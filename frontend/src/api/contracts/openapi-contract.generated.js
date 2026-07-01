@@ -36639,6 +36639,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "minLength": 1,
               "default": "[]"
             }
+          },
+          "export": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         },
         "responses": {

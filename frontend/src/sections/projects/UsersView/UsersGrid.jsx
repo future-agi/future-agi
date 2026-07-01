@@ -177,21 +177,23 @@ const UsersGrid = React.memo(
               }
               userFirstRef.current = false;
             }
+            const sortParams =
+              request.sortModel && request.sortModel.length > 0
+                ? request.sortModel.map(({ colId, sort }) => ({
+                    column_id: colId,
+                    direction: sort,
+                  }))
+                : request.sortModel || [];
+            // Mirror the active sort into the store so the export button (in the
+            // Observe header) can carry the same sort the grid is showing.
+            useUsersStore.setState({ sortParams });
             const results = await axios.get(endpoints.project.getUsersList(), {
               params: {
                 // Omit project_id when there's no project context — the
                 // backend handles project_id=null as org-scoped, used by
                 // the cross-project users page at /dashboard/users.
                 ...(updatedObserveId ? { project_id: updatedObserveId } : {}),
-                sort_params:
-                  request.sortModel && request.sortModel.length > 0
-                    ? JSON.stringify(
-                        request.sortModel.map(({ colId, sort }) => ({
-                          column_id: colId,
-                          direction: sort,
-                        })),
-                      )
-                    : JSON.stringify(request.sortModel),
+                sort_params: JSON.stringify(sortParams),
                 search: debouncedSearchQuery?.length
                   ? debouncedSearchQuery
                   : null,
