@@ -123,4 +123,13 @@ describe("DashboardsListView — delete icon ownership gate", () => {
     const { container } = render(<DashboardsListView />);
     expect(getDeleteButtons(container)).toHaveLength(0);
   });
+
+  it("hides the delete button when both created_by and the auth user are undefined", () => {
+    // scenario: the actual fail-open case — undefined === undefined → true
+    // red if fix reverted: renders the button because both sides are undefined
+    mockAuthUser = undefined;
+    mockDashboards = [makeDashboard("id-1", null, "Legacy Dashboard")];
+    const { container } = render(<DashboardsListView />);
+    expect(getDeleteButtons(container)).toHaveLength(0);
+  });
 });

@@ -30,6 +30,7 @@ import {
   useDeleteDashboard,
 } from "src/hooks/useDashboards";
 import Iconify from "src/components/iconify";
+import { ShowComponent } from "src/components/show/ShowComponent";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import SvgColor from "src/components/svg-color";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
@@ -663,7 +664,11 @@ export default function DashboardsListView() {
                   <ViewerAvatars db={db} />
                 </Box>
 
-                {db.created_by?.email === user?.email && (
+                <ShowComponent
+                  condition={
+                    !!db.created_by?.email && db.created_by.email === user?.email
+                  }
+                >
                   <IconButton
                     className="row-actions"
                     size="small"
@@ -676,7 +681,7 @@ export default function DashboardsListView() {
                   >
                     <Iconify icon="mdi:delete-outline" width={18} />
                   </IconButton>
-                )}
+                </ShowComponent>
               </Stack>
             ))}
           </Stack>

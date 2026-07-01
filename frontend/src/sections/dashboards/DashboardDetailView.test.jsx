@@ -109,4 +109,14 @@ describe("DashboardDetailView — delete dashboard ownership gate", () => {
     openDashboardMenu(getByRole);
     expect(queryByText("Delete Dashboard")).toBeNull();
   });
+
+  it("hides Delete Dashboard when both created_by and the auth user are undefined", () => {
+    // scenario: the actual fail-open case — undefined === undefined → true
+    // red if fix reverted: menu item renders because both sides are undefined
+    mockDashboard = makeDashboard(null);
+    mockAuthUser = undefined;
+    const { getByRole, queryByText } = render(<DashboardDetailView />);
+    openDashboardMenu(getByRole);
+    expect(queryByText("Delete Dashboard")).toBeNull();
+  });
 });
