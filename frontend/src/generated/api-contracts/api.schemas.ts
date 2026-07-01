@@ -1474,6 +1474,44 @@ export interface SwitchWorkspaceResponseApi {
   result: SwitchWorkspaceResultApi;
 }
 
+export type WorkspaceMemberRowApiType = typeof WorkspaceMemberRowApiType[keyof typeof WorkspaceMemberRowApiType];
+
+
+export const WorkspaceMemberRowApiType = {
+  member: 'member',
+  invite: 'invite',
+} as const;
+
+export interface WorkspaceMemberRowApi {
+  id: string;
+  name: string;
+  /** @minLength 1 */
+  email: string;
+  ws_level?: number;
+  /** @minLength 1 */
+  ws_role?: string;
+  org_level?: number;
+  /** @minLength 1 */
+  org_role?: string;
+  /** @minLength 1 */
+  status: string;
+  created_at: string;
+  type: WorkspaceMemberRowApiType;
+  auto_access?: boolean;
+}
+
+export interface WorkspaceMemberListResultApi {
+  results: WorkspaceMemberRowApi[];
+  total: number;
+  page: number;
+  limit: number;
+}
+
+export interface WorkspaceMemberListResponseApi {
+  status: boolean;
+  result: WorkspaceMemberListResultApi;
+}
+
 export interface WorkspaceMemberRemoveApi {
   user_id: string;
 }
@@ -3909,6 +3947,7 @@ export interface ConversationCreateRequestApi {
   title?: string;
   /** @maxLength 500 */
   context_page?: string;
+  hidden?: boolean;
 }
 
 export type FalconMessageApiRole = typeof FalconMessageApiRole[keyof typeof FalconMessageApiRole];
@@ -5185,6 +5224,7 @@ export type AIEvalWriterRequestApiOutputFormat = typeof AIEvalWriterRequestApiOu
 export const AIEvalWriterRequestApiOutputFormat = {
   prompt: 'prompt',
   messages: 'messages',
+  test_data: 'test_data',
 } as const;
 
 export interface AIEvalWriterRequestApi {
@@ -5193,9 +5233,15 @@ export interface AIEvalWriterRequestApi {
   output_format?: AIEvalWriterRequestApiOutputFormat;
 }
 
+export type AIEvalWriterResultApiMessagesItem = {[key: string]: string};
+
+export type AIEvalWriterResultApiTestData = {[key: string]: string};
+
 export interface AIEvalWriterResultApi {
   /** @minLength 1 */
-  prompt: string;
+  prompt?: string;
+  messages?: AIEvalWriterResultApiMessagesItem[];
+  test_data?: AIEvalWriterResultApiTestData;
 }
 
 export interface AIEvalWriterResponseApi {
@@ -8408,20 +8454,39 @@ export interface DatasetRowDiffRequestApi {
   compare_column_ids: string[];
 }
 
-export type ExperimentRowDiffCellApiCellValue = { [key: string]: unknown };
+export type ExperimentRowCellInnerMetadataApiErrorAnalysis = { [key: string]: unknown };
 
-export type ExperimentRowDiffCellApiCellDiffValue = { [key: string]: unknown };
-
-export type ExperimentRowDiffCellApiValueInfos = { [key: string]: unknown };
-
-export interface ExperimentRowDiffCellApi {
-  cell_value?: ExperimentRowDiffCellApiCellValue;
-  cell_diff_value?: ExperimentRowDiffCellApiCellDiffValue;
-  status?: string;
-  value_infos?: ExperimentRowDiffCellApiValueInfos;
+export interface ExperimentRowCellInnerMetadataApi {
+  explanation?: string;
+  error_analysis?: ExperimentRowCellInnerMetadataApiErrorAnalysis;
+  selected_input_key?: string;
 }
 
-export type ExperimentRowDiffResponseApiResult = {[key: string]: {[key: string]: ExperimentRowDiffCellApi}};
+export type ExperimentRowCellMetadataApiCost = { [key: string]: unknown };
+
+export interface ExperimentRowCellMetadataApi {
+  response_time_ms?: number;
+  token_count?: number;
+  cost?: ExperimentRowCellMetadataApiCost;
+  cell_metadata?: ExperimentRowCellInnerMetadataApi;
+  reason?: string;
+}
+
+export type ExperimentRowCellApiCellValue = { [key: string]: unknown };
+
+export type ExperimentRowCellApiCellDiffValue = { [key: string]: unknown };
+
+export type ExperimentRowCellApiValueInfos = { [key: string]: unknown };
+
+export interface ExperimentRowCellApi {
+  cell_value?: ExperimentRowCellApiCellValue;
+  cell_diff_value?: ExperimentRowCellApiCellDiffValue;
+  status?: string;
+  metadata?: ExperimentRowCellMetadataApi;
+  value_infos?: ExperimentRowCellApiValueInfos;
+}
+
+export type ExperimentRowDiffResponseApiResult = {[key: string]: {[key: string]: ExperimentRowCellApi}};
 
 export interface ExperimentRowDiffResponseApi {
   status: boolean;
@@ -8775,7 +8840,37 @@ export interface DatasetTableMetadataApi {
   status?: DatasetTableMetadataApiStatus;
 }
 
-export type DatasetTableResultApiColumnConfigItem = { [key: string]: unknown };
+export type DatasetTableColumnApiEvalTag = { [key: string]: unknown };
+
+export type DatasetTableColumnApiMetadata = { [key: string]: unknown };
+
+export type DatasetTableColumnApiChoicesMap = { [key: string]: unknown };
+
+export interface DatasetTableColumnApi {
+  /** @minLength 1 */
+  id: string;
+  name: string;
+  /** @minLength 1 */
+  data_type: string;
+  is_visible: boolean;
+  is_frozen: boolean;
+  /** @minLength 1 */
+  source_type: string;
+  /** @minLength 1 */
+  origin_type: string;
+  /** @minLength 1 */
+  source_id: string;
+  order_index: number;
+  /** @minLength 1 */
+  status: string;
+  average_score: number;
+  reason_column: boolean;
+  is_numeric_eval: boolean;
+  is_numeric_eval_percentage: boolean;
+  eval_tag: DatasetTableColumnApiEvalTag;
+  metadata: DatasetTableColumnApiMetadata;
+  choices_map: DatasetTableColumnApiChoicesMap;
+}
 
 export type DatasetTableResultApiTableItem = { [key: string]: unknown };
 
@@ -8783,7 +8878,7 @@ export type DatasetTableResultApiDatasetConfig = { [key: string]: unknown };
 
 export interface DatasetTableResultApi {
   metadata?: DatasetTableMetadataApi;
-  column_config: DatasetTableResultApiColumnConfigItem[];
+  column_config: DatasetTableColumnApi[];
   table?: DatasetTableResultApiTableItem[];
   dataset_config?: DatasetTableResultApiDatasetConfig;
   synthetic_dataset?: boolean;
@@ -9928,64 +10023,32 @@ export interface EvalFeedbackListResponseApi {
   result: EvalFeedbackListResponseResultApi;
 }
 
-export interface GroundTruthConfigApi {
-  enabled?: boolean;
-  ground_truth_id?: string;
+export interface GroundTruthRoleMappingApi {
   /** @minLength 1 */
-  mode?: string;
-  max_examples?: number;
-  similarity_threshold?: number;
+  output?: string;
   /** @minLength 1 */
-  injection_format?: string;
-}
-
-export interface GroundTruthConfigResponseResultApi {
-  ground_truth: GroundTruthConfigApi;
-}
-
-export interface GroundTruthConfigResponseApi {
-  status: boolean;
-  result: GroundTruthConfigResponseResultApi;
-}
-
-export type GroundTruthConfigRequestApiMode = typeof GroundTruthConfigRequestApiMode[keyof typeof GroundTruthConfigRequestApiMode];
-
-
-export const GroundTruthConfigRequestApiMode = {
-  auto: 'auto',
-  manual: 'manual',
-  disabled: 'disabled',
-} as const;
-
-export type GroundTruthConfigRequestApiInjectionFormat = typeof GroundTruthConfigRequestApiInjectionFormat[keyof typeof GroundTruthConfigRequestApiInjectionFormat];
-
-
-export const GroundTruthConfigRequestApiInjectionFormat = {
-  structured: 'structured',
-  conversational: 'conversational',
-  xml: 'xml',
-} as const;
-
-export interface GroundTruthConfigRequestApi {
-  enabled?: boolean;
-  ground_truth_id?: string;
-  mode?: GroundTruthConfigRequestApiMode;
+  explanation?: string;
   /**
-     * @minimum 1
-     * @maximum 10
+     * Legacy alias for `output`.
+     * @minLength 1
      */
-  max_examples?: number;
+  expected_output?: string;
   /**
-     * @minimum 0
-     * @maximum 1
+     * Legacy alias for `explanation`.
+     * @minLength 1
      */
-  similarity_threshold?: number;
-  injection_format?: GroundTruthConfigRequestApiInjectionFormat;
+  reasoning?: string;
+  /**
+     * Legacy alias for `explanation`.
+     * @minLength 1
+     */
+  reason?: string;
 }
 
+/**
+ * Map of template variable name to GT column name (string) or list of column names.
+ */
 export type GroundTruthItemApiVariableMapping = { [key: string]: unknown };
-
-export type GroundTruthItemApiRoleMapping = { [key: string]: unknown };
 
 export interface GroundTruthItemApi {
   id: string;
@@ -9995,14 +10058,20 @@ export interface GroundTruthItemApi {
   file_name?: string;
   columns: string[];
   row_count: number;
+  /** Map of template variable name to GT column name (string) or list of column names. */
   variable_mapping?: GroundTruthItemApiVariableMapping;
-  role_mapping?: GroundTruthItemApiRoleMapping;
+  role_mapping?: GroundTruthRoleMappingApi;
   /** @minLength 1 */
   embedding_status?: string;
   embedded_row_count?: number;
   /** @minLength 1 */
   storage_type?: string;
   created_at?: string;
+  embeddings_stale?: boolean;
+  is_active?: boolean;
+  enabled?: boolean;
+  max_examples?: number;
+  similarity_threshold?: number;
 }
 
 export interface GroundTruthListResponseResultApi {
@@ -10941,6 +11010,10 @@ export interface ExperimentTableRowsColumnConfigApi {
   is_final?: boolean;
 }
 
+export interface ExperimentTableRowApi {
+  row_id: string;
+}
+
 export type ExperimentTableRowsMetadataApiDescription = {[key: string]: string};
 
 export interface ExperimentTableRowsMetadataApi {
@@ -10952,11 +11025,9 @@ export interface ExperimentTableRowsMetadataApi {
   description?: ExperimentTableRowsMetadataApiDescription;
 }
 
-export type ExperimentTableRowsResultApiTableItem = { [key: string]: unknown };
-
 export interface ExperimentTableRowsResultApi {
   column_config: ExperimentTableRowsColumnConfigApi[];
-  table?: ExperimentTableRowsResultApiTableItem[];
+  table?: ExperimentTableRowApi[];
   metadata?: ExperimentTableRowsMetadataApi;
   output_format?: string;
   status?: string;
@@ -11364,66 +11435,58 @@ export interface GroundTruthEmbedResponseApi {
   result: GroundTruthEmbedResponseResultApi;
 }
 
-export type GroundTruthMappingRequestApiVariableMapping = { [key: string]: unknown };
+/**
+ * Map of template variable name to GT column name (string) or list of column names. Keys are dynamic per-template.
+ */
+export type GroundTruthSetupRequestApiVariableMapping = { [key: string]: unknown };
 
-export interface GroundTruthMappingRequestApi {
-  variable_mapping: GroundTruthMappingRequestApiVariableMapping;
-}
-
-export type GroundTruthMappingResponseResultApiVariableMapping = { [key: string]: unknown };
-
-export interface GroundTruthMappingResponseResultApi {
-  id: string;
-  variable_mapping?: GroundTruthMappingResponseResultApiVariableMapping;
-}
-
-export interface GroundTruthMappingResponseApi {
-  status: boolean;
-  result: GroundTruthMappingResponseResultApi;
-}
-
-export type GroundTruthRoleMappingRequestApiRoleMapping = { [key: string]: unknown };
-
-export interface GroundTruthRoleMappingRequestApi {
-  role_mapping: GroundTruthRoleMappingRequestApiRoleMapping;
-}
-
-export type GroundTruthRoleMappingResponseResultApiRoleMapping = { [key: string]: unknown };
-
-export interface GroundTruthRoleMappingResponseResultApi {
-  id: string;
-  role_mapping?: GroundTruthRoleMappingResponseResultApiRoleMapping;
-  /** @minLength 1 */
-  embedding_status: string;
-}
-
-export interface GroundTruthRoleMappingResponseApi {
-  status: boolean;
-  result: GroundTruthRoleMappingResponseResultApi;
-}
-
-export interface GroundTruthSearchRequestApi {
-  /** @minLength 1 */
-  query: string;
+export interface GroundTruthSetupRequestApi {
+  /** Map of template variable name to GT column name (string) or list of column names. Keys are dynamic per-template. */
+  variable_mapping: GroundTruthSetupRequestApiVariableMapping;
+  role_mapping: GroundTruthRoleMappingApi;
   /**
      * @minimum 1
      * @maximum 20
      */
-  max_results?: number;
+  max_examples: number;
+  enabled?: boolean;
 }
 
-export type GroundTruthSearchResponseResultApiResultsItem = { [key: string]: unknown };
+export interface GroundTruthRuntimeConfigApi {
+  enabled: boolean;
+  ground_truth_id: string;
+  /**
+     * @minimum 1
+     * @maximum 20
+     */
+  max_examples: number;
+  /**
+     * @minimum 0
+     * @maximum 1
+     */
+  similarity_threshold: number;
+}
 
-export interface GroundTruthSearchResponseResultApi {
+/**
+ * Map of template variable name to GT column name (string) or list of column names.
+ */
+export type GroundTruthSetupResponseResultApiVariableMapping = { [key: string]: unknown };
+
+export interface GroundTruthSetupResponseResultApi {
+  id: string;
+  template_id: string;
+  /** Map of template variable name to GT column name (string) or list of column names. */
+  variable_mapping?: GroundTruthSetupResponseResultApiVariableMapping;
+  role_mapping?: GroundTruthRoleMappingApi;
   /** @minLength 1 */
-  query: string;
-  results: GroundTruthSearchResponseResultApiResultsItem[];
-  total: number;
+  embedding_status: string;
+  embeddings_stale?: boolean;
+  config: GroundTruthRuntimeConfigApi;
 }
 
-export interface GroundTruthSearchResponseApi {
+export interface GroundTruthSetupResponseApi {
   status: boolean;
-  result: GroundTruthSearchResponseResultApi;
+  result: GroundTruthSetupResponseResultApi;
 }
 
 export interface GroundTruthStatusResponseResultApi {
@@ -11433,6 +11496,7 @@ export interface GroundTruthStatusResponseResultApi {
   embedded_row_count: number;
   total_rows: number;
   progress_percent: number;
+  embeddings_stale?: boolean;
 }
 
 export interface GroundTruthStatusResponseApi {
@@ -14641,6 +14705,7 @@ export interface FetchAssistantRequestApi {
   assistant_id: string;
   /** @minLength 1 */
   api_key: string;
+  agent_id?: string;
   /** Voice provider. One of: vapi, retell, eleven_labs, others. */
   provider?: FetchAssistantRequestApiProvider;
 }
@@ -14650,8 +14715,6 @@ export interface FetchAssistantResponseApi {
   readonly name?: string;
   /** @minLength 1 */
   readonly assistant_id?: string;
-  /** @minLength 1 */
-  readonly api_key?: string;
   /** @minLength 1 */
   readonly prompt?: string;
   /** @minLength 1 */
@@ -18848,6 +18911,8 @@ export interface FeedListRowApi {
   cluster_id: string;
   /** @minLength 1 */
   source: string;
+  /** @minLength 1 */
+  modality: string;
   error: ErrorNameApi;
   /** @minLength 1 */
   status: string;
@@ -18917,12 +18982,46 @@ export interface TracePreviewApi {
   output: string;
 }
 
+export type RcaTrailStepApiArgs = { [key: string]: unknown };
+
+export type RcaTrailStepApiResult = { [key: string]: unknown };
+
+export interface RcaTrailStepApi {
+  /** @minLength 1 */
+  type: string;
+  text?: string;
+  /** @minLength 1 */
+  call_id?: string;
+  /** @minLength 1 */
+  tool?: string;
+  args?: RcaTrailStepApiArgs;
+  result?: RcaTrailStepApiResult;
+  synthesis?: string;
+  fix?: string;
+  /** @minLength 1 */
+  confidence?: string;
+}
+
+export interface RcaSummaryApi {
+  /** @minLength 1 */
+  synthesis?: string;
+  /** @minLength 1 */
+  fix?: string;
+  /** @minLength 1 */
+  confidence?: string;
+  evidence_trace_ids?: string[];
+  analyzed_at?: string;
+  failures_at_run?: number;
+  trace?: RcaTrailStepApi[];
+}
+
 export interface FeedDetailCoreApi {
   row: FeedListRowApi;
   /** @minLength 1 */
   description: string;
   success_trace: TracePreviewApi;
   representative_trace: TracePreviewApi;
+  rca?: RcaSummaryApi;
 }
 
 export interface FeedDetailApiResponseApi {
@@ -19008,11 +19107,33 @@ export interface EventsOverTimePointApi {
   users: number;
 }
 
+export interface PatternInsightEvidenceApi {
+  /** @minLength 1 */
+  test?: string;
+  /** @minLength 1 */
+  baseline?: string;
+  /** @minLength 1 */
+  tool?: string;
+  z?: number;
+  p_value?: number;
+  ks_stat?: number;
+  fail_median?: number;
+  baseline_median?: number;
+  fail_pct?: number;
+  baseline_pct?: number;
+  hits?: number;
+  total?: number;
+  missing_in?: number;
+  traces_with_tools?: number;
+}
+
 export interface PatternInsightApi {
   /** @minLength 1 */
-  value: string;
+  title?: string;
   /** @minLength 1 */
+  value: string;
   caption: string;
+  evidence?: PatternInsightEvidenceApi;
 }
 
 export interface KeyMomentApi {
@@ -19047,6 +19168,9 @@ export interface TraceEvidenceApi {
   output: string;
   fail_reel: TraceEvidenceApiFailReelItem[];
   pass_reel: TraceEvidenceApiPassReelItem[];
+  /** @minLength 1 */
+  judge_reason?: string;
+  score?: number;
 }
 
 export type AgentFlowGraphApiNodesItem = {[key: string]: string};
@@ -19082,6 +19206,7 @@ export interface OverviewResponseApi {
   events_over_time: EventsOverTimePointApi[];
   pattern_summary: PatternSummaryApi;
   representative_traces: RepresentativeTraceApi[];
+  representative_total?: number;
 }
 
 export interface OverviewApiResponseApi {
@@ -19333,6 +19458,8 @@ export const ObservabilityProviderApiProvider = {
   retell: 'retell',
   livekit: 'livekit',
   others: 'others',
+  bland: 'bland',
+  twilio: 'twilio',
 } as const;
 
 export type ObservabilityProviderApiMetadata = { [key: string]: unknown };
@@ -19352,6 +19479,40 @@ export interface ObservabilityProviderApi {
   metadata?: ObservabilityProviderApiMetadata;
   readonly created_at?: string;
   readonly updated_at?: string;
+}
+
+export type VerifyApiKeyRequestApiProvider = typeof VerifyApiKeyRequestApiProvider[keyof typeof VerifyApiKeyRequestApiProvider];
+
+
+export const VerifyApiKeyRequestApiProvider = {
+  vapi: 'vapi',
+  retell: 'retell',
+} as const;
+
+export interface VerifyApiKeyRequestApi {
+  provider: VerifyApiKeyRequestApiProvider;
+  api_key?: string;
+  agent_id?: string;
+}
+
+export interface VerifyResponseApi {
+  status?: boolean;
+  /** @minLength 1 */
+  result: string;
+}
+
+export type VerifyAssistantIdRequestApiProvider = typeof VerifyAssistantIdRequestApiProvider[keyof typeof VerifyAssistantIdRequestApiProvider];
+
+
+export const VerifyAssistantIdRequestApiProvider = {
+  vapi: 'vapi',
+  retell: 'retell',
+} as const;
+
+export interface VerifyAssistantIdRequestApi {
+  provider: VerifyAssistantIdRequestApiProvider;
+  assistant_id?: string;
+  api_key?: string;
 }
 
 export type ObservationSpanApiObservationType = typeof ObservationSpanApiObservationType[keyof typeof ObservationSpanApiObservationType];
@@ -20710,6 +20871,26 @@ export interface TraceApi {
   /** @maxLength 255 */
   external_id?: string;
   tags?: TraceApiTags;
+}
+
+export type TraceDetailResultApiTrace = { [key: string]: unknown };
+
+export type TraceDetailResultApiObservationSpansItem = { [key: string]: unknown };
+
+export type TraceDetailResultApiSummary = { [key: string]: unknown };
+
+export type TraceDetailResultApiGraph = { [key: string]: unknown };
+
+export interface TraceDetailResultApi {
+  trace: TraceDetailResultApiTrace;
+  observation_spans: TraceDetailResultApiObservationSpansItem[];
+  summary: TraceDetailResultApiSummary;
+  graph: TraceDetailResultApiGraph;
+}
+
+export interface TraceDetailResponseApi {
+  status?: boolean;
+  result: TraceDetailResultApi;
 }
 
 export interface TraceTagsUpdateApi {
@@ -25355,6 +25536,14 @@ export type TracerFeedIssuesReadParams = {
 project_id?: string;
 };
 
+export type TracerFeedIssuesOverviewListParams = {
+/**
+ * @minimum 1
+ * @maximum 200
+ */
+rep_limit?: number;
+};
+
 export type TracerFeedIssuesRootCauseListParams = {
 /**
  * @minLength 1
@@ -25626,7 +25815,7 @@ page?: number;
  * Number of results to return per page.
  */
 limit?: number;
-project_id: string;
+project_id?: string;
 user_id?: string;
 /**
  * @minLength 1

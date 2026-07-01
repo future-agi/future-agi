@@ -76,6 +76,11 @@ const UserDetailPageBody = () => {
   useEffect(() => {
     if (!activeTab || !activeTab.startsWith("view-")) {
       lastHydratedTabRef.current = null;
+      // Sync subTab to userTab — the group dropdown navigates the URL directly,
+      // not via handleTabChange, so otherwise the view wouldn't switch.
+      if (activeTab === "sessions" || activeTab === "traces") {
+        if (activeTab !== subTab) setSubTab(activeTab);
+      }
       return;
     }
     if (lastHydratedTabRef.current === activeTab) return;

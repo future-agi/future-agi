@@ -85,6 +85,9 @@ const escapeCsvField = (field) => {
   return str;
 };
 
+const SAVED_NAV_DELAY_MS = 400;
+const AXIS_LABEL_MAX_LENGTH = 50;
+
 const TIME_PRESETS = [
   { label: "Custom", value: "custom" },
   { label: "30 mins", value: "30m" },
@@ -479,7 +482,8 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
           size="small"
           value={config.label}
           onChange={(e) => onChange("label", e.target.value)}
-          placeholder=""
+          placeholder="e.g. Cost ($)"
+          inputProps={{ maxLength: AXIS_LABEL_MAX_LENGTH }}
           sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
         />
       </Stack>
@@ -1180,6 +1184,8 @@ export default function WidgetEditorView() {
   const customDateAnchorRef = useRef(null);
   const pieChartRef = useRef(null);
   const lineChartRef = useRef(null);
+  const saveNavTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(saveNavTimerRef.current), []);
   const [pieConnectors, setPieConnectors] = useState([]);
 
   // Auto-set granularity when time preset changes
@@ -2099,7 +2105,11 @@ export default function WidgetEditorView() {
         }
       }
       setSaveStatus("saved");
-      setTimeout(() => setSaveStatus("idle"), 2000);
+      clearTimeout(saveNavTimerRef.current);
+      saveNavTimerRef.current = setTimeout(() => {
+        navigate(paths.dashboard.dashboards.detail(dashboardId));
+        setSaveStatus("idle");
+      }, SAVED_NAV_DELAY_MS);
     } catch {
       setSaveStatus("idle");
       enqueueSnackbar(`Failed to ${isEditing ? "update" : "create"} widget`, {
@@ -3152,7 +3162,7 @@ export default function WidgetEditorView() {
         <Button
           variant="contained"
           onClick={handleSave}
-          disabled={saveStatus === "saving"}
+          disabled={saveStatus !== "idle"}
           color={saveStatus === "saved" ? "success" : "primary"}
           startIcon={
             saveStatus === "saved" ? (
@@ -6023,7 +6033,8 @@ export default function WidgetEditorView() {
                         onChange={(e) =>
                           updateAxis("xAxis", "label", e.target.value)
                         }
-                        placeholder=""
+                        placeholder="e.g. Time (s)"
+                        inputProps={{ maxLength: AXIS_LABEL_MAX_LENGTH }}
                         sx={{
                           width: 180,
                           "& .MuiOutlinedInput-root": { fontSize: "13px" },

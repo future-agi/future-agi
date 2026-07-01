@@ -18,6 +18,9 @@ from __future__ import annotations
 
 from tracer.services.clickhouse.query_builders.span_list import SpanListQueryBuilder
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
+from tracer.services.clickhouse.v2.query_builders.filters import (
+    ClickHouseFilterBuilderV2,
+)
 
 
 class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
@@ -33,6 +36,10 @@ class SpanListQueryBuilderV2(V2RewriteMixin, SpanListQueryBuilder):
     """
 
     _v2_rewrite_exclude = frozenset({"build_eval_query", "build_annotation_query"})
+
+    # Use the v2 filter compiler so filters read the v2 dimension tables
+    # (end_users, etc.) instead of the dropped legacy CDC tables.
+    _FILTER_BUILDER_CLS = ClickHouseFilterBuilderV2
 
 
 __all__ = ["SpanListQueryBuilderV2"]

@@ -49,16 +49,8 @@ function normalizeEntityId(value) {
   return value;
 }
 
-/**
- * Displays a table of existing scores/annotations for a given source.
- * Supports an optional secondary source to merge scores from two levels
- * (e.g. observation_span + trace).
- * @param {string} sourceType - e.g. "dataset_row", "call_execution", "trace"
- * @param {string} sourceId - the source ID
- * @param {string} [secondarySourceType] - optional second source type
- * @param {string} [secondarySourceId] - optional second source ID
- * @param {string} [title] - optional section title
- */
+
+
 export default function ScoresListSection({
   sourceType,
   sourceId,
@@ -114,25 +106,18 @@ export default function ScoresListSection({
         seen.add(s.id);
         merged.push({
           id: s.id,
-          labelId: s.labelId || s.label_id,
-          sourceType: s.sourceType || s.source_type,
-          sourceId: s.sourceId || s.source_id,
-          labelName: s.labelName || s.label_name || s.label?.name || "—",
-          labelType: s.labelType || s.label_type || s.label?.type,
+          labelId: s.label_id,
+          sourceType: s.source_type,
+          sourceId: s.source_id,
+          labelName: s.label_name || "—",
+          labelType: s.label_type,
           value: s.value,
-          annotatorName:
-            s.annotatorName ||
-            s.annotator_name ||
-            s.annotatorEmail ||
-            s.annotator_email ||
-            "System",
-          scoreSource: s.scoreSource || s.score_source,
+          annotatorName: s.annotator_name || s.annotator_email || "System",
+          scoreSource: s.score_source,
           notes: s.notes,
-          updatedAt: s.updatedAt || s.updated_at,
-          queueId: normalizeEntityId(s.queueId || s.queue_id || s.queue),
-          queueItemId: normalizeEntityId(
-            s.queueItemId || s.queue_item_id || s.queueItem || s.queue_item,
-          ),
+          updatedAt: s.updated_at,
+          queueId: normalizeEntityId(s.queue_id),
+          queueItemId: normalizeEntityId(s.queue_item),
         });
       }
     }
@@ -146,8 +131,8 @@ export default function ScoresListSection({
       const queueId = entry?.queue?.id;
       const queueItemId = entry?.item?.id;
       if (!queueId || !queueItemId) continue;
-      const itemSourceType = entry.item.sourceType || entry.item.source_type;
-      const itemSourceId = entry.item.sourceId || entry.item.source_id;
+      const itemSourceType = entry.item.source_type;
+      const itemSourceId = entry.item.source_id;
       for (const label of entry.labels || []) {
         const target = { queueId, queueItemId };
         if (itemSourceType && itemSourceId) {

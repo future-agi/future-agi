@@ -19,6 +19,10 @@ from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import NIL_UUID, BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
+from tracer.services.clickhouse.query_builders.session_filters import (
+    SESSION_ID_FILTER_COLS,
+    build_session_id_filter_clause,
+)
 from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
     resolved_id_expr,
@@ -44,6 +48,7 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
         "traces_count": "session_traces",
         "total_traces_count": "session_traces",
     }
+    SESSION_ID_FILTER_COLS = SESSION_ID_FILTER_COLS
 
     def __init__(
         self,
@@ -81,14 +86,18 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
         # span's `trace_session_id` new→old through `trace_session_id_remap` and
         # GROUP the inner per-session aggregate on the RESOLVED id, so old + new
         # spans form ONE session. The time/project/null predicates + the span
-        # `{where_clause}` stay on the bare inner scan; only the grouping key binds
-        # the resolved column. `resolved_id_expr` is the zero-uuid-guarded map (NOT
-        # a COALESCE). Pre-flip NO span matches a `new_id` → resolved id == own id
-        # → byte-identical no-op (gate B).
+        # `{where_clause}` stay on the bare inner scan; the grouping key and
+        # session-ID filters bind the resolved column. `resolved_id_expr` is the
+        # zero-uuid-guarded map (NOT a COALESCE). Pre-flip NO span matches a
+        # `new_id` → resolved id == own id → byte-identical no-op (gate B).
         ts_join = remap_left_join(
             "rs.trace_session_id", "trace_session_id_remap", "ts_remap"
         )
         resolved_ts = resolved_id_expr("rs.trace_session_id", "ts_remap")
+        session_id_clause = self._build_session_id_clause(resolved_ts)
+        session_id_fragment = (
+            f"WHERE {session_id_clause}" if session_id_clause else ""
+        )
 
         # Two-level aggregation:
         # Inner: per-session aggregates from ALL spans in the session
@@ -136,6 +145,7 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
                   AND {where_clause}
             ) AS rs
             {ts_join}
+            {session_id_fragment}
             GROUP BY session_id
             {having_fragment}
         )
@@ -149,9 +159,25 @@ class SessionTimeSeriesQueryBuilder(BaseQueryBuilder):
         span_filters: list[dict] = []
         for f in self.filters:
             col_id = f.get("column_id") or f.get("columnId")
-            if col_id not in self.SESSION_FILTER_MAP:
+            if (
+                col_id not in self.SESSION_FILTER_MAP
+                and col_id not in self.SESSION_ID_FILTER_COLS
+            ):
                 span_filters.append(f)
         return span_filters
+
+    def _build_session_id_clause(self, resolved_session_id: str) -> str:
+        """Filter the remap-resolved session ID before session aggregation.
+
+        Applied inline (pre-GROUP BY), so it binds against the full
+        ``resolved_id_expr(...)`` rather than a projected column alias.
+        """
+        return build_session_id_filter_clause(
+            self.filters,
+            self.params,
+            session_col=resolved_session_id,
+            param_prefix="session_id_",
+        )
 
     def _build_having_clauses(self) -> str:
         """Build predicates for session aggregate filters."""

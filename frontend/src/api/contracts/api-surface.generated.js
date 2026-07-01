@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 971,
+  "endpointCount": 968,
   "groups": {
     "accounts": {
       "/accounts/2fa/recovery-codes/": [
@@ -1518,10 +1518,6 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/eval-templates/{template_id}/feedback-list/": [
         "get"
       ],
-      "/model-hub/eval-templates/{template_id}/ground-truth-config/": [
-        "get",
-        "put"
-      ],
       "/model-hub/eval-templates/{template_id}/ground-truth/": [
         "get"
       ],
@@ -1721,14 +1717,8 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/model-hub/ground-truth/{ground_truth_id}/embed/": [
         "post"
       ],
-      "/model-hub/ground-truth/{ground_truth_id}/mapping/": [
+      "/model-hub/ground-truth/{ground_truth_id}/setup/": [
         "put"
-      ],
-      "/model-hub/ground-truth/{ground_truth_id}/role-mapping/": [
-        "put"
-      ],
-      "/model-hub/ground-truth/{ground_truth_id}/search/": [
-        "post"
       ],
       "/model-hub/ground-truth/{ground_truth_id}/status/": [
         "get"
@@ -4795,10 +4785,6 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/eval-templates/{template_id}/feedback-list/": [
     "get"
   ],
-  "/model-hub/eval-templates/{template_id}/ground-truth-config/": [
-    "get",
-    "put"
-  ],
   "/model-hub/eval-templates/{template_id}/ground-truth/": [
     "get"
   ],
@@ -4998,14 +4984,8 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/model-hub/ground-truth/{ground_truth_id}/embed/": [
     "post"
   ],
-  "/model-hub/ground-truth/{ground_truth_id}/mapping/": [
+  "/model-hub/ground-truth/{ground_truth_id}/setup/": [
     "put"
-  ],
-  "/model-hub/ground-truth/{ground_truth_id}/role-mapping/": [
-    "put"
-  ],
-  "/model-hub/ground-truth/{ground_truth_id}/search/": [
-    "post"
   ],
   "/model-hub/ground-truth/{ground_truth_id}/status/": [
     "get"

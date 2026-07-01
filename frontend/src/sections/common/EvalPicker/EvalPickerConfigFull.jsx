@@ -911,7 +911,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     const templateType =
       fullEval?.template_type ||
       fullEval?.templateType ||
-      evalData?.templateType;
+      evalData?.template_type;
 
     const resolvedConfig = buildEvalTemplateConfig({
       baseConfig: fullEval?.config || evalData?.config || {},
@@ -1821,6 +1821,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TestPlayground
                     ref={sourceRef}
                     templateId={templateId}
+                    evalName={evalName || ""}
                     instructions={evalType === "code" ? "" : instructions}
                     evalType={evalType}
                     isSystemEval={isSystemEval}

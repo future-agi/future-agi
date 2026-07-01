@@ -1250,6 +1250,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     <TestPlayground
                       ref={sourceRef}
                       templateId={draftId}
+                      evalName={name || ""}
                       instructions=""
                       evalType="llm"
                       requiredKeys={compositeUnionKeys}

@@ -162,11 +162,8 @@ const ObservePage = React.memo(() => {
       let viewTabType = "traces";
       if (tabKey.startsWith("view-")) {
         const viewId = tabKey.replace("view-", "");
-        const cachedResult = queryClient.getQueryData([
-          SAVED_VIEWS_KEY,
-          observeId,
-        ]);
-        const customViews = cachedResult?.custom_views ?? [];
+        const cached = queryClient.getQueryData([SAVED_VIEWS_KEY, observeId]);
+        const customViews = cached?.custom_views ?? [];
         const view = customViews.find((v) => v.id === viewId);
         activeConfig = view?.config || null;
         viewTabType = view?.tab_type ?? "traces";
