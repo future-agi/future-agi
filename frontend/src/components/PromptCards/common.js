@@ -554,21 +554,21 @@ export const getBlocks = (quill) => {
     if (imageObject) {
       blocks.push({
         type: "image_url",
-        imageUrl: imageObject,
+        image_url: imageObject,
       });
       imageObject = null;
     }
     if (audioObject) {
       blocks.push({
         type: "audio_url",
-        audioUrl: audioObject,
+        audio_url: audioObject,
       });
       audioObject = null;
     }
     if (pdfObject) {
       blocks.push({
         type: "pdf_url",
-        pdfUrl: { ...pdfObject, file_name: pdfObject.pdf_name },
+        pdf_url: { ...pdfObject, file_name: pdfObject.pdf_name },
       });
       pdfObject = null;
     }

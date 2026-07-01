@@ -144,11 +144,11 @@ const _replaceIdWithColumnName = (content, allColumns = []) => {
         };
       }
 
-      // Handle media content (image, pdf, audio) with nested keys
+      // Handle media content (image, pdf, audio) — keys are already snake_case
       const mediaTypes = {
-        image_url: "imageUrl",
-        pdf_url: "pdfUrl",
-        audio_url: "audioUrl",
+        image_url: "image_url",
+        pdf_url: "pdf_url",
+        audio_url: "audio_url",
       };
 
       if (mediaTypes[part?.type] && part[mediaTypes[part?.type]]) {

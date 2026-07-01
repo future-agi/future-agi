@@ -67,11 +67,11 @@ export const transformDefaultData = (editConfigData, allColumns) => {
           };
         }
 
-        // Handle media content (image, pdf, audio) with nested keys
+        // Handle media content (image, pdf, audio) — keys are already snake_case
         const mediaTypes = {
-          image_url: "imageUrl",
-          pdf_url: "pdfUrl",
-          audio_url: "audioUrl",
+          image_url: "image_url",
+          pdf_url: "pdf_url",
+          audio_url: "audio_url",
         };
 
         if (mediaTypes[part?.type] && part[mediaTypes[part?.type]]) {
@@ -528,7 +528,7 @@ export const TextContent = z.object({
 
 export const ImageContent = z.object({
   type: z.literal("image_url"),
-  imageUrl: z.object({
+  image_url: z.object({
     img_name: z.string().optional(),
     url: z.string(),
     img_size: z.number().optional(),
@@ -537,7 +537,7 @@ export const ImageContent = z.object({
 
 export const PdfContent = z.object({
   type: z.literal("pdf_url"),
-  pdfUrl: z.object({
+  pdf_url: z.object({
     pdf_name: z.string().optional(),
     file_name: z.string().optional(),
     url: z.string(),
@@ -547,7 +547,7 @@ export const PdfContent = z.object({
 
 export const AudioContent = z.object({
   type: z.literal("audio_url"),
-  audioUrl: z.object({
+  audio_url: z.object({
     audio_name: z.string().optional(),
     url: z.string(),
     audio_size: z.number().optional(),
@@ -582,7 +582,9 @@ export const modelTypeByValueType = {
 };
 
 export const getOutputFormatFromCatalogType = (catalogType) =>
-  getOutputFormatForModelType(modelTypeByValueType[catalogType] ?? MODEL_TYPES.LLM);
+  getOutputFormatForModelType(
+    modelTypeByValueType[catalogType] ?? MODEL_TYPES.LLM,
+  );
 
 export const DUMMY_MODEL_PARAMS = [
   {

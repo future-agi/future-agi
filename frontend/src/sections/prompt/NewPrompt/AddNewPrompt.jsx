@@ -46,7 +46,7 @@ const transformToPayload = (
         // console.log(type,value);
         const isImage = type === "image_url";
         const typeOfInput = isImage ? "image_url" : "text";
-        const content = isImage ? object.imageUrl : object.text;
+        const content = isImage ? object.image_url : object.text;
         return {
           type: type,
           [typeOfInput]: content,
