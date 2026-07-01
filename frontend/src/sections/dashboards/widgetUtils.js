@@ -89,7 +89,7 @@ export const getSuggestedUnitConfig = (metricConfigs = []) => {
 };
 
 export const getAggColumnLabel = (metrics, allAggregations) => {
-  if (!metrics.length) return "Average";
+  if (!metrics?.length) return "Average";
   const uniqueAggs = [...new Set(metrics.map((m) => m.aggregation || "avg"))];
   if (uniqueAggs.length === 1) {
     return (

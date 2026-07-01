@@ -1,20 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { getAggColumnLabel } from "../widgetUtils";
-
-const ALL_AGGREGATIONS = [
-  { label: "Sum", value: "sum" },
-  { label: "Average", value: "avg" },
-  { label: "Median", value: "median" },
-  { label: "Distinct Count", value: "count_distinct" },
-  { label: "Count", value: "count" },
-  { label: "Minimum", value: "min" },
-  { label: "Maximum", value: "max" },
-  { label: "p50", value: "p50" },
-  { label: "p75", value: "p75" },
-  { label: "p90", value: "p90" },
-  { label: "p95", value: "p95" },
-  { label: "p99", value: "p99" },
-];
+import { ALL_AGGREGATIONS } from "../constants";
 
 describe("getAggColumnLabel", () => {
   it("returns 'Average' when metrics list is empty", () => {
@@ -36,9 +22,16 @@ describe("getAggColumnLabel", () => {
     expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe("Median");
   });
 
-  it("returns correct percentile label (p95)", () => {
+  it("returns the real percentile label (95th Percentile, not 'p95')", () => {
+    // red if source drifts from this mock again: WidgetEditorView renders
+    // "95th Percentile" for p95, not the raw value "p95".
     const metrics = [{ aggregation: "p95" }];
-    expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe("p95");
+    expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe("95th Percentile");
+  });
+
+  it("returns the real percentile label (25th Percentile)", () => {
+    const metrics = [{ aggregation: "p25" }];
+    expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe("25th Percentile");
   });
 
   it("returns 'Agg.' when multiple metrics have different aggregations", () => {
@@ -54,5 +47,11 @@ describe("getAggColumnLabel", () => {
   it("falls back to 'Average' when aggregation value is not in allAggregations", () => {
     const metrics = [{ aggregation: "unknown_agg" }];
     expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe("Average");
+  });
+
+  it("returns 'Average' when metrics is null or undefined", () => {
+    // red if the ?. guard in getAggColumnLabel is reverted to metrics.length
+    expect(getAggColumnLabel(null, ALL_AGGREGATIONS)).toBe("Average");
+    expect(getAggColumnLabel(undefined, ALL_AGGREGATIONS)).toBe("Average");
   });
 });
