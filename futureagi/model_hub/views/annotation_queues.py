@@ -114,6 +114,7 @@ from model_hub.services.bulk_selection import (
     resolve_filtered_trace_ids,
 )
 from model_hub.utils.annotation_queue_helpers import (
+    RULE_RUN_INFLIGHT_TTL,
     CollectorSourceCache,
     assign_items_to_all_annotators,
     auto_assign_items,
@@ -7461,22 +7462,24 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
                 ),
             )
 
-        # Multi-click guard. If the rule fired in the last 30s, refuse with
-        # 409 so a second click while the first run is still in flight
-        # doesn't blow up to two workflows + two emails + two PG row-lock
-        # waits. The lower-level QueueItem unique constraint already prevents
-        # data corruption, but it's still wasteful work and confusing UX.
-        # 30s is small enough that legitimate re-runs aren't impacted —
-        # users can wait, and the FE keeps the Run button disabled for the
-        # same window.
-        if rule.last_triggered_at and (
-            timezone.now() - rule.last_triggered_at
-        ) < timedelta(seconds=30):
+        # In-flight guard. Refuse a duplicate run only while an async run is
+        # genuinely still running: the async branch sets ``run_started_at`` when
+        # it schedules and the worker clears it on completion, so this blocks a
+        # second click from spawning a duplicate workflow + duplicate completion
+        # email without false-blocking a run that already finished. Keying on
+        # ``last_triggered_at`` (the old behaviour) was wrong — it also bumps on
+        # completion, so a just-finished run looked "in progress" for 30s. The
+        # TTL bounds a crashed worker that never cleared the marker. Sync runs
+        # finish inline (idempotent via the QueueItem unique constraint, no
+        # email) and never set the marker, so they're never blocked.
+        if rule.run_started_at and (
+            timezone.now() - rule.run_started_at
+        ) < RULE_RUN_INFLIGHT_TTL:
             return self._gm.custom_error_response(
                 status_code=status.HTTP_409_CONFLICT,
                 result=(
                     "A run is already in progress for this rule. "
-                    "Please wait a few seconds before trying again."
+                    "Please wait for it to finish before starting another."
                 ),
             )
 
@@ -7517,17 +7520,16 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
         # constraints make the bulk_create idempotent.
         from tfc.temporal.drop_in.runner import start_activity_sync
 
-        # Reserve the rule *before* scheduling — the 30s multi-click guard
-        # above only catches in-flight runs once the worker has bumped
-        # ``last_triggered_at`` via ``_update_rule_stats``. For async runs
-        # that bump happens minutes later (inside the Temporal activity),
-        # leaving a window where two clicks both pass the guard and schedule
-        # duplicate workflows + duplicate completion emails. Bump now from
-        # the view so the second click sees a fresh timestamp.
-        previous_last_triggered_at = rule.last_triggered_at
+        # Reserve the rule *before* scheduling so a second click that arrives
+        # before the worker picks up the run can't pass the in-flight guard and
+        # spawn a duplicate workflow + duplicate completion email. The worker
+        # clears ``run_started_at`` when the run finishes (see
+        # ``evaluate_rule_manual_async``); the guard's TTL bounds a crash that
+        # skips that clear.
+        previous_run_started_at = rule.run_started_at
         scheduled_at = timezone.now()
-        AutomationRule.objects.filter(pk=rule.pk).update(last_triggered_at=scheduled_at)
-        rule.last_triggered_at = scheduled_at
+        AutomationRule.objects.filter(pk=rule.pk).update(run_started_at=scheduled_at)
+        rule.run_started_at = scheduled_at
 
         task_id = (
             f"automation-rule-eval-{rule.pk}-{int(scheduled_at.timestamp() * 1000)}"
@@ -7546,12 +7548,12 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
                 task_id=task_id,
             )
         except Exception as exc:
-            # Schedule failed — release the reservation so the user can
-            # retry immediately without waiting out the 30s lockout.
+            # Schedule failed — release the in-flight marker so the user can
+            # retry immediately.
             AutomationRule.objects.filter(pk=rule.pk).update(
-                last_triggered_at=previous_last_triggered_at
+                run_started_at=previous_run_started_at
             )
-            rule.last_triggered_at = previous_last_triggered_at
+            rule.run_started_at = previous_run_started_at
             logger.exception(
                 "automation_rule_manual_run_schedule_failed",
                 rule_id=str(rule.pk),

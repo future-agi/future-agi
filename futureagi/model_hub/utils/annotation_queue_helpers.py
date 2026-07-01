@@ -1945,6 +1945,13 @@ RULE_TRIGGER_INTERVALS = {
 # auto-assign + finalize work bounded enough to fit inside an HTTP timeout.
 RULE_RUN_SYNC_THRESHOLD = 500
 
+# Upper bound on how long an async run may hold the in-flight marker. The
+# evaluate endpoint blocks a duplicate run while ``run_started_at`` is set and
+# younger than this; the ceiling lets a crashed worker (which never clears the
+# marker) self-heal. Comfortably above any realistic run, well under the
+# activity's 1h hard limit.
+RULE_RUN_INFLIGHT_TTL = timedelta(minutes=15)
+
 
 def is_automation_rule_due(rule, now=None):
     """Return True when a non-manual automation rule should run."""

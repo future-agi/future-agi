@@ -911,6 +911,11 @@ class AutomationRule(BaseModel):
         related_name="created_automation_rules",
     )
     last_triggered_at = models.DateTimeField(null=True, blank=True)
+    # Set when an async manual run is scheduled, cleared when it finishes. The
+    # manual evaluate endpoint rejects a duplicate run while this is set and
+    # younger than RULE_RUN_INFLIGHT_TTL — NOT on last_triggered_at, which also
+    # bumps on completion and would false-block a just-finished run.
+    run_started_at = models.DateTimeField(null=True, blank=True)
     trigger_count = models.IntegerField(default=0)
 
     def __str__(self):

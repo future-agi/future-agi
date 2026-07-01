@@ -170,6 +170,12 @@ def evaluate_rule_manual_async(rule_id, triggered_by_user_id=None):
         error_message = str(exc) or exc.__class__.__name__
         result = {"matched": 0, "added": 0, "duplicates": 0}
 
+    # Release the in-flight marker the view set when scheduling this run so the
+    # rule can be re-run as soon as the evaluation finishes (success or handled
+    # failure), not after the email. A worker crash that skips this is bounded
+    # by RULE_RUN_INFLIGHT_TTL in the evaluate guard.
+    AutomationRule.objects.filter(pk=rule_id).update(run_started_at=None)
+
     try:
         from model_hub.utils.annotation_queue_helpers import (
             send_rule_completion_email,
