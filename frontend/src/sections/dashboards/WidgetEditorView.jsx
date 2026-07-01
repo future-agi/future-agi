@@ -7,6 +7,7 @@ import React, {
   useRef,
 } from "react";
 import {
+  Alert,
   Box,
   Breadcrumbs,
   Button,
@@ -75,6 +76,7 @@ import {
   getAutoDecimals,
   getSeriesAverage,
   getSuggestedUnitConfig,
+  getYAxisRangeWarning,
 } from "./widgetUtils";
 
 const escapeCsvField = (field) => {
@@ -2195,6 +2197,15 @@ export default function WidgetEditorView() {
     return previewSeries.filter((_, i) => visibleSeries.has(i));
   }, [previewSeries, visibleSeries]);
 
+  const outOfRangeWarning = useMemo(() => {
+    const rightCfg = axisConfig.rightY || {};
+    const sa = axisConfig.seriesAxis || {};
+    const hasRightAxis =
+      rightCfg.visible && Object.values(sa).some((s) => s === "right");
+    if (hasRightAxis) return null;
+    return getYAxisRangeWarning(chartSeries, axisConfig.leftY);
+  }, [chartSeries, axisConfig]);
+
   const autoDecimals = useMemo(
     () => getAutoDecimals(chartSeries),
     [chartSeries],
@@ -4019,6 +4030,20 @@ export default function WidgetEditorView() {
                             </svg>
                           )}
                         </Box>
+                      </Box>
+                    ) : outOfRangeWarning ? (
+                      <Box
+                        sx={{
+                          display: "flex",
+                          alignItems: "center",
+                          width: "100%",
+                          height: "100%",
+                          px: 2,
+                        }}
+                      >
+                        <Alert severity="warning" sx={{ width: "100%" }}>
+                          {outOfRangeWarning}
+                        </Alert>
                       </Box>
                     ) : (
                       <Box
