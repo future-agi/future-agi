@@ -29,7 +29,7 @@ def _check_resource_limit(organization, workspace, api_call_type, config=None):
     try:
         from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
         try:
-            from ee.usage.utils import log_and_deduct_cost_for_resource_request
+            from tfc.billing.boundary import get_billing
         except ImportError:
             log_and_deduct_cost_for_resource_request = None
 

@@ -97,13 +97,13 @@ class ModelHubConfig(AppConfig):
 
         logger.info("ClickHouse analytics schema ensured")
 
-        # Warm CH page cache in background (prod only — skip in local dev)
-        try:
-            from ee.usage.deployment import DeploymentMode
-        except ImportError:
-            DeploymentMode = None
+        # Warm CH page cache in background (cloud only — skip OSS/EE/local dev).
+        # Use the OSS-safe oracle `tfc.ee_gating.is_cloud()` instead of importing
+        # `DeploymentMode` from `ee.usage` — the latter was the cause of the
+        # startup crash in TH-5477 (DeploymentMode = None → .is_cloud() → AttributeError).
+        from tfc.ee_gating import is_cloud
 
-        if DeploymentMode.is_cloud():
+        if is_cloud():
             import threading
 
             threading.Thread(

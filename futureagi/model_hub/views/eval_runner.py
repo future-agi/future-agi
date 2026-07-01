@@ -87,16 +87,7 @@ from tfc.utils.functions import get_eval_stats
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
 
-try:
-    from ee.usage.utils.usage_entries import (
-        count_tiktoken_tokens,
-        log_and_deduct_cost_for_api_request,
-        refund_cost_for_api_call,
-    )
-except ImportError:
-    count_tiktoken_tokens = None
-    log_and_deduct_cost_for_api_request = None
-    refund_cost_for_api_call = None
+from tfc.billing.boundary import BillingEventType, get_billing, token_usage_properties, llm_usage_properties
 
 
 def _request_organization(request):
@@ -1163,32 +1154,9 @@ class EvaluationRunner:
 
             # Post-eval cost-based usage emit
             try:
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.config import BillingConfig
-                except ImportError:
-                    BillingConfig = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-                try:
-                    from ee.usage.utils.event_properties import token_usage_properties
-                except ImportError:
-                    token_usage_properties = lambda token_usage: {}
-
-                billing_config = None
-                if BillingConfig is not None:
-                    billing_config = BillingConfig.get()
+                billing = get_billing()
                 eval_cost = getattr(eval_instance, "cost", {})
                 llm_cost = eval_cost.get("total_cost", 0)
-                per_run_fee = (
-                    billing_config.get_eval_per_run_fee() if billing_config else 0
-                )
-                actual_cost = llm_cost + per_run_fee
                 _token_usage = getattr(eval_instance, "token_usage", {})
 
                 # Also compute fallback cost for comparison logging
@@ -1204,6 +1172,16 @@ class EvaluationRunner:
                 except Exception:
                     pass
 
+                per_run_fee = 0
+                try:
+                    from tfc.billing.boundary import get_billing
+                    billing = get_billing()
+                    _billing_config = billing
+                    per_run_fee = _billing_config.get_eval_per_run_fee()
+                except Exception:
+                    pass
+                actual_cost = llm_cost + per_run_fee
+
                 logger.info(
                     "eval_cost_breakdown",
                     eval_id=str(self.user_eval_metric.id),
@@ -1215,11 +1193,7 @@ class EvaluationRunner:
                     token_usage=getattr(eval_instance, "token_usage", {}),
                 )
 
-                credits = (
-                    billing_config.calculate_ai_credits(actual_cost)
-                    if billing_config
-                    else 0
-                )
+                credits = billing.ai_credits(actual_cost)
                 emit_org_id = str(
                     self.organization_id
                     or (
@@ -1229,43 +1203,29 @@ class EvaluationRunner:
                     )
                 )
 
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-
                 _is_code_eval = getattr(self.eval_template, "eval_type", "") == "code"
                 eval_event_type = (
                     BillingEventType.CODE_EVALUATOR.value
-                    if _is_code_eval and BillingEventType is not None
+                    if _is_code_eval
                     else _get_api_call_type(self.user_eval_metric.model)
                 )
-                if (
-                    emit is not None
-                    and UsageEvent is not None
-                    and BillingEventType is not None
-                ):
 
-                    emit(
-                        UsageEvent(
-                            org_id=emit_org_id,
-                            event_type=eval_event_type,
-                            amount=credits,
-                            properties={
-                                "source": self.source,
-                                "source_id": str(
-                                    self.source_id
-                                    or (
-                                        str(self.user_eval_metric.template.id)
-                                        if self.user_eval_metric
-                                        else ""
-                                    )
-                                ),
-                                "raw_cost_usd": str(actual_cost),
-                                **token_usage_properties(_token_usage),
-                            },
+                billing.record_usage(
+                    emit_org_id,
+                    eval_event_type,
+                    amount=credits,
+                    source=self.source,
+                    source_id=str(
+                        self.source_id
+                        or (
+                            str(self.user_eval_metric.template.id)
+                            if self.user_eval_metric
+                            else ""
                         )
-                    )
+                    ),
+                    raw_cost_usd=str(actual_cost),
+                    **token_usage_properties(_token_usage),
+                )
             except Exception:
                 pass
 
@@ -1405,12 +1365,10 @@ class EvaluationRunner:
                 }
             )
 
-        if log_and_deduct_cost_for_api_request is None:
-            return None
-
-        api_call_log_row = log_and_deduct_cost_for_api_request(
-            org if org else self.user_eval_metric.organization,
-            api_call_type,
+        billing = get_billing()
+        api_call_log_row = billing.log_and_deduct(
+            organization=org if org else self.user_eval_metric.organization,
+            api_call_type=api_call_type,
             config=api_call_config,
             source=self.source,
             source_id=(
@@ -2361,11 +2319,8 @@ class EvaluationRunner:
         except Exception:
             logger.error(f"unable to retrieve rule prompt for column id : {column_id}")
 
-        input_token_count = (
-            count_tiktoken_tokens(input_words_string, cell_values_image_urls)
-            if count_tiktoken_tokens
-            else 0
-        )
+        billing = get_billing()
+        input_token_count = billing.count_tokens(input_words_string)
         return input_token_count
 
     def _create_eval_instance(
@@ -3081,11 +3036,7 @@ class EvaluationRunner:
 
             from sdk.utils.helpers import _get_api_call_type
 
-            try:
-                from ee.usage.services.metering import check_usage
-            except ImportError:
-                check_usage = None
-
+            billing = get_billing()
             org_id = str(
                 self.organization_id
                 or getattr(self.user_eval_metric, "organization_id", "")
@@ -3099,12 +3050,11 @@ class EvaluationRunner:
                 getattr(self.user_eval_metric, "model", None)
                 or ModelChoices.TURING_LARGE.value
             )
-            if check_usage is not None:
-                usage_check = check_usage(org_id, api_call_type)
-                if not usage_check.allowed:
-                    self.user_eval_metric.status = StatusType.FAILED.value
-                    self.user_eval_metric.save(update_fields=["status"])
-                    raise ValueError(usage_check.reason or "Usage limit exceeded")
+            usage_check = billing.check_usage(org_id, api_call_type)
+            if not usage_check.allowed:
+                self.user_eval_metric.status = StatusType.FAILED.value
+                self.user_eval_metric.save(update_fields=["status"])
+                raise ValueError(usage_check.reason or "Usage limit exceeded")
 
             self.update_cell(row_ids=row_ids)
             logger.info(

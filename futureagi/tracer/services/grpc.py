@@ -65,18 +65,16 @@ class ObservationSpanService(generics.GenericService, TraceServiceServicer):
 
             # Ingestion rate limit check
             try:
-                from ee.usage.services.rate_limiter import RateLimiter
-            except ImportError:
-                RateLimiter = None
-
-            if RateLimiter is not None:
-                rl_result = await sync_to_async(RateLimiter.check)(
+                from tfc.billing.boundary import get_billing
+                rl_result = await sync_to_async(get_billing().check_rate_limit)(
                     str(organization_id), "ingestion"
                 )
                 if not rl_result.allowed:
                     await context.abort(
                         grpc.StatusCode.RESOURCE_EXHAUSTED, rl_result.reason
                     )
+            except ImportError:
+                pass
 
             request_bytes = request.SerializeToString()
 

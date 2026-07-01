@@ -23,11 +23,7 @@ except ImportError:
     OrganizationSubscription = None
     SubscriptionTier = None
     SubscriptionTierChoices = None
-try:
-    from ee.usage.utils.usage_entries import create_organization_subscription_if_not_exists
-except ImportError:
-    create_organization_subscription_if_not_exists = None
-
+from tfc.billing.boundary import get_billing as _get_billing_sub
 aws_marketplace_service = AWSMarketplaceService()
 
 
@@ -77,7 +73,7 @@ def create_organization_for_aws_customer(aws_customer, customer_aws_account_id):
     aws_customer.organization = organization
     aws_customer.save()
 
-    create_organization_subscription_if_not_exists(organization)
+    _get_billing_sub().setup_org_subscription(organization)
 
 
 def create_onboarding_token(aws_customer, customer_identifier, product_code):

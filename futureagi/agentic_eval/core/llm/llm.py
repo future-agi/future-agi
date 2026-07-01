@@ -389,24 +389,16 @@ class LLM:
         # Initialize gateway client for internal LLM routing (all providers)
         self._gateway_client = None
         try:
-            try:
-                from ee.usage.services.gateway_llm_client import get_gateway_client
-            except ImportError:
-                get_gateway_client = None
-
-            self._gateway_client = get_gateway_client()
+            from tfc.billing.boundary import get_billing
+            self._gateway_client = get_billing().get_gateway_client()
         except (ImportError, Exception):
             pass  # Gateway not available — litellm fallback will be used
 
         # Initialize async gateway client for non-blocking LLM routing
         self._async_gateway_client = None
         try:
-            try:
-                from ee.usage.services.gateway_llm_client import get_async_gateway_client
-            except ImportError:
-                get_async_gateway_client = None
-
-            self._async_gateway_client = get_async_gateway_client()
+            from tfc.billing.boundary import get_billing
+            self._async_gateway_client = get_billing().get_async_gateway_client()
         except (ImportError, Exception):
             pass
 
@@ -2037,12 +2029,8 @@ class LLM:
         # customer's own provider credentials via litellm, not our gateway.
         if not getattr(self, "api_key", None):
             try:
-                try:
-                    from ee.usage.services.gateway_llm_client import get_gateway_client
-                except ImportError:
-                    get_gateway_client = None
-
-                gateway = get_gateway_client()
+                from tfc.billing.boundary import get_billing
+                gateway = get_billing().get_gateway_client()
                 if gateway is not None:
                     logger.info("llm_call_routing", route="agentcc_gateway", model=self.model_name)
                     gateway_kwargs = {

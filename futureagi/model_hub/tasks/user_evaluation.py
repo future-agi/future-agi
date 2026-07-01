@@ -44,22 +44,13 @@ from tfc.utils.distributed_locks import distributed_lock_manager
 from tfc.utils.distributed_state import evaluation_tracker
 from tfc.utils.error_codes import get_error_for_api_status
 from tracer.models.observation_span import EvalLogger
+from tfc.billing.boundary import get_billing, BillingEventType
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 try:
     from ee.usage.models.usage import APICallLog
 except ImportError:
     APICallLog = None
-try:
-    from ee.usage.utils.usage_entries import (
-        log_and_deduct_cost_for_api_request,
-        refund_cost_for_api_call,
-    )
-except ImportError:
-    log_and_deduct_cost_for_api_request = None
-    refund_cost_for_api_call = None
-
-
 def _mark_cells_usage_limit_error(user_eval_metric, usage_check):
     """Flip RUNNING cells for this eval to ERROR when a usage pre-check fails.
 
@@ -204,21 +195,16 @@ def process_single_evaluation(user_eval_metric):
             _mark_cells_usage_limit_error(user_eval_metric, _ErrInfo())
             raise ValueError(_err_msg)
 
-    try:
-        from ee.usage.services.metering import check_usage
-    except ImportError:
-        check_usage = None
-
+    billing = get_billing()
     api_call_type = _get_api_call_type(
         user_eval_metric.model or ModelChoices.TURING_LARGE.value
     )
-    if check_usage is not None:
-        usage_check = check_usage(str(user_eval_metric.organization.id), api_call_type)
-        if not usage_check.allowed:
-            user_eval_metric.status = StatusType.FAILED.value
-            user_eval_metric.save(update_fields=["status"])
-            _mark_cells_usage_limit_error(user_eval_metric, usage_check)
-            raise ValueError(usage_check.reason or "Usage limit exceeded")
+    usage_check = billing.check_usage(str(user_eval_metric.organization.id), api_call_type)
+    if not usage_check.allowed:
+        user_eval_metric.status = StatusType.FAILED.value
+        user_eval_metric.save(update_fields=["status"])
+        _mark_cells_usage_limit_error(user_eval_metric, usage_check)
+        raise ValueError(usage_check.reason or "Usage limit exceeded")
 
     runner = EvaluationRunner(
         user_eval_metric_id=user_eval_metric.id,
@@ -343,21 +329,16 @@ def process_experiment_evaluation(user_eval_metric):
     )
     track_mixpanel_event(MixpanelEvents.EVAL_RUN_STARTED.value, properties)
 
-    try:
-        from ee.usage.services.metering import check_usage
-    except ImportError:
-        check_usage = None
-
+    billing = get_billing()
     api_call_type = _get_api_call_type(
         user_eval_metric.model or ModelChoices.TURING_LARGE.value
     )
-    if check_usage is not None:
-        usage_check = check_usage(str(user_eval_metric.organization.id), api_call_type)
-        if not usage_check.allowed:
-            user_eval_metric.status = StatusType.FAILED.value
-            user_eval_metric.save(update_fields=["status"])
-            _mark_cells_usage_limit_error(user_eval_metric, usage_check)
-            raise ValueError(usage_check.reason or "Usage limit exceeded")
+    usage_check = billing.check_usage(str(user_eval_metric.organization.id), api_call_type)
+    if not usage_check.allowed:
+        user_eval_metric.status = StatusType.FAILED.value
+        user_eval_metric.save(update_fields=["status"])
+        _mark_cells_usage_limit_error(user_eval_metric, usage_check)
+        raise ValueError(usage_check.reason or "Usage limit exceeded")
 
     runner = ExperimentRunner(experiment_id=user_eval_metric.source_id)
     runner.load_experiment()
@@ -1105,47 +1086,41 @@ def process_single_error_localization(task_id):
                 organization=task.organization, is_default=True, is_active=True
             )
         # Pre-check: enforce free tier limits
-        try:
-            from ee.usage.services.metering import check_usage
-        except ImportError:
-            check_usage = None
-
-        if check_usage is not None:
-            usage_check = check_usage(
-                str(task.organization.id), APICallTypeChoices.ERROR_LOCALIZER.value
-            )
-            if not usage_check.allowed:
-                if task:
-                    task.mark_as_failed(usage_check.reason or "Usage limit exceeded")
-                raise ValueError(usage_check.reason or "Usage limit exceeded")
+        billing = get_billing()
+        usage_check = billing.check_usage(
+            str(task.organization.id), APICallTypeChoices.ERROR_LOCALIZER.value
+        )
+        if not usage_check.allowed:
+            if task:
+                task.mark_as_failed(usage_check.reason or "Usage limit exceeded")
+            raise ValueError(usage_check.reason or "Usage limit exceeded")
 
         # Log and deduct cost for error localization
-        if log_and_deduct_cost_for_api_request is not None:
-            api_call_log_row = log_and_deduct_cost_for_api_request(
-                organization=task.organization,
-                api_call_type=APICallTypeChoices.ERROR_LOCALIZER.value,
-                workspace=task.workspace,
-                source="error_localizer",
-                source_id=str(task.id),
-                config={
-                    "reference_id": str(task.source_id),
-                    "error_localizer_task_id": str(task.id),
-                },
+        api_call_log_row = billing.log_and_deduct(
+            organization=task.organization,
+            api_call_type=APICallTypeChoices.ERROR_LOCALIZER.value,
+            workspace=task.workspace,
+            source="error_localizer",
+            source_id=str(task.id),
+            config={
+                "reference_id": str(task.source_id),
+                "error_localizer_task_id": str(task.id),
+            },
+        )
+
+        if not api_call_log_row:
+            logger.error("API call not allowed : Error validating the api call.")
+            task.mark_as_failed(
+                "API call not allowed : Error validating the api call."
+            )
+            raise ValueError(
+                "API call not allowed : Error validating the api call."
             )
 
-            if not api_call_log_row:
-                logger.error("API call not allowed : Error validating the api call.")
-                task.mark_as_failed(
-                    "API call not allowed : Error validating the api call."
-                )
-                raise ValueError(
-                    "API call not allowed : Error validating the api call."
-                )
-
-            if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-                error_message = get_error_for_api_status(api_call_log_row.status)
-                task.mark_as_failed(error_message)
-                return
+        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+            error_message = get_error_for_api_status(api_call_log_row.status)
+            task.mark_as_failed(error_message)
+            return
 
         try:
             localizer = ErrorLocalizer(
@@ -1166,8 +1141,7 @@ def process_single_error_localization(task_id):
                 f"Error in process_single_error_localization: {str(e)}\n{traceback.format_exc()}"
             )
             task.mark_as_failed(str(e))
-            if refund_cost_for_api_call is not None:
-                refund_cost_for_api_call(api_call_log_row)
+            billing.refund(api_call_log_row)
             return
 
         error_analysis = result.analysis
@@ -1184,8 +1158,7 @@ def process_single_error_localization(task_id):
                 reason=skip_reason,
             )
             task.mark_as_skipped(skip_reason)
-            if refund_cost_for_api_call is not None:
-                refund_cost_for_api_call(api_call_log_row)
+            billing.refund(api_call_log_row)
             return
 
         # Update the task with the results
@@ -1198,29 +1171,8 @@ def process_single_error_localization(task_id):
         api_call_log_row.status = APICallStatusChoices.SUCCESS.value
         api_call_log_row.save(update_fields=["status"])
 
-        # Dual-write: emit usage event for new billing system (cost-based)
+        # Emit usage event for billing system (cost-based)
         try:
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.schemas.events import UsageEvent
-            except ImportError:
-                UsageEvent = None
-            try:
-                from ee.usage.services.config import BillingConfig
-            except ImportError:
-                BillingConfig = None
-            try:
-                from ee.usage.services.emitter import emit
-            except ImportError:
-                emit = None
-            try:
-                from ee.usage.utils.event_properties import llm_usage_properties
-            except ImportError:
-                llm_usage_properties = lambda obj: {}
-
             actual_cost = getattr(localizer, "cost", {}).get("total_cost", 0)
             if not actual_cost and hasattr(localizer, "llm"):
                 actual_cost = getattr(localizer.llm, "cost", {}).get("total_cost", 0)
@@ -1228,29 +1180,15 @@ def process_single_error_localization(task_id):
                 error_agent = getattr(localizer, "error_agent", None)
                 error_llm = getattr(error_agent, "llm", None)
                 actual_cost = getattr(error_llm, "cost", {}).get("total_cost", 0)
-            if BillingConfig is not None:
-                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
-
-            if (
-                emit is not None
-                and UsageEvent is not None
-                and BillingEventType is not None
-            ):
-                emit(
-                    UsageEvent(
-                        org_id=str(task.organization.id),
-                        event_type=BillingEventType.ERROR_LOCALIZER,
-                        amount=credits,
-                        properties={
-                            "source": "error_localizer",
-                            "source_id": str(task.id),
-                            "raw_cost_usd": str(actual_cost),
-                            **llm_usage_properties(
-                                getattr(localizer, "error_agent", None)
-                            ),
-                        },
-                    )
-                )
+            credits = billing.ai_credits(actual_cost)
+            billing.record_usage(
+                str(task.organization.id),
+                BillingEventType.ERROR_LOCALIZER,
+                amount=credits,
+                source="error_localizer",
+                source_id=str(task.id),
+                raw_cost_usd=str(actual_cost),
+            )
         except Exception:
             pass  # Metering failure must not break the action
 
@@ -1291,8 +1229,7 @@ def process_single_error_localization(task_id):
                         logger.info("Log doesn't exist.")
             except Exception as e:
                 logger.error(f"Error in updating cell metadata: {str(e)}")
-                if refund_cost_for_api_call is not None:
-                    refund_cost_for_api_call(api_call_log_row)
+                billing.refund(api_call_log_row)
                 task.mark_as_failed(str(e))
 
         elif task.source == ErrorLocalizerSource.OBSERVE:
@@ -1330,8 +1267,7 @@ def process_single_error_localization(task_id):
 
             except Exception as e:
                 logger.error(f"Error in updating span metadata: {str(e)}")
-                if refund_cost_for_api_call is not None:
-                    refund_cost_for_api_call(api_call_log_row)
+                billing.refund(api_call_log_row)
                 task.mark_as_failed(str(e))
 
         elif task.source == ErrorLocalizerSource.PLAYGROUND:
@@ -1349,8 +1285,7 @@ def process_single_error_localization(task_id):
                 eval_logger.save(update_fields=["config"])
             except Exception as e:
                 logger.exception(f"Error in updating log config: {str(e)}")
-                if refund_cost_for_api_call is not None:
-                    refund_cost_for_api_call(api_call_log_row)
+                billing.refund(api_call_log_row)
                 task.mark_as_failed(str(e))
     finally:
         close_old_connections()

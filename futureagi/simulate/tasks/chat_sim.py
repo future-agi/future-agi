@@ -31,6 +31,7 @@ from simulate.utils.chat_simulation import (
     _calculate_tokens_from_messages,
 )
 from simulate.utils.websocket_notifications import notify_simulation_update
+from tfc.billing.boundary import BillingEventType, get_billing
 from tfc.temporal.drop_in import temporal_activity
 
 logger = structlog.get_logger(__name__)
@@ -622,24 +623,15 @@ def run_single_prompt_chat(call_execution_id: str):
         organization = call_execution.test_execution.run_test.organization
         workspace = call_execution.test_execution.run_test.workspace
 
-        try:
-            from ee.usage.schemas.event_types import BillingEventType
-        except ImportError:
-            BillingEventType = None
-        try:
-            from ee.usage.services.metering import check_usage
-        except ImportError:
-            check_usage = None
-
-        if check_usage is not None and BillingEventType is not None:
-            usage_check = check_usage(str(organization.id), BillingEventType.TEXT_CALL)
-            if not usage_check.allowed:
-                call_execution.status = CallExecution.CallStatus.FAILED
-                call_execution.ended_reason = (
-                    usage_check.reason or "Usage limit exceeded"
-                )
-                call_execution.save(update_fields=["status", "ended_reason"])
-                return False
+        billing = get_billing()
+        usage_check = billing.check_usage(str(organization.id), BillingEventType.TEXT_CALL)
+        if not usage_check.allowed:
+            call_execution.status = CallExecution.CallStatus.FAILED
+            call_execution.ended_reason = (
+                usage_check.reason or "Usage limit exceeded"
+            )
+            call_execution.save(update_fields=["status", "ended_reason"])
+            return False
 
         logger.info(
             "prompt_chat_simulation_starting",
@@ -667,15 +659,6 @@ def run_single_prompt_chat(call_execution_id: str):
 
             from simulate.models import ChatMessageModel
 
-            try:
-                from ee.usage.schemas.events import UsageEvent
-            except ImportError:
-                UsageEvent = None
-            try:
-                from ee.usage.services.emitter import emit
-            except ImportError:
-                emit = None
-
             total_tokens = (
                 ChatMessageModel.objects.filter(
                     call_execution=call_execution
@@ -683,17 +666,14 @@ def run_single_prompt_chat(call_execution_id: str):
                 or 0
             )
 
-            emit(
-                UsageEvent(
-                    org_id=str(organization.id),
-                    event_type=BillingEventType.TEXT_CALL,
-                    amount=total_tokens,
-                    properties={
-                        "source": "simulate_prompt_chat",
-                        "source_id": str(call_execution.id),
-                        "total_tokens": total_tokens,
-                    },
-                )
+            billing = get_billing()
+            billing.record_usage(
+                str(organization.id),
+                BillingEventType.TEXT_CALL,
+                amount=total_tokens,
+                source="simulate_prompt_chat",
+                source_id=str(call_execution.id),
+                total_tokens=total_tokens,
             )
         except Exception:
             pass  # Metering failure must not break the action

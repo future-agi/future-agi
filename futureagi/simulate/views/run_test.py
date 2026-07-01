@@ -209,11 +209,9 @@ def _voice_sim_gate_response(user_organization, gm):
     if oss_gate is not None:
         return oss_gate
 
-    try:
-        from ee.usage.services.entitlements import Entitlements
-    except ImportError:
-        # ee.usage.deployment exists but entitlements is missing — partial
-        # EE install. Fail closed.
+    from tfc.billing.boundary import get_billing
+    billing = get_billing()
+    if not billing.has_feature(str(user_organization.id), "voice_sim"):
         message = (
             "Voice simulation is not available on this deployment. "
             "Upgrade to cloud or enterprise to run voice calls."
@@ -227,10 +225,6 @@ def _voice_sim_gate_response(user_organization, gm):
             ),
             status=status.HTTP_402_PAYMENT_REQUIRED,
         )
-
-    feat_check = Entitlements.check_feature(str(user_organization.id), "has_voice_sim")
-    if not feat_check.allowed:
-        return gm.forbidden_response(feat_check.reason)
     return None
 
 

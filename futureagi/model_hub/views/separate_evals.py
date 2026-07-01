@@ -1,3 +1,4 @@
+from tfc.billing.boundary import UsageLimitExceeded
 import json
 import math
 import traceback
@@ -129,10 +130,6 @@ from tracer.models.observation_span import EvalLogger
 from tracer.utils.filters import apply_created_at_filters
 from tracer.utils.graphs import GraphEngine
 
-try:
-    from ee.usage.exceptions import UsageLimitExceeded
-except ImportError:
-    UsageLimitExceeded = None
 
 logger = structlog.get_logger(__name__)
 

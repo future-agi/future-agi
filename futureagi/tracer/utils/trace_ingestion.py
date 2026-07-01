@@ -32,6 +32,7 @@ from tracer.utils.otel import bulk_convert_otel_spans_to_observation_spans
 from tracer.utils.parsers import deserialize_trace_payload
 from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
 from tracer.utils.pii_settings import get_pii_settings_for_projects
+from tfc.billing.boundary import get_billing, BillingEventType
 from tracer.utils.usage_emit import emit_span_ingestion_usage
 
 logger = structlog.get_logger(__name__)
@@ -809,31 +810,17 @@ def bulk_create_observation_span_task(
 
         # Pre-check: enforce free tier limits on trace ingestion
         try:
-            try:
-                from ee.usage.deployment import DeploymentMode
-            except ImportError:
-                DeploymentMode = None
-
-            if not DeploymentMode.is_oss():
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-                try:
-                    from ee.usage.services.metering import check_usage
-                except ImportError:
-                    check_usage = None
-
-                usage_check = check_usage(
-                    str(organization_id), BillingEventType.TRACING_EVENT
+            billing = get_billing()
+            usage_check = billing.check_usage(
+                str(organization_id), BillingEventType.TRACING_EVENT
+            )
+            if not usage_check.allowed:
+                logger.warning(
+                    "trace_ingestion_blocked_free_tier",
+                    org_id=str(organization_id),
+                    reason=usage_check.reason,
                 )
-                if not usage_check.allowed:
-                    logger.warning(
-                        "trace_ingestion_blocked_free_tier",
-                        org_id=str(organization_id),
-                        reason=usage_check.reason,
-                    )
-                    return
+                return
         except Exception:
             pass  # Fail open — don't break ingestion on metering errors
 
