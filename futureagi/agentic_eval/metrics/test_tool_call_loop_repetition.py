@@ -7,7 +7,7 @@ Run with:
 
 import pytest
 
-from tool_call_loop_repetition import (
+from agentic_eval.metrics.tool_call_loop_repetition import (
     ToolCall,
     ToolCallLoopDetector,
     ToolCallLoopGuardrail,
