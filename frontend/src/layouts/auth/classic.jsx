@@ -23,7 +23,10 @@ export default function AuthClassicLayout({ children }) {
       direction="row"
       sx={{
         minHeight: "100vh",
-        minWidth: 1200,
+        // Only pin the wide desktop min-width on large screens. On phones this
+        // hard-locked every auth page to 1200px, forcing horizontal scroll.
+        minWidth: { xs: "auto", lg: 1200 },
+        overflowX: "hidden",
         background: "url('/assets/illustrations/auth-background.png')",
         backgroundRepeat: "no-repeat",
         backgroundSize: "100% 100%",
