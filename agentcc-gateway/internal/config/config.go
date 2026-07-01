@@ -979,6 +979,20 @@ func loadFromEnv(cfg *Config) {
 		cfg.ControlPlane.WebhookSecret = v
 	}
 
+	// Auth env overrides. A present internal API key both seeds the key store
+	// and turns auth on, so a default deploy is closed rather than an open proxy.
+	if v := os.Getenv("AGENTCC_INTERNAL_API_KEY"); v != "" {
+		cfg.Auth.Enabled = true
+		cfg.Auth.Keys = append(cfg.Auth.Keys, AuthKeyConfig{
+			Name:  "internal-backend",
+			Key:   v,
+			Owner: "futureagi-backend",
+		})
+	}
+	if v := os.Getenv("AGENTCC_AUTH_ENABLED"); v != "" {
+		cfg.Auth.Enabled = v == "true" || v == "1"
+	}
+
 	// Redis state env overrides.
 	if v := os.Getenv("AGENTCC_REDIS_ADDRESS"); v != "" {
 		cfg.Redis.Address = v
