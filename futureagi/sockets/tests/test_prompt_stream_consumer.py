@@ -239,3 +239,89 @@ def test_execute_template_allows_null_workspace_template_in_same_org(monkeypatch
     # permission reasons).
     for call in consumer.close.await_args_list:
         assert call.kwargs.get("code") != WS_CLOSE_CODE_PERMISSION_DENIED
+
+
+# ---------------------------------------------------------------------------
+# Background-task handling (PR #821)
+#
+# asyncio keeps only a weak reference to the result of a bare create_task(), so
+# a fire-and-forget task can be garbage-collected mid-run and silently dropped.
+# `_spawn` holds a strong reference until the task finishes; `disconnect`
+# cancels anything still in flight.
+#
+# Written in the same sync + asyncio.run(...) style as the tests above so they
+# do not depend on pytest-asyncio being registered.
+# ---------------------------------------------------------------------------
+
+
+def test_spawn_retains_strong_reference_while_task_runs():
+    """_spawn() must keep the task in _background_tasks until it completes."""
+    consumer = _make_consumer()
+
+    async def scenario():
+        started = asyncio.Event()
+
+        async def _work():
+            started.set()
+            await asyncio.sleep(3600)
+
+        task = consumer._spawn(_work())
+        await started.wait()
+
+        # Still running -> reference must be held, otherwise GC could collect it.
+        assert task in consumer._background_tasks
+
+        task.cancel()
+        return task
+
+    task = asyncio.run(scenario())
+    assert task.cancelled()
+
+
+def test_spawn_drops_reference_once_task_finishes():
+    """The done callback must discard the task so the set does not leak."""
+    consumer = _make_consumer()
+
+    async def scenario():
+        async def _work():
+            return "done"
+
+        task = consumer._spawn(_work())
+        assert task in consumer._background_tasks
+
+        await task
+        # add_done_callback is scheduled via call_soon; yield so it can run.
+        await asyncio.sleep(0)
+
+        assert task not in consumer._background_tasks
+        assert consumer._background_tasks == set()
+
+    asyncio.run(scenario())
+
+
+def test_disconnect_cancels_inflight_background_tasks():
+    """disconnect() must cancel tasks that are still running."""
+    consumer = _make_consumer()
+
+    async def scenario():
+        started = asyncio.Event()
+
+        async def _work():
+            started.set()
+            await asyncio.sleep(3600)
+
+        task = consumer._spawn(_work())
+        await started.wait()
+
+        await consumer.disconnect(close_code=1000)
+
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        assert task.cancelled()
+        # The done callback should also have cleaned up the reference.
+        assert task not in consumer._background_tasks
+
+    asyncio.run(scenario())
