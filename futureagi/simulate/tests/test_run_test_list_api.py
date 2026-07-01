@@ -199,6 +199,42 @@ class TestRunTestRuntimeContracts:
         run_test = RunTest.objects.get(id=response.json()["id"])
         assert run_test.workspace_id == workspace.id
 
+    def test_create_uses_active_org_not_legacy_user_fk(
+        self, auth_client, user, agent_definition, scenario_with_prompt_version
+    ):
+        """Regression for TH-6191.
+
+        A multi-org user whose legacy ``user.organization`` FK points at a
+        different org than the one they are actively working in must still be
+        able to create a run test against agent definitions/scenarios that live
+        in the active org. Before the fix, the create serializer scoped its
+        existence checks by ``request.user.organization`` (the legacy FK), so
+        objects in the active org were reported as "not found" even though the
+        write path (which uses ``request.organization``) would have found them.
+        """
+        from accounts.models import Organization
+
+        # agent_definition + scenario live in the active org (auth_client's
+        # org). Point the user's legacy FK at a *different* org to mimic a
+        # multi-org user operating outside their primary/legacy organization.
+        legacy_primary_org = Organization.objects.create(name="Legacy Primary Org")
+        user.organization = legacy_primary_org
+        user.save(update_fields=["organization"])
+
+        response = auth_client.post(
+            "/simulate/run-tests/create/",
+            {
+                "name": "Multi-org Active Org Run",
+                "agent_definition_id": str(agent_definition.id),
+                "scenario_ids": [str(scenario_with_prompt_version.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED, response.content
+        run_test = RunTest.objects.get(id=response.json()["id"])
+        assert run_test.organization_id == agent_definition.organization_id
+
     def test_create_rejects_unknown_body_field(
         self, auth_client, agent_definition, scenario_with_prompt_version
     ):
@@ -354,9 +390,9 @@ class TestRunTestRuntimeContracts:
             format="json",
         )
 
-        assert create_response.status_code == status.HTTP_201_CREATED, (
-            create_response.content
-        )
+        assert (
+            create_response.status_code == status.HTTP_201_CREATED
+        ), create_response.content
         eval_config_id = create_response.json()["created_eval_configs"][0]["id"]
         eval_config = SimulateEvalConfig.objects.get(id=eval_config_id)
         assert eval_config.run_test_id == run_test_with_v10_scenario.id
@@ -369,9 +405,9 @@ class TestRunTestRuntimeContracts:
             f"{eval_config_id}/get-structure/"
         )
 
-        assert structure_response.status_code == status.HTTP_200_OK, (
-            structure_response.content
-        )
+        assert (
+            structure_response.status_code == status.HTTP_200_OK
+        ), structure_response.content
         structure = structure_response.json()["result"]["eval"]
         assert structure["id"] == eval_config_id
         assert structure["template_id"] == str(word_count_eval_template.id)
@@ -395,9 +431,9 @@ class TestRunTestRuntimeContracts:
             format="json",
         )
 
-        assert update_response.status_code == status.HTTP_200_OK, (
-            update_response.content
-        )
+        assert (
+            update_response.status_code == status.HTTP_200_OK
+        ), update_response.content
         eval_config.refresh_from_db()
         assert eval_config.name == "word_count_updated"
         assert eval_config.mapping == {"text": "agent_output"}
