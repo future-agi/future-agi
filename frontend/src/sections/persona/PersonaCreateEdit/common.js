@@ -280,6 +280,8 @@ export const chatOptionSettings = [
 export const getPersonaDefaultValues = (editPersona) => {
   logger.debug("editPersona", editPersona);
   if (editPersona) {
+    const fss = parseInt(editPersona?.finishedSpeakingSensitivity?.[0], 10);
+    const intr = parseInt(editPersona?.interruptSensitivity?.[0], 10);
     return {
       name: editPersona?.name,
       description: editPersona?.description,
@@ -306,14 +308,8 @@ export const getPersonaDefaultValues = (editPersona) => {
             ? "true"
             : "false"
           : null,
-      finishedSpeakingSensitivity:
-        editPersona?.finishedSpeakingSensitivity !== null
-          ? parseInt(editPersona?.finishedSpeakingSensitivity?.[0])
-          : null,
-      interruptSensitivity:
-        editPersona?.interruptSensitivity !== null
-          ? parseInt(editPersona?.interruptSensitivity?.[0])
-          : null,
+      finishedSpeakingSensitivity: Number.isNaN(fss) ? 1 : fss,
+      interruptSensitivity: Number.isNaN(intr) ? 1 : intr,
       customProperties: Object.entries(editPersona?.metadata || {}).map(
         ([key, value]) => ({
           key,
@@ -347,8 +343,8 @@ export const getPersonaDefaultValues = (editPersona) => {
     language: [],
     conversationSpeed: [],
     backgroundSound: null,
-    finishedSpeakingSensitivity: null,
-    interruptSensitivity: null,
+    finishedSpeakingSensitivity: 1,
+    interruptSensitivity: 1,
     customProperties: [],
     additionalInstruction: null,
     multilingual: false,

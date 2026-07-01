@@ -39,6 +39,8 @@ import IPOPCell from "./Renderers/IPOPCell";
 import { isCellValueEmpty } from "src/components/table/utils";
 import { APP_CONSTANTS } from "src/utils/constants";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 const ROWS_LIMIT = 100;
 
@@ -51,7 +53,10 @@ const getSpanListColumnDefs = (col) => {
     headerName: col.name,
     ...(isCustomColumn
       ? { colId: col.id, minWidth: 180, flex: 1 }
-      : { field: col.id }),
+      : {
+          field: col.id,
+          ...(colId === "total_tokens" ? { minWidth: 240 } : {}),
+        }),
     hide: !col?.isVisible,
     context: { sourceColumn: col },
     // Custom columns use valueGetter to handle dot-notation attribute keys
@@ -99,12 +104,15 @@ const getSpanListColumnDefs = (col) => {
     },
     cellRendererSelector: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
-        // No renderer for empty values
-        return null;
-      }
       const column = params?.colDef?.context?.sourceColumn;
       const colId = column?.id;
+
+      // The tags column stays interactive even when empty so a first tag can
+      // be added via its "+ Tag" affordance. Other columns render nothing when
+      // empty (valueFormatter shows "-").
+      if (isCellValueEmpty(value) && colId !== "tags") {
+        return null;
+      }
 
       if (RENDERER_CONFIG.nameColumns.includes(colId)) {
         return {
@@ -121,7 +129,10 @@ const getSpanListColumnDefs = (col) => {
     },
     cellStyle: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
+      // The tags column keeps its default left alignment so an empty "+ Tag"
+      // sits where the chips will, instead of jumping from center to left.
+      const cellColId = params?.colDef?.context?.sourceColumn?.id;
+      if (isCellValueEmpty(value) && cellColId !== "tags") {
         return {
           display: "flex",
           alignItems: "center",
@@ -270,6 +281,18 @@ const SpanGrid = React.forwardRef(
         },
       }),
       [setFilterOpen, setExtraFilters],
+    );
+
+    const { role } = useAuthContext();
+    // Viewers can browse spans but not edit tags — gate the cell affordance.
+    const canEditTags = Boolean(
+      RolePermission.OBSERVABILITY[PERMISSIONS.CREATE_EDIT_PROJECT]?.[role],
+    );
+    // Tells cell renderers (e.g. TagsCell) they are on the span grid (so tag
+    // edits target the span) and whether the role may edit.
+    const gridContext = useMemo(
+      () => ({ entityType: "span", canEditTags }),
+      [canEditTags],
     );
 
     const { columnDefs } = useMemo(() => {
@@ -603,6 +626,7 @@ const SpanGrid = React.forwardRef(
           columnDefs={columnDefs}
           onColumnMoved={onColumnMoved}
           defaultColDef={defaultColDef}
+          context={gridContext}
           rowSelection={{ mode: "multiRow", enableClickSelection: false }}
           pagination={false}
           cacheBlockSize={ROWS_LIMIT}

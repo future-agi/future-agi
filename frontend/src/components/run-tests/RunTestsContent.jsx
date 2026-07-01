@@ -506,7 +506,7 @@ const RunTestsContent = ({
         ),
       },
       {
-        id: "lastRunAt",
+        id: "last_run_at",
         accessorKey: "last_run_at",
         header: "Last Run",
         size: 150,

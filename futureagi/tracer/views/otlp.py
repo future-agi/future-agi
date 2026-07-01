@@ -149,11 +149,12 @@ class OTLPTraceView(APIView):
                 except ImportError:
                     RateLimiter = None
 
-                rl_result = RateLimiter.check(organization_id, "ingestion")
-                if not rl_result.allowed:
-                    response = self._error_response(request, rl_result.reason, 429)
-                    response["Retry-After"] = str(rl_result.retry_after)
-                    return response
+                if RateLimiter is not None:
+                    rl_result = RateLimiter.check(organization_id, "ingestion")
+                    if not rl_result.allowed:
+                        response = self._error_response(request, rl_result.reason, 429)
+                        response["Retry-After"] = str(rl_result.retry_after)
+                        return response
             except ImportError:
                 pass
 
