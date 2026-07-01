@@ -5818,8 +5818,18 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             if assignment_denial_reason:
                 return self._gm.forbidden_response(assignment_denial_reason)
 
-        # Reservation logic: opt-in via ?reserve=true query param
+        # Reservation logic: opt-in via ?reserve=true query param.
         reserve = _is_truthy(query_params.get("reserve"))
+        # The reservation is an editing lock for the user annotating their own
+        # draft. A reviewer/manager opening the review workspace, or re-opening
+        # an item that already carries a review decision (reviewed_by set — e.g.
+        # after request-changes), is acting as a reviewer, not the editor.
+        # Granting them the lock strands the annotator who must rework the item
+        # until the reservation expires. Don't reserve in those review contexts.
+        if reserve and (
+            is_review_detail or (is_reviewer and item.reviewed_by_id is not None)
+        ):
+            reserve = False
         if reserve:
             # Atomic reservation to prevent race condition
             updated = (
