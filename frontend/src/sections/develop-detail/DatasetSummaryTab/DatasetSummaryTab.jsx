@@ -78,8 +78,8 @@ const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
 
   const updatedEvalsSummary = evalsSummary?.map((e) => {
     return {
-      originType: "evaluation",
       ...e,
+      origin_type: "evaluation",
     };
   });
   const columnLists = useMemo(() => {
@@ -158,11 +158,11 @@ const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
           <EvalCard
             setCurrentTab={setCurrentTabs}
             selectedColumns={appliedFilter
-              ?.filter((e) => e.originType !== "evaluation")
+              ?.filter((e) => e.origin_type !== "evaluation")
               ?.map((item) => item.id)}
             datasetId={datasetId}
             selectedEvals={appliedFilter
-              ?.filter((e) => e.originType === "evaluation")
+              ?.filter((e) => e.origin_type === "evaluation")
               ?.map((e) => e?.id)}
             datasetIndex={datasetIndex}
           />

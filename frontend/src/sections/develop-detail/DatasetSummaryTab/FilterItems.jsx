@@ -59,11 +59,10 @@ const FilterItems = forwardRef(
     );
 
     const id = useMemo(() => (open ? `eval-filter-popper` : undefined), [open]);
-
     const filteredColumnList = useMemo(() => {
       const newData =
         columnLists?.map((item) => {
-          const originType = item.origin_type??item.originType ;
+          const originType = item.origin_type;
           const dataType = item.data_type;
           return {
             ...item,
@@ -90,7 +89,7 @@ const FilterItems = forwardRef(
     };
 
     const renderIcon = (col) => {
-      const originType = col.origin_type??col.originType;
+      const originType = col.origin_type;
       const dataType = col.data_type;
       if (originType === "run_prompt") {
         return (
