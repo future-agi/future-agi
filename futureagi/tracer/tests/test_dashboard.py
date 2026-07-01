@@ -885,6 +885,34 @@ class TestMetricsEndpoint:
         sql_arg = mock_analytics_cls.return_value.execute_ch_query.call_args[0][0]
         assert "parent_span_id" not in sql_arg
 
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_service_name_uses_service_name_col(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        auth_client,
+        observe_project,
+    ):
+        """service_name must select the real `service_name` column (OTel
+        service.name) — the same column _STRING_FILTER_COL filters on — not the
+        span `name`/`trace_name`, else the picker offers unmatchable values."""
+        mock_result = MagicMock()
+        mock_result.data = []
+        mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
+
+        auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            f"?metric_name=service_name&metric_type=system_metric"
+            f"&project_ids={observe_project.id}&source=traces"
+        )
+
+        sql_arg = mock_analytics_cls.return_value.execute_ch_query.call_args[0][0]
+        assert "SELECT DISTINCT service_name AS val" in sql_arg
+        assert "SELECT DISTINCT name AS val" not in sql_arg
+        assert "trace_name" not in sql_arg
+
 
 class TestChartsView:
     @pytest.mark.django_db
