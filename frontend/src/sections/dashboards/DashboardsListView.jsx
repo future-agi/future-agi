@@ -23,12 +23,14 @@ import {
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import { paths } from "src/routes/paths";
+import { useAuthContext } from "src/auth/hooks";
 import {
   useDashboardList,
   useCreateDashboard,
   useDeleteDashboard,
 } from "src/hooks/useDashboards";
 import Iconify from "src/components/iconify";
+import { ShowComponent } from "src/components/show/ShowComponent";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import SvgColor from "src/components/svg-color";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
@@ -318,6 +320,7 @@ export default function DashboardsListView() {
   const theme = useTheme();
   const navigate = useNavigate();
   const { enqueueSnackbar } = useSnackbar();
+  const { user } = useAuthContext();
 
   const { data: dashboards = [], isLoading } = useDashboardList();
   const createMutation = useCreateDashboard();
@@ -661,18 +664,24 @@ export default function DashboardsListView() {
                   <ViewerAvatars db={db} />
                 </Box>
 
-                <IconButton
-                  className="row-actions"
-                  size="small"
-                  onClick={(e) => handleDelete(e, db)}
-                  sx={{
-                    opacity: 0,
-                    transition: "opacity 0.15s",
-                    flexShrink: 0,
-                  }}
+                <ShowComponent
+                  condition={
+                    !!db.created_by?.email && db.created_by.email === user?.email
+                  }
                 >
-                  <Iconify icon="mdi:delete-outline" width={18} />
-                </IconButton>
+                  <IconButton
+                    className="row-actions"
+                    size="small"
+                    onClick={(e) => handleDelete(e, db)}
+                    sx={{
+                      opacity: 0,
+                      transition: "opacity 0.15s",
+                      flexShrink: 0,
+                    }}
+                  >
+                    <Iconify icon="mdi:delete-outline" width={18} />
+                  </IconButton>
+                </ShowComponent>
               </Stack>
             ))}
           </Stack>

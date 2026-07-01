@@ -30,6 +30,7 @@ import {
   useTheme,
 } from "@mui/material";
 import { useNavigate, useParams } from "react-router-dom";
+import { useAuthContext } from "src/auth/hooks";
 import { paths } from "src/routes/paths";
 import {
   useDashboardDetail,
@@ -43,6 +44,7 @@ import {
 } from "src/hooks/useDashboards";
 import { format } from "date-fns";
 import Iconify from "src/components/iconify";
+import { ShowComponent } from "src/components/show/ShowComponent";
 import {
   DATE_PRESETS,
   WIDTH_OPTIONS,
@@ -631,6 +633,7 @@ export default function DashboardDetailView() {
   const navigate = useNavigate();
   const { dashboardId } = useParams();
   const { enqueueSnackbar } = useSnackbar();
+  const { user } = useAuthContext();
 
   const { data: dashboard, isLoading } = useDashboardDetail(dashboardId);
   const updateDashboard = useUpdateDashboard();
@@ -664,7 +667,7 @@ export default function DashboardDetailView() {
 
   const [confirmDelete, setConfirmDelete] = useState(null);
   const lastConfirmDeleteRef = useRef(null);
-  
+
   if (confirmDelete) lastConfirmDeleteRef.current = confirmDelete;
   const confirmDeleteView = confirmDelete ?? lastConfirmDeleteRef.current;
 
@@ -1509,16 +1512,26 @@ export default function DashboardDetailView() {
           <ListItemText>Add Widget</ListItemText>
         </MenuItem>
         <Divider />
-        <MenuItem onClick={handleDeleteDashboard} sx={{ color: "error.main" }}>
-          <ListItemIcon>
-            <Iconify
-              icon="mdi:delete-outline"
-              width={18}
-              sx={{ color: "error.main" }}
-            />
-          </ListItemIcon>
-          <ListItemText>Delete Dashboard</ListItemText>
-        </MenuItem>
+        <ShowComponent
+          condition={
+            !!dashboard?.created_by?.email &&
+            dashboard.created_by.email === user?.email
+          }
+        >
+          <MenuItem
+            onClick={handleDeleteDashboard}
+            sx={{ color: "error.main" }}
+          >
+            <ListItemIcon>
+              <Iconify
+                icon="mdi:delete-outline"
+                width={18}
+                sx={{ color: "error.main" }}
+              />
+            </ListItemIcon>
+            <ListItemText>Delete Dashboard</ListItemText>
+          </MenuItem>
+        </ShowComponent>
       </Menu>
 
       <ConfirmDialog
