@@ -97,7 +97,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
     };
     if (module === "observe") {
       payload["sampling_rate"] =
-        typeof data.samplingRate === "number" ? data.samplingRate / 100 : 1;
+        typeof data.samplingRate === "number" ? data.samplingRate / 100 : 0;
     }
     updateProject(payload);
   };
@@ -416,8 +416,8 @@ ConfigureProject.propTypes = {
 };
 
 function getSamplingRatePercent(projectDetail, module) {
-  if (typeof projectDetail?.samplingRate === "number") {
-    return projectDetail.samplingRate * 100;
+  if (typeof projectDetail?.sampling_rate === "number") {
+    return projectDetail.sampling_rate * 100;
   }
-  return module === "observe" ? 100 : undefined;
+  return module === "observe" ? 0 : undefined;
 }

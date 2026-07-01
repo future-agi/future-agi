@@ -6,7 +6,7 @@ Tests for /tracer/project/ endpoints.
 
 import json
 import uuid
-from datetime import timedelta, timezone as datetime_timezone
+from datetime import UTC, timedelta
 
 import pytest
 from django.utils import timezone
@@ -32,7 +32,7 @@ def get_result(response):
 
 
 def _iso_z(value):
-    return value.astimezone(datetime_timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _chart_filter(column_id, filter_type, filter_op, filter_value, col_type=None):
@@ -335,7 +335,8 @@ class TestProjectRetrieveAPI:
         data = get_result(response)
         assert data["name"] == "Test Project"
         assert data.get("trace_type") == "experiment"
-        assert "sampling_rate" in data  # Should include sampling rate
+        assert "sampling_rate" in data
+        assert data["sampling_rate"] == 0
 
     def test_retrieve_project_not_found(self, auth_client):
         """Retrieve non-existent project returns error."""
