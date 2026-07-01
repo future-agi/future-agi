@@ -11107,6 +11107,25 @@ export interface ExperimentMessageResponseApi {
   result: ExperimentMessageResultApi;
 }
 
+export interface FeedbackDetailsItemApi {
+  id: string;
+  value: string;
+  comment: string;
+  /** @minLength 1 */
+  created_at: string;
+  action_type: string;
+}
+
+export interface FeedbackDetailsResultApi {
+  feedback: FeedbackDetailsItemApi[];
+  total_count: number;
+}
+
+export interface FeedbackDetailsResponseApi {
+  status: boolean;
+  result: FeedbackDetailsResultApi;
+}
+
 export type ColumnValuesRequestApiColumnPlaceholders = { [key: string]: unknown };
 
 export interface ColumnValuesRequestApi {
@@ -24009,13 +24028,6 @@ page?: number;
  * Number of results to return per page.
  */
 limit?: number;
-};
-
-export type ModelHubFeedbackGetFeedbackDetails200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: FeedbackApi[];
 };
 
 export type ModelHubFeedbackGetFeedbackSummaryParams = {

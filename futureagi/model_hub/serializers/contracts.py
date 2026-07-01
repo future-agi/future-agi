@@ -1780,6 +1780,24 @@ class EvalFeedbackListResponseSerializer(serializers.Serializer):
     result = EvalFeedbackListResponseResultSerializer()
 
 
+class FeedbackDetailsItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    value = serializers.CharField(allow_blank=True, allow_null=True)
+    comment = serializers.CharField(allow_blank=True, allow_null=True)
+    created_at = serializers.CharField()
+    action_type = serializers.CharField(allow_blank=True, allow_null=True)
+
+
+class FeedbackDetailsResultSerializer(serializers.Serializer):
+    feedback = FeedbackDetailsItemSerializer(many=True)
+    total_count = serializers.IntegerField()
+
+
+class FeedbackDetailsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = FeedbackDetailsResultSerializer()
+
+
 class EvalApiLogRowResponseResultSerializer(serializers.Serializer):
     log_id = serializers.UUIDField()
     created_at = serializers.DateTimeField()

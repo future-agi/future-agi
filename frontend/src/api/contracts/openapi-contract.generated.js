@@ -19584,32 +19584,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "responses": {
           "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/Feedback"
-                }
-              }
-            }
+            "$ref": "#/definitions/FeedbackDetailsResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "403": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "404": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "409": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ModelHubErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -55728,6 +55718,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "FeedbackDetailsResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/FeedbackDetailsResult"
+        }
+      }
+    },
     "FetchAssistantRequest": {
       "required": [
         "assistant_id",
@@ -81262,6 +81268,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "FeedbackDetailsResult": {
+      "required": [
+        "feedback",
+        "total_count"
+      ],
+      "type": "object",
+      "properties": {
+        "feedback": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/FeedbackDetailsItem"
+          }
+        },
+        "total_count": {
+          "title": "Total count",
+          "type": "integer"
+        }
+      }
+    },
     "FileUploadResult": {
       "required": [
         "id",
@@ -93889,6 +93914,43 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "age_days": {
           "title": "Age days",
           "type": "integer",
+          "x-nullable": true
+        }
+      }
+    },
+    "FeedbackDetailsItem": {
+      "required": [
+        "id",
+        "value",
+        "comment",
+        "created_at",
+        "action_type"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "format": "uuid"
+        },
+        "value": {
+          "title": "Value",
+          "type": "string",
+          "x-nullable": true
+        },
+        "comment": {
+          "title": "Comment",
+          "type": "string",
+          "x-nullable": true
+        },
+        "created_at": {
+          "title": "Created at",
+          "type": "string",
+          "minLength": 1
+        },
+        "action_type": {
+          "title": "Action type",
+          "type": "string",
           "x-nullable": true
         }
       }

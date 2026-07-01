@@ -154,6 +154,7 @@ from model_hub.serializers.contracts import (
     EmbeddingsResponseSerializer,
     EvalConfigQuerySerializer,
     EvalStructureQuerySerializer,
+    FeedbackDetailsResponseSerializer,
     HuggingFaceDatasetDetailRequestSerializer,
     HuggingFaceDatasetDetailResponseSerializer,
     HuggingFaceDatasetListRequestSerializer,
@@ -11464,6 +11465,9 @@ class FeedbackViewSet(viewsets.ModelViewSet):
                 get_error_message("FAILED_TO_CREATE_FEEDBACK")
             )
 
+    @swagger_auto_schema(
+        responses={200: FeedbackDetailsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     @action(detail=False, methods=["GET"], url_path="get-feedback-details")
     def get_feedback_details(self, request):
         """

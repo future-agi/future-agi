@@ -21414,31 +21414,21 @@ export const ModelHubFeedbackGetFeedbackDetailsQueryParams = zod.object({
   "limit": zod.number().optional().describe('Number of results to return per page.')
 })
 
-export const modelHubFeedbackGetFeedbackDetailsResponseResultsItemSourceIdMax = 255;
-
-
-export const modelHubFeedbackGetFeedbackDetailsResponseResultsItemRowIdMax = 255;
-
-export const modelHubFeedbackGetFeedbackDetailsResponseResultsItemActionTypeMax = 255;
 
 
 
 export const ModelHubFeedbackGetFeedbackDetailsResponse = zod.object({
-  "count": zod.number(),
-  "next": zod.string().url().optional(),
-  "previous": zod.string().url().optional(),
-  "results": zod.array(zod.object({
-  "id": zod.string().uuid().optional(),
-  "source_id": zod.string().min(1).max(modelHubFeedbackGetFeedbackDetailsResponseResultsItemSourceIdMax),
-  "source": zod.enum(['dataset', 'prompt', 'sdk', 'trace', 'experiment', 'observe', 'eval_playground']),
-  "user_eval_metric": zod.string().uuid().optional(),
-  "value": zod.string().min(1),
-  "explanation": zod.string().optional(),
-  "row_id": zod.string().max(modelHubFeedbackGetFeedbackDetailsResponseResultsItemRowIdMax).optional(),
-  "custom_eval_config_id": zod.string().uuid().optional(),
-  "feedback_improvement": zod.string().optional(),
-  "action_type": zod.string().max(modelHubFeedbackGetFeedbackDetailsResponseResultsItemActionTypeMax).optional()
-}))
+  "status": zod.boolean(),
+  "result": zod.object({
+  "feedback": zod.array(zod.object({
+  "id": zod.string().uuid(),
+  "value": zod.string(),
+  "comment": zod.string(),
+  "created_at": zod.string().min(1),
+  "action_type": zod.string()
+})),
+  "total_count": zod.number()
+})
 })
 
 
