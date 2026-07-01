@@ -44,6 +44,7 @@ import {
 } from "src/hooks/useDashboards";
 import { format } from "date-fns";
 import Iconify from "src/components/iconify";
+import { ShowComponent } from "src/components/show/ShowComponent";
 import {
   DATE_PRESETS,
   WIDTH_OPTIONS,
@@ -107,7 +108,6 @@ const InlineEdit = forwardRef(function InlineEdit(
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useImperativeHandle(ref, () => ({ startEdit }), [value]);
 
   const save = () => {
@@ -1526,7 +1526,12 @@ export default function DashboardDetailView() {
           <ListItemText>Add Widget</ListItemText>
         </MenuItem>
         <Divider />
-        {dashboard?.created_by?.email === user?.email && (
+        <ShowComponent
+          condition={
+            !!dashboard?.created_by?.email &&
+            dashboard.created_by.email === user?.email
+          }
+        >
           <MenuItem
             onClick={handleDeleteDashboard}
             sx={{ color: "error.main" }}
@@ -1540,7 +1545,7 @@ export default function DashboardDetailView() {
             </ListItemIcon>
             <ListItemText>Delete Dashboard</ListItemText>
           </MenuItem>
-        )}
+        </ShowComponent>
       </Menu>
 
       <ConfirmDialog

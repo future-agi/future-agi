@@ -329,6 +329,10 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
+            if instance.created_by_id != request.user.id:
+                return self._gm.forbidden_response(
+                    "Only the dashboard owner can delete this dashboard."
+                )
             deleted_at = timezone.now()
             DashboardWidget.objects.filter(
                 dashboard=instance,

@@ -89,6 +89,31 @@ def dashboard_widget(db, dashboard, user):
 
 
 @pytest.fixture
+def other_user(db, organization):
+    """Create a second user in the same org/workspace for ownership tests."""
+    from accounts.models.user import User
+
+    return User.objects.create_user(
+        email="other@futureagi.com",
+        password="testpassword123",
+        name="Other User",
+        organization=organization,
+    )
+
+
+@pytest.fixture
+def other_auth_client(other_user, workspace):
+    """Authenticated client for the other (non-owner) user."""
+    from conftest import WorkspaceAwareAPIClient
+
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=other_user)
+    client.set_workspace(workspace)
+    yield client
+    client.stop_workspace_injection()
+
+
+@pytest.fixture
 def sample_query_config():
     return {
         "project_ids": [str(uuid.uuid4())],
@@ -186,6 +211,21 @@ class TestDashboardCRUD:
         assert dashboard.deleted_at is not None
         assert dashboard_widget.deleted is True
         assert dashboard_widget.deleted_at is not None
+
+    @pytest.mark.django_db
+    def test_delete_dashboard_rejected_for_non_owner(
+        self, other_auth_client, dashboard, dashboard_widget
+    ):
+        # scenario: a workspace member who did not create the dashboard hits
+        # DELETE directly against the API (the FE only hides the button —
+        # nothing server-side previously stopped this call).
+        # red if fix reverted: 200 + dashboard actually deleted.
+        response = other_auth_client.delete(f"/tracer/dashboard/{dashboard.id}/")
+        assert response.status_code == 403
+        dashboard.refresh_from_db()
+        dashboard_widget.refresh_from_db()
+        assert dashboard.deleted is False
+        assert dashboard_widget.deleted is False
 
     @pytest.mark.django_db
     def test_deleted_dashboard_not_in_list(self, auth_client, dashboard):
