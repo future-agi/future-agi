@@ -10032,6 +10032,9 @@ export interface EvalFeedbackListItemApi {
   user_name: string;
   /** @minLength 1 */
   created_at: string;
+  user_eval_metric_id: string;
+  custom_eval_config_id: string;
+  experiment_id: string;
 }
 
 export interface EvalFeedbackListResponseResultApi {

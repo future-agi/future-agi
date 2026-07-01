@@ -40,6 +40,7 @@ from model_hub.models.evals_metric import (
 )
 
 from model_hub.models.run_prompt import PromptEvalConfig
+from model_hub.selectors.feedback import resolve_feedback_edit_contexts
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     CellErrorLocalizerResponseSerializer,
@@ -5269,7 +5270,8 @@ class EvalFeedbackListView(APIView):
             )
 
             total = base_qs.count()
-            feedbacks = base_qs[page * page_size : (page + 1) * page_size]
+            feedbacks = list(base_qs[page * page_size : (page + 1) * page_size])
+            edit_contexts = resolve_feedback_edit_contexts(feedbacks)
 
             items = []
             for fb in feedbacks:
@@ -5277,6 +5279,11 @@ class EvalFeedbackListView(APIView):
                 if fb.user:
                     user_name = getattr(fb.user, "name", "") or fb.user.email
 
+                ctx = edit_contexts.get(fb.id) or {
+                    "user_eval_metric_id": "",
+                    "custom_eval_config_id": "",
+                    "experiment_id": "",
+                }
                 items.append(
                     {
                         "id": str(fb.id),
@@ -5289,6 +5296,9 @@ class EvalFeedbackListView(APIView):
                         "created_at": (
                             fb.created_at.isoformat() if fb.created_at else ""
                         ),
+                        "user_eval_metric_id": ctx["user_eval_metric_id"],
+                        "custom_eval_config_id": ctx["custom_eval_config_id"],
+                        "experiment_id": ctx["experiment_id"],
                     }
                 )
 

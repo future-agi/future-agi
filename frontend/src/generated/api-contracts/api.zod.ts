@@ -19721,7 +19721,10 @@ export const ModelHubEvalTemplatesFeedbackListListResponse = zod.object({
   "source_id": zod.string(),
   "action_type": zod.string(),
   "user_name": zod.string(),
-  "created_at": zod.string().min(1)
+  "created_at": zod.string().min(1),
+  "user_eval_metric_id": zod.string(),
+  "custom_eval_config_id": zod.string(),
+  "experiment_id": zod.string()
 })),
   "total": zod.number(),
   "page": zod.number(),

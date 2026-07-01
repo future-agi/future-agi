@@ -92732,7 +92732,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "source_id",
         "action_type",
         "user_name",
-        "created_at"
+        "created_at",
+        "user_eval_metric_id",
+        "custom_eval_config_id",
+        "experiment_id"
       ],
       "type": "object",
       "properties": {
@@ -92769,6 +92772,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Created at",
           "type": "string",
           "minLength": 1
+        },
+        "user_eval_metric_id": {
+          "title": "User eval metric id",
+          "type": "string"
+        },
+        "custom_eval_config_id": {
+          "title": "Custom eval config id",
+          "type": "string"
+        },
+        "experiment_id": {
+          "title": "Experiment id",
+          "type": "string"
         }
       }
     },

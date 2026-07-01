@@ -599,12 +599,6 @@ const EvalFeedbackTab = ({ templateId }) => {
               <Box
                 component="button"
                 onClick={() => setFeedbackEditOpen(true)}
-                disabled={detailRow.source !== "eval_playground"}
-                title={
-                  detailRow.source !== "eval_playground"
-                    ? "Editing is available only for eval-playground feedback in this view."
-                    : undefined
-                }
                 sx={{
                   display: "flex",
                   alignItems: "center",
@@ -626,14 +620,6 @@ const EvalFeedbackTab = ({ templateId }) => {
                       t.palette.mode === "dark"
                         ? "rgba(124,77,255,0.06)"
                         : "rgba(124,77,255,0.04)",
-                  },
-                  "&:disabled": {
-                    cursor: "not-allowed",
-                    opacity: 0.5,
-                    "&:hover": {
-                      borderColor: "divider",
-                      backgroundColor: "transparent",
-                    },
                   },
                 }}
               >

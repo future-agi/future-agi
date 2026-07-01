@@ -1765,6 +1765,9 @@ class EvalFeedbackListItemSerializer(serializers.Serializer):
     action_type = serializers.CharField(allow_blank=True)
     user_name = serializers.CharField(allow_blank=True)
     created_at = serializers.CharField()
+    user_eval_metric_id = serializers.CharField(allow_blank=True)
+    custom_eval_config_id = serializers.CharField(allow_blank=True)
+    experiment_id = serializers.CharField(allow_blank=True)
 
 
 class EvalFeedbackListResponseResultSerializer(serializers.Serializer):
