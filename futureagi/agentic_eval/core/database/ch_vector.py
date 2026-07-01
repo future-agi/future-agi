@@ -33,6 +33,55 @@ def get_clickhouse_cluster_name() -> str:
     return os.getenv("CH_CLUSTER_NAME") or "cluster"
 
 
+_MERGE_TREE_ENGINE_RE = re.compile(
+    r"^\s*(?P<family>[A-Za-z]*MergeTree)\s*(?:\((?P<args>.*)\))?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def build_replicated_engine(
+    base_engine: str,
+    table_name: str,
+    *,
+    clustered: bool,
+    database: str | None = None,
+    cluster: str | None = None,
+) -> tuple[str, str]:
+    """Return ``(engine_clause, on_cluster_clause)`` for a ``CREATE TABLE``.
+
+    On a multi-replica cluster a plain ``*MergeTree[(args)]`` engine is rewritten
+    to its ``Replicated*`` form, preserving the sub-family and any version/sign
+    argument: ``MergeTree`` -> ``ReplicatedMergeTree``,
+    ``ReplacingMergeTree(ts)`` -> ``ReplicatedReplacingMergeTree('<zk>', '{replica}', ts)``.
+    The Keeper path follows the deployment convention
+    ``/clickhouse/tables/{shard}/<database>/<table>`` so two tables with the same
+    short name in different databases never share a znode.
+
+    On single-node CH the base engine is returned unchanged with an empty
+    ``ON CLUSTER`` clause, so dev and single-replica deployments keep plain
+    engines. One engine-selection rule for every legacy ``default.*`` table;
+    ``ClickHouseVectorDB.create_table`` is built on the same helper.
+    """
+    if not clustered:
+        return base_engine, ""
+    match = _MERGE_TREE_ENGINE_RE.match(base_engine)
+    if not match:
+        raise ValueError(
+            f"build_replicated_engine: {base_engine!r} is not a recognised "
+            "*MergeTree engine, so no Replicated* form can be derived."
+        )
+    family = match.group("family")
+    inner = (match.group("args") or "").strip()
+    zk_database_segment = f"{database}/" if database else ""
+    zk_path = f"/clickhouse/tables/{{shard}}/{zk_database_segment}{table_name}"
+    engine_args = [f"'{zk_path}'", "'{replica}'"]
+    if inner:
+        engine_args.append(inner)
+    engine = f"Replicated{family}({', '.join(engine_args)})"
+    on_cluster = f" ON CLUSTER '{cluster or get_clickhouse_cluster_name()}'"
+    return engine, on_cluster
+
+
 def sanitize_sql_value(value: str) -> str:
     """
     Sanitize and escape a string value to make it safe for SQL queries.
@@ -118,7 +167,8 @@ class ClickHouseVectorDB:
     ):
         self.client = clickhouse_driver.Client(**get_clickhouse_client_kwargs())
 
-    def _is_clustered(self) -> bool:
+    @classmethod
+    def is_clustered(cls, client) -> bool:
         """True iff CH has a genuinely multi-replica cluster; fails safe to False.
 
         Checking `system.macros` for the `replica` macro was too lenient: a
@@ -129,18 +179,25 @@ class ClickHouseVectorDB:
         Using `system.clusters.replica_num` is the precise check: prod multi-
         replica clusters have rows with `replica_num > 1`; a single-node
         cluster only has `replica_num = 1`.
+
+        Classmethod taking any client with `.execute`, so callers that hold a
+        raw driver client (boot-time DDL, the LLM usage logger) share the same
+        per-process answer instead of each re-probing.
         """
-        if ClickHouseVectorDB._is_clustered_cached is not None:
-            return ClickHouseVectorDB._is_clustered_cached
+        if cls._is_clustered_cached is not None:
+            return cls._is_clustered_cached
         try:
-            rows = self.client.execute(
+            rows = client.execute(
                 "SELECT count() FROM system.clusters WHERE replica_num > 1"
             )
-            ClickHouseVectorDB._is_clustered_cached = bool(rows and rows[0][0])
+            cls._is_clustered_cached = bool(rows and rows[0][0])
         except Exception:
             logger.warning("ch_vector_cluster_detect_failed", exc_info=True)
-            ClickHouseVectorDB._is_clustered_cached = False
-        return ClickHouseVectorDB._is_clustered_cached
+            cls._is_clustered_cached = False
+        return cls._is_clustered_cached
+
+    def _is_clustered(self) -> bool:
+        return self.is_clustered(self.client)
 
     def drop_table(self,table_name: str) -> None:
         """
@@ -182,19 +239,13 @@ class ClickHouseVectorDB:
         clustered = self._is_clustered()
         cluster_name = cluster or get_clickhouse_cluster_name()
         qualified = f"{database}.{table_name}" if database else table_name
-        zk_database_segment = f"{database}/" if database else ""
-
-        if clustered:
-            engine = (
-                f"ReplicatedReplacingMergeTree("
-                f"'/clickhouse/tables/{{shard}}/{zk_database_segment}{table_name}', "
-                f"'{{replica}}'"
-                f")"
-            )
-            on_cluster = f" ON CLUSTER '{cluster_name}'"
-        else:
-            engine = "ReplacingMergeTree()"
-            on_cluster = ""
+        engine, on_cluster = build_replicated_engine(
+            "ReplacingMergeTree()",
+            table_name,
+            clustered=clustered,
+            database=database,
+            cluster=cluster_name,
+        )
 
         create_table_query = f"""
         CREATE TABLE IF NOT EXISTS {qualified}{on_cluster} (
