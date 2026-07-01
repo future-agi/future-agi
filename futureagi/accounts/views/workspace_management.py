@@ -62,6 +62,10 @@ from accounts.serializers.workspace import (
     WorkspaceListRequestSerializer,
     WorkspaceListSerializer,
 )
+from accounts.services.workspace_membership import (
+    create_workspace_membership,
+    resolve_org_membership,
+)
 from accounts.utils import generate_password, resolve_org, resolve_org_role
 from analytics.mixpanel_util import mixpanel_tracker
 from analytics.utils import (
@@ -70,6 +74,7 @@ from analytics.utils import (
     get_mixpanel_properties,
     track_mixpanel_event,
 )
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 from tfc.constants.levels import Level
 from tfc.constants.roles import RoleMapping, RolePermissions
 from tfc.middleware.workspace_context import get_current_workspace
@@ -83,9 +88,6 @@ from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
 
-from tfc.billing.boundary import get_billing
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
-
 try:
     from ee.usage.models.usage import (
         OrganizationSubscription,
@@ -94,6 +96,10 @@ try:
 except ImportError:
     OrganizationSubscription = None
     SubscriptionTierChoices = None
+try:
+    from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
+except ImportError:
+    log_and_deduct_cost_for_resource_request = None
 
 logger = structlog.get_logger(__name__)
 
@@ -489,6 +495,11 @@ class WorkspaceInviteAPIView(APIView):
                                         "role": workspace_role,
                                         "invited_by": user,
                                         "is_active": True,
+                                        "organization_membership": (
+                                            resolve_org_membership(
+                                                target_user, workspace.organization
+                                            )
+                                        ),
                                     },
                                 )
                             )
@@ -587,7 +598,7 @@ class WorkspaceInviteAPIView(APIView):
                                     existing_deleted_membership.invited_by = user
                                     existing_deleted_membership.save()
                                 else:
-                                    WorkspaceMembership.no_workspace_objects.create(
+                                    create_workspace_membership(
                                         workspace=workspace,
                                         user=new_member,
                                         role=workspace_role,
@@ -1181,7 +1192,7 @@ class UserRoleUpdateAPIView(APIView):
                             existing_deleted_membership.save()
                         else:
                             # Create workspace membership if it doesn't exist
-                            WorkspaceMembership.no_workspace_objects.create(
+                            create_workspace_membership(
                                 workspace=current_workspace,
                                 user=target_user,
                                 role=workspace_role,
@@ -1245,7 +1256,7 @@ class UserRoleUpdateAPIView(APIView):
                         existing_deleted_membership.save()
                     else:
                         # Create workspace membership if it doesn't exist
-                        WorkspaceMembership.no_workspace_objects.create(
+                        create_workspace_membership(
                             workspace=current_workspace,
                             user=target_user,
                             role=new_role,
@@ -1982,7 +1993,7 @@ class ManageTeamView(APIView):
                         )
 
                         # Add organization owner to workspace with admin role
-                        WorkspaceMembership.no_workspace_objects.create(
+                        create_workspace_membership(
                             workspace=workspace,
                             user=user,
                             role=OrganizationRoles.WORKSPACE_ADMIN,
@@ -2007,7 +2018,7 @@ class ManageTeamView(APIView):
                     )
 
                     # Add organization owner to default workspace
-                    WorkspaceMembership.no_workspace_objects.create(
+                    create_workspace_membership(
                         workspace=workspace,
                         user=user,
                         role=OrganizationRoles.WORKSPACE_ADMIN,
@@ -2026,16 +2037,20 @@ class ManageTeamView(APIView):
             ).values_list("user_id", flat=True)
             user_count = User.objects.filter(id__in=org_user_ids).count()
             logger.info(f"member_count: {len(members_data)} user_count: {user_count}")
-            billing = get_billing()
-            call_log_row = billing.log_and_deduct(
-                organization=organization,
-                api_call_type=APICallTypeChoices.USER_ADD.value,
-                config={"user_count": user_count, "extra_users": len(members_data)},
-                workspace=workspace,
-            )
-            if (
-                call_log_row is not None
-                and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
+            # Resource limit / billing requires ee — skip the deduction and
+            # treat as always-allowed when absent.
+            if log_and_deduct_cost_for_resource_request is not None:
+                call_log_row = log_and_deduct_cost_for_resource_request(
+                    organization,
+                    APICallTypeChoices.USER_ADD.value,
+                    config={"user_count": user_count, "extra_users": len(members_data)},
+                    workspace=workspace,
+                )
+            else:
+                call_log_row = None
+            if log_and_deduct_cost_for_resource_request is not None and (
+                call_log_row is None
+                or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
             ):
                 config = json.loads(call_log_row.config)
                 return self._gm.too_many_requests(
@@ -2315,7 +2330,7 @@ class ManageTeamView(APIView):
                     existing_deleted_membership.save()
                 else:
                     # Create new workspace membership
-                    WorkspaceMembership.no_workspace_objects.create(
+                    create_workspace_membership(
                         workspace=workspace,
                         user=user,
                         role=role,
