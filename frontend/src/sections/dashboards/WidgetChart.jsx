@@ -42,7 +42,7 @@ function getApexType(chartType) {
   return map[chartType] || "line";
 }
 
-export default function WidgetChart({ widget, globalDateRange }) {
+export default function WidgetChart({ widget, globalDateRange, shareToken }) {
   const theme = useTheme();
   const queryMutation = useDashboardQuery();
   const rawQueryConfig = widget.query_config;
@@ -98,11 +98,17 @@ export default function WidgetChart({ widget, globalDateRange }) {
     () => JSON.stringify(queryConfig || {}),
     [queryConfig],
   );
+
+  // Pass share_token for unauthenticated shared-dashboard access
   useEffect(() => {
     if (queryConfig?.metrics?.length > 0) {
-      queryMutation.mutate(queryConfig);
+      queryMutation.mutate(
+        shareToken
+          ? { ...queryConfig, share_token: shareToken }
+          : queryConfig,
+      );
     }
-  }, [querySignature, queryConfig]);
+  }, [querySignature, shareToken]);
 
   const result = queryMutation.data?.data?.result;
   const series = useMemo(() => {
@@ -338,7 +344,6 @@ export default function WidgetChart({ widget, globalDateRange }) {
 
   // Table
   if (isTable) {
-    // Time as rows, Segments as columns
     const timeData = series[0]?.data || [];
     const granLabel = (queryConfig?.granularity || "day").toLowerCase();
     const dateFmt =
@@ -664,7 +669,6 @@ export default function WidgetChart({ widget, globalDateRange }) {
           overflow: "hidden",
         }}
       >
-        {/* Legend */}
         <Stack
           direction="row"
           gap={2}
@@ -696,7 +700,6 @@ export default function WidgetChart({ widget, globalDateRange }) {
             </Stack>
           ))}
         </Stack>
-        {/* Column headers */}
         <Box
           sx={{
             display: "flex",
@@ -731,7 +734,6 @@ export default function WidgetChart({ widget, globalDateRange }) {
             Value
           </Typography>
         </Box>
-        {/* Bar rows */}
         <Box sx={{ flex: 1, overflow: "auto", px: 2 }}>
           {barRows.map((row, i) => {
             const val = row.numericValue;
@@ -1050,9 +1052,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
       hover: { size: 6, sizeOffset: 3 },
     },
     states: {
-      hover: {
-        filter: { type: "none" },
-      },
+      hover: { filter: { type: "none" } },
       active: {
         allowMultipleDataPointsSelection: false,
         filter: { type: "none" },
@@ -1065,12 +1065,8 @@ export default function WidgetChart({ widget, globalDateRange }) {
           intersect: false,
           theme: theme.palette.mode,
           style: { fontSize: "12px" },
-          x: {
-            format: "MMM dd, yyyy",
-          },
-          y: {
-            formatter: formatVal,
-          },
+          x: { format: "MMM dd, yyyy" },
+          y: { formatter: formatVal },
         }
       : {
           enabled: true,
