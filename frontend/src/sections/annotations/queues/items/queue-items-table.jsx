@@ -497,9 +497,7 @@ function ActionsCellRenderer({ data, context }) {
             context?.onRemoveConfirm(data);
           }}
           sx={{
-            opacity: 2,
-
-   
+            opacity: 1,
             "&:hover": { color: "error.main" },
           }}
         >

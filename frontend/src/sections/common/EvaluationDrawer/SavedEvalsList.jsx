@@ -770,10 +770,13 @@ const SavedEvalsList = ({
   const hasSel = sel.size > 0;
 
   const handleBulkDelete = async () => {
-    await Promise.all(selected.map((e) => onDeleteEvalClick?.(e)));
-    setConfirmBulkDelete(false);
-    setSel(new Set());
-    onClose?.();
+    try {
+      await Promise.all(selected.map((e) => onDeleteEvalClick?.(e)));
+    } finally {
+      setConfirmBulkDelete(false);
+      setSel(new Set());
+      onClose?.();
+    }
   };
 
   return (
