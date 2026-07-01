@@ -17940,8 +17940,7 @@ export const ModelHubDevelopsEditAndRunUserEvalCreateBody = zod.object({
   "experiment_id": zod.string().uuid().optional(),
   "composite_weight_overrides": zod.object({
 
-}).passthrough().optional(),
-  "pinned_version_id": zod.string().uuid().optional()
+}).passthrough().optional()
 })
 
 
@@ -19688,6 +19687,23 @@ export const ModelHubEvalTemplatesFeedbackListListParams = zod.object({
   "template_id": zod.string()
 })
 
+export const modelHubEvalTemplatesFeedbackListListQueryPageDefault = 0;
+export const modelHubEvalTemplatesFeedbackListListQueryPageMin = 0;
+export const modelHubEvalTemplatesFeedbackListListQueryPageMax = 10000;
+
+export const modelHubEvalTemplatesFeedbackListListQueryPageSizeDefault = 25;
+export const modelHubEvalTemplatesFeedbackListListQueryPageSizeMax = 100;
+
+export const modelHubEvalTemplatesFeedbackListListQueryPeriodDefault = `30d`;
+
+export const ModelHubEvalTemplatesFeedbackListListQueryParams = zod.object({
+  "page": zod.number().min(modelHubEvalTemplatesFeedbackListListQueryPageMin).max(modelHubEvalTemplatesFeedbackListListQueryPageMax).default(modelHubEvalTemplatesFeedbackListListQueryPageDefault),
+  "page_size": zod.number().min(1).max(modelHubEvalTemplatesFeedbackListListQueryPageSizeMax).default(modelHubEvalTemplatesFeedbackListListQueryPageSizeDefault),
+  "period": zod.enum(['30m', '6h', '1d', '7d', '30d', '90d', '180d', '365d']).default(modelHubEvalTemplatesFeedbackListListQueryPeriodDefault),
+  "start_date": zod.string().datetime({"offset":true}).optional(),
+  "end_date": zod.string().datetime({"offset":true}).optional()
+})
+
 
 
 
@@ -19885,14 +19901,34 @@ export const ModelHubEvalTemplatesUpdateUpdateResponse = zod.object({
 
 /**
  * Returns usage stats, chart data, and paginated eval logs.
-Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d|180d|365d)
+Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d|180d|365d).
+
+Logic lives in `model_hub.services.eval_usage_service`. The serializer
+at the boundary (`EvalUsageStatsResponseResultSerializer(instance=...).data`)
+is the response contract — drift would surface as a serializer error
+at this call site rather than be silently shipped.
  * @summary GET /model-hub/eval-templates/<id>/usage/
  */
 export const ModelHubEvalTemplatesUsageListParams = zod.object({
   "template_id": zod.string()
 })
 
+export const modelHubEvalTemplatesUsageListQueryPageDefault = 0;
+export const modelHubEvalTemplatesUsageListQueryPageMin = 0;
+export const modelHubEvalTemplatesUsageListQueryPageMax = 10000;
 
+export const modelHubEvalTemplatesUsageListQueryPageSizeDefault = 25;
+export const modelHubEvalTemplatesUsageListQueryPageSizeMax = 100;
+
+export const modelHubEvalTemplatesUsageListQueryPeriodDefault = `30d`;
+
+export const ModelHubEvalTemplatesUsageListQueryParams = zod.object({
+  "page": zod.number().min(modelHubEvalTemplatesUsageListQueryPageMin).max(modelHubEvalTemplatesUsageListQueryPageMax).default(modelHubEvalTemplatesUsageListQueryPageDefault),
+  "page_size": zod.number().min(1).max(modelHubEvalTemplatesUsageListQueryPageSizeMax).default(modelHubEvalTemplatesUsageListQueryPageSizeDefault),
+  "period": zod.enum(['30m', '6h', '1d', '7d', '30d', '90d', '180d', '365d']).default(modelHubEvalTemplatesUsageListQueryPeriodDefault),
+  "start_date": zod.string().datetime({"offset":true}).optional(),
+  "end_date": zod.string().datetime({"offset":true}).optional()
+})
 
 
 
@@ -19917,32 +19953,8 @@ export const ModelHubEvalTemplatesUsageListResponse = zod.object({
   "pass_count": zod.number().optional(),
   "fail_count": zod.number().optional()
 })),
+  "table": zod.array(zod.record(zod.string(), zod.unknown()).describe('Row with dynamic columns — cell values are any valid JSON.')),
   "logs": zod.object({
-  "items": zod.array(zod.object({
-  "id": zod.string().uuid(),
-  "input": zod.string(),
-  "result": zod.string().optional(),
-  "score": zod.number().optional(),
-  "reason": zod.string().optional(),
-  "status": zod.string().min(1),
-  "source": zod.string().optional(),
-  "created_at": zod.string().min(1),
-  "detail": zod.object({
-
-}).passthrough(),
-  "feedback": zod.object({
-  "id": zod.string().uuid(),
-  "value": zod.object({
-
-}).passthrough().optional(),
-  "explanation": zod.string().optional(),
-  "action_type": zod.string().optional(),
-  "created_at": zod.string().optional(),
-  "user": zod.string().optional()
-}).optional(),
-  "composite": zod.boolean().optional(),
-  "aggregate_pass": zod.boolean().optional()
-})),
   "total": zod.number(),
   "page": zod.number(),
   "page_size": zod.number()
@@ -21854,15 +21866,30 @@ export const ModelHubGetEvalLogsDetailsListQueryParams = zod.object({
   "sort": zod.string().min(1).default(modelHubGetEvalLogsDetailsListQuerySortDefault)
 })
 
+
+
+
+
+
+
+
+
+
 export const ModelHubGetEvalLogsDetailsListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-  "table": zod.array(zod.object({
-
-}).passthrough()),
+  "table": zod.array(zod.record(zod.string(), zod.unknown()).describe('Row with dynamic columns — cell values are any valid JSON.')),
   "column_config": zod.array(zod.object({
-
-}).passthrough()),
+  "id": zod.string().min(1),
+  "name": zod.string().min(1),
+  "is_visible": zod.boolean(),
+  "status": zod.string().min(1),
+  "source_type": zod.string().min(1),
+  "is_frozen": zod.boolean().optional(),
+  "data_type": zod.string().min(1).optional(),
+  "origin_type": zod.string().min(1).optional(),
+  "output_type": zod.string().min(1).optional()
+})),
   "metadata": zod.object({
   "total_rows": zod.number(),
   "total_pages": zod.number()
@@ -25308,9 +25335,7 @@ export const ModelHubPromptMetricsListResponse = zod.object({
   "result": zod.object({
   "prompt_template_id": zod.string().uuid().optional(),
   "prompt_template_name": zod.string().min(1).optional(),
-  "table": zod.array(zod.object({
-
-}).passthrough()),
+  "table": zod.array(zod.record(zod.string(), zod.unknown()).describe('Row with dynamic columns — cell values are any valid JSON.')),
   "config": zod.object({
 
 }).passthrough(),
@@ -25361,9 +25386,7 @@ export const ModelHubPromptSpanMetricsListResponse = zod.object({
   "result": zod.object({
   "prompt_template_id": zod.string().uuid().optional(),
   "prompt_template_name": zod.string().min(1).optional(),
-  "table": zod.array(zod.object({
-
-}).passthrough()),
+  "table": zod.array(zod.record(zod.string(), zod.unknown()).describe('Row with dynamic columns — cell values are any valid JSON.')),
   "config": zod.object({
 
 }).passthrough(),

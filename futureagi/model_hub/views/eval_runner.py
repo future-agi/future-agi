@@ -923,8 +923,15 @@ class EvaluationRunner:
                 self.dataset.workspace.id if self.dataset.workspace else None
             )
 
-        if self.version_number is None and self.user_eval_metric.pinned_version_id:
-            self.version_number = self.user_eval_metric.pinned_version.version_number
+        if self.version_number is None:
+            # Single source of truth — same helper user_evaluation.py,
+            # develop_dataset.py and the tracer paths use. Soft-deleted-pin
+            # fallback to default lives there; nothing here needs to know.
+            from tracer.utils.eval import _resolve_uem_version
+
+            resolved = _resolve_uem_version(self.user_eval_metric)
+            if resolved is not None:
+                self.version_number = resolved.version_number
 
         self.user_eval_metric.status = StatusType.RUNNING.value
         self.user_eval_metric.save(update_fields=["status"])
@@ -1286,16 +1293,23 @@ class EvaluationRunner:
                     column__id=self.replace_column_id, row=row, deleted=False
                 ).first()
 
-                trigger_error_localization_for_column(
-                    eval_template=self.user_eval_metric.template,
-                    config=config_error,
-                    required_field=required_field_error,
-                    mapping=mapping_error,
-                    eval_result=value,
-                    response=response,
-                    cell=cell,
-                    log_id=str(api_call_log_row.log_id) if api_call_log_row else None,
-                )
+                if cell is None:
+                    logger.warning(
+                        "error_localizer_cell_missing",
+                        column_id=str(self.replace_column_id),
+                        row_id=str(row.id) if row else None,
+                    )
+                else:
+                    trigger_error_localization_for_column(
+                        eval_template=self.user_eval_metric.template,
+                        config=config_error,
+                        required_field=required_field_error,
+                        mapping=mapping_error,
+                        eval_result=value,
+                        response=response,
+                        cell=cell,
+                        log_id=str(api_call_log_row.log_id) if api_call_log_row else None,
+                    )
 
         except Exception as e:
             # Expected, handled validation failures (a required input was not

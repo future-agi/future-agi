@@ -220,15 +220,36 @@ def process_single_evaluation(user_eval_metric):
             _mark_cells_usage_limit_error(user_eval_metric, usage_check)
             raise ValueError(usage_check.reason or "Usage limit exceeded")
 
+    # Track which eval version produced this result — prefer pinned over default
+    _source_configs = {
+        "dataset_id": str(user_eval_metric.dataset.id),
+        "source": "dataset",
+    }
+    try:
+        from tracer.utils.eval import _resolve_uem_version
+        _ver = _resolve_uem_version(user_eval_metric)
+        if _ver:
+            _source_configs["version_id"] = str(_ver.id)
+            _source_configs["version_number"] = _ver.version_number
+    except Exception as _ver_err:
+        logger.warning(
+            "version_tracking_failed",
+            path="dataset_eval",
+            error=str(_ver_err),
+            eval_id=str(eval_id),
+            metric_id=str(getattr(user_eval_metric, "id", None)),
+            template_id=str(getattr(user_eval_metric.template, "id", None))
+            if getattr(user_eval_metric, "template_id", None)
+            else None,
+            exc_info=True,
+        )
+
     runner = EvaluationRunner(
         user_eval_metric_id=user_eval_metric.id,
         is_only_eval=True,
         source="dataset_evaluation",
         source_id=user_eval_metric.template.id,
-        source_configs={
-            "dataset_id": str(user_eval_metric.dataset.id),
-            "source": "dataset",
-        },
+        source_configs=_source_configs,
     )
     cols_used = runner._get_all_column_ids_being_used()
 
@@ -471,7 +492,9 @@ def execute_evaluation():
 def process_evaluation_single_task(evaluation):
     close_old_connections()
 
-    eval_obj = UserEvalMetric.objects.get(id=evaluation["eval_id"])
+    eval_obj = UserEvalMetric.objects.select_related(
+        "dataset", "template", "pinned_version"
+    ).get(id=evaluation["eval_id"])
     logger.info(f"Processing evaluation {eval_obj.id}")
 
     if evaluation["type"] == "single":
@@ -1228,6 +1251,7 @@ def process_single_error_localization(task_id):
                 error_agent = getattr(localizer, "error_agent", None)
                 error_llm = getattr(error_agent, "llm", None)
                 actual_cost = getattr(error_llm, "cost", {}).get("total_cost", 0)
+            credits = 0
             if BillingConfig is not None:
                 credits = BillingConfig.get().calculate_ai_credits(actual_cost)
 
@@ -1252,7 +1276,7 @@ def process_single_error_localization(task_id):
                     )
                 )
         except Exception:
-            pass  # Metering failure must not break the action
+            logger.warning("error_localizer_billing_emit_failed", eval_id=str(task.id), exc_info=True)
 
         logger.info(f"Error Localization task {task.id} completed")
 
@@ -1260,7 +1284,7 @@ def process_single_error_localization(task_id):
             try:
                 cell = Cell.objects.get(id=task.source_id)
 
-                value_infos = json.loads(cell.value_infos)
+                value_infos = cell.value_infos or {}
                 value_infos.update(
                     {
                         "error_analysis": error_analysis,
@@ -1270,22 +1294,28 @@ def process_single_error_localization(task_id):
                     }
                 )
 
-                cell.value_infos = json.dumps(value_infos)
+                cell.value_infos = value_infos
                 cell.save(update_fields=["value_infos"])
 
                 metadata = task.metadata
-                if metadata.get("log_id", None):
+                if metadata.get("log_id", None) and APICallLog is not None:
                     try:
-                        if APICallLog is not None:
-                            log = APICallLog.objects.get(log_id=metadata.get("log_id"))
-                        config = json.loads(log.config)
+                        log = APICallLog.objects.get(log_id=metadata.get("log_id"))
+                        config = log.config
+                        if isinstance(config, str):
+                            try:
+                                config = json.loads(config)
+                            except Exception:
+                                config = {}
+                        if not isinstance(config, dict):
+                            config = {}
                         config["error_localizer"] = {
                             "error_analysis": error_analysis,
                             "selected_input_key": selected_input_key,
                             "input_types": task.input_types,
                             "input_data": task.input_data,
                         }
-                        log.config = json.dumps(config)
+                        log.config = config
                         log.save(update_fields=["config"])
                     except APICallLog.DoesNotExist:
                         logger.info("Log doesn't exist.")
@@ -1312,18 +1342,24 @@ def process_single_error_localization(task_id):
                 eval_logger.save(update_fields=["output_metadata"])
 
                 metadata = task.metadata
-                if metadata.get("log_id", None):
+                if metadata.get("log_id", None) and APICallLog is not None:
                     try:
-                        if APICallLog is not None:
-                            log = APICallLog.objects.get(log_id=metadata.get("log_id"))
-                        config = json.loads(log.config)
+                        log = APICallLog.objects.get(log_id=metadata.get("log_id"))
+                        config = log.config
+                        if isinstance(config, str):
+                            try:
+                                config = json.loads(config)
+                            except Exception:
+                                config = {}
+                        if not isinstance(config, dict):
+                            config = {}
                         config["error_localizer"] = {
                             "error_analysis": error_analysis,
                             "selected_input_key": selected_input_key,
                             "input_types": task.input_types,
                             "input_data": task.input_data,
                         }
-                        log.config = json.dumps(config)
+                        log.config = config
                         log.save(update_fields=["config"])
                     except APICallLog.DoesNotExist:
                         logger.info("Log doesn't exist.")
@@ -1336,16 +1372,24 @@ def process_single_error_localization(task_id):
 
         elif task.source == ErrorLocalizerSource.PLAYGROUND:
             try:
-                if APICallLog is not None:
-                    eval_logger = APICallLog.objects.get(log_id=task.source_id)
-                config = json.loads(eval_logger.config) or {}
+                if APICallLog is None:
+                    return  # OSS: no APICallLog model, skip update
+                eval_logger = APICallLog.objects.get(log_id=task.source_id)
+                config = eval_logger.config
+                if isinstance(config, str):
+                    try:
+                        config = json.loads(config)
+                    except Exception:
+                        config = {}
+                if not isinstance(config, dict):
+                    config = {}
                 config["error_localizer"] = {
                     "error_analysis": error_analysis,
                     "selected_input_key": selected_input_key,
                     "input_types": task.input_types,
                     "input_data": task.input_data,
                 }
-                eval_logger.config = json.dumps(config)
+                eval_logger.config = config
                 eval_logger.save(update_fields=["config"])
             except Exception as e:
                 logger.exception(f"Error in updating log config: {str(e)}")

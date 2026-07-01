@@ -17,7 +17,7 @@ from accounts.models.workspace import Workspace
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from common.utils.data_injection import normalize as _di_normalize
 from model_hub.models.choices import StatusType
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 from sdk.utils.helpers import _get_api_call_type
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.temporal import temporal_activity
@@ -51,6 +51,32 @@ OBSERVE = "observe"
 
 # Re-export for backward compat
 from tracer.utils.eval_helpers import resolve_eval_config_id  # noqa: F401, E402
+
+
+def _resolve_uem_version(uem):
+    """Return the pinned EvalTemplateVersion for a UserEvalMetric, or the default.
+
+    Single authoritative helper for all UserEvalMetric stamping sites so the
+    pin logic is never duplicated: user_evaluation.py, develop_dataset.py, and
+    the three tracer paths all call this or _resolve_eval_version below.
+    """
+    if getattr(uem, "pinned_version_id", None):
+        # Guard against soft-deleted pinned versions — fall through to default
+        pv = uem.pinned_version
+        if pv and not getattr(pv, "deleted", False):
+            return pv
+    return EvalTemplateVersion.objects.get_default(uem.template)
+
+
+def _resolve_eval_version(custom_eval_config, eval_template):
+    """Return the default EvalTemplateVersion for the tracer/span/session path.
+
+    CustomEvalConfig has no FK to UserEvalMetric (which carries pinned_version),
+    so pin resolution is not possible on this path — use the template default.
+    Version pinning for tracer evals requires passing the pin through the
+    dispatch chain (tracked as follow-up).
+    """
+    return EvalTemplateVersion.objects.get_default(eval_template)
 
 
 # Friendly eval-mapping shorthands used in saved configs. The user-
@@ -940,7 +966,21 @@ def _run_evaluation(
         value = runner.format_output(result_data=response, eval_template=eval_model)
 
         if api_call_log_row is not None:
-            config_dict = json.loads(api_call_log_row.config)
+            config_dict = api_call_log_row.config
+
+            if isinstance(config_dict, str):
+
+                try:
+
+                    config_dict = json.loads(config_dict)
+
+                except Exception:
+
+                    config_dict = {}
+
+            if not isinstance(config_dict, dict):
+
+                config_dict = {}
             output_payload = {"output": value, "reason": response["reason"]}
             if response.get("warnings"):
                 output_payload["warnings"] = response["warnings"]
@@ -1040,7 +1080,21 @@ def _run_evaluation(
         try:
             if api_call_log_row is not None:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
-                current_config = json.loads(api_call_log_row.config)
+                current_config = api_call_log_row.config
+
+                if isinstance(current_config, str):
+
+                    try:
+
+                        current_config = json.loads(current_config)
+
+                    except Exception:
+
+                        current_config = {}
+
+                if not isinstance(current_config, dict):
+
+                    current_config = {}
                 current_config.update({"output": {"output": None, "reason": str(e)}})
                 api_call_log_row.config = json.dumps(current_config)
                 api_call_log_row.save()
@@ -1521,11 +1575,6 @@ def _execute_evaluation(
     )
 
     org_id = str(observation_span.project.organization.id)
-    ws_id = (
-        str(observation_span.project.workspace.id)
-        if observation_span.project.workspace
-        else None
-    )
 
     # --- Cost tracking (caller-side) ---
     source_config = {
@@ -1541,6 +1590,23 @@ def _execute_evaluation(
     if feedback_id:
         source_config["feedback_id"] = str(feedback_id)
 
+    # Track which eval version produced this result — prefer pinned over default
+    try:
+        _ver = _resolve_eval_version(custom_eval_config, eval_model)
+        if _ver:
+            source_config["version_id"] = str(_ver.id)
+            source_config["version_number"] = _ver.version_number
+    except Exception as _ver_err:
+        logger.warning(
+            "version_tracking_failed",
+            path="span_eval",
+            error=str(_ver_err),
+            custom_eval_config_id=str(getattr(custom_eval_config, "id", None)),
+            template_id=str(getattr(eval_model, "id", None)),
+            span_id=str(getattr(observation_span, "id", None)),
+            exc_info=True,
+        )
+
     api_call_type = _get_api_call_type(custom_eval_config.model)
     workspace = observation_span.project.workspace
     if workspace is None:
@@ -1549,6 +1615,7 @@ def _execute_evaluation(
             is_default=True,
             is_active=True,
         )
+    ws_id = str(workspace.id) if workspace else None
 
     api_call_log_row = None
     if log_and_deduct_cost_for_api_request is not None:
@@ -1613,7 +1680,21 @@ def _execute_evaluation(
         # rides on the single save below — avoids losing the warning if a
         # follow-up save were to fail (see _build_apicall_output).
         if api_call_log_row is not None:
-            config_dict = json.loads(api_call_log_row.config)
+            config_dict = api_call_log_row.config
+
+            if isinstance(config_dict, str):
+
+                try:
+
+                    config_dict = json.loads(config_dict)
+
+                except Exception:
+
+                    config_dict = {}
+
+            if not isinstance(config_dict, dict):
+
+                config_dict = {}
             config_dict.update(
                 {
                     "input": result.data,
@@ -1683,7 +1764,21 @@ def _execute_evaluation(
         try:
             if api_call_log_row is not None:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
-                current_config = json.loads(api_call_log_row.config)
+                current_config = api_call_log_row.config
+
+                if isinstance(current_config, str):
+
+                    try:
+
+                        current_config = json.loads(current_config)
+
+                    except Exception:
+
+                        current_config = {}
+
+                if not isinstance(current_config, dict):
+
+                    current_config = {}
                 current_config.update({"output": {"output": None, "reason": str(e)}})
                 api_call_log_row.config = json.dumps(current_config)
                 api_call_log_row.save()
@@ -2860,6 +2955,23 @@ def _execute_evaluation_for_trace(
     if feedback_id:
         source_config["feedback_id"] = str(feedback_id)
 
+    # Track which eval version produced this result — prefer pinned over default
+    try:
+        _ver = _resolve_eval_version(custom_eval_config, eval_template)
+        if _ver:
+            source_config["version_id"] = str(_ver.id)
+            source_config["version_number"] = _ver.version_number
+    except Exception as _ver_err:
+        logger.warning(
+            "version_tracking_failed",
+            path="trace_eval",
+            error=str(_ver_err),
+            custom_eval_config_id=str(getattr(custom_eval_config, "id", None)),
+            template_id=str(getattr(eval_template, "id", None)),
+            trace_id=str(getattr(trace, "id", None)),
+            exc_info=True,
+        )
+
     api_call_type = _get_api_call_type(custom_eval_config.model)
     api_call_log_row = None
     if log_and_deduct_cost_for_api_request is not None:
@@ -2932,7 +3044,21 @@ def _execute_evaluation_for_trace(
         )
 
         if api_call_log_row is not None:
-            config_dict = json.loads(api_call_log_row.config)
+            config_dict = api_call_log_row.config
+
+            if isinstance(config_dict, str):
+
+                try:
+
+                    config_dict = json.loads(config_dict)
+
+                except Exception:
+
+                    config_dict = {}
+
+            if not isinstance(config_dict, dict):
+
+                config_dict = {}
             config_dict.update(
                 {
                     "input": result.data,
@@ -2999,7 +3125,21 @@ def _execute_evaluation_for_trace(
         try:
             if api_call_log_row is not None:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
-                current_config = json.loads(api_call_log_row.config)
+                current_config = api_call_log_row.config
+
+                if isinstance(current_config, str):
+
+                    try:
+
+                        current_config = json.loads(current_config)
+
+                    except Exception:
+
+                        current_config = {}
+
+                if not isinstance(current_config, dict):
+
+                    current_config = {}
                 current_config.update({"output": {"output": None, "reason": str(e)}})
                 api_call_log_row.config = json.dumps(current_config)
                 api_call_log_row.save()
@@ -3094,6 +3234,23 @@ def _execute_evaluation_for_session(
     if feedback_id:
         source_config["feedback_id"] = str(feedback_id)
 
+    # Track which eval version produced this result — prefer pinned over default
+    try:
+        _ver = _resolve_eval_version(custom_eval_config, eval_template)
+        if _ver:
+            source_config["version_id"] = str(_ver.id)
+            source_config["version_number"] = _ver.version_number
+    except Exception as _ver_err:
+        logger.warning(
+            "version_tracking_failed",
+            path="session_eval",
+            error=str(_ver_err),
+            custom_eval_config_id=str(getattr(custom_eval_config, "id", None)),
+            template_id=str(getattr(eval_template, "id", None)),
+            trace_session_id=str(getattr(trace_session, "id", None)),
+            exc_info=True,
+        )
+
     api_call_type = _get_api_call_type(custom_eval_config.model)
     api_call_log_row = None
     if log_and_deduct_cost_for_api_request is not None:
@@ -3166,7 +3323,21 @@ def _execute_evaluation_for_session(
         )
 
         if api_call_log_row is not None:
-            config_dict = json.loads(api_call_log_row.config)
+            config_dict = api_call_log_row.config
+
+            if isinstance(config_dict, str):
+
+                try:
+
+                    config_dict = json.loads(config_dict)
+
+                except Exception:
+
+                    config_dict = {}
+
+            if not isinstance(config_dict, dict):
+
+                config_dict = {}
             config_dict.update(
                 {
                     "input": result.data,
@@ -3238,7 +3409,21 @@ def _execute_evaluation_for_session(
         try:
             if api_call_log_row is not None:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
-                current_config = json.loads(api_call_log_row.config)
+                current_config = api_call_log_row.config
+
+                if isinstance(current_config, str):
+
+                    try:
+
+                        current_config = json.loads(current_config)
+
+                    except Exception:
+
+                        current_config = {}
+
+                if not isinstance(current_config, dict):
+
+                    current_config = {}
                 current_config.update({"output": {"output": None, "reason": str(e)}})
                 api_call_log_row.config = json.dumps(current_config)
                 api_call_log_row.save()

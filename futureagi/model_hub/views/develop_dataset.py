@@ -11711,7 +11711,7 @@ def run_evaluation_task(evaluation_data):
         row_ids = evaluation_data["row_ids"]
 
         # Update status for all metrics
-        metrics = UserEvalMetric.objects.filter(id__in=metric_ids)
+        metrics = UserEvalMetric.objects.filter(id__in=metric_ids).select_related("template", "pinned_version")
         metric_map = {str(metric.id): metric for metric in list(metrics)}
         metrics.update(status=StatusType.RUNNING.value)
 
@@ -11813,6 +11813,25 @@ def run_evaluation_task(evaluation_data):
                             "dataset_id", str(metric.dataset_id)
                         )
                     runner_source_configs.setdefault("source", "dataset")
+                    # Track which eval version produced this result — prefer pinned over default
+                    try:
+                        from tracer.utils.eval import _resolve_uem_version
+                        _ver = _resolve_uem_version(metric)
+                        if _ver:
+                            runner_source_configs.setdefault("version_id", str(_ver.id))
+                            runner_source_configs.setdefault("version_number", _ver.version_number)
+                    except Exception as _ver_err:
+                        logger.warning(
+                            "version_tracking_failed",
+                            path="dataset_batch_eval",
+                            error=str(_ver_err),
+                            metric_id=str(metric_id),
+                            template_id=str(getattr(metric.template, "id", None))
+                            if getattr(metric, "template_id", None)
+                            else None,
+                            dataset_id=str(getattr(metric, "dataset_id", None)),
+                            exc_info=True,
+                        )
                     runner_args["source_configs"] = runner_source_configs
 
                     evaluation_runner = EvaluationRunner(

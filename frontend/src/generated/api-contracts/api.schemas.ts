@@ -8804,7 +8804,6 @@ export interface UserEvalUpdateRequestApi {
   save_as_template?: boolean;
   experiment_id?: string;
   composite_weight_overrides?: UserEvalUpdateRequestApiCompositeWeightOverrides;
-  pinned_version_id?: string;
 }
 
 export type DatasetBehaviorRequestApiColumnConfig = { [key: string]: unknown };
@@ -10239,49 +10238,24 @@ export interface EvalUsageChartPointApi {
   fail_count?: number;
 }
 
-export type EvalUsageFeedbackApiValue = { [key: string]: unknown };
-
-export interface EvalUsageFeedbackApi {
-  id: string;
-  value?: EvalUsageFeedbackApiValue;
-  explanation?: string;
-  action_type?: string;
-  created_at?: string;
-  user?: string;
-}
-
-export type EvalUsageLogItemApiDetail = { [key: string]: unknown };
-
-export interface EvalUsageLogItemApi {
-  id: string;
-  input: string;
-  result?: string;
-  score?: number;
-  reason?: string;
-  /** @minLength 1 */
-  status: string;
-  source?: string;
-  /** @minLength 1 */
-  created_at: string;
-  detail: EvalUsageLogItemApiDetail;
-  feedback?: EvalUsageFeedbackApi;
-  composite?: boolean;
-  aggregate_pass?: boolean;
-}
-
-export interface EvalUsageLogsApi {
-  items: EvalUsageLogItemApi[];
+export interface EvalUsagePaginationApi {
   total: number;
   page: number;
   page_size: number;
 }
+
+/**
+ * Row with dynamic columns — cell values are any valid JSON.
+ */
+export type EvalUsageStatsResponseResultApiTableItem = {[key: string]: unknown};
 
 export interface EvalUsageStatsResponseResultApi {
   template_id: string;
   is_composite: boolean;
   stats: EvalUsageStatsApi;
   chart: EvalUsageChartPointApi[];
-  logs: EvalUsageLogsApi;
+  table: EvalUsageStatsResponseResultApiTableItem[];
+  logs: EvalUsagePaginationApi;
 }
 
 export interface EvalUsageStatsResponseApi {
@@ -11258,18 +11232,38 @@ export interface UpdateColumnConfigApi {
   source?: string;
 }
 
+export interface EvalColumnConfigItemApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  is_visible: boolean;
+  /** @minLength 1 */
+  status: string;
+  /** @minLength 1 */
+  source_type: string;
+  is_frozen?: boolean;
+  /** @minLength 1 */
+  data_type?: string;
+  /** @minLength 1 */
+  origin_type?: string;
+  /** @minLength 1 */
+  output_type?: string;
+}
+
 export interface EvalApiLogTableMetadataApi {
   total_rows: number;
   total_pages: number;
 }
 
-export type EvalApiLogTableResponseResultApiTableItem = { [key: string]: unknown };
-
-export type EvalApiLogTableResponseResultApiColumnConfigItem = { [key: string]: unknown };
+/**
+ * Row with dynamic columns — cell values are any valid JSON.
+ */
+export type EvalApiLogTableResponseResultApiTableItem = {[key: string]: unknown};
 
 export interface EvalApiLogTableResponseResultApi {
   table: EvalApiLogTableResponseResultApiTableItem[];
-  column_config: EvalApiLogTableResponseResultApiColumnConfigItem[];
+  column_config: EvalColumnConfigItemApi[];
   metadata?: EvalApiLogTableMetadataApi;
 }
 
@@ -12617,7 +12611,10 @@ export interface PromptMetricsMetadataApi {
   total_rows: number;
 }
 
-export type PromptMetricsResultApiTableItem = { [key: string]: unknown };
+/**
+ * Row with dynamic columns — cell values are any valid JSON.
+ */
+export type PromptMetricsResultApiTableItem = {[key: string]: unknown};
 
 export type PromptMetricsResultApiConfig = { [key: string]: unknown };
 
@@ -23901,6 +23898,66 @@ export type ModelHubEvalGroupsList200 = {
   previous?: string;
   results: EvalGroupApi[];
 };
+
+export type ModelHubEvalTemplatesFeedbackListListParams = {
+/**
+ * @minimum 0
+ * @maximum 10000
+ */
+page?: number;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+page_size?: number;
+period?: ModelHubEvalTemplatesFeedbackListListPeriod;
+start_date?: string;
+end_date?: string;
+};
+
+export type ModelHubEvalTemplatesFeedbackListListPeriod = typeof ModelHubEvalTemplatesFeedbackListListPeriod[keyof typeof ModelHubEvalTemplatesFeedbackListListPeriod];
+
+
+export const ModelHubEvalTemplatesFeedbackListListPeriod = {
+  '30m': '30m',
+  '6h': '6h',
+  '1d': '1d',
+  '7d': '7d',
+  '30d': '30d',
+  '90d': '90d',
+  '180d': '180d',
+  '365d': '365d',
+} as const;
+
+export type ModelHubEvalTemplatesUsageListParams = {
+/**
+ * @minimum 0
+ * @maximum 10000
+ */
+page?: number;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+page_size?: number;
+period?: ModelHubEvalTemplatesUsageListPeriod;
+start_date?: string;
+end_date?: string;
+};
+
+export type ModelHubEvalTemplatesUsageListPeriod = typeof ModelHubEvalTemplatesUsageListPeriod[keyof typeof ModelHubEvalTemplatesUsageListPeriod];
+
+
+export const ModelHubEvalTemplatesUsageListPeriod = {
+  '30m': '30m',
+  '6h': '6h',
+  '1d': '1d',
+  '7d': '7d',
+  '30d': '30d',
+  '90d': '90d',
+  '180d': '180d',
+  '365d': '365d',
+} as const;
 
 export type ModelHubExperimentDetailListParams = {
 /**

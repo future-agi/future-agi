@@ -16,7 +16,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from model_hub.models.evals_metric import CompositeEvalChild, EvalTemplate
+from model_hub.models.evals_metric import CompositeEvalChild, EvalTemplate, EvalTemplateVersion
 from model_hub.types import CompositeChildResult
 from model_hub.utils.composite_aggregation import (
     aggregate_error_localizers,
@@ -90,8 +90,12 @@ def _execute_child(
 
         # Version pinning: if this child is pinned, snapshot overrides the
         # template's live config/criteria/model for this run only.
-        if link.pinned_version:
-            version = link.pinned_version
+        # Track which version was actually applied so run_eval_func logs the
+        # version that ran — not a version whose config wasn't used.
+        applied_version = None
+        if link.pinned_version and not getattr(link.pinned_version, "deleted", False):
+            applied_version = link.pinned_version
+            version = applied_version
             if version.config_snapshot:
                 runtime_config.update(version.config_snapshot)
             if version.criteria:
@@ -129,6 +133,7 @@ def _execute_child(
             trace_context=trace_context,
             session_context=session_context,
             call_context=call_context,
+            resolved_version=applied_version,
         )
 
         score: float | None = None
@@ -218,6 +223,7 @@ def _log_composite_usage(
             APICallType = None
 
         api_call_type_name = _get_api_call_type(model)
+        api_call_type_obj = None
         if APICallType is not None:
             api_call_type_obj = APICallType.objects.get(name=api_call_type_name)
 
@@ -232,10 +238,23 @@ def _log_composite_usage(
             else:
                 safe_mappings[k] = str(v)[:200]
 
+        # Track which version of the composite eval produced this result
+        _parent_version_id = None
+        _parent_version_number = None
+        try:
+            _default_ver = EvalTemplateVersion.objects.get_default(parent)
+            if _default_ver:
+                _parent_version_id = str(_default_ver.id)
+                _parent_version_number = _default_ver.version_number
+        except Exception:
+            logger.warning("composite_version_resolve_failed", parent_id=str(parent.id), exc_info=True)
+
         config_payload = {
             "composite": True,
             "source": source,
             "reference_id": str(parent.id),
+            "version_id": _parent_version_id,
+            "version_number": _parent_version_number,
             "aggregation_enabled": parent.aggregation_enabled,
             "aggregation_function": parent.aggregation_function,
             "mappings": safe_mappings,
@@ -270,7 +289,7 @@ def _log_composite_usage(
 
         # Pass dict directly — config is a JSONField, so Django handles
         # serialization. Using json.dumps() here would double-encode.
-        if APICallLog is None:
+        if APICallLog is None or APICallType is None:
             return None
 
         log_row = APICallLog.objects.create(

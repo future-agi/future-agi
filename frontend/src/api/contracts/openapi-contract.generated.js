@@ -17722,10 +17722,60 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/model-hub/eval-templates/{template_id}/feedback-list/": {
       "get": {
         "operationId": "model-hub_eval-templates_feedback-list_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
-        "queryParameters": {},
+        "queryParameters": {
+          "page": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000,
+              "default": 0
+            }
+          },
+          "page_size": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            }
+          },
+          "period": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "30m",
+                "6h",
+                "1d",
+                "7d",
+                "30d",
+                "90d",
+                "180d",
+                "365d"
+              ],
+              "default": "30d"
+            }
+          },
+          "start_date": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "end_date": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        },
         "responses": {
           "200": {
             "$ref": "#/definitions/EvalFeedbackListResponse"
@@ -17854,10 +17904,60 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/model-hub/eval-templates/{template_id}/usage/": {
       "get": {
         "operationId": "model-hub_eval-templates_usage_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
-        "queryParameters": {},
+        "queryParameters": {
+          "page": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000,
+              "default": 0
+            }
+          },
+          "page_size": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            }
+          },
+          "period": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "30m",
+                "6h",
+                "1d",
+                "7d",
+                "30d",
+                "90d",
+                "180d",
+                "365d"
+              ],
+              "default": "30d"
+            }
+          },
+          "start_date": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "end_date": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        },
         "responses": {
           "200": {
             "$ref": "#/definitions/EvalUsageStatsResponse"
@@ -73183,12 +73283,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Composite weight overrides",
           "type": "object",
           "x-nullable": true
-        },
-        "pinned_version_id": {
-          "title": "Pinned version id",
-          "type": "string",
-          "format": "uuid",
-          "x-nullable": true
         }
       }
     },
@@ -79437,13 +79531,16 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "table": {
           "type": "array",
           "items": {
-            "type": "object"
+            "type": "object",
+            "additionalProperties": {},
+            "x-json-value": true,
+            "description": "Row with dynamic columns — cell values are any valid JSON."
           }
         },
         "column_config": {
           "type": "array",
           "items": {
-            "type": "object"
+            "$ref": "#/definitions/EvalColumnConfigItem"
           }
         },
         "metadata": {
@@ -80342,6 +80439,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "is_composite",
         "stats",
         "chart",
+        "table",
         "logs"
       ],
       "type": "object",
@@ -80364,8 +80462,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/EvalUsageChartPoint"
           }
         },
+        "table": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {},
+            "x-json-value": true,
+            "description": "Row with dynamic columns — cell values are any valid JSON."
+          }
+        },
         "logs": {
-          "$ref": "#/definitions/EvalUsageLogs"
+          "$ref": "#/definitions/EvalUsagePagination"
         }
       }
     },
@@ -85627,7 +85734,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "table": {
           "type": "array",
           "items": {
-            "type": "object"
+            "type": "object",
+            "additionalProperties": {},
+            "x-json-value": true,
+            "description": "Row with dynamic columns — cell values are any valid JSON."
           }
         },
         "config": {
@@ -92436,6 +92546,62 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "EvalColumnConfigItem": {
+      "required": [
+        "id",
+        "name",
+        "is_visible",
+        "status",
+        "source_type"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "is_visible": {
+          "title": "Is visible",
+          "type": "boolean"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "minLength": 1
+        },
+        "source_type": {
+          "title": "Source type",
+          "type": "string",
+          "minLength": 1
+        },
+        "is_frozen": {
+          "title": "Is frozen",
+          "type": "boolean",
+          "x-nullable": true
+        },
+        "data_type": {
+          "title": "Data type",
+          "type": "string",
+          "minLength": 1
+        },
+        "origin_type": {
+          "title": "Origin type",
+          "type": "string",
+          "minLength": 1
+        },
+        "output_type": {
+          "title": "Output type",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "EvalConfigStructure": {
       "required": [
         "required_keys",
@@ -93065,21 +93231,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "EvalUsageLogs": {
+    "EvalUsagePagination": {
       "required": [
-        "items",
         "total",
         "page",
         "page_size"
       ],
       "type": "object",
       "properties": {
-        "items": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/EvalUsageLogItem"
-          }
-        },
         "total": {
           "title": "Total",
           "type": "integer"
@@ -98223,70 +98382,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "EvalUsageLogItem": {
-      "required": [
-        "id",
-        "input",
-        "status",
-        "created_at",
-        "detail"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "input": {
-          "title": "Input",
-          "type": "string"
-        },
-        "result": {
-          "title": "Result",
-          "type": "string"
-        },
-        "score": {
-          "title": "Score",
-          "type": "number",
-          "x-nullable": true
-        },
-        "reason": {
-          "title": "Reason",
-          "type": "string"
-        },
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "minLength": 1
-        },
-        "source": {
-          "title": "Source",
-          "type": "string"
-        },
-        "created_at": {
-          "title": "Created at",
-          "type": "string",
-          "minLength": 1
-        },
-        "detail": {
-          "title": "Detail",
-          "type": "object"
-        },
-        "feedback": {
-          "$ref": "#/definitions/EvalUsageFeedback"
-        },
-        "composite": {
-          "title": "Composite",
-          "type": "boolean"
-        },
-        "aggregate_pass": {
-          "title": "Aggregate pass",
-          "type": "boolean",
-          "x-nullable": true
-        }
-      }
-    },
     "ExperimentComparisonMetrics": {
       "required": [
         "raw",
@@ -98980,41 +99075,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true
         }
       }
-    },
-    "EvalUsageFeedback": {
-      "required": [
-        "id"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "value": {
-          "title": "Value",
-          "type": "object",
-          "x-nullable": true
-        },
-        "explanation": {
-          "title": "Explanation",
-          "type": "string"
-        },
-        "action_type": {
-          "title": "Action type",
-          "type": "string"
-        },
-        "created_at": {
-          "title": "Created at",
-          "type": "string"
-        },
-        "user": {
-          "title": "User",
-          "type": "string"
-        }
-      },
-      "x-nullable": true
     },
     "ExperimentComparisonNormalizedMetrics": {
       "type": "object",

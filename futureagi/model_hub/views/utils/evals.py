@@ -14,7 +14,7 @@ from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
 from model_hub.models.develop_dataset import Column
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 from model_hub.services.ground_truth_service import GroundTruthService
 from model_hub.views.eval_runner import (
     EvaluationRunner,
@@ -217,6 +217,24 @@ def run_eval_func(
         if input_data_types:
             source_config.update({"input_data_types": input_data_types})
 
+        # Track which eval version produced this result.
+        # If the caller passed a resolved_version (e.g. pinned composite
+        # child), use that — otherwise fall back to the template default.
+        _tracked_version = kwargs.get("resolved_version")
+        if not _tracked_version:
+            try:
+                _tracked_version = EvalTemplateVersion.objects.get_default(template)
+            except Exception as _ver_err:
+                logger.warning(
+                    "version_tracking_failed",
+                    template_id=str(template.id),
+                    error=str(_ver_err),
+                    exc_info=True,
+                )
+        if _tracked_version:
+            source_config["version_id"] = str(_tracked_version.id)
+            source_config["version_number"] = _tracked_version.version_number
+
         try:
             from ee.usage.schemas.event_types import BillingEventType
         except ImportError:
@@ -357,7 +375,21 @@ def run_eval_func(
 
         if api_call_log_row is None:
             return response
-        config_dict = json.loads(api_call_log_row.config)
+        config_dict = api_call_log_row.config
+
+        if isinstance(config_dict, str):
+
+            try:
+
+                config_dict = json.loads(config_dict)
+
+            except Exception:
+
+                config_dict = {}
+
+        if not isinstance(config_dict, dict):
+
+            config_dict = {}
         output_payload = {"output": value, "reason": response["reason"]}
         # Mirror the dataset path: propagate partial-input warnings into
         # the API call log so the eval usage view (which reads APICallLog)
@@ -524,7 +556,21 @@ def run_eval_func(
         try:
             if api_call_log_row:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
-                current_config = json.loads(api_call_log_row.config)
+                current_config = api_call_log_row.config
+
+                if isinstance(current_config, str):
+
+                    try:
+
+                        current_config = json.loads(current_config)
+
+                    except Exception:
+
+                        current_config = {}
+
+                if not isinstance(current_config, dict):
+
+                    current_config = {}
                 current_config.update(
                     {
                         "output": {"output": None, "reason": str(e)},
@@ -634,14 +680,33 @@ def process_eval_for_single_row(
 
         value = runner.format_output(response)
 
-        config_dict = json.loads(api_call_log_row.config)
+        config_dict = api_call_log_row.config
+
+
+        if isinstance(config_dict, str):
+
+
+            try:
+
+
+                config_dict = json.loads(config_dict)
+
+
+            except Exception:
+
+
+                config_dict = {}
+
+
+        if not isinstance(config_dict, dict):
+
+
+            config_dict = {}
 
         if (
             eval_template
             and eval_template.config.get("eval_type_id") == "DeterministicEvaluator"
         ):
-            metadata_json = eval_result.eval_results[0].get("metadata", "{}")
-            json.loads(metadata_json)
             config_dict.update(
                 {"output": {"output": value, "reason": response["reason"]}}
             )
@@ -693,7 +758,21 @@ def process_eval_for_single_row(
     except Exception as e:
         try:
             api_call_log_row.status = APICallStatusChoices.ERROR.value
-            current_config = json.loads(api_call_log_row.config)
+            current_config = api_call_log_row.config
+
+            if isinstance(current_config, str):
+
+                try:
+
+                    current_config = json.loads(current_config)
+
+                except Exception:
+
+                    current_config = {}
+
+            if not isinstance(current_config, dict):
+
+                current_config = {}
             current_config.update({"output": {"output": None, "reason": str(e)}})
             api_call_log_row.config = json.dumps(current_config, default=str)
             api_call_log_row.save()
