@@ -769,6 +769,90 @@ def ingest_files_to_s3(files, kb_id, org):
 
 
 @temporal_activity(time_limit=3600, queue="tasks_l")
+def ingest_kb_from_dataset(kb_id: str, dataset_id: str, columns: list[str], org: str) -> dict | None:
+    """
+    Convert dataset rows to documents and index them into a Knowledge Base.
+
+    Args:
+        kb_id: Knowledge Base File ID.
+        dataset_id: Source dataset ID.
+        columns: List of column names to use as document content.
+        org: Organization ID.
+    """
+    if not kb_id or not dataset_id or not columns:
+        return None
+
+    if is_kb_deleted_or_cancelled(kb_id):
+        logger.info(f"KB {kb_id} was deleted/cancelled, skipping dataset ingestion")
+        return None
+
+    try:
+        from model_hub.utils.kb_dataset_bridge import dataset_rows_to_documents
+        from model_hub.utils.kb_indexer import ingest_kb_from_memory
+
+        dataset = Dataset.objects.get(id=dataset_id)
+        kb_file = KnowledgeBaseFile.objects.get(id=kb_id)
+        kb_file.status = StatusType.PROCESSING.value
+        kb_file.save()
+
+        documents = list(dataset_rows_to_documents(dataset, columns))
+        logger.info(
+            f"[KB-from-Dataset] Generated {len(documents)} documents for KB {kb_id}"
+        )
+
+        if not documents:
+            kb_file.status = StatusType.COMPLETED.value
+            kb_file.last_error = "No documents generated from dataset (all rows empty for selected columns)"
+            kb_file.save()
+            return {"status": "empty", "documents_indexed": 0}
+
+        if is_kb_deleted_or_cancelled(kb_id):
+            logger.info(f"KB {kb_id} was deleted/cancelled, stopping")
+            return None
+
+        results = ingest_kb_from_memory(
+            documents=documents,
+            kb_id=kb_id,
+            organization_id=org,
+        )
+
+        if is_kb_deleted_or_cancelled(kb_id):
+            logger.info(f"KB {kb_id} was deleted/cancelled, skipping status update")
+            return None
+
+        total_vectors = sum(r.get("vectors", 0) for r in results)
+        kb_file.status = StatusType.COMPLETED.value
+        kb_file.save()
+
+        logger.info(
+            f"[KB-from-Dataset] Done. Indexed {total_vectors} vectors "
+            f"from {len(documents)} documents into KB {kb_id}"
+        )
+        return {"status": "success", "documents_indexed": len(documents), "vectors": total_vectors}
+
+    except Dataset.DoesNotExist:
+        logger.error(f"Dataset {dataset_id} not found for KB {kb_id}")
+        try:
+            KnowledgeBaseFile.objects.filter(id=kb_id).update(
+                status=StatusType.FAILED.value,
+                last_error=f"Source dataset {dataset_id} not found",
+            )
+        except Exception:
+            pass
+        return None
+    except Exception as e:
+        logger.exception(f"[KB-from-Dataset] Failed for kb={kb_id}: {e}")
+        try:
+            KnowledgeBaseFile.objects.filter(id=kb_id).update(
+                status=StatusType.FAILED.value,
+                last_error=str(e)[:10000],
+            )
+        except Exception as inner_e:
+            logger.error(f"Error updating KB status: {inner_e}")
+        return None
+
+
+@temporal_activity(time_limit=3600, queue="tasks_l")
 def remove_kb_files(files, org, kb_id):
     if not kb_id:
         return None

@@ -55,6 +55,7 @@ from model_hub.views.develop_dataset import *  # noqa: F403
 from model_hub.views.develop_dataset import (
     ColumnConfigView,
     CreateKnowledgeBaseView,
+    DatasetColumnsView,
     GetCellDataView,
     GetDatasetsView,
     GetEmbeddingsListView,
@@ -1030,6 +1031,11 @@ urlpatterns = [
         "knowledge-base/files/",
         ExistingKnowledgeBaseView.as_view(),  # noqa: F405
         name="knowledge-base-files",
+    ),
+    path(
+        "datasets/<str:dataset_id>/columns/",
+        DatasetColumnsView.as_view(),
+        name="dataset-columns",
     ),
     path("eval-playground/", EvalPlayGroundAPIView.as_view(), name="eval-playground"),
     path("eval-sdk-code/", EvalCodeSnippetAPIView.as_view(), name="eval-playground"),

@@ -378,6 +378,95 @@ class KBIndexer:
         else:
             raise ValueError(f"No content extracted from file with ID: {file_id}")
 
+    def process_documents_from_memory(
+        self,
+        documents: list[tuple[str, dict]],
+        kb_id: str,
+        organization_id: str,
+    ) -> list[dict]:
+        """
+        Index a list of (text, metadata) documents into the KB without touching the filesystem.
+
+        Args:
+            documents: List of (text, metadata) tuples.
+            kb_id: Knowledge Base ID used as namespace in the vector store.
+            organization_id: Organization ID.
+
+        Returns:
+            List of dicts with doc_index and vector count per document.
+        """
+        chunk_size = 800
+        chunk_overlap = 150
+
+        self.chunker = RecursiveCharacterTextSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+            length_function=len,
+            separators=["\n\n", "\n", ".", "!", "?", ";", ":", " ", ""],
+            keep_separator=True,
+        )
+
+        results = []
+        batch_size = 50
+
+        for doc_index, (text, doc_metadata) in enumerate(documents):
+            if not text.strip():
+                continue
+
+            documents_chunked = self.chunker.create_documents([text])
+            file_id = f"dataset-row-{doc_index}"
+
+            def process_batch(batch_idx):
+                close_old_connections()
+                start_idx = batch_idx * batch_size
+                end_idx = min(start_idx + batch_size, len(documents_chunked))
+                batch_docs = documents_chunked[start_idx:end_idx]
+
+                metadatas = [
+                    {
+                        "file_id": file_id,
+                        "chunk_id": f"{file_id}_{start_idx}_{j}",
+                        KB_INDEX_COL_NAME: doc.page_content,
+                        "organization_id": organization_id,
+                        **doc_metadata,
+                    }
+                    for j, doc in enumerate(batch_docs)
+                ]
+
+                try:
+                    self.embedding_manager.parallel_process_metadata(
+                        eval_id=kb_id,
+                        metadatas=metadatas,
+                        inputs_formater=[KB_INDEX_COL_NAME],
+                        table_name=KB_TABLE_NAME,
+                    )
+                    return len(batch_docs)
+                except Exception as e:
+                    logger.error(f"Error processing document batch {batch_idx}: {e}")
+                    raise
+
+            num_batches = (len(documents_chunked) + batch_size - 1) // batch_size
+            vector_count = 0
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+                futures = {
+                    executor.submit(process_batch, i): i for i in range(num_batches)
+                }
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        vector_count += future.result()
+                    except Exception as e:
+                        logger.error(f"Batch failed for document {doc_index}: {e}")
+                        raise
+
+            results.append({
+                "doc_index": doc_index,
+                "vectors": vector_count,
+                "metadata": doc_metadata,
+            })
+
+        return results
+
     def process_s3_file(
         self, filepath: str, file_id: str, kb_id: str, organization_id: str
     ) -> str | None:
@@ -450,6 +539,30 @@ def main():
 
     for result in results:
         print(result)
+
+
+def ingest_kb_from_memory(
+    documents: list[tuple[str, dict]],
+    kb_id: str,
+    organization_id: str,
+) -> list[dict]:
+    """
+    Standalone convenience function: index in-memory documents into a Knowledge Base.
+
+    Args:
+        documents: List of (text, metadata) tuples.
+        kb_id: Knowledge Base ID.
+        organization_id: Organization ID.
+
+    Returns:
+        List of result dicts from KBIndexer.process_documents_from_memory.
+    """
+    indexer = KBIndexer()
+    return indexer.process_documents_from_memory(
+        documents=documents,
+        kb_id=kb_id,
+        organization_id=organization_id,
+    )
 
 
 if __name__ == "__main__":
