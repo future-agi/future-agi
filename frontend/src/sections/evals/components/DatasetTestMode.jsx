@@ -455,11 +455,17 @@ function ColumnTreeSelect({
           </InputAdornment>
         ),
       }}
-      sx={{
+      sx={(theme) => ({
         ...(isUnmapped && {
-          "& .MuiOutlinedInput-notchedOutline": { borderColor: "warning.main" },
+          "& .MuiOutlinedInput-notchedOutline": {
+            borderColor: theme.palette.amber[500],
+            borderWidth: "1.5px",
+          },
+          "&:hover .MuiOutlinedInput-notchedOutline": {
+            borderColor: theme.palette.amber[600],
+          },
         }),
-      }}
+      })}
     />
   );
 
@@ -1718,8 +1724,7 @@ const DatasetTestMode = React.forwardRef(
                     label={`${unmapped} unmapped`}
                     size="small"
                     color="warning"
-                    variant="outlined"
-                    sx={{ fontSize: "11px", height: 20 }}
+                    sx={{ fontSize: "11px", height: 20, fontWeight: 600 }}
                   />
                 );
               })()}
