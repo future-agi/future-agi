@@ -129,6 +129,8 @@ const AddEvalsFeedbackDrawerChild = ({
         } catch {
           parsedValue = [];
         }
+      } else if (outputType === OUTPUT_TYPES.BOOL) {
+        parsedValue = String(parsedValue).toLowerCase();
       }
       reset({
         value: parsedValue,
