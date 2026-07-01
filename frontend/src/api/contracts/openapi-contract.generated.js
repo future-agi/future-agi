@@ -93939,7 +93939,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "api_format",
         "models",
         "is_active",
-        "default_timeout",
+        "timeout",
         "max_concurrent",
         "conn_pool_size"
       ],
@@ -93981,8 +93981,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Is active",
           "type": "boolean"
         },
-        "default_timeout": {
-          "title": "Default timeout",
+        "timeout": {
+          "title": "Timeout",
           "type": "integer",
           "x-nullable": true
         },

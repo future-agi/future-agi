@@ -92,7 +92,7 @@ class GatewayConfigProviderSerializer(serializers.Serializer):
     )
     models = serializers.ListField(child=serializers.JSONField())
     is_active = serializers.BooleanField()
-    default_timeout = serializers.IntegerField(allow_null=True)
+    timeout = serializers.IntegerField(allow_null=True)
     max_concurrent = serializers.IntegerField(allow_null=True)
     conn_pool_size = serializers.IntegerField(allow_null=True)
 

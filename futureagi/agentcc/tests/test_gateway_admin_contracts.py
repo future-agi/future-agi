@@ -2,13 +2,18 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from agentcc.contracts.gateway_admin import (
     CreateKeyRequest,
     OrgConfig as GatewayOrgConfig,
+    ProviderConfig,
     UpdateKeyRequest,
 )
 from agentcc.models.org_config import AgentccOrgConfig
-from agentcc.services.config_push import _build_payload
+from agentcc.models.provider_credential import AgentccProviderCredential
+from agentcc.services.config_push import _assemble_providers, _build_payload
+from integrations.services.credentials import CredentialManager
 
 
 ORG_CONFIG_FIXTURE = (
@@ -59,6 +64,39 @@ def test_build_payload_emits_gateway_org_config_contract(mock_assemble_providers
     assert contract.budgets.org_limit == 100
     assert contract.budgets.hard_limit is True
     assert contract.budgets.teams["engineering"].hard is False
+
+
+@pytest.mark.integration
+def test_assemble_providers_emits_timeout_as_int_matching_gateway_contract(user):
+    """Guard the config_push -> gateway wire shape for provider timeout.
+
+    The gateway parses `timeout` as int seconds. The field previously drifted
+    (emitted under `default_timeout` as a string), so the override was silently
+    dropped. Validate the assembled provider against the typed ProviderConfig
+    contract the gateway consumes, not opaque JSON.
+    """
+    AgentccProviderCredential.no_workspace_objects.create(
+        organization=user.organization,
+        provider_name="openai",
+        display_name="Org OpenAI",
+        encrypted_credentials=CredentialManager.encrypt({"api_key": "sk-x"}),
+        api_format="openai",
+        models_list=["gpt-4o"],
+        default_timeout_seconds=45,
+        is_active=True,
+    )
+
+    providers = _assemble_providers(user.organization.id)
+
+    assert set(providers) == {"openai"}
+    provider = providers["openai"]
+    assert provider["timeout"] == 45
+    assert isinstance(provider["timeout"], int)
+    # Push path uses `timeout`; `default_timeout` is read-only back-compat.
+    assert "default_timeout" not in provider
+
+    contract = ProviderConfig.model_validate(provider)
+    assert contract.timeout == 45
 
 
 def test_key_admin_requests_are_typed_at_backend_boundary():

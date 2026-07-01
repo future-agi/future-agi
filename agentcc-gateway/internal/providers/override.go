@@ -110,9 +110,12 @@ func (c *OrgProviderCache) GetOrCreateWithTenantConfig(orgID, providerID, apiKey
 		return nil, fmt.Errorf("no base config for provider %q", providerID)
 	}
 
-	// Clone the config with the org's API key.
+	// Clone the config with the org's API key and tenant overrides.
 	orgCfg := baseCfg
 	orgCfg.APIKey = apiKey
+	if tenantCfg != nil && tenantCfg.Timeout > 0 {
+		orgCfg.DefaultTimeout = time.Duration(tenantCfg.Timeout) * time.Second
+	}
 
 	p, err := createProvider(providerID+"_org_"+orgID, orgCfg)
 	if err != nil {
