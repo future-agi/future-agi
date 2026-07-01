@@ -208,7 +208,13 @@ def process_spans_chunk_task(span_ids, dataset_id, column_span_mapping_data):
 
         # Create all Row objects for this chunk (in memory - no DB operation)
         for i, observation_span in enumerate(observation_spans):
-            row = Row(id=uuid.uuid4(), dataset_id=dataset_id, order=rows_count + i)
+            row = Row(
+                id=uuid.uuid4(),
+                dataset_id=dataset_id,
+                order=rows_count + i,
+                source_trace_id=observation_span.trace_id,
+                source_span_id=observation_span.id,
+            )
             rows_to_create.append(row)
 
         # Create all Rows and Cells in a single transaction for atomicity
