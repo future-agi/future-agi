@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import PropTypes from "prop-types";
 import { Box, Skeleton, Stack, Typography } from "@mui/material";
 import CustomTooltip from "src/components/tooltip";
+import { ShowComponent } from "src/components/show";
 import { pluralize } from "src/utils/utils";
 import { useResolvedFilterOptions } from "./useResolvedFilterOptions";
 
@@ -32,7 +33,7 @@ export default function FilterValueLabel({
   const extra = Math.max(labels.length - 1, 0);
   const entity = (filter?.name || "item").toLowerCase();
   const entityLabel = pluralize(entity, extra);
-  const fontSize = variant === "caption" ? "12px" : "13px";
+  const sizeVariant = variant === "caption" ? "s2" : "s2_1";
   const showBadge = extra > 0 && !isResolving;
 
   const content = (
@@ -59,10 +60,9 @@ export default function FilterValueLabel({
       ) : (
         <Typography
           className="filter-value-name"
-          variant={variant}
+          variant={sizeVariant}
           noWrap
           sx={{
-            fontSize,
             color: hasValue ? "text.primary" : "text.disabled",
             overflow: "hidden",
             textOverflow: "ellipsis",
@@ -71,7 +71,7 @@ export default function FilterValueLabel({
           {hasValue ? labels[0] : "Select value..."}
         </Typography>
       )}
-      {showBadge && (
+      <ShowComponent condition={showBadge}>
         <Typography
           component="span"
           variant="s3"
@@ -80,7 +80,7 @@ export default function FilterValueLabel({
             flexShrink: 0,
             px: 0.625,
             py: "1px",
-            borderRadius: "6px",
+            borderRadius: 0.75,
             bgcolor: "action.selected",
             color: "text.secondary",
             whiteSpace: "nowrap",
@@ -88,7 +88,7 @@ export default function FilterValueLabel({
         >
           +{extra} {entityLabel}
         </Typography>
-      )}
+      </ShowComponent>
     </Stack>
   );
 
@@ -107,7 +107,7 @@ export default function FilterValueLabel({
             <Box
               component="li"
               key={`${l}-${idx}`}
-              sx={{ fontSize: "12px", lineHeight: 1.6 }}
+              sx={{ typography: "s2", lineHeight: 1.6 }}
             >
               {l}
             </Box>
