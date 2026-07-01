@@ -9015,11 +9015,14 @@ class ExtractJsonColumnView(APIView):
         try:
             close_old_connections()
             if cell.value:
-                # Parse the string as a Python literal
-                python_obj = ast.literal_eval(cell.value)
-                # Convert Python object to JSON
-                json_data = json.dumps(python_obj)
-                json_data = json.loads(json_data)
+                # Try standard JSON first (handles true/false/null correctly).
+                # Fall back to ast.literal_eval for Python-dict-style strings
+                # (single-quoted keys, True/False/None literals).
+                try:
+                    json_data = json.loads(cell.value)
+                except (ValueError, TypeError):
+                    python_obj = ast.literal_eval(cell.value)
+                    json_data = json.loads(json.dumps(python_obj))
 
                 # Parse back to Python object if needed
                 # print(cell.value,"cell.value*****")
