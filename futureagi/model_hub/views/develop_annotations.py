@@ -2011,9 +2011,18 @@ class AnnotationSummaryView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
+            # Use ``check_feature_gate`` (returns UsageDecision with .reason)
+            # so denied users see the actual upgrade prompt instead of a
+            # hardcoded "Feature not available" message. The bool-returning
+            # ``has_feature`` drops the reason on the floor.
             billing = get_billing()
-            if not billing.has_feature(str(organization.id), "has_agreement_metrics"):
-                return self._gm.forbidden_response("Feature not available")
+            gate = billing.check_feature_gate(
+                str(organization.id), "has_agreement_metrics"
+            )
+            if not gate.allowed:
+                return self._gm.forbidden_response(
+                    gate.reason or "This feature requires an EE or Cloud plan."
+                )
 
             get_object_or_404(Dataset, id=dataset_id, organization=organization)
 

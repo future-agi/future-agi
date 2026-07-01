@@ -24,9 +24,14 @@ from typing import Any, Optional
 # Return types
 # ---------------------------------------------------------------------------
 
-@dataclass
+@dataclass(frozen=True)
 class UsageDecision:
-    """Outcome of a usage/entitlement check."""
+    """Outcome of a usage/entitlement check.
+
+    ``frozen=True`` — this is safe to share as a singleton (see ``_ALLOW``
+    below). Without freezing, any caller that mutates the returned instance
+    would silently corrupt every subsequent call that got the same object.
+    """
 
     allowed: bool = True
     reason: str = ""
@@ -45,13 +50,21 @@ try:
     from ee.usage.schemas.event_types import BillingEventType  # noqa: F401
 except ImportError:
     class _BillingEventTypeStub:
-        """OSS stub: attribute access returns the attribute name as a string.
+        """OSS stub: attribute access returns the real enum's ``.value`` string.
 
-        BillingEventType.SYNTHETIC_DATA_GENERATION → "SYNTHETIC_DATA_GENERATION"
-        Matches the real enum's .value so boundary calls receive the right key.
+        The real enum is declared ``class BillingEventType(str, Enum)`` with
+        lowercase snake_case values, e.g.::
+
+            SYNTHETIC_DATA_GENERATION = "synthetic_data_generation"
+
+        Because it's a ``str, Enum`` mix-in, ``BillingEventType.X`` in EE
+        equals its ``.value`` — the lowercase string. This stub must emit
+        the SAME lowercase string so an OSS boundary call that happens to
+        pass ``event_type`` downstream (e.g. to a log line, a metric, an
+        integration webhook) sees the same key as the EE build.
         """
         def __getattr__(self, name: str) -> str:
-            return name
+            return name.lower()
 
     BillingEventType = _BillingEventTypeStub()
 

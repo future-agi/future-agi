@@ -785,19 +785,14 @@ def _emit_eval_billing(
     """Emit a UsageEvent for the new billing pipeline after a successful eval.
 
     Centralizes the dual-write block used by span/trace/session eval paths.
-    Silently no-ops on any error.
+    Fails-open (metering must not break the eval) but logs the exception
+    so silent drops are diagnoseable — swallowing without a log line
+    hides real breakage in prod.
     """
-
     try:
         billing = get_billing()
         _llm_cost = (result.cost or {}).get("total_cost", 0)
-        _per_run_fee = 0
-        try:
-            from tfc.billing.boundary import get_billing
-            billing = get_billing()
-            _per_run_fee = billing.eval_per_run_fee()
-        except Exception:
-            pass
+        _per_run_fee = billing.eval_per_run_fee()
         _actual_cost = _llm_cost + _per_run_fee
         _token_usage = result.token_usage or {}
         credits = billing.ai_credits(_actual_cost)
@@ -816,7 +811,11 @@ def _emit_eval_billing(
             **token_usage_properties(_token_usage),
         )
     except Exception:
-        pass  # Metering failure must not break eval
+        # Fail-open: metering issues never break an eval. Log at debug so
+        # the failure is diagnoseable without spamming Sentry — legitimate
+        # OSS deploys hit this path (Noop is a no-op, no exception) and
+        # only actual EE-side failures produce a log line.
+        logger.debug("eval_billing_emit_failed", exc_info=True)
 
 
 def _run_evaluation(
