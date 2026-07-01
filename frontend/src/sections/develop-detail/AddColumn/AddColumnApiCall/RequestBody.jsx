@@ -360,7 +360,8 @@ const RequestBody = ({
             border: "1px solid transparent",
             borderRadius: "8px",
             pointerEvents: "none",
-            color: theme.palette.text.primary,
+            color: "transparent",
+            zIndex: 1,
             overflow: "hidden",
           }}
         >
@@ -392,7 +393,7 @@ const RequestBody = ({
             border: `1px solid ${isError ? theme.palette.error.main : theme.palette.divider}`,
             borderRadius: "8px",
             outline: "none",
-
+            color: theme.palette.text.primary,
             caretColor: theme.palette.text.primary,
             backgroundColor: "transparent",
             position: "relative",

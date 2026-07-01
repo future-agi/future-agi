@@ -751,7 +751,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               navigate("?userTab=traces&selectedTab=spans", { replace: true });
             } else {
               navigate(
-                `/dashboard/observe/${observeId}/llm-tracing?tab=spans&selectedTab=spans`,
+                `/dashboard/observe/${observeId}/llm-tracing?tab=traces&selectedTab=spans`,
                 { replace: true },
               );
             }
