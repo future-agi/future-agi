@@ -588,6 +588,69 @@ class TestForSourceIsolation:
         assert str(span_queue.id) in returned
         assert str(session_queue.id) in returned
 
+    def test_default_queue_span_scope_uses_lean_projection(
+        self,
+        mocker,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        observe_project,
+        observation_span,
+        star_label,
+    ):
+        """The default-queue span scope check must read only ``project_id`` via
+        ``scope_by_ids`` — reading the full span row (``list_by_ids``/``get``)
+        OOMs the shared ClickHouse cluster on fat voice spans (code 241). Guard
+        that the wide reads are never used on this path.
+        """
+        from unittest.mock import MagicMock
+
+        from tracer.services.clickhouse.v2.span_reader import SpanScope
+
+        # Default queue scoped to the span's project; the span is NOT an item of
+        # it, so it can only surface via the CH project scope check.
+        default_queue = _make_queue(
+            "Default Q",
+            organization,
+            workspace,
+            user,
+            observe_project,
+            is_default=True,
+        )
+        AnnotationQueueLabel.objects.create(queue=default_queue, label=star_label)
+
+        fake_reader = MagicMock()
+        fake_reader.__enter__.return_value = fake_reader
+        fake_reader.__exit__.return_value = False
+        fake_reader.scope_by_ids.return_value = {
+            observation_span.id: SpanScope(
+                project_id=str(observe_project.id), trace_id=None
+            )
+        }
+        # The wide reads must never be called on the for-source scope path.
+        fake_reader.list_by_ids.side_effect = AssertionError(
+            "for-source must not read full span rows (OOMs shared ClickHouse)"
+        )
+        fake_reader.get.side_effect = AssertionError(
+            "for-source must not read full span rows (OOMs shared ClickHouse)"
+        )
+        mocker.patch(
+            "tracer.services.clickhouse.v2.get_reader", return_value=fake_reader
+        )
+
+        sources = [
+            {"source_type": "observation_span", "source_id": observation_span.id}
+        ]
+        resp = auth_client.get(
+            f"{QUEUE_URL}for-source/", {"sources": json.dumps(sources)}
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        fake_reader.scope_by_ids.assert_called_once()
+        returned = {entry["queue"]["id"] for entry in resp.data["result"]}
+        # The lean scope check resolved the span's project → default surfaced.
+        assert str(default_queue.id) in returned
+
 
 # ---------------------------------------------------------------------------
 # 4. Auto-complete scoping

@@ -4408,9 +4408,14 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             # called `get_reader().get(sid)` inside both the project- and
             # agent-definition-scope branches for every queue × source
             # combination, producing N×M CH round-trips. Precompute the
-            # span lookup once with list_by_ids; the inner branches now
-            # consult an in-memory dict.
-            _ch_span_by_id: dict[str, object] = {}
+            # span lookup once; the inner branches now consult an in-memory dict.
+            #
+            # These branches only need each span's project_id (a scope check),
+            # so read the lean ``scope_by_ids`` projection — pulling the full
+            # span row here blows the shared ClickHouse memory limit (code 241)
+            # on fat voice spans whose ``attributes_extra`` carries a whole raw
+            # log.
+            _ch_scope_by_span: dict[str, object] = {}
             _span_source_ids = [
                 str(src["source_id"])
                 for src in sources
@@ -4420,8 +4425,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 from tracer.services.clickhouse.v2 import get_reader as _gr_bulk
 
                 with _gr_bulk() as _reader_bulk:
-                    for _s in _reader_bulk.list_by_ids(_span_source_ids):
-                        _ch_span_by_id[str(_s.id)] = _s
+                    _ch_scope_by_span = _reader_bulk.scope_by_ids(_span_source_ids)
 
             for dq in missing_defaults:
                 if dq.id in seen_queues:
@@ -4448,8 +4452,8 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                         elif st == "observation_span":
                             # Bulk-prefetched above; in-memory dict lookup
                             # (avoids N×M CH round-trips per codex P2).
-                            _sp = _ch_span_by_id.get(str(sid))
-                            exists = _sp is not None and _sp.project_id == str(
+                            _scope = _ch_scope_by_span.get(str(sid))
+                            exists = _scope is not None and _scope.project_id == str(
                                 dq.project_id
                             )
                         elif st == "trace_session":
@@ -4517,11 +4521,12 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                             # `project__observability_providers__agent_definition`
                             # isn't on the CH span row, so verify the project
                             # linkage via PG after the in-memory CH lookup.
-                            _sp = _ch_span_by_id.get(str(sid))
+                            _scope = _ch_scope_by_span.get(str(sid))
                             exists = (
-                                _sp is not None
+                                _scope is not None
+                                and _scope.project_id is not None
                                 and Project.objects.filter(
-                                    id=_sp.project_id,
+                                    id=_scope.project_id,
                                     observability_providers__agent_definition=dq.agent_definition_id,
                                 ).exists()
                             )

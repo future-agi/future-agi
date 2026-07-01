@@ -120,6 +120,15 @@ class CHSpan:
         return self.id
 
 
+@dataclass(frozen=True)
+class SpanScope:
+    """Minimal span fields for org/project/trace scope checks — read WITHOUT the
+    wide JSON columns. See ``CHSpanReader.scope_by_ids``."""
+
+    project_id: str | None
+    trace_id: str | None
+
+
 # Stable column ordering for the CH query. JSON columns wrapped in toJSONString
 # so clickhouse-connect can decode them (it cannot yet handle the typed JSON
 # column type in result rows — see DECISIONS #015, #018 of the migration).
@@ -546,6 +555,41 @@ class CHSpanReader:
             parameters={"ids": tuple(span_ids)},
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
+
+    def scope_by_ids(self, span_ids: list[str]) -> dict[str, SpanScope]:
+        """Map ``span_id -> SpanScope(project_id, trace_id)``, reading ONLY those
+        two columns instead of the full span row.
+
+        The full-row reads (``get`` / ``list_by_ids``) pull the wide JSON
+        columns — ``attributes_extra`` / ``input`` / ``output`` / ``metadata`` /
+        ``attrs_string`` — which on a fat span (a voice root carrying its whole
+        raw log) blow the shared ClickHouse memory limit (code 241). The
+        annotation ``for-source`` scope checks only need each span's project
+        (and, for the scores panel, its trace), so read just those: a single
+        panel-open must not OOM the shared cluster. ``FINAL`` is kept —
+        project/trace are stable across versions and a two-column ``FINAL`` read
+        stays well under the limit.
+        """
+        if not span_ids:
+            return {}
+        rows = self._client.query(
+            "SELECT id, toString(project_id) AS project_id, "
+            "toString(trace_id) AS trace_id FROM spans FINAL "
+            "WHERE id IN %(ids)s AND is_deleted = 0",
+            parameters={"ids": tuple(span_ids)},
+        ).result_rows
+
+        def _norm(v: Any) -> str | None:
+            return (
+                None
+                if v in (None, "", "NULL", "00000000-0000-0000-0000-000000000000")
+                else str(v)
+            )
+
+        return {
+            str(sid): SpanScope(project_id=_norm(pid), trace_id=_norm(tid))
+            for sid, pid, tid in rows
+        }
 
     # ─── Aggregations across many traces ──────────────────────────────────────
     def aggregate_by_trace_ids(self, trace_ids: list[str]) -> dict[str, Any]:
