@@ -927,22 +927,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 ]
             )
 
-            # Span list system metrics. These are filterable row-level span
-            # fields, so expose them from the backend catalog instead of
-            # injecting span-only fields in frontend views.
-            metrics.extend(
-                [
-                    {
-                        "name": "latency_ms",
-                        "display_name": "Duration",
-                        "category": "system_metric",
-                        "source": "spans",
-                        "sources": ["spans"],
-                        "type": "number",
-                        "unit": "ms",
-                    },
-                ]
-            )
 
             # Eval-specific dimensions (available across all sources)
             metrics.extend(
