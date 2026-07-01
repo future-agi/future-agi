@@ -3192,9 +3192,9 @@ export const AgentPlaygroundGraphsVersionsNodesCreateBody = zod.object({
   "pdf_url": zod.string().url().min(1).optional().describe('PDF URL (required when type=pdf_url)')
 }).describe('Array of content items')).describe('Array of content items')
 }).describe('Array of message objects with id, role, and content array')).describe('Array of message objects with id, role, and content array'),
-  "response_format": zod.object({
+  "response_format": zod.union([zod.string(), zod.object({
 
-}).passthrough().default(agentPlaygroundGraphsVersionsNodesCreateBodyPromptTemplateResponseFormatDefault).describe('LLM output format: \'text\' (plain text), \'json\' (free-form JSON), \'json_schema\' (structured with schema), UUID string (saved schema reference), or object with \'id\' field (prompt playground format). See class docstring for details.'),
+}).passthrough()]).default(agentPlaygroundGraphsVersionsNodesCreateBodyPromptTemplateResponseFormatDefault).describe('String or JSON object.'),
   "response_schema": zod.object({
 
 }).passthrough().optional().describe('JSON Schema (Draft 7) for structured outputs. Required when response_format=\'json_schema\'. Example: {\'type\': \'object\', \'properties\': {...}, \'required\': [...]}'),
@@ -3329,9 +3329,9 @@ export const AgentPlaygroundGraphsVersionsNodesPartialUpdateBody = zod.object({
   "pdf_url": zod.string().url().min(1).optional().describe('PDF URL (required when type=pdf_url)')
 }).describe('Array of content items')).describe('Array of content items')
 }).describe('Array of message objects with id, role, and content array')).describe('Array of message objects with id, role, and content array'),
-  "response_format": zod.object({
+  "response_format": zod.union([zod.string(), zod.object({
 
-}).passthrough().default(agentPlaygroundGraphsVersionsNodesPartialUpdateBodyPromptTemplateResponseFormatDefault).describe('LLM output format: \'text\' (plain text), \'json\' (free-form JSON), \'json_schema\' (structured with schema), UUID string (saved schema reference), or object with \'id\' field (prompt playground format). See class docstring for details.'),
+}).passthrough()]).default(agentPlaygroundGraphsVersionsNodesPartialUpdateBodyPromptTemplateResponseFormatDefault).describe('String or JSON object.'),
   "response_schema": zod.object({
 
 }).passthrough().optional().describe('JSON Schema (Draft 7) for structured outputs. Required when response_format=\'json_schema\'. Example: {\'type\': \'object\', \'properties\': {...}, \'required\': [...]}'),
@@ -3405,9 +3405,9 @@ export const AgentPlaygroundGraphsVersionsNodesPartialUpdateResponse = zod.objec
   "pdf_url": zod.string().url().min(1).optional().describe('PDF URL (required when type=pdf_url)')
 }).describe('Array of content items')).describe('Array of content items')
 }).describe('Array of message objects with id, role, and content array')).describe('Array of message objects with id, role, and content array'),
-  "response_format": zod.object({
+  "response_format": zod.union([zod.string(), zod.object({
 
-}).passthrough().default(agentPlaygroundGraphsVersionsNodesPartialUpdateResponsePromptTemplateResponseFormatDefault).describe('LLM output format: \'text\' (plain text), \'json\' (free-form JSON), \'json_schema\' (structured with schema), UUID string (saved schema reference), or object with \'id\' field (prompt playground format). See class docstring for details.'),
+}).passthrough()]).default(agentPlaygroundGraphsVersionsNodesPartialUpdateResponsePromptTemplateResponseFormatDefault).describe('String or JSON object.'),
   "response_schema": zod.object({
 
 }).passthrough().optional().describe('JSON Schema (Draft 7) for structured outputs. Required when response_format=\'json_schema\'. Example: {\'type\': \'object\', \'properties\': {...}, \'required\': [...]}'),
@@ -15199,9 +15199,9 @@ export const ModelHubColumnConfigReadResponse = zod.object({
   "presence_penalty": zod.number().optional(),
   "max_tokens": zod.number().optional(),
   "top_p": zod.number().optional(),
-  "response_format": zod.object({
+  "response_format": zod.union([zod.string(), zod.object({
 
-}).passthrough().optional(),
+}).passthrough()]).optional().describe('String or JSON object.'),
   "tool_choice": zod.string().optional(),
   "tools": zod.array(zod.string().min(1)).optional(),
   "optimize_type": zod.string().optional(),
@@ -17022,9 +17022,9 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
   "presence_penalty": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
   "max_tokens": zod.number().min(1).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigMaxTokensMax).optional().describe('Maximum number of tokens to generate. Null = use provider default.'),
   "top_p": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTopPMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
-  "response_format": zod.object({
+  "response_format": zod.union([zod.string(), zod.object({
 
-}).passthrough().optional().describe('JSON schema for response format if required. Can be a JSON object or string. Defaults to None.'),
+}).passthrough()]).optional().describe('String or JSON object.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
   "tools": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of tools with tool properties if available.'),
   "output_format": zod.enum(['array', 'string', 'number', 'object', 'audio', 'image']).optional().describe('Output format type.'),
@@ -17272,9 +17272,9 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
   "presence_penalty": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
   "max_tokens": zod.number().min(1).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigMaxTokensMax).optional().describe('Maximum number of tokens to generate. Null = use provider default.'),
   "top_p": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTopPMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
-  "response_format": zod.object({
+  "response_format": zod.union([zod.string(), zod.object({
 
-}).passthrough().optional().describe('JSON schema for response format if required. Can be a JSON object or string. Defaults to None.'),
+}).passthrough()]).optional().describe('String or JSON object.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
   "tools": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of tools with tool properties if available.'),
   "output_format": zod.enum(['array', 'string', 'number', 'object', 'audio', 'image']).optional().describe('Output format type.'),
@@ -17495,9 +17495,9 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
   "presence_penalty": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
   "max_tokens": zod.number().min(1).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigMaxTokensMax).optional().describe('Maximum number of tokens to generate. Null = use provider default.'),
   "top_p": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTopPMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
-  "response_format": zod.object({
+  "response_format": zod.union([zod.string(), zod.object({
 
-}).passthrough().optional().describe('JSON schema for response format if required. Can be a JSON object or string. Defaults to None.'),
+}).passthrough()]).optional().describe('String or JSON object.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
   "tools": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of tools with tool properties if available.'),
   "output_format": zod.enum(['array', 'string', 'number', 'object', 'audio', 'image']).optional().describe('Output format type.'),
@@ -25561,9 +25561,9 @@ export const ModelHubRunPromptCreateBody = zod.object({
   "presence_penalty": zod.number().min(modelHubRunPromptCreateBodyPresencePenaltyMin).max(modelHubRunPromptCreateBodyPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
   "max_tokens": zod.number().min(1).max(modelHubRunPromptCreateBodyMaxTokensMax).optional().describe('Maximum number of tokens to generate. Null = use provider default.'),
   "top_p": zod.number().min(modelHubRunPromptCreateBodyTopPMin).max(modelHubRunPromptCreateBodyTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
-  "response_format": zod.object({
+  "response_format": zod.union([zod.string(), zod.object({
 
-}).passthrough().optional().describe('JSON schema for response format if required. Defaults to None.'),
+}).passthrough()]).optional().describe('String or JSON object.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
   "tools": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of tools with tool properties if available.')
 })

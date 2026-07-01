@@ -58271,8 +58271,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "response_format": {
           "title": "Response format",
-          "description": "JSON schema for response format if required. Defaults to None.",
-          "type": "object"
+          "description": "String or JSON object.",
+          "type": "object",
+          "x-string-or-object": true
         },
         "tool_choice": {
           "title": "Tool choice",
@@ -75085,9 +75086,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "response_format": {
           "title": "Response format",
-          "description": "JSON schema for response format if required. Can be a JSON object or string. Defaults to None.",
+          "description": "String or JSON object.",
           "type": "object",
-          "x-nullable": true
+          "x-nullable": true,
+          "x-string-or-object": true
         },
         "tool_choice": {
           "title": "Tool choice",
@@ -77113,7 +77115,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "response_format": {
           "title": "Response format",
-          "type": "object"
+          "type": "object",
+          "x-string-or-object": true,
+          "description": "String or JSON object."
         },
         "tool_choice": {
           "title": "Tool choice",
@@ -77718,9 +77722,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "response_format": {
           "title": "Response format",
-          "description": "LLM output format: 'text' (plain text), 'json' (free-form JSON), 'json_schema' (structured with schema), UUID string (saved schema reference), or object with 'id' field (prompt playground format). See class docstring for details.",
+          "description": "String or JSON object.",
           "type": "object",
-          "default": "text"
+          "default": "text",
+          "x-string-or-object": true
         },
         "response_schema": {
           "title": "Response schema",

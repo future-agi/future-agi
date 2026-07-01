@@ -11,6 +11,7 @@ from model_hub.serializers.optimize_dataset import (
 from model_hub.serializers.performance_report import PerformanceReportSerializer
 from model_hub.services.ai_eval_writer_service import OUTPUT_FORMAT_PROMPTS
 from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
+from tfc.utils.serializer_fields import StringOrObjectField
 from tracer.serializers.filters import (
     SortParamField,
     StrictInputSerializer,
@@ -1265,7 +1266,7 @@ class ColumnConfigResultSerializer(serializers.Serializer):
     presence_penalty = serializers.FloatField(required=False, allow_null=True)
     max_tokens = serializers.IntegerField(required=False, allow_null=True)
     top_p = serializers.FloatField(required=False, allow_null=True)
-    response_format = serializers.JSONField(required=False)
+    response_format = StringOrObjectField(required=False)
     tool_choice = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )

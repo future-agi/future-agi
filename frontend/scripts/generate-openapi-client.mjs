@@ -215,6 +215,68 @@ async function runGeneration(schemaPath) {
   });
 
   normalizeGeneratedQueryParamSerialization();
+  // x-string-or-object fields: orval can't read the custom extension so it
+  // generates zod.object({}).passthrough() instead of the correct string|object
+  // union. Replace all occurrences matched by the unique description string,
+  // handling .optional(), .default(...), and bare variants.
+  //
+  // Native OpenAPI 3.0 oneOf would let us delete this whole block — tracked in
+  // TH-6030. Until then, both this zod patch and the api.schemas.ts patch below
+  // throw if their anchor no longer matches, so we never silently regress to
+  // object-only.
+  if (fs.existsSync(zodOutputPath)) {
+    let zod = fs.readFileSync(zodOutputPath, "utf8");
+    const zodPattern =
+      /zod\.object\(\{\s*\}\)\.passthrough\(\)((?:\.optional\(\))?(?:\.default\([^)]+\))?(?:\.optional\(\))?)\.describe\('String or JSON object\.'\)/g;
+    if (!zodPattern.test(zod)) {
+      throw new Error(
+        "x-string-or-object post-processor: zod anchor no longer matches. " +
+          "Either restore the orval emit shape (`zod.object({...}).passthrough()" +
+          "[.optional()|.default(...)].describe('String or JSON object.')`) or " +
+          "migrate to native OpenAPI 3.0 oneOf (TH-6030) and delete this block.",
+      );
+    }
+    zod = zod.replace(
+      zodPattern,
+      (match, middle) =>
+        `zod.union([zod.string(), zod.object({\n\n}).passthrough()])${middle}.describe('String or JSON object.')`,
+    );
+    fs.writeFileSync(zodOutputPath, zod);
+  }
+  // Fix api.schemas.ts: x-string-or-object fields show as `{ [key: string]: unknown }`
+  // but should be `string | { [key: string]: unknown }`. Orval emits a multi-line
+  // JSDoc block immediately above each affected type alias and a separate
+  // `interface` field with a leading `/** String or JSON object. */` JSDoc — both
+  // need to flip from object-only to union.
+  const schemasOutputPath = path.join(outputDir, "api.schemas.ts");
+  if (fs.existsSync(schemasOutputPath)) {
+    let schemas = fs.readFileSync(schemasOutputPath, "utf8");
+
+    // (a) Type alias: orval emits
+    //   /**
+    //    * String or JSON object.
+    //    */
+    //   export type FooApiResponseFormat = { [key: string]: unknown };
+    // Flip the right-hand side to the union. Capture the alias name so we
+    // only rewrite the alias that carries the "String or JSON object."
+    // docblock — not any unrelated `{ [key: string]: unknown }` declaration.
+    const aliasPattern =
+      /(\/\*\*\n \* String or JSON object\.\n \*\/\nexport type \w+ = )\{ \[key: string\]: unknown \};/g;
+    if (!aliasPattern.test(schemas)) {
+      throw new Error(
+        "x-string-or-object post-processor: type-alias anchor no longer matches. " +
+          "Either restore the orval emit shape (`/** String or JSON object. */` " +
+          "above `export type X = { [key: string]: unknown };`) or migrate to " +
+          "native OpenAPI 3.0 oneOf (TH-6030) and delete this block.",
+      );
+    }
+    schemas = schemas.replace(
+      aliasPattern,
+      "$1string | { [key: string]: unknown };",
+    );
+
+    fs.writeFileSync(schemasOutputPath, schemas);
+  }
   normalizeGeneratedFileEndings();
 }
 
