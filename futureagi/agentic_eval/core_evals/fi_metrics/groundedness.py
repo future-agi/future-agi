@@ -16,7 +16,6 @@ class GroundednessScore(ABC):
         """
         Computes the metric.
         """
-        total_sentences = len(sentences_with_evidence)
         unsupported_sentences: list[str] = [] # List of unsupported sentences
         supported_sentences: list[tuple[str, list[str]]] = [] # List of (sentence, evidences) pairs
         for sentence_with_evidence in sentences_with_evidence:
@@ -29,7 +28,16 @@ class GroundednessScore(ABC):
             else:
                 unsupported_sentences.append(sentence_str)
         num_supported_sentences = len(supported_sentences)
-        score = num_supported_sentences / total_sentences
+        # Score over the sentences that were actually classified. Skipped
+        # (sentence is None) entries were dropped above, so counting the raw
+        # input length would wrongly lower the score, and an empty input would
+        # divide by zero. A response with no evaluable sentences is treated as
+        # fully grounded (nothing is unsupported).
+        num_classified_sentences = num_supported_sentences + len(unsupported_sentences)
+        if num_classified_sentences == 0:
+            score = 1.0
+        else:
+            score = num_supported_sentences / num_classified_sentences
         precision = 4
         score = round(score, precision)
         return score, unsupported_sentences, supported_sentences
