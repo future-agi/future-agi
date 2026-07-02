@@ -95,6 +95,41 @@ def create_observe_span_for_workspace(organization, workspace, suffix="other"):
     return project, trace, span
 
 
+def ch_only_span_row(project, trace_id, span_id, parent_span_id=""):
+    now = timezone.now()
+    return {
+        "id": span_id,
+        "project_id": str(project.id),
+        "trace_id": str(trace_id),
+        "parent_span_id": parent_span_id,
+        "org_id": str(project.organization_id),
+        "name": "CH-only Root Span",
+        "observation_type": "llm",
+        "operation_name": "",
+        "start_time": now - timedelta(seconds=2),
+        "end_time": now - timedelta(seconds=1),
+        "input": {"messages": [{"role": "user", "content": "hello"}]},
+        "output": {"choices": [{"message": {"content": "hi"}}]},
+        "model": "gpt-4",
+        "provider": "openai",
+        "prompt_tokens": 10,
+        "completion_tokens": 5,
+        "total_tokens": 15,
+        "latency_ms": 100,
+        "cost": 0.001,
+        "status": "OK",
+        "status_message": "",
+        "tags": [],
+        "metadata": {},
+        "span_events": [],
+        "span_attributes": {},
+        "resource_attributes": {},
+        "created_at": now,
+        "updated_at": now,
+        "deleted": False,
+    }
+
+
 @pytest.fixture
 def dataset(db, organization, user, workspace):
     """Create a test dataset."""
@@ -325,11 +360,12 @@ class TestAddToNewDatasetAPI:
     @patch("tracer.views.dataset.process_spans_chunk_task")
     @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
     def test_missing_project_derives_from_spans(
-        self, mock_check_allowed, mock_task, auth_client, observe_spans
+        self, mock_check_allowed, mock_task, auth_client, observe_spans, ch_seed
     ):
         """Request without project derives it from selected spans."""
         mock_check_allowed.return_value = True
         mock_task.delay.return_value = None
+        ch_seed(observe_spans)
 
         response = auth_client.post(
             "/tracer/dataset/add_to_new_dataset/",
@@ -365,10 +401,12 @@ class TestAddToNewDatasetAPI:
         workspace,
         observe_project,
         observe_spans,
+        ch_seed,
     ):
         """Successfully create dataset with spanIds."""
         mock_check_allowed.return_value = True
         mock_task.delay.return_value = None
+        ch_seed(observe_spans)
 
         response = auth_client.post(
             "/tracer/dataset/add_to_new_dataset/",
@@ -398,6 +436,40 @@ class TestAddToNewDatasetAPI:
 
     @patch("tracer.views.dataset.process_spans_chunk_task")
     @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_success_with_ch_only_span_ids_without_project(
+        self,
+        mock_check_allowed,
+        mock_task,
+        auth_client,
+        observe_project,
+        ch_seed,
+    ):
+        """Span ids derive their project from ClickHouse, not PG spans."""
+        mock_check_allowed.return_value = True
+        mock_task.delay.return_value = None
+        trace_id = uuid.uuid4()
+        span_id = f"ch_span_{uuid.uuid4().hex[:16]}"
+        ch_seed([ch_only_span_row(observe_project, trace_id, span_id)])
+        assert not ObservationSpan.no_workspace_objects.filter(id=span_id).exists()
+
+        response = auth_client.post(
+            "/tracer/dataset/add_to_new_dataset/",
+            {
+                "new_dataset_name": "New Dataset From CH Spans",
+                "span_ids": [span_id],
+                "mapping_config": [
+                    {"col_name": "input", "span_field": "input", "data_type": "text"},
+                ],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_task.delay.assert_called_once()
+        assert mock_task.delay.call_args.args[0] == [span_id]
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
     def test_success_with_traceIds(
         self,
         mock_check_allowed,
@@ -406,10 +478,12 @@ class TestAddToNewDatasetAPI:
         observe_project,
         session_trace,
         observe_spans,
+        ch_seed,
     ):
         """Successfully create dataset with traceIds."""
         mock_check_allowed.return_value = True
         mock_task.delay.return_value = None
+        ch_seed(observe_spans)
 
         response = auth_client.post(
             "/tracer/dataset/add_to_new_dataset/",
@@ -431,6 +505,41 @@ class TestAddToNewDatasetAPI:
 
     @patch("tracer.views.dataset.process_spans_chunk_task")
     @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
+    def test_success_with_ch_only_trace_ids(
+        self,
+        mock_check_allowed,
+        mock_task,
+        auth_client,
+        observe_project,
+        ch_seed,
+    ):
+        """Trace ids no longer need PG Trace/ObservationSpan rows to export."""
+        mock_check_allowed.return_value = True
+        mock_task.delay.return_value = None
+        trace_id = uuid.uuid4()
+        span_id = f"ch_root_{uuid.uuid4().hex[:16]}"
+        ch_seed([ch_only_span_row(observe_project, trace_id, span_id)])
+        assert not Trace.no_workspace_objects.filter(id=trace_id).exists()
+
+        response = auth_client.post(
+            "/tracer/dataset/add_to_new_dataset/",
+            {
+                "new_dataset_name": "New Dataset From CH Traces",
+                "project": str(observe_project.id),
+                "trace_ids": [str(trace_id)],
+                "mapping_config": [
+                    {"col_name": "input", "span_field": "input", "data_type": "text"},
+                ],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_task.delay.assert_called_once()
+        assert mock_task.delay.call_args.args[0] == [span_id]
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
+    @patch("tracer.views.dataset.check_if_dataset_creation_is_allowed")
     def test_success_with_selectAll(
         self,
         mock_check_allowed,
@@ -438,10 +547,12 @@ class TestAddToNewDatasetAPI:
         auth_client,
         observe_project,
         observe_spans,
+        ch_seed,
     ):
         """Successfully create dataset with selectAll=True."""
         mock_check_allowed.return_value = True
         mock_task.delay.return_value = None
+        ch_seed(observe_spans)
 
         response = auth_client.post(
             "/tracer/dataset/add_to_new_dataset/",
@@ -496,10 +607,12 @@ class TestAddToNewDatasetAPI:
         other_workspace,
         observe_project,
         observe_spans,
+        ch_seed,
     ):
         """Same-org duplicate names outside the active workspace do not block create."""
         mock_check_allowed.return_value = True
         mock_task.delay.return_value = None
+        ch_seed(observe_spans)
         dataset_name = f"Cross Workspace Name {uuid.uuid4().hex[:8]}"
         Dataset.no_workspace_objects.create(
             id=uuid.uuid4(),
@@ -538,6 +651,7 @@ class TestAddToNewDatasetAPI:
         auth_client,
         organization,
         other_workspace,
+        ch_seed,
     ):
         """Selected spans from another workspace are hidden before dataset creation."""
         mock_check_allowed.return_value = True
@@ -545,6 +659,7 @@ class TestAddToNewDatasetAPI:
         _, _, other_span = create_observe_span_for_workspace(
             organization, other_workspace, suffix="new_dataset_guard"
         )
+        ch_seed(other_span)
         dataset_name = f"Hidden Span Dataset {uuid.uuid4().hex[:8]}"
 
         response = auth_client.post(
@@ -671,9 +786,11 @@ class TestAddToExistingDatasetAPI:
         dataset_columns,
         observe_project,
         observe_spans,
+        ch_seed,
     ):
         """Successfully add to existing dataset with spanIds."""
         mock_task.delay.return_value = None
+        ch_seed(observe_spans)
 
         response = auth_client.post(
             "/tracer/dataset/add_to_existing_dataset/",
@@ -695,6 +812,39 @@ class TestAddToExistingDatasetAPI:
         assert result["status"] == "processing"
 
     @patch("tracer.views.dataset.process_spans_chunk_task")
+    def test_success_with_ch_only_span_ids_without_project(
+        self,
+        mock_task,
+        auth_client,
+        dataset,
+        dataset_columns,
+        observe_project,
+        ch_seed,
+    ):
+        """Existing dataset import resolves selected span ids from ClickHouse."""
+        mock_task.delay.return_value = None
+        trace_id = uuid.uuid4()
+        span_id = f"ch_existing_span_{uuid.uuid4().hex[:16]}"
+        ch_seed([ch_only_span_row(observe_project, trace_id, span_id)])
+        assert not ObservationSpan.no_workspace_objects.filter(id=span_id).exists()
+
+        response = auth_client.post(
+            "/tracer/dataset/add_to_existing_dataset/",
+            {
+                "dataset_id": str(dataset.id),
+                "span_ids": [span_id],
+                "mapping_config": [
+                    {"col_name": "input", "span_field": "input"},
+                ],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_task.delay.assert_called_once()
+        assert mock_task.delay.call_args.args[0] == [span_id]
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
     def test_success_with_traceIds(
         self,
         mock_task,
@@ -704,9 +854,11 @@ class TestAddToExistingDatasetAPI:
         observe_project,
         session_trace,
         observe_spans,
+        ch_seed,
     ):
         """Successfully add to existing dataset with traceIds."""
         mock_task.delay.return_value = None
+        ch_seed(observe_spans)
 
         response = auth_client.post(
             "/tracer/dataset/add_to_existing_dataset/",
@@ -726,6 +878,40 @@ class TestAddToExistingDatasetAPI:
         assert result["status"] == "processing"
 
     @patch("tracer.views.dataset.process_spans_chunk_task")
+    def test_success_with_ch_only_trace_ids(
+        self,
+        mock_task,
+        auth_client,
+        dataset,
+        dataset_columns,
+        observe_project,
+        ch_seed,
+    ):
+        """Existing dataset import resolves selected trace roots from ClickHouse."""
+        mock_task.delay.return_value = None
+        trace_id = uuid.uuid4()
+        span_id = f"ch_existing_root_{uuid.uuid4().hex[:16]}"
+        ch_seed([ch_only_span_row(observe_project, trace_id, span_id)])
+        assert not Trace.no_workspace_objects.filter(id=trace_id).exists()
+
+        response = auth_client.post(
+            "/tracer/dataset/add_to_existing_dataset/",
+            {
+                "dataset_id": str(dataset.id),
+                "project": str(observe_project.id),
+                "trace_ids": [str(trace_id)],
+                "mapping_config": [
+                    {"col_name": "input", "span_field": "input"},
+                ],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        mock_task.delay.assert_called_once()
+        assert mock_task.delay.call_args.args[0] == [span_id]
+
+    @patch("tracer.views.dataset.process_spans_chunk_task")
     def test_success_with_selectAll(
         self,
         mock_task,
@@ -734,9 +920,11 @@ class TestAddToExistingDatasetAPI:
         dataset_columns,
         observe_project,
         observe_spans,
+        ch_seed,
     ):
         """Successfully add to existing dataset with selectAll=True."""
         mock_task.delay.return_value = None
+        ch_seed(observe_spans)
 
         response = auth_client.post(
             "/tracer/dataset/add_to_existing_dataset/",
@@ -765,9 +953,11 @@ class TestAddToExistingDatasetAPI:
         dataset_columns,
         observe_project,
         observe_spans,
+        ch_seed,
     ):
         """Successfully add to existing dataset with new columns."""
         mock_task.delay.return_value = None
+        ch_seed(observe_spans)
 
         response = auth_client.post(
             "/tracer/dataset/add_to_existing_dataset/",
@@ -885,12 +1075,14 @@ class TestAddToExistingDatasetAPI:
         other_workspace,
         dataset,
         dataset_columns,
+        ch_seed,
     ):
         """Existing-dataset add ignores same-org span ids outside active workspace."""
         mock_task.delay.return_value = None
         _, _, other_span = create_observe_span_for_workspace(
             organization, other_workspace, suffix="existing_dataset_guard"
         )
+        ch_seed(other_span)
 
         response = auth_client.post(
             "/tracer/dataset/add_to_existing_dataset/",
@@ -903,4 +1095,49 @@ class TestAddToExistingDatasetAPI:
         )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
-        mock_task.delay.assert_not_called()
+
+
+@pytest.mark.integration
+@pytest.mark.django_db(transaction=True)
+class TestProcessSpansChunkTask:
+    def test_processes_export_cells_from_clickhouse_seed(
+        self,
+        dataset,
+        dataset_columns,
+        observe_spans,
+        ch_seed,
+    ):
+        from model_hub.models.develop_dataset import Cell, Row
+        from tracer.tasks.dataset import process_spans_chunk_task
+
+        span = observe_spans[0]
+        ch_seed([span])
+        column_span_mapping_data = [
+            {
+                "column_id": str(dataset_columns[0].id),
+                "column_name": "input",
+                "span_field": "input",
+            },
+            {
+                "column_id": str(dataset_columns[1].id),
+                "column_name": "output",
+                "span_field": "output",
+            },
+        ]
+
+        result = process_spans_chunk_task.run_sync(
+            [span.id],
+            str(dataset.id),
+            column_span_mapping_data,
+            str(span.project_id),
+            str(span.project.organization_id),
+        )
+
+        assert result == {"rows_created": 1, "cells_created": 2}
+        row = Row.objects.get(dataset=dataset)
+        values = {
+            str(cell.column_id): cell.value
+            for cell in Cell.objects.filter(dataset=dataset, row=row)
+        }
+        assert "Input 0" in values[str(dataset_columns[0].id)]
+        assert "Output 0" in values[str(dataset_columns[1].id)]

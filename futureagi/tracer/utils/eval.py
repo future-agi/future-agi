@@ -1592,6 +1592,7 @@ def _execute_evaluation(
             _eval_inputs["session_context"] = _session_ctx
 
     # --- Run eval via unified engine ---
+    result = None
     try:
         result = run_eval(
             EvalRequest(
@@ -1623,19 +1624,6 @@ def _execute_evaluation(
             api_call_log_row.config = json.dumps(config_dict)
             api_call_log_row.status = APICallStatusChoices.SUCCESS.value
             api_call_log_row.save()
-
-        # Dual-write: emit usage event for new billing system (cost-based)
-        _emit_eval_billing(
-            org_id=org_id,
-            api_call_type=api_call_type,
-            source_id=str(eval_model.id),
-            target_type=EvalTargetType.SPAN.value,
-            result=result,
-            custom_eval_config=custom_eval_config,
-            ws_id=ws_id,
-            api_call_log_row=api_call_log_row,
-            feedback_id=feedback_id,
-        )
 
         # Parse metadata
         metadata = result.metadata
@@ -1744,6 +1732,19 @@ def _execute_evaluation(
                 "observation_span__project__organization",
                 "observation_span__project__workspace",
             ).get(pk=eval_log.pk)
+
+        if result is not None:
+            _emit_eval_billing(
+                org_id=org_id,
+                api_call_type=api_call_type,
+                source_id=str(eval_model.id),
+                target_type=EvalTargetType.SPAN.value,
+                result=result,
+                custom_eval_config=custom_eval_config,
+                ws_id=ws_id,
+                api_call_log_row=api_call_log_row,
+                feedback_id=feedback_id,
+            )
 
         from model_hub.services.error_localizer_service import (
             error_localizer_enabled,
@@ -2914,6 +2915,7 @@ def _execute_evaluation_for_trace(
     if _di["span_context"]:
         _eval_inputs["span_context"] = build_span_context(anchor_span)
 
+    result = None
     try:
         result = run_eval(
             EvalRequest(
@@ -2942,19 +2944,6 @@ def _execute_evaluation_for_trace(
             api_call_log_row.config = json.dumps(config_dict)
             api_call_log_row.status = APICallStatusChoices.SUCCESS.value
             api_call_log_row.save()
-
-        # Dual-write: emit usage event for new billing system (cost-based)
-        _emit_eval_billing(
-            org_id=org_id,
-            api_call_type=api_call_type,
-            source_id=str(eval_template.id),
-            target_type=EvalTargetType.TRACE.value,
-            result=result,
-            custom_eval_config=custom_eval_config,
-            ws_id=ws_id,
-            api_call_log_row=api_call_log_row,
-            feedback_id=feedback_id,
-        )
 
         metadata = result.metadata
         if isinstance(metadata, str):
@@ -3032,6 +3021,19 @@ def _execute_evaluation_for_trace(
         )
 
     EvalLogger.objects.create(**logger_kwargs)
+
+    if result is not None:
+        _emit_eval_billing(
+            org_id=org_id,
+            api_call_type=api_call_type,
+            source_id=str(eval_template.id),
+            target_type=EvalTargetType.TRACE.value,
+            result=result,
+            custom_eval_config=custom_eval_config,
+            ws_id=ws_id,
+            api_call_log_row=api_call_log_row,
+            feedback_id=feedback_id,
+        )
 
 
 def _execute_evaluation_for_session(
@@ -3148,6 +3150,7 @@ def _execute_evaluation_for_session(
         if _session_ctx is not None:
             _eval_inputs["session_context"] = _session_ctx
 
+    result = None
     try:
         result = run_eval(
             EvalRequest(
@@ -3176,19 +3179,6 @@ def _execute_evaluation_for_session(
             api_call_log_row.config = json.dumps(config_dict)
             api_call_log_row.status = APICallStatusChoices.SUCCESS.value
             api_call_log_row.save()
-
-        # Dual-write: emit usage event for new billing system (cost-based)
-        _emit_eval_billing(
-            org_id=org_id,
-            api_call_type=api_call_type,
-            source_id=str(eval_template.id),
-            target_type=EvalTargetType.SESSION.value,
-            result=result,
-            custom_eval_config=custom_eval_config,
-            ws_id=ws_id,
-            api_call_log_row=api_call_log_row,
-            feedback_id=feedback_id,
-        )
 
         metadata = result.metadata
         if isinstance(metadata, str):
@@ -3272,6 +3262,19 @@ def _execute_evaluation_for_session(
         )
 
     EvalLogger.objects.create(**logger_kwargs)
+
+    if result is not None:
+        _emit_eval_billing(
+            org_id=org_id,
+            api_call_type=api_call_type,
+            source_id=str(eval_template.id),
+            target_type=EvalTargetType.SESSION.value,
+            result=result,
+            custom_eval_config=custom_eval_config,
+            ws_id=ws_id,
+            api_call_log_row=api_call_log_row,
+            feedback_id=feedback_id,
+        )
 
 
 # ── Error helpers ──
