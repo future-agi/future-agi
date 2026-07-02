@@ -5,6 +5,7 @@ Following the same patterns as simulate.serializers.agent_prompt_optimiser.
 """
 
 from django.db.models import Q
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from model_hub.models.ai_model import AIModel
@@ -399,6 +400,26 @@ class DatasetOptimizationTrialListSerializer(serializers.ModelSerializer):
         )
 
 
+class DatasetOptimizationParameterItemSerializer(serializers.Serializer):
+    key = serializers.CharField()
+    label = serializers.CharField()
+    description = serializers.CharField(allow_blank=True)
+    value = serializers.JSONField()
+
+
+class DatasetOptimizationEvalTemplateItemSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    eval_id = serializers.CharField()
+    name = serializers.CharField()
+    template_id = serializers.CharField(allow_null=True)
+
+
+class DatasetOptimizationColumnConfigItemSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField()
+    is_visible = serializers.BooleanField()
+
+
 class DatasetOptimizationDetailSerializer(serializers.ModelSerializer):
     """Retrieve-endpoint payload for the dataset-optimization run-detail view.
 
@@ -453,12 +474,21 @@ class DatasetOptimizationDetailSerializer(serializers.ModelSerializer):
             return obj.optimizer_config.get("model_name")
         return None
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.CharField(allow_null=True)
+    )
     def get_model(self, obj):
         return self._model_name(obj)
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.CharField(allow_null=True)
+    )
     def get_optimizer_model_id(self, obj):
         return self._model_name(obj)
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.CharField(allow_null=True)
+    )
     def get_provider_logo(self, obj):
         model_name = self._model_name(obj)
         if not model_name or not obj.column:
@@ -469,15 +499,27 @@ class DatasetOptimizationDetailSerializer(serializers.ModelSerializer):
         workspace_id = workspace.id if workspace else None
         return get_provider_logo_url(model_name, organization_id, workspace_id)
 
+    @swagger_serializer_method(
+        serializer_or_field=DatasetOptimizationParameterItemSerializer(many=True)
+    )
     def get_parameters(self, obj):
         return build_parameters_array(obj.optimizer_config, obj.optimizer_algorithm)
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.CharField(allow_null=True)
+    )
     def get_column_id(self, obj):
         return str(obj.column.id) if obj.column else None
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.CharField(allow_null=True)
+    )
     def get_column_name(self, obj):
         return obj.column.name if obj.column else None
 
+    @swagger_serializer_method(
+        serializer_or_field=DatasetOptimizationEvalTemplateItemSerializer(many=True)
+    )
     def get_user_eval_templates(self, obj):
         templates = []
         for eval_metric in obj.user_eval_template_ids.all():
@@ -499,9 +541,15 @@ class DatasetOptimizationDetailSerializer(serializers.ModelSerializer):
             )
         return templates
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.ListField(child=serializers.DictField())
+    )
     def get_table(self, obj):
         return self._table
 
+    @swagger_serializer_method(
+        serializer_or_field=DatasetOptimizationColumnConfigItemSerializer(many=True)
+    )
     def get_column_config(self, obj):
         return self._column_config
 

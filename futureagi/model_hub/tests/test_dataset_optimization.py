@@ -392,3 +392,103 @@ class TestDatasetOptimizationWorkspaceIsolation:
             obj = model.all_objects.get(id=pk)
             assert obj.deleted is True
             assert obj.deleted_at is not None
+
+
+EXPECTED_RETRIEVE_KEYS = {
+    "optimiser_name",
+    "optimiser_type",
+    "model",
+    "provider_logo",
+    "configuration",
+    "status",
+    "error_message",
+    "start_time",
+    "parameters",
+    "column_id",
+    "column_name",
+    "best_score",
+    "baseline_score",
+    "table",
+    "column_config",
+    "optimizer_model_id",
+    "user_eval_templates",
+}
+
+
+@pytest.mark.django_db
+def test_retrieve_returns_documented_shape(
+    auth_client, output_column, ai_model, user_eval_metric
+):
+    run = create_optimization_run(
+        output_column,
+        optimizer_model=ai_model,
+        best_score=0.87,
+        baseline_score=0.5,
+    )
+    run.user_eval_template_ids.set([user_eval_metric])
+
+    response = auth_client.get(f"/model-hub/dataset-optimization/{run.id}/")
+
+    assert response.status_code == status.HTTP_200_OK
+    result = response.json()["result"]
+
+    assert set(result.keys()) == EXPECTED_RETRIEVE_KEYS
+
+    assert result["optimiser_name"] == "Optimization Run"
+    assert result["optimiser_type"] == OptimizeDataset.OptimizerAlgorithm.RANDOM_SEARCH
+    assert result["model"] == "gpt-4o-mini"
+    assert result["optimizer_model_id"] == "gpt-4o-mini"
+    assert result["column_id"] == str(output_column.id)
+    assert result["column_name"] == output_column.name
+    assert result["best_score"] == 0.87
+    assert result["baseline_score"] == 0.5
+    assert result["status"] == OptimizeDataset.StatusType.PENDING
+    assert result["configuration"] == {"num_variations": 1}
+
+    assert isinstance(result["table"], list)
+    assert isinstance(result["column_config"], list)
+    assert isinstance(result["parameters"], list)
+    assert isinstance(result["user_eval_templates"], list)
+
+    assert len(result["user_eval_templates"]) == 1
+    eval_row = result["user_eval_templates"][0]
+    assert eval_row["id"] == str(user_eval_metric.id)
+    assert eval_row["eval_id"] == str(user_eval_metric.id)
+    assert eval_row["template_id"] == str(user_eval_metric.template.id)
+
+    params_by_key = {p["key"]: p for p in result["parameters"]}
+    assert "num_variations" in params_by_key
+    assert params_by_key["num_variations"]["label"] == "Number of Variations"
+    assert params_by_key["num_variations"]["value"] == 1
+    assert "model_name" not in params_by_key
+
+
+@pytest.mark.django_db
+def test_retrieve_falls_back_to_config_model_name(auth_client, output_column):
+    run = create_optimization_run(
+        output_column,
+        optimizer_config={"num_variations": 1, "model_name": "gpt-4o"},
+    )
+
+    response = auth_client.get(f"/model-hub/dataset-optimization/{run.id}/")
+
+    assert response.status_code == status.HTTP_200_OK
+    result = response.json()["result"]
+    assert result["model"] == "gpt-4o"
+    assert result["optimizer_model_id"] == "gpt-4o"
+    assert result["provider_logo"] is None or isinstance(result["provider_logo"], str)
+
+
+@pytest.mark.django_db
+def test_retrieve_handles_run_without_model_or_evals(auth_client, output_column):
+    run = create_optimization_run(output_column)
+
+    response = auth_client.get(f"/model-hub/dataset-optimization/{run.id}/")
+
+    assert response.status_code == status.HTTP_200_OK
+    result = response.json()["result"]
+    assert result["model"] is None
+    assert result["optimizer_model_id"] is None
+    assert result["provider_logo"] is None
+    assert result["user_eval_templates"] == []
+    assert result["table"] == []

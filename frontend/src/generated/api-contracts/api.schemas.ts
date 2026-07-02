@@ -7316,26 +7316,63 @@ export const DatasetOptimizationDetailApiStatus = {
   cancelled: 'cancelled',
 } as const;
 
+export type DatasetOptimizationDetailApiTableItem = {[key: string]: string};
+
+export type DatasetOptimizationParameterItemApiValue = { [key: string]: unknown };
+
+export interface DatasetOptimizationParameterItemApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  description: string;
+  value: DatasetOptimizationParameterItemApiValue;
+}
+
+export interface DatasetOptimizationColumnConfigItemApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  is_visible: boolean;
+}
+
+export interface DatasetOptimizationEvalTemplateItemApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  eval_id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  template_id: string;
+}
+
 export interface DatasetOptimizationDetailApi {
   /** @minLength 1 */
   readonly optimiser_name?: string;
   /** @minLength 1 */
   readonly optimiser_type?: string;
+  /** @minLength 1 */
   readonly model?: string;
+  /** @minLength 1 */
   readonly provider_logo?: string;
   readonly configuration?: DatasetOptimizationDetailApiConfiguration;
   status?: DatasetOptimizationDetailApiStatus;
   error_message?: string;
   readonly start_time?: string;
-  readonly parameters?: string;
+  readonly parameters?: readonly DatasetOptimizationParameterItemApi[];
+  /** @minLength 1 */
   readonly column_id?: string;
+  /** @minLength 1 */
   readonly column_name?: string;
   best_score?: number;
   baseline_score?: number;
-  readonly table?: string;
-  readonly column_config?: string;
+  readonly table?: readonly DatasetOptimizationDetailApiTableItem[];
+  readonly column_config?: readonly DatasetOptimizationColumnConfigItemApi[];
+  /** @minLength 1 */
   readonly optimizer_model_id?: string;
-  readonly user_eval_templates?: string;
+  readonly user_eval_templates?: readonly DatasetOptimizationEvalTemplateItemApi[];
 }
 
 export type DatasetOptimizationApiOptimizerAlgorithm = typeof DatasetOptimizationApiOptimizerAlgorithm[keyof typeof DatasetOptimizationApiOptimizerAlgorithm];

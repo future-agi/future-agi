@@ -15694,26 +15694,55 @@ export const ModelHubDatasetOptimizationReadParams = zod.object({
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
 export const ModelHubDatasetOptimizationReadResponse = zod.object({
   "optimiser_name": zod.string().min(1).optional(),
   "optimiser_type": zod.string().min(1).optional(),
-  "model": zod.string().optional(),
-  "provider_logo": zod.string().optional(),
+  "model": zod.string().min(1).optional(),
+  "provider_logo": zod.string().min(1).optional(),
   "configuration": zod.object({
 
 }).passthrough().optional(),
   "status": zod.enum(['not_started', 'pending', 'running', 'completed', 'failed', 'cancelled']).optional(),
   "error_message": zod.string().optional(),
   "start_time": zod.string().datetime({"offset":true}).optional(),
-  "parameters": zod.string().optional(),
-  "column_id": zod.string().optional(),
-  "column_name": zod.string().optional(),
+  "parameters": zod.array(zod.object({
+  "key": zod.string().min(1),
+  "label": zod.string().min(1),
+  "description": zod.string(),
+  "value": zod.object({
+
+}).passthrough()
+})).optional(),
+  "column_id": zod.string().min(1).optional(),
+  "column_name": zod.string().min(1).optional(),
   "best_score": zod.number().optional(),
   "baseline_score": zod.number().optional(),
-  "table": zod.string().optional(),
-  "column_config": zod.string().optional(),
-  "optimizer_model_id": zod.string().optional(),
-  "user_eval_templates": zod.string().optional()
+  "table": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "column_config": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "name": zod.string().min(1),
+  "is_visible": zod.boolean()
+})).optional(),
+  "optimizer_model_id": zod.string().min(1).optional(),
+  "user_eval_templates": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "eval_id": zod.string().min(1),
+  "name": zod.string().min(1),
+  "template_id": zod.string().min(1)
+})).optional()
 })
 
 
