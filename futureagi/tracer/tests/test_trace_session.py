@@ -359,6 +359,47 @@ class TestTraceSessionListAPI:
         )
         assert response.status_code == status.HTTP_200_OK
 
+    def test_fetch_end_user_info_survives_null_end_user_id(self, monkeypatch):
+        """Regression: a user-less session (NULL ``end_user_id`` from CH) must
+        not stringify to the literal ``"None"`` and poison the downstream
+        ``Array(UUID)`` cast in ``resolve_end_user_fields`` — that CANNOT_PARSE_UUID
+        crashed the whole CH session list, silently falling back to an empty PG
+        list (every session vanished from the grid)."""
+        import tracer.views.trace_session as ts_mod
+
+        sid = "11111111-1111-1111-1111-111111111111"
+
+        analytics = mock.Mock()
+        analytics.execute_ch_query.return_value = mock.Mock(
+            data=[{"session_id": sid, "end_user_id": None}]
+        )
+        # Isolate the null-eu path: identity canonical mapping (no id remap).
+        monkeypatch.setattr(
+            ts_mod, "_resolve_session_ids_to_canonical", lambda analytics, ids: {}
+        )
+
+        # Spy mimics the real Array(UUID) cast — a non-UUID id ("None") raises
+        # exactly as ClickHouse would, so a regression fails here loudly.
+        seen = {}
+
+        def _fake_resolve(end_user_ids):
+            ids = {str(e) for e in end_user_ids}
+            seen["ids"] = ids
+            for e in ids:
+                uuid.UUID(e)
+            return {}
+
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.v2.end_user_dict_reader.resolve_end_user_fields",
+            _fake_resolve,
+        )
+
+        # Must not raise; the user-less session is simply absent (all-None).
+        out = TraceSessionView._fetch_end_user_info([sid], analytics)
+
+        assert out == {}
+        assert "None" not in seen.get("ids", set())
+
 
 @pytest.mark.integration
 @pytest.mark.api
