@@ -23,7 +23,13 @@ import { RESPONSE_CODES } from "./constants";
 
 // ----------------------------------------------------------------------
 //
-const axiosInstance = axios.create({ baseURL: HOST_API });
+const axiosInstance = axios.create({
+  baseURL: HOST_API,
+  // Fail a hung request instead of waiting forever, so React Query can retry
+  // when the backend intermittently stalls. A single call can override this by
+  // passing its own `timeout` (e.g. genuinely long-running operations).
+  timeout: 30000,
+});
 
 const avoidRedirect = [
   "/auth/jwt/register",
