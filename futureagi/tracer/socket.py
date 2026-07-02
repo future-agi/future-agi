@@ -13,6 +13,8 @@ from tracer.utils.filters import FilterEngine
 
 # from tracer.models.observation_span import ObservationSpan
 
+EVALUATION_QUERY_ROW_LIMIT = 5000
+
 
 class GraphDataConsumer(DataConsumer):
     async def receive_json(self, content):
@@ -331,10 +333,24 @@ class GraphDataConsumer(DataConsumer):
         query, having = FilterEngine.get_sql_filter_conditions_for_eval_metrics(
             self.filters, query
         )
-        query += f"""
-        GROUP BY timestamp, config_id, tcec.name{", id_trace" if self.graph == 'trace' else ''}{", id_span" if self.graph == 'span' else ""}{';' if not having else " "+having}"""
+        group_by = (
+            "timestamp, config_id, tcec.name"
+            f"{', id_trace' if self.graph == 'trace' else ''}"
+            f"{', id_span' if self.graph == 'span' else ''}"
+        )
+        having_clause = f" {having.strip().rstrip(';')}" if having else ""
+        query = f"""
+        SELECT *
+        FROM (
+            {query}
+            GROUP BY {group_by}{having_clause}
+            ORDER BY timestamp DESC
+            LIMIT %s
+        ) bounded_eval_metrics
+        ORDER BY timestamp ASC;
+        """
 
-        params = [self.project_id for _ in range(5)]
+        params = [self.project_id for _ in range(5)] + [EVALUATION_QUERY_ROW_LIMIT]
         rows = await self.fetch_raw_data(query, params)
 
         if self.eval_id:
