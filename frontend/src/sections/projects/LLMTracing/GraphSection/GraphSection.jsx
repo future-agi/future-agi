@@ -14,12 +14,7 @@ import axios, { endpoints } from "src/utils/axios";
 import { useParams } from "react-router";
 import EmptyGraph from "src/assets/illustrations/empty-graph";
 import _ from "lodash";
-import {
-  getRandomId,
-  getUniqueColorPalette,
-  objectCamelToSnake,
-} from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
+import { getRandomId, getUniqueColorPalette } from "src/utils/utils";
 import { add, format, sub } from "date-fns";
 import {
   isDateRangeLessThan90Days,
@@ -126,7 +121,7 @@ const GraphSection = ({
 
   const combinedFilters = useMemo(() => {
     const createdAtExists = filters?.some?.(
-      (f) => f?.columnId === "created_at",
+      (f) => f?.column_id === "created_at",
     );
     const startDate = dateFilter?.dateFilter?.[0];
     const endDate = dateFilter?.dateFilter?.[1];
@@ -135,11 +130,11 @@ const GraphSection = ({
       !createdAtExists && startDate && endDate
         ? [
             {
-              columnId: "created_at",
-              filterConfig: {
-                filterType: "datetime",
-                filterOp: "between",
-                filterValue: [
+              column_id: "created_at",
+              filter_config: {
+                filter_type: "datetime",
+                filter_op: "between",
+                filter_value: [
                   new Date(startDate).toISOString(),
                   new Date(endDate).toISOString(),
                 ],
@@ -179,9 +174,7 @@ const GraphSection = ({
     queryFn: () =>
       axios.post(endpoints.project.getTraceGraphData(), {
         interval: selectedInterval,
-        filters: canonicalizeApiFilterColumnIds(
-          objectCamelToSnake(combinedFilters),
-        ),
+        filters: combinedFilters,
         property: "average",
         req_data_config: selectedGraphConfig,
         project_id: observeId,
@@ -209,9 +202,7 @@ const GraphSection = ({
     queryFn: () =>
       axios.post(endpoints.project.getSpanGraphData(), {
         interval: selectedInterval,
-        filters: canonicalizeApiFilterColumnIds(
-          objectCamelToSnake(combinedFilters),
-        ),
+        filters: combinedFilters,
         property: "average",
         req_data_config: selectedGraphConfig,
         project_id: observeId,

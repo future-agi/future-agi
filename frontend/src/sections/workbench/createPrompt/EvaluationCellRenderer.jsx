@@ -160,12 +160,15 @@ const EvaluationCellRenderer = (params) => {
   const shouldBeStringified = ["array", "float"].includes(dataType);
 
   const handleCellClick = (originType) => {
+    // Live index at click time — the destructured rowIndex goes stale after a
+    // row delete/reorder, which sent the run to the wrong position.
+    const currentRowIndex = params.node?.rowIndex ?? rowIndex;
     switch (originType) {
       case OriginTypes.EVALUATION:
-        handleRun(originType, rowIndex, templateVersion, evalTemplateId);
+        handleRun(originType, currentRowIndex, templateVersion, evalTemplateId);
         break;
       default:
-        handleRun(originType, rowIndex, templateVersion);
+        handleRun(originType, currentRowIndex, templateVersion);
         break;
     }
   };

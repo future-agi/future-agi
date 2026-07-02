@@ -35,7 +35,9 @@ import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { useCreateEval } from "src/sections/evals/hooks/useCreateEval";
 import { useUpdateEval } from "src/sections/evals/hooks/useEvalDetail";
 import { useCreateCompositeEval } from "src/sections/evals/hooks/useCompositeEval";
-import ModelSelector, { FAGI_MODEL_VALUES } from "src/sections/evals/components/ModelSelector";
+import ModelSelector, {
+  FAGI_MODEL_VALUES,
+} from "src/sections/evals/components/ModelSelector";
 import InstructionEditor from "src/sections/evals/components/InstructionEditor";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import LLMPromptEditor from "src/sections/evals/components/LLMPromptEditor";
@@ -127,7 +129,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const createEval = useCreateEval();
   const createComposite = useCreateCompositeEval();
   const sourceRef = useRef(null);
-  const {testId,executionId} = useParams();
+  const { testId, executionId } = useParams();
   // Form state (same as EvalCreatePage)
   const [name, setName] = useState("");
   const [mode, setMode] = useState("single");
@@ -150,9 +152,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     () => contextOptionsForRowType(sourceRowType) || ["variables_only"],
   );
 
-
   const handleSourceRowTypeChange = useCallback((rt) => {
-    const map =  TRACING_ROW_TYPE_TO_KEY;
+    const map = TRACING_ROW_TYPE_TO_KEY;
     const key = map[rt];
     const seeded = key ? contextOptionsForRowType(key) : null;
     if (seeded) setContextOptions(seeded);
@@ -394,7 +395,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       }
     }
 
-    if (!sourceReady && source !== "composite" && !hasDataInjection) {
+    if (!sourceReady && source !== "composite") {
       next.mapping = "Map all variables before saving";
     }
 
@@ -641,7 +642,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       (evalType === "code"
         ? code.trim()
         : instructions.trim() && !needsTemplateVariable) &&
-      (source === "composite" || sourceReady || hasDataInjection);
+      (source === "composite" || sourceReady);
 
   const getDisabledReason = () => {
     if (!name.trim()) return "Name is required";
@@ -1100,7 +1101,6 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                   />
                 </Box>
               )}
-
             </Box>
           }
           rightPanel={
@@ -1194,6 +1194,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
+                    hasDataInjection={hasDataInjection}
                     initialProjectId={sourceId}
                     initialRowType={sourceRowType}
                     isComposite={isComposite}
@@ -1209,6 +1210,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
+                    hasDataInjection={hasDataInjection}
                     onRowTypeChange={handleSourceRowTypeChange}
                     isComposite={isComposite}
                     compositeAdhocConfig={compositeAdhocConfig}
@@ -1248,6 +1250,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     <TestPlayground
                       ref={sourceRef}
                       templateId={draftId}
+                      evalName={name || ""}
                       instructions=""
                       evalType="llm"
                       requiredKeys={compositeUnionKeys}
@@ -1306,7 +1309,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
             </Typography>
           </Box>
         )}
-        {!sourceReady && !hasDataInjection && !testError && !testPassed && (
+        {!sourceReady && !testError && !testPassed && (
           <Typography
             variant="caption"
             color="text.secondary"
@@ -1317,9 +1320,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
           </Typography>
         )}
 
-        <ShowComponent
-          condition={!hasDataInjection }
-        >
+        <ShowComponent condition={!hasDataInjection}>
           <CustomTooltip
             show={!!disabledReason}
             title={disabledReason || ""}
@@ -1336,7 +1337,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 disabled={
                   isTesting ||
                   !!disabledReason ||
-                  (!sourceReady && !hasDataInjection) ||
+                  !sourceReady ||
                   !draftId ||
                   isComposite ||
                   source === "workbench"
@@ -1370,7 +1371,9 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
               size="small"
               loading={isSaving}
               disabled={!canSave}
-              onClick={isComposite ? handleSaveAndAddComposite : handleSaveAndAdd}
+              onClick={
+                isComposite ? handleSaveAndAddComposite : handleSaveAndAdd
+              }
               sx={{ textTransform: "none" }}
             >
               {isComposite ? "Create & Configure" : "Save & Add Evaluation"}

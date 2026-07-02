@@ -91,7 +91,7 @@ const AddedEvaluations = ({
           }}
         >
           <EvaluationSection
-            selected={selectedColumn?.length}
+            selected={Boolean(selectedColumn?.length)}
             showRun={false}
             hideStatus
             savedEvals={userEvalList}

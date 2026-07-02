@@ -21,7 +21,7 @@ const RoleProtection = ({ allowedRoles, children }) => {
   const { user, role: workspaceRole } = useAuthContext();
 
   // Get both organization role and workspace role
-  const orgRole = user?.organization_role ?? user?.organizationRole;
+  const orgRole = user?.organization_role;
 
   // Check if either org role or workspace role is allowed
   const hasOrgAccess = orgRole && allowedRoles.includes(orgRole);

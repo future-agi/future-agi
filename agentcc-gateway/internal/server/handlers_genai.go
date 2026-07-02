@@ -215,13 +215,13 @@ func (h *Handlers) handleGenAINonStream(ctx context.Context, w http.ResponseWrit
 		return
 	}
 
-	// Extract usage for cost tracking.
-	promptTokens, candidateTokens, _ := genaifmt.ExtractUsageMetadata(respBody)
+	// Extract usage for cost tracking (completion folds in thinking tokens).
+	promptTokens, completionTokens, _ := genaifmt.ExtractUsageMetadata(respBody)
 	if promptTokens > 0 {
 		rc.Metadata["input_tokens"] = strconv.Itoa(promptTokens)
 	}
-	if candidateTokens > 0 {
-		rc.Metadata["output_tokens"] = strconv.Itoa(candidateTokens)
+	if completionTokens > 0 {
+		rc.Metadata["output_tokens"] = strconv.Itoa(completionTokens)
 	}
 
 	h.setAgentccHeaders(w, rc)

@@ -93,8 +93,10 @@ def reseed_broken_demo_data(apps, schema_editor):
             # so we must check the result ourselves.
             new_demo = (
                 Dataset.objects.filter(
-                    organization_id=org_id, source="demo",
-                    name="Demo-dataset", deleted=False,
+                    organization_id=org_id,
+                    source="demo",
+                    name="Demo-dataset",
+                    deleted=False,
                 )
                 .annotate(row_count=Count("row", filter=Q(row__deleted=False)))
                 .first()
@@ -120,7 +122,6 @@ def reseed_broken_demo_data(apps, schema_editor):
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ("accounts", "0019_merge_20260407_1927"),
         # This data migration reads model_hub (Dataset/Row/Cell/Column) and
@@ -128,8 +129,8 @@ class Migration(migrations.Migration):
         # first. Without these deps a fresh database can apply this migration
         # before them, raising "No installed app with label 'model_hub'" and
         # crash-looping the backend on first boot.
-        ("model_hub", "0100_merge_20260521_0749"),
-        ("tracer", "0077_merge_20260514_1559"),
+        ("model_hub", "0104_merge_20260526_0921"),
+        ("tracer", "0078_canonicalize_persisted_filter_contracts"),
     ]
 
     operations = [

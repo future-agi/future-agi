@@ -21,7 +21,11 @@ export default function NumericSettings({ control }) {
         <Controller
           name="settings.min"
           control={control}
-          rules={{ required: "Required" }}
+          rules={{
+            required: "Required",
+            validate: (value) =>
+              Number(value) >= 0 || "Minimum cannot be negative",
+          }}
           render={({ field, fieldState }) => (
             <TextField
               {...field}
@@ -33,6 +37,7 @@ export default function NumericSettings({ control }) {
               error={!!fieldState.error}
               helperText={fieldState.error?.message}
               onChange={(e) => field.onChange(Number(e.target.value))}
+              inputProps={{ min: 0 }}
             />
           )}
         />
@@ -41,9 +46,13 @@ export default function NumericSettings({ control }) {
           control={control}
           rules={{
             required: "Required",
-            validate: (value, formValues) =>
-              Number(value) > Number(formValues.settings?.min) ||
-              "Max must be greater than min",
+            validate: (value, formValues) => {
+              if (Number(value) < 0) return "Maximum cannot be negative";
+              return (
+                Number(value) > Number(formValues.settings?.min) ||
+                "Max must be greater than min"
+              );
+            },
           }}
           render={({ field, fieldState }) => (
             <TextField
@@ -56,6 +65,7 @@ export default function NumericSettings({ control }) {
               error={!!fieldState.error}
               helperText={fieldState.error?.message}
               onChange={(e) => field.onChange(Number(e.target.value))}
+              inputProps={{ min: 0 }}
             />
           )}
         />
@@ -80,6 +90,7 @@ export default function NumericSettings({ control }) {
             error={!!fieldState.error}
             helperText={fieldState.error?.message}
             onChange={(e) => field.onChange(Number(e.target.value))}
+            inputProps={{ min: 0.000001, step: "any" }}
           />
         )}
       />

@@ -24,10 +24,16 @@ import { useAuthContext } from "src/auth/hooks";
 import {
   useCreateAnnotationQueue,
   useUpdateAnnotationQueue,
+  useUpdateAnnotationQueueStatus,
 } from "src/api/annotation-queues/annotation-queues";
 import LabelPicker from "./components/label-picker";
 import AnnotatorPicker from "./components/annotator-picker";
-import { QUEUE_ROLES, isQueueAnnotatorRole, queueRoleList } from "./constants";
+import {
+  QUEUE_ROLES,
+  QUEUE_STATUS_TRANSITIONS,
+  isQueueAnnotatorRole,
+  queueRoleList,
+} from "./constants";
 
 const STATUS_OPTIONS = [
   { value: "draft", label: "Draft" },
@@ -121,16 +127,39 @@ export default function CreateQueueDrawer({
     useCreateAnnotationQueue();
   const { mutate: updateQueue, isPending: isUpdating } =
     useUpdateAnnotationQueue();
-  const isPending = isCreating || isUpdating;
+  const { mutate: updateStatus, isPending: isStatusUpdating } =
+    useUpdateAnnotationQueueStatus();
+  const isPending = isCreating || isUpdating || isStatusUpdating;
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
-  const { control, handleSubmit, reset, setValue, watch } = useForm({
+  // Status lives behind its own state-machine endpoint, so only offer targets
+  // the backend will accept from the queue's current status (plus the current
+  // status itself, so the select can show where it stands). Offering an
+  // unreachable target like "draft" just produces a guaranteed error.
+  const currentStatus = editQueue?.status || "draft";
+  const statusOptions = STATUS_OPTIONS.filter(
+    (opt) =>
+      opt.value === currentStatus ||
+      (QUEUE_STATUS_TRANSITIONS[currentStatus] || []).includes(opt.value),
+  );
+
+  const { control, handleSubmit, reset, setValue, watch, trigger } = useForm({
     defaultValues: DEFAULT_VALUES,
   });
 
   const labelIds = watch("label_ids");
   const annotators = watch("annotators");
+  const autoAssign = watch("autoAssign");
   const annotatorCount = annotators.filter(isQueueAnnotatorRole).length;
+
+  // RHF only re-runs field validation on user interaction with that field, so
+  // the "Cannot exceed annotator count" error on `annotations_required` would
+  // stay stale when annotators are added/removed or have their roles changed.
+  // Re-trigger whenever the annotator count shifts so the error clears (or
+  // re-appears) in step with the picker.
+  useEffect(() => {
+    trigger("annotations_required");
+  }, [annotatorCount, trigger]);
 
   useEffect(() => {
     if (open && editQueue) {
@@ -158,7 +187,7 @@ export default function CreateQueueDrawer({
       setAdvancedOpen(false);
     } else if (open) {
       // Pre-select the current user as manager for new queues
-      const currentUserId = user?.id || user?.pk;
+      const currentUserId = user?.id;
       reset({
         ...DEFAULT_VALUES,
         annotators: currentUserId
@@ -197,9 +226,29 @@ export default function CreateQueueDrawer({
     };
 
     if (isEdit) {
+      // `status` is read-only on the queue serializer; it only moves through the
+      // dedicated state-machine endpoint. Save settings first, then transition
+      // status separately (and only when it actually changed — a no-op
+      // same-status transition is rejected by the state machine).
+      const statusChanged = formData.status !== currentStatus;
       updateQueue(
-        { id: editQueue.id, ...payload, status: formData.status },
-        { onSuccess: () => onClose() },
+        { id: editQueue.id, ...payload },
+        {
+          onSuccess: () => {
+            if (!statusChanged) {
+              onClose();
+              return;
+            }
+            updateStatus(
+              { id: editQueue.id, status: formData.status },
+              {
+                onSuccess: () => onClose(),
+                // Keep the drawer open on failure so the user can pick a valid
+                // target; the status hook surfaces the backend reason.
+              },
+            );
+          },
+        },
       );
     } else {
       createQueue(payload, {
@@ -323,7 +372,7 @@ export default function CreateQueueDrawer({
                           "& .MuiOutlinedInput-root": { borderRadius: 0.5 },
                         }}
                       >
-                        {STATUS_OPTIONS.map((opt) => (
+                        {statusOptions.map((opt) => (
                           <MenuItem key={opt.value} value={opt.value}>
                             {opt.label}
                           </MenuItem>
@@ -356,10 +405,9 @@ export default function CreateQueueDrawer({
                   value={annotators}
                   onChange={(a) => setValue("annotators", a)}
                   creatorId={
-                    isEdit
-                      ? editQueue?.created_by
-                      : String(user?.id || user?.pk || "")
+                    isEdit ? editQueue?.created_by : String(user?.id || "")
                   }
+                  highlightAutoAssigned={autoAssign}
                   isManager
                 />
 

@@ -111,7 +111,12 @@ export function scoreColor(score) {
 }
 
 /** Single eval row with collapsible explanation + optional "View span" */
-const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => {
+const EvalTableRow = ({
+  ev,
+  onSelectSpan,
+  showSpanColumn,
+  onFixWithFalcon,
+}) => {
   const [expanded, setExpanded] = useState(false);
   const isSkipped = ev?.skipped === true;
   const hasError = ev?.error === true && !isSkipped;
@@ -149,6 +154,9 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
   // Error localization visibility — surfaced for every eval that has
   // enough identifiers to drive either the cell-based or trace-based
   // flow. Rows with just an explanation still expand without it.
+  // Composite evals have no localizable input of their own — skip the whole
+  // localization flow before computing any of its identifiers.
+  const isComposite = ev?.template_type === "composite";
   const initialAnalysis = ev.error_analysis || ev.errorAnalysis || null;
   const cellId = ev.cell_id || ev.cellId;
   const observationSpanId =
@@ -163,10 +171,11 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
   const initialStatus =
     ev.error_localizer_status || ev.errorLocalizerStatus || null;
   const hasErrorLocalization =
-    !!initialAnalysis ||
-    !!cellId ||
-    !!initialStatus ||
-    !!(observationSpanId && customEvalConfigId);
+    !isComposite &&
+    (!!initialAnalysis ||
+      !!cellId ||
+      !!initialStatus ||
+      !!(observationSpanId && customEvalConfigId));
   const canExpand = !!explanation || hasErrorLocalization;
 
   return (

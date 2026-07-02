@@ -7,6 +7,7 @@ import requests
 import structlog
 from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
+from django.db import close_old_connections, transaction
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from slack_sdk import WebhookClient
@@ -15,10 +16,6 @@ from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import OrgApiKey, User
 from accounts.serializers.user import UserSignupSerializer
-from accounts.user_onboard import (
-    create_demo_traces_and_spans,
-    upload_demo_dataset,
-)
 from analytics.mixpanel_util import mixpanel_tracker
 from analytics.utils import (
     MixpanelEvents,
@@ -33,6 +30,31 @@ from tfc.utils.email import email_helper
 from tfc.utils.parse_errors import parse_serialized_errors
 
 logger = structlog.get_logger(__name__)
+
+
+def _fire_deployment_telemetry_registration():
+    import threading
+
+    try:
+        from tfc.deployment_telemetry.config import is_self_hosted_deployment
+
+        if not is_self_hosted_deployment():
+            return
+
+        def _register():
+            close_old_connections()
+            try:
+                from tfc.deployment_telemetry.sender import attempt_registration
+
+                attempt_registration()
+            finally:
+                close_old_connections()
+
+        threading.Thread(target=_register).start()
+    except Exception:
+        logger.warning(
+            "deployment_telemetry_signup_hook_failed", exc_info=True
+        )
 
 
 def resolve_org(request):
@@ -193,12 +215,6 @@ def first_signup(data, mode=None):
     domain = email_parts[1]
 
     if domain in FREE_EMAIL_DOMAINS:
-        # For free email providers, use the username part and create org name
-        username = email_parts[0]
-        # Remove numbers and special characters, capitalize first letter of each word
-        # org_name = re.sub(r'[0-9._-]+', ' ', username)
-        # org_name = ' '.join(word.capitalize() for word in org_name.split())
-        # data["company_name"] = org_name + " Org"
         data["company_name"] = ""
     else:
         # For work emails, use domain as before
@@ -269,6 +285,7 @@ def first_signup(data, mode=None):
         if generated_password:
             process_post_registration(user.id, generated_password)
 
+        transaction.on_commit(_fire_deployment_telemetry_registration)
         return user
 
     else:
@@ -474,12 +491,6 @@ def _run_post_registration(user_id, generated_password):
         if os.getenv("ENV_TYPE") not in ["local"]:
             updated, err = send_hubspot_notification(user)
             send_slack_notification(user, updated=updated, err=err)
-
-        org = get_user_organization(user)
-        if org:
-            upload_demo_dataset(org.id, str(user.id))
-            # create_demo_prompt_template(str(org.id), str(user.id))
-            create_demo_traces_and_spans(str(org.id))
 
 
 def existing_member_access_will_change(existing_user, organization, org_level, workspace_access):

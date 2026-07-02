@@ -7,7 +7,6 @@ Covers:
 """
 
 import pytest
-from django.utils import timezone
 
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
@@ -172,6 +171,12 @@ class TestDeriveOutputType:
     def test_score(self, user_eval_template):
         """Config output 'score' -> 'percentage'."""
         assert derive_output_type(user_eval_template) == "percentage"
+
+    def test_prefers_normalized_output_type(self, user_eval_template):
+        """Dedicated scoring field is canonical when present."""
+        user_eval_template.output_type_normalized = "pass_fail"
+        user_eval_template.config = {"output": "score"}
+        assert derive_output_type(user_eval_template) == "pass_fail"
 
     def test_choices(self, agent_eval_template):
         """Config output 'choices' -> 'deterministic'."""
@@ -558,25 +563,33 @@ class TestEvalListNegationFilters:
 
     def test_serializer_accepts_eval_type_not(self, auth_client):
         response = auth_client.post(
-            self.url, {"filters": {"eval_type_not": ["llm"]}}, format="json",
+            self.url,
+            {"filters": {"eval_type_not": ["llm"]}},
+            format="json",
         )
         assert response.status_code == 200
 
     def test_serializer_accepts_output_type_not(self, auth_client):
         response = auth_client.post(
-            self.url, {"filters": {"output_type_not": ["pass_fail"]}}, format="json",
+            self.url,
+            {"filters": {"output_type_not": ["pass_fail"]}},
+            format="json",
         )
         assert response.status_code == 200
 
     def test_serializer_accepts_created_by_not(self, auth_client):
         response = auth_client.post(
-            self.url, {"filters": {"created_by_not": ["SomeUser"]}}, format="json",
+            self.url,
+            {"filters": {"created_by_not": ["SomeUser"]}},
+            format="json",
         )
         assert response.status_code == 200
 
     def test_serializer_rejects_invalid_eval_type_not(self, auth_client):
         response = auth_client.post(
-            self.url, {"filters": {"eval_type_not": ["invalid_type"]}}, format="json",
+            self.url,
+            {"filters": {"eval_type_not": ["invalid_type"]}},
+            format="json",
         )
         assert response.status_code == 400
 
@@ -604,6 +617,7 @@ class TestEvalTemplateBulkDeleteAPI:
         # Verify template is soft-deleted
         user_eval_template.refresh_from_db()
         assert user_eval_template.deleted is True
+        assert user_eval_template.deleted_at is not None
 
     def test_delete_system_templates_rejected(self, auth_client, system_eval_template):
         """System templates should not be deleted."""
@@ -629,6 +643,21 @@ class TestEvalTemplateBulkDeleteAPI:
         )
         assert response.status_code == 400
 
+    def test_delete_rejects_unknown_fields(self, auth_client, user_eval_template):
+        response = auth_client.post(
+            self.url,
+            {
+                "template_ids": [str(user_eval_template.id)],
+                "templateIds": [str(user_eval_template.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 400
+        assert response.data["message"] == "templateIds: Unknown field."
+        user_eval_template.refresh_from_db()
+        assert user_eval_template.deleted is False
+
     def test_delete_mixed_templates(
         self, auth_client, system_eval_template, user_eval_template
     ):
@@ -651,6 +680,7 @@ class TestEvalTemplateBulkDeleteAPI:
 
         user_eval_template.refresh_from_db()
         assert user_eval_template.deleted is True
+        assert user_eval_template.deleted_at is not None
 
 
 # =============================================================================
@@ -790,3 +820,87 @@ class TestEvalListOutputTypeFilter:
             filters={},
         )
         assert qs.count() >= 6
+
+
+# =============================================================================
+# Tag filter — case-insensitive (TH-5638)
+# =============================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestTagFilterCaseInsensitive:
+    """Tag filters must match regardless of how the tag was stored (TH-5638).
+
+    The fix lowercases both the stored tags (via DB ARRAY/UNNEST/LOWER) and
+    the filter values so any casing (iOS, coDe, GPT4, ...) matches correctly.
+    """
+
+    def _make(self, organization, workspace, name, tags):
+        return EvalTemplate.no_workspace_objects.create(
+            name=name,
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            config={"output": "score"},
+            eval_tags=tags,
+            visible_ui=True,
+        )
+
+    def test_uppercase_filter_matches_lowercase_stored(self, organization, workspace):
+        """Filter tag 'CODE' matches eval stored with 'code'."""
+        self._make(organization, workspace, "eval_stored_lower", ["code"])
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"tags": ["CODE"]},
+        )
+        assert qs.filter(name="eval_stored_lower").exists()
+
+    def test_lowercase_filter_matches_uppercase_stored(self, organization, workspace):
+        """Filter tag 'code' matches eval stored with 'CODE'."""
+        self._make(organization, workspace, "eval_stored_upper", ["CODE"])
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"tags": ["code"]},
+        )
+        assert qs.filter(name="eval_stored_upper").exists()
+
+    def test_mixed_case_filter_matches_title_stored(self, organization, workspace):
+        """Filter tag 'CODE' matches eval stored with 'Code'."""
+        self._make(organization, workspace, "eval_stored_title", ["Code"])
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"tags": ["CODE"]},
+        )
+        assert qs.filter(name="eval_stored_title").exists()
+
+    def test_arbitrary_mixed_case_filter_matches(self, organization, workspace):
+        """Filter 'iOS' matches stored 'ios', 'IOS', 'iOS' — not just lower/upper/title."""
+        self._make(organization, workspace, "eval_ios_lower", ["ios"])
+        self._make(organization, workspace, "eval_ios_upper", ["IOS"])
+        self._make(organization, workspace, "eval_ios_mixed", ["iOS"])
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"tags": ["iOS"]},
+        )
+        names = set(qs.values_list("name", flat=True))
+        assert "eval_ios_lower" in names
+        assert "eval_ios_upper" in names
+        assert "eval_ios_mixed" in names
+
+    def test_tags_not_filter_is_also_case_insensitive(self, organization, workspace):
+        """Exclusion filter 'tags_not' works case-insensitively."""
+        self._make(organization, workspace, "eval_to_exclude", ["CODE"])
+        self._make(organization, workspace, "eval_to_keep", ["safety"])
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"tags_not": ["code"]},
+        )
+        names = set(qs.values_list("name", flat=True))
+        assert "eval_to_exclude" not in names
+        assert "eval_to_keep" in names

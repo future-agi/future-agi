@@ -38,6 +38,7 @@ TEMPORAL_ACTIVITY_MODULES = [
     "model_hub.tasks.optimisation_runner",
     "model_hub.tasks.prompt_template_optimizer",
     "model_hub.tasks.develop_dataset",
+    "model_hub.tasks.annotation_automation",
     # model_hub views
     "model_hub.views.run_prompt",
     "model_hub.views.experiment_runner",
@@ -74,6 +75,10 @@ TEMPORAL_ACTIVITY_MODULES = [
     "integrations.transformers.langfuse_transformer",
     # billing tasks (Phase 4.6 — budget catch-up)
     "tfc.temporal.schedules.billing",
+    # Self-hosted deployment registration and usage heartbeat
+    "tfc.temporal.schedules.deployment_telemetry",
+    # Deployment telemetry receiver-side integrations (PostHog, HubSpot, Slack)
+    "ee.usage.services.deployment_telemetry_integrations",
 ]
 
 

@@ -16,6 +16,7 @@ from tracer.utils.constants import (
     RANGE_OPS,
     SPAN_ATTR_ALLOWED_OPS,
 )
+from tracer.utils.filter_operators import FILTER_TYPE_ALLOWED_OPS
 
 
 @dataclass
@@ -389,7 +390,9 @@ def validate_filters_helper(value):
         return []
 
     REQUIRED_FILTER_KEYS = ["column_id", "filter_config"]
-    VALID_CONFIG_KEYS = ["filter_type", "filter_op", "filter_value"]
+    VALID_FILTER_KEYS = {"column_id", "display_name", "filter_config"}
+    REQUIRED_CONFIG_KEYS = ["filter_type", "filter_op"]
+    VALID_CONFIG_KEYS = {"filter_type", "filter_op", "filter_value", "col_type"}
 
     for filter_item in value:
         if not isinstance(filter_item, dict):
@@ -400,22 +403,60 @@ def validate_filters_helper(value):
             raise serializers.ValidationError(
                 f"Missing required filter keys: {', '.join(missing_keys)}"
             )
+        extra_keys = sorted(set(filter_item) - VALID_FILTER_KEYS)
+        if extra_keys:
+            raise serializers.ValidationError(
+                f"Unknown filter keys: {', '.join(extra_keys)}"
+            )
 
         filter_config = filter_item.get("filter_config")
         if not isinstance(filter_config, dict):
             raise serializers.ValidationError("Filter config must be a dictionary.")
 
-        missing_keys = [key for key in VALID_CONFIG_KEYS if key not in filter_config]
+        missing_keys = [key for key in REQUIRED_CONFIG_KEYS if key not in filter_config]
         if missing_keys:
             raise serializers.ValidationError(
                 f"Missing required filter config keys: {', '.join(missing_keys)}"
             )
-
-        col_type = filter_config.get("col_type") or filter_config.get("colType")
-        if col_type == "SPAN_ATTRIBUTE":
-            _validate_span_attribute_filter(
-                filter_item.get("column_id"), filter_config
+        extra_config_keys = sorted(set(filter_config) - VALID_CONFIG_KEYS)
+        if extra_config_keys:
+            raise serializers.ValidationError(
+                f"Unknown filter config keys: {', '.join(extra_config_keys)}"
             )
+
+        filter_type = filter_config.get("filter_type")
+        filter_op = filter_config.get("filter_op")
+        allowed_ops = FILTER_TYPE_ALLOWED_OPS.get(filter_type)
+        if allowed_ops is None:
+            raise serializers.ValidationError(
+                f"Unsupported filter_type {filter_type!r}."
+            )
+        if filter_op not in allowed_ops:
+            raise serializers.ValidationError(
+                f"Unsupported filter_op {filter_op!r} for filter_type {filter_type!r}."
+            )
+        if filter_op in RANGE_OPS:
+            filter_value = filter_config.get("filter_value")
+            if not isinstance(filter_value, list) or len(filter_value) != 2:
+                raise serializers.ValidationError(
+                    f"Filter {filter_item.get('column_id')!r}: {filter_op!r} "
+                    "requires a 2-element filter_value list."
+                )
+        elif filter_op in LIST_OPS:
+            filter_value = filter_config.get("filter_value")
+            if not isinstance(filter_value, list) or not filter_value:
+                raise serializers.ValidationError(
+                    f"Filter {filter_item.get('column_id')!r}: {filter_op!r} "
+                    "requires a non-empty filter_value list."
+                )
+        elif filter_op not in NO_VALUE_OPS and "filter_value" not in filter_config:
+            raise serializers.ValidationError(
+                f"Filter {filter_item.get('column_id')!r}: {filter_op!r} requires filter_value."
+            )
+
+        col_type = filter_config.get("col_type")
+        if col_type == "SPAN_ATTRIBUTE":
+            _validate_span_attribute_filter(filter_item.get("column_id"), filter_config)
 
     return value
 
@@ -448,36 +489,36 @@ def validate_sort_params_helper(value):
     return value
 
 
-def get_annotation_labels_for_project(project_id, organization=None):
+def get_annotation_labels_for_project(project_id, organization=None, project_ids=None):
     """Find annotation labels that have at least one Score in a project.
 
     Labels may not have a direct ``project`` FK set (e.g. org-wide centralized
-    labels), so we look for labels referenced by Score records whose trace or
-    observation_span belongs to the project.
+    labels), so we also look for labels referenced by Score records in the project.
 
-    Pre-deprecation this method also union'd in ``TraceAnnotation``-referenced
-    labels. Score is the unified store now (the dual-write mirrors every
-    TraceAnnotation write to Score, so any label in TraceAnnotation is also
-    reachable via Score). Reading both was redundant; reading Score alone
-    is the path forward toward fully retiring TraceAnnotation.
+    Pass ``project_ids`` (a list) instead of ``project_id`` to scope across
+    multiple projects (org-scoped span listing).
+
+    The score→project lookup is routed via ``_REGISTRY["ANNOTATION_LABELS"]``:
+    V1_ONLY reads PG (Score joins legacy trace/observation_span), V2_ONLY reads
+    CH (model_hub_score scoped via spans). See ``annotation_label_source``.
     """
     from django.db.models import Q
 
-    from model_hub.models.score import Score
+    from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
 
-    # Labels with scores for this project
-    score_label_ids = (
-        Score.objects.filter(
-            Q(trace__project_id=project_id)
-            | Q(observation_span__project_id=project_id),
-            deleted=False,
-        )
-        .values("label_id")
-        .distinct()
-    )
+    SourceCls = get_query_builder_class("ANNOTATION_LABELS")  # noqa: N806
+
+    if project_ids is not None:
+        score_label_ids = set()
+        for pid in project_ids:
+            score_label_ids.update(SourceCls().label_ids_for_project(pid))
+        owner_q = Q(project_id__in=project_ids)
+    else:
+        score_label_ids = SourceCls().label_ids_for_project(project_id)
+        owner_q = Q(project_id=project_id)
 
     return AnnotationsLabels.objects.filter(
-        Q(project_id=project_id) | Q(id__in=score_label_ids),
+        owner_q | Q(id__in=score_label_ids),
         deleted=False,
     ).distinct()
 

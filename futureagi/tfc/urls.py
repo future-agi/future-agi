@@ -34,7 +34,7 @@ from tfc.views.health import (
 from tfc.views.socket import CallWebsocketView
 from tracer.views.clickhouse_health import ClickHouseHealthView
 from tracer.views.langfuse_ingestion import LangfuseIngestionView
-from tracer.views.otlp import OTLPHealthView, OTLPTraceView
+from tracer.views.otlp import OTLPHealthView
 from tracer.views.span_attributes import (
     SpanAttributeDetailView,
     SpanAttributeKeysView,
@@ -42,10 +42,10 @@ from tracer.views.span_attributes import (
 )
 
 info_api = openapi.Info(
-    title="TFC Management API",
+    title="Future AGI Management API",
     default_version="v1",
-    description="The endpoints defined below allow users to programmatically carry out various actions on the tfc platform.",
-    terms_of_service="https://tfc.com/legal",
+    description="The endpoints defined below allow users to programmatically carry out various actions on the Future AGI platform.",
+    terms_of_service="https://futureagi.com/legal",
     contact=openapi.Contact(email="help@futureagi.com"),
     license=openapi.License(
         name="Apache 2.0", url="http://www.apache.org/licenses/LICENSE-2.0.html"
@@ -60,7 +60,8 @@ urlpatterns = [
     # Standard OTLP Endpoints (OpenTelemetry Protocol)
     # https://opentelemetry.io/docs/specs/otlp/
     # ===========================================
-    re_path(r"^v1/traces/?$", OTLPTraceView.as_view(), name="otlp-traces"),
+    # Migrated to fi-collector service (June 2026)
+    # re_path(r"^v1/traces/?$", OTLPTraceView.as_view(), name="otlp-traces"),
     path("v1/health", OTLPHealthView.as_view(), name="otlp-health"),
     # ===========================================
     # Application Routes
@@ -139,6 +140,25 @@ urlpatterns = [
 
 if has_ee("ee.usage"):
     urlpatterns += [path("usage/", include("ee.usage.urls"))]
+    from tfc.deployment_telemetry.config import is_cloud_deployment
+
+    if is_cloud_deployment():
+        try:
+            urlpatterns += [
+                path(
+                    "telemetry/",
+                    include("ee.usage.deployment_telemetry_urls"),
+                )
+            ]
+        except ImportError:
+            # The deployment_telemetry URLconf is missing on a cloud install.
+            # Silently passing here previously left an operator with no
+            # signal that ``/telemetry/`` would 404; warn instead.
+            import structlog
+
+            structlog.get_logger(__name__).warning(
+                "deployment_telemetry_url_mount_skipped", exc_info=True
+            )
 
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 

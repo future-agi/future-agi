@@ -1,16 +1,15 @@
 import operator
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from enum import Enum
 from functools import reduce
 
-from django.db.models import Exists, F, FloatField, OuterRef, Q, TextField, Value
+from django.db.models import Exists, FloatField, OuterRef, Q, Value
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Cast, Round
 from django.utils.dateparse import parse_datetime as django_parse_datetime
 
 from tracer.models.observability_provider import ProviderChoices
-from tracer.utils.filter_operators import normalize_filter_op
 from tracer.utils.helper import extract_date
 
 
@@ -57,6 +56,23 @@ _CREATED_AT_OP_MAP = {
 }
 
 
+def normalize_filter_item(filter_item):
+    """Return the canonical snake_case filter payload.
+
+    Filter request bodies are part of the public API contract. Callers must
+    send ``column_id`` and ``filter_config`` with snake_case config keys; the
+    backend intentionally does not guess camelCase aliases here.
+    """
+    if not isinstance(filter_item, dict) or not filter_item:
+        return {"column_id": None, "filter_config": {}}
+
+    raw_config = filter_item.get("filter_config") or {}
+    return {
+        "column_id": filter_item.get("column_id"),
+        "filter_config": dict(raw_config) if isinstance(raw_config, dict) else {},
+    }
+
+
 def apply_created_at_filters(qs, filters):
     """
     Apply created_at datetime filters to a queryset.
@@ -64,10 +80,10 @@ def apply_created_at_filters(qs, filters):
     """
     applied = set()
     for i, f in enumerate(filters):
-        _, cfg = FilterEngine._normalize_filter_params(f)
+        cfg = normalize_filter_item(f)["filter_config"]
         if cfg.get("filter_type") != "datetime":
             continue
-        op = normalize_filter_op(cfg.get("filter_op"))
+        op = cfg.get("filter_op")
         val = cfg.get("filter_value")
         if val is None:
             continue
@@ -120,6 +136,7 @@ class FilterEngine:
         "trace_id": "trace_id",
         "span_id": "id",
         "created_at": "created_at",
+        "name": "name",
         "run_name": "run_name",
         "span_name": "span_name",
         "trace_name": "trace_name",
@@ -137,21 +154,41 @@ class FilterEngine:
         "prompt_label_id": "prompt_label_id",
         "prompt_label_name": "prompt_label_name",
     }
+    SYSTEM_METRIC_FILTER_IDS = frozenset(DEFAULT_FIELD_MAP) | {
+        "avg_score",
+        "total_cost",
+        "total_traces_count",
+        "duration",
+        "end_time",
+        "first_message",
+        "last_message",
+        "has_eval",
+        "has_annotation",
+    }
 
     # Voice system metric IDs that need custom SYSTEM_METRIC handling.
     # These are filtered via JSON extraction from span_attributes rather
     # than direct column lookups.
     VOICE_SYSTEM_METRIC_IDS = {
+        "duration",
         "turn_count",
         "agent_talk_percentage",
         "avg_agent_latency_ms",
         "bot_wpm",
         "user_wpm",
         "user_interruption_count",
+        "user_interruption_rate",
         "ai_interruption_count",
+        "ai_interruption_rate",
     }
 
     VOICE_METRIC_DEFINITIONS = {
+        "duration": {
+            "json_keys": ["call.duration"],
+            "annotation": "_voice_duration_seconds",
+            "output_field": FloatField(),
+            "round": False,
+        },
         "turn_count": {
             "json_keys": ["call.total_turns"],
             "annotation": "_voice_turn_count",
@@ -183,10 +220,22 @@ class FilterEngine:
             "annotation": "_voice_user_interruptions",
             "output_field": FloatField(),
         },
+        "user_interruption_rate": {
+            "json_keys": ["user_interruption_rate"],
+            "annotation": "_voice_user_interruption_rate",
+            "output_field": FloatField(),
+            "round": False,
+        },
         "ai_interruption_count": {
             "json_keys": ["ai_interruption_count"],
             "annotation": "_voice_ai_interruptions",
             "output_field": FloatField(),
+        },
+        "ai_interruption_rate": {
+            "json_keys": ["ai_interruption_rate"],
+            "annotation": "_voice_ai_interruption_rate",
+            "output_field": FloatField(),
+            "round": False,
         },
     }
 
@@ -229,49 +278,25 @@ class FilterEngine:
         except (ValueError, TypeError, IndexError):
             return False, None
 
-    _INNER_KEY_MAP = {
-        "filterOp": "filter_op",
-        "filterType": "filter_type",
-        "filterValue": "filter_value",
-        "colType": "col_type",
-    }
-
     @staticmethod
     def _normalize_filter_params(filter_item):
         """
-        Normalize filter parameters to handle both camelCase and snake_case.
-
-        Normalizes both outer keys (columnId/column_id, filterConfig/filter_config)
-        and inner keys within filter_config (filterOp→filter_op, filterType→filter_type,
-        filterValue→filter_value, colType→col_type).
+        Read filter parameters from the canonical snake_case API payload.
 
         Args:
             filter_item: Dictionary containing filter parameters
 
         Returns:
-            tuple: (column_id, filter_config) with normalized parameter names
+            tuple: (column_id, filter_config)
         """
-        column_id = filter_item.get("columnId") or filter_item.get("column_id")
-        filter_config = (
-            filter_item.get("filterConfig") or filter_item.get("filter_config") or {}
-        )
-
-        if filter_config:
-            normalized = {}
-            for key, value in filter_config.items():
-                canonical = FilterEngine._INNER_KEY_MAP.get(key, key)
-                normalized[canonical] = value
-            filter_config = normalized
-
-        return column_id, filter_config
+        normalized = normalize_filter_item(filter_item)
+        return normalized["column_id"], normalized["filter_config"]
 
     def apply_filters(self, filters):
         filtered_objects = self.objects
 
         for filter_item in filters:
-            column_id, filter_config = FilterEngine._normalize_filter_params(
-                filter_item
-            )
+            column_id, filter_config = self._normalize_filter_params(filter_item)
             col_type = filter_config.get("col_type", ColType.NORMAL)
 
             if isinstance(col_type, str):
@@ -287,7 +312,11 @@ class FilterEngine:
                 filtered_objects = self._filter_number(
                     filtered_objects, column_id, filter_op, filter_value, col_type
                 )
-            elif filter_type in ["text", "array"]:
+            elif filter_type == "array":
+                filtered_objects = self._filter_array(
+                    filtered_objects, column_id, filter_op, filter_value, col_type
+                )
+            elif filter_type in ("text", "categorical", "thumbs", "annotator"):
                 filtered_objects = self._filter_text(
                     filtered_objects, column_id, filter_op, filter_value, col_type
                 )
@@ -297,10 +326,6 @@ class FilterEngine:
                 )
             elif filter_type == "datetime":
                 filtered_objects = self._filter_datetime(
-                    filtered_objects, column_id, filter_op, filter_value, col_type
-                )
-            elif filter_type == "array":
-                filtered_objects = self._filter_array(
                     filtered_objects, column_id, filter_op, filter_value, col_type
                 )
             else:
@@ -456,7 +481,12 @@ class FilterEngine:
         return [obj for obj in objects if matches(obj.get(column_id))]
 
     def _filter_datetime(self, objects, column_id, filter_op, filter_value, col_type):
-        filter_op = normalize_filter_op(filter_op)
+        if filter_op in ("is_null", "is_not_null"):
+            return [
+                obj
+                for obj in objects
+                if (obj.get(column_id) is None) == (filter_op == "is_null")
+            ]
         if isinstance(filter_value, str):
             filter_value = datetime.strptime((filter_value), "%Y-%m-%dT%H:%M:%S.%fZ")
         elif isinstance(filter_value, list):
@@ -492,6 +522,17 @@ class FilterEngine:
         ]
 
     def _filter_array(self, objects, column_id, filter_op, filter_value, col_type):
+        expected_values = (
+            filter_value if isinstance(filter_value, list) else [filter_value]
+        )
+        expected_values = [value for value in expected_values if value not in (None, "")]
+        if filter_op in ("is_null", "is_not_null"):
+            return [
+                obj
+                for obj in objects
+                if (not obj.get(column_id)) == (filter_op == "is_null")
+            ]
+
         result = []
         for obj in objects:
             column_value = obj.get(column_id, [])
@@ -499,10 +540,10 @@ class FilterEngine:
                 continue
 
             if filter_op == "contains":
-                if filter_value in column_value:
+                if any(value in column_value for value in expected_values):
                     result.append(obj)
             elif filter_op == "not_contains":
-                if filter_value not in column_value:
+                if all(value not in column_value for value in expected_values):
                     result.append(obj)
 
         return result
@@ -513,7 +554,7 @@ class FilterEngine:
         Convert sort parameters to Django ORM ordering conditions
 
         Args:
-            sort_params (list): List of dicts with columnId and direction
+            sort_params (list): List of dicts with column_id and direction
             Example: [{"column_id": "avg_cost", "direction": "asc"}]
             field_map (dict, optional): Custom mapping of column_id to ORM field name.
                 When None, uses the default map for system metrics.
@@ -556,11 +597,11 @@ class FilterEngine:
         Expected filter format:
         [
             {
-                "columnId": "avg_cost",
-                "filterConfig": {
-                    "filterOp": "equals",
-                    "filterType": "number",
-                    "filterValue": 0.5
+                "column_id": "avg_cost",
+                "filter_config": {
+                    "filter_op": "equals",
+                    "filter_type": "number",
+                    "filter_value": 0.5
                 }
             }
         ]
@@ -579,46 +620,7 @@ class FilterEngine:
                 continue
 
             # Skip if not a valid filter
-            if column_id in [
-                "avg_score",
-                "avg_latency",
-                "latency",
-                "latency_ms",
-                "avg_cost",
-                "cost",
-                "tokens",
-                "node_type",
-                "trace_id",
-                "span_id",
-                "created_at",
-                "run_name",
-                "span_name",
-                "trace_name",
-                "session_id",
-                "prompt_template_version",
-                "labels",
-                "avg_input_tokens",
-                "input_tokens",
-                "prompt_tokens",
-                "avg_output_tokens",
-                "output_tokens",
-                "completion_tokens",
-                "unique_traces",
-                "first_used",
-                "last_used",
-                "user_id",
-                "status",
-                "start_time",
-                "prompt_label_id",
-                "prompt_label_name",
-                "total_cost",
-                "total_tokens",
-                "total_traces_count",
-                "duration",
-                "end_time",
-                "first_message",
-                "last_message",
-            ]:
+            if column_id in FilterEngine.SYSTEM_METRIC_FILTER_IDS:
                 system_metrics_filter_conditions.append(
                     {"column_id": column_id, "filter_config": filter_config}
                 )
@@ -634,8 +636,13 @@ class FilterEngine:
             "between": "range",
             "not_between": "exclude",
             "contains": "icontains",
+            "not_contains": "not_icontains",
+            "starts_with": "istartswith",
+            "ends_with": "iendswith",
             "in": "in",
-            "not_in": "in",
+            "not_in": "not_in",
+            "is_null": "isnull",
+            "is_not_null": "isnotnull",
         }
 
         # Map column IDs to their aggregated field names
@@ -651,11 +658,13 @@ class FilterEngine:
             if not column_id or not filter_config:
                 continue
 
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
             filter_type = filter_config.get("filter_type")
 
-            if not all([filter_op, filter_value is not None, filter_type]):
+            if not filter_op or not filter_type:
+                continue
+            if filter_value is None and filter_op not in ("is_null", "is_not_null"):
                 continue
 
             if filter_type in ("number", "boolean"):
@@ -726,7 +735,11 @@ class FilterEngine:
                 field_name = f"{field_name}__date"
 
             # Handle special cases for aggregated fields
-            if filter_op == "not_equals":
+            if filter_op == "is_null":
+                q_objects.append(Q(**{f"{field_name}__isnull": True}))
+            elif filter_op == "is_not_null":
+                q_objects.append(Q(**{f"{field_name}__isnull": False}))
+            elif filter_op == "not_equals":
                 q_objects.append(~Q(**{f"{field_name}": filter_value}))
             elif filter_op == "between":
                 if isinstance(filter_value, list | tuple) and len(filter_value) == 2:
@@ -754,11 +767,21 @@ class FilterEngine:
                 else:
                     # Keep existing behavior for single value contains
                     q_objects.append(Q(**{f"{field_name}__icontains": filter_value}))
+            elif filter_op == "not_contains":
+                q_objects.append(~Q(**{f"{field_name}__icontains": filter_value}))
+            elif filter_op == "starts_with":
+                q_objects.append(Q(**{f"{field_name}__istartswith": filter_value}))
+            elif filter_op == "ends_with":
+                q_objects.append(Q(**{f"{field_name}__iendswith": filter_value}))
             elif filter_op == "in":
-                values = filter_value if isinstance(filter_value, list) else [filter_value]
+                values = (
+                    filter_value if isinstance(filter_value, list) else [filter_value]
+                )
                 q_objects.append(Q(**{f"{field_name}__in": values}))
             elif filter_op == "not_in":
-                values = filter_value if isinstance(filter_value, list) else [filter_value]
+                values = (
+                    filter_value if isinstance(filter_value, list) else [filter_value]
+                )
                 q_objects.append(~Q(**{f"{field_name}__in": values}))
             elif isinstance(filter_value, list) and filter_op == "equals":
                 q_objects.append(Q(**{f"{field_name}__in": filter_value}))
@@ -811,6 +834,8 @@ class FilterEngine:
             "less_than_or_equal": "lte",
             "between": "range",
             "not_between": "exclude",
+            "is_null": "isnull",
+            "is_not_null": "isnotnull",
         }
 
         annotations = {}
@@ -820,7 +845,7 @@ class FilterEngine:
             column_id, filter_config = FilterEngine._normalize_filter_params(
                 filter_item
             )
-            col_type = filter_config.get("col_type", "")
+            col_type = filter_config.get("col_type") or ""
 
             if column_id not in FilterEngine.VOICE_SYSTEM_METRIC_IDS:
                 continue
@@ -831,11 +856,13 @@ class FilterEngine:
             if not defn:
                 continue
 
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
             filter_type = filter_config.get("filter_type")
 
-            if not filter_op or filter_value is None or not filter_type:
+            if not filter_op or not filter_type:
+                continue
+            if filter_value is None and filter_op not in ("is_null", "is_not_null"):
                 continue
 
             # Voice system metrics are always numeric — reject non-number filters.
@@ -861,6 +888,8 @@ class FilterEngine:
                 annotations[annotation_name] = Round(
                     cast_expr / (cast_expr + Value(1)) * Value(100)
                 )
+            elif defn.get("round", True) is False:
+                annotations[annotation_name] = cast_expr
             else:
                 # All other metrics: round to integer.
                 annotations[annotation_name] = Round(cast_expr)
@@ -871,7 +900,11 @@ class FilterEngine:
             if not django_op:
                 continue
 
-            if filter_op == "not_equals":
+            if filter_op == "is_null":
+                q_objects.append(Q(**{f"{field_name}__isnull": True}))
+            elif filter_op == "is_not_null":
+                q_objects.append(Q(**{f"{field_name}__isnull": False}))
+            elif filter_op == "not_equals":
                 q_objects.append(~Q(**{f"{field_name}": filter_value}))
             elif filter_op == "between":
                 if isinstance(filter_value, (list, tuple)) and len(filter_value) == 2:
@@ -940,7 +973,7 @@ class FilterEngine:
             if not column_id or not filter_config:
                 continue
 
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
             filter_type = filter_config.get("filter_type")
 
@@ -1047,7 +1080,7 @@ class FilterEngine:
             if column_id not in field_map:
                 continue
 
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
             filter_type = filter_config.get("filter_type")
 
@@ -1132,7 +1165,6 @@ class FilterEngine:
             column_id, filter_config = FilterEngine._normalize_filter_params(
                 filter_item
             )
-            col_type = filter_config.get("col_type", ColType.EVAL_METRIC.value)
 
             if filter_config.get("col_type") == ColType.SPAN_ATTRIBUTE.value:
                 continue
@@ -1158,7 +1190,7 @@ class FilterEngine:
             if column_id in FilterEngine.VOICE_SYSTEM_METRIC_IDS:
                 continue
 
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
             filter_type = filter_config.get("filter_type")
 
@@ -1281,7 +1313,7 @@ class FilterEngine:
                 continue
 
             filter_type = filter_config.get("filter_type")
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
 
             if filter_type == "number":
@@ -1377,11 +1409,7 @@ class FilterEngine:
             column_id, filter_config = FilterEngine._normalize_filter_params(
                 filter_item
             )
-            col_type = (
-                filter_config.get("col_type", ColType.EVAL_METRIC.value)
-                if "col_type" in filter_config
-                else filter_item.get("col_type", ColType.EVAL_METRIC.value)
-            )
+            col_type = filter_config.get("col_type") or ColType.EVAL_METRIC.value
 
             if col_type in [
                 ColType.SPAN_ATTRIBUTE.value,
@@ -1394,38 +1422,12 @@ class FilterEngine:
             if (
                 not column_id
                 or not filter_config
-                or column_id
-                in [
-                    "avg_score",
-                    "avg_latency",
-                    "avg_cost",
-                    "node_type",
-                    "trace_id",
-                    "span_id",
-                    "created_at",
-                    "run_name",
-                    "span_name",
-                    "trace_name",
-                    "session_id",
-                    "prompt_template_version",
-                    "labels",
-                    "avg_input_tokens",
-                    "avg_output_tokens",
-                    "unique_traces",
-                    "first_used",
-                    "last_used",
-                    "prompt_label_id",
-                    "user_id",
-                    "status",
-                    "start_time",
-                    "has_eval",
-                    "has_annotation",
-                ]
+                or column_id in FilterEngine.SYSTEM_METRIC_FILTER_IDS
             ):
                 continue
 
             filter_type = filter_config.get("filter_type")
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
 
             # Replace '*' with '_' in column_id
@@ -1576,7 +1578,7 @@ class FilterEngine:
 
     @staticmethod
     def get_filter_conditions_for_voice_call_annotations(
-        filters, user_id=None, span_filter_kwargs=None
+        filters, user_id=None, span_filter_kwargs=None, source_q=None
     ):
         """
         Create Django Q objects for filtering voice call traces based on annotations.
@@ -1670,6 +1672,11 @@ class FilterEngine:
         Args:
             filters: List of filter conditions
             user_id: Current user's ID (needed for my_annotations filter)
+            span_filter_kwargs: Equality kwargs matching scores to the outer
+                row, e.g. ``{"observation_span_id": OuterRef("id")}`` for
+                span-level queries.
+            source_q: Prebuilt Q matching scores to the outer row. Takes
+                precedence over ``span_filter_kwargs`` (allows OR scopes).
 
         Returns:
             tuple[Q, dict]: A Django Q object for filtering, and a dict of extra
@@ -1680,16 +1687,15 @@ class FilterEngine:
         if not filters:
             return Q(), {}
 
-        # Build a Q object for matching scores to the outer row.
-        # For span-level queries, callers pass span_filter_kwargs directly.
-        # For the default trace-level context, match scores on the trace
-        # directly OR on any observation span belonging to the trace.
-        if span_filter_kwargs is not None:
-            source_q = Q(**span_filter_kwargs)
-        else:
-            source_q = Q(trace_id=OuterRef("trace_id")) | Q(
-                observation_span__trace_id=OuterRef("trace_id")
-            )
+        # Default (no source_q / span_filter_kwargs): trace-level — scores
+        # on the trace OR on any span of the trace.
+        if source_q is None:
+            if span_filter_kwargs is not None:
+                source_q = Q(**span_filter_kwargs)
+            else:
+                source_q = Q(trace_id=OuterRef("trace_id")) | Q(
+                    observation_span__trace_id=OuterRef("trace_id")
+                )
 
         q_conditions = Q()
         extra_annotations = {}
@@ -1702,11 +1708,7 @@ class FilterEngine:
             if not column_id or not filter_config:
                 continue
 
-            col_type = (
-                filter_config.get("col_type", "")
-                if "col_type" in filter_config
-                else filter_item.get("col_type", "")
-            )
+            col_type = filter_config.get("col_type") or ""
 
             # --- Handle "my_annotations" filter ---
             if column_id == "my_annotations":
@@ -1730,28 +1732,32 @@ class FilterEngine:
             # For per-label annotator filtering, use filter_type="annotator" with
             # col_type=ANNOTATION which checks the annotators JSON map via has_key.
             if column_id == "annotator":
+                filter_op = filter_config.get("filter_op")
                 filter_value = filter_config.get("filter_value")
-                if filter_value:
-                    if isinstance(filter_value, list):
-                        q_conditions &= Q(
-                            Exists(
-                                Score.objects.filter(
-                                    source_q,
-                                    annotator_id__in=filter_value,
-                                    deleted=False,
-                                )
-                            )
+                any_annotation = Score.objects.filter(source_q, deleted=False)
+                if filter_op == "is_null":
+                    q_conditions &= ~Q(Exists(any_annotation))
+                elif filter_op == "is_not_null":
+                    q_conditions &= Q(
+                        Exists(any_annotation.filter(annotator_id__isnull=False))
+                    )
+                elif filter_value:
+                    values = (
+                        filter_value
+                        if isinstance(filter_value, list)
+                        else [filter_value]
+                    )
+                    matched_annotation = Score.objects.filter(
+                        source_q,
+                        annotator_id__in=values,
+                        deleted=False,
+                    )
+                    if filter_op in ("not_equals", "not_in"):
+                        q_conditions &= Q(Exists(any_annotation)) & ~Q(
+                            Exists(matched_annotation)
                         )
                     else:
-                        q_conditions &= Q(
-                            Exists(
-                                Score.objects.filter(
-                                    source_q,
-                                    annotator_id=filter_value,
-                                    deleted=False,
-                                )
-                            )
-                        )
+                        q_conditions &= Q(Exists(matched_annotation))
                 continue
 
             # --- Handle annotation value filters (col_type=ANNOTATION) ---
@@ -1759,7 +1765,7 @@ class FilterEngine:
                 continue
 
             filter_type = filter_config.get("filter_type")
-            filter_op = normalize_filter_op(filter_config.get("filter_op"))
+            filter_op = filter_config.get("filter_op")
             filter_value = filter_config.get("filter_value")
 
             # Parse column_id for sub-field separator
@@ -1770,6 +1776,12 @@ class FilterEngine:
                 annotation_field = f"annotation_{base_column_id}"
             else:
                 annotation_field = f"annotation_{column_id}"
+
+            if filter_op in ("is_null", "is_not_null"):
+                q_conditions &= Q(
+                    **{f"{annotation_field}__isnull": filter_op == "is_null"}
+                )
+                continue
 
             if filter_type == "number":
                 is_valid, converted_value = (
@@ -1831,16 +1843,27 @@ class FilterEngine:
             elif filter_type == "boolean":
                 # Thumbs up/down annotations: {"thumbs_up": N, "thumbs_down": M, ...}
                 # filter_value: "up"/"down", "Thumbs Up"/"Thumbs Down", or bool
+                value_condition = None
                 if isinstance(filter_value, str):
                     val = filter_value.lower().replace(" ", "_")
                     if val in ("up", "true", "thumbs_up"):
-                        q_conditions &= Q(**{f"{annotation_field}__thumbs_up__gt": 0})
+                        value_condition = Q(**{f"{annotation_field}__thumbs_up__gt": 0})
                     elif val in ("down", "thumbs_down"):
-                        q_conditions &= Q(**{f"{annotation_field}__thumbs_down__gt": 0})
+                        value_condition = Q(
+                            **{f"{annotation_field}__thumbs_down__gt": 0}
+                        )
                 elif filter_value is True:
-                    q_conditions &= Q(**{f"{annotation_field}__thumbs_up__gt": 0})
+                    value_condition = Q(**{f"{annotation_field}__thumbs_up__gt": 0})
                 elif filter_value is False:
-                    q_conditions &= Q(**{f"{annotation_field}__thumbs_down__gt": 0})
+                    value_condition = Q(**{f"{annotation_field}__thumbs_down__gt": 0})
+                if value_condition is not None:
+                    if filter_op == "not_equals":
+                        q_conditions &= (
+                            Q(**{f"{annotation_field}__isnull": False})
+                            & ~value_condition
+                        )
+                    else:
+                        q_conditions &= value_condition
 
             elif filter_type == "thumbs":
                 # Dedicated filter type for thumbs_up_down labels — distinct
@@ -1962,33 +1985,66 @@ class FilterEngine:
                             )
                         )
                     )
+                elif filter_op in ("in", "not_in"):
+                    values = (
+                        filter_value
+                        if isinstance(filter_value, list)
+                        else [filter_value]
+                    )
+                    text_match_q = Q()
+                    for value in values:
+                        if value in (None, ""):
+                            continue
+                        text_match_q |= Q(
+                            Exists(
+                                base_text_qs.filter(
+                                    value__text__iexact=value,
+                                )
+                            )
+                        )
+                    if text_match_q:
+                        if filter_op == "not_in":
+                            q_conditions &= has_text_annotation & ~text_match_q
+                        else:
+                            q_conditions &= text_match_q
 
             elif filter_type == "annotator":
                 # Check if a specific user annotated this label
                 # annotators is a map keyed by user_id, so use has_key
                 annotators_field = f"{annotation_field}__annotators"
-                if isinstance(filter_value, list):
+                values = (
+                    filter_value if isinstance(filter_value, list) else [filter_value]
+                )
+                values = [str(uid) for uid in values if uid]
+                if values:
                     annotator_conditions = Q()
-                    for uid in filter_value:
+                    for uid in values:
                         annotator_conditions |= Q(
-                            **{f"{annotators_field}__has_key": str(uid)}
+                            **{f"{annotators_field}__has_key": uid}
                         )
-                    q_conditions &= annotator_conditions
-                elif filter_value:
-                    q_conditions &= Q(
-                        **{f"{annotators_field}__has_key": str(filter_value)}
-                    )
+                    if filter_op in ("not_equals", "not_in"):
+                        q_conditions &= (
+                            Q(**{f"{annotation_field}__isnull": False})
+                            & ~annotator_conditions
+                        )
+                    else:
+                        q_conditions &= annotator_conditions
 
             elif filter_type == "array":
                 # Categorical annotations: {"choice1": 3, "choice2": 0, ...}
                 # Filter traces where the selected choice has count > 0
-                if isinstance(filter_value, list):
-                    array_conditions = Q()
-                    for value in filter_value:
-                        array_conditions &= Q(**{f"{annotation_field}__{value}__gt": 0})
-                    q_conditions &= array_conditions
+                values = (
+                    filter_value if isinstance(filter_value, list) else [filter_value]
+                )
+                array_conditions = Q()
+                for value in values:
+                    array_conditions &= Q(**{f"{annotation_field}__{value}__gt": 0})
+                if filter_op == "not_contains":
+                    q_conditions &= (
+                        Q(**{f"{annotation_field}__isnull": False}) & ~array_conditions
+                    )
                 else:
-                    q_conditions &= Q(**{f"{annotation_field}__{filter_value}__gt": 0})
+                    q_conditions &= array_conditions
 
         return q_conditions, extra_annotations
 
@@ -2113,7 +2169,7 @@ class FilterEngine:
 
     @staticmethod
     def get_filter_conditions_for_has_annotation(
-        filters, observe_type="trace", annotation_label_ids=None
+        filters, observe_type="trace", annotation_label_ids=None, source_q=None
     ):
         """
         Create a Django Q object to filter traces/spans by annotation completeness.
@@ -2123,6 +2179,8 @@ class FilterEngine:
 
         When ``annotation_label_ids`` is provided, checks that ALL labels are
         present (fully annotated).  Without it, falls back to simple existence.
+
+        ``source_q`` (a prebuilt Q) overrides the ``observe_type`` dispatch.
         """
         if not filters:
             return Q()
@@ -2142,16 +2200,19 @@ class FilterEngine:
 
             label_ids = annotation_label_ids or []
 
+            # Score.trace_id is often NULL (annotations live on spans), so
+            # the trace branch checks both trace_id and the span's trace_id.
+            if source_q is not None:
+                score_filter = source_q
+            elif observe_type == "span":
+                score_filter = Q(observation_span_id=OuterRef("id"))
+            else:
+                score_filter = Q(trace_id=OuterRef("id")) | Q(
+                    observation_span__trace_id=OuterRef("id")
+                )
+
             if label_ids:
                 # Completeness check: fully annotated = has score for ALL labels.
-                # Score.trace_id is often NULL — annotations are stored on spans.
-                # Must check BOTH Score.trace_id AND Score.observation_span.trace_id.
-                if observe_type == "span":
-                    score_filter = Q(observation_span_id=OuterRef("id"))
-                else:
-                    score_filter = Q(trace_id=OuterRef("id")) | Q(
-                        observation_span__trace_id=OuterRef("id")
-                    )
                 fully_annotated_q = Q()
                 for lid in label_ids:
                     fully_annotated_q &= Q(
@@ -2160,23 +2221,7 @@ class FilterEngine:
                 return fully_annotated_q if filter_value else ~fully_annotated_q
             else:
                 # Fallback: simple existence check
-                if observe_type == "span":
-                    exists_q = Q(
-                        Exists(
-                            Score.objects.filter(
-                                observation_span_id=OuterRef("id"),
-                            )
-                        )
-                    )
-                else:
-                    exists_q = Q(
-                        Exists(
-                            Score.objects.filter(
-                                Q(trace_id=OuterRef("id"))
-                                | Q(observation_span__trace_id=OuterRef("id")),
-                            )
-                        )
-                    )
+                exists_q = Q(Exists(Score.objects.filter(score_filter)))
                 return exists_q if filter_value else ~exists_q
 
         return Q()
@@ -2219,23 +2264,25 @@ class FilterEngine:
             "not_equals": lambda col, val: ~Q(span_attributes__contains={col: val}),
             "in": lambda col, val: Q(
                 **{
-                    f"span_attributes__{col}__in": (
-                        val if isinstance(val, list) else [val]
-                    )
+                    f"span_attributes__{col}__in": val
+                    if isinstance(val, list)
+                    else [val]
                 }
             ),
-            "not_in": lambda col, val: ~Q(
-                **{
-                    f"span_attributes__{col}__in": (
-                        val if isinstance(val, list) else [val]
-                    )
-                }
+            "not_in": lambda col, val: (
+                ~Q(
+                    **{
+                        f"span_attributes__{col}__in": val
+                        if isinstance(val, list)
+                        else [val]
+                    }
+                )
             ),
             "contains": lambda col, val: Q(
                 **{f"span_attributes__{col}__icontains": val}
             ),
-            "not_contains": lambda col, val: ~Q(
-                **{f"span_attributes__{col}__icontains": val}
+            "not_contains": lambda col, val: (
+                ~Q(**{f"span_attributes__{col}__icontains": val})
             ),
             "starts_with": lambda col, val: Q(
                 **{f"span_attributes__{col}__startswith": val}
@@ -2258,11 +2305,15 @@ class FilterEngine:
             "less_than_or_equal": lambda col, val: Q(
                 **{f"span_attributes__{col}__lte": val}
             ),
-            "between": lambda col, val: Q(**{f"span_attributes__{col}__gte": val[0]})
-            & Q(**{f"span_attributes__{col}__lte": val[1]}),
-            "not_between": lambda col, val: ~(
+            "between": lambda col, val: (
                 Q(**{f"span_attributes__{col}__gte": val[0]})
                 & Q(**{f"span_attributes__{col}__lte": val[1]})
+            ),
+            "not_between": lambda col, val: (
+                ~(
+                    Q(**{f"span_attributes__{col}__gte": val[0]})
+                    & Q(**{f"span_attributes__{col}__lte": val[1]})
+                )
             ),
             "is_null": lambda col, _: _null_q(col),
             "is_not_null": lambda col, _: _not_null_q(col),
@@ -2271,8 +2322,8 @@ class FilterEngine:
         # Strict native bool only (matches CH builder).
         boolean_operator_map = {
             "equals": lambda col, val: Q(span_attributes__contains={col: bool(val)}),
-            "not_equals": lambda col, val: ~Q(
-                span_attributes__contains={col: bool(val)}
+            "not_equals": lambda col, val: (
+                ~Q(span_attributes__contains={col: bool(val)})
             ),
             "is_null": lambda col, _: _null_q(col),
             "is_not_null": lambda col, _: _not_null_q(col),
@@ -2285,11 +2336,7 @@ class FilterEngine:
             column_id, filter_config = FilterEngine._normalize_filter_params(
                 filter_item
             )
-            col_type = (
-                filter_config.get("col_type", "")
-                if "col_type" in filter_config
-                else filter_item.get("col_type", "")
-            )
+            col_type = filter_config.get("col_type") or ""
 
             # Skip if not a span attribute filter
             if (

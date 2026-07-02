@@ -42,23 +42,43 @@ class PromptLabel(BaseModel):
         return self.name
 
     @classmethod
-    def create_default_system_labels(cls):
-        """Create default system labels: Production, Staging, Development for the given organization."""
+    def create_default_system_labels(cls, _organization=None):
+        """Create the global Production, Staging, and Development system labels."""
+        from tfc.middleware.workspace_context import (
+            clear_workspace_context,
+            get_current_organization,
+            get_current_user,
+            get_current_workspace,
+            set_workspace_context,
+        )
+
         default_labels = ["Production", "Staging", "Development"]
         created_labels = []
-        for label_name in default_labels:
-            label, created = cls.objects.get_or_create(
-                name=label_name,
-                organization=None,
-                defaults={
-                    "type": LabelTypeChoices.SYSTEM.value,
-                    "metadata": {
-                        "description": f"Default {label_name.lower()} environment label"
+        current_workspace = get_current_workspace()
+        current_organization = get_current_organization()
+        current_user = get_current_user()
+        clear_workspace_context()
+        try:
+            for label_name in default_labels:
+                label, created = cls.no_workspace_objects.get_or_create(
+                    name=label_name,
+                    organization=None,
+                    type=LabelTypeChoices.SYSTEM.value,
+                    defaults={
+                        "workspace": None,
+                        "metadata": {
+                            "description": f"Default {label_name.lower()} environment label"
+                        },
                     },
-                },
+                )
+                if created:
+                    created_labels.append(label)
+        finally:
+            set_workspace_context(
+                workspace=current_workspace,
+                organization=current_organization,
+                user=current_user,
             )
-            if created:
-                created_labels.append(label)
         return created_labels
 
     class Meta:

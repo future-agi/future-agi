@@ -6,20 +6,26 @@ import traceback
 import uuid
 from collections import defaultdict
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any
 
 import structlog
 from django.db import IntegrityError, connection, models, transaction
 from django.utils import timezone
 
-logger = structlog.get_logger(__name__)
 from model_hub.models.prompt_label import PromptLabel
 from model_hub.models.run_prompt import PromptVersion
 from tfc.temporal import temporal_activity
 from tfc.utils.payload_storage import payload_storage
-from tracer.models.observation_span import EndUser, ObservationSpan, Trace
+from tracer.models.observation_span import ObservationSpan, Trace
 from tracer.models.project import Project
-from tracer.models.trace_session import TraceSession
+from tracer.services.clickhouse.v2.curated_writer import (
+    CuratedEndUser,
+    CuratedSession,
+)
+from tracer.services.clickhouse.v2.deterministic_id import (
+    deterministic_end_user_id,
+    deterministic_trace_session_id,
+)
 from tracer.tasks.trace_scanner import scan_traces_task
 from tracer.utils.adapters import normalize_span_attributes
 from tracer.utils.otel import bulk_convert_otel_spans_to_observation_spans
@@ -27,6 +33,8 @@ from tracer.utils.parsers import deserialize_trace_payload
 from tracer.utils.pii_scrubber import scrub_pii_in_span_batch
 from tracer.utils.pii_settings import get_pii_settings_for_projects
 from tracer.utils.usage_emit import emit_span_ingestion_usage
+
+logger = structlog.get_logger(__name__)
 
 OTLP_STATUS_MAP = {
     "STATUS_CODE_UNSET": "UNSET",
@@ -71,6 +79,67 @@ def _format_if_needed(raw: str) -> str | None:
 # --- Helper Functions for Database Interaction ---
 
 
+def _sanitize_nonfinite_floats(value: Any) -> Any:
+    """Recursively replace NaN/+-Infinity floats with ``None``.
+
+    Python's ``json.dumps`` emits the bare tokens ``NaN``/``Infinity``/
+    ``-Infinity`` for non-finite floats, which PostgreSQL's json/jsonb type
+    rejects during COPY (``invalid input syntax for type json``). User-supplied
+    span attributes can carry these values, so scrub them before serialization.
+    Mirrors ``tracer.views.trace._sanitize_nonfinite_floats`` on the read path.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, dict):
+        return {k: _sanitize_nonfinite_floats(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_nonfinite_floats(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize_nonfinite_floats(v) for v in value)
+    return value
+
+
+def _strip_null_chars(value: Any) -> Any:
+    """Recursively strip NUL (``\\x00``) bytes from string keys and values.
+
+    PostgreSQL's text and json/jsonb types cannot store the NUL code point: a
+    real ``\\x00`` inside a string is emitted by ``json.dumps`` as the escape
+    ``\\u0000``, which jsonb rejects during COPY (``unsupported Unicode escape
+    sequence ... \\u0000 cannot be converted to text``). User-supplied span
+    attributes can carry NUL (e.g. extracted PDF/document text), so scrub them
+    before serialization. Distinct from ``_sanitize_nonfinite_floats``: NUL is
+    silently escaped by ``json.dumps`` rather than raising, so the strip must
+    run unconditionally on the JSON path. Only ``\\x00`` is removed; other
+    control characters (e.g. ``\\u0013``) are valid in jsonb and preserved.
+    """
+    if isinstance(value, str):
+        return value.replace("\x00", "")
+    if isinstance(value, dict):
+        return {
+            (k.replace("\x00", "") if isinstance(k, str) else k): _strip_null_chars(v)
+            for k, v in value.items()
+        }
+    if isinstance(value, list):
+        return [_strip_null_chars(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_strip_null_chars(v) for v in value)
+    return value
+
+
+def _contains_null_char(value: Any) -> bool:
+    """Return True if any string key/value in ``value`` contains a NUL byte."""
+    if isinstance(value, str):
+        return "\x00" in value
+    if isinstance(value, dict):
+        return any(
+            (isinstance(k, str) and "\x00" in k) or _contains_null_char(v)
+            for k, v in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(_contains_null_char(v) for v in value)
+    return False
+
+
 def _serialize_json_field_value(val: Any) -> str | None:
     """
     Serialize a value for PostgreSQL JSONField in COPY operations.
@@ -86,12 +155,38 @@ def _serialize_json_field_value(val: Any) -> str | None:
 
     if isinstance(val, str):
         try:
-            json.loads(val)
-            return val
+            parsed = json.loads(val)
         except (json.JSONDecodeError, TypeError):
-            return json.dumps(val)
+            # Not JSON: COPY writes the raw string into the text-backed column,
+            # so strip NUL directly off the byte stream.
+            return json.dumps(val.replace("\x00", ""), allow_nan=False)
+        try:
+            # Fast path: already-valid JSON with no non-finite floats or NUL
+            # bytes. A NUL survives json.loads as a real \x00 inside ``parsed``
+            # (the source text held the backslash-u-0000 escape), so check ``parsed``.
+            json.dumps(parsed, allow_nan=False)
+            if not _contains_null_char(parsed):
+                return val
+            return json.dumps(_strip_null_chars(parsed), allow_nan=False)
+        except ValueError:
+            return json.dumps(
+                _strip_null_chars(_sanitize_nonfinite_floats(parsed)), allow_nan=False
+            )
 
-    return json.dumps(val)
+    # Fast path: dump directly; only pay the recursive scrub when a non-finite
+    # float or NUL byte is actually present (keeps the common clean-data path
+    # allocation-free).
+    try:
+        dumped = json.dumps(val, allow_nan=False)
+    except ValueError:
+        return json.dumps(
+            _strip_null_chars(_sanitize_nonfinite_floats(val)), allow_nan=False
+        )
+    # json.dumps does not raise on NUL; it silently emits the \u0000 escape,
+    # so guard the dumped output explicitly.
+    if "\\u0000" not in dumped:
+        return dumped
+    return json.dumps(_strip_null_chars(val), allow_nan=False)
 
 
 def _is_pk_unique_violation(exc: BaseException, table_name: str) -> bool:
@@ -103,8 +198,8 @@ def _is_pk_unique_violation(exc: BaseException, table_name: str) -> bool:
     """
     from psycopg.errors import UniqueViolation as PgUniqueViolation
 
-    pg_exc: Any = exc if isinstance(exc, PgUniqueViolation) else getattr(
-        exc, "__cause__", None
+    pg_exc: Any = (
+        exc if isinstance(exc, PgUniqueViolation) else getattr(exc, "__cause__", None)
     )
     if not isinstance(pg_exc, PgUniqueViolation):
         return False
@@ -131,6 +226,10 @@ def _bulk_create_with_copy(model: models.Model, objects: list[models.Model]):
                 # Handle JSONField values
                 if isinstance(field, models.JSONField):
                     val = _serialize_json_field_value(val)
+                elif isinstance(val, str):
+                    # text/varchar columns cannot store NUL either; COPY writes
+                    # the raw byte stream, so strip \x00 off plain strings too.
+                    val = val.replace("\x00", "")
 
                 row.append(val)
             values_list.append(tuple(row))
@@ -206,152 +305,100 @@ def _fetch_or_create_traces(
     return existing_traces
 
 
-def _fetch_or_create_sessions(
+def _resolve_session_ids(
     parsed_data_list: list[dict[str, Any]],
-) -> dict[tuple, TraceSession]:
+) -> tuple[dict[tuple, "uuid.UUID"], list[CuratedSession]]:
+    """Compute the DETERMINISTIC ``trace_session_id`` for each session in the batch
+    (CH-derived-dimensions P3b flip — NO PG ``TraceSession`` create).
+
+    Returns ``({(session_name, project_id): trace_session_id}, [CuratedSession])``:
+    the id map drives the ``trace.session_id`` column stamp (``db_constraint=False``
+    so no PG row is needed), and the ``CuratedSession`` list is the CH
+    ``trace_sessions`` dual-write payload (keyed by the same deterministic id).
     """
-    Fetches existing sessions or creates new ones, returning all relevant sessions.
-    """
-    session_keys = {
-        (d["session_name"], d["project"].id)
-        for d in parsed_data_list
-        if d.get("session_name") and d.get("project")
-    }
-    if not session_keys:
-        return {}
-
-    session_names = {key[0] for key in session_keys}
-    project_ids = {key[1] for key in session_keys}
-
-    existing_sessions = {
-        (s.name, s.project_id): s
-        for s in TraceSession.objects.filter(
-            name__in=session_names, project_id__in=project_ids
-        )
-    }
-
-    unique_new_sessions = {}
+    session_id_map: dict[tuple, uuid.UUID] = {}
+    curated: list[CuratedSession] = []
 
     for d in parsed_data_list:
         session_name = d.get("session_name")
         project = d.get("project")
-        if session_name and project:
-            key = (session_name, project.id)
-
-            if key in existing_sessions:
-                continue
-            if key in unique_new_sessions:
-                continue
-
-            unique_new_sessions[key] = TraceSession(
-                name=session_name,
-                project=project,
+        if not (session_name and project):
+            continue
+        key = (session_name, project.id)
+        if key in session_id_map:
+            continue
+        ts_id = deterministic_trace_session_id(project.id, session_name)
+        session_id_map[key] = ts_id
+        curated.append(
+            CuratedSession(
+                project_id=project.id,
+                trace_session_id=ts_id,
+                external_session_id=session_name,
             )
-
-    if unique_new_sessions:
-        TraceSession.objects.bulk_create(
-            list(unique_new_sessions.values()), ignore_conflicts=True
         )
 
-        return {
-            (s.name, s.project_id): s
-            for s in TraceSession.objects.filter(
-                name__in=session_names, project_id__in=project_ids
-            )
-        }
-
-    return existing_sessions
+    return session_id_map, curated
 
 
-def _fetch_or_create_end_users(
+def _resolve_end_user_ids(
     parsed_data_list: list[dict[str, Any]], organization_id: str
-) -> dict[tuple, EndUser]:
-    """
-    Fetches existing end users or creates new ones.
+) -> tuple[dict[tuple, "uuid.UUID"], list[CuratedEndUser]]:
+    """Compute the DETERMINISTIC ``end_user_id`` for each end user in the batch
+    (CH-derived-dimensions P3b flip — NO PG ``EndUser`` create).
 
-    Supports:
-    - Profile fields (display_name, email, avatar_url)
-    - Analytics tracking (first_seen, last_seen)
-    - Flexible attributes from span data
+    The key matches ``_link_end_user``'s lookup key
+    ``(user_id, org_id, project_id, user_id_type)`` (all str-coerced except
+    ``user_id_type``, which stays the normalized value / None). Returns
+    ``({key: end_user_id}, [CuratedEndUser])``: the id map drives the span's
+    ``end_user_id`` column stamp (``db_constraint=False``), the ``CuratedEndUser``
+    list is the CH ``end_users`` dual-write payload (keyed by the same id).
+
+    ``user_id_type`` MUST be the SAME normalized value fed to
+    ``deterministic_end_user_id`` (§11.1a: None → '' sentinel) so the curated row's
+    key matches its id and the read-side remap.
     """
-    end_user_keys = set()
-    end_user_data = {}  # Store full user data for creation
+    end_user_id_map: dict[tuple, uuid.UUID] = {}
+    curated: list[CuratedEndUser] = []
 
     for d in parsed_data_list:
         end_user = d.get("end_user")
-        if end_user and end_user.get("user_id"):
-            key = (
-                str(end_user["user_id"]),
-                str(organization_id),
-                str(end_user["project"].id),
-                end_user.get("user_id_type"),
-            )
-            end_user_keys.add(key)
-
-            if key not in end_user_data:
-                end_user_data[key] = {
-                    "end_user": end_user,
-                }
-
-    if not end_user_keys:
-        return {}
-
-    user_ids = {k[0] for k in end_user_keys}
-    project_ids = {k[2] for k in end_user_keys}
-
-    existing_end_users = {
-        (eu.user_id, str(eu.organization_id), str(eu.project_id), eu.user_id_type): eu
-        for eu in EndUser.objects.filter(
-            user_id__in=user_ids,
-            organization_id=organization_id,
-            project_id__in=project_ids,
+        if not (end_user and end_user.get("user_id")):
+            continue
+        project = end_user["project"]
+        user_id_type = end_user.get("user_id_type")
+        key = (
+            str(end_user["user_id"]),
+            str(organization_id),
+            str(project.id),
+            user_id_type,
         )
-    }
-
-    unique_new_end_users = {}
-    users_to_update = []
-
-    for key, data in end_user_data.items():
-        end_user = data["end_user"]
-
-        if key in existing_end_users:
-            existing_user = existing_end_users[key]
-            users_to_update.append(existing_user)
-        elif key not in unique_new_end_users:
-            unique_new_end_users[key] = EndUser(
-                user_id=str(end_user["user_id"]),
+        if key in end_user_id_map:
+            continue
+        eu_id = deterministic_end_user_id(
+            project.id,
+            organization_id,
+            end_user["user_id"],
+            user_id_type,
+        )
+        end_user_id_map[key] = eu_id
+        curated.append(
+            CuratedEndUser(
+                project_id=project.id,
+                end_user_id=eu_id,
                 organization_id=organization_id,
-                project=end_user["project"],
-                user_id_type=end_user.get("user_id_type"),
+                user_id=str(end_user["user_id"]),
+                user_id_type=user_id_type,
                 user_id_hash=end_user.get("user_id_hash"),
                 metadata=end_user.get("metadata", {}),
             )
-
-    if unique_new_end_users:
-        EndUser.objects.bulk_create(
-            list(unique_new_end_users.values()), ignore_conflicts=True
         )
-        # Re-fetch all users to get IDs of newly created ones
-        return {
-            (
-                eu.user_id,
-                str(eu.organization_id),
-                str(eu.project_id),
-                eu.user_id_type,
-            ): eu
-            for eu in EndUser.objects.filter(
-                user_id__in=user_ids,
-                organization_id=organization_id,
-                project_id__in=project_ids,
-            )
-        }
 
-    return existing_end_users
+    return end_user_id_map, curated
 
 
 def _fetch_prompt_versions(
-    parsed_data_list: List[Dict[str, Any]], organization_id: str
-) -> Dict[tuple, Dict]:
+    parsed_data_list: list[dict[str, Any]], organization_id: str
+) -> dict[tuple, dict]:
     """Fetches all required prompt versions."""
     prompt_version_filters = []
     for d in parsed_data_list:
@@ -470,8 +517,16 @@ def _parse_otel_request(request_data: dict[str, Any]) -> list[dict[str, Any]]:
     return otel_data_list
 
 
-def _link_end_user(observation_span_data, parsed_data, all_end_users, organization_id):
-    """Links the correct EndUser object to the observation span data."""
+def _link_end_user(
+    observation_span_data, parsed_data, all_end_user_ids, organization_id
+):
+    """Stamp the DETERMINISTIC ``end_user_id`` onto the span's FK COLUMN.
+
+    P3b flip: no PG ``EndUser`` object — ``all_end_user_ids`` maps the lookup key
+    to the deterministic id (``_resolve_end_user_ids``). The column is
+    ``db_constraint=False``, so the bare id needs no PG row; it carries to the CH
+    span via the ``s.end_user_id`` materialization.
+    """
     if not (parsed_data.get("end_user") and parsed_data["end_user"].get("user_id")):
         return
 
@@ -482,8 +537,8 @@ def _link_end_user(observation_span_data, parsed_data, all_end_users, organizati
         str(parsed_data["project"].id),
         end_user_info.get("user_id_type"),
     )
-    if end_user_key in all_end_users:
-        observation_span_data["end_user"] = all_end_users[end_user_key]
+    if end_user_key in all_end_user_ids:
+        observation_span_data["end_user_id"] = all_end_user_ids[end_user_key]
     else:
         logger.warning(f"End user not found for key: {end_user_key}. Skipping link.")
 
@@ -532,9 +587,16 @@ def _link_prompt_version(
 
 
 def _prepare_trace_update_data(
-    traces_to_update, parsed_data, observation_span_data, all_sessions
+    traces_to_update, parsed_data, observation_span_data, all_session_ids
 ):
-    """Prepares the dictionary used to bulk update Trace objects later."""
+    """Prepares the dictionary used to bulk update Trace objects later.
+
+    P3b flip: the session is stamped as the DETERMINISTIC ``session_id`` (a bare
+    UUID under the ATTNAME key) — NOT a PG ``TraceSession`` object. ``setattr(trace,
+    "session_id", uuid)`` is valid (assigning a bare UUID to the ``.session``
+    descriptor would raise); ``_bulk_update_traces`` maps the attname back to the
+    field name ``"session"`` for ``bulk_update``.
+    """
     trace_id_str = parsed_data.get("trace")
     parent_span_id = observation_span_data.get("parent_span_id")
 
@@ -548,15 +610,15 @@ def _prepare_trace_update_data(
         session_name = parsed_data["session_name"]
         project_id = parsed_data["project"].id
         session_key = (session_name, project_id)
-        if session_key in all_sessions:
-            traces_to_update[trace_id_str]["session"] = all_sessions[session_key]
+        if session_key in all_session_ids:
+            traces_to_update[trace_id_str]["session_id"] = all_session_ids[session_key]
 
 
 def _prepare_observation_spans_and_trace_updates(
     parsed_data_list: list[dict[str, Any]],
     all_traces: dict[uuid.UUID, Trace],
-    all_sessions: dict[tuple, TraceSession],
-    all_end_users: dict[tuple, EndUser],
+    all_session_ids: dict[tuple, "uuid.UUID"],
+    all_end_user_ids: dict[tuple, "uuid.UUID"],
     all_prompt_versions: dict[tuple, PromptVersion],
     organization_id: str,
 ) -> (list[ObservationSpan], dict[str, dict[str, Any]]):
@@ -583,7 +645,7 @@ def _prepare_observation_spans_and_trace_updates(
             del observation_span_data["trace_id"]
 
         _link_end_user(
-            observation_span_data, parsed_data, all_end_users, organization_id
+            observation_span_data, parsed_data, all_end_user_ids, organization_id
         )
         _link_prompt_version(
             observation_span_data, parsed_data, all_prompt_versions, organization_id
@@ -593,7 +655,7 @@ def _prepare_observation_spans_and_trace_updates(
 
         # Prepare data for the eventual bulk update of Trace objects
         _prepare_trace_update_data(
-            traces_to_update, parsed_data, observation_span_data, all_sessions
+            traces_to_update, parsed_data, observation_span_data, all_session_ids
         )
 
     return spans_to_create, traces_to_update
@@ -640,7 +702,15 @@ def _bulk_insert_observation_spans(spans_to_create: list[ObservationSpan]):
 def _bulk_update_traces(
     traces_to_update: dict[str, dict[str, Any]], all_traces: dict[uuid.UUID, Trace]
 ):
-    """Bulk updates trace fields like input, output, and session."""
+    """Bulk updates trace fields like input, output, and session.
+
+    ``session`` is staged under its ATTNAME ``session_id`` (a bare deterministic
+    UUID; see ``_prepare_trace_update_data``). ``setattr`` uses that attname, but
+    ``bulk_update``'s ``update_fields`` needs the FIELD NAME — so map
+    ``session_id`` → ``session`` for the update-field set.
+    """
+    # attname (used for setattr) → model field name (used by bulk_update).
+    _UPDATE_FIELD_NAMES = {"session_id": "session"}
     traces_to_bulk_update = []
     update_fields = set()
 
@@ -651,7 +721,7 @@ def _bulk_update_traces(
             if trace:
                 for field, value in updates.items():
                     setattr(trace, field, value)
-                    update_fields.add(field)
+                    update_fields.add(_UPDATE_FIELD_NAMES.get(field, field))
                 traces_to_bulk_update.append(trace)
         except (ValueError, TypeError):
             continue
@@ -677,18 +747,26 @@ def _trigger_trace_scanner(spans: list[ObservationSpan]):
     if not complete_traces_by_project:
         return
 
-    observe_project_ids = set(
+    observe_project_ids = {
         str(pid)
         for pid in Project.objects.filter(
             id__in=complete_traces_by_project.keys(),
             trace_type="observe",
         ).values_list("id", flat=True)
-    )
+    }
 
+    # Bound each scan task to a small batch so it finishes well under the scan
+    # activity's time_limit. One big batch at high sampling can exceed the limit
+    # and time out before writing anything — so split into per-task chunks.
+    scan_batch_size = 15
     for project_id, trace_ids in complete_traces_by_project.items():
         if project_id not in observe_project_ids:
             continue
-        scan_traces_task.apply_async(args=(list(trace_ids), project_id))
+        tid_list = list(trace_ids)
+        for i in range(0, len(tid_list), scan_batch_size):
+            scan_traces_task.apply_async(
+                args=(tid_list[i : i + scan_batch_size], project_id)
+            )
 
 
 @temporal_activity(max_retries=0, time_limit=3600, queue="trace_ingestion")
@@ -710,7 +788,11 @@ def bulk_create_observation_span_task(
         payload_bytes = payload_storage.retrieve(payload_key)
 
         if payload_bytes is None:
-            logger.error(
+            # Expected race: the payload TTL'd out (or its writer hasn't landed)
+            # before this task ran. The raised ValueError below is what Temporal
+            # retries on, so this log is purely informational - WARNING avoids
+            # double-reporting the same condition as a Sentry error.
+            logger.warning(
                 "trace_payload_not_found_in_redis",
                 payload_key=payload_key,
             )
@@ -781,15 +863,20 @@ def bulk_create_observation_span_task(
             if not parsed_data_list:
                 return
 
-            # 2. Fetch or create all related objects in bulk
+            # 2. Fetch or create all related objects in bulk. Traces still get a PG
+            # row (trace_writer re-reads it). EndUser / TraceSession do NOT — the
+            # P3b flip computes their DETERMINISTIC ids (no PG create) and the
+            # curated rows go to CH only.
             all_traces = _fetch_or_create_traces(parsed_data_list)
 
-            # Create end users first so we can associate them with sessions
-            all_end_users = _fetch_or_create_end_users(
+            # Resolve deterministic end-user / session ids (id map drives the
+            # column stamp; the CuratedEndUser/CuratedSession lists are the CH
+            # dual-write payload).
+            all_end_user_ids, ch_end_users = _resolve_end_user_ids(
                 parsed_data_list, organization_id
             )
 
-            all_sessions = _fetch_or_create_sessions(parsed_data_list)
+            all_session_ids, ch_sessions = _resolve_session_ids(parsed_data_list)
 
             all_prompt_versions = _fetch_prompt_versions(
                 parsed_data_list, organization_id
@@ -802,8 +889,8 @@ def bulk_create_observation_span_task(
             ) = _prepare_observation_spans_and_trace_updates(
                 parsed_data_list,
                 all_traces,
-                all_sessions,
-                all_end_users,
+                all_session_ids,
+                all_end_user_ids,
                 all_prompt_versions,
                 organization_id,
             )
@@ -812,12 +899,42 @@ def bulk_create_observation_span_task(
             _bulk_insert_observation_spans(observation_spans_to_create)
             _bulk_update_traces(traces_to_update, all_traces)
 
+            # CH25: mirror this batch's traces into the CH `traces` table — the
+            # app-level replacement for the removed PeerDB CDC path that fed
+            # trace_dict (the source of every span's trace_name). One upsert
+            # batch per ingest batch (not per span); post-commit + best-effort
+            # so a CH hiccup never breaks PG ingestion.
+            if all_traces:
+                from tracer.services.clickhouse.v2.trace_writer import (
+                    mirror_traces_to_clickhouse,
+                )
+
+                _ch_trace_ids = [str(tid) for tid in all_traces]
+                transaction.on_commit(
+                    lambda ids=_ch_trace_ids: mirror_traces_to_clickhouse(ids)
+                )
+
+            # CH25 (P3b flip): mirror this batch's curated EndUser / TraceSession
+            # rows into CH `end_users` / `trace_sessions`, keyed by the DETERMINISTIC
+            # ids stamped above. The PG get_or_create is GONE — `ch_end_users` /
+            # `ch_sessions` are one-per-identity CuratedEndUser/CuratedSession lists
+            # (the curated fields off the span), so this is one batched insert each;
+            # post-commit + best-effort so a CH hiccup never breaks or slows ingestion.
+            if ch_end_users or ch_sessions:
+                from tracer.services.clickhouse.v2.curated_writer import (
+                    mirror_curated_dimensions_to_clickhouse,
+                )
+
+                transaction.on_commit(
+                    lambda eus=ch_end_users, ss=ch_sessions: (
+                        mirror_curated_dimensions_to_clickhouse(eus, ss)
+                    )
+                )
+
             # 5. Trigger scanner for completed traces (root span with end_time)
             _trigger_trace_scanner(observation_spans_to_create)
 
-        num_traces = len(
-            set(p.get("trace") for p in parsed_data_list if p.get("trace"))
-        )
+        num_traces = len({p.get("trace") for p in parsed_data_list if p.get("trace")})
         emit_span_ingestion_usage(
             organization_id=organization_id,
             num_traces=num_traces,

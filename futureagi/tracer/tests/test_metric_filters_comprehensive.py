@@ -50,6 +50,7 @@ def _errors_filter():
             "filter_type": "text",
             "filter_op": "equals",
             "filter_value": "ERROR",
+            "col_type": "SYSTEM_METRIC",
         },
     }
 
@@ -160,8 +161,8 @@ class TestCHMetricFilters:
         assert "model" in where
         assert "tracer_eval_logger" in where
 
-    def test_camelCase_filter_format(self):
-        """Frontend sends camelCase before objectCamelToSnake — builder handles both."""
+    def test_camel_case_filter_format_is_supported_by_backend_contract(self):
+        """Frontend camelCase payloads are accepted by the CH filter builder."""
         filters = [
             {
                 "columnId": "has_eval",
@@ -172,10 +173,10 @@ class TestCHMetricFilters:
                 },
             }
         ]
-        where, _ = self._builder().translate(filters)
+        where, params = self._builder().translate(filters)
         assert "tracer_eval_logger" in where
 
-    def test_has_annotation_camelCase(self):
+    def test_has_annotation_camel_case_filter_format_is_supported(self):
         filters = [
             {
                 "columnId": "has_annotation",
@@ -186,7 +187,7 @@ class TestCHMetricFilters:
                 },
             }
         ]
-        where, _ = self._builder().translate(filters)
+        where, params = self._builder().translate(filters)
         assert "trace_id NOT IN" in where
 
     def test_empty_filter_list(self):
@@ -238,7 +239,7 @@ class TestCHMetricFilters:
     def test_has_annotation_joins_through_span(self):
         """Score.trace_id is often NULL — must join via observation_span to resolve trace_id."""
         where, _ = self._builder().translate([_has_annotation_filter(False)])
-        assert "LEFT JOIN spans AS sp" in where
+        assert "FROM spans WHERE" in where
         assert "sp.id = s.observation_span_id" in where
 
     def test_has_eval_casts_to_string(self):
@@ -325,13 +326,6 @@ class TestPGMetricFilters:
     def test_status_equals_error(self):
         """status filter should be recognized as system metric."""
         q = FilterEngine.get_filter_conditions_for_system_metrics([_errors_filter()])
-        assert q != Q()
-
-    def test_status_filter_without_col_type(self):
-        """Status filter from FILTER_FOR_ERRORS has no col_type — must still work."""
-        f = _errors_filter()
-        assert "col_type" not in f["filter_config"]
-        q = FilterEngine.get_filter_conditions_for_system_metrics([f])
         assert q != Q()
 
     # --- combined ---

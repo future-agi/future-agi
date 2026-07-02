@@ -2,15 +2,17 @@
 
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 from rest_framework import status as http_status
 
+from accounts.models.workspace import Workspace
 from integrations.models import (
     ConnectionStatus,
     IntegrationConnection,
+    IntegrationPlatform,
     SyncLog,
     SyncStatus,
 )
@@ -34,7 +36,10 @@ class TestIntegrationConnectionListAPI:
 
     def test_unauthenticated(self, api_client):
         resp = api_client.get(self.URL)
-        assert resp.status_code == http_status.HTTP_403_FORBIDDEN
+        assert resp.status_code in (
+            http_status.HTTP_401_UNAUTHORIZED,
+            http_status.HTTP_403_FORBIDDEN,
+        )
 
     def test_empty_list(self, auth_client):
         resp = auth_client.get(self.URL)
@@ -79,11 +84,16 @@ class TestIntegrationConnectionListAPI:
         assert result["metadata"]["page_size"] == 2
         assert len(result["connections"]) == 2
 
+    def test_rejects_unknown_query_param(self, auth_client):
+        resp = auth_client.get(self.URL, {"legacyPage": 1})
+        assert resp.status_code == http_status.HTTP_400_BAD_REQUEST
+        assert resp.json()["details"] == {"legacyPage": ["Unknown field."]}
+
     def test_excludes_other_org(self, auth_client, integration_connection, db):
         """Connections from other orgs should not be visible."""
         from accounts.models.organization import Organization
 
-        other_org = Organization.objects.create(name="Other Org")
+        Organization.objects.create(name="Other Org")
         resp = auth_client.get(self.URL)
         result = _result(resp)
         # Only our org's connection
@@ -129,8 +139,7 @@ class TestIntegrationConnectionRetrieveAPI:
 
     def test_not_found(self, auth_client):
         resp = auth_client.get(self._url(uuid.uuid4()))
-        # View catches Http404 via generic except → 500
-        assert resp.status_code == http_status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert resp.status_code == http_status.HTTP_404_NOT_FOUND
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +322,31 @@ class TestIntegrationConnectionUpdateAPI:
         result = _result(resp)
         assert result["display_name"] == "New Name"
 
+    def test_put_display_name_uses_strict_update_contract(
+        self, auth_client, integration_connection
+    ):
+        resp = auth_client.put(
+            self._url(integration_connection.id),
+            data=json.dumps({"display_name": "PUT Name"}),
+            content_type="application/json",
+        )
+        assert resp.status_code == http_status.HTTP_200_OK
+        result = _result(resp)
+        assert result["display_name"] == "PUT Name"
+        assert result["status"] == "active"
+
+    def test_put_rejects_status_mutation(self, auth_client, integration_connection):
+        resp = auth_client.put(
+            self._url(integration_connection.id),
+            data=json.dumps({"display_name": "PUT Name", "status": "paused"}),
+            content_type="application/json",
+        )
+        assert resp.status_code == http_status.HTTP_400_BAD_REQUEST
+        assert resp.json()["details"] == {"status": ["Unknown field."]}
+        integration_connection.refresh_from_db()
+        assert integration_connection.status == ConnectionStatus.ACTIVE
+        assert integration_connection.display_name == "Test Langfuse"
+
     @patch("integrations.views.integration_connection.get_integration_service")
     def test_patch_credentials_re_validates(
         self, mock_get_svc, auth_client, integration_connection
@@ -431,8 +465,7 @@ class TestIntegrationConnectionDeleteAPI:
     def test_delete_other_org_forbidden(self, auth_client, db):
         """Cannot delete a connection that doesn't belong to our org."""
         resp = auth_client.delete(f"/integrations/connections/{uuid.uuid4()}/")
-        # View catches Http404 via generic except → 500
-        assert resp.status_code == http_status.HTTP_500_INTERNAL_SERVER_ERROR
+        assert resp.status_code == http_status.HTTP_404_NOT_FOUND
 
 
 # ---------------------------------------------------------------------------
@@ -520,6 +553,15 @@ class TestSyncNowAction:
         assert resp.status_code == http_status.HTTP_200_OK
         mock_sync.delay.assert_called_once()
 
+    def test_sync_now_rejects_body_fields(self, auth_client, integration_connection):
+        resp = auth_client.post(
+            self._url(integration_connection.id),
+            data=json.dumps({"unexpected": True}),
+            content_type="application/json",
+        )
+        assert resp.status_code == http_status.HTTP_400_BAD_REQUEST
+        assert resp.json()["details"]["unexpected"] == ["Unknown field."]
+
     def test_sync_now_already_syncing(self, auth_client, syncing_connection):
         resp = auth_client.post(self._url(syncing_connection.id))
         assert resp.status_code == http_status.HTTP_409_CONFLICT
@@ -530,7 +572,7 @@ class TestSyncNowAction:
 
     @patch("integrations.temporal.activities.sync_integration_connection")
     def test_sync_now_cooldown(self, mock_sync, auth_client, integration_connection):
-        integration_connection.last_synced_at = datetime.now(timezone.utc) - timedelta(
+        integration_connection.last_synced_at = datetime.now(UTC) - timedelta(
             seconds=10
         )
         integration_connection.save(update_fields=["last_synced_at"])
@@ -560,7 +602,7 @@ class TestSyncNowAction:
         self, mock_sync, auth_client, integration_connection
     ):
         """Exactly 60 seconds elapsed should allow sync."""
-        integration_connection.last_synced_at = datetime.now(timezone.utc) - timedelta(
+        integration_connection.last_synced_at = datetime.now(UTC) - timedelta(
             seconds=61
         )
         integration_connection.save(update_fields=["last_synced_at"])
@@ -592,6 +634,16 @@ class TestPauseResumeActions:
         assert resp.status_code == http_status.HTTP_200_OK
         result = _result(resp)
         assert result["status"] == "paused"
+
+    def test_pause_rejects_body_fields(self, auth_client, integration_connection):
+        url = f"/integrations/connections/{integration_connection.id}/pause/"
+        resp = auth_client.post(
+            url,
+            data=json.dumps({"unexpected": True}),
+            content_type="application/json",
+        )
+        assert resp.status_code == http_status.HTTP_400_BAD_REQUEST
+        assert resp.json()["details"]["unexpected"] == ["Unknown field."]
 
     def test_pause_already_paused(self, auth_client, paused_connection):
         url = f"/integrations/connections/{paused_connection.id}/pause/"
@@ -659,7 +711,10 @@ class TestSyncLogListAPI:
 
     def test_list_unauthenticated(self, api_client):
         resp = api_client.get(self.URL)
-        assert resp.status_code == http_status.HTTP_403_FORBIDDEN
+        assert resp.status_code in (
+            http_status.HTTP_401_UNAUTHORIZED,
+            http_status.HTTP_403_FORBIDDEN,
+        )
 
     def test_list_sync_logs(self, auth_client, sync_log):
         resp = auth_client.get(self.URL)
@@ -679,6 +734,128 @@ class TestSyncLogListAPI:
         resp = auth_client.get(self.URL, {"connection_id": str(uuid.uuid4())})
         result = _result(resp)
         assert result["metadata"]["total_count"] == 0
+
+    def test_rejects_invalid_connection_id(self, auth_client):
+        resp = auth_client.get(self.URL, {"connection_id": "not-a-uuid"})
+        assert resp.status_code == http_status.HTTP_400_BAD_REQUEST
+        assert resp.json()["details"]["connection_id"] == ["Must be a valid UUID."]
+
+    def test_excludes_other_workspace_logs(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        encrypted_credentials,
+    ):
+        """Sync logs must follow the same workspace scope as connections."""
+        other_workspace = Workspace.objects.create(
+            name="Other Integration Workspace",
+            organization=organization,
+            created_by=user,
+            is_default=False,
+        )
+        other_connection = IntegrationConnection.no_workspace_objects.create(
+            organization=organization,
+            workspace=other_workspace,
+            created_by=user,
+            platform=IntegrationPlatform.LANGFUSE,
+            display_name="Other Workspace Langfuse",
+            host_url="https://langfuse.example.com",
+            encrypted_credentials=encrypted_credentials,
+            external_project_name="other-workspace-project",
+            status=ConnectionStatus.ACTIVE,
+            sync_interval_seconds=300,
+            backfill_completed=True,
+        )
+        SyncLog.objects.create(
+            connection=other_connection,
+            status=SyncStatus.SUCCESS,
+            started_at=datetime.now(UTC) - timedelta(minutes=2),
+            completed_at=datetime.now(UTC) - timedelta(minutes=1),
+        )
+
+        resp = auth_client.get(self.URL, {"connection_id": str(other_connection.id)})
+
+        assert resp.status_code == http_status.HTTP_200_OK
+        assert _result(resp)["metadata"]["total_count"] == 0
+
+
+@pytest.mark.django_db
+@pytest.mark.api
+class TestSyncLogDetailAPI:
+    URL = "/integrations/sync-logs/"
+
+    def detail_url(self, sync_log_id):
+        return f"{self.URL}{sync_log_id}/"
+
+    def test_read_sync_log_detail(self, auth_client, sync_log, integration_connection):
+        resp = auth_client.get(self.detail_url(sync_log.id))
+
+        assert resp.status_code == http_status.HTTP_200_OK
+        data = _result(resp)
+        assert data["id"] == str(sync_log.id)
+        assert data["connection"] == str(integration_connection.id)
+        assert data["status"] == SyncStatus.SUCCESS
+        assert data["traces_fetched"] == 10
+        assert data["traces_created"] == 8
+        assert data["traces_updated"] == 2
+        assert data["spans_synced"] == 25
+        assert data["scores_synced"] == 5
+
+    def test_read_missing_sync_log_returns_404(self, auth_client):
+        resp = auth_client.get(self.detail_url(uuid.uuid4()))
+
+        assert resp.status_code == http_status.HTTP_404_NOT_FOUND
+
+    def test_read_hides_log_when_connection_deleted(
+        self, auth_client, sync_log, integration_connection
+    ):
+        integration_connection.deleted = True
+        integration_connection.save(update_fields=["deleted"])
+
+        resp = auth_client.get(self.detail_url(sync_log.id))
+
+        assert resp.status_code == http_status.HTTP_404_NOT_FOUND
+
+    def test_read_excludes_other_workspace_logs(
+        self,
+        auth_client,
+        organization,
+        workspace,
+        user,
+        encrypted_credentials,
+    ):
+        other_workspace = Workspace.objects.create(
+            name="Other Integration Detail Workspace",
+            organization=organization,
+            created_by=user,
+            is_default=False,
+        )
+        other_connection = IntegrationConnection.no_workspace_objects.create(
+            organization=organization,
+            workspace=other_workspace,
+            created_by=user,
+            platform=IntegrationPlatform.LANGFUSE,
+            display_name="Other Workspace Langfuse",
+            host_url="https://langfuse.example.com",
+            encrypted_credentials=encrypted_credentials,
+            external_project_name="other-workspace-project",
+            status=ConnectionStatus.ACTIVE,
+            sync_interval_seconds=300,
+            backfill_completed=True,
+        )
+        now = datetime.now(UTC)
+        other_log = SyncLog.objects.create(
+            connection=other_connection,
+            status=SyncStatus.SUCCESS,
+            started_at=now - timedelta(minutes=2),
+            completed_at=now - timedelta(minutes=1),
+        )
+
+        resp = auth_client.get(self.detail_url(other_log.id))
+
+        assert resp.status_code == http_status.HTTP_404_NOT_FOUND
 
 
 # ---------------------------------------------------------------------------

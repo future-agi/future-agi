@@ -14,6 +14,7 @@ import {
   getSeriesAverage,
   getSuggestedUnitConfig,
 } from "./widgetUtils";
+import { toTimeRangePayload } from "./dashboardDateRange";
 
 const CHART_HEIGHT_FALLBACK = 280;
 const COLORS = [
@@ -49,13 +50,8 @@ export default function WidgetChart({ widget, globalDateRange }) {
   // If globalDateRange is provided, override the widget's time range
   const queryConfig = useMemo(() => {
     if (!rawQueryConfig) return rawQueryConfig;
-    if (!globalDateRange) return rawQueryConfig;
-    // Convert globalDateRange {start, end} to the format the backend expects
-    const timeOverride = {
-      preset: "custom",
-      custom_start: globalDateRange.start,
-      custom_end: globalDateRange.end,
-    };
+    const timeOverride = toTimeRangePayload(globalDateRange);
+    if (!timeOverride) return rawQueryConfig;
     return {
       ...rawQueryConfig,
       time_range: timeOverride,
@@ -170,7 +166,10 @@ export default function WidgetChart({ widget, globalDateRange }) {
 
   // Compute Y-axis precision once from the data range so all ticks use the
   // same number of decimals (avoids "0.0 / 0.0 / 0.02" inconsistency).
-  const autoDecimals = useMemo(() => getAutoDecimals(chartSeries), [chartSeries]);
+  const autoDecimals = useMemo(
+    () => getAutoDecimals(chartSeries),
+    [chartSeries],
+  );
   const leftAxisFormatConfig = useMemo(() => {
     const suggested = getSuggestedUnitConfig(result?.metrics || []);
     const leftAxis = axisConfig?.leftY || {};
@@ -322,9 +321,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
                 variant="h3"
                 sx={{ color: COLORS[i % COLORS.length] }}
               >
-                {avg == null
-                  ? "—"
-                  : formatVal(avg)}
+                {avg == null ? "—" : formatVal(avg)}
               </Typography>
               <Typography variant="caption" color="text.secondary">
                 {s.name}
@@ -651,7 +648,10 @@ export default function WidgetChart({ widget, globalDateRange }) {
         numericValue: avg == null ? 0 : avg,
       };
     });
-    const maxVal = Math.max(...barRows.map((row) => Math.abs(row.numericValue)), 1);
+    const maxVal = Math.max(
+      ...barRows.map((row) => Math.abs(row.numericValue)),
+      1,
+    );
     return (
       <Box
         ref={containerRef}
@@ -839,7 +839,8 @@ export default function WidgetChart({ widget, globalDateRange }) {
 
           if (isStacked && dpi >= 0) {
             const w = chartContext.w;
-            const gridRect = w.globals.gridRect;
+            const gridRect = w?.globals?.gridRect;
+            if (!gridRect) return;
             const chartRect = el.getBoundingClientRect();
             const mouseY = event.clientY - chartRect.top - gridRect.y;
             const plotH = gridRect.height;

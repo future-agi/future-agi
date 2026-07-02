@@ -616,7 +616,7 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
   }
 
   const columnId = params?.column?.colId;
-  const rowId = params?.data?.rowId;
+  const rowId = params?.data?.row_id ?? params?.data?.rowId;
   const newValue = params?.newValue;
   const oldValue = params?.oldValue;
   const dataType = params?.column?.colDef?.dataType;
@@ -766,8 +766,6 @@ export const getStatusColor = (value, theme) => {
   };
 };
 
-
-
 export const parsePythonReprIfNeeded = (value) => {
   if (typeof value !== "string") return value;
   const isDict = value.startsWith("{") && value.endsWith("}");
@@ -819,13 +817,11 @@ export const normalizeEvalCellValue = (value) => {
   return v;
 };
 
-
 export const cleanChoiceLabel = (value) => {
   const parsed = parsePythonReprIfNeeded(value);
   if (Array.isArray(parsed)) return parsed.map((v) => String(v)).join(", ");
   return String(parsed ?? value);
 };
-
 
 // Map an outputType string (with all its casing/spelling variants) to a canonical
 // kind. Returns null when no type was given or it isn't recognized.
@@ -844,7 +840,12 @@ const inferKindFromValue = (/** @type {any} */ v) => {
   if (typeof v === "string") {
     const trimmed = v.trim();
     const lowered = trimmed.toLowerCase();
-    if (lowered === "passed" || lowered === "failed" || lowered === "pass" || lowered === "fail") {
+    if (
+      lowered === "passed" ||
+      lowered === "failed" ||
+      lowered === "pass" ||
+      lowered === "fail"
+    ) {
       return "passfail";
     }
     // numeric-looking string → score
@@ -906,13 +907,16 @@ export const normalizeEvalResult = (value, outputType) => {
     }
     items = items
       .map((/** @type {any} */ x) =>
-        x && typeof x === "object" ? (x.choice ?? x.label ?? x.value ?? "") : x,
+        x && typeof x === "object" ? x.choice ?? x.label ?? x.value ?? "" : x,
       )
       .map((/** @type {any} */ x) => String(x ?? ""))
       .filter(Boolean);
     if (items.length === 0) return { kind: "empty" };
     const score =
-      v && typeof v === "object" && !Array.isArray(v) && typeof v.score === "number"
+      v &&
+      typeof v === "object" &&
+      !Array.isArray(v) &&
+      typeof v.score === "number"
         ? v.score
         : null;
     return { kind: "choices", items, score };
@@ -964,10 +968,8 @@ export const DATASET_TYPES = {
 export const enhanceCol = (col, averageMetaData) => {
   const columnConfig = averageMetaData?.find((d) => d.id === col.id);
   if (!columnConfig) return col;
-  // Spread only copies enumerable own properties; the non-enumerable
-  // camelCase aliases installed by the axios response interceptor are
-  // lost. Explicitly re-add them so downstream code reading camelCase
-  // fields (like `eachCol?.dataType`) still works.
+  // Local table column state still reads a few camelCase fields. Keep this
+  // adapter explicit here instead of mutating every API response globally.
   return {
     ...col,
     metadata: columnConfig?.metadata,
@@ -1066,6 +1068,8 @@ export const getDatasetViewOptions = (viewOptions) => {
       viewOptions?.showDrawer !== undefined ? viewOptions?.showDrawer : true,
     bottomRow:
       viewOptions?.bottomRow !== undefined ? viewOptions?.bottomRow : true,
+    showEvals:
+      viewOptions?.showEvals !== undefined ? viewOptions?.showEvals : true,
   };
 };
 

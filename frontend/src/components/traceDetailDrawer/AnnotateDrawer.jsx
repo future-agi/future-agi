@@ -232,12 +232,12 @@ const AnnotateDrawer = ({
   const updatedSpanId =
     listSpanId ?? (selectedNode ? selectedNode?.id : voiceObserveSpanId);
   const { data: spanAnnotationData, isPending } = useQuery({
-    queryKey: ["span-annotation", updatedSpanId, [user.id], "contains"],
+    queryKey: ["span-annotation", updatedSpanId, [user?.id], "contains"],
     queryFn: () => {
       return axios.get(endpoints.project.getAnnotationsForSpanId(), {
         params: {
           observation_span_id: updatedSpanId,
-          annotators: JSON.stringify([user.id]),
+          annotators: JSON.stringify([user?.id]),
           exclude_annotators: JSON.stringify([]),
         },
       });
@@ -289,7 +289,7 @@ const AnnotateDrawer = ({
             >
               <Typography variant="h6">
                 Annotate{" "}
-                <ShowComponent condition={runName}>
+                <ShowComponent condition={Boolean(runName)}>
                   {`- ${runName}`}
                 </ShowComponent>
               </Typography>
@@ -308,7 +308,7 @@ const AnnotateDrawer = ({
               {observationType} - {observationName}
             </Typography>
           </ShowComponent>
-          <ShowComponent condition={voiceObserveSpanId}>
+          <ShowComponent condition={Boolean(voiceObserveSpanId)}>
             <Box
               sx={{
                 display: "flex",

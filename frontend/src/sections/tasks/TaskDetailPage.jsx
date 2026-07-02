@@ -1,16 +1,26 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Box, Button, CircularProgress, Tab, Tabs } from "@mui/material";
+import {
+  Box,
+  Button,
+  CircularProgress,
+  Stack,
+  Tab,
+  Tabs,
+  Typography,
+} from "@mui/material";
 import { LoadingButton } from "@mui/lab";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
 import Iconify from "src/components/iconify";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TaskLogsView from "src/sections/common/EvalsTasks/TaskLogsView";
 import { useGetTaskData } from "src/sections/common/EvalsTasks/common";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import TaskHeader from "./components/TaskHeader";
 import TaskConfigPanel from "./components/TaskConfigPanel";
 import TaskLivePreview from "./components/TaskLivePreview";
@@ -18,9 +28,16 @@ import TaskUsageTab from "./components/TaskUsageTab";
 import {
   NewTaskValidationSchema,
   getDefaultTaskValues,
-  extractAttributeFilters,
+  getNewTaskFilters,
 } from "./schema";
 import TaskConfirmDialog from "src/sections/common/EvalsTasks/EditTaskDrawer/TaskConfirmBox";
+
+const getTaskDetailsErrorMessage = (error) =>
+  error?.result ||
+  error?.message ||
+  error?.response?.data?.result ||
+  error?.response?.data?.message ||
+  "Task details could not be loaded.";
 
 const TAB_OPTIONS = [
   { label: "Details", value: "details", icon: "solar:settings-linear" },
@@ -28,8 +45,32 @@ const TAB_OPTIONS = [
   { label: "Usage", value: "usage", icon: "solar:chart-2-linear" },
 ];
 
+const firstFilterValue = (value) => {
+  if (Array.isArray(value)) return value.find(Boolean) || null;
+  return value || null;
+};
+
+const getLinkedTraceSource = (taskDetails) => {
+  const filters = taskDetails?.filters_applied || taskDetails?.filters || {};
+  const projectId =
+    taskDetails?.project_id ||
+    taskDetails?.projectId ||
+    filters.project_id ||
+    filters.projectId;
+  const traceId = firstFilterValue(filters.trace_id || filters.traceId);
+  if (!projectId || !traceId) return null;
+  return {
+    label: "Open source",
+    path: `/dashboard/observe/${projectId}/trace/${traceId}`,
+  };
+};
+
 const TaskDetailPage = () => {
   const { taskId } = useParams();
+  const navigate = useNavigate();
+  const { role } = useAuthContext();
+  const canEditTask =
+    RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][role];
   const queryClient = useQueryClient();
   const [tab, setTab] = useState("details");
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -44,7 +85,12 @@ const TaskDetailPage = () => {
     setTestState(next);
   }, []);
 
-  const { data: taskDetails, isLoading } = useGetTaskData(taskId, {
+  const {
+    data: taskDetails,
+    isLoading,
+    isError,
+    error,
+  } = useGetTaskData(taskId, {
     enabled: !!taskId,
   });
 
@@ -110,8 +156,7 @@ const TaskDetailPage = () => {
 
   const { mutate: renameTask } = useMutation({
     mutationFn: (newName) =>
-      axios.patch(endpoints.project.patchEvalTask(), {
-        eval_task_id: taskId,
+      axios.patch(endpoints.project.updateEvalTask(taskId), {
         name: newName,
       }),
     onSuccess: () => {
@@ -131,31 +176,17 @@ const TaskDetailPage = () => {
   const handleConfirm = useCallback(
     (editType) => {
       const data = formValues;
-      const attributeFilters = extractAttributeFilters(data?.filters);
-      // observation_type rows may now carry an array `filterValue` (canonical
-      // `in`/`not_in`) or a scalar (legacy `equals`). Flatten + drop empties
-      // so the BE always sees a flat list of selected values.
-      const observationTypes = (data.filters || [])
-        .filter((f) => f.property === "observation_type")
-        .flatMap((f) => {
-          const v = f?.filterConfig?.filterValue;
-          if (Array.isArray(v)) return v;
-          return v !== undefined && v !== null && v !== "" ? [v] : [];
-        });
+      const { filters, attributeFilters } = getNewTaskFilters(
+        data,
+        data.project,
+      );
 
       const transformedData = {
         evals: data.evalsDetails?.map((item) => item.id || item) || [],
         filters: {
-          project_id: data.project,
-          date_range: [
-            new Date(data.startDate).toISOString(),
-            new Date(data.endDate).toISOString(),
-          ],
-          ...(observationTypes?.length > 0
-            ? { observation_type: observationTypes }
-            : {}),
+          ...filters,
           ...(attributeFilters?.length > 0
-            ? { span_attributes_filters: attributeFilters }
+            ? { filters: attributeFilters }
             : {}),
         },
         project_id: data.project,
@@ -172,7 +203,7 @@ const TaskDetailPage = () => {
     [formValues, updateTask],
   );
 
-  if (isLoading || !taskDetails) {
+  if (isLoading) {
     return (
       <Box
         sx={{
@@ -187,13 +218,75 @@ const TaskDetailPage = () => {
     );
   }
 
+  if (isError || !taskDetails) {
+    const message = getTaskDetailsErrorMessage(error);
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          minHeight: "100%",
+          px: 3,
+        }}
+      >
+        <Stack
+          spacing={2}
+          alignItems="center"
+          sx={{ maxWidth: 420, textAlign: "center" }}
+        >
+          <Iconify
+            icon="solar:clipboard-remove-linear"
+            width={42}
+            sx={{ color: "text.disabled" }}
+          />
+          <Box>
+            <Typography variant="h6">Task not available</Typography>
+            <Typography
+              variant="body2"
+              sx={{ mt: 0.75, color: "text.secondary" }}
+            >
+              {message}
+            </Typography>
+          </Box>
+          <Button
+            variant="contained"
+            size="small"
+            onClick={() => navigate("/dashboard/tasks")}
+            startIcon={<Iconify icon="solar:arrow-left-linear" width={14} />}
+            sx={{ textTransform: "none" }}
+          >
+            Back to Tasks
+          </Button>
+        </Stack>
+      </Box>
+    );
+  }
+
   const status = (taskDetails.status || "").toLowerCase();
-  const canPause = status === "running" || status === "pending";
+  const canPause = status === "running";
   const canResume = status === "paused";
+  const linkedTraceSource = getLinkedTraceSource(taskDetails);
 
   // Pause/Resume stay in the header
   const headerActions = (
     <>
+      {linkedTraceSource && (
+        <Button
+          variant="outlined"
+          size="small"
+          onClick={() => navigate(linkedTraceSource.path)}
+          startIcon={<Iconify icon="solar:map-point-wave-linear" width={14} />}
+          sx={{
+            textTransform: "none",
+            fontWeight: 500,
+            fontSize: "12px",
+            height: 30,
+          }}
+        >
+          {linkedTraceSource.label}
+        </Button>
+      )}
       {canPause && (
         <Button
           variant="outlined"
@@ -374,7 +467,7 @@ const TaskDetailPage = () => {
             variant="outlined"
             size="small"
             loading={testState.isTesting}
-            disabled={!testState.canTest}
+            disabled={!testState.canTest || !canEditTask}
             onClick={() => previewRef.current?.runTest()}
             startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
             sx={{ textTransform: "none", fontWeight: 500, minWidth: 120 }}
@@ -386,6 +479,7 @@ const TaskDetailPage = () => {
             size="small"
             onClick={handleSave}
             loading={isUpdating}
+            disabled={!canEditTask}
             sx={{ textTransform: "none", fontWeight: 500, minWidth: 140 }}
           >
             Save

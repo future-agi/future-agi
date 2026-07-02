@@ -278,7 +278,7 @@ const CustomCellRender = (props) => {
     );
   }
 
-  if (status === StatusTypes.RUNNING || value === undefined) {
+  if (status === StatusTypes.RUNNING) {
     return (
       <RunningSkeletonRenderer
         originType={props.colDef.col.originType}

@@ -132,13 +132,17 @@ export const buildCompositeSourceModeProps = ({
       child_template_ids: children.map((child) => child.child_id),
       child_configs: buildCompositeChildConfigs(children),
       aggregation_enabled:
-        compositeDetail?.aggregation_enabled ?? fullEval?.aggregation_enabled ?? true,
+        compositeDetail?.aggregation_enabled ??
+        fullEval?.aggregation_enabled ??
+        true,
       aggregation_function:
-        compositeDetail?.aggregation_function
-        || fullEval?.aggregation_function
-        || "weighted_avg",
+        compositeDetail?.aggregation_function ||
+        fullEval?.aggregation_function ||
+        "weighted_avg",
       composite_child_axis:
-        compositeDetail?.composite_child_axis || fullEval?.composite_child_axis || "",
+        compositeDetail?.composite_child_axis ||
+        fullEval?.composite_child_axis ||
+        "",
       child_weights:
         Object.keys(mergedWeights).length > 0 ? mergedWeights : null,
       pass_threshold:

@@ -35,10 +35,10 @@ class ListSpansTool(BaseTool):
 
     def execute(self, params: ListSpansInput, context: ToolContext) -> ToolResult:
 
-        from tracer.models.observation_span import ObservationSpan
         from tracer.models.trace import Trace
+        from tracer.services.clickhouse.v2 import get_reader
 
-        # Verify trace exists
+        # Verify trace exists (Trace still in PG; not migrating Trace model here)
         try:
             trace = Trace.objects.get(
                 id=params.trace_id, project__organization=context.organization
@@ -46,15 +46,19 @@ class ListSpansTool(BaseTool):
         except Trace.DoesNotExist:
             return ToolResult.not_found("Trace", str(params.trace_id))
 
-        qs = ObservationSpan.objects.filter(trace=trace, deleted=False).order_by(
-            "start_time", "created_at"
-        )
+        # Spans read from CH 25.3 — was ObservationSpan.objects.filter(trace=,
+        # deleted=False).order_by("start_time", "created_at"). The reader
+        # filters is_deleted=0 and orders by start_time, id (id as secondary
+        # is equivalent for tie-breaking display order; created_at-vs-id
+        # only matters for spans created in the same start_time).
+        with get_reader() as reader:
+            all_spans = reader.list_by_trace(str(trace.id))
 
         if params.span_type:
-            qs = qs.filter(observation_type=params.span_type)
+            all_spans = [s for s in all_spans if s.observation_type == params.span_type]
 
-        total = qs.count()
-        spans = list(qs[: params.limit])
+        total = len(all_spans)
+        spans = all_spans[: params.limit]
 
         if not spans:
             filter_msg = f" (type={params.span_type})" if params.span_type else ""

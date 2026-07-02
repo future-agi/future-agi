@@ -3,6 +3,14 @@ import { useMemo } from "react";
 import { getColumnConfig } from "src/sections/develop-detail/DataTab/common";
 import axios, { endpoints } from "src/utils/axios";
 import logger from "src/utils/logger";
+import { modelHubDevelopsGetDatasetTableList } from "src/generated/api-contracts/api";
+
+export const normalizeDatasetListItem = (dataset) => ({
+  ...dataset,
+  datasetId: dataset?.dataset_id ?? dataset?.datasetId ?? dataset?.id,
+  datasetType: dataset?.dataset_type ?? dataset?.datasetType,
+  modelType: dataset?.model_type ?? dataset?.modelType,
+});
 
 export const useDevelopDatasetList = (
   search_text,
@@ -39,7 +47,8 @@ export const useDevelopDatasetList = (
     queryKey,
     queryFn: () =>
       axios.get(endpoints.develop.getDatasetList(), { params: payload }),
-    select: (d) => d.data?.result?.datasets,
+    select: (d) =>
+      (d.data?.result?.datasets ?? []).map(normalizeDatasetListItem),
     staleTime: 30 * 1000, // 30 seconds stale time (reduced from 1 min)
     refetchOnWindowFocus: true, // Refetch when window regains focus
   });
@@ -136,13 +145,8 @@ export const useGetJsonColumnSchema = (datasetId, options = {}) => {
 export const useGetDatasetDetail = (datasetId, options = {}, params = {}) => {
   return useQuery({
     queryKey: ["get-dataset-detail", datasetId, params],
-    queryFn: async () => {
-      const res = await axios.get(
-        endpoints.develop.getDatasetDetail(datasetId),
-        { params },
-      );
-      return res.data?.result;
-    },
+    queryFn: () => modelHubDevelopsGetDatasetTableList(datasetId, params),
+    select: (d) => d?.data?.result || d?.result || d,
     enabled: Boolean(datasetId),
     staleTime: 60 * 1000,
     ...options,

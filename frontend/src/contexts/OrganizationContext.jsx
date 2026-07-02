@@ -143,12 +143,9 @@ export function OrganizationProvider({ children }) {
       setOrganizationHeader(stored.id);
       const updated = { ...stored };
       // Always sync role/level from latest user-info response
-      updated.role =
-        (user.organization_role ?? user.organizationRole) || stored.role;
+      updated.role = user.organization_role || stored.role;
       updated.orgLevel =
-        (user.org_level ?? user.orgLevel) != null
-          ? user.org_level ?? user.orgLevel
-          : stored.orgLevel;
+        user.org_level != null ? user.org_level : stored.orgLevel;
       setOrganization(updated);
       writeSessionOrganization(updated);
       setIsReady(true);
@@ -166,12 +163,9 @@ export function OrganizationProvider({ children }) {
           const initial = {
             id: first.id,
             name: first.name || null,
-            displayName: first.display_name || first.displayName || null,
-            role: (user.organization_role ?? user.organizationRole) || null,
-            orgLevel:
-              (user.org_level ?? user.orgLevel) != null
-                ? user.org_level ?? user.orgLevel
-                : null,
+            displayName: first.display_name || null,
+            role: user.organization_role || null,
+            orgLevel: user.org_level != null ? user.org_level : null,
           };
           setOrganization(initial);
           writeSessionOrganization(initial);
@@ -200,13 +194,9 @@ export function OrganizationProvider({ children }) {
       const newOrg = {
         id: orgData.id || newOrganizationId,
         name: orgData.name || null,
-        displayName:
-          orgData.display_name || orgData.displayName || orgData.name || null,
-        role: (result.org_role ?? result.orgRole) || null,
-        orgLevel:
-          (result.org_level ?? result.orgLevel) != null
-            ? result.org_level ?? result.orgLevel
-            : null,
+        displayName: orgData.display_name || orgData.name || null,
+        role: result.org_role || null,
+        orgLevel: result.org_level != null ? result.org_level : null,
       };
 
       // 1. Update organization sessionStorage
@@ -221,7 +211,7 @@ export function OrganizationProvider({ children }) {
         sessionStorage.setItem("workspaceName", wsData.name || "");
         sessionStorage.setItem(
           "workspaceDisplayName",
-          wsData.display_name || wsData.displayName || wsData.name || "",
+          wsData.display_name || wsData.name || "",
         );
         axios.defaults.headers.common["X-Workspace-Id"] = wsData.id;
       }

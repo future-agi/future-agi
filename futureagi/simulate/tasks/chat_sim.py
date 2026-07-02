@@ -1,7 +1,7 @@
 import os
 import uuid
 from datetime import datetime, timedelta
-from typing import Any, List, Optional, Union
+from typing import Any
 
 import structlog
 from django.db import transaction
@@ -29,12 +29,11 @@ from simulate.services.test_executor import (
 from simulate.utils.chat_simulation import (
     _aggregate_chat_metrics,
     _calculate_tokens_from_messages,
-    _swap_user_assistant_roles,
 )
 from simulate.utils.websocket_notifications import notify_simulation_update
+from tfc.temporal.drop_in import temporal_activity
 
 logger = structlog.get_logger(__name__)
-from tfc.temporal.drop_in import temporal_activity
 
 
 @temporal_activity(
@@ -45,12 +44,12 @@ def store_chat_messages(
     call_execution_id: str,
     organization_id: str,
     workspace_id: str,
-    input_messages: List[Union[ChatMessage, dict]],
-    output_messages: List[Union[ChatMessage, dict]],
+    input_messages: list[ChatMessage | dict],
+    output_messages: list[ChatMessage | dict],
     chat_ended: bool,
     chat_session_id: str,
     create_timestamp: datetime,
-    metrics: Optional[dict[str, Optional[float | int]]] = None,
+    metrics: dict[str, float | int | None] | None = None,
 ):
     try:
         organization = Organization.objects.get(id=organization_id)
@@ -73,12 +72,12 @@ def store_chat_messages(
         # - input_messages (from agent via SDK) come as role="user" (SDK converts assistant->user)
         # - output_messages (from simulator) are role="user" (simulator is the customer)
         # So we extract ALL content, not filtering by role.
-        input_messages_content: List[str] = [
+        input_messages_content: list[str] = [
             (msg.content if hasattr(msg, "content") else msg.get("content", ""))
             for msg in input_messages
             if (msg.content if hasattr(msg, "content") else msg.get("content"))
         ]
-        output_messages_content: List[str] = [
+        output_messages_content: list[str] = [
             (msg.content if hasattr(msg, "content") else msg.get("content", ""))
             for msg in output_messages
             if (msg.content if hasattr(msg, "content") else msg.get("content"))
@@ -218,16 +217,12 @@ def store_chat_messages(
 
             # run evals for this call exec
             call_metadata = call_execution.call_metadata or {}
+            should_start_evals = False
 
             if not call_metadata.get("eval_started"):
                 call_metadata["eval_started"] = True
                 call_execution.call_metadata = call_metadata
-                _run_simulate_evaluations_task.apply_async(
-                    args=(str(call_execution.id),)
-                )
-                logger.info(
-                    f"Started evaluations for call after completion {call_execution.id}"
-                )
+                should_start_evals = True
 
             call_execution.save(
                 update_fields=[
@@ -240,12 +235,77 @@ def store_chat_messages(
                 ]
             )
 
+            if should_start_evals:
+                try:
+                    _run_simulate_evaluations_task.apply_async(
+                        args=(str(call_execution.id),)
+                    )
+                    logger.info(
+                        f"Started evaluations for call after completion {call_execution.id}"
+                    )
+                except Exception as dispatch_error:
+                    call_metadata = call_execution.call_metadata or {}
+                    call_metadata["eval_started"] = False
+                    call_metadata["eval_dispatch_failed"] = str(dispatch_error)
+                    call_execution.call_metadata = call_metadata
+                    call_execution.save(update_fields=["call_metadata"])
+                    logger.exception(
+                        "chat_eval_dispatch_failed",
+                        call_execution_id=str(call_execution.id),
+                        error=str(dispatch_error),
+                    )
+
             logger.info(f"CallExecution {call_execution.id} marked as COMPLETED")
 
             # Trigger test execution monitoring to update TestExecution status
-            monitor_test_execution_for_chat.apply_async(
-                args=(str(call_execution.test_execution_id),)
-            )
+            try:
+                monitor_test_execution_for_chat.apply_async(
+                    args=(str(call_execution.test_execution_id),)
+                )
+            except Exception as dispatch_error:
+                monitor_original = getattr(
+                    monitor_test_execution_for_chat, "_original_func", None
+                )
+                if callable(monitor_original):
+                    try:
+                        monitor_original(str(call_execution.test_execution_id))
+                    except Exception as monitor_error:
+                        test_execution = call_execution.test_execution
+                        test_execution.execution_metadata = (
+                            test_execution.execution_metadata or {}
+                        )
+                        test_execution.execution_metadata[
+                            "chat_monitor_dispatch_failed"
+                        ] = str(monitor_error)
+                        test_execution.picked_up_by_executor = False
+                        test_execution.save(
+                            update_fields=[
+                                "execution_metadata",
+                                "picked_up_by_executor",
+                            ]
+                        )
+                        logger.exception(
+                            "chat_monitor_sync_fallback_failed",
+                            test_execution_id=str(call_execution.test_execution_id),
+                            error=str(monitor_error),
+                        )
+                else:
+                    test_execution = call_execution.test_execution
+                    test_execution.execution_metadata = (
+                        test_execution.execution_metadata or {}
+                    )
+                    test_execution.execution_metadata[
+                        "chat_monitor_dispatch_failed"
+                    ] = str(dispatch_error)
+                    test_execution.picked_up_by_executor = False
+                    test_execution.save(
+                        update_fields=["execution_metadata", "picked_up_by_executor"]
+                    )
+                logger.exception(
+                    "chat_monitor_dispatch_failed_falling_back_sync",
+                    test_execution_id=str(call_execution.test_execution_id),
+                    error=str(dispatch_error),
+                )
 
         return True
     except Exception as e:
@@ -438,7 +498,7 @@ def monitor_chat_timeout_call_executions():
                 .values_list("id", flat=True)[:50]
             )
 
-            updated = CallExecution.objects.filter(id__in=ids).update(
+            CallExecution.objects.filter(id__in=ids).update(
                 status=CallExecution.CallStatus.FAILED,
                 completed_at=now,
                 updated_at=now,  # because .update() won't auto-update updated_at
@@ -466,7 +526,6 @@ def process_prompt_based_chat_simulations():
     For each CallExecution, it initiates the chat and runs the full conversation.
     """
     # Lazy import: simulate.services.chat_sim imports from this module (circular)
-    from simulate.services.chat_sim import initiate_chat, run_prompt_based_conversation
 
     try:
         # Per-organisation concurrency limit.  Each org uses its own LLM API
@@ -576,7 +635,9 @@ def run_single_prompt_chat(call_execution_id: str):
             usage_check = check_usage(str(organization.id), BillingEventType.TEXT_CALL)
             if not usage_check.allowed:
                 call_execution.status = CallExecution.CallStatus.FAILED
-                call_execution.ended_reason = usage_check.reason or "Usage limit exceeded"
+                call_execution.ended_reason = (
+                    usage_check.reason or "Usage limit exceeded"
+                )
                 call_execution.save(update_fields=["status", "ended_reason"])
                 return False
 
@@ -605,6 +666,7 @@ def run_single_prompt_chat(call_execution_id: str):
             from django.db.models import Sum
 
             from simulate.models import ChatMessageModel
+
             try:
                 from ee.usage.schemas.events import UsageEvent
             except ImportError:

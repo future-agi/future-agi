@@ -122,7 +122,6 @@ colorama==0.4.6
     # via griffe
 coloredlogs==15.0.1
     # via
-    #   guardrails-ai
     #   onnxruntime
 cron-descriptor==1.4.5
     # via django-celery-beat
@@ -143,7 +142,6 @@ defusedxml==0.7.1
 deprecation==2.1.0
     # via weaviate-client
 diff-match-patch==20230430
-    # via guardrails-ai
 dill==0.3.8
     # via
     #   datasets
@@ -207,7 +205,6 @@ ecdsa==0.19.1
 elementpath==4.8.0
     # via xmlschema
 faker==25.9.2
-    # via guardrails-ai
 ffmpeg-python==0.2.0
     # via core-backend (pyproject.toml)
 filelock==3.18.0
@@ -288,7 +285,6 @@ googleapis-common-protos==1.70.0
 greenlet==3.2.3
     # via gevent
 griffe==0.36.9
-    # via guardrails-ai
 grpc-google-iam-v1==0.14.2
     # via google-cloud-resource-manager
 grpcio==1.73.1
@@ -315,12 +311,7 @@ grpcio-tools==1.71.2
     #   core-backend (pyproject.toml)
     #   django-socio-grpc
     #   weaviate-client
-guardrails-ai==0.5.12
     # via core-backend (pyproject.toml)
-guardrails-api-client==0.3.9
-    # via guardrails-ai
-guardrails-hub-types==0.0.4
-    # via guardrails-ai
 gunicorn==23.0.0
     # via core-backend (pyproject.toml)
 h11==0.16.0
@@ -403,11 +394,9 @@ jsonpointer==3.0.0
     #   jsonpatch
     #   jsonschema
 jsonref==1.1.0
-    # via guardrails-ai
 jsonschema==4.24.0
     # via
     #   chromadb
-    #   guardrails-ai
     #   litellm
 jsonschema-specifications==2025.4.1
     # via jsonschema
@@ -423,7 +412,6 @@ langchain-community==0.2.19
     # via core-backend (pyproject.toml)
 langchain-core==0.2.43
     # via
-    #   guardrails-ai
     #   langchain
     #   langchain-community
     #   langchain-text-splitters
@@ -447,14 +435,12 @@ librosa==0.11.0
 litellm==1.68.1
     # via
     #   core-backend (pyproject.toml)
-    #   guardrails-ai
 llvmlite==0.44.0
     # via
     #   core-backend (pyproject.toml)
     #   numba
 lxml==4.9.4
     # via
-    #   guardrails-ai
     #   python-docx
     #   xmlsec
 markdown-it-py==3.0.0
@@ -490,7 +476,6 @@ newrelic==10.14.0
 nltk==3.8.1
     # via
     #   core-backend (pyproject.toml)
-    #   guardrails-ai
     #   rouge-score
 nodeenv==1.9.1
     # via pre-commit
@@ -526,7 +511,6 @@ onnxruntime==1.22.0
 openai==1.75.0
     # via
     #   core-backend (pyproject.toml)
-    #   guardrails-ai
     #   litellm
 opentelemetry-api==1.34.1
     # via
@@ -548,11 +532,9 @@ opentelemetry-exporter-otlp-proto-grpc==1.34.1
     # via
     #   core-backend (pyproject.toml)
     #   chromadb
-    #   guardrails-ai
 opentelemetry-exporter-otlp-proto-http==1.34.1
     # via
     #   core-backend (pyproject.toml)
-    #   guardrails-ai
 opentelemetry-instrumentation==0.55b1
     # via
     #   core-backend (pyproject.toml)
@@ -574,7 +556,6 @@ opentelemetry-sdk==1.34.1
     # via
     #   core-backend (pyproject.toml)
     #   chromadb
-    #   guardrails-ai
     #   opentelemetry-exporter-otlp-proto-grpc
     #   opentelemetry-exporter-otlp-proto-http
 opentelemetry-semantic-conventions==0.55b1
@@ -636,7 +617,6 @@ pinecone-plugin-interface==0.0.7
     #   pinecone
     #   pinecone-plugin-inference
 pip==25.1.1
-    # via guardrails-ai
 platformdirs==4.3.8
     # via
     #   pooch
@@ -711,7 +691,6 @@ pydantic==2.11.7
     #   chromadb
     #   google-cloud-aiplatform
     #   google-genai
-    #   guardrails-ai
     #   langchain
     #   langchain-core
     #   langsmith
@@ -722,7 +701,6 @@ pydantic==2.11.7
 pydantic-core==2.33.2
     # via pydantic
 pydash==7.0.7
-    # via guardrails-ai
 pydub==0.25.1
     # via core-backend (pyproject.toml)
 pygments==2.19.2
@@ -731,7 +709,6 @@ pyjwt==2.9.0
     # via
     #   core-backend (pyproject.toml)
     #   djangorestframework-simplejwt
-    #   guardrails-ai
 pymeta3==0.5.1
     # via pybars3
 pymongo==4.13.2
@@ -755,7 +732,6 @@ python-dateutil==2.9.0.post0
     #   celery
     #   faker
     #   google-cloud-bigquery
-    #   guardrails-ai
     #   kubernetes
     #   pandas
     #   pinecone
@@ -802,7 +778,6 @@ referencing==0.36.2
     #   jsonschema-specifications
 regex==2023.12.25
     # via
-    #   guardrails-ai
     #   nltk
     #   tiktoken
     #   transformers
@@ -815,7 +790,6 @@ requests==2.32.4
     #   google-cloud-bigquery
     #   google-cloud-storage
     #   google-genai
-    #   guardrails-ai
     #   huggingface-hub
     #   kubernetes
     #   langchain
@@ -844,7 +818,6 @@ rfc3987==1.3.8
 rich==13.9.4
     # via
     #   chromadb
-    #   guardrails-ai
     #   typer
 rouge-score==0.1.2
     # via core-backend (pyproject.toml)
@@ -857,7 +830,6 @@ rsa==4.9.1
     #   google-auth
     #   python-jose
 rstr==3.2.2
-    # via guardrails-ai
 s3transfer==0.13.0
     # via boto3
 safetensors==0.5.3
@@ -870,7 +842,6 @@ scipy==1.16.0
     #   librosa
     #   scikit-learn
 semver==3.0.4
-    # via guardrails-ai
 sentry-sdk==2.32.0
     # via core-backend (pyproject.toml)
 setuptools==80.9.0
@@ -923,7 +894,6 @@ tenacity==8.5.0
     #   core-backend (pyproject.toml)
     #   chromadb
     #   google-genai
-    #   guardrails-ai
     #   langchain
     #   langchain-community
     #   langchain-core
@@ -931,7 +901,6 @@ threadpoolctl==3.6.0
     # via scikit-learn
 tiktoken==0.9.0
     # via
-    #   guardrails-ai
     #   litellm
 tokenizers==0.21.2
     # via
@@ -954,7 +923,6 @@ transformers==4.53.0
 typer==0.12.5
     # via
     #   chromadb
-    #   guardrails-ai
 types-python-dateutil==2.9.0.20250516
     # via arrow
 typing-extensions==4.14.0
@@ -964,7 +932,6 @@ typing-extensions==4.14.0
     #   chromadb
     #   google-cloud-aiplatform
     #   google-genai
-    #   guardrails-ai
     #   huggingface-hub
     #   langchain-core
     #   librosa

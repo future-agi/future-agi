@@ -8,10 +8,14 @@ from django.db import transaction
 from django.utils import timezone
 
 from accounts.models.workspace import Workspace
-from common.utils.data_injection import normalize as _di_normalize
 
-logger = structlog.get_logger(__name__)
-from agentic_eval.core_evals.fi_evals import *
+# NOTE: trigger_error_localization_for_span is imported lazily inside the
+# function that uses it (see line ~1358). Eager import here re-enters
+# model_hub.tasks.__init__ which imports tracer.utils.eval_tasks, which imports
+# back from this module — a cycle that surfaces under settings where the
+# ClickHouse client warms up at startup. Keep it lazy.
+from agentic_eval.core_evals.fi_evals import *  # noqa: F403
+from common.utils.data_injection import normalize as _di_normalize
 from model_hub.models.choices import StatusType
 from model_hub.models.evals_metric import EvalTemplate
 from sdk.utils.helpers import _get_api_call_type
@@ -28,9 +32,14 @@ from tracer.models.observation_span import (
 )
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
-from tracer.utils.helper import FieldConfig, get_default_trace_config
-from tracer.views.project import get_default_project_version_config
-from tfc.constants.api_calls import APICallStatusChoices
+from tracer.utils.helper import (
+    FieldConfig,
+    get_default_project_version_config,
+    get_default_trace_config,
+)
+
+logger = structlog.get_logger(__name__)
+
 try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
@@ -243,22 +252,42 @@ def build_trace_context(trace, *, anchor_span_id: str | None = None) -> dict:
     to empty values rather than raising; the eval continues without the
     optional context fields.
     """
-    from django.db.models import Count, Q, Sum
-
-    from tracer.models.observation_span import ObservationSpan
-
     try:
-        _agg = ObservationSpan.objects.filter(trace=trace, deleted=False).aggregate(
-            span_count=Count("id"),
-            error_count=Count("id", filter=Q(status="ERROR")),
-            total_tokens=Sum("total_tokens"),
-            total_latency_ms=Sum("latency_ms"),
-        )
-        _spans = list(
-            ObservationSpan.objects.filter(trace=trace, deleted=False)
-            .order_by("start_time")
-            .values("id", "name", "observation_type", "status", "parent_span_id")[:200]
-        )
+        # Read from CH 25.3 (was ObservationSpan.objects.filter(trace=trace,
+        # deleted=False).aggregate(...) + .order_by("start_time").values(...)).
+        # CHSpanReader.list_by_trace already filters is_deleted=0 and orders
+        # by start_time, id; we aggregate in Python so we can preserve the
+        # Count(filter=Q(status='ERROR')) shape without a new reader method.
+        # Per-trace span count is bounded (UI/agent already caps display at
+        # 200) so a single pass over the rows is cheap.
+        from tracer.services.clickhouse.v2 import get_reader
+
+        trace_id = getattr(trace, "id", None)
+        if trace_id is None:
+            _agg, _spans = {}, []
+        else:
+            with get_reader() as reader:
+                _ch_spans = reader.list_by_trace(str(trace_id))
+            _span_count = len(_ch_spans)
+            _error_count = sum(1 for s in _ch_spans if s.status == "ERROR")
+            _total_tokens = sum((s.total_tokens or 0) for s in _ch_spans)
+            _total_latency = sum((s.latency_ms or 0) for s in _ch_spans)
+            _agg = {
+                "span_count": _span_count,
+                "error_count": _error_count,
+                "total_tokens": _total_tokens,
+                "total_latency_ms": _total_latency,
+            }
+            _spans = [
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "observation_type": s.observation_type,
+                    "status": s.status,
+                    "parent_span_id": s.parent_span_id or None,
+                }
+                for s in _ch_spans[:200]
+            ]
     except Exception:
         _agg, _spans = {}, []
 
@@ -301,65 +330,131 @@ def build_session_context(session) -> dict | None:
     if session is None:
         return None
     try:
-        from django.db.models import Count, Max, Min, Q, Sum
-
-        from tracer.models.observation_span import ObservationSpan
         from tracer.models.trace import Trace
+        from tracer.services.clickhouse.v2 import get_reader
 
-        trace_qs = Trace.objects.filter(session=session, deleted=False)
-        sess_agg = ObservationSpan.objects.filter(
-            trace__in=trace_qs, deleted=False
-        ).aggregate(
-            total_spans=Count("id"),
-            error_count=Count("id", filter=Q(status="ERROR")),
-            total_tokens=Sum("total_tokens"),
-            total_cost=Sum("cost"),
-            start_time=Min("start_time"),
-            end_time=Max("end_time"),
-        )
-
+        # Derive the session's trace set from CH spans, NOT the ``Trace.session``
+        # reverse FK (Slice D, DESIGN §5 / PG_ORM_READ_MIGRATION): post-flip that
+        # FK is ``None`` for EVERY trace (only spans carry ``trace_session_id``),
+        # so ``Trace.objects.filter(session=session)`` returns EMPTY for ALL
+        # sessions. ``session_trace_ids`` resolves the input id AND each span's id
+        # new→old (remap-aware), so a straddler yields its old∪new spans' traces as
+        # ONE set and a net-new session (no PG row) yields its real trace set.
+        # ``session`` here is either a saved PG ``TraceSession`` (span/trace-level
+        # callers) or the unsaved vehicle ``evaluate_trace_session_observe`` builds
+        # — both carry ``.id`` and ``.project_id`` (the vehicle's is the eval
+        # config's project). Trace itself is still PG, so the ids drive a PG
+        # ``id__in`` filter (Trace is never re-keyed; only the session surrogate).
+        session_id = getattr(session, "id", None)
+        project_id = getattr(session, "project_id", None)
+        if session_id is None or project_id is None:
+            _session_trace_ids: list[str] = []
+        else:
+            with get_reader() as reader:
+                _session_trace_ids = reader.session_trace_ids(
+                    str(project_id), str(session_id)
+                )
+        trace_qs = Trace.objects.filter(id__in=_session_trace_ids, deleted=False)
         # Cap at 100 traces for the in-prompt summary; the agent uses
         # explore_trace for deeper drill-down.
         traces_page = list(trace_qs.order_by("created_at")[:100])
         trace_ids = [t.id for t in traces_page]
-        per_trace = {
-            row["trace_id"]: row
-            for row in (
-                ObservationSpan.objects.filter(trace_id__in=trace_ids, deleted=False)
-                .values("trace_id")
-                .annotate(
-                    span_count=Count("id"),
-                    error_count=Count("id", filter=Q(status="ERROR")),
-                    total_tokens=Sum("total_tokens"),
-                    total_latency=Sum("latency_ms"),
-                )
-            )
-        }
-        # Inline span metadata per trace so the agent has concrete span
-        # ids in its context and can call span_detail directly. Cap 50 per
-        # trace to bound payload size.
+        # Stringified, as a set, so the per-trace bucket lookups below stay
+        # O(1) and match the str trace_id CH returns on each span row.
+        _page_trace_id_strs = {str(tid) for tid in trace_ids}
+
+        # Read from CH 25.3 (was three separate ObservationSpan.objects
+        # queries: session-wide aggregate, per-trace aggregate, per-trace
+        # span listing). list_by_session covers the same row set as the
+        # original ObservationSpan.objects.filter(trace__in=trace_qs,
+        # deleted=False) — soft-deleted traces cascade to spans (see
+        # _soft_delete_trace_tree in tracer/views/trace.py) and
+        # CHSpanReader filters is_deleted=0. The session aggregate is
+        # computed over the FULL row set (matching the original ORM
+        # aggregate which was not capped); the per-trace breakdown and
+        # the inline span list are only populated for traces in the
+        # 100-trace page so trace_summaries below still iterates the
+        # capped set. (``session_id`` resolved once at the top of the try.)
+        # ``list_by_session`` matches the RAW input ``session_id`` (it resolves
+        # each span new→old and compares to this id), whereas ``session_trace_ids``
+        # above resolves the INPUT id too. They agree because every caller of this
+        # path hands a SURVIVOR (old) or NET-NEW id, never a straddler's raw NEW id
+        # (the session list/detail surfaces resolved/old ids — trace_session.py — and
+        # the eval session vehicle is built with the survivor/net-new id); for those
+        # the input resolves to itself, so both reads see the same session. (A
+        # straddler's NEW id would split here — empty span-agg vs full trace set —
+        # but no entry point produces one.)
+        if session_id is None:
+            _ch_spans = []
+        else:
+            with get_reader() as reader:
+                _ch_spans = reader.list_by_session(str(session_id))
+
+        _start_time = None
+        _end_time = None
+        _total_spans = 0
+        _error_count = 0
+        _total_tokens = 0
+        _total_cost = 0.0
+        per_trace: dict = {}
         spans_by_trace: dict = {}
-        for s in (
-            ObservationSpan.objects.filter(trace_id__in=trace_ids, deleted=False)
-            .order_by("start_time")
-            .values(
-                "id", "trace_id", "name", "observation_type", "status", "parent_span_id"
+        for s in _ch_spans:
+            # Session totals span every trace; this matches the original
+            # filter(trace__in=trace_qs).aggregate(...) which had no
+            # 100-trace cap.
+            _total_spans += 1
+            if s.status == "ERROR":
+                _error_count += 1
+            _total_tokens += s.total_tokens or 0
+            _total_cost += float(s.cost or 0.0)
+            if s.start_time and (_start_time is None or s.start_time < _start_time):
+                _start_time = s.start_time
+            if s.end_time and (_end_time is None or s.end_time > _end_time):
+                _end_time = s.end_time
+
+            # Per-trace breakdown + inline span listing are scoped to the
+            # traces in the page so the payload size stays bounded.
+            if s.trace_id not in _page_trace_id_strs:
+                continue
+            agg = per_trace.setdefault(
+                s.trace_id,
+                {
+                    "trace_id": s.trace_id,
+                    "span_count": 0,
+                    "error_count": 0,
+                    "total_tokens": 0,
+                    "total_latency": 0,
+                },
             )
-        ):
-            bucket = spans_by_trace.setdefault(s["trace_id"], [])
+            agg["span_count"] += 1
+            if s.status == "ERROR":
+                agg["error_count"] += 1
+            agg["total_tokens"] += s.total_tokens or 0
+            agg["total_latency"] += s.latency_ms or 0
+
+            bucket = spans_by_trace.setdefault(s.trace_id, [])
             if len(bucket) >= 50:
                 continue
             bucket.append(
                 {
-                    "id": str(s["id"]),
-                    "name": s.get("name"),
-                    "observation_type": s.get("observation_type"),
-                    "status": s.get("status"),
+                    "id": str(s.id),
+                    "name": s.name,
+                    "observation_type": s.observation_type,
+                    "status": s.status,
                     "parent_span_id": (
-                        str(s["parent_span_id"]) if s.get("parent_span_id") else None
+                        str(s.parent_span_id) if s.parent_span_id else None
                     ),
                 }
             )
+
+        sess_agg = {
+            "total_spans": _total_spans,
+            "error_count": _error_count,
+            "total_tokens": _total_tokens,
+            "total_cost": _total_cost,
+            "start_time": _start_time,
+            "end_time": _end_time,
+        }
 
         trace_summaries = []
         for t in traces_page:
@@ -368,9 +463,13 @@ def build_session_context(session) -> dict | None:
             t_id = getattr(t, "id", None)
             if t_id is None:
                 continue
+            # CH returns trace_id as a string, but Trace.id is a UUID — look
+            # up per_trace / spans_by_trace by the stringified id so the join
+            # works regardless of source type.
+            t_id_key = str(t_id)
             t_created = getattr(t, "created_at", None)
             t_error = getattr(t, "error", None)
-            agg = per_trace.get(t_id, {})
+            agg = per_trace.get(t_id_key, {})
             err_count = agg.get("error_count") or 0
             trace_summaries.append(
                 {
@@ -382,7 +481,7 @@ def build_session_context(session) -> dict | None:
                     "total_tokens": agg.get("total_tokens") or 0,
                     "total_latency_ms": agg.get("total_latency") or 0,
                     "has_error": bool(t_error or err_count > 0),
-                    "spans": spans_by_trace.get(t_id, []),
+                    "spans": spans_by_trace.get(t_id_key, []),
                 }
             )
 
@@ -529,9 +628,11 @@ def _process_mapping(
             # what dataset/playground do when a column cell is empty.
             parsed_mapping[key] = ""
         else:
-            logger.info(
-                f"Skipping eval for span {span.id}: required attribute "
-                f"'{attribute}' (key '{key}') not present"
+            # Expected: the user's eval references an attribute absent on this
+            # span. Raw emitter before the ValueError that the outer
+            # evaluate_*_observe handler catches and persists as failed. Warning.
+            logger.warning(
+                f"Required attribute '{attribute}' for key '{key}' not found for span {span.id}"
             )
             raise EvalSkippedMissingAttribute(attribute, key, span.id)
 
@@ -583,9 +684,9 @@ def _dual_write_eval_value(value, config_output, logger_kwargs):
         if isinstance(value, dict):
             logger_kwargs["output_str"] = json.dumps(value)
             score = value.get("score")
-            if isinstance(score, (int, float)) and not isinstance(score, bool):
+            if isinstance(score, int | float) and not isinstance(score, bool):
                 logger_kwargs["output_float"] = float(score)
-        elif isinstance(value, (int, float)):
+        elif isinstance(value, int | float):
             logger_kwargs["output_float"] = float(value)
         elif isinstance(value, list):
             # Score evals never store a list — collapse to the mean so the FE
@@ -599,11 +700,11 @@ def _dual_write_eval_value(value, config_output, logger_kwargs):
             for v in value:
                 if isinstance(v, bool):
                     continue
-                if isinstance(v, (int, float)):
+                if isinstance(v, int | float):
                     numerics.append(v)
                 elif isinstance(v, dict):
                     s = v.get("score")
-                    if isinstance(s, (int, float)) and not isinstance(s, bool):
+                    if isinstance(s, int | float) and not isinstance(s, bool):
                         numerics.append(s)
             if numerics:
                 logger_kwargs["output_float"] = sum(numerics) / len(numerics)
@@ -645,14 +746,14 @@ def _dual_write_eval_value(value, config_output, logger_kwargs):
                     elif isinstance(inner_choices, list):
                         collected.extend(c for c in inner_choices if isinstance(c, str))
             logger_kwargs["output_str_list"] = _dedupe_preserve_order(collected)
-        elif isinstance(value, (int, float)):
+        elif isinstance(value, int | float):
             logger_kwargs["output_float"] = float(value)
         else:
             logger_kwargs["output_str"] = str(value)
         return
 
     # Other output types — preserve today's dispatch verbatim.
-    if isinstance(value, (int, float)):
+    if isinstance(value, int | float):
         logger_kwargs["output_float"] = float(value)
     elif isinstance(value, list):
         logger_kwargs["output_str_list"] = value
@@ -799,7 +900,9 @@ def _run_evaluation(
                 workspace=workspace,
             )
             if not api_call_log_row:
-                raise ValueError("API call not allowed : Error validating the api call.")
+                raise ValueError(
+                    "API call not allowed : Error validating the api call."
+                )
 
             if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
                 raise ValueError("API call not allowed : ", api_call_log_row.status)
@@ -869,7 +972,7 @@ def _run_evaluation(
                 from ee.usage.utils.event_properties import token_usage_properties
             except ImportError:
                 token_usage_properties = lambda token_usage: {}
-            
+
             _token_usage = getattr(eval_instance, "token_usage", {})
             actual_cost = getattr(eval_instance, "cost", {}).get("total_cost", 0)
             credits = 0
@@ -885,9 +988,15 @@ def _run_evaluation(
                         properties={
                             "source": "tracer" if not feedback_id else "feedback",
                             "source_id": str(eval_model.id),
-                            "model": custom_eval_config.model if custom_eval_config else "",
+                            "model": (
+                                custom_eval_config.model if custom_eval_config else ""
+                            ),
                             "workspace_id": str(workspace.id) if workspace else "",
-                            "log_id": str(api_call_log_row.log_id) if api_call_log_row else None,
+                            "log_id": (
+                                str(api_call_log_row.log_id)
+                                if api_call_log_row
+                                else None
+                            ),
                             "raw_cost_usd": str(actual_cost),
                             **token_usage_properties(_token_usage),
                         },
@@ -985,9 +1094,17 @@ def _execute_composite_on_span(
     from model_hub.utils.composite_execution import execute_composite_children_sync
 
     try:
-        observation_span = ObservationSpan.objects.select_related(
-            "project", "project__organization", "project__workspace"
-        ).get(id=observation_span_id)
+        # CH 25.3 read when EVAL_SPAN_READ_SOURCE=clickhouse. Hybrid loader
+        # constructs a partial Django ObservationSpan from the CH row; the
+        # `select_related` FK preload is honored on the PG fallback path,
+        # and project/organization/workspace lazy-load from PG on attribute
+        # access in the CH path.
+        from tracer.services.clickhouse.v2.eval_loader import get_observation_span
+
+        observation_span = get_observation_span(
+            observation_span_id,
+            select_related=("project", "project__organization", "project__workspace"),
+        )
         custom_eval_config = CustomEvalConfig.objects.get(
             id=custom_eval_config_id, deleted=False
         )
@@ -1304,7 +1421,9 @@ def _execute_composite_on_session(
             "target_type": EvalTargetType.SESSION.value,
             "trace": None,
             "observation_span": None,
-            "trace_session": trace_session,
+            # Unsaved CH vehicle → write the FK by id column (db_constraint=False);
+            # see ``_execute_evaluation_for_session`` for the full rationale.
+            "trace_session_id": str(trace_session.id),
             "output_metadata": response["metadata"],
             "eval_explanation": outcome.summary or "",
             "results_explanation": response,
@@ -1318,7 +1437,8 @@ def _execute_composite_on_session(
             "target_type": EvalTargetType.SESSION.value,
             "trace": None,
             "observation_span": None,
-            "trace_session": trace_session,
+            # Unsaved CH vehicle → id-column FK write (see success branch).
+            "trace_session_id": str(trace_session.id),
             "output_metadata": {
                 "error": str(e),
                 "composite_id": str(parent.id),
@@ -1355,9 +1475,12 @@ def _execute_evaluation(
 
     raw_mapping = run_params.copy()
     try:
-        observation_span = ObservationSpan.objects.select_related(
-            "project", "project__organization", "project__workspace"
-        ).get(id=observation_span_id)
+        from tracer.services.clickhouse.v2.eval_loader import get_observation_span
+
+        observation_span = get_observation_span(
+            observation_span_id,
+            select_related=("project", "project__organization", "project__workspace"),
+        )
 
         custom_eval_config = CustomEvalConfig.objects.get(
             id=custom_eval_config_id, deleted=False
@@ -1622,21 +1745,23 @@ def _execute_evaluation(
                 "observation_span__project__workspace",
             ).get(pk=eval_log.pk)
 
-        if custom_eval_config.error_localizer:
+        from model_hub.services.error_localizer_service import (
+            error_localizer_enabled,
+        )
+
+        if error_localizer_enabled(custom_eval_config):
             from model_hub.tasks.user_evaluation import (
-                _eval_passed,
                 trigger_error_localization_for_span,
             )
 
-            if not _eval_passed(value):
-                trigger_error_localization_for_span(
-                    eval_template=eval_model,
-                    eval_logger=eval_log,
-                    mapping=raw_mapping,
-                    eval_explanation=logger_kwargs.get("eval_explanation", ""),
-                    value=value,
-                    log_id=str(log_id),
-                )
+            trigger_error_localization_for_span(
+                eval_template=eval_model,
+                eval_logger=eval_log,
+                mapping=raw_mapping,
+                eval_explanation=logger_kwargs.get("eval_explanation", ""),
+                value=value,
+                log_id=str(log_id),
+            )
 
         if type == EXPERIMENT:
             # updating project version config
@@ -1728,7 +1853,9 @@ def _create_error_eval_logger(
         trace=observation_span.trace,
         observation_span=observation_span,
         output_metadata=None if skipped_reason else {"error": message},
-        eval_explanation=None if skipped_reason else f"Error during evaluation: {message}",
+        eval_explanation=(
+            None if skipped_reason else f"Error during evaluation: {message}"
+        ),
         results_explanation={} if skipped_reason else {"reason": message},
         eval_task_id=eval_task_id,
         custom_eval_config=custom_eval_config,
@@ -1764,15 +1891,17 @@ def evaluate_observation_span(
 
     try:
         custom_eval_config = CustomEvalConfig.objects.get(id=custom_eval_config_id)
-        observation_span = ObservationSpan.objects.get(id=observation_span_id)
+        from tracer.services.clickhouse.v2.eval_loader import get_observation_span
+
+        observation_span = get_observation_span(observation_span_id)
     except CustomEvalConfig.DoesNotExist:
         raise ValueError(
             f"CustomEvalConfig with id {custom_eval_config_id} does not exist."
-        )
+        ) from None
     except ObservationSpan.DoesNotExist:
         raise ValueError(
             f"ObservationSpan with id {observation_span_id} does not exist."
-        )
+        ) from None
 
     # mark all previous eval_logger as deleted
     EvalLogger.objects.filter(
@@ -1796,8 +1925,11 @@ def evaluate_observation_span(
         )
         return True
     except ValueError as e:
-        logger.error(f"Error during evaluation in evaluate_observation_span: {e}")
-        _create_error_eval_logger(observation_span, custom_eval_config, None, e)
+        # Expected validation failure (e.g. missing required input for the eval).
+        # Recorded as a failed-eval result below; logged at WARNING so it does
+        # not page Sentry as a code bug.
+        logger.warning(f"Error during evaluation in evaluate_observation_span: {e}")
+        _create_error_eval_logger(observation_span, custom_eval_config, None, str(e))
         return False
 
     except Exception as e:
@@ -1849,15 +1981,17 @@ def evaluate_observation_span_observe(
         )
     try:
         custom_eval_config = CustomEvalConfig.objects.get(id=custom_eval_config_id)
-        observation_span = ObservationSpan.objects.get(id=observation_span_id)
+        from tracer.services.clickhouse.v2.eval_loader import get_observation_span
+
+        observation_span = get_observation_span(observation_span_id)
     except CustomEvalConfig.DoesNotExist:
         raise ValueError(
             f"CustomEvalConfig with id {custom_eval_config_id} does not exist."
-        )
+        ) from None
     except ObservationSpan.DoesNotExist:
         raise ValueError(
             f"ObservationSpan with id {observation_span_id} does not exist."
-        )
+        ) from None
 
     if EvalLogger.objects.filter(
         observation_span_id=observation_span_id,
@@ -1931,7 +2065,9 @@ def evaluate_observation_span_observe(
 
         return True
     except ValueError as e:
-        logger.error(
+        # Expected validation failure (missing/invalid eval input). Persisted as
+        # a failed span below; WARNING keeps it out of the Sentry issue stream.
+        logger.warning(
             f"Error during evaluation in evaluate_observation_span_observe: {e}"
         )
         if eval_task_id:
@@ -1955,14 +2091,14 @@ def evaluate_observation_span_observe(
                     eval_task.failed_spans = failed_spans
                     eval_task.save(update_fields=["failed_spans", "updated_at"])
             except EvalTask.DoesNotExist:
-                logger.error(f"EvalTask with id {eval_task_id} does not exist.")
+                # Expected race: the EvalTask was deleted before this async task
+                # ran. Nothing to update; downgrade to warning.
+                logger.warning(f"EvalTask with id {eval_task_id} does not exist.")
             except Exception as e:
                 logger.error(
                     f"Error during updating failed spans in exception handling evaluate_observation_span_observe: {e}"
                 )
-        _create_error_eval_logger(
-            observation_span, custom_eval_config, eval_task_id, e
-        )
+        _create_error_eval_logger(observation_span, custom_eval_config, eval_task_id, e)
 
         return False
     except Exception as e:
@@ -1982,7 +2118,13 @@ def evaluate_observation_span_observe(
 )
 def eval_observation_span_runner(observation_span_id, eval_tags):
     try:
-        observation_span = ObservationSpan.objects.get(id=observation_span_id)
+        # Goes via CH 25.3 when EVAL_SPAN_READ_SOURCE=clickhouse (CH 25.3
+        # span point-read replaces the heavy JSONB select on tracer_observation_span);
+        # falls back to PG ORM otherwise. Raises ObservationSpan.DoesNotExist
+        # in both modes — downstream `except` blocks unchanged.
+        from tracer.services.clickhouse.v2.eval_loader import get_observation_span
+
+        observation_span = get_observation_span(observation_span_id)
         if not observation_span or not eval_tags:
             return
 
@@ -2488,7 +2630,34 @@ def _resolve_session_path(trace_session: TraceSession, path: str):
         from django.db.models import OuterRef, Subquery
         from django.db.models.functions import Coalesce
 
+        from tracer.services.clickhouse.v2 import get_reader
+
+        # Derive the session's trace ids from CH spans, NOT the
+        # ``trace_session.traces`` reverse FK (Slice D, DESIGN §5 /
+        # PG_ORM_READ_MIGRATION): post-flip the ``Trace.session`` FK is ``None``
+        # for EVERY trace, so the reverse accessor returns EMPTY for ALL sessions
+        # (and ``trace_session`` here is the UNSAVED vehicle
+        # ``evaluate_trace_session_observe`` builds — it has no DB rows pointing at
+        # it at all). ``session_trace_ids`` is remap-aware on the input id AND each
+        # span's id, so a straddler yields its old∪new traces as one set and a
+        # net-new session yields its real set. The vehicle carries ``.id`` and
+        # ``.project_id`` (the eval config's project). Trace stays PG → ``id__in``.
+        _project_id = getattr(trace_session, "project_id", None)
+        _session_id = getattr(trace_session, "id", None)
+        if _project_id is None or _session_id is None:
+            _trace_ids: list[str] = []
+        else:
+            with get_reader() as reader:
+                _trace_ids = reader.session_trace_ids(
+                    str(_project_id), str(_session_id)
+                )
+
         root_start = (
+            # The earliest-root-span ordering stays a PG ``ObservationSpan``
+            # Subquery correlated against the outer Trace.id (CH25-TODO: no
+            # CHSpanReader equivalent for a correlated per-trace earliest-root
+            # fetch as of 2026-05-26; the trace SET is now CH-derived above, the
+            # ORDERING remains PG — deferred per ch25 chunk Rule 1).
             ObservationSpan.objects.filter(
                 trace_id=OuterRef("id"), parent_span_id__isnull=True
             )
@@ -2496,9 +2665,9 @@ def _resolve_session_path(trace_session: TraceSession, path: str):
             .values("start_time")[:1]
         )
         traces = list(
-            trace_session.traces.annotate(
-                _root_start=Coalesce(Subquery(root_start), "created_at")
-            ).order_by("_root_start", "id")
+            Trace.objects.filter(id__in=_trace_ids, deleted=False)
+            .annotate(_root_start=Coalesce(Subquery(root_start), "created_at"))
+            .order_by("_root_start", "id")
         )
         return _resolve_collection_path(traces, rest, _resolve_trace_path)
 
@@ -2539,7 +2708,7 @@ def _process_trace_mapping(
             f"EvalTemplate {eval_template_id} not found while processing "
             f"trace mapping for trace {trace.id}"
         )
-        raise ValueError(f"EvalTemplate {eval_template_id} not found")
+        raise ValueError(f"EvalTemplate {eval_template_id} not found") from None
 
     for key, attribute in mapping.items():
         value = _resolve_trace_path(trace, attribute) if attribute else _MISSING
@@ -2550,7 +2719,10 @@ def _process_trace_mapping(
                 # (partial). Mirrors the span / dataset behaviour.
                 parsed[key] = ""
                 continue
-            logger.error(
+            # Expected: the user's eval references an attribute absent on this
+            # trace. Raw emitter before the ValueError that the outer
+            # evaluate_trace_observe handler catches and persists as failed. Warning.
+            logger.warning(
                 f"Required attribute '{attribute}' for key '{key}' not found "
                 f"on trace {trace.id}"
             )
@@ -2588,7 +2760,7 @@ def _process_session_mapping(
             f"EvalTemplate {eval_template_id} not found while processing "
             f"session mapping for session {trace_session.id}"
         )
-        raise ValueError(f"EvalTemplate {eval_template_id} not found")
+        raise ValueError(f"EvalTemplate {eval_template_id} not found") from None
 
     for key, attribute in mapping.items():
         value = (
@@ -2601,7 +2773,10 @@ def _process_session_mapping(
                 # (partial), matching dataset/span behaviour.
                 parsed[key] = ""
                 continue
-            logger.error(
+            # Expected: the user's eval references an attribute absent on this
+            # session. Raw emitter before the ValueError that the outer
+            # evaluate_trace_session_observe handler catches and persists as failed. Warning.
+            logger.warning(
                 f"Required attribute '{attribute}' for key '{key}' not found "
                 f"on session {trace_session.id}"
             )
@@ -2825,9 +3000,7 @@ def _execute_evaluation_for_trace(
             if api_call_log_row is not None:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
                 current_config = json.loads(api_call_log_row.config)
-                current_config.update(
-                    {"output": {"output": None, "reason": str(e)}}
-                )
+                current_config.update({"output": {"output": None, "reason": str(e)}})
                 api_call_log_row.config = json.dumps(current_config)
                 api_call_log_row.save()
         except Exception:
@@ -3046,7 +3219,12 @@ def _execute_evaluation_for_session(
             "target_type": EvalTargetType.SESSION.value,
             "trace": None,
             "observation_span": None,
-            "trace_session": trace_session,
+            # Write the session FK by its id column (db_constraint=False) — the
+            # ``trace_session`` here is an UNSAVED CH-sourced vehicle with no PG
+            # row, so the relation can't be assigned, but the soft id is exactly
+            # what the column needs (same pattern as the already-CH-only
+            # trace/observation_span FKs on this row).
+            "trace_session_id": str(trace_session.id),
             "output_metadata": _output_metadata,
             "eval_explanation": result.reason,
             "results_explanation": response,
@@ -3061,9 +3239,7 @@ def _execute_evaluation_for_session(
             if api_call_log_row is not None:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
                 current_config = json.loads(api_call_log_row.config)
-                current_config.update(
-                    {"output": {"output": None, "reason": str(e)}}
-                )
+                current_config.update({"output": {"output": None, "reason": str(e)}})
                 api_call_log_row.config = json.dumps(current_config)
                 api_call_log_row.save()
         except Exception:
@@ -3072,7 +3248,8 @@ def _execute_evaluation_for_session(
             "target_type": EvalTargetType.SESSION.value,
             "trace": None,
             "observation_span": None,
-            "trace_session": trace_session,
+            # See success branch: id-column FK write for the unsaved CH vehicle.
+            "trace_session_id": str(trace_session.id),
             "output_metadata": {
                 "error": error_message,
                 "custom_eval_config_name": custom_eval_config.name,
@@ -3135,7 +3312,10 @@ def _create_error_eval_logger_for_session(
         target_type=EvalTargetType.SESSION.value,
         trace=None,
         observation_span=None,
-        trace_session=trace_session,
+        # ``trace_session`` is the unsaved CH-sourced vehicle (no PG row) —
+        # write the FK by its id column (db_constraint=False), never the
+        # relation. See ``_execute_evaluation_for_session``.
+        trace_session_id=str(trace_session.id),
         output_metadata={"error": error_message},
         eval_explanation=f"Error during evaluation: {error_message}",
         results_explanation={"reason": error_message},
@@ -3182,9 +3362,9 @@ def evaluate_trace_observe(
     except CustomEvalConfig.DoesNotExist:
         raise ValueError(
             f"CustomEvalConfig with id {custom_eval_config_id} does not exist."
-        )
+        ) from None
     except Trace.DoesNotExist:
-        raise ValueError(f"Trace with id {trace_id} does not exist.")
+        raise ValueError(f"Trace with id {trace_id} does not exist.") from None
 
     # Idempotency: the dispatcher writes one row per (trace, eval_config, task).
     # ``eval_task_id`` already scopes the check to this task's row_type — every
@@ -3248,7 +3428,8 @@ def evaluate_trace_observe(
         )
         return True
     except ValueError as e:
-        logger.error(f"Error during evaluation in evaluate_trace_observe: {e}")
+        # Expected validation failure; persisted as a failed eval below.
+        logger.warning(f"Error during evaluation in evaluate_trace_observe: {e}")
         if eval_task_id:
             try:
                 with transaction.atomic():
@@ -3266,7 +3447,9 @@ def evaluate_trace_observe(
                     eval_task.failed_spans = failed
                     eval_task.save(update_fields=["failed_spans", "updated_at"])
             except EvalTask.DoesNotExist:
-                logger.error(f"EvalTask with id {eval_task_id} does not exist.")
+                # Expected race: the EvalTask was deleted before this async task
+                # ran. Nothing to update; downgrade to warning.
+                logger.warning(f"EvalTask with id {eval_task_id} does not exist.")
             except Exception as save_err:
                 logger.error(
                     f"Error updating failed_spans during trace eval error: {save_err}"
@@ -3302,16 +3485,58 @@ def evaluate_trace_session_observe(
         raise ValueError("session_id and custom_eval_config_id are required parameters")
 
     try:
-        custom_eval_config = CustomEvalConfig.objects.get(id=custom_eval_config_id)
-        trace_session = TraceSession.objects.select_related(
+        # select_related the project chain: the session vehicle below borrows
+        # the eval CONFIG's project/org/workspace (the eval's own org-scope,
+        # used for cost-deduction + workspace-context). The session's PG
+        # project FK no longer exists post-flip, so the config's project — not
+        # the session's — is the anchor for org-scope, and it's always present.
+        custom_eval_config = CustomEvalConfig.objects.select_related(
             "project", "project__organization", "project__workspace"
-        ).get(id=session_id)
+        ).get(id=custom_eval_config_id)
     except CustomEvalConfig.DoesNotExist:
         raise ValueError(
             f"CustomEvalConfig with id {custom_eval_config_id} does not exist."
-        )
-    except TraceSession.DoesNotExist:
+        ) from None
+
+    # Resolve the eval TARGET's identity from CH (DESIGN §5 / Slice C), NOT the
+    # PG ``TraceSession`` table: a net-new session (first seen post-flip) has no
+    # PG row, and a straddler queried by its NEW deterministic id would 404 the
+    # old ``.get``. ``resolve_session_fields`` is remap-aware (straddler old|new
+    # id → ONE survivor) and returns {external_session_id, first_seen,
+    # bookmarked, display_name}. Lazy import keeps the eval.py↔eval_tasks.py
+    # cycle (see module-top NOTE) and the CH client warm-up off this module's
+    # import path, mirroring the existing ``get_reader`` lazy imports.
+    from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+        resolve_session_fields,
+    )
+
+    _fields = resolve_session_fields([session_id]).get(str(session_id))
+    if not _fields:
+        # Parity with the old ``.get`` raising DoesNotExist: no live curated
+        # session names this id (unknown / tombstoned / wrong project's id that
+        # never landed in this island).
         raise ValueError(f"TraceSession with id {session_id} does not exist.")
+
+    # Build an UNSAVED TraceSession vehicle so the unchanged downstream
+    # (``_process_session_mapping`` / ``_execute_evaluation_for_session`` /
+    # composite / ``build_session_context``) keeps reading session fields by
+    # attribute — but every field is now sourced from CH + the PG overlay, not a
+    # PG ``trace_session`` row that may not exist:
+    #   • name      ← display_name override else external_session_id (DESIGN
+    #                 §5.2 COALESCE); feeds ``_SESSION_PUBLIC_FIELDS`` mapping.
+    #   • bookmarked← PG overlay (``_SESSION_PUBLIC_FIELDS`` + build_session_ctx).
+    #   • created_at← first_seen (DESIGN §5.2: the session's creation IS its
+    #                 first observed activity; build_session_context reads it).
+    #   • project   ← the eval CONFIG's project (org/workspace org-scope anchor).
+    # The instance is NEVER saved; the EvalLogger FK is written by id column
+    # (db_constraint=False) so no PG ``trace_session`` row is required.
+    trace_session = TraceSession(
+        id=session_id,
+        name=_fields["display_name"] or _fields["external_session_id"],
+        bookmarked=bool(_fields["bookmarked"]),
+        created_at=_fields["first_seen"],
+        project=custom_eval_config.project,
+    )
 
     # Same idempotency rationale as the trace evaluator: eval_task_id alone
     # scopes the check to this task's row_type (target_type='session'), so a
@@ -3343,7 +3568,10 @@ def evaluate_trace_session_observe(
         )
         return True
     except ValueError as e:
-        logger.error(f"Error during evaluation in evaluate_trace_session_observe: {e}")
+        # Expected validation failure; persisted as a failed eval below.
+        logger.warning(
+            f"Error during evaluation in evaluate_trace_session_observe: {e}"
+        )
         if eval_task_id:
             try:
                 with transaction.atomic():
@@ -3361,7 +3589,9 @@ def evaluate_trace_session_observe(
                     eval_task.failed_spans = failed
                     eval_task.save(update_fields=["failed_spans", "updated_at"])
             except EvalTask.DoesNotExist:
-                logger.error(f"EvalTask with id {eval_task_id} does not exist.")
+                # Expected race: the EvalTask was deleted before this async task
+                # ran. Nothing to update; downgrade to warning.
+                logger.warning(f"EvalTask with id {eval_task_id} does not exist.")
             except Exception as save_err:
                 logger.error(
                     f"Error updating failed_spans during session eval error: {save_err}"

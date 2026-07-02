@@ -18,14 +18,89 @@ Usage:
 """
 
 import os
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 # Environment detection
 ENV_TYPE = os.getenv("ENV_TYPE", "local")
 IS_PRODUCTION = ENV_TYPE in ("prod", "production")
 IS_STAGING = ENV_TYPE == "staging"
-SENTRY_ENABLED = ENV_TYPE in ("staging", "prod", "production")
+
+# Sentry is enabled in staging/prod by default. An explicit SENTRY_ENABLED env
+# var (also read by settings.py) always wins so the two never diverge.
+_sentry_enabled_override = os.getenv("SENTRY_ENABLED")
+if _sentry_enabled_override not in (None, ""):
+    SENTRY_ENABLED = _sentry_enabled_override.lower() == "true"
+else:
+    SENTRY_ENABLED = ENV_TYPE in ("staging", "prod", "production")
 SENTRY_DSN = os.getenv("SENTRY_DSN")
+
+# Noise control
+# Loggers whose records must NEVER become Sentry issues. These are pure
+# infrastructure/SDK loggers that emit ERROR records for transient, expected
+# conditions (e.g. the OTel exporter failing to reach its collector). Left
+# unchecked, a single unreachable collector produced tens of millions of
+# identical events. Real application exceptions never originate here.
+#
+# NOTE: Sentry's LoggingIntegration patches logging.Logger.callHandlers, so a
+# logger's `propagate=False`/`level` in Django's LOGGING dict does NOT stop it
+# from becoming an event. ignore_logger() (below) and the before_send prefix
+# check are the only reliable levers.
+NOISY_LOGGER_PREFIXES = (
+    "opentelemetry",  # OTLP exporter/instrumentation export failures
+)
+
+# Exact logger names handed to sentry_sdk.integrations.logging.ignore_logger.
+# Children are covered by the before_send prefix check as a backstop.
+IGNORED_LOGGERS = (
+    "opentelemetry",
+    "opentelemetry.sdk.metrics._internal.export",
+    "opentelemetry.sdk.trace.export",
+    "opentelemetry.exporter.otlp.proto.grpc.exporter",
+    "opentelemetry.exporter.otlp.proto.http.metric_exporter",
+    "opentelemetry.exporter.otlp.proto.http.trace_exporter",
+    "opentelemetry.exporter.otlp.proto.http._log_exporter",
+)
+
+# Exception class names that are expected/handled and not actionable as issues.
+IGNORED_EXCEPTIONS = frozenset(
+    {
+        "DisallowedHost",  # Django - invalid host header (scanner/bot traffic)
+        "SuspiciousOperation",  # Django - security-related, handled
+        "ConnectionResetError",  # Client/peer disconnected mid-request
+        "BrokenPipeError",  # Client disconnected mid-response
+    }
+)
+
+# Substrings of structlog/event messages that represent expected, non-actionable
+# conditions. Kept deliberately specific so real bugs are never hidden.
+IGNORED_MESSAGE_SUBSTRINGS = (
+    "trace_payload_not_found_in_redis",  # expected ingestion race (payload TTL)
+    "Failed to export traces",  # OTel exporter (backstop for logger check)
+    "Exception while exporting metrics",  # OTel exporter (backstop)
+    # litellm's internal 'LiteLLM' logger emits this at ERROR when a user
+    # supplies an invalid/partial Vertex AI service-account key during model
+    # validation. Expected user-input error, not actionable. CORE-BACKEND-119Y.
+    "Failed to load vertex credentials",
+)
+
+# Keys whose values must be redacted before leaving the process. Matched
+# case-insensitively as substrings against header/cookie/body/extra keys.
+SENSITIVE_KEY_SUBSTRINGS = (
+    "authorization",
+    "cookie",
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "x-api-key",
+    "access_key",
+    "private_key",
+    "csrf",
+)
+_REDACTED = "[Filtered]"
 
 # Sample rates - configurable via env, lower in production to reduce costs
 # Production: 10% sampling, Staging: 100% sampling
@@ -39,38 +114,157 @@ PROFILES_SAMPLE_RATE = float(
 _initialized_components: set = set()
 
 
+def _is_sensitive_key(key: Any) -> bool:
+    """True if a dict/header key looks like it carries a secret or PII token."""
+    if not isinstance(key, str):
+        return False
+    lowered = key.lower()
+    return any(s in lowered for s in SENSITIVE_KEY_SUBSTRINGS)
+
+
+def _scrub(value: Any, depth: int = 0) -> Any:
+    """Recursively redact values under sensitive keys (defensive, bounded)."""
+    if depth > 6:
+        return value
+    if isinstance(value, dict):
+        return {
+            k: (_REDACTED if _is_sensitive_key(k) else _scrub(v, depth + 1))
+            for k, v in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_scrub(v, depth + 1) for v in value]
+    return value
+
+
+def _scrub_event(event: dict) -> None:
+    """
+    Redact obvious secrets/PII in-place before the event leaves the process.
+
+    Complements Sentry's server-side scrubbing and the EventScrubber denylist
+    so secrets never transit the wire even when send_default_pii is on.
+    """
+    request = event.get("request")
+    if isinstance(request, dict):
+        # Cookies are session/CSRF tokens almost by definition - redact wholesale.
+        if request.get("cookies"):
+            request["cookies"] = _REDACTED
+        for section in ("headers", "data", "env"):
+            if isinstance(request.get(section), dict):
+                request[section] = _scrub(request[section])
+        # Strip query-string credentials wholesale rather than parse them.
+        if isinstance(request.get("query_string"), str) and any(
+            s in request["query_string"].lower() for s in SENSITIVE_KEY_SUBSTRINGS
+        ):
+            request["query_string"] = _REDACTED
+
+    if isinstance(event.get("extra"), dict):
+        event["extra"] = _scrub(event["extra"])
+    contexts = event.get("contexts")
+    if isinstance(contexts, dict):
+        event["contexts"] = _scrub(contexts)
+
+
+def _event_message(event: dict) -> str:
+    """Best-effort extraction of an event's human-readable message."""
+    msg = event.get("message")
+    if isinstance(msg, dict):
+        msg = msg.get("formatted") or msg.get("message") or ""
+    logentry = event.get("logentry")
+    logentry_msg = logentry.get("message", "") if isinstance(logentry, dict) else ""
+    parts = [str(msg or ""), str(logentry_msg or "")]
+    return " ".join(p for p in parts if p)
+
+
+def _is_telemetry_url(url: object) -> bool:
+    """True when ``url`` matches a path prefix whose body must never reach Sentry.
+
+    Reuses ``SENSITIVE_BODY_PATH_PREFIXES`` so the OTel middleware and the
+    Sentry scrubber agree on which paths are sensitive; previously the prefix
+    was hardcoded here and could silently drift from the middleware copy.
+    """
+    if not url:
+        return False
+    from tfc.telemetry.middleware import SENSITIVE_BODY_PATH_PREFIXES
+
+    return any(prefix in str(url) for prefix in SENSITIVE_BODY_PATH_PREFIXES)
+
+
+def _scrub_deployment_telemetry_event(event: dict) -> dict:
+    # Sentry's HTTP integrations record outbound POSTs to /telemetry/ as
+    # breadcrumbs with the request body in ``data.body``/``data.data``. The
+    # inbound ``request.url`` check below would not match those (the exception
+    # frame's URL is whatever the caller hit, not the breadcrumb's target), so
+    # the registration payload would still ship to Sentry via breadcrumbs even
+    # though the inbound branch scrubbed the request body. Walk breadcrumbs
+    # unconditionally and strip body fields whose ``url`` points at a telemetry
+    # path before running the inbound scrub.
+    for breadcrumb in event.get("breadcrumbs", {}).get("values", []) or []:
+        data = breadcrumb.get("data") or {}
+        if _is_telemetry_url(data.get("url")):
+            for key in ("body", "data", "http.request.body", "request_body"):
+                data.pop(key, None)
+            breadcrumb["data"] = data
+
+    request = event.get("request") or {}
+    if not _is_telemetry_url(request.get("url")):
+        return event
+
+    request.pop("data", None)
+    for exception in (event.get("exception") or {}).get("values", []):
+        for frame in (exception.get("stacktrace") or {}).get("frames", []):
+            frame.pop("vars", None)
+    return event
+
+
 def _get_before_send() -> Callable:
     """
-    Create before_send hook to filter/modify events before sending to Sentry.
+    Create the before_send hook that runs on every error event.
 
-    This can be used to:
-    - Filter out noisy/expected errors
-    - Scrub sensitive data
-    - Add additional context
+    Responsibilities, in order:
+    1. Drop pure-infrastructure logger noise (OTel exporter, etc.).
+    2. Drop expected/handled exceptions and expected 4xx responses.
+    3. Drop known expected log conditions matched by message substring.
+    4. Scrub secrets/PII from whatever remains.
     """
 
-    def before_send(event: dict, hint: dict) -> Optional[dict]:
-        # Filter out expected/noisy exceptions
-        if "exc_info" in hint:
-            exc_type, exc_value, tb = hint["exc_info"]
-            exc_name = exc_type.__name__ if exc_type else ""
+    def before_send(event: dict, hint: dict) -> dict | None:
+        event = _scrub_deployment_telemetry_event(event)
 
-            # Skip common expected errors that don't need tracking
-            ignored_exceptions = [
-                "DisallowedHost",  # Django - invalid host header attacks
-                "SuspiciousOperation",  # Django - security-related
-                "ConnectionResetError",  # Client disconnected
-                "BrokenPipeError",  # Client disconnected
-            ]
-            if exc_name in ignored_exceptions:
+        # 1. Infrastructure logger noise - never actionable as an issue.
+        logger_name = event.get("logger") or ""
+        if isinstance(logger_name, str) and any(
+            logger_name.startswith(p) for p in NOISY_LOGGER_PREFIXES
+        ):
+            return None
+
+        # 2. Expected/handled exceptions and expected client (4xx) errors.
+        if "exc_info" in hint:
+            exc_type, exc_value, _tb = hint["exc_info"]
+            exc_name = exc_type.__name__ if exc_type else ""
+            if exc_name in IGNORED_EXCEPTIONS:
                 return None
 
-            # Skip 4xx client errors that are expected behavior
-            if hasattr(exc_value, "status_code"):
-                status_code = getattr(exc_value, "status_code", 500)
-                if 400 <= status_code < 500 and status_code not in (401, 403):
-                    # Skip 400, 404, 405, etc. but keep 401/403 for security monitoring
-                    return None
+            status_code = getattr(exc_value, "status_code", None)
+            if (
+                isinstance(status_code, int)
+                and 400 <= status_code < 500
+                and status_code not in (401, 403)
+            ):
+                # Drop 400/404/405/429/etc. (client behaviour); keep 401/403
+                # for security monitoring.
+                return None
+
+        # 3. Known expected conditions identified by message text.
+        message = _event_message(event)
+        if message and any(s in message for s in IGNORED_MESSAGE_SUBSTRINGS):
+            return None
+
+        # 4. Scrub secrets/PII from the surviving event.
+        try:
+            _scrub_event(event)
+        except Exception:
+            # Never let scrubbing failures drop a real error.
+            pass
 
         return event
 
@@ -117,7 +311,7 @@ def _get_traces_sampler() -> Callable:
 
 def init_sentry(
     component: str = "django",
-    tags: Optional[dict] = None,
+    tags: dict | None = None,
 ) -> bool:
     """
     Initialize Sentry for a specific component.
@@ -141,21 +335,42 @@ def init_sentry(
     try:
         import sentry_sdk
         from sentry_sdk.integrations.httpx import HttpxIntegration
-        from sentry_sdk.integrations.logging import LoggingIntegration
+        from sentry_sdk.integrations.logging import (
+            LoggingIntegration,
+            ignore_logger,
+        )
 
-        # from sentry_sdk.integrations.redis import RedisIntegration
-        # Increase max string length for better error context
+        # Keep a generous-but-bounded string length so stack frames and request
+        # bodies stay readable without bloating every event (the old 10MB cap
+        # multiplied payload size across millions of events).
         try:
-            sentry_sdk.utils.MAX_STRING_LENGTH = 10_000_000
+            sentry_sdk.utils.MAX_STRING_LENGTH = 8192
         except AttributeError:
             pass  # Newer SDK versions may not have this
 
+        # Suppress pure-infrastructure loggers at the source. This is the
+        # single most important noise lever: it stops the OTel exporter's
+        # transient "failed to reach collector" ERRORs from becoming issues.
+        for logger_name in IGNORED_LOGGERS:
+            ignore_logger(logger_name)
+
+        import logging as _logging
+
+        # Level at/above which a log record becomes a Sentry event. ERROR by
+        # default; overridable via SENTRY_LOG_LEVEL (e.g. WARNING, CRITICAL).
+        _event_level = getattr(
+            _logging, os.getenv("SENTRY_LOG_LEVEL", "ERROR").upper(), _logging.ERROR
+        )
+
         integrations = [
+            # The ONLY path that turns ERROR logs into Sentry events. The
+            # redundant Django EventHandler was removed from logging/config.py
+            # so events are captured exactly once and Temporal/Celery (which do
+            # not use the Django LOGGING dict) are covered too.
             LoggingIntegration(
-                level=20,  # INFO - capture as breadcrumbs
-                event_level=40,  # ERROR - send as events
+                level=_logging.INFO,  # capture INFO+ as breadcrumbs
+                event_level=_event_level,  # send ERROR+ as events
             ),
-            # RedisIntegration(),
             HttpxIntegration(),  # Track outgoing HTTP requests via httpx
         ]
 
@@ -193,6 +408,14 @@ def init_sentry(
         if tags:
             default_tags.update(tags)
 
+        # Defence-in-depth scrubbing: even with send_default_pii on, redact a
+        # broad denylist of secret-bearing keys recursively before send.
+        from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
+
+        scrubber_denylist = list(DEFAULT_DENYLIST) + [
+            k for k in SENSITIVE_KEY_SUBSTRINGS if k not in DEFAULT_DENYLIST
+        ]
+
         sentry_sdk.init(
             dsn=SENTRY_DSN,
             integrations=integrations,
@@ -204,9 +427,13 @@ def init_sentry(
             traces_sampler=_get_traces_sampler(),
             # Profiling configuration
             profiles_sample_rate=PROFILES_SAMPLE_RATE,
-            # Error capture configuration
+            # Error capture configuration. PII is captured for debugging but
+            # passed through the scrubber + before_send redaction below.
             send_default_pii=True,
-            max_request_body_size="always",  # Capture full request bodies
+            event_scrubber=EventScrubber(denylist=scrubber_denylist, recursive=True),
+            # "medium" caps bodies at ~10KB: enough to debug, small enough that
+            # large uploads/payloads don't dominate the event volume or leak.
+            max_request_body_size="medium",
             max_breadcrumbs=100,
             attach_stacktrace=True,  # Attach stack traces to all messages
             include_source_context=True,  # Include source code context
@@ -223,6 +450,9 @@ def init_sentry(
             in_app_exclude=["celery", "kombu", "temporalio", "django"],
             # Hooks
             before_send=_get_before_send(),
+            before_send_transaction=lambda event, hint: (
+                _scrub_deployment_telemetry_event(event)
+            ),
             # Debug mode in staging for troubleshooting
             debug=IS_STAGING,
             # Session tracking
@@ -269,9 +499,9 @@ def set_user_context(user_id: str, email: str = "", username: str = "") -> None:
 
 def capture_exception_with_context(
     exception: Exception,
-    context: Optional[dict] = None,
-    tags: Optional[dict] = None,
-) -> Optional[str]:
+    context: dict | None = None,
+    tags: dict | None = None,
+) -> str | None:
     """
     Capture an exception with additional context.
 
@@ -304,9 +534,9 @@ def capture_exception_with_context(
 def capture_message(
     message: str,
     level: str = "info",
-    context: Optional[dict] = None,
-    tags: Optional[dict] = None,
-) -> Optional[str]:
+    context: dict | None = None,
+    tags: dict | None = None,
+) -> str | None:
     """
     Capture a message to Sentry.
 
@@ -341,7 +571,7 @@ def add_breadcrumb(
     message: str,
     category: str = "custom",
     level: str = "info",
-    data: Optional[dict] = None,
+    data: dict | None = None,
 ) -> None:
     """
     Add a breadcrumb for debugging.

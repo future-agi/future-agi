@@ -1268,6 +1268,7 @@ function FeedbackDraftSummary({ feedbackDrafts, onRemove }) {
   if (!feedbackDrafts.length) return null;
   return (
     <Box
+      data-testid="review-feedback-draft-summary"
       sx={(theme) => {
         const tone = statusTone(theme, "warning");
         return {
@@ -1276,6 +1277,7 @@ function FeedbackDraftSummary({ feedbackDrafts, onRemove }) {
           borderColor: tone.border,
           borderRadius: 0.75,
           bgcolor: tone.bg,
+          minHeight: 0,
         };
       }}
     >
@@ -1300,7 +1302,19 @@ function FeedbackDraftSummary({ feedbackDrafts, onRemove }) {
           })}
         />
       </Stack>
-      <Stack spacing={0.75} sx={{ mt: 1 }}>
+      <Stack
+        data-testid="review-feedback-draft-list"
+        data-scroll-locked="true"
+        spacing={0.75}
+        sx={{
+          mt: 1,
+          maxHeight: { xs: 148, sm: 184, md: 220 },
+          overflowY: "auto",
+          overscrollBehavior: "contain",
+          pr: 0.5,
+          mr: -0.5,
+        }}
+      >
         {feedbackDrafts.map((target) => (
           <Box
             key={target.key}
@@ -2052,13 +2066,6 @@ export default function AnnotationComparisonPanel({
           onDoneFeedback={() => setActiveFeedbackKey(null)}
         />
 
-        {canReviewSubmittedAnnotations && (
-          <FeedbackDraftSummary
-            feedbackDrafts={feedbackDrafts}
-            onRemove={handleRemoveLabelFeedback}
-          />
-        )}
-
         <ItemNotesList notes={visibleSpanNotes} annotatorRows={annotatorRows} />
 
         <ReviewActivityPanel comments={reviewActivityComments} />
@@ -2068,6 +2075,7 @@ export default function AnnotationComparisonPanel({
 
       {canReviewSubmittedAnnotations && (
         <Box
+          data-testid="review-action-bar"
           sx={{
             position: "sticky",
             bottom: 0,
@@ -2085,15 +2093,24 @@ export default function AnnotationComparisonPanel({
                 ? `0 -12px 30px ${alpha(theme.palette.common.black, 0.34)}`
                 : `0 -10px 26px ${alpha(theme.palette.grey[600], 0.12)}`,
             zIndex: 2,
+            maxHeight: { xs: "58vh", md: "48vh" },
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+            gap: 1,
           }}
         >
+          <FeedbackDraftSummary
+            feedbackDrafts={feedbackDrafts}
+            onRemove={handleRemoveLabelFeedback}
+          />
           <Stack
             direction="row"
             alignItems="center"
             spacing={1}
             useFlexGap
             flexWrap="wrap"
-            sx={{ mb: 1 }}
+            sx={{ flexShrink: 0 }}
           >
             <Iconify icon="solar:checklist-minimalistic-bold" width={18} />
             <Typography
@@ -2108,7 +2125,11 @@ export default function AnnotationComparisonPanel({
                 : reviewActionHint}
             </Typography>
           </Stack>
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+          <Stack
+            direction={{ xs: "column", sm: "row" }}
+            spacing={1}
+            sx={{ flexShrink: 0 }}
+          >
             <Button
               variant="contained"
               color="inherit"

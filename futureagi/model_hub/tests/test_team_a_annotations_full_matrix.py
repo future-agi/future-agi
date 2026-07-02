@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import uuid
 from datetime import timedelta
 from typing import Any, Dict, Tuple
@@ -51,6 +52,7 @@ from model_hub.models.choices import (
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.develop_dataset import Dataset, Row
 from model_hub.models.score import SCORE_SOURCE_FK_MAP, Score
+from model_hub.serializers.annotation_queues import QueueExportQuerySerializer
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
@@ -819,7 +821,8 @@ class TestAutoCompleteQueueItems:
         assert item.status == QueueItemStatus.PENDING.value
         baseline_qi_count = QueueItem.objects.filter(deleted=False).count()
 
-        # Score one — should NOT complete
+        # Score one — should NOT complete. Pass queue_item_id explicitly so the
+        # score lands in this queue's context (per-queue Score uniqueness).
         with TestCase.captureOnCommitCallbacks(execute=True):
             auth_client.post(
                 SCORE_URL,
@@ -828,13 +831,14 @@ class TestAutoCompleteQueueItems:
                     "source_id": observation_span.id,
                     "label_id": str(star_label.id),
                     "value": {"rating": 5},
+                    "queue_item_id": str(item.id),
                 },
                 format="json",
             )
         item.refresh_from_db()
         assert item.status != QueueItemStatus.COMPLETED.value
 
-        # Score the second required → completes
+        # Score the second required in the same queue → completes
         with TestCase.captureOnCommitCallbacks(execute=True):
             auth_client.post(
                 SCORE_URL,
@@ -843,13 +847,15 @@ class TestAutoCompleteQueueItems:
                     "source_id": observation_span.id,
                     "label_id": str(thumbs_label.id),
                     "value": {"value": "up"},
+                    "queue_item_id": str(item.id),
                 },
                 format="json",
             )
         item.refresh_from_db()
         assert item.status == QueueItemStatus.COMPLETED.value
 
-        # No spurious queue items created
+        # No spurious queue items created — we attributed the scores to the
+        # test queue's item, so no default-queue item is auto-created.
         assert (
             QueueItem.objects.filter(deleted=False).count() == baseline_qi_count
         )
@@ -1354,6 +1360,43 @@ class TestQueueForSource:
         ]
         assert str(queue) in queue_ids_returned
 
+    def test_rejects_legacy_source_aliases(
+        self, auth_client, queue, dataset_with_rows
+    ):
+        _, rows = dataset_with_rows
+
+        resp = auth_client.get(
+            _queues_for_source_url(),
+            {"sourceType": "dataset_row", "sourceId": str(rows[0].id)},
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "sourceType" in str(resp.data)
+        assert "sourceId" in str(resp.data)
+
+    def test_rejects_legacy_nested_source_aliases(
+        self, auth_client, queue, dataset_with_rows
+    ):
+        _, rows = dataset_with_rows
+
+        resp = auth_client.get(
+            _queues_for_source_url(),
+            {
+                "sources": json.dumps(
+                    [
+                        {
+                            "sourceType": "dataset_row",
+                            "sourceId": str(rows[0].id),
+                        }
+                    ]
+                )
+            },
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "sourceType" in str(resp.data)
+        assert "sourceId" in str(resp.data)
+
 
 # ===========================================================================
 # 20. add-items (manual + filter mode)
@@ -1394,6 +1437,21 @@ class TestAddItems:
         assert (
             QueueItem.objects.filter(queue_id=queue, deleted=False).count() == 1
         )
+
+    def test_manual_mode_rejects_legacy_item_aliases(
+        self, auth_client, queue, dataset_with_rows
+    ):
+        _, rows = dataset_with_rows
+
+        resp = auth_client.post(
+            _add_items_url(queue),
+            {"items": [{"sourceType": "dataset_row", "sourceId": str(rows[0].id)}]},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "sourceType" in str(resp.data)
+        assert "sourceId" in str(resp.data)
 
     def test_filter_mode_traces(self, auth_client, queue, project, trace):
         """Use selection.mode=filter for trace source type."""
@@ -1460,6 +1518,12 @@ class TestListQueueItems:
         resp = auth_client.get(_items_url(queue), {"source_type": "dataset_row"})
         assert resp.status_code == 200
         assert resp.data["count"] == 2
+
+    def test_rejects_legacy_query_aliases(self, auth_client, queue):
+        resp = auth_client.get(_items_url(queue), {"sourceType": "dataset_row"})
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "sourceType" in str(resp.data)
 
 
 # ===========================================================================
@@ -1549,7 +1613,6 @@ class TestAssignItems:
             {
                 "item_ids": item_ids,
                 "user_ids": [],
-                "user_id": None,
                 "action": "set",
             },
             format="json",
@@ -1642,6 +1705,28 @@ class TestSubmitAnnotations:
         )
         assert resp.status_code == 200
         assert _result(resp)["submitted"] == 0
+        assert Score.objects.filter(queue_item=item).count() == 0
+
+    def test_submit_rejects_legacy_label_alias(
+        self, auth_client, queue, dataset_with_rows, categorical_label
+    ):
+        item = self._setup(auth_client, queue, dataset_with_rows, categorical_label)
+
+        resp = auth_client.post(
+            _submit_url(queue, item.id),
+            {
+                "annotations": [
+                    {
+                        "labelId": str(categorical_label.id),
+                        "value": {"selected": ["Good"]},
+                    }
+                ]
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "labelId" in str(resp.data)
         assert Score.objects.filter(queue_item=item).count() == 0
 
     def test_submit_to_paused_queue_400(
@@ -1863,6 +1948,12 @@ class TestQueueAnalytics:
         # header + at least 3 data rows (one per item)
         assert len(rows) >= 4
 
+    def test_export_query_serializer_rejects_legacy_format_alias(self):
+        serializer = QueueExportQuerySerializer(data={"format": "csv"})
+
+        assert not serializer.is_valid()
+        assert "format" in serializer.errors
+
     def test_export_to_dataset_creates_dataset(
         self, auth_client, queue, dataset_with_rows, categorical_label, organization
     ):
@@ -1889,7 +1980,7 @@ class TestAutomationRules:
         payload = {
             "name": "TeamA Rule",
             "source_type": "trace",
-            "conditions": {"all": []},
+            "conditions": {},
             "trigger_frequency": AutomationRuleTriggerFrequency.MANUAL.value,
         }
         resp = auth_client.post(_rules_url(queue), payload, format="json")
@@ -1957,7 +2048,7 @@ class TestAutomationRules:
             name="pick all",
             queue_id=queue,
             source_type="trace",
-            conditions={"project_id": str(project.id), "all": []},
+            conditions={"scope": {"project_id": str(project.id)}},
             organization=organization,
         )
         # Pre-state: no items.
@@ -2003,6 +2094,63 @@ class TestGetAnnotationLabelsLegacy:
         # star_label is project-scoped to ``project`` so it must appear
         assert str(star_label.id) in ids
 
+    def test_rejects_legacy_project_alias(self, api_client, user, project):
+        api_client.force_authenticate(user=user)
+        resp = api_client.get(TRACER_LABELS, {"projectId": str(project.id)})
+        assert resp.status_code == 400
+        assert "projectId" in str(resp.data)
+
+    def test_project_trace_config_includes_all_label_types_before_scores(
+        self,
+        api_client,
+        user,
+        project,
+        observation_span,
+        star_label,
+        thumbs_label,
+        numeric_label,
+        text_label,
+        categorical_label,
+        monkeypatch,
+    ):
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+        monkeypatch.setattr(
+            AnalyticsQueryService,
+            "should_use_clickhouse",
+            lambda self, query_type: False,
+        )
+        api_client.force_authenticate(user=user)
+        resp = api_client.get(
+            "/tracer/trace/list_traces_of_session/",
+            {
+                "project_id": str(project.id),
+                "page_number": 0,
+                "page_size": 30,
+            },
+        )
+
+        assert observation_span.trace_id
+        assert resp.status_code == 200, resp.data
+        result = _result(resp)
+        annotation_cols = [
+            c
+            for c in result["config"]
+            if c.get("group_by") == "Annotation Metrics"
+        ]
+        cols_by_id = {str(c["id"]): c for c in annotation_cols}
+        expected_types = {
+            str(star_label.id): AnnotationTypeChoices.STAR.value,
+            str(thumbs_label.id): AnnotationTypeChoices.THUMBS_UP_DOWN.value,
+            str(numeric_label.id): AnnotationTypeChoices.NUMERIC.value,
+            str(text_label.id): AnnotationTypeChoices.TEXT.value,
+            str(categorical_label.id): AnnotationTypeChoices.CATEGORICAL.value,
+        }
+
+        assert set(expected_types) <= set(cols_by_id)
+        for label_id, label_type in expected_types.items():
+            assert cols_by_id[label_id]["annotation_label_type"] == label_type
+
 
 # ===========================================================================
 # 31. GET /tracer/trace-annotation/get_annotation_values/
@@ -2035,8 +2183,49 @@ class TestGetAnnotationValues:
         result = _result(resp)
         assert "annotations" in result or isinstance(result, list)
 
+    def test_returns_annotations_for_span_with_annotator_filter(
+        self, auth_client, user, observation_span, star_label
+    ):
+        auth_client.post(
+            SCORE_URL,
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+                "label_id": str(star_label.id),
+                "value": {"rating": 4},
+            },
+            format="json",
+        )
+
+        resp = auth_client.get(
+            TRACER_ANN_VALUES,
+            {
+                "observation_span_id": str(observation_span.id),
+                "annotators": json.dumps([str(user.id)]),
+            },
+        )
+
+        assert resp.status_code == 200, resp.data
+        result = _result(resp)
+        assert len(result["annotations"]) == 1
+        assert result["annotations"][0]["annotator_id"] == str(user.id)
+
     def test_missing_params_400(self, auth_client):
         resp = auth_client.get(TRACER_ANN_VALUES)
+        assert resp.status_code == 400
+
+    def test_rejects_legacy_query_aliases(self, auth_client, observation_span):
+        resp = auth_client.get(
+            TRACER_ANN_VALUES, {"observationSpanId": str(observation_span.id)}
+        )
+        assert resp.status_code == 400
+        assert "observationSpanId" in str(resp.data)
+
+    def test_rejects_invalid_annotators_json(self, auth_client, observation_span):
+        resp = auth_client.get(
+            TRACER_ANN_VALUES,
+            {"observation_span_id": str(observation_span.id), "annotators": "not-json"},
+        )
         assert resp.status_code == 400
 
 

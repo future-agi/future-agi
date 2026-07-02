@@ -13,7 +13,7 @@ import {
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import ActionForm from "./ActionForm";
 import { enqueueSnackbar } from "notistack";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -100,6 +100,7 @@ const AllActionForm = ({
   workspaceId,
 }) => {
   const theme = useTheme();
+  const queryClient = useQueryClient();
   const { user, orgLevel: actorOrgLevel } = useAuthContext();
   const { usersList } = useUserManagementStore();
   const existingEmails = usersList.map((u) => u.email);
@@ -107,7 +108,7 @@ const AllActionForm = ({
   const isOwner =
     actorOrgLevel != null
       ? actorOrgLevel >= LEVELS.OWNER
-      : (user?.organization_role ?? user?.organizationRole) === "Owner";
+      : user?.organization_role === "Owner";
   const isAdmin = actorOrgLevel != null ? actorOrgLevel >= LEVELS.ADMIN : false;
 
   // Filter org role options based on actor's level
@@ -150,8 +151,8 @@ const AllActionForm = ({
   // Edit role form
   const editForm = useForm({
     defaultValues: {
-      orgLevel: userData?.org_level ?? userData?.orgLevel ?? null,
-      wsLevel: userData?.ws_level ?? userData?.wsLevel ?? null,
+      orgLevel: userData?.org_level ?? null,
+      wsLevel: userData?.ws_level ?? null,
       workspaceIds: [],
       wsLevel_edit: LEVELS.WORKSPACE_MEMBER,
     },
@@ -162,7 +163,7 @@ const AllActionForm = ({
   // Resend invite form (allows role change before resending)
   const resendForm = useForm({
     defaultValues: {
-      orgLevel: userData?.org_level ?? userData?.orgLevel ?? LEVELS.VIEWER,
+      orgLevel: userData?.org_level ?? LEVELS.VIEWER,
     },
     mode: "onChange",
   });
@@ -170,7 +171,7 @@ const AllActionForm = ({
   // Workspace role edit form
   const wsEditForm = useForm({
     defaultValues: {
-      wsLevel: userData?.ws_level ?? userData?.wsLevel ?? null,
+      wsLevel: userData?.ws_level ?? null,
     },
     mode: "onChange",
   });
@@ -182,8 +183,8 @@ const AllActionForm = ({
   useEffect(() => {
     if (userData && openActionForm?.action === "edit-role") {
       editForm.reset({
-        orgLevel: userData?.org_level ?? userData?.orgLevel ?? null,
-        wsLevel: userData?.ws_level ?? userData?.wsLevel ?? null,
+        orgLevel: userData?.org_level ?? null,
+        wsLevel: userData?.ws_level ?? null,
         workspaceIds: [],
         wsLevel_edit: LEVELS.WORKSPACE_MEMBER,
       });
@@ -194,7 +195,7 @@ const AllActionForm = ({
   useEffect(() => {
     if (userData && openActionForm?.action === "edit-ws-role") {
       wsEditForm.reset({
-        wsLevel: userData?.ws_level ?? userData?.wsLevel ?? null,
+        wsLevel: userData?.ws_level ?? null,
       });
     }
   }, [userData, openActionForm?.action, wsEditForm]);
@@ -203,12 +204,13 @@ const AllActionForm = ({
   useEffect(() => {
     if (userData && openActionForm?.action === "resend-invite") {
       resendForm.reset({
-        orgLevel: userData?.org_level ?? userData?.orgLevel ?? LEVELS.VIEWER,
+        orgLevel: userData?.org_level ?? LEVELS.VIEWER,
       });
     }
   }, [userData, openActionForm?.action, resendForm]);
 
   const refetchData = () => {
+    queryClient.invalidateQueries({ queryKey: ["user-detail"] });
     gridApi?.refreshServerSide?.({ purge: true });
   };
 
@@ -504,17 +506,20 @@ const AllActionForm = ({
     if (formData.orgLevel != null) {
       payload.org_level = formData.orgLevel;
     }
-    if (formData.wsLevel != null && workspaceId) {
-      payload.ws_level = formData.wsLevel;
-      payload.workspace_id = workspaceId;
-    }
-    // Include workspace_access for Member/Viewer roles
+    // Org-level edits with a workspace selection use `workspace_access` as
+    // the authoritative desired set. Sending `ws_level + workspace_id` from
+    // the page's URL context alongside it creates a contradictory payload —
+    // the backend ends up keeping the URL-context workspace active even if
+    // the user excluded it from their selection.
     if (needsWorkspaces && formData.workspaceIds?.length > 0) {
       const wsLevel = formData.wsLevel_edit ?? LEVELS.WORKSPACE_MEMBER;
       payload.workspace_access = formData.workspaceIds.map((wsId) => ({
         workspace_id: wsId,
         level: wsLevel,
       }));
+    } else if (formData.wsLevel != null && workspaceId) {
+      payload.ws_level = formData.wsLevel;
+      payload.workspace_id = workspaceId;
     }
     updateRoleMutate(payload);
   };
@@ -757,8 +762,8 @@ const AllActionForm = ({
                   size="small"
                   fullWidth
                   disabled={
-                    (userData?.org_level ?? userData?.orgLevel) != null &&
-                    (userData?.org_level ?? userData?.orgLevel) >= LEVELS.ADMIN
+                    userData?.org_level != null &&
+                    userData.org_level >= LEVELS.ADMIN
                   }
                 />
               )}
@@ -979,12 +984,12 @@ const AllActionForm = ({
                 size="small"
                 fullWidth
                 disabled={
-                  (userData?.org_level ?? userData?.orgLevel) != null &&
-                  (userData?.org_level ?? userData?.orgLevel) >= LEVELS.ADMIN
+                  userData?.org_level != null &&
+                  userData.org_level >= LEVELS.ADMIN
                 }
               />
-              {(userData?.org_level ?? userData?.orgLevel) != null &&
-                (userData?.org_level ?? userData?.orgLevel) >= LEVELS.ADMIN && (
+              {userData?.org_level != null &&
+                userData.org_level >= LEVELS.ADMIN && (
                   <Typography variant="body2" color="text.secondary">
                     This user is an org Admin or above and automatically has
                     Workspace Admin access.
@@ -1000,8 +1005,8 @@ const AllActionForm = ({
               color="primary"
               loading={isWsRolePending}
               disabled={
-                (userData?.org_level ?? userData?.orgLevel) != null &&
-                (userData?.org_level ?? userData?.orgLevel) >= LEVELS.ADMIN
+                userData?.org_level != null &&
+                userData.org_level >= LEVELS.ADMIN
               }
             >
               Update

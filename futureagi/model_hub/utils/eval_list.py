@@ -6,11 +6,11 @@ Handles: queryset building, eval type derivation, output type derivation,
 """
 
 from collections import defaultdict
+from collections.abc import Iterable
 from datetime import timedelta
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING
 
 from django.db.models import Count, Q, QuerySet
-from django.utils import timezone
 
 from agentic_eval.core_evals.fi_evals.eval_type import (
     FunctionEvalTypeId,
@@ -18,7 +18,7 @@ from agentic_eval.core_evals.fi_evals.eval_type import (
     GroundedEvalTypeId,
     LlmEvalTypeId,
 )
-from model_hub.models.choices import EvalOutputType, EvalTemplateType, OwnerChoices
+from model_hub.models.choices import EvalOutputType, OwnerChoices
 from model_hub.types import EvalListFilters, ThirtyDayDataPoint
 from tfc.constants.api_calls import APICallStatusChoices
 
@@ -157,6 +157,9 @@ def derive_output_type(template: "EvalTemplate") -> str:
         axis = getattr(template, "composite_child_axis", "") or ""
         return _COMPOSITE_AXIS_MAP.get(axis, "percentage")
 
+    if getattr(template, "output_type_normalized", None):
+        return template.output_type_normalized
+
     config = template.config or {}
     output = config.get("output", "")
     return _OUTPUT_TYPE_MAP.get(output, "percentage")
@@ -212,12 +215,19 @@ def get_created_by_name(template: "EvalTemplate") -> str:
     try:
         from model_hub.models.evals_metric import EvalTemplateVersion
 
-        version = (
-            EvalTemplateVersion.objects.filter(eval_template=template)
-            .select_related("created_by")
-            .order_by("version_number")
-            .first()
-        )
+        # Prefer a prefetched, version_number-ordered list when the caller
+        # supplied one (e.g. via Prefetch(..., to_attr="_prefetched_versions"))
+        # so we don't issue a per-row query inside a list loop (N+1).
+        prefetched_versions = getattr(template, "_prefetched_versions", None)
+        if prefetched_versions is not None:
+            version = prefetched_versions[0] if prefetched_versions else None
+        else:
+            version = (
+                EvalTemplateVersion.objects.filter(eval_template=template)
+                .select_related("created_by")
+                .order_by("version_number")
+                .first()
+            )
         if version and version.created_by:
             name = getattr(version.created_by, "name", "") or ""
             if name.strip():
@@ -242,9 +252,7 @@ def build_user_eval_list_items(
         deleted=False,
     )
     if is_experiment_scope:
-        column_qs = column_qs.filter(
-            source=SourceChoices.EXPERIMENT_EVALUATION.value
-        )
+        column_qs = column_qs.filter(source=SourceChoices.EXPERIMENT_EVALUATION.value)
     column_rows = list(column_qs.values("source_id", "id", "status"))
     column_map = {row["source_id"]: row["id"] for row in column_rows}
     column_status_map = {row["source_id"]: row["status"] for row in column_rows}
@@ -299,6 +307,9 @@ def build_user_eval_list_items(
                 "tools": run_config.get("tools", {}),
             },
             "output_type": template.output_type_normalized or "pass_fail",
+            "pinned_version_id": str(user_eval.pinned_version_id)
+            if user_eval.pinned_version_id
+            else None,
         }
 
         if template.template_type == "composite":
@@ -309,6 +320,7 @@ def build_user_eval_list_items(
                     "children_count": template.composite_children.filter(
                         deleted=False
                     ).count(),
+                    "composite_weight_overrides": user_eval.composite_weight_overrides,
                 }
             )
 
@@ -371,23 +383,24 @@ def build_eval_list_queryset(
     # Advanced filters
     if filters:
         # Support both dict (from DRF serializer) and Pydantic object
-        _f = lambda key: (
-            filters.get(key)
-            if isinstance(filters, dict)
-            else getattr(filters, key, None)
-        )
+        def _f(key):
+            if isinstance(filters, dict):
+                return filters.get(key)
+            return getattr(filters, key, None)
 
         # Output type filter
         if _f("output_type"):
             filter_types = set(_f("output_type"))
             # Singles: collect ALL raw values that map to requested types
             include_raw = [
-                raw for raw, normalized in _OUTPUT_TYPE_MAP.items()
+                raw
+                for raw, normalized in _OUTPUT_TYPE_MAP.items()
                 if normalized in filter_types
             ]
             # Composites: collect axis values that map to requested types
             include_axes = [
-                axis for axis, norm in _COMPOSITE_AXIS_MAP.items()
+                axis
+                for axis, norm in _COMPOSITE_AXIS_MAP.items()
                 if norm in filter_types
             ]
             if "percentage" in filter_types:
@@ -395,13 +408,11 @@ def build_eval_list_queryset(
             parts = []
             if include_raw:
                 parts.append(
-                    Q(config__output__in=include_raw)
-                    & ~Q(template_type="composite")
+                    Q(config__output__in=include_raw) & ~Q(template_type="composite")
                 )
             if include_axes:
                 parts.append(
-                    Q(template_type="composite",
-                      composite_child_axis__in=include_axes)
+                    Q(template_type="composite", composite_child_axis__in=include_axes)
                 )
             if parts:
                 combined = parts[0]
@@ -409,11 +420,30 @@ def build_eval_list_queryset(
                     combined |= p
                 qs = qs.filter(combined)
 
-        # Tags filter
-        if _f("tags"):
-            qs = qs.filter(eval_tags__overlap=_f("tags"))
-        if _f("tags_not"):
-            qs = qs.exclude(eval_tags__overlap=_f("tags_not"))
+        # Tags filter — case-insensitive by lowercasing both sides.
+        # The DB expression ARRAY(SELECT LOWER(u) FROM UNNEST(eval_tags) u)
+        # normalises stored tags at query time so any casing (iOS, coDe,
+        # GPT4, ...) matches a lowercased filter value.
+        if _f("tags") or _f("tags_not"):
+            from django.contrib.postgres.fields import ArrayField as PGArrayField
+            from django.db.models import Func, TextField
+            from django.db.models.functions import Cast
+
+            class _LowerArray(Func):
+                function = "ARRAY"
+                template = (
+                    "%(function)s(SELECT LOWER(u) FROM UNNEST(%(expressions)s) u)"
+                )
+                output_field = PGArrayField(TextField())
+
+            qs = qs.annotate(_tags_lower=_LowerArray("eval_tags"))
+
+            if _f("tags"):
+                lower_filter = [t.lower() for t in _f("tags")]
+                qs = qs.filter(_tags_lower__overlap=lower_filter)
+            if _f("tags_not"):
+                lower_not = [t.lower() for t in _f("tags_not")]
+                qs = qs.exclude(_tags_lower__overlap=lower_not)
 
         # Template type filter (single/composite)
         if _f("template_type"):
@@ -464,12 +494,14 @@ def build_eval_list_queryset(
             excluded_types = set(_f("output_type_not"))
             # Singles: collect raw config.output values to exclude
             exclude_raw = [
-                raw for raw, normalized in _OUTPUT_TYPE_MAP.items()
+                raw
+                for raw, normalized in _OUTPUT_TYPE_MAP.items()
                 if normalized in excluded_types
             ]
             # Composites: collect axis values to exclude
             exclude_axes = [
-                axis for axis, norm in _COMPOSITE_AXIS_MAP.items()
+                axis
+                for axis, norm in _COMPOSITE_AXIS_MAP.items()
                 if norm in excluded_types
             ]
             if "percentage" in excluded_types:
@@ -477,13 +509,11 @@ def build_eval_list_queryset(
             parts = []
             if exclude_raw:
                 parts.append(
-                    Q(config__output__in=exclude_raw)
-                    & ~Q(template_type="composite")
+                    Q(config__output__in=exclude_raw) & ~Q(template_type="composite")
                 )
             if exclude_axes:
                 parts.append(
-                    Q(template_type="composite",
-                      composite_child_axis__in=exclude_axes)
+                    Q(template_type="composite", composite_child_axis__in=exclude_axes)
                 )
             if parts:
                 combined = parts[0]
@@ -496,13 +526,17 @@ def build_eval_list_queryset(
             from model_hub.models.evals_metric import EvalTemplateVersion
 
             excluded_by_list = _f("created_by_not")
-            exc_ids = EvalTemplateVersion.all_objects.filter(
-                is_default=True,
-                deleted=False,
-            ).filter(
-                Q(created_by__name__in=excluded_by_list)
-                | Q(created_by__email__in=excluded_by_list)
-            ).values_list("eval_template_id", flat=True)
+            exc_ids = (
+                EvalTemplateVersion.all_objects.filter(
+                    is_default=True,
+                    deleted=False,
+                )
+                .filter(
+                    Q(created_by__name__in=excluded_by_list)
+                    | Q(created_by__email__in=excluded_by_list)
+                )
+                .values_list("eval_template_id", flat=True)
+            )
             org_q = Q(organization__display_name__in=excluded_by_list) | Q(
                 organization__name__in=excluded_by_list
             )

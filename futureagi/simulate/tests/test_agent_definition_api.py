@@ -17,6 +17,7 @@ import pytest
 from rest_framework import status
 
 from simulate.models import AgentDefinition, AgentVersion
+from simulate.models.agent_definition import ProviderCredentials
 
 # ============================================================================
 # Fixtures
@@ -106,6 +107,12 @@ class TestListAgentDefinitions:
         for result in data["results"]:
             assert result["agent_type"] == "voice"
 
+    def test_rejects_unknown_query_params(self, auth_client):
+        response = auth_client.get("/simulate/agent-definitions/?legacyFilter=voice")
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["status"] is False
+        assert response.data["details"]["legacyFilter"] == ["Unknown field."]
+
     def test_pin_agent_definition_id(self, auth_client, agent_definition):
         response = auth_client.get(
             f"/simulate/agent-definitions/?agent_definition_id={agent_definition.id}"
@@ -169,6 +176,40 @@ class TestCreateAgentDefinition:
         assert "agent" in data
         assert "id" in data["agent"]
 
+    def test_create_voice_agent_response_masks_api_key(self, auth_client):
+        raw_api_key = "sk-agent-definition-raw-secret-123456"
+        payload = {
+            "agent_name": "Masked Voice Bot",
+            "agent_type": "voice",
+            "provider": "vapi",
+            "contact_number": "+12345678901",
+            "inbound": True,
+            "commit_message": "Initial version",
+            "languages": ["en"],
+            "description": "A voice bot with provider credentials",
+            "api_key": raw_api_key,
+            "assistant_id": "asst_masked",
+            "authentication_method": "api_key",
+        }
+
+        response = auth_client.post(
+            "/simulate/agent-definitions/create/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        serialized = response.json()
+        assert raw_api_key not in str(serialized)
+        assert serialized["agent"]["api_key"] != raw_api_key
+        assert serialized["agent"]["api_key"].startswith("sk-a")
+
+        detail = auth_client.get(
+            f"/simulate/agent-definitions/{serialized['agent']['id']}/"
+        )
+        assert detail.status_code == status.HTTP_200_OK
+        assert raw_api_key not in str(detail.json())
+
     def test_create_text_agent_success(self, auth_client):
         payload = {
             "agent_name": "New Text Bot",
@@ -185,6 +226,32 @@ class TestCreateAgentDefinition:
         )
         assert response.status_code == status.HTTP_201_CREATED
 
+    def test_create_text_agent_does_not_seed_empty_provider_credentials(
+        self, auth_client
+    ):
+        payload = {
+            "agent_name": "New Text Bot Without Credentials",
+            "agent_type": "text",
+            "commit_message": "Initial text agent",
+            "inbound": True,
+            "languages": ["en"],
+            "description": "A text bot",
+        }
+        response = auth_client.post(
+            "/simulate/agent-definitions/create/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        agent_id = response.json()["agent"]["id"]
+        assert not ProviderCredentials.objects.filter(
+            agent_definition_id=agent_id
+        ).exists()
+        assert not ProviderCredentials.objects.filter(
+            agent_version__agent_definition_id=agent_id
+        ).exists()
+
     def test_missing_required_fields(self, auth_client):
         response = auth_client.post(
             "/simulate/agent-definitions/create/",
@@ -195,6 +262,24 @@ class TestCreateAgentDefinition:
         data = response.json()
         assert "error" in data
         assert "details" in data
+
+    def test_create_rejects_unknown_fields(self, auth_client):
+        payload = {
+            "agent_name": "New Text Bot",
+            "agent_type": "text",
+            "commit_message": "Initial text agent",
+            "inbound": True,
+            "legacy_extra": "should-not-be-accepted",
+        }
+        response = auth_client.post(
+            "/simulate/agent-definitions/create/",
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["status"] is False
+        assert response.data["details"]["legacy_extra"] == ["Unknown field."]
 
     def test_invalid_agent_type(self, auth_client):
         payload = {
@@ -352,6 +437,43 @@ class TestEditAgentDefinition:
         assert data["message"] == "Agent definition updated successfully"
         assert data["agent"]["agent_name"] == "Updated Agent Name"
 
+    def test_edit_masked_api_key_preserves_existing_secret(self, auth_client):
+        raw_api_key = "sk-edit-preserve-secret-123456"
+        create_response = auth_client.post(
+            "/simulate/agent-definitions/create/",
+            {
+                "agent_name": "Edit Masked Secret Bot",
+                "agent_type": "voice",
+                "provider": "vapi",
+                "contact_number": "+12345678901",
+                "inbound": True,
+                "commit_message": "Initial version",
+                "languages": ["en"],
+                "description": "A voice bot with credentials",
+                "api_key": raw_api_key,
+                "assistant_id": "asst_edit_masked",
+                "authentication_method": "api_key",
+            },
+            format="json",
+        )
+        assert create_response.status_code == status.HTTP_201_CREATED
+        agent_id = create_response.json()["agent"]["id"]
+        masked_api_key = create_response.json()["agent"]["api_key"]
+
+        response = auth_client.put(
+            f"/simulate/agent-definitions/{agent_id}/edit/",
+            {
+                "description": "Updated without rotating credentials",
+                "api_key": masked_api_key,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        agent = AgentDefinition.objects.get(id=agent_id)
+        assert agent.latest_version.credentials.get_api_key() == raw_api_key
+        assert raw_api_key not in str(response.json())
+
     def test_partial_update(self, auth_client, agent_definition):
         original_description = agent_definition.description
         response = auth_client.put(
@@ -371,6 +493,20 @@ class TestEditAgentDefinition:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_edit_rejects_unknown_fields(self, auth_client, agent_definition):
+        response = auth_client.put(
+            f"/simulate/agent-definitions/{agent_definition.id}/edit/",
+            {
+                "agent_name": "Updated Agent Name",
+                "legacy_extra": "should-not-be-accepted",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["status"] is False
+        assert response.data["details"]["legacy_extra"] == ["Unknown field."]
 
     def test_not_found(self, auth_client):
         fake_id = uuid.uuid4()
@@ -431,6 +567,20 @@ class TestBulkDeleteAgentDefinitions:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_bulk_delete_rejects_unknown_fields(self, auth_client, agent_definition):
+        response = auth_client.delete(
+            "/simulate/agent-definitions/",
+            {
+                "agent_ids": [str(agent_definition.id)],
+                "legacy_extra": "should-not-be-accepted",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["status"] is False
+        assert response.data["details"]["legacy_extra"] == ["Unknown field."]
+
     def test_nonexistent_ids(self, auth_client):
         response = auth_client.delete(
             "/simulate/agent-definitions/",
@@ -470,6 +620,25 @@ class TestDeleteAgentDefinition:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["message"] == "Agent definition deleted successfully"
+
+    def test_delete_soft_deletes_versions(self, auth_client, agent_definition):
+        version = agent_definition.create_version(
+            description="Version to cascade",
+            commit_message="Initial",
+            status=AgentVersion.StatusChoices.ACTIVE,
+        )
+
+        response = auth_client.delete(
+            f"/simulate/agent-definitions/{agent_definition.id}/delete/"
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        agent_definition.refresh_from_db()
+        version.refresh_from_db()
+        assert agent_definition.deleted is True
+        assert agent_definition.deleted_at is not None
+        assert version.deleted is True
+        assert version.deleted_at is not None
 
     def test_not_found(self, auth_client):
         fake_id = uuid.uuid4()
@@ -592,17 +761,103 @@ class TestFetchAssistantFromProvider:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_rejects_unknown_fields(self, auth_client):
+        response = auth_client.post(
+            self.URL,
+            {
+                "assistant_id": "asst_123",
+                "api_key": "key_123",
+                "provider": "vapi",
+                "legacy_extra": "should-not-be-accepted",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.data["status"] is False
+        assert response.data["details"]["legacy_extra"] == ["Unknown field."]
+
     def test_unauthenticated(self, api_client):
         response = api_client.post(
             self.URL,
             {"assistant_id": "a", "api_key": "b", "provider": "vapi"},
             format="json",
         )
-        # ViewSet uses `permissions` (not `permission_classes`), so
-        # unauthenticated requests may pass through to validation/execution.
-        # Accept 400 (validation/provider error) or 401/403 (auth denied).
         assert response.status_code in [
-            status.HTTP_400_BAD_REQUEST,
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         ]
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestAgentDefinitionOperationsCRUD:
+    """Regression coverage for the router-backed agent definition CRUD API."""
+
+    URL = "/simulate/api/agent-definition-operations/"
+
+    def test_text_agent_crud_does_not_use_read_only_serializer(self, auth_client):
+        payload = {
+            "agent_name": "Operations Text Bot",
+            "agent_type": "text",
+            "inbound": True,
+            "languages": ["en"],
+            "description": "Created through the operations ViewSet.",
+            "model": "gpt-4o-mini",
+            "model_details": {"source": "test"},
+        }
+        response = auth_client.post(self.URL, payload, format="json")
+
+        assert response.status_code == status.HTTP_201_CREATED
+        created = response.json()
+        agent_id = created["id"]
+        assert created["agent_name"] == payload["agent_name"]
+        assert created["inbound"] is True
+
+        patch_response = auth_client.patch(
+            f"{self.URL}{agent_id}/",
+            {"description": "Updated through the operations ViewSet."},
+            format="json",
+        )
+        assert patch_response.status_code == status.HTTP_200_OK
+        assert patch_response.json()["description"] == (
+            "Updated through the operations ViewSet."
+        )
+
+        delete_response = auth_client.delete(f"{self.URL}{agent_id}/")
+        assert delete_response.status_code == status.HTTP_204_NO_CONTENT
+
+    def test_create_rejects_unknown_fields(self, auth_client):
+        response = auth_client.post(
+            self.URL,
+            {
+                "agent_name": "Operations Text Bot",
+                "agent_type": "text",
+                "inbound": True,
+                "languages": ["en"],
+                "description": "Created through the operations ViewSet.",
+                "legacy_extra": "should-not-be-accepted",
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        details = response.data.get("details", response.data)
+        assert details["legacy_extra"] == ["Unknown field."]
+
+    def test_delete_soft_deletes_versions(self, auth_client, agent_definition):
+        version = agent_definition.create_version(
+            description="Version to cascade through operations API",
+            commit_message="Initial",
+            status=AgentVersion.StatusChoices.ACTIVE,
+        )
+
+        response = auth_client.delete(f"{self.URL}{agent_definition.id}/")
+
+        assert response.status_code == status.HTTP_204_NO_CONTENT
+        agent_definition.refresh_from_db()
+        version.refresh_from_db()
+        assert agent_definition.deleted is True
+        assert agent_definition.deleted_at is not None
+        assert version.deleted is True
+        assert version.deleted_at is not None

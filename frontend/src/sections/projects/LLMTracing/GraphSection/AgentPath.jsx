@@ -8,6 +8,7 @@ import React, { useMemo, useRef, useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import {
   Box,
+  Collapse,
   CircularProgress,
   IconButton,
   Typography,
@@ -15,6 +16,7 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import FullscreenGraphDialog from "./FullscreenGraphDialog";
 
 // Node type → color mapping (matches AgentGraph)
 const TYPE_COLORS = {
@@ -401,10 +403,20 @@ SankeyChart.propTypes = {
 // ---------------------------------------------------------------------------
 // AgentPath component
 // ---------------------------------------------------------------------------
-const AgentPath = ({ data, isLoading, onNodeClick }) => {
+const AgentPathInner = ({
+  data,
+  isLoading,
+  onNodeClick,
+  isFullscreen = false,
+  onToggleFullscreen,
+}) => {
   const theme = useTheme();
   const containerRef = useRef(null);
   const [containerWidth, setContainerWidth] = useState(900);
+  const [containerHeight, setContainerHeight] = useState(200);
+  const [isHovering, setIsHovering] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [zoom, setZoom] = useState(1);
   const layout = useMemo(() => computeSankeyLayout(data), [data]);
 
   useEffect(() => {
@@ -412,6 +424,7 @@ const AgentPath = ({ data, isLoading, onNodeClick }) => {
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
         setContainerWidth(entry.contentRect.width || 900);
+        setContainerHeight(entry.contentRect.height || 200);
       }
     });
     observer.observe(containerRef.current);
@@ -450,59 +463,149 @@ const AgentPath = ({ data, isLoading, onNodeClick }) => {
     );
   }
 
-  return (
-    <Box ref={containerRef} sx={{ position: "relative", mx: 2, my: 1 }}>
-      {/* Zoom controls, top right (matches AgentGraph) */}
-      <Box
-        sx={{
-          position: "absolute",
-          top: 8,
-          right: 8,
-          zIndex: 10,
-          display: "flex",
-          bgcolor: "background.paper",
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: "6px",
-          boxShadow: (t) => `0 1px 3px ${alpha(t.palette.common.black, 0.06)}`,
-          overflow: "hidden",
-        }}
-      >
-        {[
-          { icon: "mdi:plus", label: "Zoom in" },
-          { icon: "mdi:minus", label: "Zoom out" },
-          { icon: "mdi:crosshairs-gps", label: "Fit" },
-          { icon: "mdi:fullscreen", label: "Fullscreen" },
-          { icon: "mdi:chevron-down", label: "Collapse" },
-        ].map((btn) => (
-          <IconButton
-            key={btn.icon}
-            size="small"
-            title={btn.label}
-            sx={{
-              p: 0.5,
-              borderRadius: 0,
-              borderRight: "1px solid",
-              borderRightColor: "divider",
-              "&:last-child": { borderRight: "none" },
-              color: "text.secondary",
-            }}
-          >
-            <Iconify icon={btn.icon} width={14} />
-          </IconButton>
-        ))}
-      </Box>
+  const chartHeight = isFullscreen ? Math.max(containerHeight, 320) : 200;
+  const chartWidth = Math.max(320, Math.round(containerWidth * zoom));
+  const scaledChartHeight = Math.max(120, Math.round(chartHeight * zoom));
+  const controlInset = isFullscreen ? 24 : 8;
+  const collapsedToolbarHeight = controlInset * 2 + 28;
+  const showToolbar = isHovering || isFullscreen || isCollapsed;
+  const btnSx = {
+    p: 0.5,
+    borderRadius: 0,
+    borderRight: "1px solid",
+    borderRightColor: "divider",
+    "&:last-child": { borderRight: "none" },
+    color: "text.secondary",
+  };
 
-      <SankeyChart
-        layout={layout}
-        width={containerWidth}
-        height={200}
-        onNodeClick={onNodeClick}
-        theme={theme}
-      />
+  return (
+    <Box
+      ref={containerRef}
+      onMouseEnter={() => setIsHovering(true)}
+      onMouseLeave={() => setIsHovering(false)}
+      sx={{
+        display: "flex",
+        flexDirection: "column",
+        position: "relative",
+        bgcolor: "background.paper",
+        overflow: isCollapsed ? "visible" : "hidden",
+        ...(isFullscreen
+          ? { height: isCollapsed ? collapsedToolbarHeight : "100%", width: "100%" }
+          : { mx: 2, my: 1, minHeight: isCollapsed ? collapsedToolbarHeight : undefined }),
+      }}
+    >
+      {/* Zoom controls, top right (matches AgentGraph) */}
+      {showToolbar && (
+        <Box
+          sx={{
+            position: "absolute",
+            top: controlInset,
+            right: controlInset,
+            zIndex: isFullscreen ? (t) => t.zIndex.modal + 1 : 10,
+            display: "flex",
+            bgcolor: "background.paper",
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "6px",
+            boxShadow: (t) =>
+              `0 1px 3px ${alpha(t.palette.common.black, 0.06)}`,
+            overflow: "hidden",
+          }}
+        >
+          <IconButton
+            size="small"
+            title="Zoom in"
+            onClick={() => setZoom((value) => Math.min(2, value + 0.2))}
+            sx={btnSx}
+          >
+            <Iconify icon="mdi:plus" width={14} />
+          </IconButton>
+          <IconButton
+            size="small"
+            title="Zoom out"
+            onClick={() => setZoom((value) => Math.max(0.6, value - 0.2))}
+            sx={btnSx}
+          >
+            <Iconify icon="mdi:minus" width={14} />
+          </IconButton>
+          <IconButton
+            size="small"
+            title="Fit"
+            onClick={() => setZoom(1)}
+            sx={btnSx}
+          >
+            <Iconify icon="mdi:crosshairs-gps" width={14} />
+          </IconButton>
+          <IconButton
+            size="small"
+            title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+            onClick={onToggleFullscreen}
+            sx={btnSx}
+          >
+            <Iconify
+              icon={isFullscreen ? "mdi:fullscreen-exit" : "mdi:fullscreen"}
+              width={14}
+            />
+          </IconButton>
+          <IconButton
+            size="small"
+            title={isCollapsed ? "Expand" : "Collapse"}
+            onClick={() => setIsCollapsed((value) => !value)}
+            sx={btnSx}
+          >
+            <Iconify
+              icon={isCollapsed ? "mdi:chevron-up" : "mdi:chevron-down"}
+              width={14}
+            />
+          </IconButton>
+        </Box>
+      )}
+
+      <Collapse
+        in={!isCollapsed}
+        timeout="auto"
+        sx={isFullscreen ? { flex: 1, minHeight: 0 } : { minHeight: 0 }}
+      >
+        <Box
+          sx={{
+            height: "100%",
+            overflow: "auto",
+          }}
+        >
+          <SankeyChart
+            layout={layout}
+            width={chartWidth}
+            height={scaledChartHeight}
+            onNodeClick={onNodeClick}
+            theme={theme}
+          />
+        </Box>
+      </Collapse>
     </Box>
   );
 };
+
+AgentPathInner.propTypes = {
+  data: PropTypes.object,
+  isLoading: PropTypes.bool,
+  onNodeClick: PropTypes.func,
+  isFullscreen: PropTypes.bool,
+  onToggleFullscreen: PropTypes.func,
+};
+
+const AgentPath = (props) => (
+  <FullscreenGraphDialog
+    onNodeClick={props.onNodeClick}
+    renderGraph={({ isFullscreen, onToggleFullscreen, onNodeClick }) => (
+      <AgentPathInner
+        {...props}
+        isFullscreen={isFullscreen}
+        onToggleFullscreen={onToggleFullscreen}
+        onNodeClick={onNodeClick}
+      />
+    )}
+  />
+);
 
 AgentPath.propTypes = {
   data: PropTypes.object,

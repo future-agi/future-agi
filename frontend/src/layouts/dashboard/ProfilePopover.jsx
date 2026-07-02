@@ -21,8 +21,7 @@ const ProfilePopover = ({ anchorEl, open, onClose }) => {
   const { logout } = useAuthContext();
   const { user } = useAuthContext();
 
-  const isOwner =
-    (user?.organization_role ?? user?.organizationRole) === "Owner";
+  const isOwner = user?.organization_role === "Owner";
 
   const navigate = useNavigate();
 

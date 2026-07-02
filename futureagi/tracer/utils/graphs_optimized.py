@@ -40,6 +40,38 @@ from model_hub.models.score import Score
 from tracer.models.custom_eval_config import CustomEvalConfig, EvalOutputType
 from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.trace import Trace
+from tracer.utils.filters import FilterEngine
+
+
+CHART_SPAN_FIELD_MAP = {
+    "avg_cost": "cost",
+    "cost": "cost",
+    "total_cost": "cost",
+    "avg_latency": "latency_ms",
+    "latency": "latency_ms",
+    "latency_ms": "latency_ms",
+    "tokens": "total_tokens",
+    "total_tokens": "total_tokens",
+    "input_tokens": "prompt_tokens",
+    "prompt_tokens": "prompt_tokens",
+    "output_tokens": "completion_tokens",
+    "completion_tokens": "completion_tokens",
+    "node_type": "observation_type",
+    "trace_id": "trace_id",
+    "span_id": "id",
+    "session_id": "trace__session_id",
+    "created_at": "created_at",
+    "start_time": "start_time",
+    "name": "name",
+    "run_name": "trace__name",
+    "span_name": "name",
+    "trace_name": "trace__name",
+    "user_id": "end_user__user_id",
+    "status": "status",
+    "prompt_template_version": "prompt_version__template_version",
+    "prompt_label_id": "prompt_label_id",
+    "prompt_label_name": "prompt_label__name",
+}
 
 
 def parse_time_filters(filters: List[Dict]) -> tuple:
@@ -70,6 +102,24 @@ def parse_time_filters(filters: List[Dict]) -> tuple:
         start_date = end_date - timedelta(days=7)
 
     return start_date, end_date
+
+
+def apply_chart_span_filters(base_queryset, filters: List[Dict]):
+    """
+    Apply non-date Observe chart filters to ObservationSpan querysets.
+
+    The date window is still parsed separately by parse_time_filters so chart
+    bucketing can fill empty timestamps over the requested range.
+    """
+    if not filters:
+        return base_queryset
+
+    system_metric_q = FilterEngine.get_filter_conditions_for_system_metrics(
+        filters,
+        field_map=CHART_SPAN_FIELD_MAP,
+    )
+    span_attribute_q = FilterEngine.get_filter_conditions_for_span_attributes(filters)
+    return base_queryset.filter(system_metric_q).filter(span_attribute_q)
 
 
 def get_truncate_function(interval: str):
@@ -147,38 +197,41 @@ def get_eval_graph_data(
             )
             from tracer.services.clickhouse.query_service import (
                 AnalyticsQueryService,
-                QueryType,
             )
 
             analytics = AnalyticsQueryService()
-            if analytics.should_use_clickhouse(QueryType.EVAL_METRICS):
-                eval_output_type_ch = custom_eval_config.eval_template.config.get(
-                    "output", "SCORE"
-                )
-                choices = []
-                if eval_output_type_ch == "CHOICES":
-                    choices = custom_eval_config.eval_template.choices or []
+            eval_output_type_ch = custom_eval_config.eval_template.config.get(
+                "output", "SCORE"
+            )
+            choices = []
+            if eval_output_type_ch == "CHOICES":
+                choices = custom_eval_config.eval_template.choices or []
 
-                ch_start, ch_end = parse_time_filters(filters)
-                builder = EvalMetricsQueryBuilder(
-                    project_id=str(ch_project_id),
-                    custom_eval_config_id=str(custom_eval_config_id),
-                    start_date=ch_start,
-                    end_date=ch_end,
-                    interval=interval,
-                    eval_output_type=eval_output_type_ch,
-                    eval_name=custom_eval_config.name,
-                    choices=choices,
-                )
-                query, params = builder.build()
-                result = analytics.execute_ch_query(query, params, timeout_ms=5000)
-                ch_data = builder.format_result(result.data, result.columns or [])
-                # For observe_type="charts" with non-CHOICES types, the PG code
-                # wraps single-series results in a list. Match that behavior.
-                if observe_type == "charts" and eval_output_type_ch != "CHOICES":
-                    if isinstance(ch_data, dict):
-                        ch_data = [ch_data]
-                return ch_data
+            ch_start, ch_end = parse_time_filters(filters)
+            # v1↔v2 dispatch — flips with CH25_QUERY_TYPES_V2_PRIMARY=EVAL_METRICS
+            from tracer.services.clickhouse.v2.dispatch import (
+                get_query_builder_class,
+            )
+            EvalBuilderCls = get_query_builder_class("EVAL_METRICS")  # noqa: N806
+            builder = EvalBuilderCls(
+                project_id=str(ch_project_id),
+                custom_eval_config_id=str(custom_eval_config_id),
+                start_date=ch_start,
+                end_date=ch_end,
+                interval=interval,
+                eval_output_type=eval_output_type_ch,
+                eval_name=custom_eval_config.name,
+                choices=choices,
+            )
+            query, params = builder.build()
+            result = analytics.execute_ch_query(query, params, timeout_ms=5000)
+            ch_data = builder.format_result(result.data, result.columns or [])
+            # For observe_type="charts" with non-CHOICES types, the PG code
+            # wraps single-series results in a list. Match that behavior.
+            if observe_type == "charts" and eval_output_type_ch != "CHOICES":
+                if isinstance(ch_data, dict):
+                    ch_data = [ch_data]
+            return ch_data
         except Exception as e:
             logger.warning(
                 "ch_eval_graph_dispatch_failed",
@@ -265,6 +318,16 @@ def get_eval_graph_data(
                 custom_eval_config.name, start_date, end_date, interval
             )
 
+        # CH25-TODO(PG-fallback / Django-subquery-shape): the CH primary
+        # path at L142-186 already uses EvalMetricsQueryBuilder which
+        # reads the CH-side tracer_eval_logger CDC table — EvalLogger
+        # IS available in CH. This ORM block is the PG fallback, and the
+        # `observation_span__in=ObservationSpan.objects.filter(project_id
+        # =project_id)` Django subquery wraps every span for the project
+        # (potentially millions of rows). Replacing the inner subquery
+        # with a CH list would materialize the full span-id set in
+        # Python, defeating the existing memory benefit. Defer until the
+        # PG fallback can be removed entirely.
         span_subquery = ObservationSpan.objects.filter(project_id=project_id).values(
             "id"
         )
@@ -558,6 +621,32 @@ def get_all_system_metrics(
             "tokens": {"metric_name": "tokens", "data": [...]},
             "cost": {"metric_name": "cost", "data": [...]}
         }
+
+    CH25-TODO(semantic-mismatch-prevents-1-line-migration): the new
+    time_bucket_aggregate reader returns the right output shape
+    ({bucket, span_count, tokens, cost, latency_ms}) but with TWO
+    silent semantic drifts versus this PG helper:
+      (1) buckets on `start_time` (the spans column used in CH) whereas
+          this PG path uses Trunc("created_at"). For just-completed
+          spans these are usually within seconds, but for backfilled or
+          replayed spans they can diverge.
+      (2) emits `cost = sum(cost)` whereas this PG path returns
+          `cost_value = Avg("cost")` per bucket. Cost-per-bucket vs
+          total-cost-per-bucket — semantically different.
+    The sibling helper get_system_metric_graph_data (below) dispatches
+    to TimeSeriesQueryBuilder; that builder has two internal branches:
+      • the preaggregated `span_metrics_hourly.hour` path (built from
+        `created_at` in the materialized view), which matches the PG
+        `created_at` semantics here
+      • the raw filtered `start_time`-bucketed path (matches drift 1)
+    So drift (1) already exists internally inside the sibling CH
+    builder. Drift (2) is unique to `time_bucket_aggregate`.
+    A safe migration of THIS helper needs either:
+      (a) a `time_bucket_aggregate(...,  cost_agg="avg"|"sum",
+          bucket_field="start_time"|"created_at")` reader signature,
+      (b) accepting the drift and writing a product decision doc that
+          replays both paths through `start_time` + `avg(cost)`.
+    Defer.
     """
     # Parse time filters
     start_date, end_date = parse_time_filters(filters)
@@ -573,6 +662,8 @@ def get_all_system_metrics(
         )
     else:
         raise ValueError("Either project_id or span_ids must be provided")
+
+    base_queryset = apply_chart_span_filters(base_queryset, filters)
 
     # Get truncate function
     trunc_func = get_truncate_function(interval)
@@ -908,39 +999,37 @@ def get_system_metric_data(
             from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
             from tracer.services.clickhouse.query_service import (
                 AnalyticsQueryService,
-                QueryType,
             )
 
             analytics = AnalyticsQueryService()
-            if analytics.should_use_clickhouse(QueryType.TIME_SERIES):
-                builder = TimeSeriesQueryBuilder(
-                    project_id=str(ch_project_id),
-                    filters=filters,
-                    interval=interval,
-                )
-                query, params = builder.build()
-                result = analytics.execute_ch_query(query, params, timeout_ms=5000)
-                ch_data = builder.format_result(result.data, result.columns or [])
-                # Transform CH all-metrics format to match PG single-metric format
-                # CH returns: {latency: [...], tokens: [...], cost: [...], traffic: [...]}
-                # PG returns: {metric_name: "latency", data: [{timestamp, value, primary_traffic}]}
-                metric_key = metric_name if metric_name in ch_data else "latency"
-                metric_points = ch_data.get(metric_key, [])
-                traffic_points = ch_data.get("traffic", [])
-                traffic_by_ts = {
-                    t.get("timestamp"): t.get("traffic", 0) for t in traffic_points
-                }
-                return {
-                    "metric_name": metric_name,
-                    "data": [
-                        {
-                            "timestamp": p.get("timestamp"),
-                            "value": p.get("value", 0),
-                            "primary_traffic": traffic_by_ts.get(p.get("timestamp"), 0),
-                        }
-                        for p in metric_points
-                    ],
-                }
+            builder = TimeSeriesQueryBuilder(
+                project_id=str(ch_project_id),
+                filters=filters,
+                interval=interval,
+            )
+            query, params = builder.build()
+            result = analytics.execute_ch_query(query, params, timeout_ms=5000)
+            ch_data = builder.format_result(result.data, result.columns or [])
+            # Transform CH all-metrics format to match PG single-metric format
+            # CH returns: {latency: [...], tokens: [...], cost: [...], traffic: [...]}
+            # PG returns: {metric_name: "latency", data: [{timestamp, value, primary_traffic}]}
+            metric_key = metric_name if metric_name in ch_data else "latency"
+            metric_points = ch_data.get(metric_key, [])
+            traffic_points = ch_data.get("traffic", [])
+            traffic_by_ts = {
+                t.get("timestamp"): t.get("traffic", 0) for t in traffic_points
+            }
+            return {
+                "metric_name": metric_name,
+                "data": [
+                    {
+                        "timestamp": p.get("timestamp"),
+                        "value": p.get("value", 0),
+                        "primary_traffic": traffic_by_ts.get(p.get("timestamp"), 0),
+                    }
+                    for p in metric_points
+                ],
+            }
         except Exception as e:
             logger.warning(
                 "ch_system_metric_dispatch_failed",
@@ -955,6 +1044,17 @@ def get_system_metric_data(
     # Build base queryset using subqueries - NO ID MATERIALIZATION
     # This is the key optimization: we filter using EXISTS/IN with subqueries
     # instead of evaluating IDs into memory
+    #
+    # CH25-TODO(PG-fallback-stays-PG): all three branches below
+    # (trace/span/charts) sit downstream of the CH dispatch at L940-987
+    # which uses TimeSeriesQueryBuilder. The Django subquery
+    # `trace_id__in=trace_ids_queryset.values("id")` / `id__in=
+    # span_ids_queryset.values("id")` is a memory-efficient pattern that
+    # depends on Django's query compiler — switching to CH here would
+    # require materializing the id list (loss of the "NO ID
+    # MATERIALIZATION" optimization called out in the inline comment).
+    # CH primary path covers the optimized case; this PG fallback is the
+    # safety net.
 
     if observe_type == "trace":
         # For trace-level filtering, use trace_ids_queryset as a subquery
@@ -989,6 +1089,21 @@ def get_system_metric_data(
             created_at__gte=start_date,
             created_at__lte=end_date,
         )
+
+    elif observe_type == "charts":
+        project_id = system_metric_filters.get("project_id")
+        if project_id is None:
+            return {
+                "metric_name": metric_name,
+                "data": [],
+            }
+
+        base_queryset = ObservationSpan.objects.filter(
+            project_id=project_id,
+            created_at__gte=start_date,
+            created_at__lte=end_date,
+        )
+        base_queryset = apply_chart_span_filters(base_queryset, filters)
 
     else:
         raise ValueError(f"Unsupported observe_type: {observe_type}")
@@ -1120,25 +1235,23 @@ def get_annotation_graph_data(
             )
             from tracer.services.clickhouse.query_service import (
                 AnalyticsQueryService,
-                QueryType,
             )
 
             analytics = AnalyticsQueryService()
-            if analytics.should_use_clickhouse(QueryType.ANNOTATION_GRAPH):
-                builder = AnnotationGraphQueryBuilder(
-                    project_id=str(ch_project_id),
-                    annotation_label_id=str(annotation_label_id),
-                    annotation_name=annotation_label.name,
-                    start_date=start_date,
-                    end_date=end_date,
-                    interval=interval,
-                    output_type=output_type,
-                    value=req_data_config.get("value"),
-                )
-                query, params = builder.build()
-                result = analytics.execute_ch_query(query, params, timeout_ms=5000)
-                ch_data = builder.format_result(result.data, result.columns or [])
-                return ch_data
+            builder = AnnotationGraphQueryBuilder(
+                project_id=str(ch_project_id),
+                annotation_label_id=str(annotation_label_id),
+                annotation_name=annotation_label.name,
+                start_date=start_date,
+                end_date=end_date,
+                interval=interval,
+                output_type=output_type,
+                value=req_data_config.get("value"),
+            )
+            query, params = builder.build()
+            result = analytics.execute_ch_query(query, params, timeout_ms=5000)
+            ch_data = builder.format_result(result.data, result.columns or [])
+            return ch_data
         except Exception as e:
             logger.warning(
                 "ch_annotation_graph_dispatch_failed",
@@ -1162,7 +1275,11 @@ def get_annotation_graph_data(
         trace_id_values = trace_ids_queryset.values("id")
         base_queryset = Score.objects.filter(
             Q(trace_id__in=trace_id_values)
-            | Q(observation_span__trace_id__in=trace_id_values),
+            | Q(
+                observation_span_id__in=ObservationSpan.objects.filter(
+                    trace_id__in=trace_id_values
+                ).values("id")
+            ),
             label_id=annotation_label_id,
             deleted=False,
             created_at__gte=start_date,

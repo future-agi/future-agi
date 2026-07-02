@@ -1,4 +1,10 @@
-import React, { useMemo, useCallback, useEffect, useRef, startTransition } from "react";
+import React, {
+  useMemo,
+  useCallback,
+  useEffect,
+  useRef,
+  startTransition,
+} from "react";
 import PropTypes from "prop-types";
 import { Box, Paper, useTheme, CircularProgress, Alert } from "@mui/material";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
@@ -15,10 +21,7 @@ import {
 import { useTabStoreShallow } from "./LLMTracing/tabStore";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  useGetSavedViews,
-  SAVED_VIEWS_KEY,
-} from "src/api/project/saved-views";
+import { useGetSavedViews, SAVED_VIEWS_KEY } from "src/api/project/saved-views";
 import ReplayDrawer from "./ReplayDrawer/ReplayDrawer";
 import {
   resetReplaySessionsStore,
@@ -136,8 +139,7 @@ const ObservePage = React.memo(() => {
       return;
     }
     if (lastHydratedTabRef.current === tab) return;
-    const customViews =
-      savedViewsData?.customViews ?? savedViewsData?.custom_views ?? [];
+    const customViews = savedViewsData?.custom_views ?? [];
     if (!customViews.length) return;
     const view = customViews.find((v) => `view-${v.id}` === tab);
     if (!view?.config) return;
@@ -161,12 +163,10 @@ const ObservePage = React.memo(() => {
       if (tabKey.startsWith("view-")) {
         const viewId = tabKey.replace("view-", "");
         const cached = queryClient.getQueryData([SAVED_VIEWS_KEY, observeId]);
-        const cachedResult = cached?.data?.result;
-        const customViews =
-          cachedResult?.customViews ?? cachedResult?.custom_views ?? [];
+        const customViews = cached?.custom_views ?? [];
         const view = customViews.find((v) => v.id === viewId);
         activeConfig = view?.config || null;
-        viewTabType = view?.tab_type ?? view?.tabType ?? "traces";
+        viewTabType = view?.tab_type ?? "traces";
       }
 
       // Apply effects (activeViewConfig → apply effect → many setters) aren't
@@ -202,10 +202,7 @@ const ObservePage = React.memo(() => {
         } else if (isSessionsView) {
           // Sessions uses sessionFilter / sessionDateFilter URL keys.
           if (activeConfig?.filters) {
-            params.set(
-              "sessionFilter",
-              JSON.stringify(activeConfig.filters),
-            );
+            params.set("sessionFilter", JSON.stringify(activeConfig.filters));
           }
           if (activeConfig?.display?.dateFilter) {
             params.set(
@@ -241,16 +238,16 @@ const ObservePage = React.memo(() => {
               JSON.stringify(activeConfig.display.dateFilter),
             );
           }
-          if (activeConfig?.compareFilters) {
+          if (activeConfig?.compare_filters) {
             params.set(
               compareFilterKey,
-              JSON.stringify(activeConfig.compareFilters),
+              JSON.stringify(activeConfig.compare_filters),
             );
           }
-          if (activeConfig?.compareDateFilter) {
+          if (activeConfig?.compare_date_filter) {
             params.set(
               compareDateKey,
-              JSON.stringify(activeConfig.compareDateFilter),
+              JSON.stringify(activeConfig.compare_date_filter),
             );
           }
         }
@@ -399,7 +396,7 @@ const ObservePage = React.memo(() => {
         <TabContextMenu
           anchorPosition={contextMenuAnchor}
           view={
-            (savedViewsData?.customViews ?? savedViewsData?.custom_views)?.find(
+            savedViewsData?.custom_views?.find(
               (v) => v.id === contextMenuAnchor.viewId,
             ) ?? null
           }

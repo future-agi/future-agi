@@ -120,7 +120,7 @@ vi.mock("ag-grid-react", () => ({
 // ---------------------------------------------------------------------------
 describe("ItemStatusBadge", () => {
   it.each([
-    ["pending", "Pending"],
+    ["pending", "Pending Annotation"],
     ["in_progress", "In Progress"],
     ["in_review", "In Review"],
     ["completed", "Completed"],
@@ -130,9 +130,14 @@ describe("ItemStatusBadge", () => {
     expect(screen.getByText(label)).toBeInTheDocument();
   });
 
-  it("falls back to Pending for unknown status", () => {
+  it("falls back to Pending Annotation for unknown status", () => {
     render(<ItemStatusBadge status="nope" />);
-    expect(screen.getByText("Pending")).toBeInTheDocument();
+    expect(screen.getByText("Pending Annotation")).toBeInTheDocument();
+  });
+
+  it("renders backend-provided workflow labels", () => {
+    render(<ItemStatusBadge status="pending" label="Ready for review" />);
+    expect(screen.getByText("Ready for review")).toBeInTheDocument();
   });
 });
 
@@ -238,9 +243,10 @@ describe("QueueItemsTable", () => {
     render(<QueueItemsTable {...tableProps} />);
     expect(screen.getByText("Source")).toBeInTheDocument();
     expect(screen.getByText("Preview")).toBeInTheDocument();
-    expect(screen.getByText("Status")).toBeInTheDocument();
+    expect(screen.getByText("Item Status")).toBeInTheDocument();
     expect(screen.getByText("Assigned To")).toBeInTheDocument();
     expect(screen.getByText("Review")).toBeInTheDocument();
+    expect(screen.getByText("Comments")).toBeInTheDocument();
     expect(screen.queryByText("Latency")).not.toBeInTheDocument();
     expect(screen.queryByText("Response Time")).not.toBeInTheDocument();
     expect(screen.queryByText("Duration")).not.toBeInTheDocument();
@@ -256,7 +262,7 @@ describe("QueueItemsTable", () => {
 
   it("renders status badges", () => {
     render(<QueueItemsTable {...tableProps} />);
-    expect(screen.getByText("Pending")).toBeInTheDocument();
+    expect(screen.getByText("Pending Annotation")).toBeInTheDocument();
     expect(screen.getByText("Completed")).toBeInTheDocument();
   });
 
@@ -277,9 +283,39 @@ describe("QueueItemsTable", () => {
     expect(screen.getByText("In Review")).toBeInTheDocument();
   });
 
+  it("shows item comment and open feedback counts", () => {
+    render(
+      <QueueItemsTable
+        {...tableProps}
+        data={[
+          {
+            ...MOCK_ITEMS[0],
+            comment_count: 2,
+            open_feedback_count: 1,
+          },
+        ]}
+        totalCount={1}
+      />,
+    );
+
+    expect(screen.getByText("2")).toBeInTheDocument();
+    expect(screen.getByText("1")).toBeInTheDocument();
+    const icons = screen.getAllByTestId("iconify");
+    expect(
+      icons.some(
+        (el) => el.getAttribute("data-icon") === "solar:chat-round-dots-bold",
+      ),
+    ).toBe(true);
+    expect(
+      icons.some((el) => el.getAttribute("data-icon") === "solar:flag-bold"),
+    ).toBe(true);
+  });
+
   it("hides selection and remove controls for non-managers", () => {
     render(<QueueItemsTable {...tableProps} canManageItems={false} />);
     expect(screen.queryByLabelText("select-all")).not.toBeInTheDocument();
+    expect(screen.queryByText("+ Assign")).not.toBeInTheDocument();
+    expect(screen.getByText("Unassigned")).toBeInTheDocument();
     expect(
       screen
         .queryAllByTestId("iconify")
@@ -287,11 +323,56 @@ describe("QueueItemsTable", () => {
     ).toBe(false);
   });
 
+  it("allows reviewer selection without manager item actions", async () => {
+    const user = userEvent.setup();
+    const onSelectToggle = vi.fn();
+    render(
+      <QueueItemsTable
+        {...tableProps}
+        canManageItems={false}
+        canSelectItems
+        onSelectToggle={onSelectToggle}
+      />,
+    );
+
+    expect(screen.getByLabelText("select-all")).toBeInTheDocument();
+    expect(
+      screen
+        .queryAllByTestId("iconify")
+        .some((el) => el.getAttribute("data-icon") === "mingcute:close-line"),
+    ).toBe(false);
+
+    await user.click(screen.getByLabelText("select-item-1"));
+    expect(onSelectToggle).toHaveBeenCalledWith("item-1");
+  });
+
   it("shows assigned-to avatars or assign chip", () => {
-    render(<QueueItemsTable {...tableProps} />);
+    render(<QueueItemsTable {...tableProps} onAssign={vi.fn()} />);
     expect(screen.getByText("+ Assign")).toBeInTheDocument();
     // Assigned user shows as avatar with initials
     expect(screen.getByText("A")).toBeInTheDocument();
+  });
+
+  it("uses the assignee email for avatar initials when name is unavailable", () => {
+    render(
+      <QueueItemsTable
+        {...tableProps}
+        data={[
+          {
+            ...MOCK_ITEMS[1],
+            assigned_users: [
+              {
+                id: "user-2",
+                name: "",
+                email: "nikhil.pareek@example.com",
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("N")).toBeInTheDocument();
   });
 
   it("does not show source metrics in the queue item list", () => {
@@ -315,6 +396,33 @@ describe("QueueItemsTable", () => {
     expect(screen.getAllByText("All annotators").length).toBeGreaterThan(0);
     expect(screen.queryByText("+ Assign")).not.toBeInTheDocument();
     expect(screen.queryByText("Reviewer")).not.toBeInTheDocument();
+  });
+
+  it("lets managers change an auto-assigned item from all annotators to a subset", async () => {
+    const user = userEvent.setup();
+    const onAssign = vi.fn();
+    render(
+      <QueueItemsTable
+        {...tableProps}
+        autoAssign
+        onAssign={onAssign}
+        annotators={[
+          { user_id: "user-1", name: "Alice", role: "annotator" },
+          { user_id: "user-2", name: "Bob", role: "annotator" },
+          { user_id: "user-3", name: "Reviewer", role: "reviewer" },
+        ]}
+      />,
+    );
+
+    await user.click(screen.getByText("All annotators"));
+    await user.click(await screen.findByText("Bob"));
+    await user.click(screen.getByText("Apply"));
+
+    expect(onAssign).toHaveBeenCalledWith({
+      itemIds: ["item-1"],
+      userIds: ["user-1"],
+      action: "set",
+    });
   });
 
   it("shows the annotator name in auto-assign mode when only one annotator exists", () => {

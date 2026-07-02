@@ -80,11 +80,16 @@ vi.mock("src/sections/tasks/components/TaskLivePreview", () => ({
 }));
 
 vi.mock("src/sections/evals/hooks/useCreateEval", () => ({
-  useCreateEval: () => ({ mutateAsync: vi.fn(async () => ({ id: "draft-1" })) }),
+  useCreateEval: () => ({
+    mutateAsync: vi.fn(async () => ({ id: "draft-1" })),
+  }),
 }));
 
 vi.mock("src/sections/evals/hooks/useEvalDetail", () => ({
-  useUpdateEval: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(async () => ({})) }),
+  useUpdateEval: () => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(async () => ({})),
+  }),
 }));
 
 vi.mock("src/sections/evals/hooks/useCompositeEval", () => ({

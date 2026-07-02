@@ -196,8 +196,10 @@ export function transformFilterResponse(rawFilter) {
   const filters = [];
 
   // Observation types → multiple filters
-  if (Array.isArray(rawFilter?.observationType)) {
-    rawFilter.observationType.forEach((type) => {
+  const observationTypes =
+    rawFilter?.observationType || rawFilter?.observation_type;
+  if (Array.isArray(observationTypes)) {
+    observationTypes.forEach((type) => {
       filters.push({
         id: uuidv4(),
         propertyId: "",
@@ -211,16 +213,22 @@ export function transformFilterResponse(rawFilter) {
     });
   }
 
-  if (Array.isArray(rawFilter?.spanAttributesFilters)) {
-    rawFilter.spanAttributesFilters.forEach((filter) => {
+  const spanAttributeFilters =
+    rawFilter?.spanAttributesFilters || rawFilter?.span_attributes_filters;
+  if (Array.isArray(spanAttributeFilters)) {
+    spanAttributeFilters.forEach((filter) => {
+      const filterConfig = filter?.filterConfig || filter?.filter_config || {};
       filters.push({
         id: uuidv4(),
-        propertyId: filter.columnId,
+        propertyId: filter.columnId || filter.column_id,
         property: "attributes",
         filterConfig: {
-          filterType: filter?.filterConfig?.filterType,
-          filterOp: filter?.filterConfig?.filterOp,
-          filterValue: filter?.filterConfig?.filterValue,
+          filterType: filterConfig.filterType || filterConfig.filter_type,
+          filterOp: filterConfig.filterOp || filterConfig.filter_op,
+          filterValue:
+            "filterValue" in filterConfig
+              ? filterConfig.filterValue
+              : filterConfig.filter_value,
         },
       });
     });

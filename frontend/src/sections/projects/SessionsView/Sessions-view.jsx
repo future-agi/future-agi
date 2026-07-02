@@ -4,6 +4,7 @@ import {
   useUpdateSavedView,
   useUpdateWorkspaceSavedView,
 } from "src/api/project/saved-views";
+import { hydrateStoredFilterList } from "src/api/contracts/filter-contract";
 
 const USER_DETAIL_TAB_TYPE = "user_detail";
 import React, {
@@ -125,8 +126,8 @@ const buildSessionFilterFields = (sessionColumns) => {
 // Default filter and date range
 const defaultFilterBase = [
   {
-    columnId: "",
-    filterConfig: { filterType: "", filterOp: "", filterValue: "" },
+    column_id: "",
+    filter_config: { filter_type: "", filter_op: "", filter_value: "" },
   },
 ];
 
@@ -253,11 +254,11 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       isUserMode && userIdForUserMode
         ? [
             {
-              columnId: "user_id",
-              filterConfig: {
-                filterType: "text",
-                filterOp: "equals",
-                filterValue: userIdForUserMode,
+              column_id: "user_id",
+              filter_config: {
+                filter_type: "text",
+                filter_op: "equals",
+                filter_value: userIdForUserMode,
               },
             },
           ]
@@ -265,26 +266,11 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     [isUserMode, userIdForUserMode],
   );
 
-  // Combine validated filters with extra filters
-  // extraFilters from ObserveToolbar use snake_case keys (column_id, filter_config)
-  // validatedFilters from useLLMTracingFilters use camelCase keys (columnId, filterConfig)
-  // Normalize extra filters to camelCase so objectCamelToSnake in Session-grid handles them uniformly
+  // Combine canonical filter arrays. Both sources already use the API shape.
   const finalFilters = useMemo(() => {
     const base = [...userScopeFilter, ...validatedFilters];
     if (!extraFilters.length) return base;
-    const normalized = extraFilters.map((f) => ({
-      columnId: f.column_id || f.columnId || "",
-      filterConfig: {
-        filterType:
-          f.filter_config?.filter_type || f.filterConfig?.filterType || "text",
-        filterOp:
-          f.filter_config?.filter_op || f.filterConfig?.filterOp || "equals",
-        filterValue:
-          f.filter_config?.filter_value || f.filterConfig?.filterValue || "",
-        ...(f.filter_config?.col_type && { colType: f.filter_config.col_type }),
-      },
-    }));
-    return [...base, ...normalized];
+    return [...base, ...extraFilters];
   }, [userScopeFilter, validatedFilters, extraFilters]);
 
   // --- Column visibility ---
@@ -337,10 +323,11 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
   const canSaveView = useMemo(() => {
     if (!activeViewConfig) return false;
 
-    const baselineExtraFilters = activeViewConfig.extraFilters || [];
+    const baselineExtraFilters = hydrateStoredFilterList(
+      activeViewConfig.extra_filters,
+    );
     const baselineDisplay = activeViewConfig.display || {};
-    const baselineDateOption =
-      baselineDisplay.dateFilter?.dateOption ?? null;
+    const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
 
     if (!filtersContentEqual(extraFilters, baselineExtraFilters)) return true;
     if ((dateFilter?.dateOption ?? null) !== baselineDateOption) return true;
@@ -423,7 +410,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         ...(columnState ? { columnState } : {}),
         ...(customColumns.length > 0 ? { customColumns } : {}),
       },
-      extraFilters: extraFilters || [],
+      extra_filters: extraFilters || [],
     };
   }, [
     cellHeight,
@@ -627,10 +614,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     // Push visibility into AG Grid directly when the api is available so
     // the display matches without waiting for re-render. Done before the
     // snapshot below so canSaveView's baseline matches the just-applied state.
-    if (
-      display.visibleColumns &&
-      typeof display.visibleColumns === "object"
-    ) {
+    if (display.visibleColumns && typeof display.visibleColumns === "object") {
       const next = { ...display.visibleColumns };
       setUpdateObj(next);
       const api = sessionGridApiRef.current?.api;
@@ -689,7 +673,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         }
       }
     }
-    const nextExtraFilters = activeViewConfig.extraFilters || [];
+    const nextExtraFilters = hydrateStoredFilterList(
+      activeViewConfig.extra_filters,
+    );
     setExtraFilters((prev) => {
       if (prev.length === 0 && nextExtraFilters.length === 0) return prev;
       if (prev.length === nextExtraFilters.length) {
