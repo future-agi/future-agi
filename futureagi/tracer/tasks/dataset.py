@@ -16,6 +16,7 @@ logger = structlog.get_logger(__name__)
 
 CHUNK_SIZE = 500  # Process 500 spans at a time
 CH_EXPORT_READ_BATCH_SIZE = 25
+CH_CHILD_TREE_TRACE_BATCH_SIZE = 5
 
 # Fields to include when serializing a child span
 _CHILD_SPAN_FIELDS = [
@@ -218,6 +219,33 @@ def _export_span_rows(reader, span_ids, mapped_span_fields, project_id=None, org
         return left
 
 
+def _child_tree_spans_by_trace_ids(reader, trace_ids, project_id=None):
+    if not trace_ids:
+        return {}
+
+    try:
+        return reader.child_tree_spans_by_trace_ids(
+            [str(trace_id) for trace_id in trace_ids],
+            project_id=str(project_id) if project_id else None,
+        )
+    except Exception:
+        if len(trace_ids) == 1:
+            raise
+        midpoint = len(trace_ids) // 2
+        left = _child_tree_spans_by_trace_ids(
+            reader,
+            trace_ids[:midpoint],
+            project_id=project_id,
+        )
+        right = _child_tree_spans_by_trace_ids(
+            reader,
+            trace_ids[midpoint:],
+            project_id=project_id,
+        )
+        left.update(right)
+        return left
+
+
 def _serialize_span_trees_batch(span_ids, project_id=None) -> dict[str, list]:
     """Batch-serialize child trees for multiple span IDs in minimal CH queries.
 
@@ -240,12 +268,20 @@ def _serialize_span_trees_batch(span_ids, project_id=None) -> dict[str, list]:
         trace_map = reader.trace_ids_for_span_ids(
             str_ids, project_id=str(project_id) if project_id else None
         )
-        unique_trace_ids = list(set(trace_map.values()))
+        unique_trace_ids = list(dict.fromkeys(trace_map.values()))
 
-        all_trace_spans = reader.child_tree_spans_by_trace_ids(
-            unique_trace_ids,
-            project_id=str(project_id) if project_id else None,
-        )
+        all_trace_spans = {}
+        for start in range(0, len(unique_trace_ids), CH_CHILD_TREE_TRACE_BATCH_SIZE):
+            trace_chunk = unique_trace_ids[
+                start : start + CH_CHILD_TREE_TRACE_BATCH_SIZE
+            ]
+            all_trace_spans.update(
+                _child_tree_spans_by_trace_ids(
+                    reader,
+                    trace_chunk,
+                    project_id=project_id,
+                )
+            )
 
     # Build children_map once per trace (not per span_id)
     trace_children_maps: dict[str, dict] = {}
