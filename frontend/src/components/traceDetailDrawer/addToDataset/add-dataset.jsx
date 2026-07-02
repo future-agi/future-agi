@@ -16,6 +16,7 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import AddExistingDataset from "./AddExistingDataset";
 import AddNewDataset from "./AddNewDataset";
+import { useParams } from "react-router";
 import { defaultSpanFields } from "../common";
 
 const EMPTY_ARRAY = [];
@@ -34,6 +35,8 @@ const AddDataset = ({
   selectAll,
   onSuccess,
 }) => {
+  const { observeId } = useParams();
+
   const [selectedOptionDataset, setSelectedOptionDataset] =
     useState("existing");
 
@@ -50,13 +53,13 @@ const AddDataset = ({
   });
 
   const { data: observationFields = EMPTY_ARRAY } = useQuery({
-    queryKey: ["observationFields"],
+    queryKey: ["observationFields", observeId],
     queryFn: () =>
       axios
         .get(endpoints.project.getObservationSpanField)
         .then((res) => res.data),
     select: (data) => data?.result,
-    enabled: Boolean(actionToDataset),
+    enabled: Boolean(actionToDataset) && Boolean(observeId),
   });
 
   // const { data: observationSpan } = useQuery({
