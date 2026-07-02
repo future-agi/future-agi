@@ -211,6 +211,17 @@ const EvaluationFeeback = ({
     mutationFn: (formData) => axios.post(feedbackEndpoints.create, formData),
     onSuccess: (resp) => {
       const newId = resp?.data?.result?.id;
+      // Guard: without a feedback id the action submit would send
+      // feedback_id: undefined and silently fail.
+      if (!newId) {
+        enqueueSnackbar(
+          "Couldn't create the feedback record. Please try again.",
+          {
+            variant: "error",
+          },
+        );
+        return;
+      }
       submitAction(newId);
     },
   });
@@ -483,7 +494,12 @@ export const FeedBackForm = ({
         fieldName={"actionType"}
         label={""}
         options={retuneOptions}
-        groupSx={{ border: "none", borderRadius: 0, padding: 0, marginTop: "10px" }}
+        groupSx={{
+          border: "none",
+          borderRadius: 0,
+          padding: 0,
+          marginTop: "10px",
+        }}
       />
     </Box>
   );
