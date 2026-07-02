@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { Box, Typography } from "@mui/material";
 import { chatEvalColumns } from "src/components/run-tests/common";
@@ -7,7 +7,7 @@ import { useFormContext, useWatch } from "react-hook-form";
 import { useEvaluationKeys } from "./useEvaluationKeys";
 import Loading from "./Loading";
 
-const MapVariables = () => {
+const MapVariables = ({ scenarioDetail }) => {
   const { control, formState } = useFormContext();
   const model = useWatch({
     control,
@@ -31,6 +31,30 @@ const MapVariables = () => {
   const [showAll, setShowAll] = useState(false);
 
   const visibleItems = showAll ? projectEvals : projectEvals.slice(0, 10);
+
+  const scenarioColumns = useMemo(() => {
+    const columnConfig = scenarioDetail?.dataset_column_config;
+    if (!columnConfig) return chatEvalColumns;
+    const additionalCols = Object.entries(columnConfig).map(
+      ([_id, config]) => ({
+        field: config.name,
+        headerName: config.name,
+        dataType: config.type || "text",
+      }),
+    );
+    const existingFields = new Set(chatEvalColumns.map((c) => c.field));
+    const uniqueAdditional = additionalCols.filter(
+      (c) => !existingFields.has(c.field),
+    );
+    return [...chatEvalColumns, ...uniqueAdditional];
+  }, [scenarioDetail?.dataset_column_config]);
+
+  const filteredColumns = useMemo(() => {
+    if (isFutureagiBuilt && modelsToShow.length > 0) {
+      return model === "" ? [] : scenarioColumns;
+    }
+    return scenarioColumns;
+  }, [isFutureagiBuilt, modelsToShow, model, scenarioColumns]);
 
   if (isLoading) {
     return <Loading />;
@@ -69,7 +93,7 @@ const MapVariables = () => {
         control={control}
         members={projectEvals}
         filteredRequiredKeys={filteredRequiredKeys}
-        filteredColumns={model === "" ? [] : chatEvalColumns}
+        filteredColumns={filteredColumns}
         showTest={false}
         onTest={() => {}}
         formState={formState}
