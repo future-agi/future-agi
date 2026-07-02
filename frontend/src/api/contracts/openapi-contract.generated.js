@@ -36639,6 +36639,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "minLength": 1,
               "default": "[]"
             }
+          },
+          "export": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         },
         "responses": {
@@ -45812,7 +45819,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "AnnotationQueue": {
       "required": [
-        "name"
+        "name",
+        "label_ids"
       ],
       "type": "object",
       "properties": {
@@ -45931,7 +45939,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "type": "string",
             "format": "uuid"
           },
-          "default": []
+          "minItems": 1
         },
         "annotator_ids": {
           "type": "array",

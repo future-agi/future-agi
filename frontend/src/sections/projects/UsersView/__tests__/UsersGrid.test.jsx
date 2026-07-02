@@ -57,7 +57,13 @@ MockAgGridReact.propTypes = {
 
 vi.mock("ag-grid-react", () => ({ AgGridReact: MockAgGridReact }));
 vi.mock("src/styles/clean-data-table.css", () => ({}));
-vi.mock("../Store/usersStore", () => ({ default: () => storeState }));
+vi.mock("../Store/usersStore", () => {
+  const useUsersStore = () => storeState;
+  // Zustand store exposes a static setState; the grid mirrors sortParams into
+  // it on each fetch, so the mock must provide it or getRows throws.
+  useUsersStore.setState = () => {};
+  return { default: useUsersStore };
+});
 vi.mock("src/hooks/use-ag-theme", () => ({ useAgThemeWith: () => ({}) }));
 vi.mock("src/hooks/use-debounce", () => ({ useDebounce: (v) => v }));
 vi.mock("../common", () => ({

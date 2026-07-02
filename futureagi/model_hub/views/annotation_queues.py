@@ -118,6 +118,9 @@ from model_hub.utils.annotation_queue_helpers import (
     assign_items_to_all_annotators,
     auto_assign_items,
     calculate_agreement,
+    canonical_score_value,
+    eval_metrics_from_call_execution,
+    eval_output_value,
     evaluate_rule,
     filter_available_source_ids_for_annotation,
     get_fk_field_name,
@@ -125,6 +128,8 @@ from model_hub.utils.annotation_queue_helpers import (
     resolve_source_content,
     resolve_source_object,
 )
+from simulate.models.test_execution import CallTranscript
+from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
 from model_hub.utils.utils import send_message_to_channel
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
@@ -154,6 +159,26 @@ ERROR_RESPONSES = {
 # path for selections exceeding this; until then, the endpoint errors with
 # ``selection_too_large`` so the UI can prompt the user to narrow the filter.
 MAX_SELECTION_CAP = 10_000
+
+
+def _queue_item_export_prefetches():
+    return (
+        Prefetch(
+            "trace__observation_spans",
+            queryset=ObservationSpan.objects.filter(deleted=False).order_by(
+                "start_time", "created_at"
+            ),
+            to_attr="_queue_export_spans",
+        ),
+        Prefetch(
+            "call_execution__transcripts",
+            queryset=CallTranscript.objects.filter(
+                speaker_role__in=get_displayable_transcript_roles(),
+                deleted=False,
+            ).order_by("start_time_ms"),
+            to_attr="_displayable_transcripts",
+        ),
+    )
 
 SOURCE_TYPE_EXPORT_LABELS = {
     QueueItemSourceType.DATASET_ROW.value: "dataset row",
@@ -1647,7 +1672,7 @@ def _serialize_score_for_export(score):
     return {
         "label_id": str(score.label_id),
         "label_name": score.label.name if score.label else None,
-        "value": score.value,
+        "value": canonical_score_value(score.label, score.value),
         "notes": score.notes,
         "annotator_id": str(score.annotator_id) if score.annotator_id else None,
         "annotator_name": annotator.name if annotator else None,
@@ -1681,7 +1706,7 @@ def _label_export_value(scores, label_id, kind):
         return [_serialize_score_for_export(score) for score in label_scores]
 
     value_getters = {
-        "value": lambda score: score.value,
+        "value": lambda score: canonical_score_value(score.label, score.value),
         "notes": lambda score: score.notes,
         "annotator_id": lambda score: (
             str(score.annotator_id) if score.annotator_id else None
@@ -1724,16 +1749,6 @@ def _annotation_metrics_for_scores(scores):
     }
 
 
-def _eval_output_value(log):
-    if log.output_float is not None:
-        return log.output_float
-    if log.output_bool is not None:
-        return log.output_bool
-    if log.output_str not in (None, ""):
-        return log.output_str
-    return log.output_str_list
-
-
 def _eval_metric_key(log):
     if log.custom_eval_config_id and getattr(log.custom_eval_config, "name", None):
         return log.custom_eval_config.name
@@ -1742,7 +1757,7 @@ def _eval_metric_key(log):
 
 def _serialize_eval_log(log):
     return {
-        "score": _eval_output_value(log),
+        "score": eval_output_value(log),
         "explanation": log.results_explanation or log.eval_explanation,
         "tags": log.results_tags or log.eval_tags,
         "error": log.error,
@@ -1757,13 +1772,28 @@ def _eval_metrics_for_queue_items(items):
     if not items:
         return {}
 
+    metrics_by_item = {item.id: {} for item in items}
+
     span_item_ids = defaultdict(list)
     trace_item_ids = defaultdict(list)
     for item in items:
-        if item.source_type == "observation_span" and item.observation_span_id:
+        if (
+            item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value
+            and item.observation_span_id
+        ):
             span_item_ids[str(item.observation_span_id)].append(item.id)
-        elif item.source_type == "trace" and item.trace_id:
+        elif (
+            item.source_type == QueueItemSourceType.TRACE.value
+            and item.trace_id
+        ):
             trace_item_ids[str(item.trace_id)].append(item.id)
+        elif (
+            item.source_type == QueueItemSourceType.CALL_EXECUTION.value
+            and item.call_execution_id
+        ):
+            metrics_by_item[item.id] = eval_metrics_from_call_execution(
+                item.call_execution
+            )
 
     eval_filter = Q()
     if span_item_ids:
@@ -1771,9 +1801,8 @@ def _eval_metrics_for_queue_items(items):
     if trace_item_ids:
         eval_filter |= Q(trace_id__in=list(trace_item_ids))
     if not eval_filter:
-        return {}
+        return metrics_by_item
 
-    metrics_by_item = {item.id: {} for item in items}
     seen_by_item = {item.id: set() for item in items}
     eval_logs = (
         EvalLogger.objects.filter(eval_filter, deleted=False)
@@ -1818,7 +1847,6 @@ LABEL_TYPE_TO_DATA_TYPE = {
     AnnotationTypeChoices.STAR.value: DataTypeChoices.FLOAT.value,
     AnnotationTypeChoices.THUMBS_UP_DOWN.value: DataTypeChoices.TEXT.value,
 }
-
 
 def _unique_export_column_name(name, used):
     base = (name or "column").strip() or "column"
@@ -2169,15 +2197,7 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
                 "call_execution",
                 "trace_session",
             )
-            .prefetch_related(
-                Prefetch(
-                    "trace__observation_spans",
-                    queryset=ObservationSpan.objects.filter(deleted=False).order_by(
-                        "start_time", "created_at"
-                    ),
-                    to_attr="_queue_export_spans",
-                )
-            )
+            .prefetch_related(*_queue_item_export_prefetches())
             .order_by("order", "created_at")[:100]
         )
     sample_items = list(sample_items)
@@ -3365,15 +3385,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 "call_execution",
                 "trace_session",
             )
-            .prefetch_related(
-                Prefetch(
-                    "trace__observation_spans",
-                    queryset=ObservationSpan.objects.filter(deleted=False).order_by(
-                        "start_time", "created_at"
-                    ),
-                    to_attr="_queue_export_spans",
-                )
-            )
+            .prefetch_related(*_queue_item_export_prefetches())
         )
 
         status_filter = _normalize_query_filter_value(query_params.get("status"))
@@ -3692,15 +3704,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 "call_execution",
                 "trace_session",
             )
-            .prefetch_related(
-                Prefetch(
-                    "trace__observation_spans",
-                    queryset=ObservationSpan.objects.filter(deleted=False).order_by(
-                        "start_time", "created_at"
-                    ),
-                    to_attr="_queue_export_spans",
-                )
-            )
+            .prefetch_related(*_queue_item_export_prefetches())
         )
         if status_filter:
             items_qs = items_qs.filter(status=status_filter)

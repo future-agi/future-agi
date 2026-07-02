@@ -2050,6 +2050,51 @@ class TestDashboardQueryExecution:
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_query_action_dataset_string_metric_is_queryable(
+        self, mock_analytics_cls, auth_client
+    ):
+        mock_service = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = [{"time_bucket": "2025-01-01T00:00:00", "value": 3}]
+        mock_service.execute_ch_query.return_value = mock_result
+        mock_analytics_cls.return_value = mock_service
+
+        response = auth_client.post(
+            "/tracer/dashboard/query/",
+            {
+                "workflow": "observability",
+                "project_ids": [],
+                "time_range": {"preset": "12M"},
+                "granularity": "month",
+                "metrics": [
+                    {
+                        "id": "dataset",
+                        "name": "dataset",
+                        "display_name": "Dataset",
+                        "type": "system_metric",
+                        "source": "datasets",
+                        "aggregation": "avg",
+                        "attribute_type": "string",
+                        "data_type": "string",
+                        "filters": [],
+                    }
+                ],
+                "filters": [],
+                "breakdowns": [],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200
+        metric = response.json()["result"]["metrics"][0]
+        assert metric["id"] == "dataset"
+        assert metric["aggregation"] == "count_distinct"
+        sql = mock_service.execute_ch_query.call_args.args[0]
+        assert "uniqIf(" in sql
+        assert "dataset_dict" in sql
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
     def test_filter_values_simulation_excludes_deleted_rows_and_handles_numeric_columns(
         self, _mock_enabled, mock_analytics_cls, auth_client
@@ -2069,6 +2114,27 @@ class TestDashboardQueryExecution:
         assert "c.deleted = 0" in sql
         assert "c.duration_seconds IS NOT NULL" in sql
         assert "c.duration_seconds != ''" not in sql
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    def test_filter_values_dataset_picker_keeps_active_dataset_scope(
+        self, _mock_enabled, mock_analytics_cls, auth_client
+    ):
+        mock_service = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = []
+        mock_service.execute_ch_query.return_value = mock_result
+        mock_analytics_cls.return_value = mock_service
+
+        response = auth_client.get(
+            "/tracer/dashboard/filter_values/?source=datasets&metric_name=dataset&metric_type=system_metric"
+        )
+
+        assert response.status_code == 200
+        sql = mock_service.execute_ch_query.call_args.args[0]
+        assert "FROM model_hub_dataset FINAL" in sql
+        assert "AND deleted = 0" in sql
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.AnalyticsQueryService")
