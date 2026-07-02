@@ -29,6 +29,7 @@ import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "src/components/snackbar";
 import axios, { endpoints } from "src/utils/axios";
+import { getVersionLabel } from "src/utils/utils";
 import { format } from "date-fns";
 import { useGetScenarioList } from "src/api/scenarios/scenarios";
 import { AGENT_TYPES } from "src/sections/agents/constants";
@@ -228,15 +229,12 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
                 setFormData((prev) => ({ ...prev, versionId: e.target.value }))
               }
               disabled={isLoadingVersions}
+              MenuProps={{ PaperProps: { sx: { maxHeight: 300 } } }}
             >
               {versions.map((version) => (
                 <MenuItem key={version.id} value={version.id}>
                   <Box display="flex" alignItems="center" gap={1}>
-                    <span>
-                      {String(version.template_version).startsWith("v")
-                        ? version.template_version
-                        : `v${version.template_version}`}
-                    </span>
+                    <span>{getVersionLabel(version.template_version)}</span>
                     {version.is_default && (
                       <Typography
                         component="span"

@@ -228,7 +228,8 @@ export const useAnnotationQueuesList = (filters = {}, options = {}) => {
     queryFn: () =>
       axios.get(annotationQueueEndpoints.list, { params: filters }),
     select: (d) => d.data,
-    staleTime: 1000 * 60 * 2,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };
@@ -239,6 +240,8 @@ export const useAnnotationQueueDetail = (id, options = {}) => {
     queryFn: () => axios.get(annotationQueueEndpoints.detail(id)),
     select: (d) => extractData(d),
     enabled: !!id,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };
@@ -269,6 +272,7 @@ export const useUpdateAnnotationQueue = () => {
       enqueueSnackbar("Queue updated successfully", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
       queryClient.invalidateQueries({
+
         queryKey: annotationQueueKeys.detail(variables.id),
       });
     },
@@ -304,7 +308,6 @@ export const useArchiveAnnotationQueue = () => {
 export const useDeleteAnnotationQueue = useArchiveAnnotationQueue;
 
 export const useHardDeleteAnnotationQueue = () => {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, name }) =>
       axios.post(annotationQueueEndpoints.hardDelete(id), {
@@ -313,7 +316,6 @@ export const useHardDeleteAnnotationQueue = () => {
       }),
     onSuccess: () => {
       enqueueSnackbar("Queue permanently deleted.", { variant: "warning" });
-      queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: (error) => {
       enqueueSnackbar(extractErrorMessage(error, "Failed to delete queue"), {
@@ -420,7 +422,8 @@ export const useQueueItems = (queueId, filters = {}, options = {}) => {
       };
     },
     enabled: !!queueId,
-    staleTime: 1000 * 60 * 2,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };

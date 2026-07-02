@@ -16,6 +16,9 @@ const useUsersStore = create((set, get) => ({
   globalChartType: "line",
   isGlobalChartType: false,
   filters: [{ ...userDefaultFilter, id: getRandomId() }],
+  // Last sort_params sent by the grid, mirrored here so the export button can
+  // match what's on screen (the sort lives in AG Grid's request, not the store).
+  sortParams: [],
 
   setSearchQuery: (query) => set({ searchQuery: query }),
   setFilters: (newFiltersOrUpdater) => {
@@ -59,6 +62,7 @@ const useUsersStore = create((set, get) => ({
       selectedRowsData: [],
       openUserListFilter: false,
       filters: [{ ...userDefaultFilter, id: getRandomId() }],
+      sortParams: [],
     }),
   updateColumnVisibility: (updatedData) => {
     set((state) => ({

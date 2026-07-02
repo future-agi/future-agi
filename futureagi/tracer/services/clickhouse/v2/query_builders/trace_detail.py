@@ -65,6 +65,8 @@ def retrieve_trace_detail_ch(
     metadata is taken from the PG ``Trace`` row when present and otherwise
     synthesized from the root span. Returns the response dict.
     """
+    from django.db.utils import ProgrammingError
+
     from tracer.constants.provider_logos import PROVIDER_LOGOS
     from tracer.models.custom_eval_config import CustomEvalConfig
     from tracer.models.observation_span import ObservationSpan
@@ -94,8 +96,15 @@ def retrieve_trace_detail_ch(
         raise Trace.DoesNotExist
 
     # Trace metadata: PG row when present (full fidelity), else synthesized
-    # from the root span below (CH-only trace).
-    trace = Trace.objects.filter(id=trace_id, project_id=project_id).first()
+    # from the root span below (CH-only trace, or `tracer_trace` dropped
+    # post-cutover — the query then raises, treated the same as "no PG row").
+    try:
+        trace = Trace.objects.filter(id=trace_id, project_id=project_id).first()
+    except ProgrammingError:
+        trace = None  # tracer_trace dropped post-cutover — expected on CH25
+    except Exception:
+        logger.exception("trace_detail: PG Trace lookup failed")
+        trace = None
     trace_data = view.get_serializer(trace).data if trace is not None else None
 
     # Fetch all spans for this trace from CH — use the denormalized `spans`
@@ -167,15 +176,21 @@ def retrieve_trace_detail_ch(
                 span_attrs[k] = v
             for k, v in (row.get("attrs_bool") or {}).items():
                 span_attrs[k] = bool(v)
-        # Fallback: if CH has no span_attributes, try PG
+        # Fallback: if CH has no span_attributes, try PG (skipped on a CH-only
+        # deployment where `tracer_observation_span` is dropped — the query
+        # raises and we fall through to the empty attrs).
         if not span_attrs:
             try:
                 pg_span = ObservationSpan.objects.only(
                     "span_attributes", "eval_attributes"
                 ).get(id=span_id)
                 span_attrs = pg_span.span_attributes or pg_span.eval_attributes or {}
-            except ObservationSpan.DoesNotExist:
-                pass
+            except (ObservationSpan.DoesNotExist, ProgrammingError):
+                pass  # no PG row / table dropped — expected
+            except Exception:
+                logger.exception(
+                    "trace_detail: PG span-attrs fallback failed", span_id=span_id
+                )
 
         # Build metadata from CH JSON column
         metadata_raw = row.get("metadata_json") or "{}"
@@ -302,8 +317,8 @@ def retrieve_trace_detail_ch(
             output_float = row.get("output_float")
             output_bool = row.get("output_bool")
             output_str = row.get("output_str")
-            # Score: use float if non-zero, else bool (True=100, False=0)
-            if output_float and output_float != 0:
+
+            if output_float is not None:
                 score = round(output_float * 100, 2)
             elif output_bool is not None:
                 score = 100 if output_bool else 0
@@ -324,8 +339,8 @@ def retrieve_trace_detail_ch(
                     "explanation": explanation if explanation else None,
                 }
             )
-    except Exception as e:
-        logger.warning(f"Failed to fetch trace eval scores: {e}")
+    except Exception:
+        logger.exception("Failed to fetch trace eval scores")
 
     # ----- Phase 8: Batch fetch annotations from PG -----
     annotation_map = {}
@@ -359,8 +374,8 @@ def retrieve_trace_detail_ch(
                     "value": s.get("value"),
                 }
             )
-    except Exception as e:
-        logger.warning(f"Failed to fetch trace annotations: {e}")
+    except Exception:
+        logger.exception("Failed to fetch trace annotations")
 
     # ----- Fetch fresh span tags from PG (CH has sync delay) -----
     if span_map:
@@ -373,8 +388,10 @@ def retrieve_trace_detail_ch(
             for sid, tags in pg_tags.items():
                 if sid in span_map:
                     span_map[sid]["observation_span"]["tags"] = tags
-        except Exception as e:
-            logger.warning(f"Failed to fetch span tags from PG: {e}")
+        except ProgrammingError:
+            pass  # tracer_observation_span dropped post-cutover — expected
+        except Exception:
+            logger.exception("Failed to fetch span tags from PG")
 
     # ----- Attach evals + annotations to each span -----
     for sid, entry in span_map.items():
