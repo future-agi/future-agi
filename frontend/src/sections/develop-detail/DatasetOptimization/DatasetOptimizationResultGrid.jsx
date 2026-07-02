@@ -31,8 +31,8 @@ const getColumnConfig = (columnConfig) => {
           valueGetter: (params) => {
             return {
               title: params.data?.trial,
-              improvement: params.data?.scorePercentageChange,
-              isBest: params.data?.isBest,
+              improvement: params.data?.score_percentage_change,
+              isBest: params.data?.is_best,
             };
           },
         };

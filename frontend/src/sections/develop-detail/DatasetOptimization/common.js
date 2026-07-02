@@ -319,8 +319,8 @@ export const getTrialsColumnConfig = (columnConfig) => {
           colId: "trial",
           valueGetter: (params) => ({
             title: params.data?.trial,
-            improvement: params.data?.scorePercentageChange,
-            isBest: params.data?.isBest,
+            improvement: params.data?.score_percentage_change,
+            isBest: params.data?.is_best,
           }),
         };
 
