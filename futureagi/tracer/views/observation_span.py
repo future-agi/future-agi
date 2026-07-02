@@ -108,6 +108,42 @@ from tracer.utils.sql_queries import SQL_query_handler
 logger = structlog.get_logger(__name__)
 
 
+# Attribute keys hidden from custom columns: internal payloads / duplicates of
+# the input/output columns.
+_SKIP_ATTR_PREFIXES = (
+    "raw.",
+    "llm.input_messages",
+    "llm.output_messages",
+    "input.value",
+    "output.value",
+)
+
+
+def _flatten_span_attributes_into_entry(entry: dict, row: dict) -> None:
+    """Surface a span's attributes as top-level keys on `entry` for custom columns.
+
+    Merges the typed maps (attrs_string/number/bool) with attributes_extra via the
+    shared `merge_span_attributes` — reading attributes_extra alone drops typed
+    custom-attribute values. Standard columns already on `entry` are not clobbered;
+    internal/oversized payloads are skipped/truncated.
+    """
+    from tracer.services.clickhouse.v2.span_reader import merge_span_attributes
+
+    attrs = merge_span_attributes(
+        row.get("attrs_string"),
+        row.get("attrs_number"),
+        row.get("attrs_bool"),
+        row.get("attributes_extra", "{}"),
+    )
+    for key, value in attrs.items():
+        if key in entry or key.startswith(_SKIP_ATTR_PREFIXES):
+            continue
+        if isinstance(value, str) and len(value) > 500:
+            entry[key] = value[:500] + "..."
+        else:
+            entry[key] = value
+
+
 class AddObservationSpanAnnotationsSerializer(serializers.Serializer):
     observation_span_id = serializers.CharField(required=False, allow_blank=True)
     trace_id = serializers.UUIDField(required=False)
@@ -1505,6 +1541,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     row["input"] = c.get("input", "")
                     row["output"] = c.get("output", "")
                     row["attributes_extra"] = c.get("attributes_extra", "{}")
+                    row["attrs_string"] = c.get("attrs_string") or {}
+                    row["attrs_number"] = c.get("attrs_number") or {}
+                    row["attrs_bool"] = c.get("attrs_bool") or {}
 
         # Count
         count_query, count_params = builder.build_count_query()
@@ -1678,29 +1717,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 if label_id in span_annotations:
                     entry[label_id] = span_annotations[label_id]
 
-            # Include span attributes for custom columns
-            raw_attrs = row.get("attributes_extra", "{}")
-            try:
-                attrs = (
-                    json.loads(raw_attrs)
-                    if isinstance(raw_attrs, str)
-                    else (raw_attrs or {})
-                )
-            except (json.JSONDecodeError, TypeError):
-                attrs = {}
-            _SKIP_ATTR_PREFIXES = (
-                "raw.",
-                "llm.input_messages",
-                "llm.output_messages",
-                "input.value",
-                "output.value",
-            )
-            for key, value in attrs.items():
-                if key not in entry and not key.startswith(_SKIP_ATTR_PREFIXES):
-                    if isinstance(value, str) and len(value) > 500:
-                        entry[key] = value[:500] + "..."
-                    else:
-                        entry[key] = value
+            # Include span attributes (typed maps + attributes_extra) for custom columns
+            _flatten_span_attributes_into_entry(entry, row)
 
             table_data.append(entry)
 
