@@ -50,13 +50,15 @@ import {
   useDashboardMetrics,
   useDashboardMetricsPaginated,
   useDashboardQuery,
-  useDashboardFilterValues,
   useCreateWidget,
   useUpdateWidget,
   useDeleteWidget,
   useSimulationAgents,
 } from "src/hooks/useDashboards";
 import Iconify from "src/components/iconify";
+import FilterValueLabel, {
+  useResolvedFilterOptions,
+} from "src/components/filter-value-label";
 import { useSnackbar } from "src/components/snackbar";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { format } from "date-fns";
@@ -883,56 +885,7 @@ function FilterValuePickerPopup({
     Array.isArray(filter?.value) ? [...filter.value] : [],
   );
 
-  const backendType = (() => {
-    const map = {
-      system: "system_metric",
-      eval_metric: "eval_metric",
-      annotation: "annotation_metric",
-      custom_attribute: "custom_attribute",
-      custom_column: "custom_column",
-    };
-    return map[filter?.type] || filter?.type || "system_metric";
-  })();
-
-  // For eval metrics with known output types, provide static options
-  const evalOutputType = filter?.outputType?.toUpperCase() || "";
-  const isEvalWithStaticOptions =
-    backendType === "eval_metric" &&
-    (evalOutputType === "PASS_FAIL" || evalOutputType === "CHOICES");
-
-  const { data: fetchedOptions = [], isLoading } = useDashboardFilterValues({
-    metricName: filter?.id || "",
-    metricType: backendType,
-    projectIds: [],
-    source: source || "traces",
-    enabled: !isEvalWithStaticOptions,
-  });
-
-  const options = useMemo(() => {
-    if (isEvalWithStaticOptions) {
-      if (evalOutputType === "PASS_FAIL") {
-        return [
-          { value: "Passed", label: "Passed" },
-          { value: "Failed", label: "Failed" },
-        ];
-      }
-      if (
-        (evalOutputType === "CHOICES" || evalOutputType === "CHOICE") &&
-        filter?.choices?.length
-      ) {
-        return filter.choices.map((c) => ({
-          value: typeof c === "string" ? c : c.value || c.label || String(c),
-          label: typeof c === "string" ? c : c.label || c.value || String(c),
-        }));
-      }
-    }
-    return fetchedOptions;
-  }, [
-    isEvalWithStaticOptions,
-    evalOutputType,
-    fetchedOptions,
-    filter?.choices,
-  ]);
+  const { options, isLoading } = useResolvedFilterOptions(filter, source);
 
   const filteredOptions = useMemo(() => {
     if (!search) return options;
@@ -4998,9 +4951,11 @@ export default function WidgetEditorView() {
                               </Select>
                             </FormControl>
                             {curMfOp?.noValue ? null : curMfOp?.multi ? (
-                              <Typography
+                              <FilterValueLabel
+                                filter={mf}
+                                source={mf.source || "traces"}
                                 variant="caption"
-                                ref={(el) => {
+                                innerRef={(el) => {
                                   mfValueRefs.current[`${i}_${fi}`] = el;
                                 }}
                                 onClick={(e) => {
@@ -5010,25 +4965,7 @@ export default function WidgetEditorView() {
                                     filterIdx: fi,
                                   });
                                 }}
-                                sx={{
-                                  flex: 1,
-                                  fontSize: "12px",
-                                  cursor: "pointer",
-                                  color:
-                                    Array.isArray(mf.value) &&
-                                    mf.value.length > 0
-                                      ? "text.primary"
-                                      : "text.disabled",
-                                  "&:hover": { color: "primary.main" },
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                {Array.isArray(mf.value) && mf.value.length > 0
-                                  ? `${mf.value.length} selected`
-                                  : "Select value..."}
-                              </Typography>
+                              />
                             ) : curMfOp?.range ? (
                               <Stack
                                 direction="row"
@@ -5475,9 +5412,11 @@ export default function WidgetEditorView() {
                               </Select>
                             </FormControl>
                             {currentOp?.noValue ? null : currentOp?.multi ? (
-                              <Typography
+                              <FilterValueLabel
+                                filter={f}
+                                source={f.source || "traces"}
                                 variant="body2"
-                                ref={(el) => {
+                                innerRef={(el) => {
                                   filterValueRefs.current[i] = el;
                                 }}
                                 onClick={(e) => {
@@ -5485,24 +5424,7 @@ export default function WidgetEditorView() {
                                   setFilterValueIndex(i);
                                   setFilterValueSearch("");
                                 }}
-                                sx={{
-                                  flex: 1,
-                                  fontSize: "13px",
-                                  cursor: "pointer",
-                                  color:
-                                    Array.isArray(f.value) && f.value.length > 0
-                                      ? "text.primary"
-                                      : "text.disabled",
-                                  "&:hover": { color: "primary.main" },
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                {Array.isArray(f.value) && f.value.length > 0
-                                  ? `${f.value.length} selected`
-                                  : "Select value..."}
-                              </Typography>
+                              />
                             ) : currentOp?.range ? (
                               <Stack
                                 direction="row"
