@@ -1,9 +1,18 @@
 import { Box, CircularProgress, IconButton, TextField } from "@mui/material";
 import PropTypes from "prop-types";
 import React from "react";
-import Iconify from "src/components/iconify";
+import SvgColor from "src/components/svg-color";
 
 const FIELD_HEIGHT = 36;
+
+const squareButtonSx = {
+  width: FIELD_HEIGHT,
+  height: FIELD_HEIGHT,
+  flexShrink: 0,
+  border: "1px solid",
+  borderColor: "divider",
+  borderRadius: "6px",
+};
 
 const CreateTagInput = ({
   newLabelName,
@@ -12,15 +21,6 @@ const CreateTagInput = ({
   isCreatingLabel,
   onCancel,
 }) => {
-  const squareButtonSx = {
-    width: FIELD_HEIGHT,
-    height: FIELD_HEIGHT,
-    flexShrink: 0,
-    border: "1px solid",
-    borderColor: "divider",
-    borderRadius: "6px",
-  };
-
   return (
     <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, mt: 0.75 }}>
       <TextField
@@ -57,7 +57,10 @@ const CreateTagInput = ({
         {isCreatingLabel ? (
           <CircularProgress size={16} />
         ) : (
-          <Iconify icon="mdi:check" sx={{ width: 18, height: 18 }} />
+          <SvgColor
+            src="/assets/icons/ic_check.svg"
+            sx={{ width: 18, height: 18 }}
+          />
         )}
       </IconButton>
       <IconButton
@@ -66,7 +69,10 @@ const CreateTagInput = ({
         disabled={isCreatingLabel}
         sx={squareButtonSx}
       >
-        <Iconify icon="mdi:close" sx={{ width: 18, height: 18 }} />
+        <SvgColor
+          src="/assets/icons/ic_close.svg"
+          sx={{ width: 18, height: 18 }}
+        />
       </IconButton>
     </Box>
   );
