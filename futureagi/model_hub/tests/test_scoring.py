@@ -125,9 +125,13 @@ class TestNormalizeScoreRobustness:
     def test_deterministic_empty_list(self):
         assert normalize_score([], "deterministic", {"Yes": 1.0}) == 0.0
 
-    def test_deterministic_multi_element_list_takes_first(self):
+    def test_deterministic_multi_element_list_averages_mapped_scores(self):
         scores = {"Yes": 1.0, "No": 0.0}
-        assert normalize_score(["Yes", "No"], "deterministic", scores) == 1.0
+        assert normalize_score(["Yes", "No"], "deterministic", scores) == 0.5
+
+    def test_deterministic_multi_element_list_skips_unknown_labels(self):
+        scores = {"Yes": 1.0, "No": 0.0}
+        assert normalize_score(["Yes", "Maybe"], "deterministic", scores) == 1.0
 
     def test_deterministic_choice_case_insensitive(self):
         scores = {"Yes": 1.0, "No": 0.0}
