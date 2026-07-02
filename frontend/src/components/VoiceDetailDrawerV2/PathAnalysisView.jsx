@@ -259,7 +259,7 @@ const PathAnalysisView = ({
 
   const turns = useMemo(() => {
     const raw = (data?.transcript || []).filter(
-      (t) => (t.speakerRole || t.role) !== "system",
+      (t) => (t.speaker_role || t.role) !== "system",
     );
     return enrichTurns(raw);
   }, [data]);
