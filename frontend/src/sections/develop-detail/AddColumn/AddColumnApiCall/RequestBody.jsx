@@ -389,7 +389,7 @@ const RequestBody = ({
             padding: inputPadding,
             ...(multiline
               ? { minHeight: "200px", resize: "none" }
-              : { resize: "none", overflow: "hidden" }),
+              : { resize: "none", overflowX: "auto", overflowY: "hidden" }),
             border: `1px solid ${isError ? theme.palette.error.main : theme.palette.divider}`,
             borderRadius: "8px",
             outline: "none",
