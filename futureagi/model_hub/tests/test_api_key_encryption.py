@@ -4,7 +4,7 @@ import logging
 
 import pytest
 from cryptography.fernet import Fernet
-from django.apps import apps as django_apps
+from django.core.exceptions import ImproperlyConfigured
 
 from integrations.services.credentials import CredentialManager
 
@@ -14,6 +14,21 @@ MIGRATION = "model_hub.migrations.0112_encrypt_api_keys_fernet"
 @pytest.fixture(autouse=True)
 def _enc_key(settings):
     settings.INTEGRATION_ENCRYPTION_KEY = Fernet.generate_key().decode()
+
+
+@pytest.fixture
+def historical_apps():
+    """The model_hub app state as of migration 0112 — the historical models the
+    migration is actually handed at runtime, not the live registry. The live models
+    carry the encrypt-on-save override that a real ``migrate`` never runs through, so
+    testing against them would exercise a different code path than production."""
+    from django.db import connection
+    from django.db.migrations.executor import MigrationExecutor
+
+    state = MigrationExecutor(connection).loader.project_state(
+        ("model_hub", "0112_encrypt_api_keys_fernet")
+    )
+    return state.apps
 
 
 def _legacy(plaintext):
@@ -94,6 +109,39 @@ def test_decrypt_wrong_key_logs_and_returns_none(settings, caplog):
     assert "sk-rotate" not in caplog.text
 
 
+def test_prepare_undecryptable_token_is_not_rewrapped(settings, caplog):
+    # corruption guard (comment a): a real token whose key was rotated is NOT
+    # plaintext — prepare_secret_for_storage must return it UNCHANGED, never wrap the
+    # ciphertext as if it were the secret (which would destroy the real secret).
+    token = CredentialManager.encrypt_secret("sk-preserve-me")
+    settings.INTEGRATION_ENCRYPTION_KEY = Fernet.generate_key().decode()  # rotate
+    with caplog.at_level(logging.WARNING):
+        stored, plaintext = CredentialManager.prepare_secret_for_storage(token)
+    assert stored == token  # byte-for-byte untouched — survives a key rollback
+    assert plaintext is None
+    assert "sk-preserve-me" not in caplog.text
+
+
+def test_encrypt_secret_fails_closed_in_deployed_env(settings):
+    # fail-closed (comment b): a deployed environment with no key must RAISE, not
+    # silently degrade to the reversible legacy encoding. local/test may degrade.
+    settings.INTEGRATION_ENCRYPTION_KEY = ""
+    settings.ENV_TYPE = "prod"
+    with pytest.raises(ImproperlyConfigured):
+        CredentialManager.encrypt_secret("sk-prod-secret")
+
+
+def test_encrypt_secret_allows_legacy_only_in_local(settings):
+    # the other half of the gate: local/test may degrade to legacy + warn (proven
+    # elsewhere) — but never store raw plaintext.
+    settings.INTEGRATION_ENCRYPTION_KEY = ""
+    settings.ENV_TYPE = "local"
+    stored = CredentialManager.encrypt_secret("sk-local-secret")
+    assert stored != "sk-local-secret"  # not raw
+    assert not stored.startswith("gAAAAA")  # not Fernet (no key)
+    assert CredentialManager.decrypt_secret(stored) == "sk-local-secret"
+
+
 # --- model save path ------------------------------------------------------------
 
 
@@ -104,8 +152,8 @@ def test_apikey_save_stores_fernet_and_roundtrips():
     obj = ApiKey(provider="openai", key="sk-plaintext")
     obj.save()
     obj.refresh_from_db()
-    assert obj.key.startswith("gAAAAA")            # stored encrypted
-    assert obj.actual_key == "sk-plaintext"        # decrypts back
+    assert obj.key.startswith("gAAAAA")  # stored encrypted
+    assert obj.actual_key == "sk-plaintext"  # decrypts back
     # idempotent: saving again doesn't double-encrypt or corrupt
     obj.save()
     obj.refresh_from_db()
@@ -122,8 +170,8 @@ def test_save_plaintext_with_fernet_prefix_is_encrypted_not_stored_raw():
     obj = ApiKey(provider="openai", key=sneaky)
     obj.save()
     obj.refresh_from_db()
-    assert obj.key != sneaky                       # not stored raw
-    assert obj.actual_key == sneaky                # encrypted as plaintext, reads back
+    assert obj.key != sneaky  # not stored raw
+    assert obj.actual_key == sneaky  # encrypted as plaintext, reads back
 
 
 @pytest.mark.django_db
@@ -135,9 +183,9 @@ def test_save_upgrades_legacy_key_to_fernet_in_place():
     obj = ApiKey(provider="openai", key="sk-x")
     obj.save()
     ApiKey.objects.filter(pk=obj.id).update(key=_legacy("sk-legacy-upgrade"))
-    ApiKey.objects.get(pk=obj.id).save()           # re-save the legacy row
+    ApiKey.objects.get(pk=obj.id).save()  # re-save the legacy row
     row = ApiKey.objects.get(pk=obj.id)
-    assert row.key.startswith("gAAAAA")            # upgraded in place
+    assert row.key.startswith("gAAAAA")  # upgraded in place
     assert row.actual_key == "sk-legacy-upgrade"
 
 
@@ -155,10 +203,33 @@ def test_apikey_save_without_encryption_key_stores_legacy_not_plaintext(
         obj = ApiKey(provider="openai", key="sk-no-key")
         obj.save()
     obj.refresh_from_db()
-    assert obj.key != "sk-no-key"                  # never stored raw
-    assert not obj.key.startswith("gAAAAA")        # cannot be Fernet without a key
-    assert obj.actual_key == "sk-no-key"           # dual-read still serves it
+    assert obj.key != "sk-no-key"  # never stored raw
+    assert not obj.key.startswith("gAAAAA")  # cannot be Fernet without a key
+    assert obj.actual_key == "sk-no-key"  # dual-read still serves it
     assert any("INTEGRATION_ENCRYPTION_KEY" in r.message for r in caplog.records)
+
+
+@pytest.mark.django_db
+def test_apikey_save_under_rotated_key_does_not_rewrap_token(settings):
+    # comment (d): the behavioral proof for the corruption guard, on the real save
+    # call-path. Store a Fernet token, rotate the key so it no longer decrypts, then
+    # save the row again. The stored ciphertext must be left BYTE-FOR-BYTE unchanged —
+    # re-wrapping it (the pre-fix behavior) would lose the secret forever.
+    from model_hub.models.api_key import ApiKey
+
+    obj = ApiKey(provider="openai", key="sk-rotate-me")
+    obj.save()
+    obj.refresh_from_db()
+    token = obj.key
+    assert token.startswith("gAAAAA")
+
+    settings.INTEGRATION_ENCRYPTION_KEY = Fernet.generate_key().decode()  # rotate
+    stale = ApiKey.objects.get(pk=obj.id)  # __init__ can no longer decrypt it
+    assert stale.actual_key is None
+    stale.save()  # must NOT re-encrypt the token
+
+    row = ApiKey.objects.get(pk=obj.id)
+    assert row.key == token  # unchanged → recoverable on rollback
 
 
 @pytest.mark.django_db
@@ -175,7 +246,7 @@ def test_apikey_save_encrypts_nested_config_json():
     assert obj.config_json["api_key"].startswith("gAAAAA")
     assert obj.config_json["vertex"]["creds"].startswith("gAAAAA")
     assert obj.config_json["ids"][0].startswith("gAAAAA")
-    assert obj.actual_json == cfg                  # decrypts back at every depth
+    assert obj.actual_json == cfg  # decrypts back at every depth
 
 
 @pytest.mark.django_db
@@ -217,15 +288,106 @@ def test_custom_model_serializer_never_returns_plaintext():
 
     reloaded = CustomAIModel.objects.get(pk=m.id)  # DB -> model -> serializer
     blob = _json.dumps(CustomAIModelSerializer(reloaded).data)
-    assert "sk-supersecret-1234" not in blob       # never the plaintext
-    assert "gAAAAA" not in blob                     # nor the ciphertext
-
-
-# --- migration ------------------------------------------------------------------
+    assert "sk-supersecret-1234" not in blob  # never the plaintext
+    assert "gAAAAA" not in blob  # nor the ciphertext
 
 
 @pytest.mark.django_db
-def test_migration_0112_reencrypts_legacy_rows_from_plaintext():
+def test_apikey_serializer_never_returns_plaintext_or_ciphertext():
+    # comment (f): the never-leak contract is the same for ApiKey, not only
+    # CustomAIModel — the read serializer exposes only the masked key.
+    import json as _json
+
+    from model_hub.models.api_key import ApiKey
+    from model_hub.serializers.run_prompt import ApiKeySerializer
+
+    obj = ApiKey(
+        provider="openai",
+        key="sk-apikey-plaintext-1234",
+        config_json={"nested": {"token": "sk-config-plaintext-5678"}},
+    )
+    obj.save()
+
+    reloaded = ApiKey.objects.get(pk=obj.id)  # DB -> model -> serializer
+    blob = _json.dumps(ApiKeySerializer(reloaded).data)
+    assert "sk-apikey-plaintext-1234" not in blob  # never the plaintext key
+    assert "sk-config-plaintext-5678" not in blob  # never a nested config secret
+    assert "gAAAAA" not in blob  # nor any ciphertext
+
+
+@pytest.mark.django_db
+def test_secret_serializer_never_returns_plaintext_or_ciphertext():
+    # comment (f): same contract for SecretModel — key is write-only, only a masked
+    # form is ever returned.
+    import json as _json
+
+    from model_hub.models.api_key import SecretModel
+    from model_hub.serializers.develop_dataset import SecretSerializer
+
+    s = SecretModel(name="pinecone-cred", key="sk-secretmodel-plaintext-1234")
+    s.save()
+
+    reloaded = SecretModel.objects.get(pk=s.id)  # DB -> model -> serializer
+    blob = _json.dumps(SecretSerializer(reloaded).data)
+    assert "sk-secretmodel-plaintext-1234" not in blob  # never the plaintext
+    assert "gAAAAA" not in blob  # nor the ciphertext
+
+
+# --- migration transform: reencrypt_value (pure, no registry) -------------------
+# The migration's real work is CredentialManager.reencrypt_value applied per field.
+# Testing it directly (comment e) exercises the exact transform without coupling to
+# the live-vs-historical model registry.
+
+
+def test_reencrypt_value_upgrades_legacy_scalar_from_plaintext():
+    new, changed = CredentialManager.reencrypt_value(_legacy("sk-legacy"))
+    assert changed is True
+    assert new.startswith("gAAAAA")
+    assert CredentialManager.decrypt_secret(new) == "sk-legacy"  # secret, not the blob
+
+
+def test_reencrypt_value_recurses_dicts_and_lists():
+    legacy_cfg = {
+        "flat": _legacy("p-flat"),
+        "nested": {"creds": _legacy("p-nested")},
+        "lst": [_legacy("p-list")],
+    }
+    new, changed = CredentialManager.reencrypt_value(legacy_cfg)
+    assert changed is True
+    assert new["flat"].startswith("gAAAAA")
+    assert new["nested"]["creds"].startswith("gAAAAA")
+    assert new["lst"][0].startswith("gAAAAA")
+    assert CredentialManager.decrypt_json(new) == {
+        "flat": "p-flat",
+        "nested": {"creds": "p-nested"},
+        "lst": ["p-list"],
+    }
+
+
+def test_reencrypt_value_leaves_fernet_and_plaintext_untouched():
+    fernet = CredentialManager.encrypt_secret("sk-already")
+    assert CredentialManager.reencrypt_value(fernet) == (fernet, False)  # no churn
+    assert CredentialManager.reencrypt_value("plain-not-a-secret") == (
+        "plain-not-a-secret",
+        False,
+    )
+
+
+def test_reencrypt_value_never_rewraps_undecryptable_token(settings):
+    # the migration must not corrupt a token whose key was rotated (mirror of a).
+    token = CredentialManager.encrypt_secret("sk-rotate")
+    settings.INTEGRATION_ENCRYPTION_KEY = Fernet.generate_key().decode()
+    assert CredentialManager.reencrypt_value(token) == (token, False)  # left intact
+
+
+# --- migration end-to-end via historical apps -----------------------------------
+# _reencrypt is handed the HISTORICAL model state (the ``historical_apps`` fixture),
+# exactly as a real ``migrate`` runs it — not the live registry with its
+# encrypt-on-save override (comment e).
+
+
+@pytest.mark.django_db
+def test_migration_0112_reencrypts_legacy_rows_from_plaintext(historical_apps):
     from model_hub.models.api_key import ApiKey
 
     obj = ApiKey(provider="openai", key="sk-seed")
@@ -234,18 +396,19 @@ def test_migration_0112_reencrypts_legacy_rows_from_plaintext():
     ApiKey.objects.filter(pk=obj.id).update(key=_legacy("sk-old-secret"))
 
     mig = importlib.import_module(MIGRATION)
-    mig._reencrypt(django_apps, None)
+    mig._reencrypt(historical_apps, None)
 
     row = ApiKey.objects.get(pk=obj.id)
-    assert row.key.startswith("gAAAAA")            # upgraded to Fernet
-    assert row.actual_key == "sk-old-secret"       # from the plaintext, not corrupted
+    assert row.key.startswith("gAAAAA")  # upgraded to Fernet
+    assert row.actual_key == "sk-old-secret"  # from the plaintext, not corrupted
 
-    mig._reencrypt(django_apps, None)              # idempotent re-run
+    mig._reencrypt(historical_apps, None)  # idempotent re-run
     assert ApiKey.objects.get(pk=obj.id).actual_key == "sk-old-secret"
 
 
 @pytest.mark.django_db
-def test_migration_noops_without_encryption_key(settings, caplog):
+def test_migration_noops_without_key_in_local(settings, caplog, historical_apps):
+    # local/test with no key: no-op, no crash, and the skip is logged for the operator.
     from model_hub.models.api_key import ApiKey
 
     obj = ApiKey(provider="openai", key="sk-x")
@@ -253,18 +416,40 @@ def test_migration_noops_without_encryption_key(settings, caplog):
     ApiKey.objects.filter(pk=obj.id).update(key=_legacy("sk-x"))
     before = ApiKey.objects.get(pk=obj.id).key
 
-    settings.INTEGRATION_ENCRYPTION_KEY = ""       # dependency-failure: key absent
+    settings.INTEGRATION_ENCRYPTION_KEY = ""
+    settings.ENV_TYPE = "local"
     mig = importlib.import_module(MIGRATION)
     with caplog.at_level(logging.WARNING):
-        mig._reencrypt(django_apps, None)
+        mig._reencrypt(historical_apps, None)
 
-    # no-op, no crash, and the skip is logged so an operator sees it
     assert ApiKey.objects.get(pk=obj.id).key == before
     assert any("INTEGRATION_ENCRYPTION_KEY" in r.message for r in caplog.records)
 
 
 @pytest.mark.django_db
-def test_migration_leaves_existing_fernet_rows_unchanged():
+def test_migration_raises_without_key_in_deployed_env(settings, historical_apps):
+    # comment (c): a deployed migrate with no key must RAISE, not silently no-op and
+    # mark 0112 applied (which would make "set key later + re-run" a permanent no-op).
+    # Raising rolls the migration back → it is re-runnable once the key is set. The
+    # seeded row is left untouched.
+    from model_hub.models.api_key import ApiKey
+
+    obj = ApiKey(provider="openai", key="sk-x")
+    obj.save()
+    ApiKey.objects.filter(pk=obj.id).update(key=_legacy("sk-trapped"))
+    before = ApiKey.objects.get(pk=obj.id).key
+
+    settings.INTEGRATION_ENCRYPTION_KEY = ""
+    settings.ENV_TYPE = "prod"
+    mig = importlib.import_module(MIGRATION)
+    with pytest.raises(ImproperlyConfigured):
+        mig._reencrypt(historical_apps, None)
+
+    assert ApiKey.objects.get(pk=obj.id).key == before  # nothing written on the raise
+
+
+@pytest.mark.django_db
+def test_migration_leaves_existing_fernet_rows_unchanged(historical_apps):
     from model_hub.models.api_key import ApiKey
 
     obj = ApiKey(provider="openai", key="sk-fernet")
@@ -273,13 +458,13 @@ def test_migration_leaves_existing_fernet_rows_unchanged():
     assert stored.startswith("gAAAAA")
 
     mig = importlib.import_module(MIGRATION)
-    mig._reencrypt(django_apps, None)
+    mig._reencrypt(historical_apps, None)
 
     assert ApiKey.objects.get(pk=obj.id).key == stored  # not re-encrypted
 
 
 @pytest.mark.django_db
-def test_migration_reencrypts_nested_legacy_config_json():
+def test_migration_reencrypts_nested_legacy_config_json(historical_apps):
     # the migration must match the model's recursion: a legacy secret nested inside
     # config_json (dict/list) is upgraded from its plaintext, not left behind.
     from model_hub.models.api_key import ApiKey
@@ -294,21 +479,21 @@ def test_migration_reencrypts_nested_legacy_config_json():
     ApiKey.objects.filter(pk=obj.id).update(config_json=legacy_cfg)
 
     mig = importlib.import_module(MIGRATION)
-    mig._reencrypt(django_apps, None)
+    mig._reencrypt(historical_apps, None)
 
     row = ApiKey.objects.get(pk=obj.id)
     assert row.config_json["flat"].startswith("gAAAAA")
     assert row.config_json["nested"]["creds"].startswith("gAAAAA")
     assert row.config_json["lst"][0].startswith("gAAAAA")
     expected = {"flat": "p-flat", "nested": {"creds": "p-nested"}, "lst": ["p-list"]}
-    assert row.actual_json == expected             # recovered plaintext, not the blob
+    assert row.actual_json == expected  # recovered plaintext, not the blob
 
-    mig._reencrypt(django_apps, None)              # idempotent re-run
+    mig._reencrypt(historical_apps, None)  # idempotent re-run
     assert ApiKey.objects.get(pk=obj.id).actual_json == expected
 
 
 @pytest.mark.django_db
-def test_migration_reencrypts_custom_model_key_config():
+def test_migration_reencrypts_custom_model_key_config(historical_apps):
     # CustomAIModel.key_config flows through the same encrypt path — the migration
     # upgrades its legacy secrets too.
     from accounts.models import Organization
@@ -329,7 +514,7 @@ def test_migration_reencrypts_custom_model_key_config():
     )
 
     mig = importlib.import_module(MIGRATION)
-    mig._reencrypt(django_apps, None)
+    mig._reencrypt(historical_apps, None)
 
     row = CustomAIModel.objects.get(pk=m.id)
     assert row.key_config["api_key"].startswith("gAAAAA")
@@ -337,7 +522,7 @@ def test_migration_reencrypts_custom_model_key_config():
 
 
 @pytest.mark.django_db
-def test_secretmodel_save_and_migration_roundtrip():
+def test_secretmodel_save_and_migration_roundtrip(historical_apps):
     # the sibling secret store: save() stores Fernet, and the migration upgrades a
     # legacy SecretModel.key row from its plaintext.
     from model_hub.models.api_key import SecretModel
@@ -350,7 +535,7 @@ def test_secretmodel_save_and_migration_roundtrip():
 
     SecretModel.objects.filter(pk=s.id).update(key=_legacy("pw-old"))
     mig = importlib.import_module(MIGRATION)
-    mig._reencrypt(django_apps, None)
+    mig._reencrypt(historical_apps, None)
 
     row = SecretModel.objects.get(pk=s.id)
     assert row.key.startswith("gAAAAA")

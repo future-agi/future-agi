@@ -1,6 +1,5 @@
 import logging
 
-from django.conf import settings
 from django.db import migrations, models
 
 logger = logging.getLogger(__name__)
@@ -10,18 +9,20 @@ def _reencrypt(apps, schema_editor):
     """Upgrade legacy base64(SECRET_KEY[:16] + plaintext) secrets to Fernet,
     re-encrypting from the recovered plaintext (never the stored ciphertext).
 
-    Idempotent: already-Fernet values are skipped, so this is safe to re-run as a
-    follow-up if INTEGRATION_ENCRYPTION_KEY wasn't set the first time. No-op when
-    the key is absent — the model's dual-read keeps legacy rows readable until it
-    is configured.
+    Idempotent: already-Fernet values are skipped.
+
+    Fail-closed on a missing key: ``require_encryption_key`` RAISES in every deployed
+    environment, so this migration is *not* marked applied and re-runs cleanly once
+    the key is configured (no one-shot trap). It only no-ops — with a warning — in
+    local / test, where dual-read keeps any legacy rows readable meanwhile.
     """
     from integrations.services.credentials import CredentialManager
 
-    if not getattr(settings, "INTEGRATION_ENCRYPTION_KEY", None):
+    if not CredentialManager.require_encryption_key("re-encrypt stored secrets"):
         logger.warning(
-            "0112_encrypt_api_keys_fernet: INTEGRATION_ENCRYPTION_KEY is not set; "
-            "skipping secret re-encryption. Rows stay readable via dual-read. Set the "
-            "key and re-run `migrate model_hub` to upgrade secrets to Fernet at rest."
+            "0112_encrypt_api_keys_fernet: INTEGRATION_ENCRYPTION_KEY is not set "
+            "(local/test); skipping secret re-encryption. Rows stay readable via "
+            "dual-read. Set the key and re-run `migrate model_hub` to upgrade at rest."
         )
         return
 

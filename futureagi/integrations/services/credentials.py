@@ -6,6 +6,7 @@ from typing import Any, Optional, Tuple
 
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
+from django.core.exceptions import ImproperlyConfigured
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,33 @@ class CredentialManager:
     def _key_configured(cls) -> bool:
         return bool(getattr(settings, "INTEGRATION_ENCRYPTION_KEY", None))
 
+    @classmethod
+    def _legacy_fallback_allowed(cls) -> bool:
+        """The reversible legacy encoding is only tolerable where secrets are not
+        real: local development and the test suite. Every deployed environment
+        (dev / staging / prod) must have a key — matching settings.py, which only
+        auto-derives a throwaway key when ``ENV_TYPE`` is local."""
+        return str(getattr(settings, "ENV_TYPE", "local")).lower() in ("local", "test")
+
+    @classmethod
+    def require_encryption_key(cls, action: str) -> bool:
+        """Fail-closed key policy for a write ``action``.
+
+        Returns ``True`` when a key is configured (caller encrypts with Fernet).
+        Returns ``False`` only when no key is set *and* the environment tolerates
+        the legacy encoding (local / test) — the caller may degrade with a warning.
+        RAISES in every deployed environment so a missing key is a hard failure at
+        write time, never a silent downgrade to reversible storage."""
+        if cls._key_configured():
+            return True
+        if cls._legacy_fallback_allowed():
+            return False
+        raise ImproperlyConfigured(
+            f"INTEGRATION_ENCRYPTION_KEY is not set; refusing to {action} without "
+            f"encryption in ENV_TYPE={getattr(settings, 'ENV_TYPE', 'local')!r}. "
+            "Set INTEGRATION_ENCRYPTION_KEY as an env var."
+        )
+
     @staticmethod
     def _legacy_salt() -> bytes:
         return settings.SECRET_KEY[:16].encode()
@@ -86,11 +114,31 @@ class CredentialManager:
         return base64.b64decode(value)[16:].decode()
 
     @classmethod
+    def _is_wellformed_fernet_token(cls, value: Any) -> bool:
+        """True iff ``value`` parses as a *structurally* valid Fernet token —
+        regardless of whether the current key can decrypt it. This is what tells a
+        real token under a rotated key (base64 of version 0x80 + timestamp + IV +
+        AES blocks + HMAC) apart from plaintext that merely happens to start with
+        the ``gAAAAA`` prefix. The former must be preserved on save; the latter must
+        be encrypted."""
+        if not isinstance(value, str) or not value.startswith(cls.FERNET_PREFIX):
+            return False
+        try:
+            raw = base64.urlsafe_b64decode(value.encode())
+        except Exception:
+            return False
+        # version(1) + timestamp(8) + IV(16) + HMAC(32) = 57 fixed bytes, plus a
+        # non-empty AES-CBC ciphertext that is a positive multiple of the 16-byte block.
+        overhead = 1 + 8 + 16 + 32
+        ct_len = len(raw) - overhead
+        return raw[:1] == b"\x80" and ct_len >= 16 and ct_len % 16 == 0
+
+    @classmethod
     def is_fernet(cls, value: Any) -> bool:
         """True iff ``value`` is a Fernet token this key can decrypt. Verifies by
         decryption — a plaintext that merely starts with the prefix is rejected.
-        With no key configured, falls back to the prefix so an existing token is
-        not mistaken for plaintext and re-encoded."""
+        With no key configured, falls back to structural well-formedness so an
+        existing token is not mistaken for plaintext and re-encoded."""
         if (
             not value
             or not isinstance(value, str)
@@ -98,7 +146,7 @@ class CredentialManager:
         ):
             return False
         if not cls._key_configured():
-            return True
+            return cls._is_wellformed_fernet_token(value)
         try:
             cls._get_fernet().decrypt(value.encode())
             return True
@@ -118,15 +166,15 @@ class CredentialManager:
         """Idempotently encrypt one plaintext secret for storage.
 
         Already-encrypted input is returned unchanged. With the key configured the
-        result is a Fernet token; with the key absent the value is stored in the
-        legacy reversible encoding (plus a warning) so saves never crash on an
-        unconfigured deployment — dual-read keeps it readable and it upgrades to
-        Fernet once the key is set."""
+        result is a Fernet token. With the key absent the behaviour is fail-closed:
+        a deployed environment RAISES (see ``require_encryption_key``); only local /
+        test degrade to the legacy reversible encoding (plus a warning), which
+        dual-read keeps readable until the key is set and the migration upgrades it."""
         if not value:
             return None
         if cls.is_encrypted(value):
             return value
-        if not cls._key_configured():
+        if not cls.require_encryption_key("store a secret"):
             logger.warning(
                 "INTEGRATION_ENCRYPTION_KEY is not set; storing secret with the legacy "
                 "reversible encoding. Set the key and run migrate to upgrade secrets to "
@@ -145,7 +193,7 @@ class CredentialManager:
         if not stored:
             return None
         stored = str(stored)
-        if stored.startswith(cls.FERNET_PREFIX):
+        if cls._is_wellformed_fernet_token(stored):
             try:
                 return cls.decrypt(stored.encode())["v"]
             except (ValueError, KeyError) as exc:
@@ -166,15 +214,28 @@ class CredentialManager:
         """Canonicalize one secret for at-rest storage. Returns
         ``(stored, plaintext)``:
 
-          plaintext     -> (Fernet token, plaintext)
-          legacy base64 -> (Fernet token, plaintext)   # upgraded in place
-          Fernet token  -> (unchanged token, plaintext)  # no re-encrypt churn
-          empty / None  -> (None, None)
+          plaintext        -> (Fernet token, plaintext)
+          legacy base64    -> (Fernet token, plaintext)     # upgraded in place
+          Fernet token     -> (unchanged token, plaintext)  # no re-encrypt churn
+          undecryptable    -> (unchanged token, None)        # rotated key — left intact
+          empty / None     -> (None, None)
         """
         if not value:
             return None, None
         if cls.is_fernet(value):
             return value, cls.decrypt_secret(value)
+        # A structurally valid Fernet token that did NOT decrypt above is a token
+        # under a different / rotated key, not plaintext. Re-encrypting it would wrap
+        # the ciphertext as if it were the secret and lose the real secret
+        # irrecoverably. Leave it exactly as stored so it survives a key rollback.
+        # (Plaintext that merely starts with the prefix is not well-formed, so it
+        # falls through and gets encrypted.)
+        if cls._is_wellformed_fernet_token(value):
+            logger.warning(
+                "Refusing to re-encrypt an undecryptable Fernet secret (key rotated or "
+                "INTEGRATION_ENCRYPTION_KEY changed?); leaving the stored value untouched."
+            )
+            return value, None
         plaintext = cls.decrypt_secret(value)
         if plaintext is None:
             plaintext = value  # raw plaintext, not a recognized ciphertext
