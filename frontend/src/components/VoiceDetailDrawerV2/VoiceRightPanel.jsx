@@ -49,6 +49,7 @@ const VoiceRightPanel = ({
   data,
   onCompareBaseline,
   onAction,
+  hiddenActionIds = [],
   hideAnnotationTab,
 }) => {
   const [currentTab, setCurrentTab] = useState(TABS.ANALYTICS);
@@ -251,10 +252,12 @@ const VoiceRightPanel = ({
         score_items: scoreItems,
         explanation: e?.reason || e?.explanation,
         error: e?.error === true,
+        skipped: e?.skipped === true,
         // Error localization fields — pulled from whatever key the
         // backend used. Makes the shared EvalsTabView render the
         // dropdown / "Run" UX for failed voice evals.
         cell_id: e?.cell_id || e?.cellId,
+        template_type: e?.template_type,
         error_analysis:
           e?.error_analysis || e?.errorAnalysis || e?.error_details,
         error_localizer_status:
@@ -317,7 +320,11 @@ const VoiceRightPanel = ({
       {/* Call details — chips + tags + Actions button live at the top of
           the right panel, matching the trace drawer's span-detail-pane
           layout. */}
-      <CallDetailsBar data={data} onAction={onAction} />
+      <CallDetailsBar
+        data={data}
+        onAction={onAction}
+        hiddenActionIds={hiddenActionIds}
+      />
 
       <Stack
         direction="row"
@@ -501,6 +508,7 @@ VoiceRightPanel.propTypes = {
   data: PropTypes.object.isRequired,
   onCompareBaseline: PropTypes.func,
   onAction: PropTypes.func,
+  hiddenActionIds: PropTypes.arrayOf(PropTypes.string),
   hideAnnotationTab: PropTypes.bool,
 };
 

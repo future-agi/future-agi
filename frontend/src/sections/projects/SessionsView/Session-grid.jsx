@@ -8,7 +8,6 @@ import React, {
   useEffect,
   useCallback,
 } from "react";
-import _ from "lodash";
 import PropTypes from "prop-types";
 import { getRandomId } from "src/utils/utils";
 import TotalRowsStatusBar from "src/sections/develop-detail/Common/TotalRowsStatusBar";
@@ -20,30 +19,25 @@ import { getSessionListColumnDef } from "./common";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
+import { normalizeConfigKeys } from "src/sections/projects/LLMTracing/common";
 import { useSessionsGridStoreShallow } from "./ReplaySessions/store";
 import { APP_CONSTANTS } from "src/utils/constants";
 
-const SESSION_GRID_THEME_PARAMS = {
+const getSessionGridThemeParams = (theme) => ({
   columnBorder: false,
   rowVerticalPaddingScale: 2.6,
-  headerColumnBorder: { width: 0 },
+  headerColumnBorder: false,
   wrapperBorder: { width: 0 },
   wrapperBorderRadius: 0,
-};
+  rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+  headerFontSize: "13px",
+  headerFontWeight: theme.typography.fontWeightMedium,
+  headerBackgroundColor: "transparent",
+  headerTextColor: theme.palette.text.primary,
+  rowHoverColor: "rgba(120,87,252,0.04)",
+});
 
 const DATASET_ROWS_LIMIT = 30;
-
-// Normalize config object keys from snake_case to camelCase while preserving id values as snake_case
-const normalizeConfigKeys = (config) =>
-  config?.map((obj) => {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
-    }
-    return result;
-  });
 
 const LoadingHeader = () => {
   return <Skeleton variant="text" width={100} height={20} />;
@@ -69,7 +63,7 @@ const SessionGrid = React.forwardRef(
     const [open, setOpen] = useState(false);
     const [currentRowData, setCurrentRowData] = useState(null);
     const theme = useTheme();
-    const agTheme = useAgThemeWith(SESSION_GRID_THEME_PARAMS);
+    const agTheme = useAgThemeWith(getSessionGridThemeParams(theme));
     const handleDrawerClose = () => {
       setOpen(false);
     };
@@ -160,21 +154,31 @@ const SessionGrid = React.forwardRef(
         }
       }
 
-      const columnDefsResult = Object.entries(grouping).map(([group, cols]) => {
-        if (cols.length === 1) {
-          const c = cols[0];
-          bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-          return getSessionListColumnDef(c);
-        } else {
-          return {
-            headerName: group,
-            children: cols.map((c) => {
-              bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
+      const columnDefsResult = Object.entries(grouping).flatMap(
+        ([group, cols]) => {
+          if (group === "Annotation Metrics") {
+            return cols.map((c) => {
+              bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
               return getSessionListColumnDef(c);
-            }),
-          };
-        }
-      });
+            });
+          }
+          if (cols.length === 1) {
+            const c = cols[0];
+            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+            return getSessionListColumnDef(c);
+          } else {
+            return {
+              headerName: group,
+              children: cols.map((c) => {
+                bottomRowObj[c?.id] = c?.average
+                  ? `Average ${c?.average}`
+                  : null;
+                return getSessionListColumnDef(c);
+              }),
+            };
+          }
+        },
+      );
 
       return {
         columnDefs: columnDefsResult,
@@ -220,9 +224,7 @@ const SessionGrid = React.forwardRef(
                     direction: sort,
                   })),
                 ),
-                filters: JSON.stringify(
-                  canonicalizeApiFilterColumnIds(objectCamelToSnake(filters)),
-                ),
+                filters: JSON.stringify(filters),
                 ...(dateInterval && { interval: dateInterval }),
               });
 
@@ -250,18 +252,34 @@ const SessionGrid = React.forwardRef(
                 const dedupedPending = pending.filter(
                   (c) => !existingIds.has(c.id),
                 );
-                const backendChanged = !_.isEqual(newCols, currentNonCustom);
+                const newIds = new Set(newCols.map((c) => c.id));
+                const currentIdSet = new Set(currentNonCustom.map((c) => c.id));
+                const idSetChanged =
+                  newIds.size !== currentIdSet.size ||
+                  [...newIds].some((id) => !currentIdSet.has(id));
                 // hasPending ensures same-tab saved-view clicks still drain
                 // queued customs even when backend cols match.
                 const hasPending = dedupedPending.length > 0;
-                if (backendChanged || hasPending) {
+                if (idSetChanged || hasPending) {
                   const allCustom = [...existingCustom, ...dedupedPending];
                   if (pending.length > 0 && pendingCustomColumnsRef) {
                     pendingCustomColumnsRef.current = [];
                   }
-                  const finalNonCustom = backendChanged
-                    ? newCols
-                    : currentNonCustom;
+                  let finalNonCustom;
+                  if (idSetChanged) {
+                    const newById = new Map(newCols.map((nc) => [nc.id, nc]));
+                    const seen = new Set();
+                    const kept = currentNonCustom
+                      .filter((cc) => newById.has(cc.id))
+                      .map((cc) => {
+                        seen.add(cc.id);
+                        return newById.get(cc.id);
+                      });
+                    const added = newCols.filter((nc) => !seen.has(nc.id));
+                    finalNonCustom = [...kept, ...added];
+                  } else {
+                    finalNonCustom = currentNonCustom;
+                  }
                   setColumns(
                     allCustom.length > 0
                       ? [...finalNonCustom, ...allCustom]
@@ -289,7 +307,7 @@ const SessionGrid = React.forwardRef(
                   return updateObjRef.current?.[column.field] ?? true;
                 }
 
-                const columnConfig = (res?.config || []).find(
+                const columnConfig = (newCols || []).find(
                   (config) => config.id === column.field,
                 );
                 return columnConfig ? columnConfig.isVisible : true;
@@ -436,7 +454,7 @@ const SessionGrid = React.forwardRef(
                   userTraceRowHeightMapping.Short.height
                 }
                 statusBar={statusBar}
-                rowSelection={{ mode: "multiRow" }}
+                rowSelection={{ mode: "multiRow", enableClickSelection: false }}
                 className="clean-data-table"
                 theme={agTheme}
                 rowModelType="serverSide"
@@ -448,7 +466,6 @@ const SessionGrid = React.forwardRef(
                 suppressServerSideFullWidthLoadingRow={true}
                 serverSideInitialRowCount={DATASET_ROWS_LIMIT}
                 defaultColDef={defaultColDef}
-                suppressRowClickSelection={true}
                 rowStyle={{ cursor: "pointer" }}
                 onRowClicked={onRowClicked}
                 onColumnMoved={onColumnMoved}

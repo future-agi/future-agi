@@ -76,7 +76,6 @@ const TrialItems = ({ optimizationId, trialId }) => {
       filter: false,
       resizable: true,
       suppressMenu: true,
-      suppressMultiSort: true,
       //   cellStyle: {
       //     lineHeight: 1.5,
       //     padding: "8px",
@@ -88,8 +87,8 @@ const TrialItems = ({ optimizationId, trialId }) => {
   );
 
   const columnDefs = useMemo(() => {
-    return getTrialItemsColumnConfig(trialItems?.columnConfig);
-  }, [trialItems?.columnConfig]);
+    return getTrialItemsColumnConfig(trialItems?.column_config);
+  }, [trialItems?.column_config]);
 
   return (
     <Box

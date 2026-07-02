@@ -1,8 +1,9 @@
 """Billing Temporal activities and schedules.
 
-Budget catch-up workflow runs every 15 minutes to evaluate budgets
-that were missed by the consumer (e.g., consumer was down, budget created after threshold crossed).
-Hourly Stripe usage reporting + daily dunning checks. The consumer workflow runs as a long-lived workflow (not a schedule).
+Schedules: budget catch-up (15 min), dunning (daily), monthly closing
+(``0 0 1 * *``). Meter events fire at invoice-close inside the monthly
+closing activity — no hourly catch-up. The usage consumer is a separate
+long-lived workflow, not a schedule.
 """
 
 from datetime import datetime, timezone
@@ -83,13 +84,6 @@ BILLING_SCHEDULES: List[ScheduleConfig] = [
         interval_seconds=900,
         queue="default",
         description="Evaluate budgets missed by consumer (every 15 min)",
-    ),
-    ScheduleConfig(
-        schedule_id="stripe-usage-hourly",
-        activity_name="report_stripe_usage_activity",
-        interval_seconds=3600,
-        queue="default",
-        description="Report pre-calculated usage costs to Stripe (hourly)",
     ),
     ScheduleConfig(
         schedule_id="dunning-checks-daily",

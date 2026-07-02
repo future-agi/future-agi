@@ -28,7 +28,7 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
-import { fCurrency } from "src/utils/format-number";
+import { fCurrency, fUsage } from "src/utils/format-number";
 import UsageChart from "./UsageChart";
 import WorkspaceBreakdown from "./WorkspaceBreakdown";
 
@@ -64,14 +64,71 @@ const DIMENSION_CONFIG = {
   },
 };
 
-function formatUsage(value, unit) {
-  if (value == null) return `0 ${unit}`;
-  if (value === 0) return `0 ${unit}`;
-  if (value >= 1e9) return `${(value / 1e9).toFixed(1)}B ${unit}`;
-  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M ${unit}`;
-  if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K ${unit}`;
-  if (Number.isInteger(value)) return `${value.toLocaleString()} ${unit}`;
-  return `${value.toFixed(1)} ${unit}`;
+function getSingularUnit(unit) {
+  if (!unit) return "unit";
+  if (/^[A-Z]+$/.test(unit)) return unit;
+  return unit.endsWith("s") ? unit.slice(0, -1) : unit;
+}
+
+function formatTierRate(rateStr) {
+  if (rateStr == null) return "$0";
+  const num = parseFloat(String(rateStr).replace(/[^0-9.-]/g, ""));
+  if (!Number.isFinite(num) || num === 0) return "$0";
+  return fCurrency(num, true);
+}
+
+const DISCRETE_UNITS = new Set(["events", "requests", "hits", "tokens"]);
+
+function isDiscreteUnit(unit) {
+  return DISCRETE_UNITS.has(unit);
+}
+
+function normalizeUsageValue(value, unit) {
+  const numericValue = Number(value || 0);
+  if (!Number.isFinite(numericValue)) return 0;
+  return isDiscreteUnit(unit) ? Math.round(numericValue) : numericValue;
+}
+
+function formatUsageNumber(value, unit, { exact = false } = {}) {
+  const normalizedValue = normalizeUsageValue(value, unit);
+  if (normalizedValue === 0) return "0";
+
+  if (exact) {
+    return normalizedValue.toLocaleString(undefined, {
+      maximumFractionDigits: isDiscreteUnit(unit) ? 0 : 4,
+    });
+  }
+
+  if (normalizedValue >= 1e9) return `${(normalizedValue / 1e9).toFixed(1)}B`;
+  if (normalizedValue >= 1e6) return `${(normalizedValue / 1e6).toFixed(1)}M`;
+  if (normalizedValue >= 1e3) return `${(normalizedValue / 1e3).toFixed(1)}K`;
+  if (Number.isInteger(normalizedValue))
+    return normalizedValue.toLocaleString();
+  return normalizedValue.toFixed(1);
+}
+
+function formatUsage(value, unit, options) {
+  return `${formatUsageNumber(value, unit, options)} ${unit}`;
+}
+
+function parseTierRate(rate) {
+  const rateText = String(rate || "")
+    .split("/")[0]
+    .replace(/[$,\s]/g, "");
+  const parsedRate = Number(rateText);
+  return Number.isFinite(parsedRate) ? parsedRate : 0;
+}
+
+function getFirstPaidTierRate(tierBreakdown = []) {
+  return (
+    tierBreakdown
+      .map((tier) => parseTierRate(tier.rate))
+      .find((rate) => rate > 0) || 0
+  );
+}
+
+function getPeriodAllowance(freeAllowance, periodMonthCount) {
+  return (freeAllowance || 0) * periodMonthCount;
 }
 
 // ── Usage Gauge (multi-segment bar) ───────────────────────────────────────
@@ -213,7 +270,7 @@ function StatCard({ icon, label, value, subtitle, color, tooltip }) {
             <Typography
               variant="caption"
               display="block"
-              color="text.disabled"
+              color="text.secondary"
               noWrap
             >
               {subtitle}
@@ -245,14 +302,35 @@ StatCard.propTypes = {
 
 // ── Dimension Product Card ────────────────────────────────────────────────
 
-function DimensionCard({ dim }) {
+function DimensionCard({ dim, periodCaption, periodMonthCount }) {
   const theme = useTheme();
   const [expanded, setExpanded] = useState(false);
   const config = DIMENSION_CONFIG[dim.key] || {};
   const color = config.color || theme.palette.primary.main;
+  const periodFreeAllowance = getPeriodAllowance(
+    dim.free_allowance,
+    periodMonthCount,
+  );
+  const currentUsage = normalizeUsageValue(dim.current_usage, dim.display_unit);
+  const projectedUsage = normalizeUsageValue(
+    dim.projected_usage,
+    dim.display_unit,
+  );
+  const freeAllowance = normalizeUsageValue(
+    periodFreeAllowance,
+    dim.display_unit,
+  );
+  const showExactCurrentUsage = isDiscreteUnit(dim.display_unit);
+  const displayedCurrentUsage = showExactCurrentUsage
+    ? dim.current_usage_raw ?? dim.current_usage
+    : dim.current_usage;
+  const billableUsage = Math.max(
+    0,
+    normalizeUsageValue(displayedCurrentUsage, dim.display_unit) -
+      freeAllowance,
+  );
 
-  const usagePct =
-    dim.free_allowance > 0 ? (dim.current_usage / dim.free_allowance) * 100 : 0;
+  const usagePct = freeAllowance > 0 ? (currentUsage / freeAllowance) * 100 : 0;
   const isOverFree = usagePct > 100;
 
   return (
@@ -311,7 +389,10 @@ function DimensionCard({ dim }) {
                 )}
                 {dim.free_allowance > 0 && !isOverFree && (
                   <Typography variant="caption" color="text.secondary">
-                    {usagePct.toFixed(0)}% of free tier used
+                    {usagePct > 0 && usagePct < 1
+                      ? `${usagePct.toFixed(2)}`
+                      : usagePct.toFixed(0)}
+                    % of free tier used
                   </Typography>
                 )}
               </Stack>
@@ -323,16 +404,16 @@ function DimensionCard({ dim }) {
               {fCurrency(dim.estimated_cost)}
             </Typography>
             <Typography variant="caption" color="text.secondary">
-              month to date
+              {periodCaption}
             </Typography>
           </Stack>
         </Stack>
 
         {/* Usage gauge */}
         <UsageGauge
-          current={dim.current_usage || 0}
-          projected={dim.projected_usage || 0}
-          freeAllowance={dim.free_allowance || 0}
+          current={currentUsage}
+          projected={projectedUsage}
+          freeAllowance={freeAllowance}
           color={color}
         />
 
@@ -348,13 +429,36 @@ function DimensionCard({ dim }) {
               component="span"
               sx={{ fontWeight: 600, color: "text.primary" }}
             >
-              {formatUsage(dim.current_usage, dim.display_unit)}
+              {formatUsage(displayedCurrentUsage, dim.display_unit, {
+                exact: showExactCurrentUsage,
+              })}
             </Box>
-            {dim.free_allowance > 0 && (
-              <> of {formatUsage(dim.free_allowance, dim.display_unit)} free</>
+            {freeAllowance > 0 && billableUsage <= 0 && (
+              <>
+                {" "}
+                of{" "}
+                {formatUsage(freeAllowance, dim.display_unit, {
+                  exact: showExactCurrentUsage,
+                })}{" "}
+                free
+              </>
+            )}
+            {freeAllowance > 0 && billableUsage > 0 && (
+              <>
+                {" "}
+                (
+                {formatUsageNumber(freeAllowance, dim.display_unit, {
+                  exact: true,
+                })}{" "}
+                free +{" "}
+                {formatUsageNumber(billableUsage, dim.display_unit, {
+                  exact: true,
+                })}{" "}
+                billed)
+              </>
             )}
           </Typography>
-          {dim.projected_usage > dim.current_usage && (
+          {projectedUsage > currentUsage && (
             <Stack direction="row" spacing={0.5} alignItems="center">
               <Iconify
                 icon="mdi:trending-up"
@@ -362,7 +466,7 @@ function DimensionCard({ dim }) {
                 sx={{ color: "text.disabled" }}
               />
               <Typography variant="caption" color="text.disabled">
-                ~{formatUsage(dim.projected_usage, dim.display_unit)} projected
+                ~{formatUsage(projectedUsage, dim.display_unit)} projected
               </Typography>
             </Stack>
           )}
@@ -406,12 +510,49 @@ function DimensionCard({ dim }) {
                   borderColor: "divider",
                 }}
               >
+                <Box
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: "1fr 120px 140px 100px",
+                    columnGap: 2,
+                    pb: 0.75,
+                    mb: 0.25,
+                    borderBottom: "1px solid",
+                    borderColor: "divider",
+                  }}
+                >
+                  <Typography variant="overline" color="text.secondary">
+                    {`Range${dim.display_unit ? ` (${dim.display_unit})` : ""}`}
+                  </Typography>
+                  <Typography
+                    variant="overline"
+                    color="text.secondary"
+                    textAlign="right"
+                  >
+                    Used
+                  </Typography>
+                  <Typography
+                    variant="overline"
+                    color="text.secondary"
+                    textAlign="right"
+                  >
+                    Rate
+                  </Typography>
+                  <Typography
+                    variant="overline"
+                    color="text.secondary"
+                    textAlign="right"
+                  >
+                    Cost
+                  </Typography>
+                </Box>
                 {dim.tier_breakdown.map((tier, i) => (
-                  <Stack
+                  <Box
                     key={i}
-                    direction="row"
-                    justifyContent="space-between"
                     sx={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr 120px 140px 100px",
+                      columnGap: 2,
                       py: 0.75,
                       borderBottom:
                         i < dim.tier_breakdown.length - 1
@@ -423,15 +564,29 @@ function DimensionCard({ dim }) {
                     <Typography variant="caption" color="text.secondary">
                       {tier.range}
                     </Typography>
-                    <Stack direction="row" spacing={2}>
-                      <Typography variant="caption" color="text.secondary">
-                        {tier.rate}/unit
-                      </Typography>
-                      <Typography variant="caption" fontWeight={600}>
-                        {fCurrency(tier.cost)}
-                      </Typography>
-                    </Stack>
-                  </Stack>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ textAlign: "right" }}
+                    >
+                      {fUsage(tier.usage, dim.display_unit)}
+                    </Typography>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ textAlign: "right" }}
+                    >
+                      {formatTierRate(tier.rate)}/
+                      {getSingularUnit(dim.display_unit)}
+                    </Typography>
+                    <Typography
+                      variant="caption"
+                      fontWeight={600}
+                      sx={{ textAlign: "right" }}
+                    >
+                      {fCurrency(tier.cost, true)}
+                    </Typography>
+                  </Box>
                 ))}
               </Box>
             </Collapse>
@@ -446,6 +601,7 @@ const dimensionPropType = PropTypes.shape({
   key: PropTypes.string,
   display_name: PropTypes.string,
   current_usage: PropTypes.number,
+  current_usage_raw: PropTypes.number,
   projected_usage: PropTypes.number,
   free_allowance: PropTypes.number,
   estimated_cost: PropTypes.number,
@@ -461,6 +617,8 @@ const dimensionPropType = PropTypes.shape({
 
 DimensionCard.propTypes = {
   dim: dimensionPropType.isRequired,
+  periodCaption: PropTypes.string.isRequired,
+  periodMonthCount: PropTypes.number.isRequired,
 };
 
 // ── Legend ─────────────────────────────────────────────────────────────────
@@ -564,6 +722,11 @@ const TIME_RANGES = [
   { value: "12", label: "12M" },
 ];
 
+function getPeriodCaption(rangeValue) {
+  if (rangeValue === "current") return "month to date";
+  return `last ${rangeValue} months`;
+}
+
 function getPeriodRange(rangeValue) {
   const now = new Date();
   const end = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -576,6 +739,12 @@ function getPeriodRange(rangeValue) {
   };
 }
 
+function getPeriodMonthCount(rangeValue) {
+  if (rangeValue === "current") return 1;
+  const months = parseInt(rangeValue, 10);
+  return Number.isFinite(months) ? months : 1;
+}
+
 // ── Main Component ────────────────────────────────────────────────────────
 
 export default function UsageSummaryV2() {
@@ -585,6 +754,10 @@ export default function UsageSummaryV2() {
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   const periodParams = useMemo(() => getPeriodRange(timeRange), [timeRange]);
+  const periodMonthCount = useMemo(
+    () => getPeriodMonthCount(timeRange),
+    [timeRange],
+  );
 
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
@@ -637,19 +810,17 @@ export default function UsageSummaryV2() {
 
   const freeTierSavings = useMemo(() => {
     if (!overview?.dimensions) return 0;
-    // Sum what free usage would have cost at tier-1 rates
     return overview.dimensions.reduce((sum, dim) => {
+      const paidTierRate = getFirstPaidTierRate(dim.tier_breakdown);
+      if (!paidTierRate) return sum;
+
       const freeUsed = Math.min(
         dim.current_usage || 0,
-        dim.free_allowance || 0,
+        getPeriodAllowance(dim.free_allowance, periodMonthCount),
       );
-      if (freeUsed > 0 && dim.tier_breakdown?.[0]?.rate) {
-        const rateStr = dim.tier_breakdown[0].rate.replace(/[^0-9.]/g, "");
-        return sum + freeUsed * parseFloat(rateStr || "0");
-      }
-      return sum;
+      return freeUsed > 0 ? sum + freeUsed * paidTierRate : sum;
     }, 0);
-  }, [overview]);
+  }, [overview, periodMonthCount]);
 
   const activeDimensions = useMemo(() => {
     if (!overview?.dimensions) return 0;
@@ -904,7 +1075,12 @@ export default function UsageSummaryV2() {
 
       <Stack spacing={2}>
         {overview?.dimensions?.map((dim) => (
-          <DimensionCard key={dim.key} dim={dim} />
+          <DimensionCard
+            key={dim.key}
+            dim={dim}
+            periodCaption={getPeriodCaption(timeRange)}
+            periodMonthCount={periodMonthCount}
+          />
         ))}
       </Stack>
 
@@ -927,7 +1103,7 @@ export default function UsageSummaryV2() {
           <Typography variant="h6" color="text.secondary" gutterBottom>
             No usage data yet
           </Typography>
-          <Typography variant="body2" color="text.disabled">
+          <Typography variant="body2" color="text.secondary">
             Start using FutureAGI features and your usage will appear here.
           </Typography>
         </Paper>
@@ -1014,7 +1190,7 @@ function DimensionDetail({ dimensions, period, periodEnd }) {
           </Typography>
           <Stack direction="row" spacing={1} alignItems="center">
             <Typography variant="caption" color="text.disabled">
-              {formatUsage(selected.current_usage, selected.display_unit)} total
+              {fUsage(selected.current_usage, selected.display_unit)} total
             </Typography>
           </Stack>
         </Stack>

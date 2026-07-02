@@ -4,6 +4,10 @@ import time
 
 import structlog
 from django.db.models import Case, Prefetch, When
+from django.http import Http404
+from django.shortcuts import get_object_or_404
+from drf_yasg import openapi
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.exceptions import NotFound
 from rest_framework.generics import CreateAPIView, ListAPIView
 from rest_framework.permissions import IsAuthenticated
@@ -22,6 +26,24 @@ from model_hub.models.column_config import ColumnConfig
 from model_hub.models.conversations import Message, Node
 from model_hub.models.metric import Metric
 from model_hub.serializers.column_config import ColumnConfigSerializer
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    ModelHubEmptyRequestSerializer,
+    OptimizeDatasetColumnConfigResponseSerializer,
+    OptimizeDatasetColumnConfigUpdateRequestSerializer,
+    OptimizeDatasetColumnConfigUpdateResponseSerializer,
+    OptimizeDatasetCreateResponseSerializer,
+    OptimizeDatasetDetailResponseSerializer,
+    OptimizeDatasetKnowledgeBaseCreateResponseSerializer,
+    OptimizeDatasetKnowledgeBaseDetailResponseSerializer,
+    OptimizeDatasetKnowledgeBaseListResponseSerializer,
+    OptimizeDatasetKnowledgeBaseRequestSerializer,
+    OptimizeDatasetListQuerySerializer,
+    OptimizeDatasetMutationRequestSerializer,
+    OptimizeDatasetPageRequestSerializer,
+    OptimizeDatasetPaginatedResponseSerializer,
+    OptimizeDatasetTemplateResultsResponseSerializer,
+)
 from model_hub.serializers.optimize_dataset import (
     OptimizeDatasetKbSerializer,
     OptimizeDatasetSerializer,
@@ -34,34 +56,120 @@ from model_hub.utils.optimize import (
     get_right_answer_columns,
 )
 from model_hub.utils.utils import check_valid_metrics
+from model_hub.utils.workspace_scope import (
+    request_organization,
+    request_workspace,
+    scoped_ai_model_queryset,
+    scoped_column_config_for_identifier,
+    scoped_optimize_dataset_queryset,
+)
 from tfc.temporal import temporal_activity
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.pagination import ExtendedPageNumberPagination
+from tfc.utils.types import Environments
 
 logger = structlog.get_logger(__name__)
-from tfc.utils.pagination import ExtendedPageNumberPagination
+
+
+def _clickhouse_environment_value(environment):
+    return Environments.convert_to_type(environment) or environment
+
+
+OPTIMIZE_DATASET_DYNAMIC_ROW_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    properties={
+        "id": openapi.Schema(type=openapi.TYPE_STRING),
+        "input": openapi.Schema(type=openapi.TYPE_STRING),
+        "output": openapi.Schema(type=openapi.TYPE_STRING),
+        "right_answer": openapi.Schema(type=openapi.TYPE_STRING),
+    },
+    additional_properties=openapi.Schema(
+        type=openapi.TYPE_NUMBER,
+        description="Metric score column keyed by metric id and score variant.",
+    ),
+)
+OPTIMIZE_DATASET_DYNAMIC_ROWS_RESPONSE_SCHEMA = openapi.Schema(
+    type=openapi.TYPE_OBJECT,
+    properties={
+        "results": openapi.Schema(
+            type=openapi.TYPE_ARRAY,
+            items=OPTIMIZE_DATASET_DYNAMIC_ROW_SCHEMA,
+        ),
+        "count": openapi.Schema(type=openapi.TYPE_INTEGER),
+        "total_pages": openapi.Schema(type=openapi.TYPE_INTEGER),
+        "current_page": openapi.Schema(type=openapi.TYPE_INTEGER),
+        "next": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+        "previous": openapi.Schema(type=openapi.TYPE_BOOLEAN),
+        "message": openapi.Schema(type=openapi.TYPE_STRING),
+    },
+    required=[
+        "results",
+        "count",
+        "total_pages",
+        "current_page",
+        "next",
+        "previous",
+        "message",
+    ],
+)
+
+
+def _validate_request(serializer_class, data):
+    serializer = serializer_class(data=data)
+    if not serializer.is_valid():
+        return None, Response(serializer.errors, status=400)
+    return serializer.validated_data, None
+
+
+def _execute_clickhouse_read_or_empty(clickhouse_client, query, *, operation):
+    try:
+        return clickhouse_client.execute(query)
+    except Exception as exc:
+        logger.warning(
+            "legacy_optimize_dataset_clickhouse_read_failed",
+            operation=operation,
+            error=str(exc),
+        )
+        return []
 
 
 class OptimizedDatasetView(APIView):
     permission_classes = [IsAuthenticated]
+    _gm = GeneralMethods()
 
+    @validated_request(
+        query_serializer=OptimizeDatasetListQuerySerializer,
+        responses={
+            200: OptimizeDatasetPaginatedResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def get(self, request, model_id, *args, **kwarg):
         try:
-            # sort_by = request.query_params.get("sort_by")
-            filters = request.query_params.get("filters", [])
+            filters = request.validated_query_data["filters"]
 
-            model = AIModel.objects.filter(id=model_id)
+            model = get_object_or_404(
+                scoped_ai_model_queryset(request).only("id"),
+                id=model_id,
+            )
 
-            filter_dict = {"model": model[0]}
-            for filter in filters:
-                if filter["operator"] in ["between"]:
-                    filter_dict[f'{filter["key"]}__gte'] = filter["value"][0]
-                    filter_dict[f'{filter["key"]}__lte'] = filter["value"][1]
-                elif filter["dataType"] in ["equal", ""]:
-                    filter_dict[f'{filter["key"]}'] = filter["value"][0]
+            filter_dict = {"model": model}
+            for filter_item in filters:
+                filter_key = filter_item["key"]
+                filter_value = filter_item["value"]
+                if filter_item["operator"] == "between":
+                    filter_dict[f"{filter_key}__gte"] = filter_value[0]
+                    filter_dict[f"{filter_key}__lte"] = filter_value[1]
+                else:
+                    filter_dict[filter_key] = filter_value[0]
 
-            optimized_dataset_queryset = OptimizeDataset.objects.filter(**filter_dict)
+            optimized_dataset_queryset = scoped_optimize_dataset_queryset(
+                request
+            ).filter(**filter_dict)
 
             paginator = ExtendedPageNumberPagination()
             paginator.page_size = 15
@@ -72,26 +180,29 @@ class OptimizedDatasetView(APIView):
             serializer = OptimizeDatasetSerializer(result_page, many=True)
             return paginator.get_paginated_response(serializer.data)
 
+        except (AIModel.DoesNotExist, Http404):
+            raise NotFound("AI model not found.") from None
         except NotFound:
             raise
         except Exception as e:
             logger.error(e)
-            return Response(
-                {
-                    "status": "Failed",
-                    "message": str(e),
-                    "data": None,
-                },
-                status=500,
-            )
+            return GeneralMethods().internal_server_error_response(str(e))
 
-    def post(self, request, *args, **kwargs):
+    @validated_request(
+        request_serializer=OptimizeDatasetMutationRequestSerializer,
+        responses={
+            200: OptimizeDatasetCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
+    def post(self, request, model_id, *args, **kwargs):
         try:
-            data = request.data
+            data = request.validated_data
             name = data.get("name")
             start_date = data.get("start_date").split("T")[0]
             end_date = data.get("end_date").split("T")[0]
-            model_id = data.get("model")
+            payload_model_id = data.get("model")
             optimize_type = data.get("optimize_type")
             environment = data.get("environment")
             version = data.get("version")
@@ -99,7 +210,13 @@ class OptimizedDatasetView(APIView):
             prompt = data.get("prompt")
             variables = data.get("variables")
 
-            model = AIModel.objects.only("id").get(id=model_id)
+            if str(payload_model_id) != str(model_id):
+                return self._gm.bad_request("Payload model must match the URL model.")
+
+            model = get_object_or_404(
+                scoped_ai_model_queryset(request).only("id"),
+                id=model_id,
+            )
 
             if optimize_type == OptimizeDataset.OptimizeType.TEMPLATE:
                 pass
@@ -114,13 +231,17 @@ class OptimizedDatasetView(APIView):
                     if optimize_type == OptimizeDataset.OptimizeType.TEMPLATE
                     else "EVALUATE_ANSWER"
                 ),
-                model_id,
+                str(model.id),
             )
 
             if not valid:
-                return self.gm.bad_request(get_error_message("IN_VALID_METRICS"))
+                return self._gm.bad_request(get_error_message("IN_VALID_METRICS"))
 
-            metrics_list = Metric.objects.filter(id__in=metrics)
+            metrics_list = Metric.objects.filter(model=model, id__in=metrics)
+            if metrics_list.count() != len(set(metrics)):
+                return self._gm.bad_request(
+                    "Metrics are not accessible for this model."
+                )
 
             optim_dict = {
                 "name": name,
@@ -133,6 +254,8 @@ class OptimizedDatasetView(APIView):
                 "prompt": prompt,
                 "variables": variables,
                 "status": OptimizeDataset.StatusType.RUNNING.value,
+                "organization": request_organization(request),
+                "workspace": request_workspace(request),
             }
 
             optim_obj = OptimizeDataset(**optim_dict)
@@ -197,27 +320,28 @@ class OptimizedDatasetView(APIView):
                 },
                 status=200,
             )
+        except Http404:
+            raise NotFound("AI model not found.") from None
         except Exception as e:
             logger.error(e)
-            return Response(
-                {
-                    "status": "Failed",
-                    "message": str(e),
-                    "data": None,
-                },
-                status=500,
-            )
+            return GeneralMethods().internal_server_error_response(str(e))
 
 
 class OptimizeDetailView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: OptimizeDatasetDetailResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(self, request, model_id, optimization_id):
-        AIModel.objects.filter(id=model_id)
-
-        optimized_dataset = OptimizeDataset.objects.filter(
+        model = get_object_or_404(scoped_ai_model_queryset(request), id=model_id)
+        optimized_dataset = get_object_or_404(
+            scoped_optimize_dataset_queryset(request).filter(model=model),
             id=optimization_id,
-        ).first()
+        )
 
         serializer = OptimizeDatasetSerializer(optimized_dataset)
 
@@ -250,14 +374,7 @@ class KOptimizedPromptTemplateView(APIView):
             )
 
         except Exception as e:
-            return Response(
-                {
-                    "status": "Failed",
-                    "message": str(e),
-                    "data": None,
-                },
-                status=500,
-            )
+            return GeneralMethods().internal_server_error_response(str(e))
 
 
 class RightAnswerResultsView(APIView):
@@ -431,15 +548,27 @@ class RightAnswerResultsView(APIView):
 
         return result
 
+    @validated_request(
+        request_serializer=OptimizeDatasetPageRequestSerializer,
+        responses={
+            200: OPTIMIZE_DATASET_DYNAMIC_ROWS_RESPONSE_SCHEMA,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, model_id, optimization_id):
-        optimization = OptimizeDataset.objects.prefetch_related("metrics").get(
-            id=optimization_id
+        payload = request.validated_data
+
+        model = get_object_or_404(scoped_ai_model_queryset(request), id=model_id)
+        optimization = get_object_or_404(
+            scoped_optimize_dataset_queryset(request).filter(model=model),
+            id=optimization_id,
         )
 
-        page = int(request.data["page"]) or 1
-        limit = int(request.data["limit"]) or 10
+        page = payload["page"]
+        limit = payload["limit"]
         offset = (int(page) - 1) * limit
-        environment = optimization.environment
+        environment = _clickhouse_environment_value(optimization.environment)
         version = optimization.version
         start_date = optimization.start_date.strftime("%Y-%m-%d %H:%M:%S")
         end_date = optimization.end_date.strftime("%Y-%m-%d %H:%M:%S")
@@ -449,7 +578,8 @@ class RightAnswerResultsView(APIView):
         # sort_key = request.data["sort_key"]
 
         clickhouse_client = ClickHouseClientSingleton()
-        raw_data_points = clickhouse_client.execute(
+        raw_data_points = _execute_clickhouse_read_or_empty(
+            clickhouse_client,
             self.construct_query(
                 model_id,
                 environment,
@@ -458,16 +588,19 @@ class RightAnswerResultsView(APIView):
                 end_date,
                 limit,
                 offset,
-            )
+            ),
+            operation="right_answers_rows",
         )
 
-        data_points_count = clickhouse_client.execute(
+        data_points_count = _execute_clickhouse_read_or_empty(
+            clickhouse_client,
             self.construct_count_query(
                 model_id, environment, version, start_date, end_date
-            )
+            ),
+            operation="right_answers_count",
         )
 
-        total_count = int(data_points_count[0][0])
+        total_count = int(data_points_count[0][0]) if data_points_count else 0
 
         total_pages = (total_count + limit - 1) // limit
 
@@ -650,12 +783,12 @@ class TemplateResultsView(APIView):
 
         for i in range(num_templates):
             score_columns.append(
-                f"arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'optimized_{optimization_id}_{metric_id}_{i}_score')) AS temp{i+1}_score"
+                f"arrayElement(EvalResults.Value, indexOf(EvalResults.Key, 'optimized_{optimization_id}_{metric_id}_{i}_score')) AS temp{i + 1}_score"
             )
             score_conditions.append(
-                f"if(isNotNull(temp{i+1}_score) AND temp{i+1}_score != '', toFloat32(temp{i+1}_score), -1) AS t{i+1}_score"
+                f"if(isNotNull(temp{i + 1}_score) AND temp{i + 1}_score != '', toFloat32(temp{i + 1}_score), -1) AS t{i + 1}_score"
             )
-            avg_scores.append(f"AVG(t{i+1}_score) AS avg_t{i+1}_score")
+            avg_scores.append(f"AVG(t{i + 1}_score) AS avg_t{i + 1}_score")
 
         # Include the original score column and condition
         score_columns.append(
@@ -669,27 +802,37 @@ class TemplateResultsView(APIView):
         # Construct the SQL query dynamically
         query = f"""
         WITH
-            {', '.join(score_columns)},
-            {', '.join(score_conditions)}
+            {", ".join(score_columns)},
+            {", ".join(score_conditions)}
         SELECT
-            {', '.join(avg_scores)}
+            {", ".join(avg_scores)}
         FROM events
         WHERE AIModel = '{model_id}'
         AND ModelVersion = '{version}'
         AND Environment = {environment}
         AND has(Features.Key, 'node_id')
         AND deleted = 0
-        AND {' AND '.join([f"t{i+1}_score != -1" for i in range(num_templates)])}
+        AND {" AND ".join([f"t{i + 1}_score != -1" for i in range(num_templates)])}
         AND og_score != -1
         GROUP BY AIModel
         """
 
         return query
 
+    @validated_request(
+        request_serializer=ModelHubEmptyRequestSerializer,
+        responses={
+            200: OptimizeDatasetTemplateResultsResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, model_id, optimization_id, *args, **kwarg):
         try:
-            optimization = OptimizeDataset.objects.prefetch_related("metrics").get(
-                id=optimization_id
+            model = get_object_or_404(scoped_ai_model_queryset(request), id=model_id)
+            optimization = get_object_or_404(
+                scoped_optimize_dataset_queryset(request).filter(model=model),
+                id=optimization_id,
             )
 
             num_templates = len(optimization.optimized_k_prompts)
@@ -701,13 +844,20 @@ class TemplateResultsView(APIView):
                 dynamic_query = self.construct_dynamic_query(
                     model_id,
                     optimization_id,
-                    optimization.environment,
+                    _clickhouse_environment_value(optimization.environment),
                     optimization.version,
                     metric.id,
                     num_templates,
                 )
 
-                res = clickhouse_client.execute(dynamic_query)[0]
+                query_results = _execute_clickhouse_read_or_empty(
+                    clickhouse_client,
+                    dynamic_query,
+                    operation="prompt_template_result",
+                )
+                if not query_results:
+                    continue
+                res = query_results[0]
 
                 scores = res[0:-1]
                 og_score = res[-1]
@@ -727,15 +877,10 @@ class TemplateResultsView(APIView):
                 },
                 status=200,
             )
+        except Http404:
+            raise NotFound("Optimization not found.") from None
         except Exception as e:
-            return Response(
-                {
-                    "status": "Failed",
-                    "message": str(e),
-                    "data": None,
-                },
-                status=500,
-            )
+            return GeneralMethods().internal_server_error_response(str(e))
 
 
 class TemplateExploreView(APIView):
@@ -909,15 +1054,27 @@ class TemplateExploreView(APIView):
 
         return result
 
+    @validated_request(
+        request_serializer=OptimizeDatasetPageRequestSerializer,
+        responses={
+            200: OPTIMIZE_DATASET_DYNAMIC_ROWS_RESPONSE_SCHEMA,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, model_id, optimization_id):
-        optimization = OptimizeDataset.objects.prefetch_related("metrics").get(
-            id=optimization_id
+        payload = request.validated_data
+
+        model = get_object_or_404(scoped_ai_model_queryset(request), id=model_id)
+        optimization = get_object_or_404(
+            scoped_optimize_dataset_queryset(request).filter(model=model),
+            id=optimization_id,
         )
 
-        page = int(request.data["page"]) or 1
-        limit = int(request.data["limit"]) or 10
+        page = payload["page"]
+        limit = payload["limit"]
         offset = (int(page) - 1) * limit
-        environment = optimization.environment
+        environment = _clickhouse_environment_value(optimization.environment)
         version = optimization.version
         start_date = optimization.start_date.strftime("%Y-%m-%d %H:%M:%S")
         end_date = optimization.end_date.strftime("%Y-%m-%d %H:%M:%S")
@@ -928,7 +1085,8 @@ class TemplateExploreView(APIView):
         # sort_key = request.data["sort_key"]
 
         clickhouse_client = ClickHouseClientSingleton()
-        raw_data_points = clickhouse_client.execute(
+        raw_data_points = _execute_clickhouse_read_or_empty(
+            clickhouse_client,
             self.construct_query(
                 model_id,
                 environment,
@@ -937,16 +1095,19 @@ class TemplateExploreView(APIView):
                 end_date,
                 limit,
                 offset,
-            )
+            ),
+            operation="prompt_template_explore_rows",
         )
 
-        data_points_count = clickhouse_client.execute(
+        data_points_count = _execute_clickhouse_read_or_empty(
+            clickhouse_client,
             self.construct_count_query(
                 model_id, environment, version, start_date, end_date
-            )
+            ),
+            operation="prompt_template_explore_count",
         )
 
-        total_count = int(data_points_count[0][0])
+        total_count = int(data_points_count[0][0]) if data_points_count else 0
 
         total_pages = (total_count + limit - 1) // limit
 
@@ -1059,20 +1220,30 @@ class TemplateExploreView(APIView):
 class OptimizeDatasetColumnConfig(APIView):
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: OptimizeDatasetColumnConfigResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(self, request, model_id):
-        user_organization = (
-            getattr(self.request, "organization", None)
-            or self.request.user.organization
-        )
+        get_object_or_404(scoped_ai_model_queryset(request), id=model_id)
+        user_organization = request_organization(request)
+        user_workspace = request_workspace(request)
 
-        column_config, created = ColumnConfig.objects.get_or_create(
-            table_name=ColumnConfig.TableName.OPTIMIZE_DATASET,
-            organization=user_organization,
-            identifier=f"{model_id}",
+        column_config = scoped_column_config_for_identifier(
+            request,
+            ColumnConfig.TableName.OPTIMIZE_DATASET,
+            f"{model_id}",
         )
-        if created:
-            column_config.columns = optimize_table_columns
-            column_config.save()
+        if column_config is None:
+            column_config = ColumnConfig.objects.create(
+                table_name=ColumnConfig.TableName.OPTIMIZE_DATASET,
+                organization=user_organization,
+                workspace=user_workspace,
+                identifier=f"{model_id}",
+                columns=optimize_table_columns,
+            )
 
         column_serializer = ColumnConfigSerializer(column_config)
 
@@ -1080,19 +1251,36 @@ class OptimizeDatasetColumnConfig(APIView):
             {"columns": column_serializer.data["columns"], "status": "Success"}
         )
 
+    @validated_request(
+        request_serializer=OptimizeDatasetColumnConfigUpdateRequestSerializer,
+        responses={
+            200: OptimizeDatasetColumnConfigUpdateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, model_id):
-        user_organization = (
-            getattr(self.request, "organization", None)
-            or self.request.user.organization
-        )
+        payload = request.validated_data
 
-        column_config, created = ColumnConfig.objects.get_or_create(
-            table_name=ColumnConfig.TableName.OPTIMIZE_DATASET,
-            organization=user_organization,
-            identifier=f"{model_id}",
-        )
+        get_object_or_404(scoped_ai_model_queryset(request), id=model_id)
+        user_organization = request_organization(request)
+        user_workspace = request_workspace(request)
 
-        column_config.columns = request.data["columns"]
+        column_config = scoped_column_config_for_identifier(
+            request,
+            ColumnConfig.TableName.OPTIMIZE_DATASET,
+            f"{model_id}",
+        )
+        if column_config is None:
+            column_config = ColumnConfig.objects.create(
+                table_name=ColumnConfig.TableName.OPTIMIZE_DATASET,
+                organization=user_organization,
+                workspace=user_workspace,
+                identifier=f"{model_id}",
+                columns=[],
+            )
+
+        column_config.columns = payload["columns"]
 
         column_config.save()
 
@@ -1129,32 +1317,44 @@ class OptimizeDatasetRightColumnConfig(APIView):
 
         return existing_cols
 
+    @swagger_auto_schema(
+        responses={
+            200: OptimizeDatasetColumnConfigResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(
         self,
         request,
         model_id,
         optimization_id,
     ):
-        user_organization = (
-            getattr(self.request, "organization", None)
-            or self.request.user.organization
-        )
+        model = get_object_or_404(scoped_ai_model_queryset(request), id=model_id)
+        user_organization = request_organization(request)
+        user_workspace = request_workspace(request)
 
-        optimization = optimization = OptimizeDataset.objects.prefetch_related(
-            "metrics"
-        ).get(id=optimization_id)
+        optimization = get_object_or_404(
+            scoped_optimize_dataset_queryset(request).filter(model=model),
+            id=optimization_id,
+        )
 
         metrics = optimization.metrics.all()
 
-        column_config, created = ColumnConfig.objects.get_or_create(
-            table_name=ColumnConfig.TableName.OPTIMIZE_DATASET_RIGHT_ANSWER,
-            organization=user_organization,
-            identifier=f"{model_id}-{optimization_id}-right-answers-explore",
+        identifier = f"{model_id}-{optimization_id}-right-answers-explore"
+        column_config = scoped_column_config_for_identifier(
+            request,
+            ColumnConfig.TableName.OPTIMIZE_DATASET_RIGHT_ANSWER,
+            identifier,
         )
-        if created:
+        if column_config is None:
             columns = get_right_answer_columns(metrics)
-            column_config.columns = columns
-            column_config.save()
+            column_config = ColumnConfig.objects.create(
+                table_name=ColumnConfig.TableName.OPTIMIZE_DATASET_RIGHT_ANSWER,
+                organization=user_organization,
+                workspace=user_workspace,
+                identifier=identifier,
+                columns=columns,
+            )
         else:
             column_config.columns = self.merge_metric_cols(
                 column_config.columns, metrics
@@ -1166,24 +1366,46 @@ class OptimizeDatasetRightColumnConfig(APIView):
             {"columns": column_serializer.data["columns"], "status": "Success"}
         )
 
+    @validated_request(
+        request_serializer=OptimizeDatasetColumnConfigUpdateRequestSerializer,
+        responses={
+            200: OptimizeDatasetColumnConfigUpdateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(
         self,
         request,
         model_id,
         optimization_id,
     ):
-        user_organization = (
-            getattr(self.request, "organization", None)
-            or self.request.user.organization
-        )
+        payload = request.validated_data
 
-        column_config, created = ColumnConfig.objects.get_or_create(
-            table_name=ColumnConfig.TableName.OPTIMIZE_DATASET_RIGHT_ANSWER,
-            organization=user_organization,
-            identifier=f"{model_id}-{optimization_id}-right-answers-explore",
+        model = get_object_or_404(scoped_ai_model_queryset(request), id=model_id)
+        get_object_or_404(
+            scoped_optimize_dataset_queryset(request).filter(model=model),
+            id=optimization_id,
         )
+        user_organization = request_organization(request)
+        user_workspace = request_workspace(request)
 
-        column_config.columns = request.data["columns"]
+        identifier = f"{model_id}-{optimization_id}-right-answers-explore"
+        column_config = scoped_column_config_for_identifier(
+            request,
+            ColumnConfig.TableName.OPTIMIZE_DATASET_RIGHT_ANSWER,
+            identifier,
+        )
+        if column_config is None:
+            column_config = ColumnConfig.objects.create(
+                table_name=ColumnConfig.TableName.OPTIMIZE_DATASET_RIGHT_ANSWER,
+                organization=user_organization,
+                workspace=user_workspace,
+                identifier=identifier,
+                columns=[],
+            )
+
+        column_config.columns = payload["columns"]
 
         column_config.save()
 
@@ -1204,7 +1426,7 @@ class OptimizeDatasetPromptExploreColumnConfig(APIView):
                     # Add the new metric if it doesn't exist in the input array
                     existing_cols.append(
                         {
-                            "label": f"(T{idx+1}) {metric.name}",
+                            "label": f"(T{idx + 1}) {metric.name}",
                             "value": f"{str(metric.id)}-{idx}",
                             "enabled": True,
                         }
@@ -1221,34 +1443,46 @@ class OptimizeDatasetPromptExploreColumnConfig(APIView):
 
         return existing_cols
 
+    @swagger_auto_schema(
+        responses={
+            200: OptimizeDatasetColumnConfigResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(
         self,
         request,
         model_id,
         optimization_id,
     ):
-        user_organization = (
-            getattr(self.request, "organization", None)
-            or self.request.user.organization
-        )
+        model = get_object_or_404(scoped_ai_model_queryset(request), id=model_id)
+        user_organization = request_organization(request)
+        user_workspace = request_workspace(request)
 
-        optimization = optimization = OptimizeDataset.objects.prefetch_related(
-            "metrics"
-        ).get(id=optimization_id)
+        optimization = get_object_or_404(
+            scoped_optimize_dataset_queryset(request).filter(model=model),
+            id=optimization_id,
+        )
 
         metrics = optimization.metrics.all()
 
         k_prompts = optimization.optimized_k_prompts or []
 
-        column_config, created = ColumnConfig.objects.get_or_create(
-            table_name=ColumnConfig.TableName.OPTIMIZE_DATASET_PROMPT_TEMPLATE_EXPLORE,
-            organization=user_organization,
-            identifier=f"{model_id}-{optimization_id}-prompt-template-explore",
+        identifier = f"{model_id}-{optimization_id}-prompt-template-explore"
+        column_config = scoped_column_config_for_identifier(
+            request,
+            ColumnConfig.TableName.OPTIMIZE_DATASET_PROMPT_TEMPLATE_EXPLORE,
+            identifier,
         )
-        if created:
+        if column_config is None:
             columns = get_prompt_template_columns(metrics, k_prompts)
-            column_config.columns = columns
-            column_config.save()
+            column_config = ColumnConfig.objects.create(
+                table_name=ColumnConfig.TableName.OPTIMIZE_DATASET_PROMPT_TEMPLATE_EXPLORE,
+                organization=user_organization,
+                workspace=user_workspace,
+                identifier=identifier,
+                columns=columns,
+            )
         else:
             column_config.columns = self.merge_metric_cols(
                 column_config.columns, metrics, k_prompts
@@ -1260,24 +1494,46 @@ class OptimizeDatasetPromptExploreColumnConfig(APIView):
             {"columns": column_serializer.data["columns"], "status": "Success"}
         )
 
+    @validated_request(
+        request_serializer=OptimizeDatasetColumnConfigUpdateRequestSerializer,
+        responses={
+            200: OptimizeDatasetColumnConfigUpdateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(
         self,
         request,
         model_id,
         optimization_id,
     ):
-        user_organization = (
-            getattr(self.request, "organization", None)
-            or self.request.user.organization
-        )
+        payload = request.validated_data
 
-        column_config, created = ColumnConfig.objects.get_or_create(
-            table_name=ColumnConfig.TableName.OPTIMIZE_DATASET_PROMPT_TEMPLATE_EXPLORE,
-            organization=user_organization,
-            identifier=f"{model_id}-{optimization_id}-prompt-template-explore",
+        model = get_object_or_404(scoped_ai_model_queryset(request), id=model_id)
+        get_object_or_404(
+            scoped_optimize_dataset_queryset(request).filter(model=model),
+            id=optimization_id,
         )
+        user_organization = request_organization(request)
+        user_workspace = request_workspace(request)
 
-        column_config.columns = request.data["columns"]
+        identifier = f"{model_id}-{optimization_id}-prompt-template-explore"
+        column_config = scoped_column_config_for_identifier(
+            request,
+            ColumnConfig.TableName.OPTIMIZE_DATASET_PROMPT_TEMPLATE_EXPLORE,
+            identifier,
+        )
+        if column_config is None:
+            column_config = ColumnConfig.objects.create(
+                table_name=ColumnConfig.TableName.OPTIMIZE_DATASET_PROMPT_TEMPLATE_EXPLORE,
+                organization=user_organization,
+                workspace=user_workspace,
+                identifier=identifier,
+                columns=[],
+            )
+
+        column_config.columns = payload["columns"]
 
         column_config.save()
 
@@ -1288,9 +1544,20 @@ class OptimizedDatasetKbView(CreateAPIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=OptimizeDatasetKnowledgeBaseRequestSerializer,
+        responses={
+            200: OptimizeDatasetKnowledgeBaseCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
+    def post(self, request, *args, **kwargs):
+        return self.create(request, *args, **kwargs)
+
     def create(self, request, *args, **kwargs):
         try:
-            data = request.data
+            data = request.validated_data
             name = data.get("name")
             knowledge_base_metrics = data.get("knowledge_base_metrics")
             knowledge_base_filters = data.get("knowledge_base_filters")
@@ -1305,6 +1572,10 @@ class OptimizedDatasetKbView(CreateAPIView):
                 "knowledge_base_metrics": knowledge_base_metrics,
                 "variables": variables,
                 "status": OptimizeDataset.StatusType.RUNNING.value,
+                "organization": request_organization(request),
+                "workspace": request_workspace(request),
+                "environment": OptimizeDataset.EnvTypes.CORPUS,
+                "version": "",
             }
 
             optim_obj = OptimizeDataset(**optim_dict)
@@ -1364,10 +1635,18 @@ class OptimizeDatasetList(ListAPIView):
     serializer_class = OptimizeDatasetKbSerializer
     queryset = OptimizeDataset.objects.all()
 
+    @swagger_auto_schema(
+        responses={
+            200: OptimizeDatasetKnowledgeBaseListResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def list(self, request, *args, **kwargs):
         try:
             # Fetch all OptimizeDataset instances
-            queryset = self.get_queryset()
+            queryset = scoped_optimize_dataset_queryset(request).filter(
+                optimize_type=OptimizeDataset.OptimizeType.RAG_TEMPLATE
+            )
             serializer = self.get_serializer(queryset, many=True)
 
             return self._gm.success_response(serializer.data)
@@ -1382,10 +1661,20 @@ class OptimizeDatasetGet(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: OptimizeDatasetKnowledgeBaseDetailResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(self, request, optim_id, *args, **kwargs):
         try:
-            logger.exception(optim_id)
-            optimize_dataset = OptimizeDataset.objects.filter(id=optim_id).get()
+            optimize_dataset = get_object_or_404(
+                scoped_optimize_dataset_queryset(request).filter(
+                    optimize_type=OptimizeDataset.OptimizeType.RAG_TEMPLATE
+                ),
+                id=optim_id,
+            )
             data = {
                 "name": optimize_dataset.name,
                 "prompt": optimize_dataset.prompt,
@@ -1397,6 +1686,8 @@ class OptimizeDatasetGet(APIView):
             }
 
             return self._gm.success_response(data)
+        except Http404:
+            raise NotFound("Optimization not found.") from None
         except Exception as e:
             logger.exception(f"Error in starting knowledge base optimizer: {str(e)}")
             return self._gm.internal_server_error_response(

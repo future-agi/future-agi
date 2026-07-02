@@ -16,10 +16,14 @@ span IDs, grouped by ``(observation_span_id, label_id)``.
 The three result sets are merged in Python to produce the final response.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
+from tracer.services.clickhouse.v2.id_remap_sql import (
+    remap_left_join,
+    resolved_id_expr,
+)
 
 
 class SpanListQueryBuilder(BaseQueryBuilder):
@@ -38,8 +42,11 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     TABLE = "spans"
     EVAL_TABLE = "tracer_eval_logger"
     ANNOTATION_TABLE = "model_hub_score"
+    # Filter compiler class; the v2 list builder overrides this to the v2
+    # builder so it reads the v2 dimension tables (end_users, etc.).
+    _FILTER_BUILDER_CLS = ClickHouseFilterBuilder
 
-    SORT_FIELD_MAP: Dict[str, str] = {
+    SORT_FIELD_MAP: dict[str, str] = {
         "created_at": "start_time",
         "start_time": "start_time",
         "latency": "latency_ms",
@@ -53,18 +60,19 @@ class SpanListQueryBuilder(BaseQueryBuilder):
 
     def __init__(
         self,
-        project_id: str,
+        project_id: str | None = None,
+        project_ids: list[str] | None = None,
         page_number: int = 0,
         page_size: int = 50,
-        filters: Optional[List[Dict]] = None,
-        sort_params: Optional[List[Dict]] = None,
-        eval_config_ids: Optional[List[str]] = None,
-        annotation_label_ids: Optional[List[str]] = None,
-        end_user_id: Optional[str] = None,
-        project_version_id: Optional[str] = None,
+        filters: list[dict] | None = None,
+        sort_params: list[dict] | None = None,
+        eval_config_ids: list[str] | None = None,
+        annotation_label_ids: list[str] | None = None,
+        end_user_id: str | None = None,
+        project_version_id: str | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(project_id, **kwargs)
+        super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
         self.page_number = page_number
         self.page_size = page_size
         self.filters = filters or []
@@ -78,16 +86,18 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     # Phase 1: Paginated span list
     # ------------------------------------------------------------------
 
-    def build(self) -> Tuple[str, Dict[str, Any]]:
+    def build(self) -> tuple[str, dict[str, Any]]:
         """Build the Phase-1 query for paginated span data."""
         start_date, end_date = self.parse_time_range(self.filters)
         self.params["start_date"] = start_date
         self.params["end_date"] = end_date
 
-        fb = ClickHouseFilterBuilder(
+        fb = self._FILTER_BUILDER_CLS(
             table=self.TABLE,
-            query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
+            query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         self.params.update(extra_params)
@@ -99,7 +109,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             order_clause = "ORDER BY start_time DESC"
 
         offset = self.page_number * self.page_size
-        self.params["limit"] = self.page_size + 1  # +1 for has_more detection
+        self.params["limit"] = self.page_size
         self.params["offset"] = offset
 
         filter_fragment = f"AND {extra_where}" if extra_where else ""
@@ -114,6 +124,85 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             pv_fragment = "AND project_version_id = %(project_version_id)s"
             self.params["project_version_id"] = self.project_version_id
 
+        # P3b step1.5 id-remap resolution (DESIGN §3 / id_remap_sql): this is the
+        # per-user span list — `end_user_id` is passed as the OLD curated id
+        # (obs_span view resolves `user_id` → `EndUser.objects.get(...).id`). A
+        # cross-cutover straddler's NEW (deterministic-id) spans carry
+        # `end_user_id = new_id`, so resolve each span new→old through
+        # `end_user_id_remap` BEFORE the user filter, and re-project the resolved
+        # id AS `end_user_id` so the displayed column also reads under the OLD
+        # identity. The non-user predicates (project / time / version / generic
+        # `{filter_fragment}`) stay on the bare `{self.TABLE}` inner scan (they
+        # may reference span columns this wrap does not project); only the
+        # identity resolve+filter moves to the wrapped layer. `resolved_id_expr`
+        # is the zero-uuid-guarded new→old map — NOT a COALESCE; an unmatched
+        # LEFT JOIN fills `old_id` with the zero-uuid, not NULL (see id_remap_sql).
+        # Gated on `self.end_user_id`: a non-user span list keeps the committed
+        # bare-`spans` query verbatim (out of scope). Pre-flip even the user path
+        # is byte-identical — NO span matches a `new_id`, so the resolved id ==
+        # the span's own id (gate B).
+        if self.end_user_id:
+            remap_join = remap_left_join("rs.end_user_id", "end_user_id_remap")
+            resolved_eu = resolved_id_expr("rs.end_user_id")
+            inner_scan = f"""
+            SELECT
+                id,
+                trace_id,
+                name,
+                observation_type,
+                status,
+                start_time,
+                end_time,
+                latency_ms,
+                cost,
+                total_tokens,
+                prompt_tokens,
+                completion_tokens,
+                model,
+                provider,
+                end_user_id,
+                created_at
+            FROM {self.TABLE}
+            {self.project_where()}
+              AND created_at >= %(start_date)s - INTERVAL 1 DAY
+              AND start_time >= %(start_date)s
+              AND start_time < %(end_date)s
+              {pv_fragment}
+              {filter_fragment}
+            """
+            query = f"""
+            SELECT
+                id,
+                trace_id,
+                name,
+                observation_type,
+                status,
+                start_time,
+                end_time,
+                latency_ms,
+                cost,
+                total_tokens,
+                prompt_tokens,
+                completion_tokens,
+                model,
+                provider,
+                resolved_end_user_id AS end_user_id,
+                created_at
+            FROM (
+                SELECT
+                    rs.*,
+                    {resolved_eu} AS resolved_end_user_id
+                FROM ({inner_scan}) AS rs
+                {remap_join}
+            )
+            WHERE resolved_end_user_id = %(end_user_id)s
+            {order_clause}
+            LIMIT 1 BY id
+            LIMIT %(limit)s
+            OFFSET %(offset)s
+            """
+            return query, self.params
+
         # Light columns only — input/output fetched via build_content_query()
         query = f"""
         SELECT
@@ -127,6 +216,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             latency_ms,
             cost,
             total_tokens,
+            prompt_tokens,
+            completion_tokens,
             model,
             provider,
             end_user_id,
@@ -146,25 +237,27 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
-    def build_content_query(self, span_ids: list) -> Tuple[str, Dict[str, Any]]:
+    def build_content_query(self, span_ids: list) -> tuple[str, dict[str, Any]]:
         """Fetch input/output for a page of span IDs."""
         if not span_ids:
             return "", {}
         params = {**self.params, "content_span_ids": tuple(span_ids)}
         query = f"""
-        SELECT id, input, output, span_attributes_raw
+        SELECT id, input, output, attributes_extra
         FROM {self.TABLE}
         PREWHERE id IN %(content_span_ids)s
-        WHERE project_id = %(project_id)s AND _peerdb_is_deleted = 0
+        WHERE {self.project_filter_sql()} AND is_deleted = 0
         """
         return query, params
 
-    def build_count_query(self) -> Tuple[str, Dict[str, Any]]:
+    def build_count_query(self) -> tuple[str, dict[str, Any]]:
         """Build a count query for total matching spans."""
-        fb = ClickHouseFilterBuilder(
+        fb = self._FILTER_BUILDER_CLS(
             table=self.TABLE,
-            query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
+            query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         params = dict(self.params)
@@ -181,6 +274,35 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         if self.project_version_id:
             pv_fragment = "AND project_version_id = %(project_version_id)s"
             params["project_version_id"] = self.project_version_id
+
+        # P3b step1.5 id-remap resolution (DESIGN §3 / id_remap_sql): MUST mirror
+        # `build()` exactly — resolve `end_user_id` new→old and count on the
+        # resolved id, else a straddler's count splits from the list and
+        # has_more/pagination lies. Non-user predicates stay on the bare inner
+        # scan; pre-flip a byte-identical no-op (gate B). Gated on
+        # `self.end_user_id` like `build()`.
+        if self.end_user_id:
+            remap_join = remap_left_join("rs.end_user_id", "end_user_id_remap")
+            resolved_eu = resolved_id_expr("rs.end_user_id")
+            query = f"""
+            SELECT uniqExact(id) AS total
+            FROM (
+                SELECT rs.id AS id, {resolved_eu} AS resolved_end_user_id
+                FROM (
+                    SELECT id, end_user_id
+                    FROM {self.TABLE}
+                    {self.project_where()}
+                      AND created_at >= %(start_date)s - INTERVAL 1 DAY
+                      AND start_time >= %(start_date)s
+                      AND start_time < %(end_date)s
+                      {pv_fragment}
+                      {filter_fragment}
+                ) AS rs
+                {remap_join}
+            )
+            WHERE resolved_end_user_id = %(end_user_id)s
+            """
+            return query, params
 
         query = f"""
         SELECT uniqExact(id) AS total
@@ -201,13 +323,13 @@ class SpanListQueryBuilder(BaseQueryBuilder):
 
     def build_eval_query(
         self,
-        span_ids: List[str],
-    ) -> Tuple[str, Dict[str, Any]]:
+        span_ids: list[str],
+    ) -> tuple[str, dict[str, Any]]:
         """Build the Phase-2 eval-scores query for a page of span IDs."""
         if not span_ids or not self.eval_config_ids:
             return "", {}
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "span_ids": tuple(span_ids),
             "eval_config_ids": tuple(self.eval_config_ids),
         }
@@ -259,6 +381,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
           AND observation_span_id IN %(span_ids)s
           AND custom_eval_config_id IN %(eval_config_ids)s
         GROUP BY observation_span_id, custom_eval_config_id
+        SETTINGS max_bytes_before_external_group_by = 1073741824, max_bytes_before_external_sort = 1073741824
         """
         return query, params
 
@@ -268,13 +391,13 @@ class SpanListQueryBuilder(BaseQueryBuilder):
 
     def build_annotation_query(
         self,
-        span_ids: List[str],
-    ) -> Tuple[str, Dict[str, Any]]:
+        span_ids: list[str],
+    ) -> tuple[str, dict[str, Any]]:
         """Build the Phase-3 annotation query for a page of span IDs."""
         if not span_ids or not self.annotation_label_ids:
             return "", {}
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "span_ids": tuple(span_ids),
             "label_ids": tuple(self.annotation_label_ids),
         }
@@ -299,8 +422,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
 
     @staticmethod
     def pivot_eval_results(
-        eval_rows: List[Dict],
-    ) -> Dict[str, Dict[str, Any]]:
+        eval_rows: list[dict],
+    ) -> dict[str, dict[str, Any]]:
         """Pivot eval query results into a nested dict keyed by span_id.
 
         Returns:
@@ -312,7 +435,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         """
         import json as _json
 
-        result: Dict[str, Dict[str, Any]] = {}
+        result: dict[str, dict[str, Any]] = {}
         for row in eval_rows:
             span_id = str(row.get("observation_span_id", ""))
             config_id = str(row.get("eval_config_id", ""))
@@ -352,13 +475,11 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                         continue
             if parsed:
                 total = len(parsed)
-                counts: Dict[str, int] = {}
+                counts: dict[str, int] = {}
                 for lst in parsed:
                     for choice in set(lst):
                         counts[choice] = counts.get(choice, 0) + 1
-                per_choice = {
-                    k: round(100.0 * v / total, 2) for k, v in counts.items()
-                }
+                per_choice = {k: round(100.0 * v / total, 2) for k, v in counts.items()}
                 result.setdefault(span_id, {})[config_id] = per_choice
                 continue
 
@@ -376,9 +497,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
 
     @staticmethod
     def pivot_annotation_results(
-        annotation_rows: List[Dict],
-        label_types: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, Dict[str, Any]]:
+        annotation_rows: list[dict],
+        label_types: dict[str, str] | None = None,
+    ) -> dict[str, dict[str, Any]]:
         """Pivot annotation query results into a nested dict keyed by span_id.
 
         Args:
@@ -392,7 +513,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         import json
 
         label_types = label_types or {}
-        result: Dict[str, Dict[str, Any]] = {}
+        result: dict[str, dict[str, Any]] = {}
         for row in annotation_rows:
             span_id = str(row.get("observation_span_id", ""))
             label_id = str(row.get("label_id", ""))

@@ -13,6 +13,8 @@ MAX_BATCH_DELETE_SIZE = 50
 MAX_PAGE_SIZE = 100
 ALLOWED_FILE_EXTENSIONS = {".csv", ".xls", ".xlsx", ".json", ".jsonl"}
 ALLOWED_DATASET_SOURCES = ["demo", "build", "observe"]
+SDK_API_KEY_PLACEHOLDER = "YOUR_API_KEY"
+SDK_SECRET_KEY_PLACEHOLDER = "YOUR_SECRET_KEY"
 
 PYTHON_CODE = """# pip install futureagi
 

@@ -25,6 +25,8 @@ from google.genai.types import GenerateContentConfig, HttpOptions, Part, Thinkin
 from litellm import completion
 from openai import AsyncOpenAI, OpenAI
 
+from agentic_eval.core.database.ch_vector import get_clickhouse_client_kwargs
+
 logger = structlog.get_logger(__name__)
 from agentic_eval.core.llm.audio_utils import (
     is_audio_url,
@@ -88,13 +90,7 @@ def log_to_clickhouse(log_data: LogData) -> None:
         Exception: If there's an error connecting to or writing to ClickHouse.
     """
     try:
-        client = Client(
-            host=os.getenv("CH_HOST"),
-            port=os.getenv("CH_PORT"),
-            user=os.getenv("CH_USERNAME"),
-            password=os.getenv("CH_PASSWORD"),
-            database=os.getenv("CH_DATABASE"),
-        )
+        client = Client(**get_clickhouse_client_kwargs())
 
         query = """
         INSERT INTO llm_logs (
@@ -293,7 +289,7 @@ class LLM:
             "aws_bedrock": {
                 "aws_access_key": os.getenv("AWS_ACCESS_KEY_ID"),
                 "aws_secret_key": os.getenv("AWS_SECRET_ACCESS_KEY"),
-                "aws_region": "us-west-2",
+                "aws_region": os.getenv("AWS_BEDROCK_REGION", "us-west-2"),
             },
         }
 
@@ -537,11 +533,17 @@ class LLM:
                 )
 
     def _update_cost(self, response: Any = None) -> None:
-        """Update cost statistics. Prioritizes response-level cost from litellm,
-        falls back to calculate_total_cost from token counts."""
+        """
+        Update cost statistics.
+        """
+        catalog = calculate_total_cost(self.model_name, self.token_usage)
+
+        if catalog.get("pricing_source") != "default":
+            self.cost.update(catalog)
+            return
+
         response_cost = 0.0
         if response is not None:
-            # litellm ModelResponse stores cost in _hidden_params
             hidden = getattr(response, "_hidden_params", None)
             if hidden and isinstance(hidden, dict):
                 response_cost = hidden.get("response_cost", 0) or 0
@@ -549,7 +551,7 @@ class LLM:
         if response_cost > 0:
             self.cost["total_cost"] = self.cost.get("total_cost", 0) + response_cost
         else:
-            self.cost.update(calculate_total_cost(self.model_name, self.token_usage))
+            self.cost.update(catalog)
 
     def _set_last_finish_reason_from_response(self, response: Any) -> None:
         self.last_finish_reason = None

@@ -11,7 +11,6 @@ from model_hub.models.experiments import (
     ExperimentPromptConfig,
     ExperimentsTable,
 )
-from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from tfc.middleware.workspace_context import get_current_organization
 
 
@@ -81,11 +80,9 @@ class ExperimentsTableSerializer(serializers.ModelSerializer):
                     )
 
                     model = next(
-                        (
-                            model
-                            for model in model_manager.models
-                            if _model_name.lower() == model["model_name"].lower()
-                        )
+                        model
+                        for model in model_manager.models
+                        if _model_name.lower() == model["model_name"].lower()
                     )
 
                     provider = model.get("providers")
@@ -107,10 +104,22 @@ class ExperimentsTableSerializer(serializers.ModelSerializer):
             elif isinstance(prompt_config, dict):
                 _augment_config(prompt_config)
         except Exception:
-            # Serialization enrichment should never break the response
+            # Serialization enrichment should never break the response.
             pass
 
         return data
+
+
+class ExperimentsTableUpdateSerializer(ExperimentsTableSerializer):
+    experiment_id = serializers.UUIDField()
+    re_run = serializers.BooleanField(required=False, default=False)
+
+    class Meta(ExperimentsTableSerializer.Meta):
+        fields = [
+            "experiment_id",
+            "re_run",
+            *ExperimentsTableSerializer.Meta.fields,
+        ]
 
 
 class ExperimentsTableGetSerializer(serializers.ModelSerializer):
@@ -315,21 +324,26 @@ class ExperimentRerunCellsSerializer(serializers.Serializer):
     source_ids = serializers.ListField(
         child=serializers.UUIDField(),
         required=False,
-        default=[],
+        default=list,
     )
     cells = RerunCellEntrySerializer(
         many=True,
         required=False,
-        default=[],
+        default=list,
     )
     user_eval_metric_ids = serializers.ListField(
         child=serializers.UUIDField(),
         required=False,
-        default=[],
+        default=list,
     )
     failed_only = serializers.BooleanField(
         required=False,
         default=False,
+    )
+    max_concurrent_rows = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        default=10,
     )
 
     def validate(self, attrs):

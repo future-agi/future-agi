@@ -46,11 +46,7 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
     from tracer.models.trace_error_analysis import TraceErrorAnalysis
     from tracer.queries.error_analysis import TraceErrorAnalysisDB
     from tracer.queries.helpers import get_default_workspace_for_project
-    try:
-        from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
-    except ImportError:
-        APICallStatusChoices = None
-        APICallTypeChoices = None
+    from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
     try:
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request, refund_cost_for_api_call
     except ImportError:
@@ -91,36 +87,38 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
         except ImportError:
             check_usage = None
 
-        usage_check = check_usage(
-            str(organization.id), APICallTypeChoices.TRACE_ERROR_ANALYSIS.value
-        )
-        if not usage_check.allowed:
-            Trace.objects.filter(id=trace_id).update(
-                error_analysis_status=TraceErrorAnalysisStatus.FAILED
+        if check_usage is not None:
+            usage_check = check_usage(
+                str(organization.id), APICallTypeChoices.TRACE_ERROR_ANALYSIS.value
             )
-            raise ValueError(usage_check.reason or "Usage limit exceeded")
+            if not usage_check.allowed:
+                Trace.objects.filter(id=trace_id).update(
+                    error_analysis_status=TraceErrorAnalysisStatus.FAILED
+                )
+                raise ValueError(usage_check.reason or "Usage limit exceeded")
 
         # Log and deduct cost for the analysis upfront.
-        api_call_log_row = log_and_deduct_cost_for_api_request(
-            organization=organization,
-            api_call_type=APICallTypeChoices.TRACE_ERROR_ANALYSIS.value,
-            source="trace_error_analysis",
-            workspace=workspace,
-            source_id=str(trace_id),
-            config={
-                "trace_id": str(trace_id),
-                "project_id": str(trace.project.id),
-                "reference_id": str(trace.project.id),
-            },
-        )
-
-        if not api_call_log_row:
-            error_message = "Failed to create API call log for trace analysis."
-            logger.error(error_message)
-            Trace.objects.filter(id=trace_id).update(
-                error_analysis_status=TraceErrorAnalysisStatus.FAILED
+        if log_and_deduct_cost_for_api_request is not None:
+            api_call_log_row = log_and_deduct_cost_for_api_request(
+                organization=organization,
+                api_call_type=APICallTypeChoices.TRACE_ERROR_ANALYSIS.value,
+                source="trace_error_analysis",
+                workspace=workspace,
+                source_id=str(trace_id),
+                config={
+                    "trace_id": str(trace_id),
+                    "project_id": str(trace.project.id),
+                    "reference_id": str(trace.project.id),
+                },
             )
-            return {"success": False, "trace_id": trace_id, "error": error_message}
+
+            if not api_call_log_row:
+                error_message = "Failed to create API call log for trace analysis."
+                logger.error(error_message)
+                Trace.objects.filter(id=trace_id).update(
+                    error_analysis_status=TraceErrorAnalysisStatus.FAILED
+                )
+                return {"success": False, "trace_id": trace_id, "error": error_message}
 
         agent = TraceErrorAnalysisAgent(
             trace_id=str(trace_id),
@@ -145,8 +143,9 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
             error_analysis_db.ingest_trace_error_embeddings(trace_id)
 
         # Mark the API call as successful
-        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save(update_fields=["status"])
+        if api_call_log_row:
+            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+            api_call_log_row.save(update_fields=["status"])
 
         # Dual-write: emit usage event for new billing system (cost-based)
         try:
@@ -166,25 +165,34 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
                 from ee.usage.services.emitter import emit
             except ImportError:
                 emit = None
+            try:
+                from ee.usage.utils.event_properties import llm_usage_properties
+            except ImportError:
+                llm_usage_properties = lambda obj: {}
 
             actual_cost = getattr(agent, "cost", {}).get("total_cost", 0)
             if not actual_cost and hasattr(agent, "llm"):
                 actual_cost = getattr(agent.llm, "cost", {}).get("total_cost", 0)
-            credits = BillingConfig.get().calculate_ai_credits(actual_cost)
 
-            emit(
-                UsageEvent(
-                    org_id=str(organization.id),
-                    event_type=BillingEventType.TRACE_ERROR_ANALYSIS,
-                    amount=credits,
-                    properties={
-                        "source": "trace_error_analysis",
-                        "source_id": str(trace_id),
-                        "errors_found": error_count,
-                        "raw_cost_usd": str(actual_cost),
-                    },
+            credits = 0
+            if BillingConfig is not None:
+                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
+
+            if emit is not None and UsageEvent is not None and BillingEventType is not None:
+                emit(
+                    UsageEvent(
+                        org_id=str(organization.id),
+                        event_type=BillingEventType.TRACE_ERROR_ANALYSIS,
+                        amount=credits,
+                        properties={
+                            "source": "trace_error_analysis",
+                            "source_id": str(trace_id),
+                            "errors_found": error_count,
+                            "raw_cost_usd": str(actual_cost),
+                            **llm_usage_properties(agent),
+                        },
+                    )
                 )
-            )
         except Exception:
             pass
 
@@ -196,7 +204,8 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
         # If something went wrong, refund the cost.
         if api_call_log_row:
             logger.info(f"Refunding cost for failed trace analysis {trace_id}.")
-            refund_cost_for_api_call(api_call_log_row, config={"error": str(e)})
+            if refund_cost_for_api_call is not None:
+                refund_cost_for_api_call(api_call_log_row, config={"error": str(e)})
             api_call_log_row.status = APICallStatusChoices.ERROR.value
             api_call_log_row.save(update_fields=["status"])
 

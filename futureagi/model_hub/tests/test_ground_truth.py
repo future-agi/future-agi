@@ -4,11 +4,19 @@ Tests for Phase 9: Ground Truth.
 
 import io
 import json
+import uuid
 
 import pytest
 
+from accounts.models import Organization, User
+from accounts.models.workspace import Workspace
 from model_hub.models.choices import OwnerChoices
-from model_hub.models.evals_metric import EvalGroundTruth, EvalTemplate
+from model_hub.models.evals_metric import (
+    EvalGroundTruth,
+    EvalTemplate,
+)
+from tfc.constants.roles import OrganizationRoles
+
 
 
 @pytest.fixture
@@ -37,8 +45,82 @@ def ground_truth(eval_template, organization):
             {"input": "alpha", "expected": "beta", "score": 1.0, "notes": "perfect"},
         ],
         row_count=3,
+        variable_mapping={"input": "input"},
+        role_mapping={"output": "expected"},
         organization=organization,
+        workspace=eval_template.workspace,
     )
+
+
+def create_other_org_ground_truth():
+    suffix = uuid.uuid4().hex[:8]
+    other_org = Organization.objects.create(name=f"Other GT Org {suffix}")
+    other_user = User.objects.create_user(
+        email=f"other-gt-{suffix}@futureagi.com",
+        password="testpassword123",
+        name="Other GT User",
+        organization=other_org,
+        organization_role=OrganizationRoles.OWNER,
+    )
+    other_workspace = Workspace.objects.create(
+        name=f"Other GT Workspace {suffix}",
+        organization=other_org,
+        is_default=True,
+        is_active=True,
+        created_by=other_user,
+    )
+    other_template = EvalTemplate.no_workspace_objects.create(
+        name=f"other-gt-eval-{suffix}",
+        organization=other_org,
+        workspace=other_workspace,
+        owner=OwnerChoices.USER.value,
+        config={"output": "Pass/Fail", "required_keys": ["input"]},
+        criteria="Compare {{input}}",
+        visible_ui=True,
+    )
+    other_gt = EvalGroundTruth.objects.create(
+        eval_template=other_template,
+        name=f"other-gt-{suffix}",
+        file_name="other.csv",
+        columns=["input"],
+        data=[{"input": "secret"}],
+        row_count=1,
+        organization=other_org,
+        workspace=other_workspace,
+    )
+    return other_template, other_gt
+
+
+def create_same_org_other_workspace_ground_truth(organization, user):
+    suffix = uuid.uuid4().hex[:8]
+    other_workspace = Workspace.objects.create(
+        name=f"Other Same Org GT Workspace {suffix}",
+        organization=organization,
+        is_default=False,
+        is_active=True,
+        created_by=user,
+    )
+    other_template = EvalTemplate.no_workspace_objects.create(
+        name=f"same-org-other-workspace-gt-eval-{suffix}",
+        organization=organization,
+        workspace=other_workspace,
+        owner=OwnerChoices.USER.value,
+        config={"output": "Pass/Fail", "required_keys": ["input"]},
+        criteria="Compare {{input}}",
+        visible_ui=True,
+    )
+    other_gt = EvalGroundTruth.no_workspace_objects.create(
+        eval_template=other_template,
+        name=f"same-org-other-workspace-gt-{suffix}",
+        file_name="other-workspace.csv",
+        columns=["input", "expected"],
+        data=[{"input": "secret", "expected": "hidden"}],
+        row_count=1,
+        embedding_status=EvalGroundTruth.EmbeddingStatus.COMPLETED,
+        organization=organization,
+        workspace=other_workspace,
+    )
+    return other_template, other_gt
 
 
 # =========================================================================
@@ -73,7 +155,7 @@ class TestGroundTruthUploadAPI:
         assert result["name"] == "my-ground-truth"
         assert result["row_count"] == 3
         assert result["columns"] == ["input", "expected"]
-        assert result["embedding_status"] == "pending"
+        assert result["embedding_status"] == EvalGroundTruth.EmbeddingStatus.PENDING
 
     def test_upload_csv_file(self, auth_client, eval_template):
         csv_content = (
@@ -92,6 +174,36 @@ class TestGroundTruthUploadAPI:
         assert result["name"] == "csv-upload"
         assert result["row_count"] == 2
         assert set(result["columns"]) == {"question", "answer", "score"}
+
+    def test_upload_csv_file_with_multipart_json_mapping(
+        self, auth_client, eval_template
+    ):
+        csv_content = "question,answer\nWhat is 1+1?,2\n"
+        csv_file = io.BytesIO(csv_content.encode("utf-8"))
+        csv_file.name = "mapped_data.csv"
+
+        response = auth_client.post(
+            self._url(eval_template.id),
+            {
+                "file": csv_file,
+                "name": "mapped-upload",
+                "variable_mapping": json.dumps(
+                    {"input": "question", "expected": "answer"}
+                ),
+                "role_mapping": json.dumps(
+                    {"input": "question", "expected_output": "answer"}
+                ),
+            },
+            format="multipart",
+        )
+
+        assert response.status_code == 200, response.data
+        gt = EvalGroundTruth.objects.get(id=response.data["result"]["id"])
+        assert gt.variable_mapping == {"input": "question", "expected": "answer"}
+        assert gt.role_mapping == {
+            "input": "question",
+            "expected_output": "answer",
+        }
 
     def test_upload_json_file(self, auth_client, eval_template):
         json_data = [
@@ -123,6 +235,23 @@ class TestGroundTruthUploadAPI:
         response = auth_client.post(
             "/model-hub/eval-templates/00000000-0000-0000-0000-000000000000/ground-truth/upload/",
             {"name": "gt", "columns": ["a"], "data": [{"a": 1}]},
+            format="json",
+        )
+        assert response.status_code == 404
+
+    def test_upload_rejects_same_org_other_workspace_template(
+        self, auth_client, organization, user
+    ):
+        other_template, _ = create_same_org_other_workspace_ground_truth(
+            organization, user
+        )
+        response = auth_client.post(
+            self._url(other_template.id),
+            {
+                "name": "cross-workspace-gt",
+                "columns": ["input"],
+                "data": [{"input": "secret"}],
+            },
             format="json",
         )
         assert response.status_code == 404
@@ -177,91 +306,301 @@ class TestGroundTruthListAPI:
         item = response.data["result"]["items"][0]
         assert item["name"] == "test-gt"
         assert item["row_count"] == 3
-        assert item["embedding_status"] == "pending"
+        assert item["embedding_status"] == EvalGroundTruth.EmbeddingStatus.PENDING
+
+    def test_list_marks_stale_for_pending_with_prior_vectors(
+        self, auth_client, eval_template, ground_truth
+    ):
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.PENDING
+        ground_truth.embedded_row_count = 3
+        ground_truth.save(
+            update_fields=[
+                "embedding_status",
+                "embedded_row_count",
+                "updated_at",
+            ]
+        )
+        response = auth_client.get(self._url(eval_template.id))
+        item = response.data["result"]["items"][0]
+        assert item["embeddings_stale"] is True
+
+    def test_list_does_not_mark_stale_during_processing(
+        self, auth_client, eval_template, ground_truth
+    ):
+        ground_truth.embedding_status = (
+            EvalGroundTruth.EmbeddingStatus.PROCESSING
+        )
+        ground_truth.embedded_row_count = 2
+        ground_truth.save(
+            update_fields=[
+                "embedding_status",
+                "embedded_row_count",
+                "updated_at",
+            ]
+        )
+        response = auth_client.get(self._url(eval_template.id))
+        item = response.data["result"]["items"][0]
+        assert item["embeddings_stale"] is False
+
+    def test_list_does_not_mark_stale_when_no_prior_vectors(
+        self, auth_client, eval_template, ground_truth
+    ):
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.PENDING
+        ground_truth.embedded_row_count = 0
+        ground_truth.save(
+            update_fields=[
+                "embedding_status",
+                "embedded_row_count",
+                "updated_at",
+            ]
+        )
+        response = auth_client.get(self._url(eval_template.id))
+        item = response.data["result"]["items"][0]
+        assert item["embeddings_stale"] is False
+
+    def test_list_rejects_other_org_template(self, auth_client):
+        other_template, _ = create_other_org_ground_truth()
+        response = auth_client.get(self._url(other_template.id))
+        assert response.status_code == 404
+
+    def test_list_rejects_same_org_other_workspace_template(
+        self, auth_client, organization, user
+    ):
+        other_template, _ = create_same_org_other_workspace_ground_truth(
+            organization, user
+        )
+        response = auth_client.get(self._url(other_template.id))
+        assert response.status_code == 404
 
 
 # =========================================================================
-# Mapping API
+# Setup API: atomic save of variable mapping, role mapping, injection
+# config, and the enable toggle. Backs the FE single-Save button.
 # =========================================================================
 
 
 @pytest.mark.e2e
 @pytest.mark.django_db
-class TestGroundTruthMappingAPI:
-    def test_update_mapping(self, auth_client, ground_truth):
-        response = auth_client.put(
-            f"/model-hub/ground-truth/{ground_truth.id}/mapping/",
-            {"variable_mapping": {"input": "input", "expected": "expected"}},
-            format="json",
-        )
-        assert response.status_code == 200
-        ground_truth.refresh_from_db()
-        assert ground_truth.variable_mapping == {
-            "input": "input",
-            "expected": "expected",
+class TestGroundTruthSetupAPI:
+    """Contract tests for PUT /model-hub/ground-truth/<id>/setup/."""
+
+    def _setup_url(self, gt_id):
+        return f"/model-hub/ground-truth/{gt_id}/setup/"
+
+    def _valid_payload(self, *, enabled=True):
+        return {
+            "variable_mapping": {"input": "input"},
+            "role_mapping": {"output": "score", "explanation": "notes"},
+            "max_examples": 3,
+            "enabled": enabled,
         }
 
-    def test_mapping_nonexistent(self, auth_client):
+    def test_setup_persists_all_fields_when_enabled_true(
+        self, auth_client, ground_truth
+    ):
         response = auth_client.put(
-            "/model-hub/ground-truth/00000000-0000-0000-0000-000000000000/mapping/",
-            {"variable_mapping": {"a": "b"}},
-            format="json",
-        )
-        assert response.status_code == 404
-
-
-# =========================================================================
-# Role Mapping API
-# =========================================================================
-
-
-@pytest.mark.e2e
-@pytest.mark.django_db
-class TestGroundTruthRoleMappingAPI:
-    def _url(self, gt_id):
-        return f"/model-hub/ground-truth/{gt_id}/role-mapping/"
-
-    def test_set_role_mapping(self, auth_client, ground_truth):
-        response = auth_client.put(
-            self._url(ground_truth.id),
-            {
-                "role_mapping": {
-                    "input": "input",
-                    "expected_output": "expected",
-                    "score": "score",
-                    "reasoning": "notes",
-                }
-            },
+            self._setup_url(ground_truth.id),
+            self._valid_payload(enabled=True),
             format="json",
         )
         assert response.status_code == 200
+
         ground_truth.refresh_from_db()
-        assert ground_truth.role_mapping["input"] == "input"
-        assert ground_truth.role_mapping["score"] == "score"
+        ground_truth.eval_template.refresh_from_db()
+        assert ground_truth.variable_mapping == {"input": "input"}
+        assert ground_truth.role_mapping == {
+            "output": "score",
+            "explanation": "notes",
+        }
+        assert ground_truth.is_active is True
+        assert ground_truth.enabled is True
+        assert ground_truth.max_examples == 3
+        assert "ground_truth" not in (ground_truth.eval_template.config or {})
 
-    def test_invalid_role_rejected(self, auth_client, ground_truth):
+    def test_setup_persists_enabled_false_for_pause_without_delete(
+        self, auth_client, ground_truth
+    ):
         response = auth_client.put(
-            self._url(ground_truth.id),
-            {"role_mapping": {"bad_role": "input"}},
+            self._setup_url(ground_truth.id),
+            self._valid_payload(enabled=False),
             format="json",
+        )
+        assert response.status_code == 200
+
+        ground_truth.refresh_from_db()
+        assert ground_truth.enabled is False
+        assert ground_truth.is_active is True
+
+    def test_setup_defaults_enabled_to_true_when_field_omitted(
+        self, auth_client, ground_truth
+    ):
+        payload = self._valid_payload()
+        payload.pop("enabled")
+        response = auth_client.put(
+            self._setup_url(ground_truth.id), payload, format="json"
+        )
+        assert response.status_code == 200
+
+        ground_truth.refresh_from_db()
+        assert ground_truth.enabled is True
+
+    def test_setup_rejects_unknown_field(self, auth_client, ground_truth):
+        payload = self._valid_payload()
+        payload["mystery_field"] = "should-fail"
+        response = auth_client.put(
+            self._setup_url(ground_truth.id), payload, format="json"
         )
         assert response.status_code == 400
 
-    def test_invalid_column_rejected(self, auth_client, ground_truth):
+    def test_setup_rejects_non_boolean_enabled(self, auth_client, ground_truth):
+        payload = self._valid_payload()
+        payload["enabled"] = "yes-please"
         response = auth_client.put(
-            self._url(ground_truth.id),
-            {"role_mapping": {"input": "nonexistent_column"}},
-            format="json",
+            self._setup_url(ground_truth.id), payload, format="json"
         )
         assert response.status_code == 400
 
-    def test_role_mapping_nonexistent(self, auth_client):
+    def test_setup_rejects_missing_required_field(
+        self, auth_client, ground_truth
+    ):
+        payload = self._valid_payload()
+        payload.pop("max_examples")
         response = auth_client.put(
-            "/model-hub/ground-truth/00000000-0000-0000-0000-000000000000/role-mapping/",
-            {"role_mapping": {"input": "col"}},
+            self._setup_url(ground_truth.id), payload, format="json"
+        )
+        assert response.status_code == 400
+
+    def test_setup_rejects_unauthenticated_request(
+        self, api_client, ground_truth
+    ):
+        response = api_client.put(
+            self._setup_url(ground_truth.id),
+            self._valid_payload(),
             format="json",
         )
-        assert response.status_code == 404
+        assert response.status_code in (401, 403)
+
+    def test_setup_rejects_empty_variable_mapping_when_enabled(
+        self, auth_client, ground_truth
+    ):
+        payload = self._valid_payload(enabled=True)
+        payload["variable_mapping"] = {}
+        response = auth_client.put(
+            self._setup_url(ground_truth.id), payload, format="json"
+        )
+        assert response.status_code == 400
+        assert "variable" in response.data["message"].lower()
+
+    def test_setup_allows_empty_variable_mapping_when_disabled(
+        self, auth_client, ground_truth
+    ):
+        payload = self._valid_payload(enabled=False)
+        payload["variable_mapping"] = {}
+        response = auth_client.put(
+            self._setup_url(ground_truth.id), payload, format="json"
+        )
+        assert response.status_code == 200
+
+    def test_setup_marks_stale_when_mapping_changes_with_prior_vectors(
+        self, auth_client, ground_truth
+    ):
+        ground_truth.variable_mapping = {"input": "input"}
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.COMPLETED
+        ground_truth.embedded_row_count = 3
+        ground_truth.save(
+            update_fields=[
+                "variable_mapping",
+                "embedding_status",
+                "embedded_row_count",
+                "updated_at",
+            ]
+        )
+        payload = self._valid_payload(enabled=True)
+        payload["variable_mapping"] = {"input": "expected"}
+        response = auth_client.put(
+            self._setup_url(ground_truth.id), payload, format="json"
+        )
+        assert response.status_code == 200
+        assert response.data["result"]["embeddings_stale"] is True
+        ground_truth.refresh_from_db()
+        assert (
+            ground_truth.embedding_status
+            == EvalGroundTruth.EmbeddingStatus.PENDING
+        )
+
+    def test_setup_does_not_mark_stale_when_no_prior_vectors(
+        self, auth_client, ground_truth
+    ):
+        ground_truth.variable_mapping = {"input": "input"}
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.PENDING
+        ground_truth.embedded_row_count = 0
+        ground_truth.save(
+            update_fields=[
+                "variable_mapping",
+                "embedding_status",
+                "embedded_row_count",
+                "updated_at",
+            ]
+        )
+        payload = self._valid_payload(enabled=True)
+        payload["variable_mapping"] = {"input": "expected"}
+        response = auth_client.put(
+            self._setup_url(ground_truth.id), payload, format="json"
+        )
+        assert response.status_code == 200
+        assert response.data["result"]["embeddings_stale"] is False
+
+    def test_setup_preserves_processing_status_on_mapping_change(
+        self, auth_client, ground_truth
+    ):
+        ground_truth.variable_mapping = {"input": "input"}
+        ground_truth.embedding_status = (
+            EvalGroundTruth.EmbeddingStatus.PROCESSING
+        )
+        ground_truth.embedded_row_count = 1
+        ground_truth.save(
+            update_fields=[
+                "variable_mapping",
+                "embedding_status",
+                "embedded_row_count",
+                "updated_at",
+            ]
+        )
+        payload = self._valid_payload(enabled=True)
+        payload["variable_mapping"] = {"input": "expected"}
+        response = auth_client.put(
+            self._setup_url(ground_truth.id), payload, format="json"
+        )
+        assert response.status_code == 200
+        assert response.data["result"]["embeddings_stale"] is True
+        ground_truth.refresh_from_db()
+        assert (
+            ground_truth.embedding_status
+            == EvalGroundTruth.EmbeddingStatus.PROCESSING
+        )
+
+    def test_setup_returns_response_with_post_save_snapshot(
+        self, auth_client, ground_truth
+    ):
+        """Response carries the post-save snapshot the FE needs to clear
+        its dirty state without an extra refetch round-trip."""
+        response = auth_client.put(
+            self._setup_url(ground_truth.id),
+            self._valid_payload(enabled=False),
+            format="json",
+        )
+        assert response.status_code == 200
+        result = response.data["result"]
+        for required_key in (
+            "id",
+            "template_id",
+            "variable_mapping",
+            "role_mapping",
+            "config",
+            "embeddings_stale",
+        ):
+            assert required_key in result
+        assert result["config"]["enabled"] is False
 
 
 # =========================================================================
@@ -302,6 +641,18 @@ class TestGroundTruthDataAPI:
         )
         assert response.status_code == 404
 
+    def test_data_rejects_other_org_ground_truth(self, auth_client):
+        _, other_gt = create_other_org_ground_truth()
+        response = auth_client.get(self._url(other_gt.id))
+        assert response.status_code == 404
+
+    def test_data_rejects_same_org_other_workspace_ground_truth(
+        self, auth_client, organization, user
+    ):
+        _, other_gt = create_same_org_other_workspace_ground_truth(organization, user)
+        response = auth_client.get(self._url(other_gt.id))
+        assert response.status_code == 404
+
 
 # =========================================================================
 # Status API
@@ -318,10 +669,42 @@ class TestGroundTruthStatusAPI:
         response = auth_client.get(self._url(ground_truth.id))
         assert response.status_code == 200
         result = response.data["result"]
-        assert result["embedding_status"] == "pending"
+        assert result["embedding_status"] == EvalGroundTruth.EmbeddingStatus.PENDING
         assert result["total_rows"] == 3
         assert result["embedded_row_count"] == 0
         assert result["progress_percent"] == 0.0
+
+    def test_status_does_not_mark_stale_during_processing(
+        self, auth_client, ground_truth
+    ):
+        ground_truth.embedding_status = (
+            EvalGroundTruth.EmbeddingStatus.PROCESSING
+        )
+        ground_truth.embedded_row_count = 1
+        ground_truth.save(
+            update_fields=[
+                "embedding_status",
+                "embedded_row_count",
+                "updated_at",
+            ]
+        )
+        response = auth_client.get(self._url(ground_truth.id))
+        assert response.data["result"]["embeddings_stale"] is False
+
+    def test_status_marks_stale_for_failed_with_prior_vectors(
+        self, auth_client, ground_truth
+    ):
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.FAILED
+        ground_truth.embedded_row_count = 2
+        ground_truth.save(
+            update_fields=[
+                "embedding_status",
+                "embedded_row_count",
+                "updated_at",
+            ]
+        )
+        response = auth_client.get(self._url(ground_truth.id))
+        assert response.data["result"]["embeddings_stale"] is True
 
     def test_status_nonexistent(self, auth_client):
         response = auth_client.get(
@@ -349,6 +732,7 @@ class TestGroundTruthDeleteAPI:
         # Verify soft-deleted
         ground_truth.refresh_from_db()
         assert ground_truth.deleted is True
+        assert ground_truth.deleted_at is not None
 
     def test_delete_nonexistent(self, auth_client):
         response = auth_client.delete(
@@ -367,59 +751,157 @@ class TestGroundTruthDeleteAPI:
         assert response.status_code == 200
         assert response.data["result"]["total"] == 0
 
+    def test_delete_inactive_upload_preserves_active_row(
+        self, auth_client, eval_template, ground_truth, organization, workspace
+    ):
+        from model_hub.models.evals_metric import EvalGroundTruth
+
+        ground_truth.is_active = True
+        ground_truth.save(update_fields=["is_active", "updated_at"])
+
+        inactive = EvalGroundTruth.objects.create(
+            eval_template=eval_template,
+            name="inactive",
+            description="",
+            file_name="",
+            columns=["q"],
+            data=[{"q": "x"}],
+            row_count=1,
+            embedding_status="pending",
+            organization=organization,
+            workspace=workspace,
+            is_active=False,
+        )
+
+        response = auth_client.delete(self._url(inactive.id))
+        assert response.status_code == 200
+
+        ground_truth.refresh_from_db()
+        assert ground_truth.is_active is True
+        assert ground_truth.deleted is False
+
+    def test_delete_active_upload_clears_active_flag(
+        self, auth_client, ground_truth
+    ):
+        ground_truth.is_active = True
+        ground_truth.save(update_fields=["is_active", "updated_at"])
+
+        response = auth_client.delete(self._url(ground_truth.id))
+        assert response.status_code == 200
+
+        ground_truth.refresh_from_db()
+        assert ground_truth.deleted is True
+        assert ground_truth.is_active is False
+
+
+# Search API coverage lives in test_ground_truth_service.py (unit) and
+# manage.py gt_roundtrip_test (live).
 
 # =========================================================================
-# Ground Truth Config API
+# Embed API
 # =========================================================================
 
 
 @pytest.mark.e2e
 @pytest.mark.django_db
-class TestGroundTruthConfigAPI:
-    def _url(self, template_id):
-        return f"/model-hub/eval-templates/{template_id}/ground-truth-config/"
+class TestGroundTruthEmbedAPI:
+    def _url(self, gt_id):
+        return f"/model-hub/ground-truth/{gt_id}/embed/"
 
-    def test_get_default_config(self, auth_client, eval_template):
-        response = auth_client.get(self._url(eval_template.id))
-        assert response.status_code == 200
-        gt_config = response.data["result"]["ground_truth"]
-        assert gt_config["enabled"] is False
-        assert gt_config["mode"] == "auto"
-        assert gt_config["max_examples"] == 3
-
-    def test_set_config(self, auth_client, eval_template, ground_truth):
-        response = auth_client.put(
-            self._url(eval_template.id),
-            {
-                "enabled": True,
-                "ground_truth_id": str(ground_truth.id),
-                "mode": "auto",
-                "max_examples": 5,
-                "similarity_threshold": 0.8,
-            },
-            format="json",
+    def test_embed_rejects_empty_ground_truth(
+        self, auth_client, eval_template, organization, workspace
+    ):
+        empty_gt = EvalGroundTruth.objects.create(
+            eval_template=eval_template,
+            name="empty-gt",
+            file_name="empty.json",
+            columns=["input"],
+            data=[],
+            row_count=0,
+            organization=organization,
+            workspace=workspace,
         )
-        assert response.status_code == 200
-        gt_config = response.data["result"]["ground_truth"]
-        assert gt_config["enabled"] is True
-        assert gt_config["max_examples"] == 5
-        assert gt_config["similarity_threshold"] == 0.8
 
-    def test_config_invalid_gt_id(self, auth_client, eval_template):
-        response = auth_client.put(
-            self._url(eval_template.id),
-            {
-                "enabled": True,
-                "ground_truth_id": "00000000-0000-0000-0000-000000000000",
-            },
-            format="json",
-        )
+        response = auth_client.post(self._url(empty_gt.id), {}, format="json")
         assert response.status_code == 400
+        assert response.data["message"] == "No data rows to embed."
 
-    def test_config_nonexistent_template(self, auth_client):
-        response = auth_client.get(
-            "/model-hub/eval-templates/00000000-0000-0000-0000-000000000000/ground-truth-config/"
+    def test_embed_rejects_empty_variable_mapping(
+        self, auth_client, ground_truth
+    ):
+        ground_truth.variable_mapping = {}
+        ground_truth.save(update_fields=["variable_mapping", "updated_at"])
+        response = auth_client.post(self._url(ground_truth.id), {}, format="json")
+        assert response.status_code == 400
+        assert "mapping" in response.data["message"].lower()
+
+    def test_embed_rejects_processing_ground_truth(self, auth_client, ground_truth):
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.PROCESSING
+        ground_truth.save(update_fields=["embedding_status", "updated_at"])
+
+        response = auth_client.post(self._url(ground_truth.id), {}, format="json")
+        assert response.status_code == 400
+        assert response.data["message"] == "Embedding generation is already in progress."
+
+    def test_embed_resets_status_and_triggers_workflow(
+        self, auth_client, ground_truth, monkeypatch
+    ):
+        calls = []
+
+        async def fake_trigger_embedding_generation(ground_truth_id):
+            calls.append(ground_truth_id)
+            return "test-run-id"
+
+        monkeypatch.setattr(
+            "tfc.temporal.ground_truth.client.trigger_embedding_generation",
+            fake_trigger_embedding_generation,
         )
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.FAILED
+        ground_truth.embedded_row_count = 2
+        ground_truth.save(
+            update_fields=["embedding_status", "embedded_row_count", "updated_at"]
+        )
+
+        response = auth_client.post(self._url(ground_truth.id), {}, format="json")
+
+        assert response.status_code == 200, response.data
+        result = response.data["result"]
+        assert result["id"] == str(ground_truth.id)
+        assert result["embedding_status"] == EvalGroundTruth.EmbeddingStatus.PENDING
+        assert calls == [str(ground_truth.id)]
+        ground_truth.refresh_from_db()
+        assert ground_truth.embedding_status == EvalGroundTruth.EmbeddingStatus.PENDING
+        assert ground_truth.embedded_row_count == 0
+
+    def test_embed_marks_failed_when_workflow_dispatch_fails(
+        self, auth_client, ground_truth, monkeypatch
+    ):
+        async def fake_trigger_embedding_generation(ground_truth_id):
+            return None
+
+        monkeypatch.setattr(
+            "tfc.temporal.ground_truth.client.trigger_embedding_generation",
+            fake_trigger_embedding_generation,
+        )
+        ground_truth.embedding_status = EvalGroundTruth.EmbeddingStatus.COMPLETED
+        ground_truth.embedded_row_count = 2
+        ground_truth.save(
+            update_fields=["embedding_status", "embedded_row_count", "updated_at"]
+        )
+
+        response = auth_client.post(self._url(ground_truth.id), {}, format="json")
+
+        assert response.status_code == 400
+        assert response.data["message"] == "Failed to trigger embedding generation."
+        ground_truth.refresh_from_db()
+        assert ground_truth.embedding_status == EvalGroundTruth.EmbeddingStatus.FAILED
+        assert ground_truth.embedded_row_count == 0
+
+    def test_embed_rejects_same_org_other_workspace_ground_truth(
+        self, auth_client, organization, user
+    ):
+        _, other_gt = create_same_org_other_workspace_ground_truth(organization, user)
+        response = auth_client.post(self._url(other_gt.id), {}, format="json")
         assert response.status_code == 404
 
 

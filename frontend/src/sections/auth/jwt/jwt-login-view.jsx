@@ -20,7 +20,6 @@ import { useRouter } from "src/routes/hooks";
 import { useBoolean } from "src/hooks/use-boolean";
 import { useAuthContext } from "src/auth/hooks";
 import { setSession, setRefreshToken } from "src/auth/context/jwt/utils";
-import { GOOGLE_SITE_KEY } from "src/config-global";
 
 import Iconify from "src/components/iconify";
 import FormProvider, { RHFTextField } from "src/components/hook-form";
@@ -32,7 +31,7 @@ import { LOGIN_ERROR_CODES } from "src/utils/constants";
 import { useSnackbar } from "src/components/snackbar";
 import { useMutation } from "@tanstack/react-query";
 import { useParams } from "src/routes/hooks";
-import { useGoogleReCaptcha } from "react-google-recaptcha-v3";
+import { getRecaptchaToken } from "src/utils/recaptchaService";
 import logger from "src/utils/logger";
 import { FormCheckboxField } from "src/components/FormCheckboxField";
 import SvgColor from "src/components/svg-color";
@@ -50,7 +49,6 @@ import { usePostLoginPath } from "src/hooks/useDeploymentMode";
 export default function JwtLoginView() {
   const { login } = useAuthContext();
   const postLoginPath = usePostLoginPath();
-  const { executeRecaptcha } = useGoogleReCaptcha();
   const router = useRouter();
   const [errorMsg, setErrorMsg] = useState("");
   const [searchParams] = useSearchParams();
@@ -72,9 +70,7 @@ export default function JwtLoginView() {
 
   const { mutate: acceptInvitation } = useMutation({
     mutationFn: () =>
-      axiosInstance.get(
-        `${endpoints.invite.accept_invitation}${uuid}/${token}/`,
-      ),
+      axiosInstance.get(endpoints.invite.accept_invitation(uuid, token)),
     onSuccess: (response) => {
       navigate(`/auth/jwt/invitation/set-password/${uuid}/${token}`, {
         state: {
@@ -194,14 +190,16 @@ export default function JwtLoginView() {
 
   const onSubmit = handleSubmit(async (data) => {
     persistReturnTo();
-    if (GOOGLE_SITE_KEY && !executeRecaptcha) {
+    let token;
+    try {
+      token = await getRecaptchaToken("login");
+    } catch (err) {
       enqueueSnackbar({
         message: "reCAPTCHA not ready. Please try again",
         variant: "error",
       });
       return;
     }
-    const token = GOOGLE_SITE_KEY ? await executeRecaptcha("login") : "";
 
     trackEvent(Events.loginClicked, {
       [PropertyName.status]: true,
@@ -212,7 +210,7 @@ export default function JwtLoginView() {
         email: data.email,
         password: data.password,
         remember_me: data.rememberMe,
-        "recaptcha-response": token,
+        recaptcha_response: token,
       });
       // trackEvent(Events.loginCompleted);
 
@@ -247,9 +245,7 @@ export default function JwtLoginView() {
         }
       }
     } catch (error) {
-      const errorCode =
-        error?.result?.error_code ||
-        error?.error_code
+      const errorCode = error?.result?.error_code || error?.error_code;
       if (errorCode) {
         switch (errorCode) {
           case LOGIN_ERROR_CODES.IP_BLOCKED:
@@ -263,8 +259,7 @@ export default function JwtLoginView() {
 
           case LOGIN_ERROR_CODES.ACCOUNT_BLOCKED:
           case LOGIN_ERROR_CODES.TOO_MANY_ATTEMPTS: {
-            const remaining =
-              error?.result?.block_time_remaining
+            const remaining = error?.result?.block_time_remaining;
             const minutes = remaining ? Math.ceil(remaining / 60) : null;
             setErrorMsg(
               minutes
@@ -332,7 +327,14 @@ export default function JwtLoginView() {
           );
         }
       }
-      logger.error("Login attempt failed", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Login attempt failed (expected)", error);
+      } else {
+        logger.error("Login attempt failed", error);
+      }
     }
   });
 
@@ -379,14 +381,21 @@ export default function JwtLoginView() {
           { variant: "error" },
         );
       }
-      logger.error("Passkey login failed", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Passkey login failed (expected)", error);
+      } else {
+        logger.error("Passkey login failed", error);
+      }
     } finally {
       setPasskeyLoading(false);
     }
   };
 
   const handleSsoLogin = () => {
-    persistReturnTo();  
+    persistReturnTo();
     // Navigate to SSO login page
     navigate(paths.auth.jwt.sso);
   };
@@ -423,7 +432,14 @@ export default function JwtLoginView() {
         });
       }
     } catch (error) {
-      logger.error("Error during social login:", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Error during social login (expected)", error);
+      } else {
+        logger.error("Error during social login:", error);
+      }
       if (error.response?.status === 302 && error.response?.headers?.reason) {
         enqueueSnackbar(error.response.headers.reason, { variant: "error" });
       } else {

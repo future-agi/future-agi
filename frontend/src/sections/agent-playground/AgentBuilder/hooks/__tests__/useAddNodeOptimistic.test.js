@@ -42,6 +42,7 @@ const mockRemoveOptimisticNode = vi.fn();
 const mockComputeNewNodeData = vi.fn();
 const mockSetSelectedNode = vi.fn();
 const mockGetNodeById = vi.fn();
+const mockUpdateEdgeId = vi.fn();
 
 function setStoreState(overrides = {}) {
   useAgentPlaygroundStore.setState({
@@ -50,10 +51,11 @@ function setStoreState(overrides = {}) {
     computeNewNodeData: mockComputeNewNodeData,
     setSelectedNode: mockSetSelectedNode,
     getNodeById: mockGetNodeById,
+    updateEdgeId: mockUpdateEdgeId,
     currentAgent: {
       id: "graph-1",
-      versionId: "v-1",
-      isDraft: true,
+      version_id: "v-1",
+      is_draft: true,
       ...overrides.currentAgent,
     },
     ...overrides,
@@ -176,6 +178,50 @@ describe("useAddNodeOptimistic", () => {
     expect(returnValue).toEqual({
       nodeId: "node-123",
       position: { x: 100, y: 200 },
+    });
+  });
+
+  it("draft path: syncs optimistic edge ID from snake_case node_connection response", async () => {
+    mockEnsureDraft.mockResolvedValue("existing-draft");
+    mockAddOptimisticNode.mockReturnValue(defaultOptimisticResult);
+    mockGetNodeById.mockReturnValue({ id: "node-123", type: "llm_prompt" });
+    addNodeApi.mockResolvedValue({
+      node_connection: { id: "backend-edge-123" },
+    });
+
+    const { result } = renderHook(() => useAddNodeOptimistic());
+
+    await act(async () => {
+      await result.current.addNode(defaultPayload);
+    });
+
+    await vi.waitFor(() => {
+      expect(mockUpdateEdgeId).toHaveBeenCalledWith(
+        "edge-456",
+        "backend-edge-123",
+      );
+    });
+  });
+
+  it("draft path: keeps camelCase nodeConnection response compatibility", async () => {
+    mockEnsureDraft.mockResolvedValue("existing-draft");
+    mockAddOptimisticNode.mockReturnValue(defaultOptimisticResult);
+    mockGetNodeById.mockReturnValue({ id: "node-123", type: "llm_prompt" });
+    addNodeApi.mockResolvedValue({
+      nodeConnection: { id: "backend-edge-456" },
+    });
+
+    const { result } = renderHook(() => useAddNodeOptimistic());
+
+    await act(async () => {
+      await result.current.addNode(defaultPayload);
+    });
+
+    await vi.waitFor(() => {
+      expect(mockUpdateEdgeId).toHaveBeenCalledWith(
+        "edge-456",
+        "backend-edge-456",
+      );
     });
   });
 

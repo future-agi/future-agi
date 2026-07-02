@@ -6,13 +6,13 @@ import { useForm } from "react-hook-form";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 
 const OptionValueSelector = ({ definition, filter, updateFilter }) => {
-  const values = filter.filterConfig;
+  const values = filter.filter_config;
 
   // Initialize selected values
-  const selectedValues = Array.isArray(values.filterValue)
-    ? values.filterValue.filter(Boolean)
-    : typeof values.filterValue === "string"
-      ? values.filterValue.split(",").filter(Boolean)
+  const selectedValues = Array.isArray(values.filter_value)
+    ? values.filter_value.filter(Boolean)
+    : typeof values.filter_value === "string"
+      ? values.filter_value.split(",").filter(Boolean)
       : [];
 
   // Set up React Hook Form
@@ -38,10 +38,10 @@ const OptionValueSelector = ({ definition, filter, updateFilter }) => {
 
       updateFilter(filter.id, (existingFilter) => ({
         ...existingFilter,
-        filterConfig: {
-          ...existingFilter.filterConfig,
-          filterValue: updatedValues,
-          filterOp: definition.multiSelect ? "contains" : "equals",
+        filter_config: {
+          ...existingFilter.filter_config,
+          filter_value: updatedValues,
+          filter_op: definition.multiSelect ? "contains" : "equals",
         },
       }));
     }
@@ -56,10 +56,10 @@ const OptionValueSelector = ({ definition, filter, updateFilter }) => {
 
   // Update form value when filter changes externally
   useEffect(() => {
-    const currentSelectedValues = Array.isArray(values.filterValue)
-      ? values.filterValue.filter(Boolean)
-      : typeof values.filterValue === "string"
-        ? values.filterValue.split(",").filter(Boolean)
+    const currentSelectedValues = Array.isArray(values.filter_value)
+      ? values.filter_value.filter(Boolean)
+      : typeof values.filter_value === "string"
+        ? values.filter_value.split(",").filter(Boolean)
         : [];
 
     const newValue = definition.multiSelect
@@ -67,7 +67,7 @@ const OptionValueSelector = ({ definition, filter, updateFilter }) => {
       : currentSelectedValues[0] || "";
 
     setValue("selectedOptions", newValue);
-  }, [values.filterValue, definition.multiSelect, setValue]);
+  }, [values.filter_value, definition.multiSelect, setValue]);
 
   return (
     <>

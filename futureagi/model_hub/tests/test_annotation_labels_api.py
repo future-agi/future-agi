@@ -202,6 +202,21 @@ class TestCreateLabel:
         assert resp.status_code == status.HTTP_200_OK
         assert resp.data["status"] is True
 
+    def test_create_returns_created_label_object(self, auth_client):
+        """Create responds with the serialized label under ``result``."""
+        resp = create_label(
+            auth_client,
+            name="Echoed Label",
+            type="categorical",
+            settings=make_categorical_settings(),
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        result = resp.data["result"]
+        assert result["name"] == "Echoed Label"
+        assert result["type"] == "categorical"
+        assert result["id"]
+
     def test_create_numeric_label(self, auth_client):
         """TC-9: Create numeric label with min/max/step."""
         resp = create_label(
@@ -213,6 +228,30 @@ class TestCreateLabel:
         assert resp.status_code == status.HTTP_200_OK
         assert resp.data["status"] is True
 
+    @pytest.mark.parametrize(
+        ("settings", "message"),
+        [
+            (make_numeric_settings(min=-1), "min cannot be negative"),
+            (make_numeric_settings(max=-1), "max cannot be negative"),
+            (make_numeric_settings(step_size=0), "step_size must be greater than 0"),
+        ],
+    )
+    def test_create_numeric_label_rejects_negative_bounds_and_zero_step(
+        self,
+        auth_client,
+        settings,
+        message,
+    ):
+        resp = create_label(
+            auth_client,
+            name=f"Invalid Numeric {uuid.uuid4()}",
+            type="numeric",
+            settings=settings,
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert message in str(resp.data)
+
     def test_create_text_label(self, auth_client):
         """TC-10: Create text label with placeholder."""
         resp = create_label(
@@ -223,6 +262,36 @@ class TestCreateLabel:
         )
         assert resp.status_code == status.HTTP_200_OK
         assert resp.data["status"] is True
+
+    def test_create_text_label_rejects_invalid_length_range(self, auth_client):
+        resp = create_label(
+            auth_client,
+            name=f"Invalid Text {uuid.uuid4()}",
+            type="text",
+            settings=make_text_settings(min_length=10, max_length=10),
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "min_length must be less than max_length" in str(resp.data)
+
+    def test_create_categorical_label_rejects_duplicate_option_names(
+        self,
+        auth_client,
+    ):
+        resp = create_label(
+            auth_client,
+            name=f"Duplicate Options {uuid.uuid4()}",
+            type="categorical",
+            settings=make_categorical_settings(
+                options=[
+                    {"label": "Pass"},
+                    {"label": "pass"},
+                ],
+            ),
+        )
+
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "Categorical option labels must be unique" in str(resp.data)
 
     def test_create_star_label(self, auth_client):
         """TC-11: Create star label."""
@@ -334,6 +403,24 @@ class TestArchiveAndRestore:
         assert resp.status_code == status.HTTP_200_OK
         ids = [r["id"] for r in resp.data["results"]]
         assert str(label_id) not in [str(i) for i in ids]
+
+    def test_archived_filter_lists_only_archived_labels(self, auth_client):
+        """Archived labels are discoverable for restore without mixing active labels."""
+        label_id = self._create_and_get_id(auth_client)
+        auth_client.delete(detail_url(label_id))
+        create_label(auth_client, name="Still Active")
+        active_list_resp = auth_client.get(BASE_URL, {"search": "Still Active"})
+        active_id = active_list_resp.data["results"][0]["id"]
+
+        resp = auth_client.get(BASE_URL, {"archived": "true"})
+
+        assert resp.status_code == status.HTTP_200_OK
+        results = resp.data["results"]
+        ids = [str(r["id"]) for r in results]
+        assert str(label_id) in ids
+        assert str(active_id) not in ids
+        archived_label = next(r for r in results if str(r["id"]) == str(label_id))
+        assert archived_label["archived"] is True
 
     def test_restore_archived_label(self, auth_client):
         """TC-20: Restore a soft-deleted label."""

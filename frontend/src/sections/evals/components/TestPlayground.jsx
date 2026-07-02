@@ -20,6 +20,7 @@ import React, {
   useState,
 } from "react";
 import { useSnackbar } from "notistack";
+import { useSearchParams } from "react-router-dom";
 import { CreditExhaustionBanner } from "src/components/CreditExhaustionBanner";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
@@ -27,6 +28,7 @@ import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 import axios, { endpoints } from "src/utils/axios";
 import { extractCodeEvaluateParams } from "src/utils/codeEvalParams";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
+import logger from "src/utils/logger";
 import { canonicalEntries } from "src/utils/utils";
 import { camelCaseToTitleCase } from "src/utils/utils";
 import CodeEditor from "./CodeEditor";
@@ -36,12 +38,13 @@ import SimulationTestMode from "./SimulationTestMode";
 import {
   useEvalVersions,
   useSetDefaultVersion,
-  useRestoreVersion,
 } from "../hooks/useEvalVersions";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import EvalResultDisplay from "./EvalResultDisplay";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import VersionBadge from "./VersionBadge";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import {
   useExecuteCompositeEval,
   useExecuteCompositeEvalAdhoc,
@@ -49,7 +52,8 @@ import {
 
 const SOURCE_TABS = ["Dataset", "Tracing", "Simulation", "Custom"];
 
-const camelizeKey = (key = "") => key.replace(/_([a-z])/g, (_, char) => char.toUpperCase());
+const camelizeKey = (key = "") =>
+  key.replace(/_([a-z])/g, (_, char) => char.toUpperCase());
 
 const formatParamLabel = (key) => camelCaseToTitleCase(camelizeKey(key));
 
@@ -59,11 +63,13 @@ const CustomJsonInput = ({
   inputValues,
   onInputChange,
   instructions,
+  evalName,
   onColumnsLoaded,
 }) => {
   const [jsonText, setJsonText] = useState("");
   const [jsonError, setJsonError] = useState(null);
   const followUpRef = useRef(null);
+  const { enqueueSnackbar } = useSnackbar();
 
   // AI bar state
   const [aiOpen, setAiOpen] = useState(false);
@@ -72,7 +78,7 @@ const CustomJsonInput = ({
   const [hasResult, setHasResult] = useState(false);
   const [originalJson, setOriginalJson] = useState(null);
 
-  // Extract keys from current JSON — include nested dot-notation paths
+  // Extract keys from current JSON - include nested dot-notation paths
   const jsonKeys = React.useMemo(() => {
     try {
       const parsed = JSON.parse(jsonText);
@@ -137,7 +143,7 @@ const CustomJsonInput = ({
     });
   }, [variables, jsonKeys]);
 
-  // Sync JSON keys with variables — add new ones, remove stale ones
+  // Sync JSON keys with variables - add new ones, remove stale ones
   useEffect(() => {
     // Parse current JSON
     let current = {};
@@ -207,21 +213,33 @@ const CustomJsonInput = ({
       const varList = variables.join(", ");
       const currentData =
         jsonText && jsonText.trim() !== "{}" ? jsonText : null;
-      const description = currentData
-        ? `Current test data JSON:\n${currentData}\n\nUser wants to: ${userPrompt}\n\nGenerate updated JSON with keys: ${varList}. Return ONLY valid JSON.`
-        : `Generate realistic test data as JSON for variables: ${varList}.\n${instructions ? `Eval context: ${instructions.slice(0, 300)}` : ""}\nUser request: ${userPrompt}\nReturn ONLY valid JSON.`;
+
+      // Context so the model knows the test data is for THIS evaluation.
+      const evalContext = [
+        "The test data you generate will be used to run the following evaluation.",
+        evalName ? `Evaluation name: ${evalName}` : "",
+        instructions
+          ? `Evaluation instruction:\n${instructions.slice(0, 4000)}`
+          : "",
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+
+      const task = currentData
+        ? `Current test data JSON:\n${currentData}\n\nUser wants to: ${userPrompt}\n\nGenerate updated JSON with keys: ${varList}.`
+        : `User request: ${userPrompt}\n\nGenerate JSON with keys: ${varList}.`;
+
+      const description = `${evalContext}\n\n${task}`;
 
       const { data } = await axios.post(endpoints.develop.eval.aiEvalWriter, {
         description,
+        output_format: "test_data",
       });
-      const raw = data?.result?.prompt;
-      if (raw) {
-        const match = raw.match(/\{[\s\S]*\}/);
-        if (match) return match[0];
-      }
-      return null;
+      // Backend parses + validates the test_data object for us now.
+      const testData = data?.result?.test_data;
+      return testData && typeof testData === "object" ? testData : null;
     },
-    [variables, jsonText, instructions],
+    [variables, jsonText, instructions, evalName],
   );
 
   // Submit prompt
@@ -234,20 +252,22 @@ const CustomJsonInput = ({
       try {
         const result = await callAI(prompt.trim());
         if (result) {
-          const parsed = JSON.parse(result);
-          const formatted = JSON.stringify(parsed, null, 2);
+          const formatted = JSON.stringify(result, null, 2);
           handleJsonChange(formatted);
           setHasResult(true);
           setAiPrompt(prompt.trim());
           setTimeout(() => followUpRef.current?.focus(), 100);
         }
-      } catch {
-        // silent
+      } catch (err) {
+        logger.error("Falcon test-data generation failed", err);
+        enqueueSnackbar("Couldn't generate test data. Please try again.", {
+          variant: "error",
+        });
       } finally {
         setAiLoading(false);
       }
     },
-    [jsonText, originalJson, callAI, handleJsonChange],
+    [jsonText, originalJson, callAI, handleJsonChange, enqueueSnackbar],
   );
 
   const handleAccept = useCallback(() => {
@@ -320,7 +340,7 @@ const CustomJsonInput = ({
                 <Box
                   component="input"
                   autoFocus
-                  placeholder="Describe the test data you need — e.g. 'generate a failing case'"
+                  placeholder="Describe the test data you need - e.g. 'generate a failing case'"
                   value={aiPrompt}
                   onChange={(e) => setAiPrompt(e.target.value)}
                   onKeyDown={(e) => {
@@ -514,7 +534,7 @@ const CustomJsonInput = ({
         </Typography>
       )}
 
-      {/* Variable mapping with dropdowns — same UI as DatasetTestMode */}
+      {/* Variable mapping with dropdowns - same UI as DatasetTestMode */}
       {variables.length > 0 && (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
           {variables.map((variable) => (
@@ -606,6 +626,7 @@ CustomJsonInput.propTypes = {
   inputValues: PropTypes.object.isRequired,
   onInputChange: PropTypes.func.isRequired,
   instructions: PropTypes.string,
+  evalName: PropTypes.string,
   onColumnsLoaded: PropTypes.func,
 };
 
@@ -614,6 +635,7 @@ const TestPlayground = React.forwardRef(
     {
       templateId,
       instructions = "",
+      evalName = "",
       evalType,
       model = "turing_large",
       requiredKeys = [],
@@ -642,7 +664,6 @@ const TestPlayground = React.forwardRef(
     const [activeTab, setActiveTab] = useState("Custom");
     const { data: versionsData } = useEvalVersions(templateId);
     const setDefaultVersion = useSetDefaultVersion(templateId);
-    const restoreVersion = useRestoreVersion(templateId);
     const { enqueueSnackbar } = useSnackbar();
     const [isRunning, setIsRunning] = useState(false);
     const [result, setResult] = useState(null);
@@ -659,12 +680,34 @@ const TestPlayground = React.forwardRef(
     const { state: errorLocalizerState, start: startErrorLocalizerPoll } =
       useErrorLocalizerPoll();
 
+    const { role } = useAuthContext();
+    const canEditEvals = Boolean(
+      RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role]
+    );
+
     // Version hover menu state
     const [versionMenuAnchor, setVersionMenuAnchor] = useState(null);
     const [hoveredVersionId, setHoveredVersionId] = useState(null);
     const [menuVersion, setMenuVersion] = useState(null);
     const [selectedVersionId, setSelectedVersionId] = useState(null);
+    const [searchParams] = useSearchParams();
 
+    const urlVersionParam = searchParams.get("v");
+    useEffect(() => {
+      const list = versionsData?.versions || [];
+      if (!list.length) return;
+      if (urlVersionParam) {
+        const match = list.find(
+      ver =>
+            String(ver.version_number) === String(urlVersionParam),
+        );
+        if (match && match.id !== selectedVersionId) {
+          setSelectedVersionId(match.id);
+        }
+      } else if (selectedVersionId) {
+        setSelectedVersionId(null);
+      }
+    }, [urlVersionParam, versionsData]);
     const handleVersionMenuOpen = useCallback((e, version) => {
       e.stopPropagation();
       setVersionMenuAnchor(e.currentTarget);
@@ -694,35 +737,23 @@ const TestPlayground = React.forwardRef(
       handleVersionMenuClose,
     ]);
 
-    const handleRestore = useCallback(async () => {
+    const handleRestore = useCallback(() => {
       if (!menuVersion) return;
-      try {
-        const restored = await restoreVersion.mutateAsync(menuVersion.id);
-        enqueueSnackbar(
-          `Restored V${menuVersion.version_number} as new V${restored?.version_number || ""}`,
-          { variant: "success" },
-        );
-      } catch {
-        enqueueSnackbar("Failed to restore version", { variant: "error" });
-      }
+      setSelectedVersionId(menuVersion.id);
+      onVersionSelect?.(menuVersion);
+      enqueueSnackbar(
+        `Loaded V${menuVersion.version_number} config - edit and save to create a new version`,
+        { variant: "info" },
+      );
       handleVersionMenuClose();
-    }, [menuVersion, restoreVersion, enqueueSnackbar, handleVersionMenuClose]);
-
-    const handleViewConfig = useCallback(
-      (version) => {
-        setSelectedVersionId(version.id);
-        onVersionSelect?.(version);
-        handleVersionMenuClose();
-      },
-      [onVersionSelect, handleVersionMenuClose],
-    );
+    }, [menuVersion, onVersionSelect, enqueueSnackbar, handleVersionMenuClose]);
 
     const handleVersionClick = useCallback(
       (version) => {
         const isAlreadySelected = selectedVersionId === version.id;
         if (isAlreadySelected) {
           setSelectedVersionId(null);
-          onVersionSelect?.(null); // deselect — go back to current config
+          onVersionSelect?.(null); // deselect - go back to current config
         } else {
           setSelectedVersionId(version.id);
           onVersionSelect?.(version);
@@ -749,7 +780,7 @@ const TestPlayground = React.forwardRef(
 
       // For code evals: system evals always have the canonical signature
       // `evaluate(input, output, expected, context, **kwargs)` and store
-      // the real keys in YAML required_keys — use those directly.
+      // the real keys in YAML required_keys - use those directly.
       // User-authored code is live-parsed so newly typed kwargs surface
       // as mapping rows. Standard trio is the last-resort fallback.
       let codeStdVars = [];
@@ -762,7 +793,9 @@ const TestPlayground = React.forwardRef(
         } else {
           const liveParams = extractCodeEvaluateParams(code, codeLanguage);
           codeStdVars =
-            liveParams.length > 0 ? liveParams : ["input", "output", "expected"];
+            liveParams.length > 0
+              ? liveParams
+              : ["input", "output", "expected"];
         }
       }
 
@@ -810,11 +843,14 @@ const TestPlayground = React.forwardRef(
       codeParamsRef.current = codeParams;
     }, [codeParams]);
 
-    const handleCodeParamChange = useCallback((key, value) => {
-      const next = { ...codeParamsRef.current, [key]: value };
-      setInternalCodeParams(next);
-      onCodeParamsChange?.(next);
-    }, [onCodeParamsChange]);
+    const handleCodeParamChange = useCallback(
+      (key, value) => {
+        const next = { ...codeParamsRef.current, [key]: value };
+        setInternalCodeParams(next);
+        onCodeParamsChange?.(next);
+      },
+      [onCodeParamsChange],
+    );
 
     const visibleFunctionParamEntries = React.useMemo(() => {
       if (!functionParamsSchema) return [];
@@ -824,7 +860,7 @@ const TestPlayground = React.forwardRef(
       );
     }, [functionParamsSchema, variables]);
 
-    // Per-tab readiness — Custom always allows running (empty strings are
+    // Per-tab readiness - Custom always allows running (empty strings are
     // a valid input for exploratory testing); Dataset/Tracing/Simulation
     // report up via their own onReadyChange callbacks because they require
     // a row / dataset selection.
@@ -835,25 +871,37 @@ const TestPlayground = React.forwardRef(
       Simulation: false,
     });
 
-    const handleDatasetReady = useCallback((isReady) => {
-      setTabReady((prev) =>
-        prev.Dataset === !!isReady ? prev : { ...prev, Dataset: !!isReady },
-      );
-    }, []);
-    const handleTracingReady = useCallback((isReady) => {
-      setTabReady((prev) =>
-        prev.Tracing === !!isReady ? prev : { ...prev, Tracing: !!isReady },
-      );
-    }, []);
-    const handleSimulationReady = useCallback((isReady) => {
-      setTabReady((prev) =>
-        prev.Simulation === !!isReady
-          ? prev
-          : { ...prev, Simulation: !!isReady },
-      );
-    }, []);
 
-    useEffect(() => {
+    const handleDatasetReady = useCallback(
+      (isReady, mapping) => {
+        setTabReady((prev) =>
+          prev.Dataset === !!isReady ? prev : { ...prev, Dataset: !!isReady },
+        );
+        onReadyChange?.(!!isReady, mapping);
+      },
+      [onReadyChange],
+    );
+    const handleTracingReady = useCallback(
+      (isReady, mapping) => {
+        setTabReady((prev) =>
+          prev.Tracing === !!isReady ? prev : { ...prev, Tracing: !!isReady },
+        );
+        onReadyChange?.(!!isReady, mapping);
+      },
+      [onReadyChange],
+    );
+    const handleSimulationReady = useCallback(
+      (isReady, mapping) => {
+        setTabReady((prev) =>
+          prev.Simulation === !!isReady
+            ? prev
+            : { ...prev, Simulation: !!isReady },
+        );
+        onReadyChange?.(!!isReady, mapping);
+      },
+      [onReadyChange],
+    );
+  useEffect(() => {
       if (!onReadyChange) return;
       onReadyChange(!!tabReady[activeTab]);
     }, [activeTab, tabReady, onReadyChange]);
@@ -865,7 +913,7 @@ const TestPlayground = React.forwardRef(
       const tid = templateIdRef.current;
       // Adhoc composite (eval create page) doesn't need a saved templateId.
       if (!tid && !compositeAdhocConfig) {
-        onTestResult?.(false, "No template ID — save the eval first");
+        onTestResult?.(false, "No template ID - save the eval first");
         return;
       }
 
@@ -879,7 +927,7 @@ const TestPlayground = React.forwardRef(
 
         // Composite evals use a dedicated execute endpoint that runs every
         // child and optionally aggregates their scores.
-        // Composite parent templates have no declared required_keys — child
+        // Composite parent templates have no declared required_keys - child
         // evals each declare their own. Pass every key the user typed in the
         // JSON input so the execute endpoint can route them to children.
         if (isComposite) {
@@ -947,7 +995,7 @@ const TestPlayground = React.forwardRef(
         if (data?.status) {
           setResult(data.result);
           onTestResult?.(true, data.result);
-          // Kick off the async error-localization poll when enabled —
+          // Kick off the async error-localization poll when enabled -
           // the eval playground returns before the localizer task
           // finishes, so we poll `/get-eval-logs` and merge the
           // resulting error_details into `result` via the EvalResultDisplay
@@ -965,7 +1013,7 @@ const TestPlayground = React.forwardRef(
         // banner so users see an upgrade CTA instead of a generic red
         // "failed" box. Fall back to the friendly `result` field that the
         // axios interceptor flattens (backend `usage_limit_response` sets
-        // result=reason). `err.response.data.result` is dead — the
+        // result=reason). `err.response.data.result` is dead - the
         // interceptor rejects with a flat custom error.
         if (handleCreditError(err)) {
           onTestResult?.(false, err?.result || "Usage limit exceeded");
@@ -1036,7 +1084,7 @@ const TestPlayground = React.forwardRef(
           height: "100%",
         }}
       >
-        {/* Header — Test Evaluations + Versions (only if saved) */}
+        {/* Header - Test Evaluations + Versions (only if saved) */}
         <Box sx={{ display: "flex", gap: 2, mb: 1.5 }}>
           <Box
             onClick={() => setActiveMainTab("test")}
@@ -1122,7 +1170,7 @@ const TestPlayground = React.forwardRef(
 
         {activeMainTab === "test" ? (
           <>
-            {/* Source tabs + Map Variables — same row */}
+            {/* Source tabs + Map Variables - same row */}
             <Box sx={{ display: "flex", alignItems: "center", mb: 2 }}>
               <Tabs
                 value={activeTab}
@@ -1195,6 +1243,7 @@ const TestPlayground = React.forwardRef(
                     inputValues={inputValues}
                     onInputChange={handleInputChange}
                     instructions={instructions}
+                    evalName={evalName}
                     onColumnsLoaded={onColumnsLoaded}
                   />
 
@@ -1208,6 +1257,12 @@ const TestPlayground = React.forwardRef(
                             ? {
                                 error_localizer_status:
                                   errorLocalizerState.status,
+                              }
+                            : {}),
+                          ...(errorLocalizerState.message
+                            ? {
+                                error_localizer_message:
+                                  errorLocalizerState.message,
                               }
                             : {}),
                           ...(errorLocalizerState.details
@@ -1229,7 +1284,7 @@ const TestPlayground = React.forwardRef(
                     </Box>
                   )}
 
-                  {/* Credit-limit / upgrade banner — takes precedence over
+                  {/* Credit-limit / upgrade banner - takes precedence over
                       the generic error box so users see a clear CTA. */}
                   {exhaustionError && (
                     <Box sx={{ mt: 1 }}>
@@ -1264,7 +1319,7 @@ const TestPlayground = React.forwardRef(
               )}
               {activeTab === "CustomOLD" && (
                 <Box>
-                  {/* placeholder to keep JSX structure — not rendered */}
+                  {/* placeholder to keep JSX structure - not rendered */}
 
                   {/* Result display */}
                   {result && (
@@ -1416,92 +1471,84 @@ const TestPlayground = React.forwardRef(
                 />
               )}
 
-              {/* Code eval params — visible on all source tabs */}
+              {/* Code eval params - visible on all source tabs */}
               {evalType === "code" &&
                 visibleFunctionParamEntries.length > 0 && (
                   <Box sx={{ mt: 2 }}>
-                    <Typography
-                      variant="body2"
-                      fontWeight={600}
-                      sx={{ mb: 1 }}
-                    >
+                    <Typography variant="body2" fontWeight={600} sx={{ mb: 1 }}>
                       Parameters
                     </Typography>
-                    {visibleFunctionParamEntries.map(
-                      ([key, schema]) => (
-                        <Box
-                          key={key}
-                          sx={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 1,
-                            mb: 0.75,
-                          }}
+                    {visibleFunctionParamEntries.map(([key, schema]) => (
+                      <Box
+                        key={key}
+                        sx={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 1,
+                          mb: 0.75,
+                        }}
+                      >
+                        <Tooltip
+                          title={
+                            configParamsDesc?.[key] || schema?.description || ""
+                          }
+                          placement="top"
                         >
-                          <Tooltip
-                            title={
-                              configParamsDesc?.[key] ||
-                              schema?.description ||
-                              ""
-                            }
-                            placement="top"
-                          >
-                            <Typography
-                              variant="caption"
-                              sx={{
-                                minWidth: 90,
-                                fontFamily: "monospace",
-                                color: "primary.main",
-                              }}
-                            >
-                              {formatParamLabel(key)}
-                            </Typography>
-                          </Tooltip>
-                          <Box
-                            component="input"
-                            type={
-                              schema?.type === "integer" ||
-                              schema?.type === "number"
-                                ? "number"
-                                : "text"
-                            }
-                            placeholder={
-                              schema?.nullable
-                                ? "optional"
-                                : String(schema?.default ?? "")
-                            }
-                            value={codeParams[key] ?? ""}
-                            onChange={(e) => {
-                              // BE's `type: number` schema rejects strings; coerce here.
-                              const raw = e.target.value;
-                              const isNumeric =
-                                schema?.type === "integer" ||
-                                schema?.type === "number";
-                              let next = raw;
-                              if (isNumeric && raw !== "") {
-                                const n = Number(raw);
-                                if (!Number.isNaN(n)) next = n;
-                              }
-                              handleCodeParamChange(key, next);
-                            }}
+                          <Typography
+                            variant="caption"
                             sx={{
-                              flex: 1,
-                              px: 1,
-                              py: 0.5,
-                              fontSize: "12px",
+                              minWidth: 90,
                               fontFamily: "monospace",
-                              border: "1px solid",
-                              borderColor: "divider",
-                              borderRadius: "6px",
-                              bgcolor: "background.paper",
-                              color: "text.primary",
-                              outline: "none",
-                              "&:focus": { borderColor: "primary.main" },
+                              color: "primary.main",
                             }}
-                          />
-                        </Box>
-                      ),
-                    )}
+                          >
+                            {formatParamLabel(key)}
+                          </Typography>
+                        </Tooltip>
+                        <Box
+                          component="input"
+                          type={
+                            schema?.type === "integer" ||
+                            schema?.type === "number"
+                              ? "number"
+                              : "text"
+                          }
+                          placeholder={
+                            schema?.nullable
+                              ? "optional"
+                              : String(schema?.default ?? "")
+                          }
+                          value={codeParams[key] ?? ""}
+                          onChange={(e) => {
+                            // BE's `type: number` schema rejects strings; coerce here.
+                            const raw = e.target.value;
+                            const isNumeric =
+                              schema?.type === "integer" ||
+                              schema?.type === "number";
+                            let next = raw;
+                            if (isNumeric && raw !== "") {
+                              const n = Number(raw);
+                              if (!Number.isNaN(n)) next = n;
+                            }
+                            handleCodeParamChange(key, next);
+                          }}
+                          sx={{
+                            flex: 1,
+                            px: 1,
+                            py: 0.5,
+                            fontSize: "12px",
+                            fontFamily: "monospace",
+                            border: "1px solid",
+                            borderColor: "divider",
+                            borderRadius: "6px",
+                            bgcolor: "background.paper",
+                            color: "text.primary",
+                            outline: "none",
+                            "&:focus": { borderColor: "primary.main" },
+                          }}
+                        />
+                      </Box>
+                    ))}
                   </Box>
                 )}
             </Box>
@@ -1512,7 +1559,7 @@ const TestPlayground = React.forwardRef(
             {!templateId ? (
               <Typography
                 variant="body2"
-                color="text.disabled"
+                color="text.secondary"
                 sx={{ mt: 4, textAlign: "center" }}
               >
                 Save the evaluation first to create versions.
@@ -1520,7 +1567,7 @@ const TestPlayground = React.forwardRef(
             ) : !versionsData?.versions?.length ? (
               <Typography
                 variant="body2"
-                color="text.disabled"
+                color="text.secondary"
                 sx={{ mt: 4, textAlign: "center" }}
               >
                 No versions yet. Click &ldquo;Save Version&rdquo; to create one.
@@ -1759,10 +1806,11 @@ const TestPlayground = React.forwardRef(
                           )}
                         </Box>
 
-                        {/* Three-dot menu — always visible */}
+                        {/* Three-dot menu - always visible */}
                         <Tooltip title="Actions" arrow placement="left">
                           <IconButton
                             size="small"
+                            disabled={!canEditEvals}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleVersionMenuOpen(e, v);
@@ -1812,19 +1860,6 @@ const TestPlayground = React.forwardRef(
                     },
                   }}
                 >
-                  <MenuItem
-                    onClick={() => {
-                      handleViewConfig(menuVersion);
-                    }}
-                    sx={{ fontSize: "13px", gap: 1, py: 1 }}
-                  >
-                    <Iconify
-                      icon="solar:eye-bold"
-                      width={16}
-                      sx={{ color: "text.secondary" }}
-                    />
-                    View Config
-                  </MenuItem>
                   {!menuVersion?.is_default && (
                     <MenuItem
                       onClick={handleSetDefault}
@@ -1864,6 +1899,7 @@ TestPlayground.displayName = "TestPlayground";
 TestPlayground.propTypes = {
   templateId: PropTypes.string,
   instructions: PropTypes.string,
+  evalName: PropTypes.string,
   evalType: PropTypes.string,
   requiredKeys: PropTypes.array,
   showVersions: PropTypes.bool,
@@ -1888,3 +1924,4 @@ TestPlayground.propTypes = {
 };
 
 export default TestPlayground;
+export { CustomJsonInput };

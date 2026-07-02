@@ -74,6 +74,10 @@ const EvaluationStepExperimentCreation = ({
       const apiEvals = userEvalList.map((item) => ({
         ...item,
         evalId: item.id,
+        config: item.config || {
+          ...item.params,
+          mapping: item.mapping || {},
+        },
       }));
       replaceEvals([...apiEvals, ...manualEvals]);
       userChangedColumnRef.current = false;

@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import { Box } from "@mui/material";
+import { Box, useTheme } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import PropTypes from "prop-types";
@@ -23,13 +23,12 @@ import {
   SPAN_DEFAULT_COLUMNS,
   mergeCellStyle,
   generateAnnotationColumnsForTracing,
+  normalizeConfigKeys,
 } from "./common";
 import CustomTraceRenderer from "./Renderers/CustomTraceRenderer";
 import CustomTraceHeaderRenderer from "./Renderers/CustomTraceHeaderRenderer";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { statusBar } from "src/components/run-insights/traces-tab/common";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import LLMTracingSpanDetailDrawer from "./LLMTracingSpanDetailDrawer";
 import { useLLMTracingStoreShallow, useSpanGridStore } from "./states";
 import { userTraceRowHeightMapping } from "../UsersView/common";
@@ -37,22 +36,13 @@ import IPOPTooltipComponent from "./Renderers/IPOPTooltipComponent";
 import { RENDERER_CONFIG } from "./Renderers/common";
 import { NameCell } from "./Renderers";
 import IPOPCell from "./Renderers/IPOPCell";
-import _ from "lodash";
 import { isCellValueEmpty } from "src/components/table/utils";
 import { APP_CONSTANTS } from "src/utils/constants";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 const ROWS_LIMIT = 100;
-
-// Normalize config object keys from snake_case to camelCase while preserving id values as snake_case
-const normalizeConfigKeys = (config) =>
-  config?.map((obj) => {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
-    }
-    return result;
-  });
 
 const getSpanListColumnDefs = (col) => {
   const colId = col?.id;
@@ -63,9 +53,12 @@ const getSpanListColumnDefs = (col) => {
     headerName: col.name,
     ...(isCustomColumn
       ? { colId: col.id, minWidth: 180, flex: 1 }
-      : { field: col.id }),
+      : {
+          field: col.id,
+          ...(colId === "total_tokens" ? { minWidth: 240 } : {}),
+        }),
     hide: !col?.isVisible,
-    col,
+    context: { sourceColumn: col },
     // Custom columns use valueGetter to handle dot-notation attribute keys
     ...(isCustomColumn
       ? (() => {
@@ -111,12 +104,15 @@ const getSpanListColumnDefs = (col) => {
     },
     cellRendererSelector: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
-        // No renderer for empty values
+      const column = params?.colDef?.context?.sourceColumn;
+      const colId = column?.id;
+
+      // The tags column stays interactive even when empty so a first tag can
+      // be added via its "+ Tag" affordance. Other columns render nothing when
+      // empty (valueFormatter shows "-").
+      if (isCellValueEmpty(value) && colId !== "tags") {
         return null;
       }
-      const column = params?.colDef?.col;
-      const colId = column?.id;
 
       if (RENDERER_CONFIG.nameColumns.includes(colId)) {
         return {
@@ -133,7 +129,10 @@ const getSpanListColumnDefs = (col) => {
     },
     cellStyle: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
+      // The tags column keeps its default left alignment so an empty "+ Tag"
+      // sits where the chips will, instead of jumping from center to left.
+      const cellColId = params?.colDef?.context?.sourceColumn?.id;
+      if (isCellValueEmpty(value) && cellColId !== "tags") {
         return {
           display: "flex",
           alignItems: "center",
@@ -198,6 +197,7 @@ const SpanGrid = React.forwardRef(
       }));
 
     const agTheme = useAgTheme();
+    const theme = useTheme();
     const { observeId } = useParams();
     const { setSpanDetailDrawerOpen } = useLLMTracingStoreShallow((state) => ({
       setSpanDetailDrawerOpen: state.setSpanDetailDrawerOpen,
@@ -214,9 +214,29 @@ const SpanGrid = React.forwardRef(
     // Prefetch cache: stores next page data so scroll feels instant
     const prefetchCache = useRef(new Map());
 
-    const refreshGrid = () => {
-      gridRef?.current?.api?.refreshServerSide();
-    };
+    const refreshGrid = useCallback(() => {
+      gridRef?.current?.api?.refreshServerSide({ purge: true });
+    }, [gridRef]);
+    const filterRequestKey = useMemo(
+      () =>
+        JSON.stringify({
+          filters,
+          extraFilters: extraFilters || EMPTY_EXTRA_FILTERS,
+          metricFilters: metricFilters || [],
+          hasEvalFilter,
+          observeId,
+          enabled,
+        }),
+      [filters, extraFilters, metricFilters, hasEvalFilter, observeId, enabled],
+    );
+    const previousFilterRequestKeyRef = useRef(filterRequestKey);
+
+    useEffect(() => {
+      if (previousFilterRequestKeyRef.current === filterRequestKey) return;
+      previousFilterRequestKeyRef.current = filterRequestKey;
+      prefetchCache.current.clear();
+      refreshGrid();
+    }, [filterRequestKey, refreshGrid]);
 
     // Clear AG Grid's internal selection when the project changes — the
     // zustand reset handled in the header only clears our mirror, not AG
@@ -239,7 +259,6 @@ const SpanGrid = React.forwardRef(
       () => ({
         filter: false,
         resizable: true,
-        suppressMovable: true,
         suppressHeaderMenuButton: true,
         suppressHeaderFilterButton: true,
         suppressHeaderContextMenu: true,
@@ -262,6 +281,18 @@ const SpanGrid = React.forwardRef(
         },
       }),
       [setFilterOpen, setExtraFilters],
+    );
+
+    const { role } = useAuthContext();
+    // Viewers can browse spans but not edit tags — gate the cell affordance.
+    const canEditTags = Boolean(
+      RolePermission.OBSERVABILITY[PERMISSIONS.CREATE_EDIT_PROJECT]?.[role],
+    );
+    // Tells cell renderers (e.g. TagsCell) they are on the span grid (so tag
+    // edits target the span) and whether the role may edit.
+    const gridContext = useMemo(
+      () => ({ entityType: "span", canEditTags }),
+      [canEditTags],
     );
 
     const { columnDefs } = useMemo(() => {
@@ -315,7 +346,13 @@ const SpanGrid = React.forwardRef(
         }
       });
       if (annotationColumns?.length > 0) {
-        columnDefsResult.push(annotationColumns[0]);
+        for (const group of annotationColumns) {
+          if (group.children) {
+            columnDefsResult.push(...group.children);
+          } else {
+            columnDefsResult.push(group);
+          }
+        }
       }
       return {
         columnDefs: columnDefsResult,
@@ -349,16 +386,12 @@ const SpanGrid = React.forwardRef(
                 ...(observeId ? { project_id: observeId } : {}),
                 page_number: page,
                 page_size: ROWS_LIMIT,
-                filters: JSON.stringify(
-                  canonicalizeApiFilterColumnIds([
-                    ...objectCamelToSnake([
-                      ...filters,
-                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                    ]),
-                    ...(extraFilters || EMPTY_EXTRA_FILTERS),
-                    ...(metricFilters || []),
-                  ]),
-                ),
+                filters: JSON.stringify([
+                  ...filters,
+                  ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                  ...(extraFilters || EMPTY_EXTRA_FILTERS),
+                  ...(metricFilters || []),
+                ]),
               });
 
               // Use prefetched data if available, otherwise fetch
@@ -388,32 +421,36 @@ const SpanGrid = React.forwardRef(
                 const dedupedPending = pending.filter(
                   (c) => !existingIds.has(c.id),
                 );
-                // Strip isVisible from the diff so saved-view hide maps
-                // don't keep retriggering the merge on every fetch.
-                const stripVis = (cols) =>
-                  (cols || []).map(({ isVisible, ...rest }) => rest);
-                const backendChanged = !_.isEqual(
-                  stripVis(newCols),
-                  stripVis(currentNonCustom),
-                );
+                // Diff by ID set — order isn't a schema change (TH-4996).
+                const newIds = new Set(newCols.map((c) => c.id));
+                const currentIdSet = new Set(currentNonCustom.map((c) => c.id));
+                const idSetChanged =
+                  newIds.size !== currentIdSet.size ||
+                  [...newIds].some((id) => !currentIdSet.has(id));
                 const hasPending = dedupedPending.length > 0;
-                if (backendChanged || hasPending) {
+                if (idSetChanged || hasPending) {
                   const allCustom = [...existingCustom, ...dedupedPending];
                   if (pending.length > 0 && pendingCustomColumnsRef) {
                     pendingCustomColumnsRef.current = [];
                   }
-                  // Preserve existing isVisible so saved-view hide intent
-                  // survives backend col changes.
-                  const finalNonCustom = backendChanged
-                    ? newCols.map((nc) => {
-                        const existing = currentNonCustom.find(
-                          (c) => c.id === nc.id,
-                        );
-                        return existing
-                          ? { ...nc, isVisible: existing.isVisible }
-                          : nc;
-                      })
-                    : currentNonCustom;
+                  let finalNonCustom;
+                  if (idSetChanged) {
+                    const newById = new Map(newCols.map((nc) => [nc.id, nc]));
+                    const seen = new Set();
+                    const kept = currentNonCustom
+                      .filter((cc) => newById.has(cc.id))
+                      .map((cc) => {
+                        seen.add(cc.id);
+                        return {
+                          ...newById.get(cc.id),
+                          isVisible: cc.isVisible,
+                        };
+                      });
+                    const added = newCols.filter((nc) => !seen.has(nc.id));
+                    finalNonCustom = [...kept, ...added];
+                  } else {
+                    finalNonCustom = currentNonCustom;
+                  }
                   setColumns(
                     allCustom.length > 0
                       ? [...finalNonCustom, ...allCustom]
@@ -467,6 +504,27 @@ const SpanGrid = React.forwardRef(
         hasEvalFilter,
         enabled,
       ],
+    );
+
+    // Propagate drag-reorder to parent so the View columns dropdown stays in sync.
+    const onColumnMoved = useCallback(
+      (params) => {
+        if (!params.finished) return;
+        const newOrder = params.api
+          .getColumnState()
+          .map((s) => s.colId)
+          .filter((id) => id !== APP_CONSTANTS.AG_GRID_SELECTION_COLUMN);
+        const byId = new Map((columns || []).map((c) => [c.id, c]));
+        const reordered = newOrder.map((id) => byId.get(id)).filter(Boolean);
+        const matched = new Set(newOrder);
+        const unmatched = (columns || []).filter((c) => !matched.has(c.id));
+        const next = [...reordered, ...unmatched];
+        const changed =
+          next.length !== (columns || []).length ||
+          next.some((c, i) => c.id !== columns[i]?.id);
+        if (changed) setColumns(next);
+      },
+      [columns, setColumns],
     );
 
     const onSelectionChanged = useCallback((params) => {
@@ -554,26 +612,32 @@ const SpanGrid = React.forwardRef(
           rowHeight={userTraceRowHeightMapping[cellHeight]?.height ?? 40}
           theme={agTheme.withParams({
             columnBorder: false,
-            headerColumnBorder: { width: 0 },
+            headerColumnBorder: false,
             wrapperBorder: { width: 0 },
             wrapperBorderRadius: 0,
+            rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
+            headerFontSize: "13px",
+            headerFontWeight: theme.typography.fontWeightMedium,
+            headerBackgroundColor: "transparent",
+            headerTextColor: theme.palette.text.primary,
+            rowHoverColor: "rgba(120,87,252,0.04)",
           })}
           ref={gridRef}
           columnDefs={columnDefs}
+          onColumnMoved={onColumnMoved}
           defaultColDef={defaultColDef}
-          rowSelection={{ mode: "multiRow" }}
+          context={gridContext}
+          rowSelection={{ mode: "multiRow", enableClickSelection: false }}
           pagination={false}
           cacheBlockSize={ROWS_LIMIT}
           maxBlocksInCache={undefined}
           rowBuffer={10}
-          suppressRowClickSelection={true}
           rowModelType="serverSide"
           tooltipShowDelay={0}
           tooltipHideDelay={2000}
           tooltipInteraction={true}
           serverSideDatasource={dataSource}
           suppressServerSideFullWidthLoadingRow={true}
-          serverSideInitialRowCount={ROWS_LIMIT}
           onCellClicked={handleCellClick}
           onSelectionChanged={onSelectionChanged}
           // onGridReady={(params) => {
@@ -625,7 +689,7 @@ SpanGrid.propTypes = {
   filters: PropTypes.array,
   extraFilters: PropTypes.array,
   setFilters: PropTypes.func,
-  setFilterOpen: PropTypes.bool,
+  setFilterOpen: PropTypes.func,
   setLoading: PropTypes.func,
   setPageMap: PropTypes.func,
   compareType: PropTypes.string,

@@ -90,6 +90,8 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         fb = ClickHouseFilterBuilder(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         self.params.update(extra_params)
@@ -140,7 +142,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         SELECT id AS span_id, span_attributes_raw, span_attr_str, span_attr_num, metadata_map
         FROM {self.TABLE}
         PREWHERE id IN %(content_span_ids)s
-        WHERE project_id = %(project_id)s AND _peerdb_is_deleted = 0
+        WHERE project_id = %(project_id)s AND is_deleted = 0
         """
         return query, params
 
@@ -149,6 +151,8 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         fb = ClickHouseFilterBuilder(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
         )
         extra_where, extra_params = fb.translate(self.filters)
         params = dict(self.params)
@@ -353,7 +357,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             tags
         FROM {self.TABLE}
         WHERE project_id = %(project_id)s
-          AND _peerdb_is_deleted = 0
+          AND is_deleted = 0
           AND trace_id IN %(trace_ids)s
           AND parent_span_id IS NOT NULL
         ORDER BY start_time ASC

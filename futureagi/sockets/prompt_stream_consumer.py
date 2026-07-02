@@ -30,11 +30,7 @@ from model_hub.utils.websocket_direct_manager import WebSocketDirectManager
 from model_hub.views.prompt_template import (
     replace_ids_with_column_name_async,
 )
-try:
-    from ee.usage.models.usage import APICallStatusChoices, APICallTypeChoices
-except ImportError:
-    APICallStatusChoices = None
-    APICallTypeChoices = None
+from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 try:
     from ee.usage.utils.usage_entries import count_text_tokens, log_and_deduct_cost_for_api_request
 except ImportError:

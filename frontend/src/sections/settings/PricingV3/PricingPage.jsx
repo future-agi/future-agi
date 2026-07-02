@@ -11,7 +11,11 @@
 
 import React, { useState, useCallback, useEffect } from "react";
 import PropTypes from "prop-types";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+  usePlansAndAddons,
+  PLANS_QUERY_KEY,
+} from "src/hooks/use-plans-and-addons";
 import {
   Box,
   Typography,
@@ -39,10 +43,12 @@ import {
 } from "@mui/material";
 import Iconify from "src/components/iconify";
 import CustomDialog from "src/sections/develop-detail/Common/CustomDialog/CustomDialog";
+import ConfirmDowngrade from "src/pages/dashboard/settings/ConfirmDowngrade";
 
 import { enqueueSnackbar } from "notistack";
 import axios, { endpoints } from "src/utils/axios";
 import { fCurrency } from "src/utils/format-number";
+import { canonicalEntries } from "src/utils/utils";
 import {
   FEATURE_LABELS,
   ADDON_ICONS,
@@ -321,7 +327,8 @@ AddonCard.propTypes = {
 
 function BooleanFeatureList({ features, isRemove }) {
   // Show boolean features that are true + numeric features that are > 0
-  const displayFeatures = Object.entries(features || {})
+  const seenLabels = new Set();
+  const displayFeatures = canonicalEntries(features)
     .filter(([key, v]) => {
       if (SKIP_FEATURE_PREFIXES.some((p) => key.startsWith(p))) return false;
       if (typeof v === "boolean") return v === true;
@@ -337,7 +344,12 @@ function BooleanFeatureList({ features, isRemove }) {
             ? "Unlimited"
             : formatCompact(v)
           : null,
-    }));
+    }))
+    .filter(({ label }) => {
+      if (seenLabels.has(label)) return false;
+      seenLabels.add(label);
+      return true;
+    });
 
   if (!displayFeatures.length) return null;
 
@@ -434,8 +446,8 @@ function FeatureMatrix({ plansData }) {
         </TableHead>
         <TableBody>
           {FEATURE_GROUPS.map((group) => (
-            <>
-              <TableRow key={group.name}>
+            <React.Fragment key={group.name}>
+              <TableRow>
                 <TableCell
                   colSpan={6}
                   sx={{
@@ -519,7 +531,7 @@ function FeatureMatrix({ plansData }) {
                   })}
                 </TableRow>
               ))}
-            </>
+            </React.Fragment>
           ))}
         </TableBody>
       </Table>
@@ -540,6 +552,7 @@ export default function PricingPage() {
     plan: null,
     action: null,
   });
+  const [downgradeOpen, setDowngradeOpen] = useState(false);
   const queryClient = useQueryClient();
 
   // Handle Stripe Checkout redirect (upgrade=success&session_id=...)
@@ -553,7 +566,7 @@ export default function PricingPage() {
         .put(endpoints.settings.v2.upgradeToPayg, { session_id: sessionId })
         .then(() => {
           enqueueSnackbar("Upgraded to Pay-as-you-go!", { variant: "success" });
-          queryClient.invalidateQueries({ queryKey: ["v2-plans-and-addons"] });
+          queryClient.invalidateQueries({ queryKey: PLANS_QUERY_KEY });
         })
         .catch((err) => {
           enqueueSnackbar(
@@ -571,11 +584,7 @@ export default function PricingPage() {
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const { data, isLoading } = useQuery({
-    queryKey: ["v2-plans-and-addons"],
-    queryFn: () => axios.get(endpoints.settings.v2.plansAndAddons),
-    select: (res) => res.data?.result,
-  });
+  const { data, isLoading } = usePlansAndAddons();
 
   const closeDialog = () =>
     setAddonDialog({ open: false, plan: null, action: null });
@@ -598,7 +607,7 @@ export default function PricingPage() {
       enqueueSnackbar(`${res.data?.result?.plan} add-on activated!`, {
         variant: "success",
       });
-      queryClient.invalidateQueries({ queryKey: ["v2-plans-and-addons"] });
+      queryClient.invalidateQueries({ queryKey: PLANS_QUERY_KEY });
       closeDialog();
     },
     onError: () => {
@@ -614,7 +623,7 @@ export default function PricingPage() {
       enqueueSnackbar("Add-on will be removed at end of billing period", {
         variant: "info",
       });
-      queryClient.invalidateQueries({ queryKey: ["v2-plans-and-addons"] });
+      queryClient.invalidateQueries({ queryKey: PLANS_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: ["v2-billing-overview"] });
       queryClient.invalidateQueries({ queryKey: ["v2-usage-overview"] });
       closeDialog();
@@ -631,7 +640,7 @@ export default function PricingPage() {
       enqueueSnackbar("Add-on reinstated. Your plan stays active.", {
         variant: "success",
       });
-      queryClient.invalidateQueries({ queryKey: ["v2-plans-and-addons"] });
+      queryClient.invalidateQueries({ queryKey: PLANS_QUERY_KEY });
       queryClient.invalidateQueries({ queryKey: ["v2-billing-overview"] });
       queryClient.invalidateQueries({ queryKey: ["v2-usage-overview"] });
     },
@@ -646,7 +655,7 @@ export default function PricingPage() {
     mutationFn: () => axios.post(endpoints.settings.v2.downgradeToFree),
     onSuccess: () => {
       enqueueSnackbar("Downgraded to Free plan", { variant: "success" });
-      queryClient.invalidateQueries({ queryKey: ["v2-plans-and-addons"] });
+      queryClient.invalidateQueries({ queryKey: PLANS_QUERY_KEY });
     },
     onError: (err) =>
       enqueueSnackbar(err?.response?.data?.result || "Downgrade failed", {
@@ -658,12 +667,17 @@ export default function PricingPage() {
     if (plan === "payg") {
       upgradeMutation.mutate();
     } else if (plan === "free") {
-      if (currentPlan !== "free" && currentPlan !== "payg") {
-        removeMutation.mutate(currentPlan);
-      } else if (currentPlan === "payg") {
-        downgradeMutation.mutate();
-      }
+      setDowngradeOpen(true);
     }
+  };
+
+  const handleDowngradeConfirm = () => {
+    if (currentPlan !== "free" && currentPlan !== "payg") {
+      removeMutation.mutate(currentPlan);
+    } else if (currentPlan === "payg") {
+      downgradeMutation.mutate();
+    }
+    setDowngradeOpen(false);
   };
 
   const handleAddAddon = useCallback((plan) => {
@@ -700,7 +714,9 @@ export default function PricingPage() {
   }
 
   const currentPlan = data?.current_plan || "free";
-  const isCustomPricing = data?.is_custom_pricing || false;
+  const isCustomPricing =
+    data?.isCustomPricing ?? data?.is_custom_pricing ?? false;
+  const customDetails = data?.customDetails ?? data?.custom_details ?? null;
   const tiers = data?.tiers || [];
   const addons = data?.addons || [];
   const currentAddon = addons.find((a) => a.key === currentPlan);
@@ -750,11 +766,11 @@ export default function PricingPage() {
               <Box>
                 <Typography variant="subtitle1" fontWeight={700}>
                   Custom Pricing
-                  {data?.custom_details?.platform_fee > 0 && (
+                  {customDetails?.platform_fee > 0 && (
                     <Chip
-                      label={`${fCurrency(data.custom_details.per_charge_amount)}/${
+                      label={`${fCurrency(customDetails.per_charge_amount)}/${
                         { 1: "mo", 3: "qtr", 6: "half", 12: "yr" }[
-                          data.custom_details.platform_fee_billing_cycle
+                          customDetails.platform_fee_billing_cycle
                         ] || "mo"
                       }`}
                       size="small"
@@ -771,7 +787,7 @@ export default function PricingPage() {
           </Paper>
 
           {/* Custom plan features */}
-          {data?.custom_details?.features && (
+          {customDetails?.features && (
             <>
               <Typography variant="subtitle1" fontWeight={600} mb={2}>
                 Your plan features
@@ -782,7 +798,7 @@ export default function PricingPage() {
               >
                 <Table size="small">
                   <TableBody>
-                    {Object.entries(data.custom_details.features)
+                    {canonicalEntries(customDetails.features)
                       .filter(
                         ([key]) =>
                           !SKIP_FEATURE_PREFIXES.some((p) => key.startsWith(p)),
@@ -824,8 +840,8 @@ export default function PricingPage() {
           )}
 
           {/* Custom pricing tiers */}
-          {data?.custom_details?.pricing &&
-            Object.keys(data.custom_details.pricing).length > 0 && (
+          {customDetails?.pricing &&
+            Object.keys(customDetails.pricing).length > 0 && (
               <>
                 <Typography variant="subtitle1" fontWeight={600} mb={1}>
                   Your pricing tiers
@@ -865,7 +881,7 @@ export default function PricingPage() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {Object.entries(data.custom_details.pricing).flatMap(
+                      {canonicalEntries(customDetails.pricing).flatMap(
                         ([dimKey, dim]) =>
                           dim.tiers.map((tier, idx) => (
                             <TableRow key={`${dimKey}-${idx}`}>
@@ -1110,7 +1126,7 @@ export default function PricingPage() {
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {Object.entries(data.pricing).map(([dimKey, pricing]) => {
+                  {canonicalEntries(data.pricing).map(([dimKey, pricing]) => {
                     const isSingleTier = pricing.tiers.length === 1;
                     return pricing.tiers.map((tier, i) => (
                       <TableRow key={`${dimKey}-${i}`}>
@@ -1256,6 +1272,13 @@ export default function PricingPage() {
           )}
         </DialogContent>
       </CustomDialog>
+
+      <ConfirmDowngrade
+        open={downgradeOpen}
+        onClose={() => setDowngradeOpen(false)}
+        onConfirm={handleDowngradeConfirm}
+        isLoading={removeMutation.isPending || downgradeMutation.isPending}
+      />
     </Box>
   );
 }

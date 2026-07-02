@@ -325,9 +325,9 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
             onClose={() => setAddLabelDrawerOpen(false)}
             projectId={projectId}
             onLabelsChanged={() => {
-                refetchQueueLabels();
-                onScoresChanged?.();
-              }}
+              refetchQueueLabels();
+              onScoresChanged?.();
+            }}
           />
         )}
       </Box>
@@ -405,9 +405,9 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
           onClose={() => setAddLabelDrawerOpen(false)}
           projectId={projectId}
           onLabelsChanged={() => {
-                refetchQueueLabels();
-                onScoresChanged?.();
-              }}
+            refetchQueueLabels();
+            onScoresChanged?.();
+          }}
         />
       )}
     </Box>

@@ -391,7 +391,6 @@ class TestE2EOrgSwitchScenarios:
         response = auth_client.post(
             "/accounts/workspace/switch/",
             {
-                "old_workspace_id": str(ws_a_default.id),
                 "new_workspace_id": str(ws_a_staging.id),
             },
             format="json",

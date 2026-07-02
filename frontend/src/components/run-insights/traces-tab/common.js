@@ -171,11 +171,11 @@ export const applyQuickFilters =
     let filter = null;
     if (!col.groupBy) {
       filter = {
-        columnId: col.id,
-        filterConfig: {
-          filterType: "text",
-          filterOp: "equals",
-          filterValue: value,
+        column_id: col.id,
+        filter_config: {
+          filter_type: "text",
+          filter_op: "equals",
+          filter_value: value,
         },
         _meta: {
           parentProperty: col.id,
@@ -184,10 +184,10 @@ export const applyQuickFilters =
       };
 
       if (col.id === "node_type") {
-        filter.filterConfig = {
-          filterType: "text",
-          filterOp: "contains",
-          filterValue: [value],
+        filter.filter_config = {
+          filter_type: "text",
+          filter_op: "contains",
+          filter_value: [value],
         };
       }
     } else if (col?.groupBy === "Evaluation Metrics") {
@@ -195,11 +195,11 @@ export const applyQuickFilters =
         filterAnchor,
         value,
         filter: {
-          columnId: col.id,
-          filterConfig: {
-            filterType: "number",
-            filterOp: "equals",
-            filterValue: [value, ""],
+          column_id: col.id,
+          filter_config: {
+            filter_type: "number",
+            filter_op: "equals",
+            filter_value: [value, ""],
           },
           _meta: {
             parentProperty: "Evaluation Metrics",
@@ -210,7 +210,7 @@ export const applyQuickFilters =
       });
     } else if (col?.groupBy === "Annotation Metrics") {
       filter = {
-        columnId: col.id,
+        column_id: col.id,
         _meta: {
           parentProperty: "Annotation Metrics",
           "Annotation Metrics": col.id,
@@ -221,10 +221,10 @@ export const applyQuickFilters =
         case AnnotationLabelTypes.STAR: {
           filter = {
             ...filter,
-            filterConfig: {
-              filterType: "number",
-              filterOp: "equals",
-              filterValue: [value, ""],
+            filter_config: {
+              filter_type: "number",
+              filter_op: "equals",
+              filter_value: [value, ""],
             },
           };
           break;
@@ -232,10 +232,10 @@ export const applyQuickFilters =
         case AnnotationLabelTypes.TEXT: {
           filter = {
             ...filter,
-            filterConfig: {
-              filterType: "text",
-              filterOp: "equals",
-              filterValue: value,
+            filter_config: {
+              filter_type: "text",
+              filter_op: "equals",
+              filter_value: value,
             },
           };
           break;
@@ -243,10 +243,10 @@ export const applyQuickFilters =
         case AnnotationLabelTypes.THUMBS_UP_DOWN: {
           filter = {
             ...filter,
-            filterConfig: {
-              filterType: "boolean",
-              filterOp: "equals",
-              filterValue: value === "up" ? true : false,
+            filter_config: {
+              filter_type: "boolean",
+              filter_op: "equals",
+              filter_value: value === "up" ? true : false,
             },
           };
           break;
@@ -254,10 +254,10 @@ export const applyQuickFilters =
         case AnnotationLabelTypes.CATEGORICAL: {
           filter = {
             ...filter,
-            filterConfig: {
-              filterType: "text",
-              filterOp: "contains",
-              filterValue: value,
+            filter_config: {
+              filter_type: "text",
+              filter_op: "contains",
+              filter_value: value,
             },
           };
           break;
@@ -268,10 +268,10 @@ export const applyQuickFilters =
             value,
             filter: {
               ...filter,
-              filterConfig: {
-                filterType: "number",
-                filterOp: "equals",
-                filterValue: [value, ""],
+              filter_config: {
+                filter_type: "number",
+                filter_op: "equals",
+                filter_value: [value, ""],
               },
             },
           });

@@ -11,6 +11,7 @@ from agentcc.serializers.api_key import (
 )
 from agentcc.services import auth_bridge
 from agentcc.services.gateway_client import GatewayClientError
+from model_hub.utils.workspace_scope import request_workspace_filter
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.general_methods import GeneralMethods
 
@@ -81,9 +82,12 @@ class AgentccAPIKeyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
 
             project = None
             if data.get("project_id"):
-                project = AgentccProject.no_workspace_objects.get(
-                    id=data["project_id"],
+                project = AgentccProject.no_workspace_objects.filter(
+                    request_workspace_filter(request),
+                    deleted=False,
                     organization=org,
+                ).get(
+                    id=data["project_id"],
                 )
 
             api_key, raw_key = auth_bridge.provision_key(
@@ -109,6 +113,9 @@ class AgentccAPIKeyViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         except Exception as e:
             logger.exception("api_key_create_error", error=str(e))
             return self._gm.bad_request(str(e))
+
+    def update(self, request, *args, **kwargs):
+        return self.partial_update(request, *args, **kwargs)
 
     def partial_update(self, request, *args, **kwargs):
         try:

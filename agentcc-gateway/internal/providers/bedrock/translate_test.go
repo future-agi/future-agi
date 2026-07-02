@@ -2,10 +2,37 @@ package bedrock
 
 import (
 	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/futureagi/agentcc-gateway/internal/models"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
+
+func mockImageDownloadClient(t *testing.T, mediaType, body string) {
+	t.Helper()
+	original := sharedDownloadClient
+	sharedDownloadClient = &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     http.Header{"Content-Type": []string{mediaType}},
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Request:    req,
+			}, nil
+		}),
+	}
+	t.Cleanup(func() {
+		sharedDownloadClient = original
+	})
+}
 
 // ===========================================================================
 // translateRequest tests
@@ -783,6 +810,8 @@ func TestTranslateVisionContent_Bedrock_InvalidJSON(t *testing.T) {
 }
 
 func TestTranslateVisionContent_Bedrock_MultipleImages(t *testing.T) {
+	mockImageDownloadClient(t, "image/jpeg", "jpeg-bytes")
+
 	content := json.RawMessage(`[
 		{"type":"text","text":"Compare these"},
 		{"type":"image_url","image_url":{"url":"data:image/png;base64,abc="}},
@@ -802,8 +831,14 @@ func TestTranslateVisionContent_Bedrock_MultipleImages(t *testing.T) {
 	if blocks[1].Type != "image" || blocks[1].Source.Type != "base64" {
 		t.Errorf("blocks[1] should be base64 image")
 	}
-	if blocks[2].Type != "image" || blocks[2].Source.Type != "url" {
-		t.Errorf("blocks[2] should be URL image")
+	if blocks[2].Type != "image" || blocks[2].Source.Type != "base64" {
+		t.Errorf("blocks[2] should be downloaded base64 image")
+	}
+	if blocks[2].Source.MediaType != "image/jpeg" {
+		t.Errorf("blocks[2].Source.MediaType = %q, want %q", blocks[2].Source.MediaType, "image/jpeg")
+	}
+	if blocks[2].Source.Data != "anBlZy1ieXRlcw==" {
+		t.Errorf("blocks[2].Source.Data = %q, want downloaded image base64", blocks[2].Source.Data)
 	}
 }
 
@@ -847,6 +882,8 @@ func TestConvertImageToBedrock_DataURI_JPEG(t *testing.T) {
 }
 
 func TestConvertImageToBedrock_HTTPURL(t *testing.T) {
+	mockImageDownloadClient(t, "image/jpeg", "photo-bytes")
+
 	block := convertImageToBedrock("https://example.com/photo.jpg")
 	if block == nil {
 		t.Fatal("expected non-nil block")
@@ -857,11 +894,14 @@ func TestConvertImageToBedrock_HTTPURL(t *testing.T) {
 	if block.Source == nil {
 		t.Fatal("Source should not be nil")
 	}
-	if block.Source.Type != "url" {
-		t.Errorf("Source.Type = %q, want %q", block.Source.Type, "url")
+	if block.Source.Type != "base64" {
+		t.Errorf("Source.Type = %q, want %q", block.Source.Type, "base64")
 	}
-	if block.Source.URL != "https://example.com/photo.jpg" {
-		t.Errorf("Source.URL = %q, want %q", block.Source.URL, "https://example.com/photo.jpg")
+	if block.Source.MediaType != "image/jpeg" {
+		t.Errorf("Source.MediaType = %q, want %q", block.Source.MediaType, "image/jpeg")
+	}
+	if block.Source.Data != "cGhvdG8tYnl0ZXM=" {
+		t.Errorf("Source.Data = %q, want downloaded image base64", block.Source.Data)
 	}
 }
 
@@ -1003,6 +1043,8 @@ func TestTranslateMessage_Bedrock_VisionContent_WithText(t *testing.T) {
 }
 
 func TestTranslateMessage_Bedrock_VisionContent_HTTPUrl_ImageOnly(t *testing.T) {
+	mockImageDownloadClient(t, "image/jpeg", "image-bytes")
+
 	// Image-only content with HTTP URL (no text parts).
 	msg := models.Message{
 		Role: "user",
@@ -1020,11 +1062,17 @@ func TestTranslateMessage_Bedrock_VisionContent_HTTPUrl_ImageOnly(t *testing.T) 
 	if len(blocks) != 1 {
 		t.Fatalf("blocks length = %d, want 1", len(blocks))
 	}
-	if blocks[0].Source.Type != "url" {
-		t.Errorf("Source.Type = %q, want %q", blocks[0].Source.Type, "url")
+	if blocks[0].Source == nil {
+		t.Fatal("blocks[0].Source should not be nil")
 	}
-	if blocks[0].Source.URL != "https://example.com/img.jpg" {
-		t.Errorf("Source.URL = %q, want %q", blocks[0].Source.URL, "https://example.com/img.jpg")
+	if blocks[0].Source.Type != "base64" {
+		t.Errorf("Source.Type = %q, want %q", blocks[0].Source.Type, "base64")
+	}
+	if blocks[0].Source.MediaType != "image/jpeg" {
+		t.Errorf("Source.MediaType = %q, want %q", blocks[0].Source.MediaType, "image/jpeg")
+	}
+	if blocks[0].Source.Data != "aW1hZ2UtYnl0ZXM=" {
+		t.Errorf("Source.Data = %q, want downloaded image base64", blocks[0].Source.Data)
 	}
 }
 
@@ -1413,7 +1461,7 @@ func TestParseStreamPayload_ContentBlockDeltaNonTextDelta(t *testing.T) {
 
 	msg := &eventStreamMessage{
 		Headers: map[string]string{":message-type": "event"},
-		Payload: []byte(`{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{"}}`),
+		Payload: []byte(`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","text":"ignored"}}`),
 	}
 
 	chunk, done, err := state.parseStreamPayload(msg)
@@ -1424,9 +1472,9 @@ func TestParseStreamPayload_ContentBlockDeltaNonTextDelta(t *testing.T) {
 	if done {
 		t.Error("should not be done")
 	}
-	// Non text_delta types should return nil chunk
+	// Unsupported delta types should return nil chunks.
 	if chunk != nil {
-		t.Error("chunk should be nil for non-text_delta")
+		t.Error("chunk should be nil for unsupported delta type")
 	}
 }
 

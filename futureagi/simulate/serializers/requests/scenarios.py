@@ -5,9 +5,10 @@ from rest_framework import serializers
 
 from model_hub.models.choices import DataTypeChoices, SourceChoices
 from simulate.models import Scenarios
+from tracer.serializers.filters import StrictInputSerializer
 
 
-class ColumnDefinitionSerializer(serializers.Serializer):
+class ColumnDefinitionSerializer(StrictInputSerializer):
     """Typed column definition — replaces DictField() in scenario create/add-columns."""
 
     name = serializers.CharField(max_length=50)
@@ -52,18 +53,18 @@ class ScenarioMultiDatasetFilterSerializer(serializers.Serializer):
     def validate_scenarios(self, value):
         try:
             parsed = json.loads(value)
-        except (json.JSONDecodeError, TypeError):
+        except (json.JSONDecodeError, TypeError) as exc:
             raise serializers.ValidationError(
                 "Must be a valid JSON array of scenario UUIDs."
-            )
+            ) from exc
         if not isinstance(parsed, list):
             raise serializers.ValidationError("Must be a JSON array.")
         validated_ids = []
         for item in parsed:
             try:
                 validated_ids.append(uuid.UUID(str(item)))
-            except (ValueError, AttributeError):
-                raise serializers.ValidationError(f"Invalid UUID: {item}")
+            except (ValueError, AttributeError) as exc:
+                raise serializers.ValidationError(f"Invalid UUID: {item}") from exc
         return validated_ids
 
 
@@ -126,6 +127,15 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
     finished_speaking_sensitivity = serializers.FloatField(required=False, default=0.5)
     initial_message_delay = serializers.IntegerField(required=False, default=0)
 
+    @classmethod
+    def _no_of_rows_min(cls) -> int:
+        """Single source of truth for the dataset-rows floor.
+
+        Mirrors the ``no_of_rows.min_value`` so the Import-Dataset path and the
+        Workflow-Builder path stay in lockstep.
+        """
+        return cls().fields["no_of_rows"].min_value
+
     def validate_name(self, value):
         if not value.strip():
             raise serializers.ValidationError(
@@ -154,6 +164,27 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
                 "Dataset not found or not accessible."
             ) from e
 
+    def validate_agent_definition_id(self, value):
+        if not value:
+            return value
+        request = self.context.get("request")
+        if not request:
+            raise serializers.ValidationError("Request context is required.")
+        from simulate.models import AgentDefinition
+
+        try:
+            AgentDefinition.objects.get(
+                id=value,
+                deleted=False,
+                organization=getattr(request, "organization", None)
+                or request.user.organization,
+            )
+            return value
+        except AgentDefinition.DoesNotExist as e:
+            raise serializers.ValidationError(
+                "Agent definition not found or not accessible."
+            ) from e
+
     def validate_prompt_template_id(self, value):
         if not value:
             return value
@@ -169,8 +200,11 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
                 "organization": getattr(request, "organization", None)
                 or request.user.organization,
             }
-            if hasattr(request.user, "workspace") and request.user.workspace:
-                filters["workspace"] = request.user.workspace
+            request_workspace = getattr(request, "workspace", None) or getattr(
+                request.user, "workspace", None
+            )
+            if request_workspace:
+                filters["workspace"] = request_workspace
             PromptTemplate.objects.get(**filters)
             return value
         except PromptTemplate.DoesNotExist as e:
@@ -195,8 +229,11 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
                 )
                 or request.user.organization,
             }
-            if hasattr(request.user, "workspace") and request.user.workspace:
-                filters["original_template__workspace"] = request.user.workspace
+            request_workspace = getattr(request, "workspace", None) or getattr(
+                request.user, "workspace", None
+            )
+            if request_workspace:
+                filters["original_template__workspace"] = request_workspace
             PromptVersion.objects.get(**filters)
             return value
         except PromptVersion.DoesNotExist as e:
@@ -218,6 +255,18 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
         if kind == Scenarios.ScenarioTypes.SCRIPT and not data.get("script_url"):
             raise serializers.ValidationError(
                 {"script_url": "script_url is required for script kind."}
+            )
+
+        if (
+            source_type == Scenarios.SourceTypes.AGENT_DEFINITION
+            and not data.get("agent_definition_id")
+        ):
+            raise serializers.ValidationError(
+                {
+                    "agent_definition_id": (
+                        "agent_definition_id is required for agent_definition source type."
+                    )
+                }
             )
 
         if kind == Scenarios.ScenarioTypes.GRAPH:
@@ -278,7 +327,7 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
         # Phase 0.1.2 + 0.1.3 — persona column type + duplicate DB column names (dataset)
         if kind == Scenarios.ScenarioTypes.DATASET and data.get("dataset_id"):
             request = self.context.get("request")
-            from model_hub.models.develop_dataset import Column, Dataset
+            from model_hub.models.develop_dataset import Column, Dataset, Row
 
             try:
                 source_dataset = Dataset.objects.get(
@@ -290,6 +339,20 @@ class ScenarioCreateRequestSerializer(serializers.Serializer):
             except Dataset.DoesNotExist:
                 # Already validated in validate_dataset_id; skip DB checks
                 return data
+
+            min_rows = ScenarioCreateRequestSerializer._no_of_rows_min()
+            row_count = Row.objects.filter(
+                dataset=source_dataset, deleted=False
+            ).count()
+            if row_count < min_rows:
+                raise serializers.ValidationError(
+                    {
+                        "dataset_id": (
+                            f"Source dataset must have at least {min_rows} rows "
+                            f"to create a scenario (found {row_count})."
+                        )
+                    }
+                )
 
             # 0.1.2 — persona column data type
             persona_col = Column.objects.filter(
@@ -364,7 +427,7 @@ class ScenarioAddRowsRequestSerializer(serializers.Serializer):
         return value
 
 
-class ScenarioAddColumnsRequestSerializer(serializers.Serializer):
+class ScenarioAddColumnsRequestSerializer(StrictInputSerializer):
     """Request serializer for POST /scenarios/{scenario_id}/add-columns/.
 
     Incorporates Phase 0 validations (0.2.1 – 0.2.2) that previously lived in the view.

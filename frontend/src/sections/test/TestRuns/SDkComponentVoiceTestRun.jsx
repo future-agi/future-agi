@@ -40,13 +40,13 @@ const SDkComponentVoiceTestRun = () => {
     >
       <InstructionTitle title="Step 1: Install the SDK" />
       <InstructionCodeCopy
-        text={getCodeBySection("installationGuide")}
+        text={getCodeBySection("installation_guide")}
         language={languageTab}
       />
 
       <InstructionTitle title="Step 2: Create a simulation run" />
       <InstructionCodeCopy
-        text={getCodeBySection("sdkCode")}
+        text={getCodeBySection("sdk_code")}
         language={languageTab}
       />
     </Box>

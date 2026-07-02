@@ -17,7 +17,7 @@ import { useAuthContext } from "src/auth/hooks";
  *     <WorkspaceIntegrations />
  *   </WorkspaceRoleProtection>
  *
- * Role mapping from workspace level (userWsLevel) — mirrors backend Level constants:
+ * Role mapping from workspace level (user_ws_level) — mirrors backend Level constants:
  * - >= 8 = workspace_admin (WORKSPACE_ADMIN)
  * - >= 3 = workspace_member (WORKSPACE_MEMBER)
  * - >= 1 = workspace_viewer (WORKSPACE_VIEWER)
@@ -78,7 +78,7 @@ const WorkspaceRoleProtection = ({ allowedRoles, children }) => {
 
   // Map workspace level to role name
   // Backend level constants: WORKSPACE_ADMIN=8, WORKSPACE_MEMBER=3, WORKSPACE_VIEWER=1
-  const wsLevel = workspace.userWsLevel || 0;
+  const wsLevel = workspace.user_ws_level || 0;
   const workspaceRole = (() => {
     if (wsLevel >= 8) return "workspace_admin";
     if (wsLevel >= 3) return "workspace_member";

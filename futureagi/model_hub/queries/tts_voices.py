@@ -2,6 +2,7 @@ import uuid
 from typing import List, Optional
 
 from django.core.exceptions import ValidationError
+from django.db.models import Q
 
 from agentic_eval.core_evals.run_prompt.litellm_models import LiteLLMModelManager
 from agentic_eval.core_evals.run_prompt.other_services.manager import (
@@ -11,21 +12,45 @@ from model_hub.models.tts_voices import TTSVoice
 from tfc.utils.error_codes import get_error_message
 
 
-def check_voice_name_exists(organization, name: str) -> bool:
+def _workspace_scope(workspace):
+    if workspace is None:
+        return Q()
+    if getattr(workspace, "is_default", False):
+        return (
+            Q(workspace=workspace)
+            | Q(
+                workspace__is_default=True,
+                workspace__organization=workspace.organization,
+            )
+            | Q(workspace__isnull=True)
+        )
+    return Q(workspace=workspace)
+
+
+def check_voice_name_exists(organization, name: str, workspace=None) -> bool:
     """
     Checks if a voice with the given name already exists for the organization.
     """
-    return TTSVoice.objects.filter(
-        organization=organization, name=name, deleted=False
+    return TTSVoice.no_workspace_objects.filter(
+        _workspace_scope(workspace),
+        organization=organization,
+        name=name,
+        deleted=False,
     ).exists()
 
 
-def check_voice_id_exists(organization, voice_id: str, provider: str) -> bool:
+def check_voice_id_exists(
+    organization, voice_id: str, provider: str, workspace=None
+) -> bool:
     """
     Checks if a voice with the given voice_id and provider already exists for the organization.
     """
-    return TTSVoice.objects.filter(
-        organization=organization, voice_id=voice_id, provider=provider, deleted=False
+    return TTSVoice.no_workspace_objects.filter(
+        _workspace_scope(workspace),
+        organization=organization,
+        voice_id=voice_id,
+        provider=provider,
+        deleted=False,
     ).exists()
 
 
@@ -42,11 +67,11 @@ def create_custom_voice(
     Creates a new custom TTS voice.
     """
     # Check for duplicate name
-    if check_voice_name_exists(organization, name):
+    if check_voice_name_exists(organization, name, workspace=workspace):
         raise ValidationError(f"A voice with the name '{name}' already exists.")
 
     # Check for duplicate voice ID
-    if check_voice_id_exists(organization, voice_id, provider):
+    if check_voice_id_exists(organization, voice_id, provider, workspace=workspace):
         raise ValidationError(
             f"A voice with ID '{voice_id}' already exists for this provider."
         )
@@ -97,11 +122,15 @@ def create_custom_voice(
     )
 
 
-def get_custom_voices(organization, provider: Optional[str] = None) -> List[TTSVoice]:
+def get_custom_voices(
+    organization, provider: Optional[str] = None, workspace=None
+) -> List[TTSVoice]:
     """
     Fetches custom voices for an organization, optionally filtered by provider.
     """
-    qs = TTSVoice.objects.filter(organization=organization, deleted=False)
+    qs = TTSVoice.no_workspace_objects.filter(
+        _workspace_scope(workspace), organization=organization, deleted=False
+    )
     if provider:
         qs = qs.filter(provider=provider)
 

@@ -25,7 +25,7 @@ import { z } from "zod";
 const ConfigureDatasetModal = ({
   open,
   onClose,
-  datasetName,
+  datasetName = "",
   title = "Configure Dataset",
 }) => {
   const theme = useTheme();
@@ -212,6 +212,6 @@ export default ConfigureDatasetModal;
 ConfigureDatasetModal.propTypes = {
   open: PropTypes.bool.isRequired,
   onClose: PropTypes.func.isRequired,
-  datasetName: PropTypes.string.isRequired,
-  title: PropTypes.string.isRequired,
+  datasetName: PropTypes.string,
+  title: PropTypes.string,
 };

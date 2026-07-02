@@ -99,11 +99,9 @@ const ObserveTabBar = ({
   }, [projectSource]);
   const { data: savedViewsData } = useGetSavedViews(projectId);
   // Only show trace-list views (traces/spans/voice) — exclude "imagine" tabs (those belong to trace detail)
-  const customViews = (
-    savedViewsData?.customViews ??
-    savedViewsData?.custom_views ??
-    []
-  ).filter((v) => (v.tab_type || v.tabType) !== "imagine");
+  const customViews = (savedViewsData?.custom_views ?? []).filter(
+    (v) => v.tab_type !== "imagine",
+  );
 
   // Mutations
   const { mutate: updateView } = useUpdateSavedView(projectId);
@@ -137,7 +135,7 @@ const ObserveTabBar = ({
     if (activeTab?.startsWith("view-")) {
       const currentId = activeTab.replace("view-", "");
       const current = customViews.find((v) => v.id === currentId);
-      return current?.tab_type ?? current?.tabType ?? "traces";
+      return current?.tab_type ?? "traces";
     }
     return "traces";
   }, [activeTab, customViews, getTabType]);

@@ -7,8 +7,6 @@ import pytest
 from django.utils import timezone
 
 from agent_playground.models.choices import GraphVersionStatus, PortDirection
-from agent_playground.models.graph_dataset import GraphDataset
-from agent_playground.models.graph_version import GraphVersion
 from agent_playground.services.dataset_bridge import (
     commit_draft_prompt_versions,
     execute_rows,
@@ -167,7 +165,9 @@ class TestExecuteRows:
 
         assert result == [fake_exec_id]
         mock_start.assert_called_once_with(
-            graph_version_id=str(graph_version.id), input_payload={}
+            graph_version_id=str(graph_version.id),
+            input_payload={},
+            task_queue="tasks_l",
         )
 
     def test_no_rows_with_input_ports_returns_empty(self, graph_version, dataset):
@@ -224,10 +224,42 @@ class TestExecuteRows:
         mock_start.assert_called_once()
         call_kwargs = mock_start.call_args[1]
         assert call_kwargs["graph_version_id"] == str(graph_version.id)
+        assert call_kwargs["task_queue"] == "tasks_l"
         payload = call_kwargs["input_payload"]
         for col in dataset_columns:
             assert col.name in payload
             assert payload[col.name] == f"value for {col.name}"
+
+    def test_with_rows_passes_requested_task_queue(
+        self,
+        graph_version,
+        dataset,
+        dataset_columns,
+        dataset_row_with_cells,
+    ):
+        """The public task_queue option is forwarded to Temporal dispatch."""
+        port_names = [col.name for col in dataset_columns]
+        fake_exec_id = str(uuid.uuid4())
+
+        with (
+            patch(
+                self.EXPOSED_PORTS_PATH,
+                side_effect=self._mock_exposed_ports(graph_version.id, port_names),
+            ),
+            patch(
+                self.START_EXEC_PATH,
+                return_value=fake_exec_id,
+            ) as mock_start,
+        ):
+            result = execute_rows(
+                graph_version,
+                dataset,
+                row_ids=None,
+                task_queue="agent-playground-test",
+            )
+
+        assert result == [fake_exec_id]
+        assert mock_start.call_args[1]["task_queue"] == "agent-playground-test"
 
 
 @pytest.mark.unit

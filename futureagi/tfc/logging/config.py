@@ -3,9 +3,7 @@ Structlog configuration for Django/Celery logging.
 Uses a centralized django-structlog configuration.
 """
 
-import logging
 import os
-import sys
 
 import structlog
 
@@ -82,7 +80,6 @@ def get_logging_config(base_dir: str) -> dict:
     Returns:
         Django LOGGING dict
     """
-    env_type = get_env()
     log_level = os.getenv("LOG_LEVEL", "INFO")
     logs_dir = os.path.join(base_dir, "logs")
 
@@ -191,14 +188,17 @@ def get_logging_config(base_dir: str) -> dict:
         },
     }
 
-    # Add error tracking handler for staging/prod
-    if env_type in ("staging", "prod"):
-        sentry_level = os.getenv("SENTRY_LOG_LEVEL", "ERROR")
-        config["handlers"]["sentry"] = {
-            "class": "sentry_sdk.integrations.logging.EventHandler",
-            "level": sentry_level,
-            "formatter": "plain",
-        }
-        config["loggers"][""]["handlers"].append("sentry")
+    # NOTE: We deliberately do NOT attach a sentry EventHandler here.
+    #
+    # Sentry's LoggingIntegration (configured in tfc.logging.sentry.init_sentry)
+    # already captures every ERROR-level log record as an event by patching
+    # logging.Logger.callHandlers. Adding an explicit EventHandler on the root
+    # logger double-captured each error and, because the integration runs in
+    # Temporal/Celery too (which never load this Django LOGGING dict), split
+    # capture across two code paths. Routing all log->event capture through the
+    # single LoggingIntegration keeps behaviour consistent everywhere and lets
+    # noise control (ignore_logger + before_send) live in one place.
+    #
+    # SENTRY_LOG_LEVEL is still honoured by the LoggingIntegration's event_level.
 
     return config

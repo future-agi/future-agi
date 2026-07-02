@@ -61,37 +61,18 @@ const LLMPromptEditor = ({
           description,
           output_format: "messages",
         });
-        const prompt = data?.result?.prompt;
-        if (!prompt) return null;
+        // Backend parses + validates the messages array for us now.
+        const msgs = data?.result?.messages;
+        if (!Array.isArray(msgs) || msgs.length === 0) return null;
 
-        // Backend returns a JSON string for messages format — parse it.
-        try {
-          let parsed = prompt;
-          if (typeof parsed === "string") {
-            let text = parsed.trim();
-            if (text.startsWith("```")) {
-              text = text.split("\n").slice(1).join("\n");
-              if (text.endsWith("```")) text = text.slice(0, -3);
-              text = text.trim();
-            }
-            parsed = JSON.parse(text);
-          }
-          if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].role) {
-            // Filter out assistant messages — those come from the actual eval, not the template
-            return parsed
-              .filter((m) => m.role !== "assistant")
-              .map((m) => ({
-                role: m.role || "system",
-                content: m.content || "",
-              }));
-          }
-        } catch (err) {
-          // eslint-disable-next-line no-console
-          console.warn("LLM-as-a-Judge AI: failed to parse JSON", err?.message);
-        }
-
-        // Fallback: keep the raw text as a system message so the user sees SOMETHING
-        return [{ role: "system", content: prompt }];
+        // Drop assistant messages — those come from the actual eval at run
+        // time, not the template.
+        return msgs
+          .filter((m) => m.role !== "assistant")
+          .map((m) => ({
+            role: m.role || "system",
+            content: m.content || "",
+          }));
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn("LLM-as-a-Judge AI: request failed", err?.message);

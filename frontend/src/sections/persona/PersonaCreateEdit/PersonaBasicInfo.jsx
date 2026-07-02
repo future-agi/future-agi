@@ -44,6 +44,7 @@ const PersonaBasicInfo = ({ viewOptions, multiple = true }) => {
                 size="small"
                 fullWidth
                 placeholder="angry_customer"
+                inputProps={{ "aria-label": "Persona name" }}
               />
             </ShowComponent>
             <ShowComponent condition={showDescription}>
@@ -57,6 +58,7 @@ const PersonaBasicInfo = ({ viewOptions, multiple = true }) => {
                 placeholder="A customer who is angry about the product"
                 multiline
                 rows={2}
+                inputProps={{ "aria-label": "Description" }}
               />
             </ShowComponent>
             <Box

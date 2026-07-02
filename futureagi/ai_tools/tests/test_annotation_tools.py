@@ -56,7 +56,17 @@ class TestCreateAnnotationLabelTool:
     def test_create_basic(self, tool_context):
         result = run_tool(
             "create_annotation_label",
-            {"name": "Quality", "label_type": "categorical"},
+            {
+                "name": "Quality",
+                "label_type": "categorical",
+                "settings": {
+                    "options": [{"label": "Good"}, {"label": "Bad"}],
+                    "multi_choice": False,
+                    "rule_prompt": "",
+                    "auto_annotate": False,
+                    "strategy": None,
+                },
+            },
             tool_context,
         )
         assert not result.is_error
@@ -112,7 +122,11 @@ class TestCreateAnnotationLabelTool:
         )
         result = run_tool(
             "create_annotation_label",
-            {"name": "Shared Name", "label_type": "star"},
+            {
+                "name": "Shared Name",
+                "label_type": "star",
+                "settings": {"no_of_stars": 5},
+            },
             tool_context,
         )
         # Same name but different type should succeed

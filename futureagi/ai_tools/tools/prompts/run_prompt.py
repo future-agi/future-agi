@@ -60,10 +60,10 @@ class RunPromptTool(BaseTool):
         from model_hub.utils.column_utils import is_json_response_format
         from model_hub.utils.utils import remove_empty_text_from_messages
         from model_hub.views.prompt_template import replace_variables
+        from tfc.constants.api_calls import APICallTypeChoices
         try:
-            from ee.usage.utils.usage_entries import APICallTypeChoices, log_and_deduct_cost_for_api_request
+            from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
         except ImportError:
-            APICallTypeChoices = None
             log_and_deduct_cost_for_api_request = None
 
         template_obj, err = resolve_prompt_template(
@@ -222,7 +222,8 @@ class RunPromptTool(BaseTool):
                 from ee.usage.schemas.event_types import BillingEventType
                 from ee.usage.services.metering import check_usage
 
-                usage_check = check_usage(
+                if check_usage is not None:
+                    usage_check = check_usage(
                     str(context.organization.id),
                     BillingEventType.AI_PROMPT_CREATION,
                 )
@@ -265,7 +266,8 @@ class RunPromptTool(BaseTool):
             # Log usage and deduct cost (skipped when ee is absent).
             if log_and_deduct_cost_for_api_request is not None:
                 try:
-                    log_and_deduct_cost_for_api_request(
+                    if log_and_deduct_cost_for_api_request is not None:
+                        log_and_deduct_cost_for_api_request(
                         context.organization,
                         APICallTypeChoices.PROMPT_BENCH.value,
                         config=token_config,
@@ -280,7 +282,10 @@ class RunPromptTool(BaseTool):
                 from ee.usage.schemas.events import UsageEvent
                 from ee.usage.services.emitter import emit
 
-                emit(
+                if emit is not None and UsageEvent is not None:
+
+
+                    emit(
                     UsageEvent(
                         org_id=str(context.organization.id),
                         event_type=APICallTypeChoices.PROMPT_BENCH.value,
