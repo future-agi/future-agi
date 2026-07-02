@@ -82,6 +82,7 @@ class FunctionEvalTypeId(Enum):
     TRAJECTORY_MATCH = "TrajectoryMatch"
     STEP_COUNT = "StepCount"
     REGEX_PII_DETECTION = "RegexPiiDetection"
+    SECRET_KEY_DETECTION = "SecretKeyDetection"
     PEARSON_CORRELATION = "PearsonCorrelation"
     SPEARMAN_CORRELATION = "SpearmanCorrelation"
     R2_SCORE = "R2Score"
