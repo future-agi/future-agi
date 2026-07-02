@@ -32,6 +32,11 @@ yarn test:unit           # Unit tests only
 yarn test:integration    # Integration tests only
 ```
 
+`test:unit` and `test:integration` run the dedicated
+`frontend/src/__tests__/unit/` and `frontend/src/__tests__/integration/`
+directories. Component-local tests outside those directories are still covered
+by `test:run` and `test:coverage`.
+
 Coverage thresholds (global): **70%** for branches, functions, lines, and statements.
 
 ### Backend (Django + pytest, Docker-based)
