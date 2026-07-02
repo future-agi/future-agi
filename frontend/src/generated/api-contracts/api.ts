@@ -27388,8 +27388,8 @@ export const getModelHubDatasetOptimizationReadUrl = (id: string,) => {
 }
 
 /**
- * Returns data in the same format as AgentPromptOptimiserRunViewSet.retrieve()
-to allow reuse of frontend simulation components.
+ * Payload shape matches AgentPromptOptimiserRunViewSet.retrieve() so the
+frontend simulation-optimizer components can render both endpoints.
  * @summary Get run details with trial comparison table.
  */
 export const modelHubDatasetOptimizationRead = async (id: string, options?: RequestInit): Promise<modelHubDatasetOptimizationReadResponse> => {

@@ -15682,62 +15682,38 @@ export const ModelHubDatasetOptimizationCreateBody = zod.object({
 
 
 /**
- * Returns data in the same format as AgentPromptOptimiserRunViewSet.retrieve()
-to allow reuse of frontend simulation components.
+ * Payload shape matches AgentPromptOptimiserRunViewSet.retrieve() so the
+frontend simulation-optimizer components can render both endpoints.
  * @summary Get run details with trial comparison table.
  */
 export const ModelHubDatasetOptimizationReadParams = zod.object({
   "id": zod.string().uuid().describe('A UUID string identifying this optimize dataset.')
 })
 
-export const modelHubDatasetOptimizationReadResponseNameMax = 255;
 
-
-export const modelHubDatasetOptimizationReadResponseStepsItemNameMax = 255;
-
-export const modelHubDatasetOptimizationReadResponseStepsItemStepNumberMin = -2147483648;
-export const modelHubDatasetOptimizationReadResponseStepsItemStepNumberMax = 2147483647;
-
-export const modelHubDatasetOptimizationReadResponseTrialsItemTrialNumberMin = -2147483648;
-export const modelHubDatasetOptimizationReadResponseTrialsItemTrialNumberMax = 2147483647;
 
 
 
 export const ModelHubDatasetOptimizationReadResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "name": zod.string().min(1).max(modelHubDatasetOptimizationReadResponseNameMax),
-  "column": zod.string().uuid().optional().describe('Column being optimized'),
-  "optimizer_algorithm": zod.enum(['random_search', 'bayesian', 'metaprompt', 'protegi', 'promptwizard', 'gepa']).optional(),
-  "optimizer_model": zod.string().uuid().optional().describe('Model used for optimization (separate from eval model)'),
-  "optimizer_config": zod.object({
-
-}).passthrough().optional().describe('Optimizer-specific configuration (num_trials, etc.)'),
-  "status": zod.enum(['not_started', 'pending', 'running', 'completed', 'failed', 'cancelled']).optional(),
-  "error_message": zod.string().optional(),
-  "best_score": zod.number().optional(),
-  "baseline_score": zod.number().optional(),
-  "optimized_k_prompts": zod.array(zod.string().min(1)).optional(),
-  "steps": zod.array(zod.object({
-  "id": zod.string().uuid().optional(),
-  "name": zod.string().min(1).max(modelHubDatasetOptimizationReadResponseStepsItemNameMax),
-  "description": zod.string().optional(),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed']).optional(),
-  "metadata": zod.object({
+  "optimiser_name": zod.string().min(1).optional(),
+  "optimiser_type": zod.string().min(1).optional(),
+  "model": zod.string().optional(),
+  "provider_logo": zod.string().optional(),
+  "configuration": zod.object({
 
 }).passthrough().optional(),
-  "step_number": zod.number().min(modelHubDatasetOptimizationReadResponseStepsItemStepNumberMin).max(modelHubDatasetOptimizationReadResponseStepsItemStepNumberMax),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional()
-})).optional(),
-  "trials": zod.array(zod.object({
-  "id": zod.string().uuid().optional(),
-  "trial_number": zod.number().min(modelHubDatasetOptimizationReadResponseTrialsItemTrialNumberMin).max(modelHubDatasetOptimizationReadResponseTrialsItemTrialNumberMax),
-  "is_baseline": zod.boolean().optional(),
-  "average_score": zod.number(),
-  "created_at": zod.string().datetime({"offset":true}).optional()
-})).optional(),
-  "trial_count": zod.string().optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional()
+  "status": zod.enum(['not_started', 'pending', 'running', 'completed', 'failed', 'cancelled']).optional(),
+  "error_message": zod.string().optional(),
+  "start_time": zod.string().datetime({"offset":true}).optional(),
+  "parameters": zod.string().optional(),
+  "column_id": zod.string().optional(),
+  "column_name": zod.string().optional(),
+  "best_score": zod.number().optional(),
+  "baseline_score": zod.number().optional(),
+  "table": zod.string().optional(),
+  "column_config": zod.string().optional(),
+  "optimizer_model_id": zod.string().optional(),
+  "user_eval_templates": zod.string().optional()
 })
 
 
