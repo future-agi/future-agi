@@ -307,11 +307,7 @@ export default function ImportPrompt({
       subTitle="You can edit it once applied"
       onSubmit={handleSubmit(handleImportPrompt)}
       isValid={Boolean(isValid && selectedVersionId)}
-      hideCancelBtn
       actionBtnTitle="Apply"
-      actionBtnSx={{
-        widtd: "fit-content",
-      }}
     >
       <DialogContent
         sx={{

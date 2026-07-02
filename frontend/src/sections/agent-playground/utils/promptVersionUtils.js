@@ -12,14 +12,14 @@ import {
  * @returns {Object} Config compatible with getDefaultValues / setValue
  */
 export function mapVersionToFormConfig(version) {
-  const snapshot = version?.promptConfigSnapshot;
+  const snapshot = version?.prompt_config_snapshot;
   const cfg = snapshot?.configuration || {};
 
   return {
-    outputFormat: cfg.outputFormat || snapshot?.outputFormat || "string",
+    outputFormat: cfg.output_format || snapshot?.output_format || "string",
     modelConfig: {
       model: cfg.model || "",
-      modelDetail: cfg.modelDetail || {},
+      modelDetail: cfg.model_detail || {},
       toolChoice: cfg.tool_choice || "auto",
       tools: cfg.tools || [],
       responseFormat: normalizeResponseFormat(cfg.response_format),
@@ -54,8 +54,8 @@ export function mapVersionToFormConfig(version) {
             temperature: cfg.temperature,
             maxTokens: cfg.max_tokens,
             topP: cfg.top_p,
-            frequencyPenalty: cfg.frequencyPenalty,
-            presencePenalty: cfg.presencePenalty,
+            frequencyPenalty: cfg.frequency_penalty,
+            presencePenalty: cfg.presence_penalty,
             ...(cfg.reasoning && { reasoning: cfg.reasoning }),
           },
         },

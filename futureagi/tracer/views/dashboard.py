@@ -927,22 +927,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 ]
             )
 
-            # Span list system metrics. These are filterable row-level span
-            # fields, so expose them from the backend catalog instead of
-            # injecting span-only fields in frontend views.
-            metrics.extend(
-                [
-                    {
-                        "name": "latency_ms",
-                        "display_name": "Duration",
-                        "category": "system_metric",
-                        "source": "spans",
-                        "sources": ["spans"],
-                        "type": "number",
-                        "unit": "ms",
-                    },
-                ]
-            )
 
             # Eval-specific dimensions (available across all sources)
             metrics.extend(
@@ -2218,7 +2202,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     null_uuid = "00000000-0000-0000-0000-000000000000"
                     # Trace Name = root span name; restrict to root spans.
                     root_only_clause = (
-                        "AND parent_span_id IS NULL " if metric_name == "name" else ""
+                        "AND (parent_span_id IS NULL OR parent_span_id = '') "
+                        if metric_name == "name"
+                        else ""
                     )
 
                     if metric_name == "session":

@@ -209,7 +209,7 @@ const ColumnDropdown = ({
           position: "sticky",
           top: 0,
           zIndex: 2,
-          background: "background.paper",
+          backgroundColor: "background.paper",
           padding: (theme) => theme.spacing(1),
         }}
       >

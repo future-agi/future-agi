@@ -18,6 +18,7 @@ The three result sets are merged in Python to produce the final response.
 
 from typing import Any
 
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.eval_status import (
     non_terminal_eval_marker,
@@ -43,7 +44,6 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     """
 
     TABLE = "spans"
-    EVAL_TABLE = "tracer_eval_logger"
     ANNOTATION_TABLE = "model_hub_score"
     # Filter compiler class; the v2 list builder overrides this to the v2
     # builder so it reads the v2 dimension tables (end_users, etc.).
@@ -374,6 +374,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             "eval_config_ids": tuple(self.eval_config_ids),
         }
 
+        eval_table, eval_not_deleted = eval_logger_source()
+
         # Aggregates are computed only over *completed*, non-errored rows so a
         # non-terminal (pending/running) or skipped row never skews a score or
         # masquerades as a real value. The per-status counts let the pivot pick
@@ -421,9 +423,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 output_str_list,
                 error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS str_lists
-        FROM {self.EVAL_TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
-          AND (deleted = 0 OR deleted IS NULL)
+        FROM {eval_table} FINAL
+        WHERE {eval_not_deleted}
           AND observation_span_id IN %(span_ids)s
           AND custom_eval_config_id IN %(eval_config_ids)s
         GROUP BY observation_span_id, custom_eval_config_id

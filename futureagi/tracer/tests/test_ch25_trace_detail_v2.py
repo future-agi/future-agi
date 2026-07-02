@@ -372,3 +372,89 @@ class TestV1V2EnvelopeParity:
         v1_edges = {(e["from"], e["to"]) for e in v1["graph"]["edges"]}
         v2_edges = {(e["from"], e["to"]) for e in v2["graph"]["edges"]}
         assert v1_edges == v2_edges == {("R1", "C1")}
+
+
+# --------------------------------------------------------------------------- #
+# 4) Eval score mapping
+# --------------------------------------------------------------------------- #
+class TestV2EvalScoreRendering:
+    """Nullable output_float/output_bool -> numeric score; a real 0.0 (0%) float
+    score must survive (`is not None`, not truthiness)."""
+
+    @staticmethod
+    def _eval_row(**overrides):
+        # empty eval_config_id -> skips the CustomEvalConfig lookup (no DB hit)
+        row = {
+            "span_id": "S1",
+            "eval_config_id": "",
+            "output_float": None,
+            "output_bool": None,
+            "output_str": None,
+            "eval_explanation": "",
+        }
+        row.update(overrides)
+        return row
+
+    def _scores_for(self, eval_row):
+        analytics = _FakeAnalytics(
+            project_rows=[{"project_id": "P1"}],
+            span_rows=[_root_span_row()],
+            eval_rows=[eval_row],
+        )
+        with ExitStack() as stack:
+            _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
+            result = retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
+        return result["observation_spans"][0]["eval_scores"]
+
+    def test_zero_float_score_is_kept(self):
+        # regression: truthiness check previously dropped this to None
+        scores = self._scores_for(self._eval_row(output_float=0.0))
+        assert len(scores) == 1 and scores[0]["score"] == 0.0
+
+    def test_nonzero_float_score(self):
+        assert self._scores_for(self._eval_row(output_float=0.75))[0]["score"] == 75.0
+
+    def test_bool_false_score(self):
+        assert self._scores_for(self._eval_row(output_bool=False))[0]["score"] == 0
+
+    def test_no_score_when_both_null(self):
+        assert self._scores_for(self._eval_row())[0]["score"] is None
+
+
+# --------------------------------------------------------------------------- #
+# 5) Enrichment fault logging (loud on genuine faults, silent on dropped table)
+# --------------------------------------------------------------------------- #
+class TestV2EnrichmentFaultLogging:
+    """A genuine PG fault on the Trace lookup surfaces (logged) while the handler
+    degrades to root-span synthesis; the expected dropped-table case stays silent."""
+
+    def _run_with_trace_objects(self, trace_objects):
+        import tracer.services.clickhouse.v2.query_builders.trace_detail as td
+
+        analytics = _FakeAnalytics(
+            project_rows=[{"project_id": "P1"}],
+            span_rows=[_root_span_row()],
+        )
+        logger_mock = MagicMock()
+        with ExitStack() as stack:
+            _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
+            stack.enter_context(patch.object(Trace, "objects", trace_objects))
+            stack.enter_context(patch.object(td, "logger", logger_mock))
+            result = retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
+        return result, logger_mock
+
+    def test_genuine_fault_is_logged_and_degrades(self):
+        objs = MagicMock()
+        objs.filter.side_effect = RuntimeError("boom")
+        result, logger_mock = self._run_with_trace_objects(objs)
+        assert result["trace"]["id"] == "T1"  # synthesized from the root span
+        assert logger_mock.exception.called
+
+    def test_dropped_table_is_silent(self):
+        from django.db.utils import ProgrammingError
+
+        objs = MagicMock()
+        objs.filter.side_effect = ProgrammingError("relation does not exist")
+        result, logger_mock = self._run_with_trace_objects(objs)
+        assert result["trace"]["id"] == "T1"
+        assert not logger_mock.exception.called
