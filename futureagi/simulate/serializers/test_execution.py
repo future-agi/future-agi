@@ -16,6 +16,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.serializers.chat_message import ChatMessageSerializer
+from simulate.utils.eval_outputs import iter_live_eval_outputs
 from tracer.serializers.filters import (
     StrictInputSerializer,
     filter_list_query_param_field,
@@ -666,20 +667,19 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         if not eval_outputs:
             return {}
 
-        # Drop outputs for soft-deleted eval configs. When an authoritative
-        # eval_configs map is provided in context, any eval_id missing from it
-        # is a deleted config and must not surface in the execution.
         eval_configs = (
-            self.context.get("eval_configs", {})
+            self.context.get("eval_configs")
             if hasattr(self, "context") and self.context
-            else {}
+            else None
+        )
+        eval_items = (
+            eval_outputs.items()
+            if eval_configs is None
+            else iter_live_eval_outputs(eval_outputs, eval_configs)
         )
 
-        # Transform eval_outputs to a more structured format
         structured_outputs = {}
-        for eval_id, eval_data in eval_outputs.items():
-            if eval_configs and eval_id not in eval_configs:
-                continue
+        for eval_id, eval_data in eval_items:
             if isinstance(eval_data, dict):
                 if eval_data.get("status") == "pending":
                     structured_outputs[eval_id] = {}
@@ -726,17 +726,19 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         if not eval_outputs:
             return {}
 
-        # Get eval configs from context if available
         eval_configs = (
-            self.context.get("eval_configs", {})
+            self.context.get("eval_configs")
             if hasattr(self, "context") and self.context
-            else {}
+            else None
+        )
+        eval_items = (
+            eval_outputs.items()
+            if eval_configs is None
+            else iter_live_eval_outputs(eval_outputs, eval_configs)
         )
 
         metrics = {}
-        for eval_id, eval_data in eval_outputs.items():
-            if eval_configs and eval_id not in eval_configs:
-                continue
+        for eval_id, eval_data in eval_items:
             if isinstance(eval_data, dict):
                 if eval_data.get("status") == "pending":
                     metrics[eval_id] = {}
@@ -745,7 +747,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 is_error = bool(raw_error is True or raw_error == "error") or (
                     eval_data.get("status") == "error"
                 )
-                eval_config = eval_configs.get(eval_id)
+                eval_config = (eval_configs or {}).get(eval_id)
                 metrics[eval_id] = {
                     "id": eval_id,
                     "name": eval_data.get(
