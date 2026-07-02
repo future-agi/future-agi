@@ -12,6 +12,35 @@ from typing import TYPE_CHECKING
 
 from django.db.models import Count, Q, QuerySet
 
+
+def normalize_search_for_name(search: str) -> Q:
+    """Build a Q object that matches eval template names regardless of
+    whether the user typed spaces, underscores, or hyphens.
+
+    Eval template names are stored as slug-style identifiers using
+    underscores and hyphens (e.g. ``context_adherence``), but users
+    naturally search with spaces (e.g. ``context adherence``).  A plain
+    ``name__icontains`` lookup treats them as distinct, returning zero
+    results.
+
+    This helper expands the search term into OR-ed lookups so that
+    ``"context adherence"`` also matches ``context_adherence`` and
+    ``context-adherence`` in the database.
+
+    Args:
+        search: Raw search string (will be stripped).
+
+    Returns:
+        A ``Q`` object that can be passed to ``.filter()``.
+    """
+    term = search.strip()
+    return (
+        Q(name__icontains=term)
+        | Q(name__icontains=term.replace(" ", "_"))
+        | Q(name__icontains=term.replace(" ", "-"))
+    )
+
+
 from agentic_eval.core_evals.fi_evals.eval_type import (
     FunctionEvalTypeId,
     FutureAgiEvalTypeId,
@@ -376,9 +405,9 @@ def build_eval_list_queryset(
             user_q &= Q(workspace=workspace) | Q(workspace__isnull=True)
         qs = qs.filter(system_q | user_q)
 
-    # Search by name
+    # Search by name (normalize spaces/underscores/hyphens)
     if search:
-        qs = qs.filter(name__icontains=search.strip())
+        qs = qs.filter(normalize_search_for_name(search))
 
     # Advanced filters
     if filters:

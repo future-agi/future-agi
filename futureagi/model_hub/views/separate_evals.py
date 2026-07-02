@@ -1169,7 +1169,8 @@ class GetEvalTemplateNameView(APIView):
                 .order_by("name")
             )
             if search_text:
-                eval_templates = eval_templates.filter(name__icontains=search_text)
+                from model_hub.utils.eval_list import normalize_search_for_name
+                eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
             eval_template_names = [
                 {
                     "id": str(eval_template.id),
