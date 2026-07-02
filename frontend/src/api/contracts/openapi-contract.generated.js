@@ -32081,15 +32081,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/observability-provider/verify_api_key/": {
       "post": {
         "operationId": "tracer_observability-provider_verify_api_key",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/ObservabilityProvider"
+          "$ref": "#/definitions/VerifyApiKeyRequest"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/ObservabilityProvider"
+          "200": {
+            "$ref": "#/definitions/VerifyResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -32100,15 +32103,18 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/observability-provider/verify_assistant_id/": {
       "post": {
         "operationId": "tracer_observability-provider_verify_assistant_id",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/ObservabilityProvider"
+          "$ref": "#/definitions/VerifyAssistantIdRequest"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/ObservabilityProvider"
+          "200": {
+            "$ref": "#/definitions/VerifyResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -35928,7 +35934,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/Trace"
+            "$ref": "#/definitions/TraceDetailResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -36626,6 +36638,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "type": "string",
               "minLength": 1,
               "default": "[]"
+            }
+          },
+          "export": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
             }
           }
         },
@@ -45800,7 +45819,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "AnnotationQueue": {
       "required": [
-        "name"
+        "name",
+        "label_ids"
       ],
       "type": "object",
       "properties": {
@@ -45919,7 +45939,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "type": "string",
             "format": "uuid"
           },
-          "default": []
+          "minItems": 1
         },
         "annotator_ids": {
           "type": "array",
@@ -55113,7 +55133,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "additionalProperties": {
             "type": "object",
             "additionalProperties": {
-              "$ref": "#/definitions/ExperimentRowDiffCell"
+              "$ref": "#/definitions/ExperimentRowCell"
             }
           }
         }
@@ -60281,7 +60301,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "eleven_labs",
             "retell",
             "livekit",
-            "others"
+            "others",
+            "bland",
+            "twilio"
           ]
         },
         "enabled": {
@@ -70691,6 +70713,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "TraceDetailResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "$ref": "#/definitions/TraceDetailResult"
+        }
+      }
+    },
     "TraceErrorAnalysisResponse": {
       "required": [
         "result"
@@ -73766,6 +73804,81 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "VerifyApiKeyRequest": {
+      "required": [
+        "provider"
+      ],
+      "type": "object",
+      "properties": {
+        "provider": {
+          "title": "Provider",
+          "type": "string",
+          "enum": [
+            "vapi",
+            "retell"
+          ]
+        },
+        "api_key": {
+          "title": "Api key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_id": {
+          "title": "Agent id",
+          "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
+    "VerifyAssistantIdRequest": {
+      "required": [
+        "provider"
+      ],
+      "type": "object",
+      "properties": {
+        "provider": {
+          "title": "Provider",
+          "type": "string",
+          "enum": [
+            "vapi",
+            "retell"
+          ]
+        },
+        "assistant_id": {
+          "title": "Assistant id",
+          "type": "string",
+          "x-nullable": true
+        },
+        "api_key": {
+          "title": "Api key",
+          "type": "string",
+          "x-nullable": true
+        },
+        "agent_id": {
+          "title": "Agent id",
+          "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
+    "VerifyResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "title": "Result",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "WalletBalanceResponse": {
       "required": [
         "wallet_balance"
@@ -74928,8 +75041,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Run prompt config",
           "type": "object",
           "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
+            "type": "object",
+            "x-json-value": true,
+            "description": "Any valid JSON value."
           }
         },
         "messages": {
@@ -74938,8 +75052,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "type": "object",
             "additionalProperties": {
-              "type": "string",
-              "x-nullable": true
+              "type": "object",
+              "x-json-value": true,
+              "description": "Any valid JSON value."
             }
           }
         },
@@ -74985,9 +75100,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "response_format": {
           "title": "Response format",
-          "description": "JSON schema for response format if required. Can be a JSON object or string. Defaults to None.",
+          "description": "Any valid JSON value.",
           "type": "object",
-          "x-nullable": true
+          "x-nullable": true,
+          "x-json-value": true
         },
         "tool_choice": {
           "title": "Tool choice",
@@ -75006,8 +75122,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "type": "object",
             "additionalProperties": {
-              "type": "string",
-              "x-nullable": true
+              "type": "object",
+              "x-json-value": true,
+              "description": "Any valid JSON value."
             }
           },
           "x-nullable": true
@@ -80771,7 +80888,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "ExperimentRowDiffCell": {
+    "ExperimentRowCell": {
       "type": "object",
       "properties": {
         "cell_value": {
@@ -80786,7 +80903,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "status": {
           "title": "Status",
-          "type": "string"
+          "type": "string",
+          "x-nullable": true
+        },
+        "metadata": {
+          "$ref": "#/definitions/ExperimentRowCellMetadata"
         },
         "value_infos": {
           "title": "Value infos",
@@ -80858,7 +80979,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "table": {
           "type": "array",
           "items": {
-            "type": "object"
+            "$ref": "#/definitions/ExperimentTableRow"
           }
         },
         "metadata": {
@@ -89012,6 +89133,35 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "TraceDetailResult": {
+      "required": [
+        "trace",
+        "observation_spans",
+        "summary",
+        "graph"
+      ],
+      "type": "object",
+      "properties": {
+        "trace": {
+          "title": "Trace",
+          "type": "object"
+        },
+        "observation_spans": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "summary": {
+          "title": "Summary",
+          "type": "object"
+        },
+        "graph": {
+          "title": "Graph",
+          "type": "object"
+        }
+      }
+    },
     "TraceErrorAnalysisResult": {
       "required": [
         "analysis_exists",
@@ -93170,6 +93320,34 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "ExperimentRowCellMetadata": {
+      "type": "object",
+      "properties": {
+        "response_time_ms": {
+          "title": "Response time ms",
+          "type": "number",
+          "x-nullable": true
+        },
+        "token_count": {
+          "title": "Token count",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "cost": {
+          "title": "Cost",
+          "type": "object",
+          "x-nullable": true
+        },
+        "cell_metadata": {
+          "$ref": "#/definitions/ExperimentRowCellInnerMetadata"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
     "ExperimentStatsColumnConfig": {
       "required": [
         "name"
@@ -93227,6 +93405,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "reruns": {
           "title": "Reruns",
           "type": "boolean"
+        }
+      }
+    },
+    "ExperimentTableRow": {
+      "required": [
+        "row_id"
+      ],
+      "type": "object",
+      "properties": {
+        "row_id": {
+          "title": "Row id",
+          "type": "string",
+          "format": "uuid"
         }
       }
     },
@@ -98215,6 +98406,26 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "total_tokens": {
           "title": "Total tokens",
           "type": "integer"
+        }
+      }
+    },
+    "ExperimentRowCellInnerMetadata": {
+      "type": "object",
+      "properties": {
+        "explanation": {
+          "title": "Explanation",
+          "type": "string",
+          "x-nullable": true
+        },
+        "error_analysis": {
+          "title": "Error analysis",
+          "type": "object",
+          "x-nullable": true
+        },
+        "selected_input_key": {
+          "title": "Selected input key",
+          "type": "string",
+          "x-nullable": true
         }
       }
     },

@@ -149,7 +149,7 @@ const OptimizationResultGraph = ({ optimizationId }) => {
                   borderRadius: 0.5,
                   backgroundColor:
                     activeSeries === index
-                      ? getUniqueColorPalette(index).tagBackground
+                      ? getUniqueColorPalette(index).solid
                       : "transparent",
                   userSelect: "none",
                 }}
@@ -166,7 +166,7 @@ const OptimizationResultGraph = ({ optimizationId }) => {
                     width: 10,
                     height: 10,
                     borderRadius: "50%",
-                    backgroundColor: getUniqueColorPalette(index).tagForeground,
+                    backgroundColor: getUniqueColorPalette(index).tagBackground,
                   }}
                 />
                 <Typography typography="s1">{series.name}</Typography>
@@ -185,169 +185,175 @@ const OptimizationResultGraph = ({ optimizationId }) => {
             multiple
           />
         </Box>
-        <ReactApexChart
-          options={{
-            chart: {
-              id: "optimization-result-graph",
-              type: "line",
-              background: "transparent",
-              foreColor: isDark ? "#a1a1aa" : undefined,
-              toolbar: {
-                show: false,
-              },
-              zoom: {
-                enabled: false,
-              },
-              events: {
-                dataPointMouseEnter: (_, chartContext, config) => {
-                  updateCrosshairColor(chartContext, config.seriesIndex);
-                },
-                mouseMove: (_, chartContext, config) => {
-                  if (config.seriesIndex !== undefined) {
-                    updateCrosshairColor(chartContext, config.seriesIndex);
-                  }
-                },
-                mouseLeave: (_, chartContext) => {
-                  updateCrosshairColor(chartContext, undefined);
-                },
-              },
-            },
-            theme: {
-              mode: isDark ? "dark" : "light",
-            },
-            colors: seriesData.map((_, idx) => {
-              if (activeSeries !== null && idx !== activeSeries) {
-                return getUniqueColorPalette(idx).tagBackground;
-              } else {
-                return getUniqueColorPalette(idx).tagForeground;
-              }
-            }),
-            stroke: {
-              width: 2,
-              curve: "smooth",
-            },
-            markers: {
-              size: 0,
-            },
-            xaxis: {
-              categories: categories,
-              labels: {
-                style: {
-                  fontFamily: "IBM Plex Sans",
-                  fontWeight: 400,
-                  fontSize: "12px",
-                  lineHeight: "18px",
-                  letterSpacing: "0%",
-                  textAlign: "center",
-                },
-              },
-              crosshairs: {
-                show: true,
-                position: "back",
-                stroke: {
-                  color: getUniqueColorPalette(0).tagForeground,
-                  width: 1,
-                  dashArray: 4,
-                },
-              },
-            },
-            yaxis: {
-              title: {
-                text: "Evaluation Score",
-                style: {
-                  fontFamily: "IBM Plex Sans",
-                  fontWeight: 400,
-                  fontSize: "12px",
-                  lineHeight: "18px",
-                  letterSpacing: "0%",
-                },
-              },
-              min: 0,
-              max: 100,
-              tickAmount: 5,
-              labels: {
-                formatter: (value) => Math.round(value),
-              },
-            },
-            grid: {
-              borderColor: "var(--border-default)",
-              strokeDashArray: 4,
-              xaxis: {
-                lines: {
+    
+        {seriesData.length === 0 ? (
+          <Box sx={{ height: 260 }} />
+        ) : (
+          <ReactApexChart
+            options={{
+              chart: {
+                id: "optimization-result-graph",
+                type: "line",
+                background: "transparent",
+                foreColor: isDark ? "#a1a1aa" : undefined,
+                toolbar: {
                   show: false,
+                },
+                zoom: {
+                  enabled: false,
+                },
+                events: {
+                  dataPointMouseEnter: (_, chartContext, config) => {
+                    updateCrosshairColor(chartContext, config.seriesIndex);
+                  },
+                  mouseMove: (_, chartContext, config) => {
+                    if (config.seriesIndex !== undefined) {
+                      updateCrosshairColor(chartContext, config.seriesIndex);
+                    }
+                  },
+                  mouseLeave: (_, chartContext) => {
+                    updateCrosshairColor(chartContext, undefined);
+                  },
+                },
+              },
+              theme: {
+                mode: isDark ? "dark" : "light",
+              },
+              colors: seriesData.map((_, idx) => {
+                if (activeSeries !== null && idx !== activeSeries) {
+                  // Dim the non-selected lines to a light tint.
+                  return getUniqueColorPalette(idx).solid;
+                } else {
+                  return getUniqueColorPalette(idx).tagBackground;
+                }
+              }),
+              stroke: {
+                width: 2,
+                curve: "smooth",
+              },
+              markers: {
+                size: 0,
+              },
+              xaxis: {
+                categories: categories,
+                labels: {
+                  style: {
+                    fontFamily: "IBM Plex Sans",
+                    fontWeight: 400,
+                    fontSize: "12px",
+                    lineHeight: "18px",
+                    letterSpacing: "0%",
+                    textAlign: "center",
+                  },
+                },
+                crosshairs: {
+                  show: true,
+                  position: "back",
+                  stroke: {
+                    color: getUniqueColorPalette(0).tagBackground,
+                    width: 1,
+                    dashArray: 4,
+                  },
                 },
               },
               yaxis: {
-                lines: {
-                  show: true,
+                title: {
+                  text: "Evaluation Score",
+                  style: {
+                    fontFamily: "IBM Plex Sans",
+                    fontWeight: 400,
+                    fontSize: "12px",
+                    lineHeight: "18px",
+                    letterSpacing: "0%",
+                  },
+                },
+                min: 0,
+                max: 100,
+                tickAmount: 5,
+                labels: {
+                  formatter: (value) => Math.round(value),
                 },
               },
-            },
-            legend: {
-              show: false,
-            },
-            tooltip: {
-              theme: isDark ? "dark" : "light",
-              shared: false,
-              fillSeriesColor: true,
-              style: {
-                border: "none !important",
+              grid: {
+                borderColor: "var(--border-default)",
+                strokeDashArray: 4,
+                xaxis: {
+                  lines: {
+                    show: false,
+                  },
+                },
+                yaxis: {
+                  lines: {
+                    show: true,
+                  },
+                },
               },
-              onMarkerHover: (_, chartContext, { seriesIndex }) => {
-                if (seriesIndex !== undefined) {
-                  const color =
-                    getUniqueColorPalette(seriesIndex)?.tagForeground ||
-                    getUniqueColorPalette(0).tagForeground;
-                  const baseEl = chartContext.w.globals.dom.baseEl;
-                  const crosshairLine = baseEl?.querySelector(
-                    ".apexcharts-xcrosshairs line",
-                  );
-                  if (crosshairLine) {
-                    crosshairLine.setAttribute("stroke", color);
-                    crosshairLine.setAttribute("stroke-dasharray", "4");
-                    crosshairLine.style.stroke = color;
-                    crosshairLine.style.strokeDasharray = "4";
+              legend: {
+                show: false,
+              },
+              tooltip: {
+                theme: isDark ? "dark" : "light",
+                shared: false,
+                fillSeriesColor: true,
+                style: {
+                  border: "none !important",
+                },
+                onMarkerHover: (_, chartContext, { seriesIndex }) => {
+                  if (seriesIndex !== undefined) {
+                    const color =
+                      getUniqueColorPalette(seriesIndex)?.tagBackground ||
+                      getUniqueColorPalette(0).tagBackground;
+                    const baseEl = chartContext.w.globals.dom.baseEl;
+                    const crosshairLine = baseEl?.querySelector(
+                      ".apexcharts-xcrosshairs line",
+                    );
+                    if (crosshairLine) {
+                      crosshairLine.setAttribute("stroke", color);
+                      crosshairLine.setAttribute("stroke-dasharray", "4");
+                      crosshairLine.style.stroke = color;
+                      crosshairLine.style.strokeDasharray = "4";
+                    }
                   }
-                }
-              },
-              custom: ({ seriesIndex, dataPointIndex, w }) => {
-                // Update crosshair color when tooltip is shown
-                if (seriesIndex !== undefined) {
-                  const color =
-                    getUniqueColorPalette(seriesIndex)?.tagForeground ||
-                    getUniqueColorPalette(0).tagForeground;
-                  const baseEl = w.globals.dom.baseEl;
-                  const crosshairLine = baseEl?.querySelector(
-                    ".apexcharts-xcrosshairs line",
-                  );
-                  if (crosshairLine) {
-                    crosshairLine.setAttribute("stroke", color);
-                    crosshairLine.setAttribute("stroke-dasharray", "4");
-                    crosshairLine.style.stroke = color;
-                    crosshairLine.style.strokeDasharray = "4";
+                },
+                custom: ({ seriesIndex, dataPointIndex, w }) => {
+                  // Update crosshair color when tooltip is shown
+                  if (seriesIndex !== undefined) {
+                    const color =
+                      getUniqueColorPalette(seriesIndex)?.tagBackground ||
+                      getUniqueColorPalette(0).tagBackground;
+                    const baseEl = w.globals.dom.baseEl;
+                    const crosshairLine = baseEl?.querySelector(
+                      ".apexcharts-xcrosshairs line",
+                    );
+                    if (crosshairLine) {
+                      crosshairLine.setAttribute("stroke", color);
+                      crosshairLine.setAttribute("stroke-dasharray", "4");
+                      crosshairLine.style.stroke = color;
+                      crosshairLine.style.strokeDasharray = "4";
+                    }
                   }
-                }
 
-                const trialName = w.globals.categoryLabels[dataPointIndex];
-                const seriesName = w.config.series[seriesIndex].name;
-                const value = w.globals.series[seriesIndex][dataPointIndex];
-                const color =
-                  getUniqueColorPalette(seriesIndex)?.tagForeground ??
-                  getUniqueColorPalette(0).tagForeground;
+                  const trialName = w.globals.categoryLabels[dataPointIndex];
+                  const seriesName = w.config.series[seriesIndex].name;
+                  const value = w.globals.series[seriesIndex][dataPointIndex];
+                  const color =
+                    getUniqueColorPalette(seriesIndex)?.tagBackground ??
+                    getUniqueColorPalette(0).tagBackground;
 
-                return getGraphTooltipComponent(
-                  trialName,
-                  seriesName,
-                  value,
-                  color,
-                );
+                  return getGraphTooltipComponent(
+                    trialName,
+                    seriesName,
+                    value,
+                    color,
+                  );
+                },
               },
-            },
-          }}
-          series={seriesData}
-          type="line"
-          height={260}
-        />
+            }}
+            series={seriesData}
+            type="line"
+            height={260}
+          />
+        )}
       </Box>
     </Box>
   );

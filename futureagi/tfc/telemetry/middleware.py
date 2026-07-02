@@ -29,7 +29,8 @@ Configuration in settings.py:
 import json
 import time
 import uuid
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import structlog
 from django.http import HttpRequest, HttpResponse
@@ -41,6 +42,7 @@ logger = structlog.get_logger(__name__)
 # Defaults
 DEFAULT_MAX_BODY_SIZE = 8192
 DEFAULT_MAX_ITEMS = 50
+SENSITIVE_BODY_PATH_PREFIXES = ("/telemetry/",)
 
 
 def _safe_json(value: Any, max_size: int = DEFAULT_MAX_BODY_SIZE) -> str:
@@ -69,9 +71,7 @@ def _safe_json(value: Any, max_size: int = DEFAULT_MAX_BODY_SIZE) -> str:
         return f"<{type(value).__name__}>"
 
 
-def _parse_json_body(
-    body: bytes, max_size: int = DEFAULT_MAX_BODY_SIZE
-) -> Optional[dict]:
+def _parse_json_body(body: bytes, max_size: int = DEFAULT_MAX_BODY_SIZE) -> dict | None:
     """Parse JSON body, return None on failure."""
     try:
         if len(body) > max_size * 2:  # Allow some headroom for parsing
@@ -232,7 +232,11 @@ class OTelContextMiddleware:
                 span.set_attribute("http.request.headers", _safe_json(headers))
 
             # Request body
-            if self.capture_request_body and request.body:
+            if (
+                self.capture_request_body
+                and not request.path.startswith(SENSITIVE_BODY_PATH_PREFIXES)
+                and request.body
+            ):
                 self._capture_request_body(span, request)
 
             # Client IP
@@ -384,7 +388,7 @@ class OTelContextMiddleware:
 
         return headers
 
-    def _get_client_ip(self, request: HttpRequest) -> Optional[str]:
+    def _get_client_ip(self, request: HttpRequest) -> str | None:
         """Get client IP, handling proxies."""
         x_forwarded = request.META.get("HTTP_X_FORWARDED_FOR")
         if x_forwarded:
