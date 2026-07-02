@@ -5423,7 +5423,8 @@ export interface AnnotationQueueApi {
   readonly is_default?: boolean;
   readonly labels?: readonly QueueLabelNestedApi[];
   readonly annotators?: readonly QueueAnnotatorNestedApi[];
-  label_ids?: string[];
+  /** @minItems 1 */
+  label_ids: string[];
   annotator_ids?: string[];
   annotator_roles?: AnnotationQueueApiAnnotatorRoles;
   readonly label_count?: number;
@@ -8152,16 +8153,16 @@ export const PromptConfigApiOutputFormat = {
   image: 'image',
 } as const;
 
-export type PromptConfigApiRunPromptConfig = {[key: string]: string};
+export type PromptConfigApiRunPromptConfig = {[key: string]: { [key: string]: unknown }};
 
-export type PromptConfigApiMessagesItem = {[key: string]: string};
+export type PromptConfigApiMessagesItem = {[key: string]: { [key: string]: unknown }};
 
 /**
- * JSON schema for response format if required. Can be a JSON object or string. Defaults to None.
+ * Any valid JSON value.
  */
 export type PromptConfigApiResponseFormat = { [key: string]: unknown };
 
-export type PromptConfigApiToolsItem = {[key: string]: string};
+export type PromptConfigApiToolsItem = {[key: string]: { [key: string]: unknown }};
 
 export interface PromptConfigApi {
   /** @maxLength 255 */
@@ -8199,7 +8200,7 @@ export interface PromptConfigApi {
      * @maximum 1
      */
   top_p?: number;
-  /** JSON schema for response format if required. Can be a JSON object or string. Defaults to None. */
+  /** Any valid JSON value. */
   response_format?: PromptConfigApiResponseFormat;
   /** Tool selection mode: 'auto' or 'required'. */
   tool_choice?: PromptConfigApiToolChoice;
@@ -19559,6 +19560,7 @@ export interface VerifyAssistantIdRequestApi {
   provider: VerifyAssistantIdRequestApiProvider;
   assistant_id?: string;
   api_key?: string;
+  agent_id?: string;
 }
 
 export type ObservationSpanApiObservationType = typeof ObservationSpanApiObservationType[keyof typeof ObservationSpanApiObservationType];
@@ -26596,6 +26598,7 @@ sort_params?: string;
  * @minLength 1
  */
 filters?: string;
+export?: boolean;
 };
 
 export type UsageAdminCustomPlanListParams = {

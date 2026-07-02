@@ -249,7 +249,8 @@ export const AddColumnApiCallChild = ({
     if (!validateDotInColumnNames()) return;
     if (!validateBodyVariable(formValues)) return;
     if (!onFormSubmit) {
-      preview(transformFormToApi(formValues));
+      const { config } = transformFormToApi(formValues);
+      preview({ config });
     }
   });
 

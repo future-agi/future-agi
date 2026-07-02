@@ -631,7 +631,10 @@ export const getTraceListColumnDefs = (col) => {
         : {}),
     cellStyle: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
+      // The tags column keeps its default left alignment so an empty "+ Tag"
+      // sits where the chips will, instead of jumping from center to left.
+      const cellColId = params?.colDef?.context?.sourceColumn?.id;
+      if (isCellValueEmpty(value) && cellColId !== "tags") {
         return {
           display: "flex",
           height: "100%",
@@ -650,12 +653,15 @@ export const getTraceListColumnDefs = (col) => {
     },
     cellRendererSelector: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
-        // No renderer for empty values
-        return null;
-      }
       const column = params?.colDef?.context?.sourceColumn;
       const colId = column?.id;
+
+      // The tags column stays interactive even when empty so a first tag can
+      // be added via its "+ Tag" affordance. Other columns render nothing when
+      // empty (valueFormatter shows "-").
+      if (isCellValueEmpty(value) && colId !== "tags") {
+        return null;
+      }
 
       if (RENDERER_CONFIG.nameColumns.includes(colId)) {
         return {

@@ -402,10 +402,8 @@ class TestMetricsEndpoint:
         metric_names = [m["name"] for m in data["metrics"]]
         assert "latency" in metric_names
         assert "cost" in metric_names
-        span_duration = next(m for m in data["metrics"] if m["name"] == "latency_ms")
-        assert span_duration["display_name"] == "Duration"
-        assert span_duration["source"] == "spans"
-        assert span_duration["type"] == "number"
+        # latency_ms ("Duration") was removed from the catalog (duplicate of latency)
+        assert "latency_ms" not in metric_names
 
     @pytest.mark.django_db
     def test_metrics_returns_agent_scoped_simulation_eval_metrics(
@@ -843,7 +841,11 @@ class TestMetricsEndpoint:
         auth_client,
         observe_project,
     ):
-        """`metric_name=name` (Trace Name) must scope to root spans."""
+        """`metric_name=name` (Trace Name) must scope to root spans.
+
+        CH25 v2 spans write '' (not NULL) on the non-nullable parent_span_id
+        for root spans, so the clause must match both forms or it returns 0 rows.
+        """
         mock_result = MagicMock()
         mock_result.data = []
         mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
@@ -855,7 +857,7 @@ class TestMetricsEndpoint:
         )
 
         sql_arg = mock_analytics_cls.return_value.execute_ch_query.call_args[0][0]
-        assert "parent_span_id IS NULL" in sql_arg
+        assert "(parent_span_id IS NULL OR parent_span_id = '')" in sql_arg
 
     @pytest.mark.parametrize("metric_name", ["span_name", "service_name"])
     @pytest.mark.django_db

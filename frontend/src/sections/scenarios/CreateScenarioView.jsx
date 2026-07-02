@@ -17,6 +17,7 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import SvgColor from "src/components/svg-color";
 import axios, { endpoints } from "src/utils/axios";
+import { getVersionLabel } from "src/utils/utils";
 import { ShowComponent } from "src/components/show";
 import WorkflowBuilderOption from "./WorkflowBuilderOption";
 import ImportDatasetOption from "./ImportDatasetOption";
@@ -227,9 +228,7 @@ const CreateScenarioView = () => {
   const promptVersionOptions = useMemo(() => {
     const results = promptVersionsData?.results || promptVersionsData || [];
     return results.map((version) => {
-      const versionLabel = String(version.template_version).startsWith("v")
-        ? version.template_version
-        : `v${version.template_version}`;
+      const versionLabel = getVersionLabel(version.template_version);
       return {
         label: versionLabel,
         value: version.id,
@@ -607,12 +606,12 @@ const CreateScenarioView = () => {
     if (defaultSelectedAgent) {
       applySourceChange({
         value: defaultSelectedAgent.id,
-        label: defaultSelectedAgent.agentName,
+        label: defaultSelectedAgent.agent_name,
         sourceType: SourceType.AGENT_DEFINITION,
-        agentType: defaultSelectedAgent.agentType,
+        agentType: defaultSelectedAgent.agent_type,
       });
     }
-  }, [defaultAgentDefinitionId, agentDefinitions]);
+  }, [defaultAgentDefinitionId, agentDefinitions, selectedAgent]);
 
   return (
     <Box

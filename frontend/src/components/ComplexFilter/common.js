@@ -22,6 +22,7 @@ const RangeOperators = new Set(RANGE_FILTER_OPS);
 
 export const stripUiFilterKeys = (filters = []) =>
   (Array.isArray(filters) ? filters : []).map((filter) => {
+    if (!filter || typeof filter !== "object") return filter;
     const cleaned = { ...filter };
     delete cleaned._meta;
     delete cleaned.id;

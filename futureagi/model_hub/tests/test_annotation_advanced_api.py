@@ -29,6 +29,8 @@ import pytest
 from django.utils import timezone
 from rest_framework import status
 
+from conftest import create_categorical_label
+
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
     AnnotationQueueAnnotator,
@@ -78,11 +80,23 @@ LABEL_URL = "/model-hub/annotations-labels/"
 # ---------------------------------------------------------------------------
 
 
+
+
 def _create_queue(auth_client, name="Test Queue", **extra):
+    # A queue must have at least one label (serializer-enforced); attach one
+    # by default unless the caller specifies label_ids.
+    bootstrap_label = "label_ids" not in extra
+    if bootstrap_label:
+        extra["label_ids"] = [str(create_categorical_label(auth_client))]
     payload = {"name": name, **extra}
     resp = auth_client.post(QUEUE_URL, payload, format="json")
     assert resp.status_code == status.HTTP_201_CREATED, resp.data
     queue_id = resp.data["id"]
+    if bootstrap_label:
+        # The bootstrap label only satisfies the "at least one label" creation
+        # rule. Mark it non-required so tests that annotate their own label can
+        # still complete items (a required, un-annotated label blocks completion).
+        AnnotationQueueLabel.objects.filter(queue_id=queue_id).update(required=False)
     # Activate queue so submit/complete endpoints work (they require ACTIVE).
     auth_client.post(
         f"{QUEUE_URL}{queue_id}/update-status/",

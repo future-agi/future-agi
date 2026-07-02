@@ -144,6 +144,8 @@ const UsersView = ({
     removeCustomColumns,
     openCustomColumnDialog,
     setOpenCustomColumnDialog,
+    searchQuery,
+    sortParams,
   } = useUsersStore(
     useShallow((state) => ({
       clearSelection: state.clearSelection,
@@ -156,6 +158,8 @@ const UsersView = ({
       removeCustomColumns: state.removeCustomColumns,
       openCustomColumnDialog: state.openCustomColumnDialog,
       setOpenCustomColumnDialog: state.setOpenCustomColumnDialog,
+      searchQuery: state.searchQuery,
+      sortParams: state.sortParams,
     })),
   );
 
@@ -215,14 +219,6 @@ const UsersView = ({
     }
   }, [gridApi]);
 
-  useEffect(() => {
-    setHeaderConfig((prev) => ({
-      ...prev,
-      text: "Users",
-      refreshData: refreshUsers,
-    }));
-  }, [refreshUsers, setHeaderConfig]);
-
   // --- Filter & date state ---
   const defaultDateFilter = useMemo(() => getDefaultDateRange(), []);
 
@@ -276,6 +272,19 @@ const UsersView = ({
   useEffect(() => {
     useUsersStore.setState({ filters: finalFilters });
   }, [finalFilters]);
+
+  // Must live after finalFilters so the export button sees the current filter set.
+  // search + sort ride along too, so the CSV matches a searched/sorted grid.
+  useEffect(() => {
+    setHeaderConfig((prev) => ({
+      ...prev,
+      text: "Users",
+      filterUsers: finalFilters,
+      searchUsers: searchQuery,
+      sortUsers: sortParams,
+      refreshData: refreshUsers,
+    }));
+  }, [refreshUsers, finalFilters, searchQuery, sortParams, setHeaderConfig]);
 
   // Saved-view api — populates a ref the parent UsersPageTabBar drives.
   const getConfig = useCallback(() => {
