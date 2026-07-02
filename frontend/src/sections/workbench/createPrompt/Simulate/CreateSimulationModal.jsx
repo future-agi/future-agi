@@ -229,6 +229,7 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
                 setFormData((prev) => ({ ...prev, versionId: e.target.value }))
               }
               disabled={isLoadingVersions}
+              MenuProps={{ PaperProps: { sx: { maxHeight: 300 } } }}
             >
               {versions.map((version) => (
                 <MenuItem key={version.id} value={version.id}>
