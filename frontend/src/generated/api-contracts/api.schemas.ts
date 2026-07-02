@@ -8152,16 +8152,16 @@ export const PromptConfigApiOutputFormat = {
   image: 'image',
 } as const;
 
-export type PromptConfigApiRunPromptConfig = {[key: string]: string};
+export type PromptConfigApiRunPromptConfig = {[key: string]: { [key: string]: unknown }};
 
-export type PromptConfigApiMessagesItem = {[key: string]: string};
+export type PromptConfigApiMessagesItem = {[key: string]: { [key: string]: unknown }};
 
 /**
- * JSON schema for response format if required. Can be a JSON object or string. Defaults to None.
+ * Any valid JSON value.
  */
 export type PromptConfigApiResponseFormat = { [key: string]: unknown };
 
-export type PromptConfigApiToolsItem = {[key: string]: string};
+export type PromptConfigApiToolsItem = {[key: string]: { [key: string]: unknown }};
 
 export interface PromptConfigApi {
   /** @maxLength 255 */
@@ -8199,7 +8199,7 @@ export interface PromptConfigApi {
      * @maximum 1
      */
   top_p?: number;
-  /** JSON schema for response format if required. Can be a JSON object or string. Defaults to None. */
+  /** Any valid JSON value. */
   response_format?: PromptConfigApiResponseFormat;
   /** Tool selection mode: 'auto' or 'required'. */
   tool_choice?: PromptConfigApiToolChoice;

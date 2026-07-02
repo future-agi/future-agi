@@ -17015,8 +17015,12 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
   "name": zod.string().min(1),
   "config": zod.object({
   "model": zod.string().max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigModelMax).optional(),
-  "run_prompt_config": zod.record(zod.string(), zod.string()).optional(),
-  "messages": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
+  "run_prompt_config": zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.')).optional(),
+  "messages": zod.array(zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
   "temperature": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTemperatureMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTemperatureMax).optional().describe('Controls the randomness. Value between 0 and 2.'),
   "frequency_penalty": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigFrequencyPenaltyMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigFrequencyPenaltyMax).optional().describe('Penalty for word repetition. Value between -2 and 2.'),
   "presence_penalty": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
@@ -17024,9 +17028,11 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
   "top_p": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTopPMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
   "response_format": zod.object({
 
-}).passthrough().optional().describe('JSON schema for response format if required. Can be a JSON object or string. Defaults to None.'),
+}).passthrough().optional().describe('Any valid JSON value.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
-  "tools": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of tools with tool properties if available.'),
+  "tools": zod.array(zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of tools with tool properties if available.'),
   "output_format": zod.enum(['array', 'string', 'number', 'object', 'audio', 'image']).optional().describe('Output format type.'),
   "concurrency": zod.number().min(1).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigConcurrencyMax).optional().describe('Number of concurrent operations allowed. Maximum 10.')
 }).default(modelHubDevelopsAddRunPromptColumnCreateBodyConfigDefault)
@@ -17265,8 +17271,12 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
   "name": zod.string().min(1).optional(),
   "config": zod.object({
   "model": zod.string().max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigModelMax).optional(),
-  "run_prompt_config": zod.record(zod.string(), zod.string()).optional(),
-  "messages": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
+  "run_prompt_config": zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.')).optional(),
+  "messages": zod.array(zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
   "temperature": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTemperatureMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTemperatureMax).optional().describe('Controls the randomness. Value between 0 and 2.'),
   "frequency_penalty": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigFrequencyPenaltyMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigFrequencyPenaltyMax).optional().describe('Penalty for word repetition. Value between -2 and 2.'),
   "presence_penalty": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
@@ -17274,9 +17284,11 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
   "top_p": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTopPMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
   "response_format": zod.object({
 
-}).passthrough().optional().describe('JSON schema for response format if required. Can be a JSON object or string. Defaults to None.'),
+}).passthrough().optional().describe('Any valid JSON value.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
-  "tools": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of tools with tool properties if available.'),
+  "tools": zod.array(zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of tools with tool properties if available.'),
   "output_format": zod.enum(['array', 'string', 'number', 'object', 'audio', 'image']).optional().describe('Output format type.'),
   "concurrency": zod.number().min(1).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigConcurrencyMax).optional().describe('Number of concurrent operations allowed. Maximum 10.')
 }).default(modelHubDevelopsEditRunPromptColumnCreateBodyConfigDefault)
@@ -17488,8 +17500,12 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
   "name": zod.string().min(1),
   "config": zod.object({
   "model": zod.string().max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigModelMax).optional(),
-  "run_prompt_config": zod.record(zod.string(), zod.string()).optional(),
-  "messages": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
+  "run_prompt_config": zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.')).optional(),
+  "messages": zod.array(zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
   "temperature": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTemperatureMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTemperatureMax).optional().describe('Controls the randomness. Value between 0 and 2.'),
   "frequency_penalty": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigFrequencyPenaltyMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigFrequencyPenaltyMax).optional().describe('Penalty for word repetition. Value between -2 and 2.'),
   "presence_penalty": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
@@ -17497,9 +17513,11 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
   "top_p": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTopPMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
   "response_format": zod.object({
 
-}).passthrough().optional().describe('JSON schema for response format if required. Can be a JSON object or string. Defaults to None.'),
+}).passthrough().optional().describe('Any valid JSON value.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
-  "tools": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of tools with tool properties if available.'),
+  "tools": zod.array(zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of tools with tool properties if available.'),
   "output_format": zod.enum(['array', 'string', 'number', 'object', 'audio', 'image']).optional().describe('Output format type.'),
   "concurrency": zod.number().min(1).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigConcurrencyMax).optional().describe('Number of concurrent operations allowed. Maximum 10.')
 }).default(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigDefault),
