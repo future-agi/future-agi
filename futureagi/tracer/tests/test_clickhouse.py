@@ -25,18 +25,41 @@ class TestClickHouseSchema:
 
     def test_get_all_schema_ddl_returns_correct_count(self):
         """Should return all DDL statements in correct order."""
-        from tracer.services.clickhouse.schema import get_all_schema_ddl
+        from tracer.services.clickhouse.schema import (
+            get_all_schema_ddl,
+            should_drop_legacy_chain,
+        )
 
         ddl = get_all_schema_ddl()
-        # 4 CDC tables + dict + spans + spans_mv + 2 agg tables + 2 MVs = 11
         assert len(ddl) >= 10
         names = [name for name, _ in ddl]
-        assert "tracer_observation_span" in names
-        assert "tracer_trace" in names
-        assert "trace_session" in names
-        assert "tracer_eval_logger" in names
         assert "trace_dict" in names
-        assert "spans" in names
+        # The legacy CDC chain is gated by CH25_DROP_LEGACY_CDC_CHAIN.
+        # Default (False, prod-safe) keeps it; True (dev) drops the whole
+        # chain AND filters the legacy v1 ``spans`` registry entry (v2 spans
+        # is applied via the v2 SQL files, not this registry).
+        legacy_names = [
+            "tracer_trace",
+            "tracer_enduser",
+            "trace_session",
+            "tracer_eval_logger",
+            "tracer_observation_span",
+            "enduser_dict",
+            "trace_session_dict",
+            "eval_metrics_hourly",
+            "eval_metrics_hourly_mv",
+        ]
+        if should_drop_legacy_chain():
+            for legacy in legacy_names:
+                assert legacy not in names, f"{legacy} must be excluded when flag set"
+            assert "spans" not in names, (
+                "v1 SPANS_TABLE must be filtered when flag set — otherwise "
+                "the boot DDL apply recreates v1 after the helper drops it."
+            )
+        else:
+            for legacy in legacy_names:
+                assert legacy in names
+            assert "spans" in names
 
     def test_get_all_schema_ddl_returns_list_of_tuples(self):
         """Each entry should be a (name, ddl_string) tuple."""
@@ -52,25 +75,32 @@ class TestClickHouseSchema:
 
     def test_get_all_schema_ddl_creation_order(self):
         """CDC tables must come before dict, dict before spans, spans before MVs."""
-        from tracer.services.clickhouse.schema import get_all_schema_ddl
+        from tracer.services.clickhouse.schema import (
+            get_all_schema_ddl,
+            should_drop_legacy_chain,
+        )
 
         ddl = get_all_schema_ddl()
         names = [name for name, _ in ddl]
 
-        # CDC tables must appear before trace_dict
-        assert names.index("tracer_trace") < names.index("trace_dict")
-        # trace_dict must appear before spans
-        assert names.index("trace_dict") < names.index("spans")
-        # spans must appear before spans_mv
-        assert names.index("spans") < names.index("spans_mv")
+        # CDC tables must appear before trace_dict, and trace_dict before
+        # v1 spans — only meaningful when the legacy chain is in the
+        # registry (flag off); when dropped, those names aren't present.
+        if not should_drop_legacy_chain():
+            assert names.index("tracer_trace") < names.index("trace_dict")
+            assert names.index("trace_dict") < names.index("spans")
         # Dataset CDC tables must appear before dataset dictionaries
         assert names.index("model_hub_dataset") < names.index("dataset_dict")
         assert names.index("model_hub_column") < names.index("column_dict")
         # Dataset dictionaries must appear before dataset_cells view
         assert names.index("column_dict") < names.index("dataset_cells")
         assert names.index("dataset_dict") < names.index("dataset_cells")
-        # spans_mv must appear before span_metrics_hourly
-        assert names.index("spans_mv") < names.index("span_metrics_hourly")
+        # Legacy chain ordering — only meaningful when the chain is in
+        # the registry. When CH25_DROP_LEGACY_CDC_CHAIN drops these, the
+        # ordering invariants below have no entries to compare.
+        if not should_drop_legacy_chain():
+            assert names.index("spans") < names.index("spans_mv")
+            assert names.index("spans_mv") < names.index("span_metrics_hourly")
 
     def test_eval_logger_ddl_has_target_type_and_trace_session_columns(self):
         """PR3: tracer_eval_logger DDL must carry the new row_type-stack columns.
@@ -308,7 +338,131 @@ class TestClickHouseSchema:
         assert len(stmts) > 0
         assert "INSERT INTO spans" in stmts[0]
         assert "FROM tracer_observation_span" in stmts[0]
-        assert "_peerdb_is_deleted = 0" in stmts[0]
+        assert "is_deleted = 0" in stmts[0]
+
+    # ------------------------------------------------------------------
+    # CH25_DROP_LEGACY_CDC_CHAIN toggle
+    # ------------------------------------------------------------------
+    # Dev/local docker compose sets the flag True so fi-collector is the
+    # sole writer for `spans`. Prod keeps the legacy chain alive until
+    # the cutover playbook (see docs/CH25_MIGRATION.md) is run.
+
+    def test_legacy_chain_drop_statements_order_and_idempotency(self):
+        """MV drops first, then their source tables; every drop is IF EXISTS."""
+        from tracer.services.clickhouse.schema import (
+            get_legacy_chain_drop_statements,
+        )
+
+        drops = get_legacy_chain_drop_statements()
+        names = [n for n, _ in drops]
+        # MV drops MUST precede the source table they reference.
+        assert names.index("span_metrics_hourly_mv") < names.index(
+            "span_metrics_hourly"
+        ), "MV must drop before its source table"
+        assert names.index("spans_mv") < names.index(
+            "tracer_observation_span"
+        ), "spans_mv must drop before tracer_observation_span"
+        # Idempotency: every drop wraps IF EXISTS so reruns are no-ops.
+        for _, sql in drops:
+            assert "IF EXISTS" in sql, f"drop must be idempotent: {sql}"
+        # Each kind drops with its matching statement — CH refuses the
+        # wrong kind (a dictionary cannot be dropped with DROP TABLE).
+        for name, sql in drops:
+            if name.endswith("_mv"):
+                assert sql.startswith("DROP VIEW IF EXISTS")
+            elif name.endswith("_dict"):
+                assert sql.startswith("DROP DICTIONARY IF EXISTS")
+            else:
+                assert sql.startswith("DROP TABLE IF EXISTS")
+
+    def test_legacy_chain_drop_covers_exactly_the_expected_set(self):
+        """The drop list pins the migration scope — no more, no less."""
+        from tracer.services.clickhouse.schema import (
+            get_legacy_chain_drop_statements,
+        )
+
+        names = {n for n, _ in get_legacy_chain_drop_statements()}
+        assert names == {
+            "span_metrics_hourly_mv",
+            "spans_mv",
+            "span_metrics_hourly",
+            "tracer_observation_span",
+            "eval_metrics_hourly_mv",
+            "eval_metrics_hourly",
+            "enduser_dict",
+            "trace_session_dict",
+            "tracer_trace",
+            "tracer_enduser",
+            "trace_session",
+            "tracer_eval_logger",
+        }, (
+            "Legacy chain drop set drifted; update "
+            "_LEGACY_CDC_CHAIN_NAMES in schema.py and the cutover doc."
+        )
+
+    # ------------------------------------------------------------------
+    # v1 → v2 spans shape detection (dev-upgrade boot hook)
+    # ------------------------------------------------------------------
+    # CREATE TABLE IF NOT EXISTS silently no-ops on shape drift. Dev
+    # boxes upgrading from an old CH 24.x volume need an explicit
+    # detector so the boot hook can drop the v1 spans + re-apply v2.
+
+    def test_detect_spans_v2(self):
+        """v2 marker column ``attrs_string`` → result is ``v2``."""
+        from tracer.services.clickhouse.schema import detect_spans_table_shape
+
+        def stub(query: str):
+            if "system.columns" in query:
+                return [("attrs_string",)]
+            return [(1,)]
+
+        assert detect_spans_table_shape(stub) == "v2"
+
+    def test_detect_spans_v1(self):
+        """v1 marker ``span_attr_str`` → result is ``v1``."""
+        from tracer.services.clickhouse.schema import detect_spans_table_shape
+
+        def stub(query: str):
+            if "system.columns" in query:
+                return [("span_attr_str",)]
+            return [(1,)]
+
+        assert detect_spans_table_shape(stub) == "v1"
+
+    def test_detect_spans_absent(self):
+        """No table at all → ``absent`` (boot hook skips the drop)."""
+        from tracer.services.clickhouse.schema import detect_spans_table_shape
+
+        def stub(query: str):
+            if "system.columns" in query:
+                return []
+            return [(0,)]
+
+        assert detect_spans_table_shape(stub) == "absent"
+
+    def test_detect_spans_unknown(self):
+        """Table exists but neither marker → ``unknown``; refuse to migrate."""
+        from tracer.services.clickhouse.schema import detect_spans_table_shape
+
+        def stub(query: str):
+            if "system.columns" in query:
+                return []
+            return [(1,)]
+
+        assert detect_spans_table_shape(stub) == "unknown"
+
+    def test_detect_prefers_v2_when_both_markers_appear(self):
+        """When v2 + v1 column names coexist (unlikely but explicit),
+        treat as v2 — don't trigger a destructive drop on a table that
+        already has the v2 column."""
+        from tracer.services.clickhouse.schema import detect_spans_table_shape
+
+        def stub(query: str):
+            if "system.columns" in query:
+                return [("attrs_string",), ("span_attr_str",)]
+            return [(1,)]
+
+        assert detect_spans_table_shape(stub) == "v2"
 
 
 # ============================================================================
@@ -362,6 +516,47 @@ class TestClickHouseFilterBuilder:
         assert "toUUID(%(uid_1)s), toUUID(%(uid_2)s)" in where
         assert params == {"uid_1": user_ids[0], "uid_2": user_ids[1]}
 
+    @pytest.mark.django_db
+    def test_global_annotator_filter_ignores_stale_annotation_col_type(
+        self, custom_eval_config
+    ):
+        """Global annotator must not be parsed as an annotation-label UUID."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        user_id = "11111111-1111-1111-1111-111111111111"
+        builder = ClickHouseFilterBuilder()
+        where, params = builder.translate(
+            [
+                {
+                    "column_id": str(custom_eval_config.id),
+                    "filter_config": {
+                        "filter_type": "number",
+                        "filter_op": "greater_than",
+                        "filter_value": 70,
+                        "col_type": "EVAL_METRIC",
+                    },
+                },
+                {
+                    "column_id": "annotator",
+                    "filter_config": {
+                        "filter_type": "annotator",
+                        "filter_op": "equals",
+                        "filter_value": [user_id],
+                        "col_type": "ANNOTATION",
+                    },
+                },
+            ]
+        )
+
+        assert "tracer_eval_logger" in where
+        assert "model_hub_score AS s FINAL" in where
+        assert "s.annotator_id IN (toUUID(%(uid_" in where
+        assert "s.label_id = toUUID(%(ann_label" not in where
+        assert "annotator" not in params.values()
+        assert user_id in params.values()
+
     def test_span_mode_global_annotator_filter_targets_span_id(self):
         """The spans tab annotator filter should not widen to whole traces."""
         from tracer.services.clickhouse.query_builders.filters import (
@@ -388,9 +583,220 @@ class TestClickHouseFilterBuilder:
 
         assert where.strip().startswith("id IN")
         assert "trace_id IN" not in where
-        assert "s.annotator_id = toUUID(%(uid_1)s)" in where
-        assert "LEFT JOIN spans AS root_sp" in where
+        assert "s.annotator_id IN (toUUID(%(uid_1)s))" in where
+        assert "FROM spans WHERE" in where
         assert params == {"uid_1": user_id}
+
+    def test_scoped_spans_subquery_org_mode_uses_project_ids(self):
+        """Org-scoped mode (project_ids set) must emit ``project_id IN
+        %(project_ids)s``, even for a single-element list. Earlier the
+        single-element case fell through to ``project_id = %(project_id)s``
+        which fails at execution because the outer query only binds
+        ``project_ids``. Regression guard for the Codex P1 finding.
+        """
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        # Single-element list — the buggy branch.
+        single = ClickHouseFilterBuilder(
+            project_ids=["11111111-1111-1111-1111-111111111111"]
+        )
+        where_single, _ = single.translate(
+            [
+                {
+                    "column_id": "annotator",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "22222222-2222-2222-2222-222222222222",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+        assert "project_id IN %(project_ids)s" in where_single
+        assert "project_id = %(project_id)s" not in where_single
+
+        # Two-element list — same shape.
+        multi = ClickHouseFilterBuilder(
+            project_ids=[
+                "11111111-1111-1111-1111-111111111111",
+                "22222222-2222-2222-2222-222222222222",
+            ]
+        )
+        where_multi, _ = multi.translate(
+            [
+                {
+                    "column_id": "annotator",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "22222222-2222-2222-2222-222222222222",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+        assert "project_id IN %(project_ids)s" in where_multi
+
+        # Single-project mode — should still emit the single-project shape.
+        single_pid = ClickHouseFilterBuilder(
+            project_id="11111111-1111-1111-1111-111111111111"
+        )
+        where_pid, _ = single_pid.translate(
+            [
+                {
+                    "column_id": "annotator",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "22222222-2222-2222-2222-222222222222",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+        assert "project_id = %(project_id)s" in where_pid
+        assert "project_id IN %(project_ids)s" not in where_pid
+
+    def test_system_metric_trace_wrap_org_mode_uses_project_ids(self):
+        """Trace-mode SYSTEM_METRIC filters (e.g. ``node_type``) wrap the
+        condition in a ``trace_id IN (SELECT trace_id FROM spans WHERE
+        project_id ...)`` subquery. That wrap used to hardcode
+        ``project_id = %(project_id)s`` regardless of org scope, so
+        org-scoped requests (``project_ids`` set, no ``project_id``) raised
+        ``KeyError: 'project_id'`` at execution time — surfaced by
+        ``list_traces_of_session`` as a generic 400. Regression guard.
+        """
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(
+            project_ids=["11111111-1111-1111-1111-111111111111"],
+            query_mode=ClickHouseFilterBuilder.QUERY_MODE_TRACE,
+        )
+        where, params = builder.translate(
+            [
+                {
+                    "column_id": "node_type",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": ["chain", "retriever"],
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+
+        assert "trace_id IN" in where
+        assert "project_id IN %(project_ids)s" in where
+        assert "project_id = %(project_id)s" not in where
+        assert "project_id" not in params
+
+        # Single-project mode should still emit the scalar shape.
+        single_pid = ClickHouseFilterBuilder(
+            project_id="11111111-1111-1111-1111-111111111111",
+            query_mode=ClickHouseFilterBuilder.QUERY_MODE_TRACE,
+        )
+        where_pid, _ = single_pid.translate(
+            [
+                {
+                    "column_id": "node_type",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": ["chain", "retriever"],
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+        assert "project_id = %(project_id)s" in where_pid
+        assert "project_id IN %(project_ids)s" not in where_pid
+
+    def test_score_date_scope_can_be_disabled_for_monitor_builders(self):
+        """Monitor queries bind start_time/end_time, not start_date/end_date."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(
+            project_id="11111111-1111-1111-1111-111111111111",
+            score_date_scope=False,
+        )
+        where, _ = builder.translate(
+            [
+                {
+                    "column_id": "annotator",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "22222222-2222-2222-2222-222222222222",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+
+        assert "model_hub_score" in where
+        assert "%(start_date)s" not in where
+        assert "project_id = %(project_id)s" in where
+
+    def test_span_attribute_org_mode_uses_project_ids(self):
+        """Trace-mode span attribute filters must mirror org-scoped params."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(
+            project_ids=["11111111-1111-1111-1111-111111111111"]
+        )
+        where, params = builder.translate(
+            [
+                {
+                    "column_id": "metadata.provider",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "openai",
+                        "col_type": "SPAN_ATTRIBUTE",
+                    },
+                }
+            ]
+        )
+
+        assert "project_id IN %(project_ids)s" in where
+        assert "project_id = %(project_id)s" not in where
+        assert params == {"attr_1": "openai"}
+
+    def test_has_eval_org_mode_uses_project_ids(self):
+        """has_eval joins spans for project scope and must support org mode."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(
+            project_ids=["11111111-1111-1111-1111-111111111111"]
+        )
+        where, params = builder.translate(
+            [
+                {
+                    "column_id": "has_eval",
+                    "filter_config": {
+                        "filter_type": "boolean",
+                        "filter_op": "equals",
+                        "filter_value": True,
+                    },
+                }
+            ]
+        )
+
+        assert "sp.project_id IN %(project_ids)s" in where
+        assert "sp.project_id = %(project_id)s" not in where
+        assert params == {}
 
     def test_span_mode_my_annotations_filter_targets_span_id(self):
         """my_annotations uses span ids in span mode and trace ids elsewhere."""
@@ -453,7 +859,7 @@ class TestClickHouseFilterBuilder:
         builder = ClickHouseFilterBuilder()
         filters = [
             {
-                "column_id": "avg_latency",
+                "column_id": "latency_ms",
                 "filter_config": {
                     "filter_type": "number",
                     "filter_op": "greater_than",
@@ -463,7 +869,7 @@ class TestClickHouseFilterBuilder:
             }
         ]
         where, params = builder.translate(filters)
-        # avg_latency should map to latency_ms
+        # SYSTEM_METRIC numeric filter resolves to the latency_ms column
         assert "latency_ms" in where
         assert ">" in where
 
@@ -490,7 +896,7 @@ class TestClickHouseFilterBuilder:
 
         where, params = builder.translate(filters)
 
-        assert "name IN" in where
+        assert "lower(name) IN" in where
         assert "span_attr_" not in where
         assert "trace_id IN" not in where
         assert tuple(params.values()) == (("response",),)
@@ -519,7 +925,7 @@ class TestClickHouseFilterBuilder:
         where, params = builder.translate(filters)
 
         assert "trace_id IN" in where
-        assert "name IN" in where
+        assert "lower(name) IN" in where
         assert "span_attr_" not in where
         assert "parent_span_id" not in where
         assert tuple(params.values()) == (("response",),)
@@ -548,9 +954,34 @@ class TestClickHouseFilterBuilder:
         where, params = builder.translate(filters)
 
         assert "trace_id IN" in where
-        assert "name IN" in where
+        assert "lower(name) IN" in where
         assert "parent_span_id IS NULL OR parent_span_id = ''" in where
         assert tuple(params.values()) == (("root trace",),)
+
+    def test_voice_duration_system_metric_uses_call_duration_attribute(self):
+        """Voice Duration filters should route to the stored call.duration metric."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder()
+        where, params = builder.translate(
+            [
+                {
+                    "column_id": "duration",
+                    "filter_config": {
+                        "filter_type": "number",
+                        "filter_op": "less_than_or_equal",
+                        "filter_value": 20,
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ]
+        )
+
+        assert "span_attr_num['call.duration']" in where
+        assert "span_attr_num['duration']" not in where
+        assert 20 in params.values()
 
     @pytest.mark.parametrize(
         ("frontend_column", "clickhouse_column"),
@@ -1227,7 +1658,7 @@ class TestClickHouseFilterBuilder:
         where, params = builder.translate(filters)
 
         assert "model_hub_score AS s FINAL" in where
-        assert "LEFT JOIN spans AS sp" in where
+        assert "FROM spans WHERE" in where
         assert "sp.id = s.observation_span_id" in where
         assert "sp.trace_id" in where
         assert "toString(s.trace_id)" in where
@@ -1261,8 +1692,8 @@ class TestClickHouseFilterBuilder:
         assert "trace_id IN" not in where
         assert "model_hub_score AS s FINAL" in where
         assert "s.observation_span_id" in where
-        assert "LEFT JOIN spans AS root_sp" in where
-        assert "root_sp.parent_span_id" in where
+        assert "FROM spans WHERE" in where
+        assert "parent_span_id" in where
         assert params["ann_label_1"] == "00000000-0000-0000-0000-000000000044"
 
     def test_span_mode_annotation_text_in_filter_targets_span_id(self):
@@ -1364,7 +1795,7 @@ class TestClickHouseFilterBuilder:
         where, params = builder.translate(filters)
         assert "trace_id IN" in where
         assert "tracer_eval_logger" in where
-        assert "_peerdb_is_deleted = 0" in where
+        assert "is_deleted = 0" in where
         # No params needed — the subquery is static
         assert params == {}
 
@@ -1430,8 +1861,7 @@ class TestClickHouseFilterBuilder:
         where, params = builder.translate(filters)
         assert where == ""
 
-    def test_translate_has_eval_camel_case(self):
-        """has_eval filter should work with camelCase keys."""
+    def test_translate_has_eval_accepts_camelcase_filter_keys(self):
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
         )
@@ -1475,9 +1905,9 @@ class TestClickHouseFilterBuilder:
         where, params = builder.translate(filters)
         assert "trace_id IN" in where
         assert "model_hub_score" in where
-        assert "LEFT JOIN spans AS sp" in where
+        assert "FROM spans WHERE" in where
         assert "sp.id = s.observation_span_id" in where
-        assert "_peerdb_is_deleted = 0" in where
+        assert "is_deleted = 0" in where
         assert params == {}
 
     def test_span_mode_has_annotation_targets_span_id(self):
@@ -1510,7 +1940,7 @@ class TestClickHouseFilterBuilder:
         assert "trace_id IN" not in where
         assert "GROUP BY entity_id" in where
         assert "uniq(s.label_id) >= 2" in where
-        assert "root_sp.parent_span_id" in where
+        assert "parent_span_id" in where
         assert params["lbl_1"] == "00000000-0000-0000-0000-000000000011"
         assert params["lbl_2"] == "00000000-0000-0000-0000-000000000022"
 
@@ -1662,8 +2092,8 @@ class TestTimeSeriesQueryBuilder:
         assert isinstance(query, str)
         assert isinstance(params, dict)
         assert "project_id" in params
-        # Unfiltered query should use pre-aggregated table
-        assert "span_metrics_hourly" in query
+        # Unfiltered query should use the v2 pre-aggregated rollup
+        assert "spans_hourly_rollup" in query
 
     def test_build_with_filters_uses_spans_table(self):
         """When attribute filters are present, should fall back to raw spans table."""
@@ -1690,7 +2120,7 @@ class TestTimeSeriesQueryBuilder:
         assert "model" in query or "gpt-4" in str(params.values())
 
     def test_build_unfiltered_uses_agg_table(self):
-        """Without filters, should use pre-aggregated span_metrics_hourly."""
+        """Without filters, should use the v2 pre-aggregated spans_hourly_rollup."""
         from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
 
         builder = TimeSeriesQueryBuilder(
@@ -1699,7 +2129,11 @@ class TestTimeSeriesQueryBuilder:
             interval="hour",
         )
         query, params = builder.build()
-        assert "span_metrics_hourly" in query
+        assert "spans_hourly_rollup" in query
+        # Should use AggregatingMergeTree combinators
+        assert "countMerge" in query
+        assert "sumMerge" in query
+        assert "quantilesTDigestMerge" in query
 
     def test_build_sets_start_and_end_dates(self):
         """build() should populate start_date and end_date in params."""
@@ -1729,6 +2163,206 @@ class TestTimeSeriesQueryBuilder:
         assert "GROUP BY" in query
         assert "ORDER BY" in query
 
+    # ------------------------------------------------------------------
+    # CH25 close-out: v2 spans_hourly_rollup specifics
+    # ------------------------------------------------------------------
+    # The rollup table partitions/orders by `hour` (DateTime, schema 010)
+    # rather than `start_time`. If the WHERE clause uses the wrong column
+    # the query still runs but skips no partitions — silent perf regression.
+
+    def test_agg_query_filters_on_hour_not_start_time(self):
+        """Rollup queries must filter on `hour`, the partition/order key."""
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        builder = TimeSeriesQueryBuilder(
+            project_id="test-project-id", filters=[], interval="hour"
+        )
+        query, _ = builder.build()
+        # The rollup table has no `start_time` column — that lives on raw spans.
+        assert "hour >= %(start_date)s" in query
+        assert "hour < %(end_date)s" in query
+        assert "start_time" not in query
+
+    def test_agg_query_extracts_median_quantile(self):
+        """avg_latency should be the median (index [1]) of the tDigest tuple.
+
+        `quantilesTDigestMerge(0.5, 0.95, 0.99)` returns a 3-tuple; CH is
+        1-indexed so [1] = p50. We assert the index, not the literal, so
+        the test doesn't depend on whitespace.
+        """
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        builder = TimeSeriesQueryBuilder(
+            project_id="test-project-id", filters=[], interval="hour"
+        )
+        query, _ = builder.build()
+        assert "quantilesTDigestMerge(0.5, 0.95, 0.99)(latency_q)" in query
+        # Median selector is appended to the merge call.
+        assert ")[1]" in query
+
+    def test_agg_query_avg_cost_divides_sum_by_count(self):
+        """avg_cost must be `sumMerge(cost_sum) / countMerge(n)`.
+
+        The rollup stores only the summed cost, not the average — the
+        builder must reconstruct the mean. `greatest(..., 1)` guards
+        against /0 on empty hours.
+        """
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        builder = TimeSeriesQueryBuilder(
+            project_id="test-project-id", filters=[], interval="hour"
+        )
+        query, _ = builder.build()
+        assert "sumMerge(cost_sum) / greatest(countMerge(n), 1)" in query
+
+    def test_agg_query_error_rate_is_percentage(self):
+        """error_rate must be a percentage (× 100.0), not a raw ratio."""
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        builder = TimeSeriesQueryBuilder(
+            project_id="test-project-id", filters=[], interval="hour"
+        )
+        query, _ = builder.build()
+        assert "countMerge(error_count) * 100.0 / greatest(countMerge(n), 1)" in query
+
+    def test_agg_query_does_not_reference_legacy_table(self):
+        """No path back to the legacy CDC-fed aggregate or its source."""
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        builder = TimeSeriesQueryBuilder(
+            project_id="test-project-id", filters=[], interval="hour"
+        )
+        query, _ = builder.build()
+        assert "span_metrics_hourly" not in query
+        assert "tracer_observation_span" not in query
+
+    def test_format_result_emits_all_metric_keys(self):
+        """The response dict must include every metric the dashboard reads.
+
+        The dashboard renderers index into specific keys — if any one is
+        missing the chart silently disappears. Pin the contract.
+        """
+
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        builder = TimeSeriesQueryBuilder(
+            project_id="test-project-id", filters=[], interval="hour"
+        )
+        builder.build()  # populates start_date / end_date
+        # Single bucket within the parsed window.
+        assert builder.start_date is not None and builder.end_date is not None
+        rows = [
+            {
+                "time_bucket": builder.start_date,
+                "avg_latency": 123.45,
+                "total_tokens": 1000,
+                "avg_cost": 0.0042,
+                "traffic_count": 7,
+                "prompt_tokens": 600,
+                "completion_tokens": 400,
+                "error_rate": 12.5,
+            }
+        ]
+        result = builder.format_result(rows, columns=[])
+
+        expected_keys = {
+            "latency",
+            "tokens",
+            "cost",
+            "traffic",
+            "prompt_tokens",
+            "completion_tokens",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "error_rate",
+        }
+        assert expected_keys.issubset(result.keys())
+        # input_tokens / output_tokens are aliases of prompt / completion —
+        # this is a stable contract the frontend depends on.
+        assert result["input_tokens"] == result["prompt_tokens"]
+        assert result["output_tokens"] == result["completion_tokens"]
+        assert result["total_tokens"] == result["tokens"]
+
+    def test_format_result_preserves_values_from_dict_rows(self):
+        """Dict-row path (returned by execute_ch_query) must round-trip values.
+
+        Regression guard for the dual dict-or-tuple row handling in
+        ``format_result``: it reshapes each dict into a 2-tuple
+        ``(time_bucket, metric_value)`` for the zero-fill helper, so the
+        canonical key on each output point is ``"value"`` (the synonymous
+        ``latency`` / ``tokens`` / ``cost`` keys are zero-filled aliases —
+        see test below).
+        """
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        builder = TimeSeriesQueryBuilder(
+            project_id="test-project-id", filters=[], interval="hour"
+        )
+        builder.build()
+        assert builder.start_date is not None
+        rows = [
+            {
+                "time_bucket": builder.start_date,
+                "avg_latency": 99.5,
+                "total_tokens": 1234,
+                "avg_cost": 0.000123456789,
+                "traffic_count": 42,
+                "prompt_tokens": 1000,
+                "completion_tokens": 234,
+                "error_rate": 5.0,
+            }
+        ]
+        result = builder.format_result(rows, columns=[])
+
+        # The hour bucket containing start_date — zero-fill creates other
+        # buckets around it. Match by hour prefix to ignore minute/second
+        # normalization done by `format_time_series._normalize_timestamp`.
+        hour_prefix = builder.start_date.isoformat()[:13]
+
+        def _bucket_at_start(series_key: str) -> dict:
+            for p in result[series_key]:
+                if p["timestamp"].startswith(hour_prefix):
+                    return p
+            raise AssertionError(
+                f"No bucket matched hour {hour_prefix!r} in {series_key}"
+            )
+
+        assert _bucket_at_start("latency")["value"] == 99.5
+        assert _bucket_at_start("tokens")["value"] == 1234
+        # avg_cost is rounded to 9 decimal places by format_result.
+        assert _bucket_at_start("cost")["value"] == round(0.000123456789, 9)
+        assert _bucket_at_start("traffic")["traffic"] == 42
+
+    def test_raw_query_path_keeps_start_time_column(self):
+        """Filtered queries hit raw `spans`, which uses `start_time` (not `hour`).
+
+        Belt-and-braces with `test_build_with_filters_uses_spans_table`:
+        confirms the *column* swap happens too, not just the table swap.
+        """
+        from tracer.services.clickhouse.query_builders import TimeSeriesQueryBuilder
+
+        builder = TimeSeriesQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "model",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "gpt-4",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ],
+            interval="hour",
+        )
+        query, _ = builder.build()
+        # Raw-spans path filters on start_time, NOT hour.
+        assert "start_time >= %(start_date)s" in query
+        assert "start_time < %(end_date)s" in query
+        assert "spans_hourly_rollup" not in query
+
 
 @pytest.mark.unit
 class TestTraceListQueryBuilder:
@@ -1748,6 +2382,7 @@ class TestTraceListQueryBuilder:
         assert "LIMIT" in query
         assert "OFFSET" in query
         assert "parent_span_id IS NULL" in query
+        assert params["limit"] == 10
 
     def test_build_query_selects_expected_columns(self):
         """Phase-1 query should select trace metadata columns."""
@@ -1881,7 +2516,65 @@ class TestTraceListQueryBuilder:
         )
         query, params = builder.build()
         assert params["offset"] == 75  # 3 * 25
-        assert params["limit"] == 26  # 25 + 1 for has_more detection
+        assert params["limit"] == 25
+
+    def test_build_user_id_query(self):
+        """build_user_id_query() should use enduser_dict for single-query lookup."""
+        from tracer.services.clickhouse.query_builders import TraceListQueryBuilder
+
+        builder = TraceListQueryBuilder(project_id="test-proj-123")
+        trace_ids = ["trace-1", "trace-2", "trace-3"]
+
+        query, params = builder.build_user_id_query(trace_ids)
+
+        assert "SELECT" in query
+        assert "trace_id" in query
+        assert "dictGetOrDefault('enduser_dict', 'user_id', end_user_id, '')" in query
+        assert "GROUP BY trace_id" in query
+        assert "PREWHERE trace_id IN" in query
+        assert params["user_trace_ids"] == ("trace-1", "trace-2", "trace-3")
+        assert params["project_id"] == "test-proj-123"
+
+    def test_build_user_id_query_empty_trace_ids(self):
+        """build_user_id_query() should return empty when no trace_ids provided."""
+        from tracer.services.clickhouse.query_builders import TraceListQueryBuilder
+
+        builder = TraceListQueryBuilder(project_id="test-proj-123")
+        query, params = builder.build_user_id_query([])
+
+        assert query == ""
+        assert params == {}
+
+    def test_v2_build_user_id_query_uses_v2_dict_and_column(self):
+        """TraceListQueryBuilderV2 must rewrite the inherited user-id query to the
+        v2 `end_users_dict` / `is_deleted` (and append the v2 SETTINGS) — the v1
+        `enduser_dict` / `_peerdb_is_deleted` artifacts must be gone."""
+        from tracer.services.clickhouse.v2.query_builders.trace_list import (
+            TraceListQueryBuilderV2,
+        )
+
+        builder = TraceListQueryBuilderV2(project_id="test-proj-123")
+        query, params = builder.build_user_id_query(["trace-1", "trace-2"])
+
+        assert "end_users_dict" in query
+        assert "is_deleted" in query
+        assert "use_skip_indexes_if_final" in query  # v2 SETTINGS appended
+        assert "'enduser_dict'" not in query
+        assert "_peerdb_is_deleted" not in query
+        assert params["user_trace_ids"] == ("trace-1", "trace-2")
+
+    def test_v2_build_user_id_query_empty_trace_ids(self):
+        """The v2 override preserves the empty-input contract (no rewrite/SETTINGS
+        applied to an empty query)."""
+        from tracer.services.clickhouse.v2.query_builders.trace_list import (
+            TraceListQueryBuilderV2,
+        )
+
+        builder = TraceListQueryBuilderV2(project_id="test-proj-123")
+        query, params = builder.build_user_id_query([])
+
+        assert query == ""
+        assert params == {}
 
 
 @pytest.mark.unit
@@ -1931,7 +2624,12 @@ class TestSessionListQueryBuilder:
         builder.build()
         query, params = builder.build_count_query()
         assert "count(DISTINCT trace_session_id)" in query
-        assert "GROUP BY" not in query
+        # The id-remap survivor map (id_remap_sql) embeds internal
+        # `GROUP BY new_id` + `GROUP BY any_id` in its join subquery; the simple
+        # count path must have no OTHER (session-level) GROUP BY — strip the
+        # remap's first.
+        stripped = query.replace("GROUP BY new_id", "").replace("GROUP BY any_id", "")
+        assert "GROUP BY" not in stripped
 
     def test_build_count_query_with_having(self):
         """build_count_query() with HAVING filters uses full aggregation subquery."""
@@ -1957,8 +2655,8 @@ class TestSessionListQueryBuilder:
         assert "GROUP BY trace_session_id" in query
         assert "HAVING" in query
 
-    def test_having_filter_normalizes_operator_alias(self):
-        """Session aggregate filters should accept saved UI operator aliases."""
+    def test_having_filter_accepts_canonical_operator(self):
+        """Session aggregate filters use the canonical filter operator contract."""
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
 
         builder = SessionListQueryBuilder(
@@ -1967,7 +2665,7 @@ class TestSessionListQueryBuilder:
                 {
                     "column_id": "duration",
                     "filter_config": {
-                        "filter_op": "equal_to",
+                        "filter_op": "equals",
                         "filter_value": 60,
                     },
                 }
@@ -2006,7 +2704,7 @@ class TestSessionListQueryBuilder:
         assert "duration = %(having_" not in query
 
     def test_build_with_user_id(self):
-        """When user_id is provided, query should filter by end_user_id."""
+        """User membership should select sessions without shrinking aggregates."""
         from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
 
         builder = SessionListQueryBuilder(
@@ -2017,8 +2715,38 @@ class TestSessionListQueryBuilder:
             user_id="user-123",
         )
         query, params = builder.build()
-        assert "end_user_id" in query
+        assert "trace_session_id IN (" in query
+        assert "SELECT trace_session_id, end_user_id" in query
+        assert "end_user_id = %(user_id)s" in query
+        assert query.index("trace_session_id IN (") < query.index(
+            "GROUP BY trace_session_id"
+        )
         assert params.get("user_id") == "user-123"
+
+    def test_user_null_filter_presence_resolves_session_ids_before_membership(self):
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "end_user_id",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "is_not_null",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ],
+        )
+
+        query, _params = builder.build()
+
+        assert "trace_session_id IN (" in query
+        assert "trace_session_id_remap" in query
+        assert "user_presence_ts_remap.survivor_id" in query
+        assert "GROUP BY trace_session_id" in query
+        assert "end_user_id IS NOT NULL" in query
 
     def test_build_excludes_null_session_ids(self):
         """Query should filter out rows without a session ID."""
@@ -2032,6 +2760,133 @@ class TestSessionListQueryBuilder:
         )
         query, params = builder.build()
         assert "trace_session_id IS NOT NULL" in query
+
+    def test_session_filter_alias_resolves_before_grouping(self):
+        """Session picker values are strings; the frontend session filter resolves them
+        new→old through the trace_session_id remap (P3b step1.5) so a cross-cutover
+        straddler unifies under the OLD curated id, passing the ids as a bound
+        UUID-set param — replacing the legacy ``toString(trace_session_id) IN`` cast.
+        """
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        session_id = "003b76f1-2b4a-4af5-b0dc-224d687374d4"
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "session",
+                    "display_name": "Session",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": [session_id],
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ],
+            page_number=0,
+            page_size=10,
+        )
+
+        query, params = builder.build()
+
+        # Resolved-membership form (id_remap_sql survivor-collapse), not the
+        # legacy toString cast.
+        assert "trace_session_id_remap" in query
+        assert "ts_remap.survivor_id" in query
+        assert "IN %(sess_1)s" in query
+        assert "toString(trace_session_id) IN" not in query
+        assert query.index("IN %(sess_1)s") < query.index(
+            "GROUP BY trace_session_id"
+        )
+        assert session_id in next(
+            value for key, value in params.items() if key.startswith("sess_")
+        )
+
+    def test_total_traces_count_frontend_alias_filters_and_sorts(self):
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "total_traces_count",
+                    "filter_config": {
+                        "filter_type": "number",
+                        "filter_op": "greater_than",
+                        "filter_value": 4,
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ],
+            sort_params=[
+                {"column_id": "total_traces_count", "direction": "desc"}
+            ],
+        )
+
+        query, params = builder.build()
+
+        assert "HAVING traces_count > %(having_" in query
+        assert "ORDER BY traces_count DESC" in query
+        assert 4 in params.values()
+
+    def test_first_message_filter_aggregates_before_having(self):
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "first_message",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "contains",
+                        "filter_value": "recursion",
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ],
+        )
+
+        query, params = builder.build()
+        count_query, _ = builder.build_count_query()
+
+        assert "argMin(input, start_time) AS first_message" in query
+        assert "HAVING first_message ILIKE %(having_" in query
+        assert "%recursion%" in params.values()
+        assert "argMin(input, start_time) AS first_message" in count_query
+
+    def test_first_message_sort_projects_message_aggregates(self):
+        from tracer.services.clickhouse.query_builders import SessionListQueryBuilder
+
+        builder = SessionListQueryBuilder(
+            project_id="test-project-id",
+            filters=[],
+            sort_params=[{"column_id": "first_message", "direction": "asc"}],
+        )
+
+        query, _params = builder.build()
+
+        assert "argMin(input, start_time) AS first_message" in query
+        assert "argMax(input, start_time) AS last_message" in query
+        assert "SELECT trace_session_id, trace_id, start_time, end_time, cost, total_tokens, input" in query
+        assert "ORDER BY first_message ASC" in query
+
+    def test_v2_span_attributes_query_uses_native_ch25_columns(self):
+        from tracer.services.clickhouse.v2.query_builders.session_list import (
+            SessionListQueryBuilderV2,
+        )
+
+        builder = SessionListQueryBuilderV2(project_id="test-project-id")
+        builder.build()
+        query, _ = builder.build_span_attributes_query(["session-1"])
+
+        assert "attributes_extra AS span_attributes_raw" in query
+        assert "attrs_string" in query
+        assert "attrs_number" in query
+        assert "span_attr_str" not in query
+        assert "span_attr_num" not in query
+        assert "toJSONString(attributes_extra) AS span_attributes_raw" not in query
 
     def test_build_uses_uniq_not_uniqExact(self):
         """build() should use approximate uniq() instead of expensive uniqExact()."""
@@ -2519,7 +3374,6 @@ class TestEvalMetricsQueryBuilder:
 
     def test_default_time_range(self):
         """When no start/end dates provided, should default to last 7 days."""
-        from datetime import datetime, timedelta
 
         from tracer.services.clickhouse.query_builders import EvalMetricsQueryBuilder
 
@@ -2661,51 +3515,15 @@ class TestErrorAnalysisQueryBuilder:
 class TestAnalyticsQueryService:
     """Test the dispatch layer."""
 
-    def test_get_route_returns_valid_decision(self):
-        """get_route should return a valid RouteDecision enum value."""
-        from tracer.services.clickhouse.query_service import (
-            AnalyticsQueryService,
-            QueryType,
-            RouteDecision,
-        )
-
-        service = AnalyticsQueryService()
-        route = service.get_route(QueryType.TRACE_LIST)
-        assert route in (
-            RouteDecision.POSTGRES,
-            RouteDecision.CLICKHOUSE,
-            RouteDecision.SHADOW,
-        )
-
-    @mock.patch(
-        "tracer.services.clickhouse.query_service.is_clickhouse_enabled",
-        return_value=True,
-    )
-    def test_should_use_clickhouse_consistent_with_route(self, _mock_enabled):
-        """should_use_clickhouse should be True when route is CLICKHOUSE or SHADOW."""
-        from tracer.services.clickhouse.query_service import (
-            AnalyticsQueryService,
-            QueryType,
-            RouteDecision,
-        )
-
-        service = AnalyticsQueryService()
-        route = service.get_route(QueryType.TRACE_LIST)
-        uses_ch = service.should_use_clickhouse(QueryType.TRACE_LIST)
-        if route == RouteDecision.POSTGRES:
-            assert uses_ch is False
-        else:
-            assert uses_ch is True
-
     def test_get_backend_status(self):
-        """get_backend_status should return a dict with clickhouse and routing info."""
+        """get_backend_status reports CH enablement + connectivity."""
         from tracer.services.clickhouse.query_service import AnalyticsQueryService
 
         service = AnalyticsQueryService()
         status = service.get_backend_status()
         assert "clickhouse" in status
-        assert "routing" in status
-        assert "shadow_mode" in status
+        assert "enabled" in status["clickhouse"]
+        assert "connected" in status["clickhouse"]
 
     def test_query_result_creation(self):
         """QueryResult dataclass should be creatable with expected fields."""
@@ -2745,15 +3563,6 @@ class TestAnalyticsQueryService:
         assert QueryType.SESSION_LIST == "SESSION_LIST"
         assert QueryType.EVAL_METRICS == "EVAL_METRICS"
         assert QueryType.ERROR_ANALYSIS == "ERROR_ANALYSIS"
-
-    def test_route_decision_enum_values(self):
-        """RouteDecision should have all expected routing options."""
-        from tracer.services.clickhouse.query_service import RouteDecision
-
-        assert RouteDecision.POSTGRES == "postgres"
-        assert RouteDecision.CLICKHOUSE == "clickhouse"
-        assert RouteDecision.AUTO == "auto"
-        assert RouteDecision.SHADOW == "shadow"
 
 
 # ============================================================================
@@ -2911,22 +3720,23 @@ class TestBaseQueryBuilder:
         assert end.day == 30
 
     def test_parse_time_range_defaults(self):
-        """Empty filters should default to a very wide window (10 years)."""
-        from datetime import datetime, timedelta
+        """Empty filters should default to a 30-day window (partition-pruning friendly)."""
+        from datetime import datetime
 
         from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 
         start, end = BaseQueryBuilder.parse_time_range([])
         assert start is not None
         assert end is not None
-        # Default is ~3650 days (10 years) to include all historical data.
-        assert (datetime.utcnow() - start).days >= 3649
+        # Default is 30 days back from now (was 3650; shortened in CH 25.3 perf sweep).
+        assert (datetime.utcnow() - start).days >= 29
+        assert (datetime.utcnow() - start).days <= 31
         # End should be close to now
         assert abs((datetime.utcnow() - end).total_seconds()) < 5
 
     def test_parse_time_range_ignores_non_date_filters(self):
         """parse_time_range should ignore filters on non-date columns."""
-        from datetime import datetime, timedelta
+        from datetime import datetime
 
         from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 
@@ -2940,8 +3750,9 @@ class TestBaseQueryBuilder:
             }
         ]
         start, end = BaseQueryBuilder.parse_time_range(filters)
-        # Should fall back to defaults (~3650 days back).
-        assert (datetime.utcnow() - start).days >= 3649
+        # Should fall back to defaults (30 days back).
+        assert (datetime.utcnow() - start).days >= 29
+        assert (datetime.utcnow() - start).days <= 31
 
     def test_parse_time_range_handles_start_time_column(self):
         """parse_time_range should also recognize start_time as a date column."""
@@ -2970,7 +3781,7 @@ class TestBaseQueryBuilder:
         builder = TimeSeriesQueryBuilder(project_id="test-id")
         where = builder.project_where()
         assert "project_id = %(project_id)s" in where
-        assert "_peerdb_is_deleted = 0" in where
+        assert "is_deleted = 0" in where
 
     def test_project_where_with_alias(self):
         """project_where() with alias should prefix column names."""
@@ -2979,7 +3790,7 @@ class TestBaseQueryBuilder:
         builder = TimeSeriesQueryBuilder(project_id="test-id")
         where = builder.project_where(table_alias="s")
         assert "s.project_id = %(project_id)s" in where
-        assert "s._peerdb_is_deleted = 0" in where
+        assert "s.is_deleted = 0" in where
 
     def test_normalize_timestamp_hour(self):
         """_normalize_timestamp for hour should truncate to hour boundary."""
@@ -3021,6 +3832,15 @@ class TestBaseQueryBuilder:
 
         dt = datetime(2024, 6, 15, 14, 0, 0)
         result = BaseQueryBuilder._normalize_timestamp(dt, "month")
+        assert result == datetime(2024, 6, 1, 0, 0, 0)
+
+    def test_normalize_timestamp_accepts_clickhouse_date_bucket(self):
+        """ClickHouse monthly buckets may arrive as date objects, not datetimes."""
+        from datetime import date, datetime
+
+        from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+
+        result = BaseQueryBuilder._normalize_timestamp(date(2024, 6, 1), "month")
         assert result == datetime(2024, 6, 1, 0, 0, 0)
 
     def test_generate_timestamp_range_hourly(self):
@@ -3497,6 +4317,9 @@ class TestTraceListQueryBuilderComprehensive:
     def test_build_uses_date_range_from_filters(self):
         """When datetime filters exist, they should set start/end dates."""
         from tracer.services.clickhouse.query_builders import TraceListQueryBuilder
+        from tracer.services.clickhouse.query_builders.trace_list import (
+            TIME_FILTER_COLUMN,
+        )
 
         builder = TraceListQueryBuilder(
             project_id="proj-1",
@@ -3517,8 +4340,8 @@ class TestTraceListQueryBuilderComprehensive:
         query, params = builder.build()
         assert params["start_date"] is not None
         assert params["end_date"] is not None
-        assert "start_time >=" in query
-        assert "start_time <" in query
+        assert f"{TIME_FILTER_COLUMN} >=" in query
+        assert f"{TIME_FILTER_COLUMN} <" in query
 
     def test_build_default_date_range(self):
         """When no datetime filter, should use default 30-day range."""
@@ -3621,7 +4444,7 @@ class TestTraceListQueryBuilderComprehensive:
         )
         _, params = builder.build()
         assert params["offset"] == 0
-        assert params["limit"] == 51  # +1 for has_more
+        assert params["limit"] == 50
 
     def test_pagination_large_page(self):
         """Large page number should calculate correct offset."""
@@ -3634,7 +4457,7 @@ class TestTraceListQueryBuilderComprehensive:
         )
         _, params = builder.build()
         assert params["offset"] == 1000
-        assert params["limit"] == 101
+        assert params["limit"] == 100
 
     def test_pagination_small_page_size(self):
         """Small page size should work correctly."""
@@ -3647,7 +4470,7 @@ class TestTraceListQueryBuilderComprehensive:
         )
         _, params = builder.build()
         assert params["offset"] == 50
-        assert params["limit"] == 11
+        assert params["limit"] == 10
 
     # ------------------------------------------------------------------
     # Count query
@@ -3706,7 +4529,7 @@ class TestTraceListQueryBuilderComprehensive:
         )
         assert "model_hub_score" in query
         assert "label_id" in query
-        assert "LEFT JOIN spans AS sp" in query
+        assert "LEFT JOIN" in query
         assert "sp.id = s.observation_span_id" in query
         assert "s.deleted = false" in query
         assert "GROUP BY" in query
@@ -3982,7 +4805,7 @@ class TestTraceListQueryBuilderComprehensive:
         builder = TraceListQueryBuilder(project_id="proj-1")
         builder.build()
         content_query, _ = builder.build_content_query(["trace-1"])
-        assert "metadata_map" in content_query
+        assert "metadata" in content_query
 
     def test_build_selects_trace_session_id(self):
         """Phase-1 query should select trace_session_id."""
@@ -4033,6 +4856,7 @@ class TestSpanListQueryBuilderComprehensive:
         assert "spans" in query
         assert "LIMIT" in query
         assert "OFFSET" in query
+        assert params["limit"] == 50
         # Unlike trace list, span list shows ALL spans (no parent_span_id filter)
         assert "parent_span_id IS NULL" not in query
 
@@ -4168,7 +4992,7 @@ class TestSpanListQueryBuilderComprehensive:
         )
         _, params = builder.build()
         assert params["offset"] == 60
-        assert params["limit"] == 21  # +1 for has_more detection
+        assert params["limit"] == 20
 
     def test_sort_default(self):
         """Default sort should be ORDER BY start_time DESC."""
@@ -4605,6 +5429,63 @@ class TestEvalMetricsQueryBuilderExtended:
 class TestFilterBuilderEdgeCases:
     """Edge case tests for ClickHouseFilterBuilder."""
 
+    def test_nullable_uuid_column_text_ops_cast_to_string(self):
+        """Filtering a nullable-UUID column (session/user) must not crash and
+        must wrap the column in toString() for string-comparison ops.
+
+        Regression: ``_build_column_condition`` referenced an undefined
+        ``_UUID_TEXT_FILTER_OPS``, so any session_id/end_user_id/
+        trace_session_id filter raised AttributeError (e.g. the
+        list_traces_of_session endpoint). ClickHouse also rejects direct
+        UUID-vs-String comparisons, so the cast is required for correctness.
+        """
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        # ``session_id`` is a frontend alias normalized to ``trace_session_id``
+        # before it reaches the column condition, so assert on the canonical
+        # columns that actually surface in the SQL.
+        for column in ("trace_session_id", "end_user_id"):
+            for op in ("contains", "equals", "starts_with", "in", "not_in"):
+                builder = ClickHouseFilterBuilder()
+                value = ["abc", "def"] if op in ("in", "not_in") else "0f57a0c2"
+                filters = [
+                    {
+                        "column_id": column,
+                        "filter_config": {
+                            "filter_type": "categorical",
+                            "filter_op": op,
+                            "filter_value": value,
+                            "col_type": "SYSTEM_METRIC",
+                        },
+                    }
+                ]
+                where, _ = builder.translate(filters)
+                assert f"toString({column})" in where, (column, op, where)
+
+    def test_nullable_uuid_column_is_null_uses_bare_column(self):
+        """is_null/is_not_null on a nullable-UUID column skip the toString cast."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder()
+        filters = [
+            {
+                "column_id": "trace_session_id",
+                "filter_config": {
+                    "filter_type": "categorical",
+                    "filter_op": "is_null",
+                    "filter_value": None,
+                    "col_type": "SYSTEM_METRIC",
+                },
+            }
+        ]
+        where, _ = builder.translate(filters)
+        assert "trace_session_id IS NULL" in where
+        assert "toString(trace_session_id) IS NULL" not in where
+
     def test_not_equals_filter(self):
         """not_equals should produce != operator."""
         from tracer.services.clickhouse.query_builders.filters import (
@@ -4627,7 +5508,7 @@ class TestFilterBuilderEdgeCases:
         assert "!=" in where
 
     def test_not_contains_filter(self):
-        """not_contains should produce NOT LIKE."""
+        """not_contains should produce NOT ILIKE (case-insensitive)."""
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
         )
@@ -4645,7 +5526,7 @@ class TestFilterBuilderEdgeCases:
             }
         ]
         where, _ = builder.translate(filters)
-        assert "NOT LIKE" in where
+        assert "NOT ILIKE" in where
 
     def test_starts_with_filter(self):
         """starts_with should produce LIKE with trailing %."""
@@ -4771,7 +5652,7 @@ class TestFilterBuilderEdgeCases:
         assert "<=" in where
 
     def test_span_attr_not_contains(self):
-        """SPAN_ATTRIBUTE not_contains should produce NOT LIKE."""
+        """SPAN_ATTRIBUTE not_contains should produce NOT ILIKE (case-insensitive)."""
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
         )
@@ -4789,7 +5670,7 @@ class TestFilterBuilderEdgeCases:
             }
         ]
         where, _ = builder.translate(filters)
-        assert "NOT LIKE" in where
+        assert "NOT ILIKE" in where
         assert "span_attr_str" in where
 
     def test_span_attr_between(self):
@@ -4814,8 +5695,7 @@ class TestFilterBuilderEdgeCases:
         assert "BETWEEN" in where
         assert "span_attr_num" in where
 
-    def test_camelcase_filter_keys(self):
-        """Should accept camelCase filter keys (columnId, filterConfig)."""
+    def test_camelcase_filter_keys_are_supported_defensively(self):
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
         )
@@ -4825,16 +5705,16 @@ class TestFilterBuilderEdgeCases:
             {
                 "columnId": "model",
                 "filterConfig": {
-                    "filter_type": "text",
-                    "filter_op": "equals",
-                    "filter_value": "gpt-4",
+                    "filterType": "text",
+                    "filterOp": "equals",
+                    "filterValue": "gpt-4",
                     "col_type": "SYSTEM_METRIC",
                 },
             }
         ]
         where, params = builder.translate(filters)
-        assert "model" in where
-        assert "gpt-4" in params.values()
+        assert "lower(model) = %(col_1)s" in where
+        assert params == {"col_1": "gpt-4"}
 
     def test_eval_metric_filter_subquery_structure(self):
         """EVAL_METRIC filter should have correct subquery structure."""
@@ -4881,10 +5761,10 @@ class TestFilterBuilderEdgeCases:
         assert "model_hub_score AS s FINAL" in where
         # The column on model_hub_score is simply label_id (not annotation_label_id).
         assert "label_id" in where
-        assert "_peerdb_is_deleted = 0" in where
+        assert "is_deleted = 0" in where
 
-    def test_annotation_number_not_equal_to_alias(self):
-        """Frontend number op not_equal_to should translate to SQL !=."""
+    def test_annotation_number_not_equals(self):
+        """Canonical number op not_equals should translate to SQL !=."""
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
         )
@@ -4895,7 +5775,7 @@ class TestFilterBuilderEdgeCases:
                 "column_id": "00000000-0000-0000-0000-000000000066",
                 "filter_config": {
                     "filter_type": "number",
-                    "filter_op": "not_equal_to",
+                    "filter_op": "not_equals",
                     "filter_value": 45,
                     "col_type": "ANNOTATION",
                 },
@@ -4933,18 +5813,18 @@ class TestFilterBuilderEdgeCases:
         assert 10 in params.values()
         assert 50 in params.values()
 
-    def test_annotation_positive_operator_aliases(self):
-        """Frontend positive op aliases should translate to canonical SQL."""
+    def test_annotation_positive_canonical_operators(self):
+        """Canonical annotation ops should translate to SQL."""
         from tracer.services.clickhouse.query_builders.filters import (
             ClickHouseFilterBuilder,
         )
 
         label_id = "00000000-0000-0000-0000-000000000066"
         cases = [
-            ("number", "equal_to", 45, ") = %(ann_", {45}),
-            ("number", "inBetween", [10, 50], " BETWEEN ", {10, 50}),
-            ("text", "is", "good", ") = lower(%(ann_", {"good"}),
-            ("text", "is_not", "bad", ") != lower(%(ann_", {"bad"}),
+            ("number", "equals", 45, ") = %(ann_", {45}),
+            ("number", "between", [10, 50], " BETWEEN ", {10, 50}),
+            ("text", "equals", "good", ") = lower(%(ann_", {"good"}),
+            ("text", "not_equals", "bad", ") != lower(%(ann_", {"bad"}),
         ]
 
         for filter_type, filter_op, value, sql_fragment, expected_values in cases:
@@ -5513,6 +6393,158 @@ class TestVoiceCallListQueryBuilder:
         query, params = builder.build()
         assert "lower(status) =" in query
 
+    def test_voice_numeric_filter_without_col_type_uses_metric_expression(self):
+        """API callers may omit col_type; voice metrics should still translate."""
+        from tracer.services.clickhouse.query_builders.voice_call_list import (
+            VoiceCallListQueryBuilder,
+        )
+
+        builder = VoiceCallListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "turn_count",
+                    "filter_config": {
+                        "filter_type": "number",
+                        "filter_op": "greater_than_or_equal",
+                        "filter_value": 0,
+                    },
+                }
+            ],
+        )
+
+        query, _ = builder.build()
+
+        assert "span_attr_num['call.total_turns']" in query
+        assert "turn_count >=" not in query
+
+    def test_voice_string_filter_without_col_type_uses_attribute_map(self):
+        """Voice string metrics should not be emitted as unknown CH columns."""
+        from tracer.services.clickhouse.query_builders.voice_call_list import (
+            VoiceCallListQueryBuilder,
+        )
+
+        builder = VoiceCallListQueryBuilder(
+            project_id="test-project-id",
+            filters=[
+                {
+                    "column_id": "ended_reason",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "contains",
+                        "filter_value": "customer",
+                    },
+                }
+            ],
+        )
+
+        query, _ = builder.build()
+
+        assert "mapContains(span_attr_str, 'ended_reason')" in query
+        assert "span_attr_str['ended_reason'] LIKE" in query
+
+
+@pytest.mark.unit
+class TestVoiceCallListPhase1bMigration:
+    """Pin the CH25 cutover for the Phase 1b attrs hydration step.
+
+    The voice list view fetches the paginated root spans first (Phase 1)
+    and then hydrates `span_attributes` + `provider` for that page in a
+    second query (Phase 1b). Pre-CH25 that second query hit the legacy
+    `tracer_observation_span` CDC mirror. Post-CH25 it reads the v2
+    `spans` table (`attributes_extra` JSON + typed Maps), and that
+    cutover is the one thing standing between us and being able to
+    decommission the PeerDB stream for that table.
+
+    The SQL is inline in the view method, not in a builder class, so we
+    pin it by inspecting the function source — same pattern used by
+    test_trace_workspace_scope.py for the agent_graph PG-fallback ban.
+    """
+
+    @staticmethod
+    def _voice_list_source() -> str:
+        import inspect
+
+        from tracer.views.trace import TraceView
+
+        return inspect.getsource(TraceView._list_voice_calls_clickhouse)
+
+    def test_phase_1b_does_not_query_legacy_cdc_mirror(self):
+        """The Phase 1b hydration must NOT read `tracer_observation_span`.
+
+        Reverting to the CDC mirror means voice attributes go stale the
+        moment we cut PeerDB. Catch that statically.
+
+        Scope: the *Phase 1b* query specifically. The view legitimately
+        keeps `_peerdb_is_deleted` for the unrelated `tracer_eval_logger`
+        CDC query earlier in the same method — that mirror still flows
+        through PeerDB and is out of scope for this cutover.
+        """
+        import re
+
+        src = self._voice_list_source()
+        # Ban the actual query, not the comments that document the cutover.
+        assert not re.search(r"FROM\s+tracer_observation_span", src), (
+            "_list_voice_calls_clickhouse references the legacy CDC mirror; "
+            "the Phase 1b query must read from the v2 `spans` table."
+        )
+        # Narrow the `_peerdb_is_deleted` ban to the Phase 1b block, found
+        # by anchoring on the unique `attributes_extra AS span_attributes`
+        # projection and slicing forward to the next `analytics.execute_ch_query`
+        # call. Anything inside that slice belongs to the Phase 1b query.
+        anchor = "attributes_extra AS span_attributes"
+        assert anchor in src, (
+            "Phase 1b query no longer projects `attributes_extra AS "
+            "span_attributes`; this regression test needs a new anchor."
+        )
+        start = src.index(anchor)
+        phase_1b_block = src[start : start + 600]
+        assert "_peerdb_is_deleted" not in phase_1b_block, (
+            "Phase 1b query still filters on `_peerdb_is_deleted`; v2 "
+            "`spans` uses `is_deleted` (no CDC = no PeerDB tombstone)."
+        )
+
+    def test_phase_1b_reads_v2_spans_table(self):
+        """The Phase 1b hydration must select from v2 `spans` with FINAL."""
+        import re
+
+        src = self._voice_list_source()
+        # `FROM spans FINAL` collapses ReplacingMergeTree duplicates — the
+        # v2 dedup contract. FINAL alone (without `spans`) is too permissive.
+        assert re.search(
+            r"FROM\s+spans\s+FINAL", src
+        ), "_list_voice_calls_clickhouse must hydrate from v2 `spans FINAL`."
+        assert "is_deleted = 0" in src
+
+    def test_phase_1b_selects_typed_map_columns_for_reconstruction(self):
+        """The Phase 1b query must SELECT the typed Maps + attributes_extra.
+
+        fi-collector puts the common-case LLM keys (gen_ai.*) into the
+        typed Maps; `attributes_extra` only holds the overflow. If we
+        only select `attributes_extra`, voice spans show empty
+        `span_attributes` because nothing fell into the overflow tier.
+        """
+        src = self._voice_list_source()
+        assert "attributes_extra AS span_attributes" in src
+        assert "attrs_string" in src
+        assert "attrs_number" in src
+        assert "attrs_bool" in src
+
+    def test_phase_1b_python_fallback_merges_typed_maps(self):
+        """Python-side: when `attributes_extra` is empty, fall back to Maps.
+
+        The fallback is what makes the reconstruction actually work — it's
+        easy to drop accidentally during refactors. Pin it.
+        """
+        src = self._voice_list_source()
+        # The fallback walks all three Maps. Any one being missing would
+        # silently drop a class of attributes.
+        assert 'arow.get("attrs_string")' in src
+        assert 'arow.get("attrs_number")' in src
+        assert 'arow.get("attrs_bool")' in src
+        # Bool values get cast to Python bool (CH UInt8 → 0/1 otherwise).
+        assert "bool(v)" in src
+
 
 @pytest.mark.unit
 class TestVoiceCallListQueryBuilderComprehensive:
@@ -5561,7 +6593,7 @@ class TestVoiceCallListQueryBuilderComprehensive:
         builder = VoiceCallListQueryBuilder(project_id="proj-abc")
         query, params = builder.build()
         assert "project_id = %(project_id)s" in query
-        assert "_peerdb_is_deleted = 0" in query
+        assert "is_deleted = 0" in query
         assert params["project_id"] == "proj-abc"
 
     def test_build_orders_by_start_time_desc(self):
@@ -5575,8 +6607,8 @@ class TestVoiceCallListQueryBuilderComprehensive:
         assert "ORDER BY start_time DESC" in query
 
     def test_build_uses_default_time_range_when_no_date_filter(self):
-        """When no date filter, should default to a very wide window (10 years)."""
-        from datetime import datetime, timedelta
+        """When no date filter, should default to a 30-day window."""
+        from datetime import datetime
 
         from tracer.services.clickhouse.query_builders.voice_call_list import (
             VoiceCallListQueryBuilder,
@@ -5585,8 +6617,10 @@ class TestVoiceCallListQueryBuilderComprehensive:
         builder = VoiceCallListQueryBuilder(project_id="proj-1", filters=[])
         _, params = builder.build()
         now = datetime.utcnow()
-        # Default is ~3650 days (10 years) back — matches BaseQueryBuilder.parse_time_range.
-        assert (now - params["start_date"]).days >= 3649
+        # Default is 30 days back — matches BaseQueryBuilder.parse_time_range
+        # (was 3650; shortened in CH 25.3 perf sweep for partition pruning).
+        assert (now - params["start_date"]).days >= 29
+        assert (now - params["start_date"]).days <= 31
         # end_date should be roughly now
         assert abs((now - params["end_date"]).total_seconds()) < 5
 
@@ -6091,7 +7125,7 @@ class TestVoiceCallListQueryBuilderComprehensive:
         query, _ = builder.build_annotation_query(["trace-1"], ["label-1"])
         assert "model_hub_score" in query
         assert "trace_id" in query
-        assert "LEFT JOIN spans AS sp" in query
+        assert "LEFT JOIN" in query
         assert "sp.id = s.observation_span_id" in query
         assert "toString(s.trace_id)" in query
         assert "s.deleted = false" in query
@@ -6135,7 +7169,7 @@ class TestVoiceCallListQueryBuilderComprehensive:
 
         builder = VoiceCallListQueryBuilder(project_id="proj-1")
         query, _ = builder.build_child_spans_query(["trace-1"])
-        assert "_peerdb_is_deleted = 0" in query
+        assert "is_deleted = 0" in query
 
     def test_child_spans_query_orders_by_start_time(self):
         """Child spans should be ordered chronologically."""
@@ -6261,13 +7295,6 @@ class TestVoiceCallListQueryBuilderComprehensive:
         assert hasattr(QueryType, "VOICE_CALL_LIST")
         assert QueryType.VOICE_CALL_LIST.value == "VOICE_CALL_LIST"
 
-    def test_voice_call_list_route_setting(self):
-        """CH_ROUTE_VOICE_CALL_LIST should be present in CLICKHOUSE settings."""
-        from django.conf import settings
-
-        ch_settings = settings.CLICKHOUSE
-        assert "CH_ROUTE_VOICE_CALL_LIST" in ch_settings
-
 
 # ============================================================================
 # 21. Annotation Graph Query Builder Tests
@@ -6303,8 +7330,52 @@ class TestAnnotationGraphQueryBuilder:
         assert "JSONExtract(value, 'rating', 'Nullable(Float64)')" in query
         assert "model_hub_score" in query
         assert "FINAL" in query
-        assert "_peerdb_is_deleted = 0" in query
+        assert "is_deleted = 0" in query
         assert params["label_id"] == self.LABEL_ID
+
+    def test_fetch_annotation_graph_uses_score_backed_label_lookup(self):
+        """Annotation graph labels should resolve through the project score union."""
+        from model_hub.models.choices import AnnotationTypeChoices
+        from tracer.services.clickhouse import graph_dispatch
+
+        class LabelQuery:
+            def get(self, **kwargs):
+                assert kwargs == {"id": self_label_id}
+                label = mock.Mock()
+                label.id = self_label_id
+                label.name = "Score-backed label"
+                label.type = AnnotationTypeChoices.NUMERIC.value
+                return label
+
+        class Result:
+            data = []
+            columns = []
+
+        class Analytics:
+            def execute_ch_query(self, query, params, timeout_ms):
+                self.query = query
+                self.params = params
+                return Result()
+
+        self_label_id = self.LABEL_ID
+        analytics = Analytics()
+        with mock.patch.object(
+            graph_dispatch,
+            "get_annotation_labels_for_project",
+            return_value=LabelQuery(),
+        ) as lookup:
+            result = graph_dispatch.fetch_annotation_graph_ch(
+                analytics=analytics,
+                project_id="project-with-shared-label",
+                filters=[],
+                interval="month",
+                req_data_config={"id": self.LABEL_ID, "type": "ANNOTATION"},
+                observe_type="span",
+            )
+
+        lookup.assert_called_once_with("project-with-shared-label")
+        assert analytics.params["label_id"] == self.LABEL_ID
+        assert result["name"] == "Score-backed label"
 
     def test_build_bool_query(self):
         """Bool output type should produce CASE WHEN on JSON-extracted value."""
@@ -6964,7 +8035,76 @@ class TestMonitorMetricsQueryBuilder:
 
 
 # ============================================================================
-# 23. Session Analytics Query Builder Tests
+# 23. Session Time-Series Query Builder Tests
+# ============================================================================
+
+
+@pytest.mark.unit
+class TestSessionTimeSeriesQueryBuilder:
+    """Test session graph query generation."""
+
+    def test_session_filter_alias_resolves_before_grouping(self):
+        from tracer.services.clickhouse.query_builders.session_time_series import (
+            SessionTimeSeriesQueryBuilder,
+        )
+
+        session_id = "003b76f1-2b4a-4af5-b0dc-224d687374d4"
+        builder = SessionTimeSeriesQueryBuilder(
+            project_id="project-1",
+            filters=[
+                {
+                    "column_id": "session",
+                    "display_name": "Session",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "in",
+                        "filter_value": [session_id],
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ],
+        )
+
+        query, params = builder.build()
+
+        assert "trace_session_id_remap" in query
+        assert "ts_remap.survivor_id" in query
+        assert "IN %(session_id_1)s" in query
+        assert query.index("IN %(session_id_1)s") < query.index(
+            "GROUP BY session_id"
+        )
+        assert params["session_id_1"] == (session_id,)
+
+    def test_session_aggregate_filter_uses_inner_having(self):
+        from tracer.services.clickhouse.query_builders.session_time_series import (
+            SessionTimeSeriesQueryBuilder,
+        )
+
+        builder = SessionTimeSeriesQueryBuilder(
+            project_id="project-1",
+            interval="month",
+            filters=[
+                {
+                    "column_id": "duration",
+                    "filter_config": {
+                        "filter_type": "number",
+                        "filter_op": "greater_than",
+                        "filter_value": 50,
+                        "col_type": "SYSTEM_METRIC",
+                    },
+                }
+            ],
+        )
+
+        query, params = builder.build()
+
+        assert "HAVING session_duration > %(having_901)s" in query
+        assert "span_attr_num" not in query
+        assert params["having_901"] == 50
+
+
+# ============================================================================
+# 24. Session Analytics Query Builder Tests
 # ============================================================================
 
 
@@ -7025,7 +8165,9 @@ class TestSessionAnalyticsQueryBuilder:
         assert "trace_session_id" in query
         assert "GROUP BY trace_session_id" in query
         assert "ORDER BY started_at DESC" in query
-        assert "trace_session_id != ''" in query
+        # UUID-vs-empty-string makes CH raise Code 376 (Cannot parse uuid).
+        assert "trace_session_id != ''" not in query
+        assert "trace_session_id IS NOT NULL" in query
 
     def test_session_navigation_has_aggregate_columns(self):
         """Navigation query should include count, tokens, cost."""
@@ -7154,17 +8296,6 @@ class TestNewQueryTypeRoutingSettings:
         assert hasattr(QueryType, "ANNOTATION_DETAIL")
         assert QueryType.ANNOTATION_DETAIL.value == "ANNOTATION_DETAIL"
 
-    def test_route_settings_exist(self):
-        """All new CH_ROUTE_* settings should exist in CLICKHOUSE config."""
-        from django.conf import settings
-
-        ch = settings.CLICKHOUSE
-        assert "CH_ROUTE_SESSION_ANALYTICS" in ch
-        assert "CH_ROUTE_ANNOTATION_GRAPH" in ch
-        assert "CH_ROUTE_TRACE_DETAIL" in ch
-        assert "CH_ROUTE_MONITOR_METRICS" in ch
-        assert "CH_ROUTE_ANNOTATION_DETAIL" in ch
-
     def test_new_builders_in_package_exports(self):
         """New query builders should be exported from __init__.py."""
         import tracer.services.clickhouse.query_builders as pkg
@@ -7232,7 +8363,7 @@ class TestSpanAttrConditionContract:
                 "k", filter_type="text", filter_op="not_equals", filter_value="v"
             )
         )
-        assert "AND span_attr_str['k'] != " in where
+        assert "AND lower(span_attr_str['k']) != " in where
         assert "NOT mapContains" not in where
 
     def test_text_in(self):
@@ -7241,7 +8372,7 @@ class TestSpanAttrConditionContract:
                 "k", filter_type="text", filter_op="in", filter_value=["a", "b"]
             )
         )
-        assert "span_attr_str['k'] IN" in where
+        assert "lower(span_attr_str['k']) IN" in where
         assert ("a", "b") in params.values()
 
     def test_text_not_in_uses_exists_and(self):
@@ -7256,7 +8387,7 @@ class TestSpanAttrConditionContract:
             )
         )
         assert "mapContains(span_attr_str, 'ended_reason')" in where
-        assert "AND span_attr_str['ended_reason'] NOT IN" in where
+        assert "AND lower(span_attr_str['ended_reason']) NOT IN" in where
         assert "NOT mapContains" not in where
         assert ("voicemail", "assistant-ended-call") in params.values()
 
@@ -7275,7 +8406,7 @@ class TestSpanAttrConditionContract:
                 "k", filter_type="text", filter_op="not_contains", filter_value="abc"
             )
         )
-        assert "AND span_attr_str['k'] NOT LIKE" in where
+        assert "AND span_attr_str['k'] NOT ILIKE" in where
         assert "NOT mapContains" not in where
         assert "%abc%" in params.values()
 

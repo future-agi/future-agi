@@ -1,6 +1,7 @@
 import structlog
 from django.shortcuts import get_object_or_404
 from django_filters.rest_framework import DjangoFilterBackend
+from drf_yasg.utils import swagger_auto_schema
 
 # views.py
 from rest_framework import filters, generics
@@ -9,112 +10,170 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-logger = structlog.get_logger(__name__)
-from accounts.utils import get_request_organization
 from model_hub.models.develop_optimisation import OptimizationDataset
 from model_hub.models.evals_metric import UserEvalMetric
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    MetricsByColumnResponseSerializer,
+    ModelHubStringResultResponseSerializer,
+)
 from model_hub.serializers.develop_optimisation import (
+    get_optimization_link_errors,
     OptimizationDatasetGetSerializer,
     OptimizationDatasetSerializer,
 )
 from model_hub.utils.eval_list import build_user_eval_list_items
+from model_hub.utils.workspace_scope import (
+    scoped_column_queryset,
+    scoped_optimization_queryset,
+    scoped_user_eval_metric_queryset,
+)
 from model_hub.views.develop_optimiser import DevelopOptimizer
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
-from tfc.utils.parse_errors import parse_serialized_errors
+
+logger = structlog.get_logger(__name__)
+
+
+def _request_serializer_context(request):
+    return {"request": request}
 
 
 class OptimisationCreateView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=OptimizationDatasetSerializer,
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+        serializer_context=_request_serializer_context,
+    )
     def post(self, request):
         try:
-            serializer = OptimizationDatasetSerializer(data=request.data)
-            if serializer.is_valid():
-                # Extract nested data
-                validated_data = serializer.validated_data
-                dataset = validated_data.get("dataset")
-                column = validated_data.get("column") or None
-                messages = validated_data.get("messages") or []
-                user_eval_template_ids = (
-                    validated_data.get("user_eval_template_ids") or []
+            validated_data = request.validated_data
+            # Extract nested data. `validated_request` owns request-shape errors;
+            # the view should only handle domain validation from here on.
+            dataset = validated_data.get("dataset")
+            column = validated_data.get("column") or None
+            messages = validated_data.get("messages") or []
+            user_eval_template_ids = validated_data.get("user_eval_template_ids") or []
+            model_config = validated_data.get("model_config")
+
+            if OptimizationDataset.objects.filter(
+                name=validated_data["name"], dataset=dataset, deleted=False
+            ).exists():
+                return self._gm.bad_request(
+                    get_error_message("OPTIMIZATION_NAME_EXISTS")
                 )
-                model_config = validated_data.get("model_config")
 
-                if OptimizationDataset.objects.filter(
-                    name=validated_data["name"], dataset=dataset, deleted=False
-                ).exists():
-                    return self._gm.bad_request(
-                        get_error_message("OPTIMIZATION_NAME_EXISTS")
-                    )
+            optimiser = OptimizationDataset.objects.create(
+                name=validated_data["name"],
+                optimize_type=validated_data["optimize_type"],
+                dataset=dataset,
+                prompt_name=validated_data.get("prompt_name"),
+                model_config=model_config,
+                messages=messages,
+                column=column,
+                user_eval_template_mapping=validated_data.get(
+                    "user_eval_template_mapping"
+                ),
+            )
+            optimiser.user_eval_template_ids.set(user_eval_template_ids)
+            optimizer = DevelopOptimizer(optim_obj_id=optimiser.id, avoid_cost=True)
+            optimizer.create_column()
 
-                optimiser = OptimizationDataset.objects.create(
-                    name=validated_data["name"],
-                    optimize_type=validated_data["optimize_type"],
-                    dataset=dataset,
-                    prompt_name=validated_data.get("prompt_name"),
-                    model_config=model_config,
-                    messages=messages,
-                    column=column,
-                    user_eval_template_mapping=validated_data.get(
-                        "user_eval_template_mapping"
-                    ),
-                )
-                optimiser.user_eval_template_ids.set(user_eval_template_ids)
-                optimizer = DevelopOptimizer(optim_obj_id=optimiser.id, avoid_cost=True)
-                optimizer.create_column()
-
-                return self._gm.success_response("success.")
-            return self._gm.bad_request(parse_serialized_errors(serializer))
+            return self._gm.success_response("success.")
         except Exception as e:
             logger.exception(f"Error in creating optimize dataset: {str(e)}")
             return self._gm.bad_request(
                 get_error_message("FAILED_TO_CREATE_OPTIMIZE_DATASET")
             )
 
+    @validated_request(
+        request_serializer=OptimizationDatasetSerializer,
+        responses={
+            200: ModelHubStringResultResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        partial_request_validation=True,
+        reject_unknown_fields=True,
+        serializer_context=_request_serializer_context,
+    )
     def put(self, request, pk):
+        optimization_dataset = get_object_or_404(
+            scoped_optimization_queryset(request),
+            pk=pk,
+        )
         try:
-            optimization_dataset = get_object_or_404(OptimizationDataset, pk=pk)
-            serializer = OptimizationDatasetSerializer(
-                optimization_dataset, data=request.data, partial=True
+            validated_data = request.validated_data
+            dataset = validated_data.get("dataset", optimization_dataset.dataset)
+            column = (
+                validated_data["column"]
+                if "column" in validated_data
+                else optimization_dataset.column
             )
-            if serializer.is_valid():
-                validated_data = serializer.validated_data
-                dataset = validated_data.get("dataset")
-                column = validated_data.get("column") or None
-                messages = validated_data.get("messages") or []
-                user_eval_template_ids = (
-                    validated_data.get("user_eval_template_ids") or []
+            messages = validated_data.get(
+                "messages", optimization_dataset.messages or []
+            )
+            model_config = validated_data.get(
+                "model_config", optimization_dataset.model_config
+            )
+            name = validated_data.get("name", optimization_dataset.name)
+            optimize_type = validated_data.get(
+                "optimize_type", optimization_dataset.optimize_type
+            )
+            prompt_name = validated_data.get(
+                "prompt_name", optimization_dataset.prompt_name
+            )
+            user_eval_template_mapping = validated_data.get(
+                "user_eval_template_mapping",
+                optimization_dataset.user_eval_template_mapping,
+            )
+            user_eval_template_ids = (
+                validated_data["user_eval_template_ids"]
+                if "user_eval_template_ids" in validated_data
+                else list(optimization_dataset.user_eval_template_ids.all())
+            )
+
+            link_errors = get_optimization_link_errors(
+                dataset,
+                column,
+                user_eval_template_ids,
+            )
+            if link_errors:
+                return self._gm.bad_request(link_errors)
+
+            if (
+                OptimizationDataset.objects.filter(
+                    name=name, dataset=dataset, deleted=False
                 )
-                model_config = validated_data.get("model_config")
+                .exclude(id=pk)
+                .exists()
+            ):
+                return self._gm.bad_request(
+                    get_error_message("OPTIMIZATION_NAME_EXISTS")
+                )
 
-                if not OptimizationDataset.objects.filter(
-                    name=validated_data["name"], dataset=dataset, deleted=False
-                ).exists():
-                    OptimizationDataset.objects.filter(id=pk).update(
-                        name=validated_data["name"],
-                        optimize_type=validated_data["optimize_type"],
-                        dataset=dataset,
-                        prompt_name=validated_data.get("prompt_name"),
-                        model_config=model_config,
-                        messages=messages,
-                        column=column,
-                        user_eval_template_mapping=validated_data.get(
-                            "user_eval_template_mapping"
-                        ),
-                    )
-                    optimization_dataset.user_eval_template_ids.set(
-                        user_eval_template_ids
-                    )
-                else:
-                    return self._gm.bad_request(
-                        get_error_message("OPTIMIZATION_NAME_EXISTS")
-                    )
+            OptimizationDataset.objects.filter(id=pk).update(
+                name=name,
+                optimize_type=optimize_type,
+                dataset=dataset,
+                prompt_name=prompt_name,
+                model_config=model_config,
+                messages=messages,
+                column=column,
+                user_eval_template_mapping=user_eval_template_mapping,
+            )
+            if "user_eval_template_ids" in validated_data:
+                optimization_dataset.user_eval_template_ids.set(user_eval_template_ids)
 
-                return self._gm.success_response("success.")
-            return self._gm.bad_request(parse_serialized_errors(serializer))
+            return self._gm.success_response("success.")
         except Exception as e:
             logger.exception(f"Error in updating optimize dataset: {str(e)}")
             return self._gm.bad_request(
@@ -125,6 +184,7 @@ class OptimisationCreateView(APIView):
 class OptimizationDatasetListView(generics.ListAPIView):
     queryset = OptimizationDataset.objects.all()
     serializer_class = OptimizationDatasetSerializer
+    permission_classes = [IsAuthenticated]
     pagination_class = ExtendedPageNumberPagination
     filter_backends = [
         DjangoFilterBackend,
@@ -136,12 +196,11 @@ class OptimizationDatasetListView(generics.ListAPIView):
     ordering_fields = ["created_at", "name"]
     ordering = ["-created_at"]
 
+    def get_queryset(self):
+        return scoped_optimization_queryset(self.request)
+
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())
-        queryset = queryset.filter(
-            dataset__organization=getattr(request, "organization", None)
-            or request.user.organization
-        )
 
         dataset_id = request.query_params.get("dataset_id")
         if dataset_id:
@@ -166,6 +225,10 @@ class OptimizationDatasetListView(generics.ListAPIView):
 class OptimizationDatasetDetailView(generics.RetrieveAPIView):
     queryset = OptimizationDataset.objects.all()
     serializer_class = OptimizationDatasetGetSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        return scoped_optimization_queryset(self.request)
 
     def retrieve(self, request, *args, **kwargs):
         instance = self.get_object()
@@ -174,6 +237,10 @@ class OptimizationDatasetDetailView(generics.RetrieveAPIView):
         return Response(serializer.data)
 
 
+@swagger_auto_schema(
+    method="get",
+    responses={200: MetricsByColumnResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def get_metrics_by_column(request):
@@ -187,12 +254,16 @@ def get_metrics_by_column(request):
         return _gm.bad_request(get_error_message("MISSING_COLUMN_ID"))
 
     try:
-        # Get organization from the authenticated user
-        _org = get_request_organization(request)
-        organization_id = _org.id if _org else None
+        column = scoped_column_queryset(request).filter(id=column_id).first()
+        if column is None:
+            return _gm.success_response([])
 
-        metrics = UserEvalMetric.get_metrics_using_column(
-            organization_id=organization_id, column_id=column_id
+        metrics = (
+            metric
+            for metric in scoped_user_eval_metric_queryset(request)
+            .filter(show_in_sidebar=True, dataset=column.dataset)
+            .select_related("template")
+            if UserEvalMetric.config_uses_column(metric.config or {}, str(column.id))
         )
 
         return _gm.success_response(build_user_eval_list_items(metrics))

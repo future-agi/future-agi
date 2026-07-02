@@ -5,7 +5,9 @@ import SvgColor from "src/components/svg-color";
 import { trackEvent } from "src/utils/Mixpanel";
 import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
+import { useParams } from "react-router";
 import { useDevelopDetailContext } from "src/sections/develop-detail/Context/DevelopDetailContext";
+import { useRefreshScenarioGrid } from "./useRefreshScenarioGrid";
 import { useDevelopSelectedRowsStoreShallow } from "src/sections/develop-detail/states";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
@@ -43,7 +45,8 @@ const StyledButton = styled(Button)(({ theme }) => ({
 const ScenarioDetailSelectionView = ({ dataset }) => {
   const [isDelete, setIsDelete] = useState(false);
 
-  const { refreshGrid } = useDevelopDetailContext();
+  const { scenarioId } = useParams();
+  const refreshGrid = useRefreshScenarioGrid(scenarioId);
   const { selectAll, toggledNodes, resetSelectedRows } =
     useDevelopSelectedRowsStoreShallow((s) => ({
       selectAll: s.selectAll,
@@ -58,7 +61,7 @@ const ScenarioDetailSelectionView = ({ dataset }) => {
   const { mutate: onDeleteDatasetRow, isPending: isDeleting } = useMutation({
     mutationFn: () => {
       const selectedIds = toggledNodes;
-      
+
       return axios.delete(endpoints.develop.deleteDatasetRow(dataset), {
         data: { row_ids: selectedIds, selected_all_rows: selectAll },
       });

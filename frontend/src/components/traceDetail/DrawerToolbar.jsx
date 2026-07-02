@@ -18,8 +18,9 @@ import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 // Shared 24px bordered pill button
-const ToolbarPill = ({ icon, label, onClick, sx }) => (
+const ToolbarPill = React.forwardRef(({ icon, label, onClick, sx }, ref) => (
   <ButtonBase
+    ref={ref}
     onClick={onClick}
     sx={{
       display: "inline-flex",
@@ -47,7 +48,9 @@ const ToolbarPill = ({ icon, label, onClick, sx }) => (
     {icon && <Iconify icon={icon} width={14} />}
     {label && <span>{label}</span>}
   </ButtonBase>
-);
+));
+
+ToolbarPill.displayName = "ToolbarPill";
 
 ToolbarPill.propTypes = {
   icon: PropTypes.string,
@@ -96,6 +99,9 @@ const TabPill = ({
           fontWeight: isActive ? 600 : 400,
           color: isActive ? "primary.main" : "text.secondary",
           whiteSpace: "nowrap",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          maxWidth: 200,
         }}
       >
         {label}
@@ -121,11 +127,12 @@ const TabPill = ({
     </Box>
   );
 
-  if (!tooltip) return pill;
+  const effectiveTooltip = tooltip || (!isDefault ? label : undefined);
+  if (!effectiveTooltip) return pill;
   return (
     <CustomTooltip
       show
-      title={tooltip}
+      title={effectiveTooltip}
       placement="bottom"
       arrow
       size="small"

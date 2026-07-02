@@ -170,13 +170,7 @@ describe("flattenLeaves word pre-computation", () => {
     const leaves = flattenLeaves({
       attributes: { llm: { model: "gpt-4" } },
     });
-    expect(leaves[0].words).toEqual([
-      "attributes",
-      "llm",
-      "model",
-      "gpt",
-      "4",
-    ]);
+    expect(leaves[0].words).toEqual(["attributes", "llm", "model", "gpt", "4"]);
   });
 });
 
@@ -188,9 +182,7 @@ describe("NestedJsonTable fuzzy search", () => {
         searchQuery="station"
       />,
     );
-    expect(
-      screen.getByText(hasRowText("station_id")),
-    ).toBeInTheDocument();
+    expect(screen.getByText(hasRowText("station_id"))).toBeInTheDocument();
   });
 
   it("surfaces 'station' when the user types 'sation' (single-char typo)", () => {
@@ -198,22 +190,15 @@ describe("NestedJsonTable fuzzy search", () => {
     // distance to the word `station` is 1 and threshold for a 6-char
     // token is 1.
     renderWithTheme(
-      <NestedJsonTable
-        data={{ station_id: "central" }}
-        searchQuery="sation"
-      />,
+      <NestedJsonTable data={{ station_id: "central" }} searchQuery="sation" />,
     );
-    expect(
-      screen.getByText(hasRowText("station_id")),
-    ).toBeInTheDocument();
+    expect(screen.getByText(hasRowText("station_id"))).toBeInTheDocument();
   });
 
   it("does not fuzzy-match 3-char tokens (threshold is 0 there)", () => {
     // `abd` vs `abc` is edit distance 1, but ≤ 3-char tokens are
     // exact-only to keep the false-positive rate sane.
-    renderWithTheme(
-      <NestedJsonTable data={{ abc: "x" }} searchQuery="abd" />,
-    );
+    renderWithTheme(<NestedJsonTable data={{ abc: "x" }} searchQuery="abd" />);
     expect(screen.getByText(/No matches for/i)).toBeInTheDocument();
   });
 

@@ -34,7 +34,7 @@ const PATH_VIEW_MODE = {
  * a hidden container on non-transcript tabs) so seeking via click from
  * a path view keeps the audio player hydrated.
  */
-const VoiceLeftPanel = ({ data, scenarioId }) => {
+const VoiceLeftPanel = ({ data, scenarioId, embedded = false }) => {
   const isSimulate = data?.module === "simulate";
   const [currentTab, setCurrentTab] = useState(TABS.TRANSCRIPT);
 
@@ -49,7 +49,10 @@ const VoiceLeftPanel = ({ data, scenarioId }) => {
     return transcript?.filter((item) => item.speakerRole !== "system");
   }, [data]);
 
-  const showPathTabs = isSimulate && !!data?.id;
+  const callExecutionId =
+    data?.call_execution_id || (data?.id !== data?.trace_id ? data?.id : null);
+  const showPathTabs =
+    isSimulate && (!!callExecutionId || !!data?.scenario_graph?.nodes?.length);
 
   const tabs = useMemo(() => {
     const t = [
@@ -87,24 +90,28 @@ const VoiceLeftPanel = ({ data, scenarioId }) => {
       }}
     >
       {/* Tabs at the top — no chrome above them so all four views get
-          the full panel height. */}
-      <Box sx={{ px: 1.25, flexShrink: 0 }}>
-        <CompactTabs
-          value={currentTab}
-          onChange={(_, value) => setCurrentTab(value)}
-          tabs={tabs}
-        />
-      </Box>
+          the full panel height. Hidden in `embedded` mode (e.g. error-feed
+          Overview) where the parent SectionCard already provides chrome. */}
+      {!embedded && (
+        <Box sx={{ px: 1.25, flexShrink: 0 }}>
+          <CompactTabs
+            value={currentTab}
+            onChange={(_, value) => setCurrentTab(value)}
+            tabs={tabs}
+          />
+        </Box>
+      )}
 
-      {/* Scrollable tab content */}
+      {/* Scrollable tab content. `embedded` callers drop internal padding so
+          the panel sits flush inside their own container. */}
       <Box
         sx={{
           flex: 1,
           minHeight: 0,
           overflow: "auto",
-          px: 1.25,
-          pt: 1,
-          pb: 1,
+          px: embedded ? 0 : 1.25,
+          pt: embedded ? 0 : 1,
+          pb: embedded ? 0 : 1,
           display: "flex",
           flexDirection: "column",
         }}
@@ -141,7 +148,9 @@ const VoiceLeftPanel = ({ data, scenarioId }) => {
                         }),
                   }}
                 >
-                  <ShowComponent condition={!!filteredTranscript?.length}>
+                  <ShowComponent
+                    condition={!!filteredTranscript?.length && !embedded}
+                  >
                     <Typography
                       sx={{
                         fontSize: 10,
@@ -159,7 +168,10 @@ const VoiceLeftPanel = ({ data, scenarioId }) => {
                 </Box>
                 <ShowComponent condition={!!filteredTranscript?.length}>
                   <Box sx={{ flex: 1, minHeight: 0, display: "flex" }}>
-                    <TranscriptView transcript={filteredTranscript} />
+                    <TranscriptView
+                      transcript={filteredTranscript}
+                      embedded={embedded}
+                    />
                   </Box>
                 </ShowComponent>
               </Stack>
@@ -167,8 +179,9 @@ const VoiceLeftPanel = ({ data, scenarioId }) => {
             <ShowComponent condition={isPathTab && showPathTabs}>
               <PathAnalysisView
                 data={data}
-                scenarioId={scenarioId}
-                openedExecutionId={data?.id}
+                scenarioId={scenarioId || data?.scenario_id}
+                openedExecutionId={callExecutionId}
+                testExecutionId={data?.test_execution_id}
                 enabled={isPathTab}
                 viewMode={PATH_VIEW_MODE[currentTab]}
                 onRequestTranscript={() => setCurrentTab(TABS.TRANSCRIPT)}
@@ -184,6 +197,7 @@ const VoiceLeftPanel = ({ data, scenarioId }) => {
 VoiceLeftPanel.propTypes = {
   data: PropTypes.object.isRequired,
   scenarioId: PropTypes.string,
+  embedded: PropTypes.bool,
 };
 
 export default VoiceLeftPanel;

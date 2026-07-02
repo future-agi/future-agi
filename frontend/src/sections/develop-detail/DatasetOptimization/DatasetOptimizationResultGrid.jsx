@@ -73,7 +73,6 @@ const defaultColDef = {
   filter: false,
   resizable: true,
   suppressMenu: true,
-  suppressMultiSort: true,
 };
 
 /**
@@ -94,8 +93,8 @@ const DatasetOptimizationResultGrid = ({ optimizationId, onTrialClick }) => {
   });
 
   const columnDefs = useMemo(() => {
-    return getColumnConfig(optimizationData?.columnConfig);
-  }, [optimizationData?.columnConfig]);
+    return getColumnConfig(optimizationData?.column_config);
+  }, [optimizationData?.column_config]);
 
   const rowData = useMemo(() => {
     return optimizationData?.table ?? [];

@@ -41,14 +41,16 @@ function getDefaultValues(editTool) {
     return {
       name: editTool?.name || "",
       description: editTool?.description || "",
-      config_type: editTool?.configType,
+      config_type: editTool?.config_type,
       inputSchema: {
         json:
-          editTool?.configType === "json"
+          editTool?.config_type === "json"
             ? JSON.stringify(editTool?.config, null, 2)
             : defaultJson,
         yaml:
-          editTool?.configType === "yaml" ? editTool?.yamlConfig : defaultYaml,
+          editTool?.config_type === "yaml"
+            ? editTool?.yaml_config
+            : defaultYaml,
       },
     };
   }

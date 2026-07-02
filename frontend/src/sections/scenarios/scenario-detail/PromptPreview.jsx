@@ -19,11 +19,11 @@ const PromptPreview = ({ scenario }) => {
   );
 
   const allowedVariables = useMemo(() => {
-    const columnConfig = tableData?.data?.result?.columnConfig ?? [];
+    const columnConfig = tableData?.data?.result?.column_config ?? [];
 
     const allowedVariables = columnConfig.map((col) => col.name);
     return allowedVariables;
-  }, [tableData?.data?.result?.columnConfig]);
+  }, [tableData?.data?.result?.column_config]);
 
   const isLoading =
     isLoadingTable ||

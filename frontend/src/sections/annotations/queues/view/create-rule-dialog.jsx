@@ -27,11 +27,6 @@ import {
 } from "src/api/annotation-queues/annotation-queues";
 import { getDatasetQueryOptions } from "src/api/develop/develop-detail";
 import {
-  DefaultFilter as DatasetDefaultFilter,
-  transformFilter,
-  validateFilter,
-} from "src/sections/develop-detail/DataTab/DevelopFilters/common";
-import {
   DEVELOP_FILTER_CATEGORIES,
   DatasetColumnValuePicker,
   buildProperties as buildDatasetFilterProperties,
@@ -39,418 +34,45 @@ import {
   storeFilterToPanel as datasetStoreFilterToPanel,
 } from "src/sections/develop-detail/DataTab/DevelopFilters/DevelopFilterBox";
 import FilterChips from "src/sections/projects/LLMTracing/FilterChips";
-import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel";
+import TraceFilterPanel, {
+  buildTraceFilterProperties,
+} from "src/sections/projects/LLMTracing/TraceFilterPanel";
 import { useGetProjectDetails } from "src/api/project/project-detail";
+import { apiPath } from "src/api/contracts/api-surface";
 import { PROJECT_SOURCE } from "src/utils/constants";
-import { getRandomId, objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
+import { getRandomId } from "src/utils/utils";
+import { apiFilterHasValue } from "src/sections/annotations/queues/utils/filter-operators";
 import {
-  apiFilterHasValue,
-  apiOpToPanel,
-  isNumberFilterOp,
-  isRangeFilterOp,
-  normalizeApiFilterOp,
-  panelOperatorAndValueToApi,
-} from "src/sections/annotations/queues/utils/filter-operators";
-import { SIMULATION_PERSONA_FILTER_FIELDS } from "src/sections/annotations/queues/utils/simulation-persona-filter-fields";
-
-export const SOURCE_OPTIONS = [
-  { value: "dataset_row", label: "Dataset Row" },
-  { value: "trace", label: "Trace" },
-  { value: "observation_span", label: "Span" },
-  { value: "trace_session", label: "Session" },
-  { value: "call_execution", label: "Simulation" },
-];
-
-export const TRIGGER_FREQUENCY_OPTIONS = [
-  { value: "manual", label: "Manually" },
-  { value: "hourly", label: "Every hour" },
-  { value: "daily", label: "Daily" },
-  { value: "weekly", label: "Weekly" },
-  { value: "monthly", label: "Monthly" },
-];
+  apiFilterToPanel,
+  panelFilterToApi,
+} from "src/sections/annotations/queues/utils/api-filter-converters";
+import {
+  DEFAULT_FILTER,
+  MULTI_VALUE_OPS,
+  SESSION_RULE_FILTER_FIELDS,
+  SIMPLE_FILTER_CATEGORIES,
+  SIMULATION_RULE_FILTER_FIELDS,
+  SOURCE_OPTIONS,
+  TRIGGER_FREQUENCY_OPTIONS,
+} from "src/sections/annotations/queues/constants";
+import {
+  buildConditionsForRule,
+  datasetFilterToCamel,
+  datasetFilterToSnake,
+  defaultFiltersForSource,
+  getDatasetOptionId,
+  getQueueScopeId,
+  getRuleSubmitDisabledTooltipTitle,
+  getSubmittableFilters,
+  isDatasetFilterValid,
+  isQueueScopeLocked,
+  isScopeReady,
+  makeDatasetDefaultFilter,
+  resolveRuleScopeId,
+  transformDatasetFilter,
+} from "src/sections/annotations/queues/utils/automation-rule-utils";
 
 const activeFilterButtonBg = (theme) => alpha(theme.palette.primary.main, 0.12);
-
-export const DEFAULT_FILTER = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
-  },
-};
-
-const SIMULATION_RULE_FILTER_FIELDS = [
-  {
-    id: "status",
-    name: "Status",
-    category: "system",
-    type: "categorical",
-    choices: ["completed", "failed", "in_progress", "pending", "cancelled"],
-  },
-  ...SIMULATION_PERSONA_FILTER_FIELDS,
-  {
-    id: "agent_definition",
-    name: "Agent Definition",
-    category: "system",
-    type: "text",
-  },
-  {
-    id: "call_type",
-    name: "Call Type",
-    category: "system",
-    type: "categorical",
-    choices: ["voice", "text"],
-  },
-  {
-    id: "simulation_call_type",
-    name: "Simulation Call Type",
-    category: "system",
-    type: "text",
-  },
-  {
-    id: "duration_seconds",
-    name: "Duration",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "overall_score",
-    name: "Overall Score",
-    category: "system",
-    type: "number",
-  },
-  {
-    id: "created_at",
-    name: "Created At",
-    category: "system",
-    type: "date",
-  },
-];
-
-const SIMPLE_FILTER_CATEGORIES = [
-  { key: "all", label: "All", icon: "mdi:view-grid-outline" },
-  { key: "system", label: "System", icon: "mdi:tune-variant" },
-  { key: "persona", label: "Persona", icon: "mdi:account-outline" },
-];
-
-const SESSION_RULE_FILTER_FIELDS = [
-  { id: "session_id", name: "Session ID", category: "system", type: "string" },
-  {
-    id: "first_message",
-    name: "First Message",
-    category: "system",
-    type: "string",
-  },
-  {
-    id: "last_message",
-    name: "Last Message",
-    category: "system",
-    type: "string",
-  },
-  { id: "user_id", name: "User ID", category: "system", type: "string" },
-  { id: "duration", name: "Duration", category: "system", type: "number" },
-  { id: "total_cost", name: "Total Cost", category: "system", type: "number" },
-  {
-    id: "total_traces_count",
-    name: "Total Traces",
-    category: "system",
-    type: "number",
-  },
-  { id: "start_time", name: "Start Time", category: "system", type: "date" },
-  { id: "end_time", name: "End Time", category: "system", type: "date" },
-];
-
-const PANEL_TYPE_TO_API = {
-  string: "text",
-  number: "number",
-  boolean: "boolean",
-  categorical: "categorical",
-  text: "text",
-  date: "datetime",
-  array: "array",
-};
-
-const PANEL_CAT_TO_COL_TYPE = {
-  attribute: "SPAN_ATTRIBUTE",
-  system: "SYSTEM_METRIC",
-  eval: "EVAL_METRIC",
-  annotation: "ANNOTATION",
-};
-
-const COL_TYPE_TO_PANEL_CAT = {
-  SPAN_ATTRIBUTE: "attribute",
-  SYSTEM_METRIC: "system",
-  EVAL_METRIC: "eval",
-  ANNOTATION: "annotation",
-};
-
-const MULTI_VALUE_OPS = new Set(["is", "is_not", "in", "not_in"]);
-
-function formatDateInputValue(value) {
-  if (!value) return "";
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 16);
-  }
-  const stringValue = String(value);
-  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(stringValue)) {
-    return stringValue.slice(0, 16);
-  }
-  if (/^\d{4}-\d{2}-\d{2}$/.test(stringValue)) {
-    return `${stringValue}T00:00`;
-  }
-  return stringValue;
-}
-
-function getQueueScopeId(queue, key) {
-  const value = queue?.[key];
-  if (!value) return "";
-  return typeof value === "object"
-    ? value.id || value.datasetId || value.dataset_id
-    : value;
-}
-
-function getDatasetOptionId(dataset) {
-  return dataset?.dataset_id || dataset?.datasetId || dataset?.id || "";
-}
-
-function resolveRuleScopeId(queue, queueScopeId, selectedScopeId) {
-  if (queue?.is_default) return selectedScopeId || queueScopeId;
-  return queueScopeId || selectedScopeId;
-}
-
-function isQueueScopeLocked(queue, queueScopeId) {
-  return Boolean(queueScopeId) && !queue?.is_default;
-}
-
-export function defaultFiltersForSource(sourceType) {
-  if (sourceType === "dataset_row") {
-    return [{ ...DatasetDefaultFilter, id: getRandomId() }];
-  }
-  return [{ ...DEFAULT_FILTER, id: getRandomId() }];
-}
-
-function panelFilterToApi(panel) {
-  const { filterOp, filterValue } = panelOperatorAndValueToApi(
-    panel.operator,
-    panel.value,
-  );
-  const filterType = PANEL_TYPE_TO_API[panel.fieldType] || "text";
-  const colType = PANEL_CAT_TO_COL_TYPE[panel.fieldCategory];
-  return {
-    columnId: panel.field,
-    ...(panel.fieldName && { displayName: panel.fieldName }),
-    filterConfig: {
-      filterType,
-      filterOp,
-      filterValue,
-      ...(colType && { col_type: colType }),
-    },
-  };
-}
-
-function apiFilterToPanel(api) {
-  const rawOp = api?.filterConfig?.filterOp || "equals";
-  const canonicalOp = normalizeApiFilterOp(rawOp);
-  const rawVal = api?.filterConfig?.filterValue;
-  const filterType = api?.filterConfig?.filterType;
-  const isNumberOp = isNumberFilterOp(canonicalOp);
-  const isRange = isRangeFilterOp(canonicalOp);
-  const isDateType = filterType === "datetime" || filterType === "date";
-  let value;
-  if (isRange && rawVal) {
-    value = Array.isArray(rawVal)
-      ? rawVal.map((v) => (isDateType ? formatDateInputValue(v) : String(v)))
-      : String(rawVal)
-          .split(",")
-          .map((v) => (isDateType ? formatDateInputValue(v.trim()) : v.trim()));
-  } else if (isDateType) {
-    value = rawVal ? formatDateInputValue(rawVal) : "";
-  } else if (isNumberOp) {
-    value = rawVal != null ? String(rawVal) : "";
-  } else if (Array.isArray(rawVal)) {
-    value = rawVal.map((v) => String(v));
-  } else {
-    value = rawVal
-      ? String(rawVal)
-          .split(",")
-          .map((v) => v.trim())
-      : [];
-  }
-  const rawColType =
-    api?.filterConfig?.col_type ||
-    api?.filterConfig?.colType ||
-    api?.col_type ||
-    api?.colType ||
-    "SYSTEM_METRIC";
-  const fieldType = (() => {
-    if (isNumberOp || filterType === "number") return "number";
-    if (isDateType) return "date";
-    if (filterType === "boolean") return "boolean";
-    if (filterType === "array") return "array";
-    if (filterType === "categorical") return "categorical";
-    if (filterType === "text" && rawColType === "ANNOTATION") return "text";
-    return "string";
-  })();
-  return {
-    field: api.columnId,
-    fieldName: api.displayName,
-    fieldCategory: COL_TYPE_TO_PANEL_CAT[rawColType] || "system",
-    fieldType,
-    operator: apiOpToPanel(canonicalOp, fieldType),
-    value,
-  };
-}
-
-function filterWithValue(filter) {
-  return apiFilterHasValue(filter);
-}
-
-function toRuleRows(filters) {
-  return (filters || []).filter(filterWithValue).map((filter) => ({
-    field: filter.columnId,
-    op: filter.filterConfig.filterOp,
-    value: filter.filterConfig.filterValue,
-    filterType: filter.filterConfig.filterType,
-  }));
-}
-
-function toApiFilters(filters) {
-  // Drop rows that don't carry a value (or aren't a unary op like
-  // is_null / is_empty). Without this, a half-filled row with just a
-  // columnId selected serialises into the API payload's `filter:` array
-  // and the backend's evaluator silently match-everythings.
-  return (filters || [])
-    .filter(filterWithValue)
-    .map(({ id, ...filter }) => filter);
-}
-
-function snakeFilterToUi(filter) {
-  const config = filter?.filter_config || filter?.filterConfig || {};
-  const filterType = config.filter_type || config.filterType || "";
-  let filterValue =
-    "filter_value" in config ? config.filter_value : config.filterValue ?? "";
-  if (filterType === "datetime") {
-    filterValue = Array.isArray(filterValue)
-      ? filterValue.map((value) => (value ? new Date(value) : value))
-      : filterValue
-        ? new Date(filterValue)
-        : filterValue;
-  }
-  return {
-    id: getRandomId(),
-    columnId: filter?.column_id || filter?.columnId || "",
-    displayName: filter?.display_name || filter?.displayName,
-    filterConfig: {
-      filterType,
-      filterOp: config.filter_op || config.filterOp || "",
-      filterValue,
-      ...(config.col_type || config.colType
-        ? { col_type: config.col_type || config.colType }
-        : {}),
-    },
-  };
-}
-
-export function ruleConditionsToFilters(rule) {
-  const sourceType = rule?.source_type || "trace";
-  const filterPayload = rule?.conditions?.filter || rule?.conditions?.filters;
-  if (Array.isArray(filterPayload) && filterPayload.length > 0) {
-    return filterPayload.map(snakeFilterToUi);
-  }
-  const rules = rule?.conditions?.rules || [];
-  if (rules.length === 0) return defaultFiltersForSource(sourceType);
-  return rules.map((row) => ({
-    id: getRandomId(),
-    columnId: row.field || "",
-    filterConfig: {
-      filterType: row.filterType || "text",
-      filterOp: row.op || "",
-      filterValue: row.value ?? "",
-    },
-  }));
-}
-
-export function ruleConditionsToScope(rule) {
-  return rule?.conditions?.scope || {};
-}
-
-export function buildConditionsForRule(sourceType, filters, scope, queue) {
-  const queueProjectId = getQueueScopeId(queue, "project");
-  const queueDatasetId = getQueueScopeId(queue, "dataset");
-  const queueAgentId = getQueueScopeId(queue, "agent_definition");
-  const nextScope = {};
-
-  if (sourceType === "dataset_row") {
-    const datasetId = resolveRuleScopeId(
-      queue,
-      queueDatasetId,
-      scope.dataset_id,
-    );
-    if (datasetId) nextScope.dataset_id = datasetId;
-    return {
-      operator: "and",
-      rules: toRuleRows(filters),
-      filter: filters.filter(validateFilter).map(transformFilter),
-      scope: nextScope,
-    };
-  }
-
-  if (sourceType === "trace" || sourceType === "observation_span") {
-    const projectId = resolveRuleScopeId(
-      queue,
-      queueProjectId,
-      scope.project_id,
-    );
-    if (projectId) nextScope.project_id = projectId;
-    if (sourceType === "trace") {
-      nextScope.is_voice_call = !!scope.is_voice_call;
-      nextScope.remove_simulation_calls = !!scope.remove_simulation_calls;
-    }
-    const apiFilters = canonicalizeApiFilterColumnIds(toApiFilters(filters));
-    return {
-      operator: "and",
-      rules: toRuleRows(apiFilters),
-      filter: objectCamelToSnake(apiFilters),
-      scope: nextScope,
-    };
-  }
-
-  if (sourceType === "trace_session") {
-    const projectId = resolveRuleScopeId(
-      queue,
-      queueProjectId,
-      scope.project_id,
-    );
-    if (projectId) nextScope.project_id = projectId;
-    const apiFilters = canonicalizeApiFilterColumnIds(toApiFilters(filters));
-    return {
-      operator: "and",
-      rules: toRuleRows(apiFilters),
-      filter: objectCamelToSnake(apiFilters),
-      scope: nextScope,
-    };
-  }
-
-  if (sourceType === "call_execution") {
-    const agentId = resolveRuleScopeId(queue, queueAgentId, scope.project_id);
-    if (agentId) nextScope.project_id = agentId;
-    const apiFilters = canonicalizeApiFilterColumnIds(toApiFilters(filters));
-    return {
-      operator: "and",
-      rules: toRuleRows(apiFilters),
-      filter: objectCamelToSnake(apiFilters),
-      ...(Object.keys(nextScope).length ? { scope: nextScope } : {}),
-    };
-  }
-
-  return {
-    operator: "and",
-    rules: toRuleRows(filters),
-    ...(Object.keys(nextScope).length ? { scope: nextScope } : {}),
-  };
-}
 
 export function RuleScopePicker({
   sourceType,
@@ -473,7 +95,8 @@ export function RuleScopePicker({
 
   const { data: datasets = [], isLoading: datasetsLoading } = useQuery({
     queryKey: ["datasets-list-simple"],
-    queryFn: () => axios.get("/model-hub/develops/get-datasets-names/"),
+    queryFn: () =>
+      axios.get(apiPath("/model-hub/develops/get-datasets-names/")),
     select: (d) => d.data?.result?.datasets || [],
     enabled: needsDataset,
     staleTime: 1000 * 60 * 5,
@@ -662,7 +285,7 @@ function DatasetRuleFilters({
   );
 
   const columnConfig = useMemo(
-    () => tableData?.data?.result?.columnConfig || [],
+    () => tableData?.data?.result?.column_config || [],
     [tableData],
   );
 
@@ -703,16 +326,18 @@ function DatasetRuleFilters({
   const panelCurrentFilters = useMemo(
     () =>
       filters
-        .filter((filter) => filter.columnId)
-        .map((filter) => datasetStoreFilterToPanel(filter, columnLookup)),
+        .filter((filter) => filter.column_id)
+        .map((filter) =>
+          datasetStoreFilterToPanel(datasetFilterToCamel(filter), columnLookup),
+        ),
     [filters, columnLookup],
   );
 
   const chipFilters = useMemo(
     () =>
       filters
-        .filter(validateFilter)
-        .map(transformFilter)
+        .filter(isDatasetFilterValid)
+        .map(transformDatasetFilter)
         .map((filter) => ({
           ...filter,
           display_name:
@@ -726,7 +351,7 @@ function DatasetRuleFilters({
   const validFilterIndices = useMemo(() => {
     const indices = [];
     filters.forEach((filter, index) => {
-      if (validateFilter(filter)) indices.push(index);
+      if (isDatasetFilterValid(filter)) indices.push(index);
     });
     return indices;
   }, [filters]);
@@ -734,13 +359,11 @@ function DatasetRuleFilters({
   const handleApply = useCallback(
     (newPanelFilters) => {
       onInteraction?.();
-      const nextFilters = (newPanelFilters || []).map(
-        datasetPanelFilterToStore,
-      );
+      const nextFilters = (newPanelFilters || [])
+        .map(datasetPanelFilterToStore)
+        .map(datasetFilterToSnake);
       setFilters(
-        nextFilters.length
-          ? nextFilters
-          : [{ ...DatasetDefaultFilter, id: getRandomId() }],
+        nextFilters.length ? nextFilters : [makeDatasetDefaultFilter()],
       );
     },
     [onInteraction, setFilters],
@@ -768,14 +391,14 @@ function DatasetRuleFilters({
         }}
         sx={{
           border: "1px solid",
-          borderColor: filters.some((filter) => filter.columnId)
+          borderColor: filters.some((filter) => filter.column_id)
             ? "primary.main"
             : "divider",
           borderRadius: 0.5,
           p: 0.75,
           mb: 1,
           bgcolor: (theme) =>
-            filters.some((filter) => filter.columnId)
+            filters.some((filter) => filter.column_id)
               ? activeFilterButtonBg(theme)
               : "transparent",
         }}
@@ -826,13 +449,13 @@ function DatasetRuleFilters({
             );
             return nextFilters.length
               ? nextFilters
-              : [{ ...DatasetDefaultFilter, id: getRandomId() }];
+              : [makeDatasetDefaultFilter()];
           });
         }}
         onClearAll={() => {
           onInteraction?.();
           setFilterAnchorEl(null);
-          setFilters([{ ...DatasetDefaultFilter, id: getRandomId() }]);
+          setFilters([makeDatasetDefaultFilter()]);
           setFilterOpen(false);
         }}
       />
@@ -860,13 +483,11 @@ function TraceRuleFilters({
   );
   const isVoiceProject = projectDetails?.source === PROJECT_SOURCE.SIMULATOR;
   const panelSource = sourceType === "trace_session" ? "sessions" : "traces";
+  const isSpanSource = sourceType === "observation_span";
   const filterFields =
     sourceType === "trace_session" ? SESSION_RULE_FILTER_FIELDS : undefined;
 
-  const snakeFilters = useMemo(
-    () => objectCamelToSnake(toApiFilters(filters)),
-    [filters],
-  );
+  const snakeFilters = useMemo(() => getSubmittableFilters(filters), [filters]);
 
   useEffect(() => {
     if (sourceType !== "trace" || !projectId) return;
@@ -909,14 +530,14 @@ function TraceRuleFilters({
         }}
         sx={{
           border: "1px solid",
-          borderColor: filters.some((filter) => filter.columnId)
+          borderColor: filters.some((filter) => filter.column_id)
             ? "primary.main"
             : "divider",
           borderRadius: 0.5,
           p: 0.75,
           mb: 1,
           bgcolor: (theme) =>
-            filters.some((filter) => filter.columnId)
+            filters.some((filter) => filter.column_id)
               ? activeFilterButtonBg(theme)
               : "transparent",
         }}
@@ -933,10 +554,12 @@ function TraceRuleFilters({
         onClose={() => setFilterOpen(false)}
         projectId={projectId}
         source={panelSource}
+        tab={isSpanSource ? "spans" : undefined}
+        isSpansView={isSpanSource}
         filterFields={filterFields}
         isSimulator={isVoiceProject}
         key={`${projectId}-${panelSource}-${isVoiceProject ? "voice" : "trace"}`}
-        currentFilters={toApiFilters(filters).map(apiFilterToPanel)}
+        currentFilters={getSubmittableFilters(filters).map(apiFilterToPanel)}
         onApply={(newPanelFilters) => {
           onInteraction?.();
           const nextFilters = (newPanelFilters || [])
@@ -970,9 +593,9 @@ function TraceRuleFilters({
           if (!target) return;
           setFilters((prev) =>
             prev.filter((filter) => {
-              const colMatches = filter.columnId === target.column_id;
+              const colMatches = filter.column_id === target.column_id;
               const opMatches =
-                filter.filterConfig?.filterOp ===
+                filter.filter_config?.filter_op ===
                 target.filter_config?.filter_op;
               return !(colMatches && opMatches);
             }),
@@ -989,20 +612,50 @@ function TraceRuleFilters({
   );
 }
 
-function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
+function SimulationRuleFilters({
+  filters,
+  setFilters,
+  scope,
+  queue,
+  onInteraction,
+}) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const buttonRef = useRef(null);
+  const queueAgentId = getQueueScopeId(queue, "agent_definition");
+  const agentDefinitionId = resolveRuleScopeId(
+    queue,
+    queueAgentId,
+    scope.project_id,
+  );
 
   const panelCurrentFilters = useMemo(
-    () => toApiFilters(filters).map(apiFilterToPanel),
+    () => getSubmittableFilters(filters).map(apiFilterToPanel),
     [filters],
   );
 
-  const snakeFilters = useMemo(
-    () => objectCamelToSnake(toApiFilters(filters)),
-    [filters],
-  );
+  const snakeFilters = useMemo(() => getSubmittableFilters(filters), [filters]);
+  const { data: simulationEvalFields = [] } = useQuery({
+    queryKey: ["automation-rule-simulation-eval-fields", agentDefinitionId],
+    queryFn: () =>
+      axios.get(endpoints.dashboard.metrics, {
+        params: { agent_definition_id: agentDefinitionId },
+      }),
+    enabled: Boolean(agentDefinitionId),
+    select: (response) =>
+      buildTraceFilterProperties(response.data?.result?.metrics || [], {
+        isSimulator: true,
+        sourceScope: "simulation",
+      }).filter((property) => property.category === "eval"),
+    staleTime: 5 * 60_000,
+  });
+  const properties = useMemo(() => {
+    const fieldsById = new Map(
+      SIMULATION_RULE_FILTER_FIELDS.map((field) => [field.id, field]),
+    );
+    simulationEvalFields.forEach((field) => fieldsById.set(field.id, field));
+    return Array.from(fieldsById.values());
+  }, [simulationEvalFields]);
 
   return (
     <Box sx={{ maxWidth: "100%", minWidth: 0, overflow: "hidden" }}>
@@ -1018,14 +671,14 @@ function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
         }}
         sx={{
           border: "1px solid",
-          borderColor: filters.some((filter) => filter.columnId)
+          borderColor: filters.some((filter) => filter.column_id)
             ? "primary.main"
             : "divider",
           borderRadius: 0.5,
           p: 0.75,
           mb: 1,
           bgcolor: (theme) =>
-            filters.some((filter) => filter.columnId)
+            filters.some((filter) => filter.column_id)
               ? activeFilterButtonBg(theme)
               : "transparent",
         }}
@@ -1052,7 +705,7 @@ function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
               : [{ ...DEFAULT_FILTER, id: getRandomId() }],
           );
         }}
-        properties={SIMULATION_RULE_FILTER_FIELDS}
+        properties={properties}
         source="simulation"
         showAi={false}
         showQueryTab={false}
@@ -1079,9 +732,9 @@ function SimulationRuleFilters({ filters, setFilters, onInteraction }) {
           if (!target) return;
           setFilters((prev) =>
             prev.filter((filter) => {
-              const colMatches = filter.columnId === target.column_id;
+              const colMatches = filter.column_id === target.column_id;
               const opMatches =
-                filter.filterConfig?.filterOp ===
+                filter.filter_config?.filter_op ===
                 target.filter_config?.filter_op;
               return !(colMatches && opMatches);
             }),
@@ -1135,41 +788,11 @@ export function RuleFilterSection({
     <SimulationRuleFilters
       filters={filters}
       setFilters={setFilters}
+      scope={scope}
+      queue={queue}
       onInteraction={onInteraction}
     />
   );
-}
-
-export function isScopeReady(sourceType, scope, queue) {
-  if (sourceType === "dataset_row") {
-    return Boolean(scope.dataset_id || getQueueScopeId(queue, "dataset"));
-  }
-  if (["trace", "observation_span", "trace_session"].includes(sourceType)) {
-    return Boolean(scope.project_id || getQueueScopeId(queue, "project"));
-  }
-  if (sourceType === "call_execution") {
-    return Boolean(
-      scope.project_id || getQueueScopeId(queue, "agent_definition"),
-    );
-  }
-  return true;
-}
-
-export function getRuleSubmitDisabledTooltipTitle(
-  sourceType,
-  scope,
-  queue,
-  name,
-) {
-  if (!name.trim()) return "Enter a rule name";
-  if (!isScopeReady(sourceType, scope, queue)) {
-    if (sourceType === "dataset_row") return "Choose a dataset";
-    if (["trace", "observation_span", "trace_session"].includes(sourceType)) {
-      return "Choose a project";
-    }
-    if (sourceType === "call_execution") return "Choose an agent definition";
-  }
-  return "";
 }
 
 export default function CreateRuleDialog({ open, onClose, queueId, queue }) {

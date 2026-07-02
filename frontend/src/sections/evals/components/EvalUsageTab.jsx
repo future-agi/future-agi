@@ -31,6 +31,8 @@ import PartialInputWarningDetails, {
 import { useEvalUsageChart, useEvalUsageLogs } from "../hooks/useEvalUsage";
 import { isEditableElement } from "src/utils/keyboardUtils";
 import UsageChart from "./UsageChart";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 // ── Inline stat ──
 const StatPill = ({ label, value, color }) => (
@@ -542,7 +544,7 @@ const EvalUsageTab = ({
                 sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
               />
               <StatPill
-                label="Pass Rate"
+                label="Task Completion Rate"
                 value={`${stats.pass_rate ?? 0}%`}
                 color="info.main"
               />
@@ -580,7 +582,7 @@ const EvalUsageTab = ({
               }}
             >
               <Typography variant="caption" color="text.disabled">
-                No data for this period
+              No data to show for selected period, update filters to view graph/data when no data is available.
               </Typography>
             </Box>
           )}
@@ -626,7 +628,7 @@ const EvalUsageTab = ({
               />
             </Box>
           </Box>
-          <Box sx={{ flex: 1,overflowY: "auto", minHeight: 0 }}>
+          <Box sx={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
             <DataTable
               columns={columns}
               data={filteredLogs}
@@ -788,7 +790,6 @@ const EvalUsageTab = ({
   );
 };
 
-
 // ── Detail panel content with Formatted/JSON tabs + feedback ──
 const DetailPanelContent = ({
   row,
@@ -797,6 +798,10 @@ const DetailPanelContent = ({
   evalType = "llm",
   onFeedbackSubmitted,
 }) => {
+  const { role } = useAuthContext();
+  const canEditEvals = Boolean(
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role]
+  );
   const [viewMode, setViewMode] = useState("formatted");
   const [feedbackOpen, setFeedbackOpen] = useState(false);
 
@@ -1124,6 +1129,7 @@ const DetailPanelContent = ({
                         )}
                         <IconButton
                           size="small"
+                          disabled={!canEditEvals}
                           onClick={() => setFeedbackOpen(true)}
                         >
                           <Iconify
@@ -1165,6 +1171,7 @@ const DetailPanelContent = ({
 
                 <Box
                   component="button"
+                  disabled={!canEditEvals}
                   onClick={() => setFeedbackOpen(true)}
                   sx={{
                     display: "flex",
@@ -1177,17 +1184,20 @@ const DetailPanelContent = ({
                     borderRadius: "8px",
                     backgroundColor: "transparent",
                     color: "text.primary",
-                    cursor: "pointer",
+                    cursor: canEditEvals ? "pointer" : "not-allowed",
+                    opacity: canEditEvals ? 1 : 0.5,
                     fontSize: "12px",
                     fontWeight: 500,
                     width: "100%",
-                    "&:hover": {
-                      borderColor: "primary.main",
-                      backgroundColor: (t) =>
-                        t.palette.mode === "dark"
-                          ? "rgba(124,77,255,0.06)"
-                          : "rgba(124,77,255,0.04)",
-                    },
+                    "&:hover": canEditEvals
+                      ? {
+                          borderColor: "primary.main",
+                          backgroundColor: (t) =>
+                            t.palette.mode === "dark"
+                              ? "rgba(124,77,255,0.06)"
+                              : "rgba(124,77,255,0.04)",
+                        }
+                      : {},
                   }}
                 >
                   <Iconify
@@ -1379,13 +1389,29 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => (
       borderColor: "divider",
     }}
   >
-    <Typography
-      variant="caption"
-      color="text.secondary"
-      sx={{ width: 90, flexShrink: 0, pt: 0.25 }}
+    <CustomTooltip
+      show
+      title={label}
+      placement="top-start"
+      enterDelay={300}
+      size="small"
     >
-      {label}
-    </Typography>
+      <Typography
+        variant="caption"
+        color="text.secondary"
+        sx={{
+          width: 90,
+          flexShrink: 0,
+          pt: 0.25,
+          pr: 1,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {label}
+      </Typography>
+    </CustomTooltip>
     <Box sx={{ flex: 1, minWidth: 0 }}>
       {chip ? (
         <Chip

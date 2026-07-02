@@ -6,9 +6,10 @@ GET /simulate/call-executions/<uuid:call_execution_id>/session-comparison/
 """
 
 import uuid
+from contextlib import contextmanager
 from datetime import timedelta
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from django.utils import timezone
@@ -245,10 +246,34 @@ class TestSessionComparisonChatSimAPI:
         base_trace,
         observation_spans,
         assistant_chat_message,
+        trace_session,
     ):
-        response = auth_client.get(
-            f"/simulate/call-executions/{completed_text_call_execution.id}/session-comparison/"
-        )
+        # Mock CH reader — session metrics now come from ClickHouse, not PG.
+        start = timezone.now() - timedelta(seconds=10)
+        end = timezone.now()
+        mock_reader = MagicMock()
+        mock_reader.aggregate_by_session_ids.return_value = {
+            str(trace_session.id): {
+                "start_time": start,
+                "end_time": end,
+                "tokens": 100,
+                "traces_count": 1,
+                "span_count": 2,
+                "cost": 0.0,
+            }
+        }
+        mock_reader.count_with_filters.return_value = 2
+
+        @contextmanager
+        def fake_get_reader():
+            yield mock_reader
+
+        with patch(
+            "tracer.services.clickhouse.v2.get_reader", fake_get_reader
+        ):
+            response = auth_client.get(
+                f"/simulate/call-executions/{completed_text_call_execution.id}/session-comparison/"
+            )
 
         assert response.status_code == status.HTTP_200_OK
         data = response.json()

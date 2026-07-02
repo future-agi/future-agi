@@ -104,6 +104,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
 
   const labelIds = watch("label_ids");
   const annotators = watch("annotators");
+  const autoAssign = watch("autoAssign");
   const annotatorCount = annotators.filter(isQueueAnnotatorRole).length;
   const hasInitializedRef = useRef(false);
 
@@ -303,6 +304,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                     setValue("annotators", a, { shouldDirty: true })
                   }
                   creatorId={creatorId}
+                  highlightAutoAssigned={autoAssign}
                   isManager
                 />
               </Stack>
@@ -408,7 +410,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                         >
                           Auto-assign items to all annotator members
                         </Typography>
-                        <Typography variant="caption" color="text.disabled">
+                        <Typography variant="caption" color="text.secondary">
                           When on, all members with the Annotator role are
                           assigned to every item and can annotate any item
                         </Typography>

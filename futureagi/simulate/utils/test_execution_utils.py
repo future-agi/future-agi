@@ -18,7 +18,6 @@ from simulate.utils.sql_query import get_grouped_call_execution_metrics_query
 
 
 class TestExecutionUtils:
-
     def _apply_filters(
         self,
         call_executions,
@@ -52,11 +51,11 @@ class TestExecutionUtils:
 
         def apply_text_filter(queryset, field, op, value, *, exact_lookup="iexact"):
             values = as_list(value)
-            if op in ("equals", "eq"):
+            if op == "equals":
                 if len(values) == 1:
                     return queryset.filter(**{f"{field}__{exact_lookup}": values[0]})
                 return queryset.filter(**{f"{field}__in": values})
-            if op in ("not_equals", "ne"):
+            if op == "not_equals":
                 if len(values) == 1:
                     return queryset.exclude(**{f"{field}__{exact_lookup}": values[0]})
                 return queryset.exclude(**{f"{field}__in": values})
@@ -64,7 +63,7 @@ class TestExecutionUtils:
                 return queryset.filter(**{f"{field}__in": values})
             if op == "not_in":
                 return queryset.exclude(**{f"{field}__in": values})
-            if op in ("contains", "icontains"):
+            if op == "contains":
                 return queryset.filter(**{f"{field}__icontains": value})
             if op == "not_contains":
                 return queryset.exclude(**{f"{field}__icontains": value})
@@ -72,23 +71,27 @@ class TestExecutionUtils:
 
         def apply_number_filter(queryset, field, op, value, transform=lambda v: v):
             values = as_list(value)
-            if op in ("equals", "eq"):
+            if op == "equals":
                 return queryset.filter(**{field: transform(values[0])})
-            if op in ("not_equals", "ne"):
+            if op == "not_equals":
                 return queryset.exclude(**{field: transform(values[0])})
             if op == "in":
-                return queryset.filter(**{f"{field}__in": [transform(v) for v in values]})
+                return queryset.filter(
+                    **{f"{field}__in": [transform(v) for v in values]}
+                )
             if op == "not_in":
-                return queryset.exclude(**{f"{field}__in": [transform(v) for v in values]})
-            if op in ("greater_than", "more_than", "gt"):
+                return queryset.exclude(
+                    **{f"{field}__in": [transform(v) for v in values]}
+                )
+            if op == "greater_than":
                 return queryset.filter(**{f"{field}__gt": transform(value)})
-            if op in ("less_than", "lt"):
+            if op == "less_than":
                 return queryset.filter(**{f"{field}__lt": transform(value)})
-            if op in ("greater_than_or_equal", "more_than_or_equal", "gte"):
+            if op == "greater_than_or_equal":
                 return queryset.filter(**{f"{field}__gte": transform(value)})
-            if op in ("less_than_or_equal", "lte"):
+            if op == "less_than_or_equal":
                 return queryset.filter(**{f"{field}__lte": transform(value)})
-            if op in ("between", "not_between", "not_in_between") and len(values) >= 2:
+            if op in ("between", "not_between") and len(values) >= 2:
                 start, end = transform(values[0]), transform(values[1])
                 if op == "between":
                     return queryset.filter(**{f"{field}__range": (start, end)})
@@ -110,23 +113,27 @@ class TestExecutionUtils:
                     condition |= q_for(field, lookup, val)
                 return condition
 
-            if op in ("equals", "eq"):
+            if op == "equals":
                 return queryset.filter(any_field_q(None, transform(values[0])))
-            if op in ("not_equals", "ne"):
+            if op == "not_equals":
                 return queryset.exclude(any_field_q(None, transform(values[0])))
             if op == "in":
-                return queryset.filter(any_field_q("in", [transform(v) for v in values]))
+                return queryset.filter(
+                    any_field_q("in", [transform(v) for v in values])
+                )
             if op == "not_in":
-                return queryset.exclude(any_field_q("in", [transform(v) for v in values]))
-            if op in ("greater_than", "more_than", "gt"):
+                return queryset.exclude(
+                    any_field_q("in", [transform(v) for v in values])
+                )
+            if op == "greater_than":
                 return queryset.filter(any_field_q("gt", transform(value)))
-            if op in ("less_than", "lt"):
+            if op == "less_than":
                 return queryset.filter(any_field_q("lt", transform(value)))
-            if op in ("greater_than_or_equal", "more_than_or_equal", "gte"):
+            if op == "greater_than_or_equal":
                 return queryset.filter(any_field_q("gte", transform(value)))
-            if op in ("less_than_or_equal", "lte"):
+            if op == "less_than_or_equal":
                 return queryset.filter(any_field_q("lte", transform(value)))
-            if op in ("between", "not_between", "not_in_between") and len(values) >= 2:
+            if op in ("between", "not_between") and len(values) >= 2:
                 range_value = (transform(values[0]), transform(values[1]))
                 if op == "between":
                     return queryset.filter(any_field_q("range", range_value))
@@ -170,11 +177,11 @@ class TestExecutionUtils:
 
             if filter_type in ("text", "string", "categorical"):
                 values = [str(item) for item in as_list(value)]
-                if op in ("equals", "eq"):
+                if op == "equals":
                     if len(values) == 1:
                         return exists("model_hub_cell.value = %s", [values[0]])
                     return exists("model_hub_cell.value = ANY(%s)", [values])
-                if op in ("not_equals", "ne"):
+                if op == "not_equals":
                     if len(values) == 1:
                         return not_exists("model_hub_cell.value = %s", [values[0]])
                     return not_exists("model_hub_cell.value = ANY(%s)", [values])
@@ -182,7 +189,7 @@ class TestExecutionUtils:
                     return exists("model_hub_cell.value = ANY(%s)", [values])
                 if op == "not_in":
                     return not_exists("model_hub_cell.value = ANY(%s)", [values])
-                if op in ("contains", "icontains"):
+                if op == "contains":
                     return exists("model_hub_cell.value ILIKE %s", [f"%{value}%"])
                 if op == "not_contains":
                     return not_exists("model_hub_cell.value ILIKE %s", [f"%{value}%"])
@@ -190,29 +197,31 @@ class TestExecutionUtils:
             if filter_type == "number":
                 values = as_list(value)
                 numeric_expr = "CAST(NULLIF(model_hub_cell.value, '') AS NUMERIC)"
-                if op in ("equals", "eq"):
+                if op == "equals":
                     return exists(f"{numeric_expr} = %s", [float(values[0])])
-                if op in ("not_equals", "ne"):
+                if op == "not_equals":
                     return not_exists(f"{numeric_expr} = %s", [float(values[0])])
-                if op in ("greater_than", "more_than", "gt"):
+                if op == "greater_than":
                     return exists(f"{numeric_expr} > %s", [float(value)])
-                if op in ("less_than", "lt"):
+                if op == "less_than":
                     return exists(f"{numeric_expr} < %s", [float(value)])
-                if op in ("greater_than_or_equal", "more_than_or_equal", "gte"):
+                if op == "greater_than_or_equal":
                     return exists(f"{numeric_expr} >= %s", [float(value)])
-                if op in ("less_than_or_equal", "lte"):
+                if op == "less_than_or_equal":
                     return exists(f"{numeric_expr} <= %s", [float(value)])
-                if op in ("between", "not_between", "not_in_between") and len(values) >= 2:
+                if op in ("between", "not_between") and len(values) >= 2:
                     params = [float(values[0]), float(values[1])]
                     if op == "between":
                         return exists(f"{numeric_expr} BETWEEN %s AND %s", params)
                     return not_exists(f"{numeric_expr} BETWEEN %s AND %s", params)
 
             if filter_type == "boolean":
-                bool_value = "true" if str(value).lower() in ["true", "1", "yes"] else "false"
-                if op in ("equals", "eq"):
+                bool_value = (
+                    "true" if str(value).lower() in ["true", "1", "yes"] else "false"
+                )
+                if op == "equals":
                     return exists("LOWER(model_hub_cell.value) = %s", [bool_value])
-                if op in ("not_equals", "ne"):
+                if op == "not_equals":
                     return not_exists("LOWER(model_hub_cell.value) = %s", [bool_value])
 
             return queryset
@@ -227,31 +236,21 @@ class TestExecutionUtils:
 
         for filter_item in filters:
             try:
-                column_id = filter_item.get("column_id") or filter_item.get("columnId")
-                filter_config = filter_item.get("filter_config", {}) or filter_item.get(
-                    "filterConfig", {}
-                )
+                column_id = filter_item.get("column_id")
+                filter_config = filter_item.get("filter_config") or {}
 
                 if not column_id or not filter_config:
                     continue
 
-                filter_type = filter_config.get("filter_type") or filter_config.get(
-                    "filterType"
-                )
-                filter_op = filter_config.get("filter_op") or filter_config.get(
-                    "filterOp"
-                )
-                filter_value = (
-                    filter_config.get("filter_value")
-                    if "filter_value" in filter_config
-                    else filter_config.get("filterValue")
-                )
+                filter_type = filter_config.get("filter_type")
+                filter_op = filter_config.get("filter_op")
+                filter_value = filter_config.get("filter_value")
 
                 # Handle different column types based on new response structure
                 if column_id in ["timestamp", "created_at"]:
                     # Filter by timestamp
                     if filter_type == "datetime":
-                        if filter_op in ["between", "not_between", "not_in_between"]:
+                        if filter_op in ["between", "not_between"]:
                             if (
                                 isinstance(filter_value, list)
                                 and len(filter_value) == 2
@@ -360,7 +359,11 @@ class TestExecutionUtils:
                     # Filter by overall score
                     if filter_type == "number":
                         call_executions = apply_number_filter(
-                            call_executions, "overall_score", filter_op, filter_value, float
+                            call_executions,
+                            "overall_score",
+                            filter_op,
+                            filter_value,
+                            float,
                         )
 
                 elif column_id in ["duration_seconds", "duration"]:
@@ -503,13 +506,16 @@ class TestExecutionUtils:
 
                 elif (
                     column_id in scenario_dataset_columns
-                    or column_id.startswith("scenario_") and "dataset" in column_id
+                    or column_id.startswith("scenario_")
+                    and "dataset" in column_id
                 ):
                     column_meta = scenario_dataset_columns.get(str(column_id), {})
                     scenario_id = column_meta.get("scenario_id")
                     dataset_column_id = column_id
                     if column_id not in scenario_dataset_columns:
-                        scenario_id, dataset_column_id = scenario_column_parts(column_id)
+                        scenario_id, dataset_column_id = scenario_column_parts(
+                            column_id
+                        )
 
                     if dataset_column_id:
                         call_executions = apply_scenario_dataset_column_filter(
@@ -537,8 +543,8 @@ class TestExecutionUtils:
                         output_field = "eval_outputs"
 
                     if filter_type == "number":
-                        # Handle between/not_in_between operations
-                        if filter_op in ["between", "not_in_between"]:
+                        # Handle between/not_between operations
+                        if filter_op in ["between", "not_between"]:
                             if (
                                 isinstance(filter_value, list)
                                 and len(filter_value) == 2
@@ -563,7 +569,7 @@ class TestExecutionUtils:
                                             f"{output_field}__{eval_id}__output__lte": db_end_value
                                         },
                                     )
-                                else:  # not_in_between
+                                else:  # not_between
                                     call_executions = call_executions.filter(
                                         **{f"{output_field}__has_key": eval_id}
                                     ).filter(
@@ -1113,7 +1119,6 @@ class TestExecutionUtils:
 
         # Search in scenario dataset columns (if call has row_id)
         try:
-
             # Search in dataset cell values for calls that have row_id
             # We need to apply this search separately since it uses extra()
             call_executions_with_dataset_search = call_executions.filter(

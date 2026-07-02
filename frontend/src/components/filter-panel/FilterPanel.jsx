@@ -63,8 +63,14 @@ const ENUM_OPERATORS = [
   { value: "is_not", label: "Is not" },
 ];
 
-function getOperators(fieldType) {
-  return fieldType === "enum" ? ENUM_OPERATORS : STRING_OPERATORS;
+function getOperators(fieldDef) {
+  const fieldType = typeof fieldDef === "string" ? fieldDef : fieldDef?.type;
+  const base = fieldType === "enum" ? ENUM_OPERATORS : STRING_OPERATORS;
+  const allowed =
+    typeof fieldDef === "object" && Array.isArray(fieldDef?.operators)
+      ? fieldDef.operators
+      : null;
+  return allowed ? base.filter((op) => allowed.includes(op.value)) : base;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,7 +149,7 @@ function parseNaturalLanguage(query, filterFields, fieldMap) {
 // ---------------------------------------------------------------------------
 // EnumValuePicker — checkbox multi-select popover (matches trace filter design)
 // ---------------------------------------------------------------------------
-function EnumValuePicker({ choices, value = [], onChange }) {
+function EnumValuePicker({ choices, value = [], onChange, single = false }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [search, setSearch] = useState("");
 
@@ -155,11 +161,17 @@ function EnumValuePicker({ choices, value = [], onChange }) {
 
   const toggle = useCallback(
     (val) => {
+      if (single) {
+        onChange(value.includes(val) ? [] : [val]);
+        setAnchorEl(null);
+        setSearch("");
+        return;
+      }
       onChange(
         value.includes(val) ? value.filter((v) => v !== val) : [...value, val],
       );
     },
-    [value, onChange],
+    [value, onChange, single],
   );
 
   return (
@@ -259,7 +271,9 @@ function EnumValuePicker({ choices, value = [], onChange }) {
           <Typography
             sx={{ fontSize: 10, color: "text.disabled", mt: 0.5, px: 0.25 }}
           >
-            Select one or more values (multi-select)
+            {single
+              ? "Select a value"
+              : "Select one or more values (multi-select)"}
           </Typography>
         </Box>
         <Box
@@ -271,7 +285,7 @@ function EnumValuePicker({ choices, value = [], onChange }) {
           }}
         >
           {/* Select all matching */}
-          {search && filtered.length > 0 && (
+          {!single && search && filtered.length > 0 && (
             <Box
               onClick={() => {
                 const allFiltered = filtered.filter((o) => !value.includes(o));
@@ -381,9 +395,13 @@ function EnumValuePicker({ choices, value = [], onChange }) {
               >
                 <Iconify
                   icon={
-                    isSelected
-                      ? "mdi:checkbox-marked"
-                      : "mdi:checkbox-blank-outline"
+                    single
+                      ? isSelected
+                        ? "mdi:radiobox-marked"
+                        : "mdi:radiobox-blank"
+                      : isSelected
+                        ? "mdi:checkbox-marked"
+                        : "mdi:checkbox-blank-outline"
                   }
                   width={18}
                   sx={{
@@ -451,7 +469,7 @@ function FilterRow({
   onRemove,
 }) {
   const fieldDef = fieldMap[filter.field] || filterFields[0];
-  const operators = getOperators(fieldDef.type);
+  const operators = getOperators(fieldDef);
 
   return (
     <Stack direction="row" alignItems="center" gap={0.5}>
@@ -493,6 +511,7 @@ function FilterRow({
       {fieldDef.type === "enum" ? (
         <EnumValuePicker
           choices={fieldDef.choices || []}
+          single={fieldDef.single}
           value={
             Array.isArray(filter.value)
               ? filter.value
@@ -614,8 +633,10 @@ const QueryInput = forwardRef(function QueryInput(
   const currentOpDef = useMemo(() => {
     if (!partialField || !partialOp) return null;
     const fd = fieldMap[partialField];
-    const resolve = getOperatorsProp || getOperators;
-    return resolve(fd?.type || "string").find((o) => o.value === partialOp);
+    const ops = getOperatorsProp
+      ? getOperatorsProp(fd?.type || "string")
+      : getOperators(fd || "string");
+    return ops.find((o) => o.value === partialOp);
   }, [partialField, partialOp, fieldMap, getOperatorsProp]);
 
   const isRangePhase = phase === "value" && Boolean(currentOpDef?.range);
@@ -632,8 +653,10 @@ const QueryInput = forwardRef(function QueryInput(
       }));
     if (phase === "operator") {
       const fd = fieldMap[partialField];
-      const resolve = getOperatorsProp || getOperators;
-      return resolve(fd?.type || "string").map((o) => ({
+      const ops = getOperatorsProp
+        ? getOperatorsProp(fd?.type || "string")
+        : getOperators(fd || "string");
+      return ops.map((o) => ({
         id: o.value,
         label: o.label,
         type: "operator",
@@ -1244,12 +1267,18 @@ const FilterPanel = ({
         const isNeg = key.endsWith("_not");
         const field = isNeg ? key.slice(0, -4) : key;
         if (Array.isArray(val)) {
-          const op = isNeg ? "is_not" : (fieldMap[field]?.type === "enum" ? "is" : "contains");
-          val.forEach((v) =>
-            initial.push({ field, operator: op, value: v }),
-          );
+          const op = isNeg
+            ? "is_not"
+            : fieldMap[field]?.type === "enum"
+              ? "is"
+              : "contains";
+          val.forEach((v) => initial.push({ field, operator: op, value: v }));
         } else if (val) {
-          initial.push({ field, operator: isNeg ? "not_equals" : "contains", value: val });
+          initial.push({
+            field,
+            operator: isNeg ? "not_equals" : "contains",
+            value: val,
+          });
         }
       }
       if (initial.length > 0) setRows(initial);
@@ -1272,7 +1301,8 @@ const FilterPanel = ({
         const isEmpty = !val || (Array.isArray(val) && val.length === 0);
         if (isEmpty) continue;
         const values = Array.isArray(val) ? val : [val];
-        const isNeg = row.operator === "is_not" || row.operator === "not_equals";
+        const isNeg =
+          row.operator === "is_not" || row.operator === "not_equals";
         const key = isNeg ? `${row.field}_not` : row.field;
         if (!result[key]) result[key] = [];
         result[key].push(...values);

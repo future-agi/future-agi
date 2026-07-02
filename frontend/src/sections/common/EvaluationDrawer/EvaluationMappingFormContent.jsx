@@ -30,7 +30,6 @@ import { ADD_AND_RUN_BUTTON_MAPPER, ADD_BUTTON_MAPPER } from "./common";
 import { useWatch } from "react-hook-form";
 import ConfigRenderer from "./ConfigRenderer";
 
-
 const requiredRunPrompt = [
   "dataset",
   "run-experiment",

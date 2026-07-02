@@ -63,13 +63,15 @@ const IndividualGroup = ({ groupId, onReset }) => {
       return response.data;
     },
     enabled: !!id,
-    select: (data) => ({
-      evalGroup: data?.result?.eval_group,
-      lastUpdated: data?.result?.eval_group?.updated_at,
-      rowCount:
-        (data?.result?.members || data?.result?.eval_group?.members)?.length ||
-        0,
-    }),
+    select: (data) => {
+      const payload = evalGroupDetailPayload(data);
+      return {
+        evalGroup: payload?.eval_group,
+        lastUpdated: payload?.eval_group?.updated_at,
+        rowCount:
+          (payload?.members || payload?.eval_group?.members)?.length || 0,
+      };
+    },
   });
 
   const [selectDrawerType, setSelectedDrawerType] = useState({
@@ -103,41 +105,44 @@ const IndividualGroup = ({ groupId, onReset }) => {
     },
     {
       headerName: "Added By",
-      field: "addedBy",
-      cellRenderer: ({ value }) => (
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            height: "100%",
-            gap: (theme) => theme.spacing(0.5),
-          }}
-        >
-          <Avatar
-            variant="rounded"
-            {...stringAvatar(value)}
+      field: "added_by",
+      cellRenderer: ({ value }) => {
+        const addedBy = value || "-";
+        return (
+          <Box
             sx={{
-              width: (theme) => theme.spacing(3),
-              height: (theme) => theme.spacing(3),
-              fontSize: "11px",
-              color: "pink.500",
-              backgroundColor: "background.neutral",
+              display: "flex",
+              alignItems: "center",
+              height: "100%",
+              gap: (theme) => theme.spacing(0.5),
             }}
-          />
-          <Typography typography="s2" fontWeight={"fontWeightRegular"}>
-            {value}
-          </Typography>
-        </Box>
-      ),
+          >
+            <Avatar
+              variant="rounded"
+              {...stringAvatar(addedBy)}
+              sx={{
+                width: (theme) => theme.spacing(3),
+                height: (theme) => theme.spacing(3),
+                fontSize: "11px",
+                color: "pink.500",
+                backgroundColor: "background.neutral",
+              }}
+            />
+            <Typography typography="s2" fontWeight={"fontWeightRegular"}>
+              {addedBy}
+            </Typography>
+          </Box>
+        );
+      },
     },
     {
       headerName: "Date Added",
-      field: "addedOn",
+      field: "added_on",
       cellRenderer: ({ value }) => {
         const parsedDate = parseISO(value);
         const formattedDate = isValid(parsedDate)
           ? format(parsedDate, "dd/MM/yyyy")
-          : "Invalid Date";
+          : "-";
 
         return (
           <Box height={"100%"} display={"flex"} alignItems={"center"}>
@@ -218,7 +223,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
             },
           );
 
-          const members = response.data?.result?.members || [];
+          const members = evalGroupDetailPayload(response.data)?.members || [];
 
           // Success callback with data
           params.success({
@@ -256,7 +261,7 @@ const IndividualGroup = ({ groupId, onReset }) => {
       const response = await axios.get(
         `${endpoints.develop.eval.groupEvals}${id}/`,
       );
-      const members = response.data?.result?.members || [];
+      const members = evalGroupDetailPayload(response.data)?.members || [];
 
       setSelectedEvals(
         members?.map((member) => ({
@@ -587,3 +592,7 @@ IndividualGroup.propTypes = {
   groupId: PropTypes.string,
   onReset: PropTypes.func,
 };
+
+function evalGroupDetailPayload(data) {
+  return data?.result || data;
+}

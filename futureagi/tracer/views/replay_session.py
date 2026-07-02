@@ -7,11 +7,13 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.viewsets import ViewSet
 
+from tfc.routers import uses_db
 from tfc.temporal.simulate import start_create_graph_scenario_workflow_sync
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.errors import format_validation_error
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tracer.db_routing import DATABASE_FOR_REPLAY_SESSION_LIST
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
 from tracer.models.replay_session import ReplaySession, ReplaySessionStep
@@ -30,6 +32,10 @@ from tracer.utils.replay_session import (
     get_agent_suggestions,
     get_or_create_agent_definition,
     get_transcripts,
+)
+from tracer.utils.workspace_scope import (
+    project_queryset_for_request,
+    project_workspace_scope_q,
 )
 
 logger = structlog.get_logger(__name__)
@@ -67,14 +73,14 @@ class ReplaySessionView(ViewSet):
 
     def get_queryset(self):
         """Return base queryset filtered by user's organization and workspace."""
-        queryset = ReplaySession.objects.filter(
-            project__organization=self.request.user.organization
+        manager = getattr(ReplaySession, "no_workspace_objects", ReplaySession.objects)
+        return manager.filter(
+            project_workspace_scope_q(self.request),
+            deleted=False,
+            project__deleted=False,
         )
 
-        if hasattr(self.request.user, "workspace") and self.request.user.workspace:
-            queryset = queryset.filter(project__workspace=self.request.user.workspace)
-        return queryset
-
+    @uses_db(DATABASE_FOR_REPLAY_SESSION_LIST, feature_key="feature:replay_session_list")
     def list(self, request: Request) -> Response:
         """
         List replay sessions for a project with pagination.
@@ -91,7 +97,10 @@ class ReplaySessionView(ViewSet):
 
         try:
             queryset = (
-                self.get_queryset().select_related("project").order_by("-created_at")
+                self.get_queryset()
+                .select_related("project")
+                .order_by("-created_at")
+                .using(DATABASE_FOR_REPLAY_SESSION_LIST)
             )
 
             if project_id:
@@ -348,13 +357,11 @@ class ReplaySessionView(ViewSet):
             return self._gm.bad_request(get_error_message("PROJECT_ID_REQUIRED"))
 
         try:
-            project = Project.objects.get(
-                id=project_id,
-                organization=request.user.organization,
-            )
+            project = project_queryset_for_request(request).get(id=project_id)
 
-            custom_eval_configs = CustomEvalConfig.objects.filter(
-                project=project
+            custom_eval_configs = CustomEvalConfig.no_workspace_objects.filter(
+                project=project,
+                project__deleted=False,
             ).select_related("eval_template")
 
             eval_configs_data = []

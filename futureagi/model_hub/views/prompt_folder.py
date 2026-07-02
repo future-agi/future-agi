@@ -1,12 +1,18 @@
 import traceback
 
-from django.db import models
+from django.db import IntegrityError, models, transaction
+from django.http import Http404
+from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.permissions import IsAuthenticated
 
 from model_hub.models.prompt_folders import PromptFolder
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from model_hub.serializers.prompt_folder import PromptFolderSerializer
+from model_hub.utils.workspace_scope import (
+    request_organization,
+    request_workspace_filter,
+)
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 
@@ -21,18 +27,44 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    def _duplicate_name_response(self):
+        return self._gm.bad_request(
+            "A prompt folder with this name already exists in your organization."
+        )
+
+    def get_queryset(self):
+        organization = request_organization(self.request)
+        custom_scope = models.Q(organization=organization) & request_workspace_filter(
+            self.request
+        )
+        sample_scope = models.Q(
+            is_sample=True,
+            organization__isnull=True,
+            workspace__isnull=True,
+        )
+        return PromptFolder.no_workspace_objects.filter(
+            custom_scope | sample_scope,
+            deleted=False,
+        ).select_related("organization", "workspace", "created_by", "parent_folder")
+
     def create(self, request, *args, **kwargs):
         """Create a new prompt folder"""
         try:
             serializer = self.get_serializer(data=request.data)
             serializer.is_valid(raise_exception=True)
-            self.perform_create(serializer)
+            try:
+                with transaction.atomic():
+                    self.perform_create(serializer)
+            except IntegrityError as e:
+                if "unique_prompt_folder_name_organization_workspace_not_deleted" in str(
+                    e
+                ):
+                    return self._duplicate_name_response()
+                raise
             return self._gm.create_response(serializer.data)
         except Exception as e:
             if "unique_prompt_folder_name_organization_workspace_not_deleted" in str(e):
-                return self._gm.bad_request(
-                    "A prompt folder with this name already exists in your organization."
-                )
+                return self._duplicate_name_response()
             return self._gm.bad_request(f"Failed to create prompt folder: {str(e)}")
 
     def perform_create(self, serializer):
@@ -41,24 +73,14 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             organization=getattr(self.request, "organization", None)
             or self.request.user.organization,
             created_by=self.request.user,
-            workspace=self.request.workspace,
+            workspace=getattr(self.request, "workspace", None),
+            is_sample=False,
         )
 
     def list(self, request, *args, **kwargs):
         """List all prompt folders for the user's organization"""
         try:
-            root_folders = PromptFolder.no_workspace_objects.filter(
-                (
-                    models.Q(workspace=self.request.workspace)
-                    & models.Q(
-                        organization=getattr(self.request, "organization", None)
-                        or self.request.user.organization
-                    )
-                )
-                | models.Q(is_sample=True),
-                parent_folder=None,
-                deleted=False,
-            )
+            root_folders = self.get_queryset().filter(parent_folder=None)
             response = PromptFolderSerializer(root_folders, many=True).data
             return self._gm.success_response(response)
         except Exception as e:
@@ -73,6 +95,8 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             instance = self.get_object()
             serializer = self.get_serializer(instance)
             return self._gm.success_response(serializer.data)
+        except Http404:
+            return self._gm.not_found("Prompt folder not found")
         except Exception as e:
             return self._gm.bad_request(f"Prompt folder not found: {str(e)}")
 
@@ -81,13 +105,27 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         try:
             partial = kwargs.pop("partial", False)
             instance = self.get_object()
+            if instance.is_sample:
+                return self._gm.bad_request("Sample prompt folders cannot be modified")
             serializer = self.get_serializer(
                 instance, data=request.data, partial=partial
             )
             serializer.is_valid(raise_exception=True)
-            self.perform_update(serializer)
+            try:
+                with transaction.atomic():
+                    self.perform_update(serializer)
+            except IntegrityError as e:
+                if "unique_prompt_folder_name_organization_workspace_not_deleted" in str(
+                    e
+                ):
+                    return self._duplicate_name_response()
+                raise
             return self._gm.success_response(serializer.data)
+        except Http404:
+            return self._gm.not_found("Prompt folder not found")
         except Exception as e:
+            if "unique_prompt_folder_name_organization_workspace_not_deleted" in str(e):
+                return self._duplicate_name_response()
             return self._gm.bad_request(f"Failed to update prompt folder: {str(e)}")
 
     def perform_update(self, serializer):
@@ -95,7 +133,8 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         serializer.save(
             organization=getattr(self.request, "organization", None)
             or self.request.user.organization,
-            workspace=self.request.workspace,
+            workspace=getattr(self.request, "workspace", None),
+            is_sample=False,
         )
 
     def partial_update(self, request, *args, **kwargs):
@@ -107,21 +146,31 @@ class PromptFolderViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         """Delete a prompt folder (soft delete)"""
         try:
             instance = self.get_object()
+            if instance.is_sample:
+                return self._gm.bad_request("Sample prompt folders cannot be deleted")
             self.perform_destroy(instance)
             return self._gm.success_response("Prompt folder deleted successfully")
+        except Http404:
+            return self._gm.not_found("Prompt folder not found")
         except Exception as e:
             return self._gm.bad_request(f"Failed to delete prompt folder: {str(e)}")
 
     def perform_destroy(self, instance):
         """Override destroy to implement soft delete"""
+        now = timezone.now()
 
         prompt_templates = PromptTemplate.objects.filter(prompt_folder=instance)
+        prompt_template_ids = list(prompt_templates.values_list("id", flat=True))
 
-        if prompt_templates.exists():
-            PromptVersion.objects.filter(original_template__in=prompt_templates).update(
-                deleted=True
+        if prompt_template_ids:
+            PromptVersion.objects.filter(
+                original_template_id__in=prompt_template_ids
+            ).update(
+                deleted=True,
+                deleted_at=now,
             )
-            prompt_templates.update(deleted=True)
+            prompt_templates.update(deleted=True, deleted_at=now)
 
         instance.deleted = True
-        instance.save()
+        instance.deleted_at = now
+        instance.save(update_fields=["deleted", "deleted_at", "updated_at"])

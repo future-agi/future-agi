@@ -21,13 +21,7 @@ import {
 import { useState } from "react";
 
 import axios, { endpoints } from "src/utils/axios";
-
-function formatUsageCompact(value, _unit) {
-  if (value >= 1e6) return `${(value / 1e6).toFixed(1)}M`;
-  if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K`;
-  if (Number.isInteger(value)) return value.toLocaleString();
-  return value.toFixed(1);
-}
+import { fUsage } from "src/utils/format-number";
 
 WorkspaceBreakdown.propTypes = {
   dimension: PropTypes.string.isRequired,
@@ -49,7 +43,11 @@ export default function WorkspaceBreakdown({
     queryKey: ["v2-workspace-breakdown", dimension, period, periodEnd],
     queryFn: () =>
       axios.get(endpoints.settings.v2.usageWorkspaceBreakdown, {
-        params: { dimension, period, ...(periodEnd ? { period_end: periodEnd } : {}) },
+        params: {
+          dimension,
+          period,
+          ...(periodEnd ? { period_end: periodEnd } : {}),
+        },
       }),
     select: (res) => res.data?.result?.workspaces || [],
     enabled: !!dimension,
@@ -138,7 +136,7 @@ export default function WorkspaceBreakdown({
               </TableCell>
               <TableCell align="right">
                 <Typography variant="body2">
-                  {formatUsageCompact(w.usage, displayUnit)}
+                  {fUsage(w.usage)}
                 </Typography>
               </TableCell>
               <TableCell align="right">
@@ -158,7 +156,7 @@ export default function WorkspaceBreakdown({
             </TableCell>
             <TableCell align="right">
               <Typography variant="subtitle2">
-                {formatUsageCompact(totalUsage, displayUnit)}
+                {fUsage(totalUsage)}
               </Typography>
             </TableCell>
             <TableCell align="right">

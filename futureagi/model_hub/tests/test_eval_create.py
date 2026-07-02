@@ -39,7 +39,7 @@ class TestEvalTemplateCreateV2API:
 
     # --- Happy path ---
 
-    def test_create_pass_fail_eval(self, auth_client):
+    def test_create_pass_fail_eval(self, auth_client, workspace):
         """Create a Pass/Fail eval successfully."""
         response = auth_client.post(self.url, self._valid_payload(), format="json")
         assert response.status_code == 200
@@ -54,6 +54,7 @@ class TestEvalTemplateCreateV2API:
         assert template.output_type_normalized == "pass_fail"
         assert template.pass_threshold == 0.5
         assert template.choice_scores is None
+        assert template.workspace == workspace
 
     def test_create_percentage_eval(self, auth_client):
         """Create a Percentage eval successfully."""
@@ -306,16 +307,7 @@ class TestEvalTemplateCreateV2API:
         template = EvalTemplate.objects.get(id=result["id"])
         assert template.name.startswith("draft-")
 
-    def test_create_draft_camel_case_alias(self, auth_client):
-        """isDraft (camelCase) must be accepted as an alias for is_draft.
-
-        The frontend's camelCase compatibility bridge installs enumerable
-        camelCase twins on every response object. If a spread of response-
-        derived state lands in a create-v2 POST body without the snake_case
-        original, only `isDraft` arrives — without this alias, the request
-        is treated as a non-draft and fails with "Instructions are
-        required." (TH-4076).
-        """
+    def test_create_draft_requires_canonical_snake_case(self, auth_client):
         response = auth_client.post(
             self.url,
             {
@@ -327,9 +319,10 @@ class TestEvalTemplateCreateV2API:
             },
             format="json",
         )
-        assert response.status_code == 200, response.data
-        assert response.data["status"] is True
-        assert response.data["result"]["name"].startswith("draft-")
+        assert response.status_code == 400
+        assert response.data["status"] is False
+        assert response.data["message"] == "isDraft: Unknown field."
+        assert response.data["details"] == {"isDraft": ["Unknown field."]}
 
     # --- Code eval creation ---
 

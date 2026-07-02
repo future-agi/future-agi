@@ -36,6 +36,7 @@ import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import {
   extractAttributeFilters,
+  getTaskFilterApiKey,
   getNewTaskFilters,
   NewTaskValidationSchema,
 } from "../NewTaskDrawer/validation";
@@ -53,7 +54,6 @@ import EvaluationSection from "../NewTaskDrawer/EvaluationSection";
 import { red } from "src/theme/palette";
 import FilterErrorBoundary from "src/components/ComplexFilter/FilterErrorBoundary";
 import EvaluationDrawer from "../../EvaluationDrawer/EvaluationDrawer";
-import { objectCamelToSnake } from "src/utils/utils";
 import { resetEvalStore } from "src/sections/evals/store/useEvalStore";
 
 function CustomTabPanel(props) {
@@ -187,7 +187,7 @@ const DetailsEdit = ({
       axios.get(endpoints.project.getEvalTaskConfig(), {
         params: {
           project_id: project,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
+          filters: JSON.stringify(filters),
           task_id: selectedRow?.id,
         },
       }),
@@ -207,7 +207,7 @@ const DetailsEdit = ({
       axios.get(endpoints.project.getEvalAttributeList(), {
         params: {
           row_type: rowType,
-          filters: JSON.stringify(objectCamelToSnake(filters)),
+          filters: JSON.stringify(filters),
         },
       }),
     select: (data) => data.data?.result,
@@ -249,22 +249,28 @@ const DetailsEdit = ({
   });
 
   const onUpdateSubmit = (data, editType) => {
+    // Flat chip list with col_type for the BE dispatcher; observation_type
+    // (incl. node_type alias) still rides as a sibling key.
     const attributeFilters = extractAttributeFilters(data?.filters);
 
-    // Generic system filter aggregation — every non-attribute filter
-    // row contributes its value to a BE key named after `f.property`.
-    // Mirrors the create-side getNewTaskFilters (validation.js) so
-    // span_kind, latency_ms, total_tokens, etc. all round-trip without
-    // each one being hard-coded.
+    // Task system filter aggregation. The task filter UI only exposes
+    // backend-supported system fields plus span attributes, so unsupported
+    // TraceFilterPanel fields cannot be saved and silently ignored.
     const systemFilters = {};
     (data.filters || []).forEach((f) => {
       if (!f?.property || f.property === "attributes") return;
+      const apiKey = getTaskFilterApiKey(f.property);
       const v = f?.filterConfig?.filterValue;
-      if (v === undefined || v === null || v === "") return;
-      if (systemFilters[f.property]) {
-        systemFilters[f.property].push(v);
+      const values = Array.isArray(v)
+        ? v
+        : v !== undefined && v !== null && v !== ""
+          ? [v]
+          : [];
+      if (!values.length) return;
+      if (systemFilters[apiKey]) {
+        systemFilters[apiKey].push(...values);
       } else {
-        systemFilters[f.property] = [v];
+        systemFilters[apiKey] = [...values];
       }
     });
 
@@ -278,7 +284,7 @@ const DetailsEdit = ({
         ],
         ...systemFilters,
         ...(attributeFilters && attributeFilters?.length > 0
-          ? { span_attributes_filters: attributeFilters }
+          ? { filters: attributeFilters }
           : {}),
       },
       project_id: data.project,

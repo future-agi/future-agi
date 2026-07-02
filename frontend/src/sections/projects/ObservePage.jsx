@@ -1,4 +1,10 @@
-import React, { useMemo, useCallback, useEffect, useRef, startTransition } from "react";
+import React, {
+  useMemo,
+  useCallback,
+  useEffect,
+  useRef,
+  startTransition,
+} from "react";
 import PropTypes from "prop-types";
 import { Box, Paper, useTheme, CircularProgress, Alert } from "@mui/material";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
@@ -12,14 +18,10 @@ import {
   ViewConfigModal,
   TabContextMenu,
 } from "src/components/observe-tabs";
-import ObserveTabs from "./ObserveTabs";
 import { useTabStoreShallow } from "./LLMTracing/tabStore";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useQueryClient } from "@tanstack/react-query";
-import {
-  useGetSavedViews,
-  SAVED_VIEWS_KEY,
-} from "src/api/project/saved-views";
+import { useGetSavedViews, SAVED_VIEWS_KEY } from "src/api/project/saved-views";
 import ReplayDrawer from "./ReplayDrawer/ReplayDrawer";
 import {
   resetReplaySessionsStore,
@@ -53,9 +55,6 @@ const TabErrorBoundary = ({ children }) => {
 TabErrorBoundary.propTypes = {
   children: PropTypes.node.isRequired,
 };
-
-// Routes that use the new tab system (ObserveTabBar)
-const TAB_SYSTEM_ROUTES = ["llm-tracing", "sessions", "users"];
 
 // Map observe tab keys to route + URL params
 const TAB_TO_ROUTE = {
@@ -94,13 +93,10 @@ const ObservePage = React.memo(() => {
   // Active tab for the new tab system
   const [activeTab, setActiveTab] = useUrlState("tab", "traces");
 
-  // Determine if current route uses the new tab system
   const currentRouteSegment = useMemo(() => {
     const segments = location.pathname.split("/").filter(Boolean);
     return segments[segments.length - 1] || "llm-tracing";
   }, [location.pathname]);
-
-  const isTabSystemRoute = TAB_SYSTEM_ROUTES.includes(currentRouteSegment);
 
   // Derive active tab from URL on initial load / route changes
   useEffect(() => {
@@ -143,8 +139,7 @@ const ObservePage = React.memo(() => {
       return;
     }
     if (lastHydratedTabRef.current === tab) return;
-    const customViews =
-      savedViewsData?.customViews ?? savedViewsData?.custom_views ?? [];
+    const customViews = savedViewsData?.custom_views ?? [];
     if (!customViews.length) return;
     const view = customViews.find((v) => `view-${v.id}` === tab);
     if (!view?.config) return;
@@ -168,12 +163,10 @@ const ObservePage = React.memo(() => {
       if (tabKey.startsWith("view-")) {
         const viewId = tabKey.replace("view-", "");
         const cached = queryClient.getQueryData([SAVED_VIEWS_KEY, observeId]);
-        const cachedResult = cached?.data?.result;
-        const customViews =
-          cachedResult?.customViews ?? cachedResult?.custom_views ?? [];
+        const customViews = cached?.custom_views ?? [];
         const view = customViews.find((v) => v.id === viewId);
         activeConfig = view?.config || null;
-        viewTabType = view?.tab_type ?? view?.tabType ?? "traces";
+        viewTabType = view?.tab_type ?? "traces";
       }
 
       // Apply effects (activeViewConfig → apply effect → many setters) aren't
@@ -209,10 +202,7 @@ const ObservePage = React.memo(() => {
         } else if (isSessionsView) {
           // Sessions uses sessionFilter / sessionDateFilter URL keys.
           if (activeConfig?.filters) {
-            params.set(
-              "sessionFilter",
-              JSON.stringify(activeConfig.filters),
-            );
+            params.set("sessionFilter", JSON.stringify(activeConfig.filters));
           }
           if (activeConfig?.display?.dateFilter) {
             params.set(
@@ -248,16 +238,16 @@ const ObservePage = React.memo(() => {
               JSON.stringify(activeConfig.display.dateFilter),
             );
           }
-          if (activeConfig?.compareFilters) {
+          if (activeConfig?.compare_filters) {
             params.set(
               compareFilterKey,
-              JSON.stringify(activeConfig.compareFilters),
+              JSON.stringify(activeConfig.compare_filters),
             );
           }
-          if (activeConfig?.compareDateFilter) {
+          if (activeConfig?.compare_date_filter) {
             params.set(
               compareDateKey,
-              JSON.stringify(activeConfig.compareDateFilter),
+              JSON.stringify(activeConfig.compare_date_filter),
             );
           }
         }
@@ -277,52 +267,6 @@ const ObservePage = React.memo(() => {
       }
     },
     [observeId, navigate, queryClient, setActiveViewConfig],
-  );
-
-  // Legacy tabs for non-tab-system routes (sessions, evals, charts, etc.)
-  const legacyTabs = useMemo(
-    () => [
-      {
-        id: "llm-tracing",
-        title: "LLM Tracing",
-        path: `/dashboard/observe/${observeId}/llm-tracing`,
-        show: true,
-      },
-      {
-        id: "evals-tasks",
-        title: "Evals & Tasks",
-        path: `/dashboard/observe/${observeId}/evals-tasks`,
-        show: true,
-      },
-      {
-        id: "charts",
-        title: "Charts",
-        path: `/dashboard/observe/${observeId}/charts`,
-        show: true,
-      },
-      {
-        id: "alerts",
-        title: "Alerts",
-        path: `/dashboard/observe/${observeId}/alerts`,
-        show: true,
-      },
-    ],
-    [observeId],
-  );
-
-  const currentLegacyTab = useMemo(() => {
-    const segments = location.pathname.split("/").filter(Boolean);
-    return legacyTabs.find((tab) => segments.includes(tab.id)) || legacyTabs[0];
-  }, [location.pathname, legacyTabs]);
-
-  const handleLegacyTabChange = useCallback(
-    (event, newTabId) => {
-      const selectedTab = legacyTabs.find((tab) => tab.id === newTabId);
-      if (selectedTab && selectedTab.path !== location.pathname) {
-        navigate(selectedTab.path, { replace: true });
-      }
-    },
-    [legacyTabs, location.pathname, navigate],
   );
 
   // Memoized styles
@@ -407,21 +351,12 @@ const ObservePage = React.memo(() => {
 
       {/* Tabs Section */}
       <Paper sx={tabsPaperStyles}>
-        {isTabSystemRoute ? (
-          <ObserveTabBar
-            projectId={observeId}
-            activeTab={activeTab}
-            onTabChange={handleTabChange}
-            projectSource={projectDetail?.source}
-          />
-        ) : (
-          <ObserveTabs
-            tabs={legacyTabs}
-            currentTab={currentLegacyTab}
-            onTabChange={handleLegacyTabChange}
-            observeId={observeId}
-          />
-        )}
+        <ObserveTabBar
+          projectId={observeId}
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          projectSource={projectDetail?.source}
+        />
       </Paper>
 
       {/* Filter chips slot — FilterChips portals here */}
@@ -438,7 +373,7 @@ const ObservePage = React.memo(() => {
       </Box>
       <ReplayDrawer
         gridApi={headerConfig?.gridApi}
-        currentTab={currentLegacyTab}
+        activeRoute={currentRouteSegment}
         projectDetail={projectDetail}
       />
 
@@ -461,7 +396,7 @@ const ObservePage = React.memo(() => {
         <TabContextMenu
           anchorPosition={contextMenuAnchor}
           view={
-            (savedViewsData?.customViews ?? savedViewsData?.custom_views)?.find(
+            savedViewsData?.custom_views?.find(
               (v) => v.id === contextMenuAnchor.viewId,
             ) ?? null
           }

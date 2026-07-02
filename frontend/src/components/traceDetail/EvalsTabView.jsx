@@ -74,6 +74,19 @@ export function collectAllEvalsFromEntry(entry) {
   return rows;
 }
 
+// `score >= 50` matches the summary's totalPass threshold. Some evals
+// (label-based pass/fail) may come through with no numeric score — fall back
+// to the textual label so we still hide Fix on those. Anything else (null
+// score, arbitrary label) is treated as not-passed and keeps the button.
+const isPassedEval = (ev) => {
+  if (ev?.score != null) return ev.score >= 50;
+  const rawLabel = (ev?.score_label || "").trim();
+  const numericLabel = parseFloat(rawLabel.replace(/%$/, ""));
+  if (Number.isFinite(numericLabel)) return numericLabel >= 50;
+  const label = rawLabel.toLowerCase();
+  return label === "pass" || label === "passed" || label === "true";
+};
+
 /** Score → colored background + text — traffic-light pattern */
 export function scoreColor(score) {
   if (score == null)
@@ -98,28 +111,52 @@ export function scoreColor(score) {
 }
 
 /** Single eval row with collapsible explanation + optional "View span" */
-const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => {
+const EvalTableRow = ({
+  ev,
+  onSelectSpan,
+  showSpanColumn,
+  onFixWithFalcon,
+}) => {
   const [expanded, setExpanded] = useState(false);
-  const hasError = ev?.error === true;
-  const sc = hasError
+  const isSkipped = ev?.skipped === true;
+  const hasError = ev?.error === true && !isSkipped;
+  const sc = isSkipped
     ? {
-        bg: (theme) => alpha(theme.palette.error.main, 0.08),
-        text: "error.main",
+        bg: (theme) => alpha(theme.palette.text.disabled, 0.08),
+        text: "text.disabled",
       }
-    : scoreColor(ev.score);
+    : hasError
+      ? {
+          bg: (theme) => alpha(theme.palette.error.main, 0.08),
+          text: "error.main",
+        }
+      : scoreColor(ev.score);
   const evalName = ev.eval_name || ev.eval_config_id || "Eval";
   const explanation = ev.explanation || ev.eval_explanation;
-  const scoreLabel = hasError
-    ? "Error"
-    : ev.score_label != null
-      ? ev.score_label
-      : ev.score != null
-        ? `${ev.score}%`
-        : "—";
+  // Pass/Fail evals
+  const isPassFail =
+    ev.output_type === "pass_fail" || ev.output_type === "Pass/Fail";
+  const passFailLabel =
+    isPassFail && typeof ev.result === "boolean"
+      ? ev.result
+        ? "Pass"
+        : "Fail"
+      : null;
+
+  const scoreLabel = isSkipped
+    ? "Skipped"
+    : hasError
+      ? "Error"
+      : (ev.score_label ??
+        passFailLabel ??
+        (ev.score != null ? `${ev.score}%` : "—"));
 
   // Error localization visibility — surfaced for every eval that has
   // enough identifiers to drive either the cell-based or trace-based
   // flow. Rows with just an explanation still expand without it.
+  // Composite evals have no localizable input of their own — skip the whole
+  // localization flow before computing any of its identifiers.
+  const isComposite = ev?.template_type === "composite";
   const initialAnalysis = ev.error_analysis || ev.errorAnalysis || null;
   const cellId = ev.cell_id || ev.cellId;
   const observationSpanId =
@@ -134,10 +171,11 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
   const initialStatus =
     ev.error_localizer_status || ev.errorLocalizerStatus || null;
   const hasErrorLocalization =
-    !!initialAnalysis ||
-    !!cellId ||
-    !!initialStatus ||
-    !!(observationSpanId && customEvalConfigId);
+    !isComposite &&
+    (!!initialAnalysis ||
+      !!cellId ||
+      !!initialStatus ||
+      !!(observationSpanId && customEvalConfigId));
   const canExpand = !!explanation || hasErrorLocalization;
 
   return (
@@ -327,43 +365,43 @@ const EvalTableRow = ({ ev, onSelectSpan, showSpanColumn, onFixWithFalcon }) => 
             />
           )}
 
-          {/* Fix with Falcon — always shown whenever the row is expanded,
-              regardless of whether there's an explanation or error
-              localization data, so users can always escalate a failing
-              eval for a proposed fix. */}
-          <Box
-            onClick={(e) => {
-              e.stopPropagation();
-              if (onFixWithFalcon) {
-                onFixWithFalcon({ level: "eval", ev });
-              } else {
-                defaultFixNotice();
-              }
-            }}
-            sx={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 0.5,
-              px: 0.75,
-              py: 0.25,
-              alignSelf: "flex-start",
-              border: "1px solid",
-              borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
-              borderRadius: "4px",
-              cursor: "pointer",
-              bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06),
-              "&:hover": {
-                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
-              },
-            }}
-          >
-            <Iconify icon="mdi:creation" width={12} color="primary.main" />
-            <Typography
-              sx={{ fontSize: 10, fontWeight: 600, color: "primary.main" }}
+          {/* Fix with Falcon — hidden for passed evals (nothing to fix);
+              shown for failed and unscored rows whenever expanded. */}
+          {!isPassedEval(ev) && (
+            <Box
+              onClick={(e) => {
+                e.stopPropagation();
+                if (onFixWithFalcon) {
+                  onFixWithFalcon({ level: "eval", ev });
+                } else {
+                  defaultFixNotice();
+                }
+              }}
+              sx={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 0.5,
+                px: 0.75,
+                py: 0.25,
+                alignSelf: "flex-start",
+                border: "1px solid",
+                borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
+                borderRadius: "4px",
+                cursor: "pointer",
+                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06),
+                "&:hover": {
+                  bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
+                },
+              }}
             >
-              Fix with Falcon
-            </Typography>
-          </Box>
+              <Iconify icon="mdi:creation" width={12} color="primary.main" />
+              <Typography
+                sx={{ fontSize: 10, fontWeight: 600, color: "primary.main" }}
+              >
+                Fix with Falcon
+              </Typography>
+            </Box>
+          )}
         </Box>
       )}
     </>
@@ -497,46 +535,51 @@ const EvalsTabView = ({
           </Box>
         </Box>
 
-        <Box
-          onClick={() => {
-            if (onFixWithFalcon) {
-              const failing = list.filter(
-                (e) => e.score != null && e.score < 50,
-              );
-              onFixWithFalcon({
-                level: "span",
-                failingEvals: failing,
-                allEvals: list,
-              });
-            } else {
-              defaultFixNotice();
-            }
-          }}
-          sx={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 0.5,
-            mt: 1,
-            px: 1,
-            py: 0.35,
-            border: "1px solid",
-            borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
-            borderRadius: "6px",
-            cursor: "pointer",
-            bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06),
-            "&:hover": {
-              bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
-              borderColor: (theme) => alpha(theme.palette.primary.main, 0.5),
-            },
-          }}
-        >
-          <Iconify icon="mdi:creation" width={14} color="primary.main" />
-          <Typography
-            sx={{ fontSize: 11, fontWeight: 600, color: "primary.main" }}
+        {/* Summary-bar Fix with Falcon — hidden when every eval passed
+            (nothing failing to escalate). Uses isPassedEval so unscored /
+            label-based non-passes also keep the button visible (e.g. an
+            eval with score=null and no Pass label still shows up as
+            non-passing in the "X/N passed" text). */}
+        {list.some((e) => !isPassedEval(e)) && (
+          <Box
+            onClick={() => {
+              if (onFixWithFalcon) {
+                const failing = list.filter((e) => !isPassedEval(e));
+                onFixWithFalcon({
+                  level: "span",
+                  failingEvals: failing,
+                  allEvals: list,
+                });
+              } else {
+                defaultFixNotice();
+              }
+            }}
+            sx={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 0.5,
+              mt: 1,
+              px: 1,
+              py: 0.35,
+              border: "1px solid",
+              borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
+              borderRadius: "6px",
+              cursor: "pointer",
+              bgcolor: (theme) => alpha(theme.palette.primary.main, 0.06),
+              "&:hover": {
+                bgcolor: (theme) => alpha(theme.palette.primary.main, 0.12),
+                borderColor: (theme) => alpha(theme.palette.primary.main, 0.5),
+              },
+            }}
           >
-            Fix with Falcon
-          </Typography>
-        </Box>
+            <Iconify icon="mdi:creation" width={14} color="primary.main" />
+            <Typography
+              sx={{ fontSize: 11, fontWeight: 600, color: "primary.main" }}
+            >
+              Fix with Falcon
+            </Typography>
+          </Box>
+        )}
       </Box>
 
       {/* Search + Add Evals */}

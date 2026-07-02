@@ -49,8 +49,9 @@ export default function ExecutionDetailView({ graphId, executionId }) {
 
     const newNodeStatuses = {};
     for (const node of executionData.nodes) {
-      const currentStatus = node.nodeExecution?.status?.toLowerCase();
-      const nodeExecId = node.nodeExecution?.id;
+      const nodeExecution = node.nodeExecution || node.node_execution;
+      const currentStatus = nodeExecution?.status?.toLowerCase();
+      const nodeExecId = nodeExecution?.id;
       const prevNodeStatus = nodeStatusesRef.current[node.id];
 
       if (nodeExecId && currentStatus && currentStatus !== prevNodeStatus) {
@@ -121,7 +122,7 @@ export default function ExecutionDetailView({ graphId, executionId }) {
           justifyContent: "center",
         }}
       >
-        <Typography typography="s2" color="text.disabled">
+        <Typography typography="s2" color="text.secondary">
           Select an execution to view details
         </Typography>
       </Box>

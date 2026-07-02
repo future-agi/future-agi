@@ -28,7 +28,7 @@ const STATUS_COLORS = {
 };
 
 const WebhookEventLog = ({ webhookId }) => {
-  const params = webhookId ? { webhook: webhookId } : {};
+  const params = webhookId ? { webhook_id: webhookId } : {};
   const { data: events, isLoading, error } = useWebhookEvents(params);
   const retryMutation = useRetryWebhookEvent();
 
@@ -105,17 +105,17 @@ const WebhookEventLog = ({ webhookId }) => {
               </TableCell>
               <TableCell>
                 <Typography variant="body2" color="text.secondary">
-                  {evt.attempts}/{evt.maxAttempts}
+                  {evt.attempts}/{evt.max_attempts ?? evt.maxAttempts}
                 </Typography>
               </TableCell>
               <TableCell>
                 <Typography variant="body2" color="text.secondary">
-                  {evt.lastResponseCode || "\u2014"}
+                  {evt.last_response_code ?? evt.lastResponseCode ?? "\u2014"}
                 </Typography>
               </TableCell>
               <TableCell>
                 <Typography variant="body2" color="text.secondary">
-                  {formatDate(evt.lastAttemptAt)}
+                  {formatDate(evt.last_attempt_at ?? evt.lastAttemptAt)}
                 </Typography>
               </TableCell>
               <TableCell>
@@ -124,9 +124,9 @@ const WebhookEventLog = ({ webhookId }) => {
                   color="error.main"
                   noWrap
                   sx={{ maxWidth: 200 }}
-                  title={evt.lastError}
+                  title={evt.last_error ?? evt.lastError}
                 >
-                  {evt.lastError || "\u2014"}
+                  {evt.last_error || evt.lastError || "\u2014"}
                 </Typography>
               </TableCell>
               <TableCell align="right">

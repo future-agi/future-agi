@@ -338,7 +338,6 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => {
   // so users can drill into nested keys (e.g. `prompt.messages.0.content`)
   // instead of seeing "[object Object]". Strings, numbers, booleans, and
   // null still render as plain text.
-  
 
   const isResultRow =
     typeof label === "string" && label.trim().toLowerCase() === "result";
@@ -624,7 +623,6 @@ const ErrorDetails = ({ rawError }) => {
 ErrorDetails.propTypes = {
   rawError: PropTypes.string,
 };
-
 
 PartialInputWarningDetails.propTypes = {
   warnings: PropTypes.arrayOf(PropTypes.object),
@@ -1226,7 +1224,7 @@ const TaskUsageTab = ({ taskId }) => {
               height. Without it the DataGrid renders every row at
               natural height and the table grows past the viewport,
               hiding the pagination footer and breaking internal scroll. */}
-          <Box sx={{ flex: 1, minHeight: 0, display: "flex" }}>
+          <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex" }}>
             <DataTable
               columns={columns}
               data={visibleLogs}

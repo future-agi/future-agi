@@ -44,7 +44,7 @@ export default function InviteAcceptedPage() {
     const validateToken = async () => {
       try {
         await axiosInstance.get(
-          `${endpoints.invite.accept_invitation}${uuid}/${token}/`,
+          endpoints.invite.accept_invitation(uuid, token),
         );
         if (!cancelled) {
           setTokenStatus("valid");
@@ -92,13 +92,10 @@ export default function InviteAcceptedPage() {
 
   const { mutate: setNewPassword, isPending } = useMutation({
     mutationFn: (body) =>
-      axiosInstance.post(
-        `${endpoints.invite.accept_invitation}${uuid}/${token}/`,
-        {
-          new_password: body.newPassword,
-          repeat_password: body.repeatPassword,
-        },
-      ),
+      axiosInstance.post(endpoints.invite.accept_invitation(uuid, token), {
+        new_password: body.newPassword,
+        repeat_password: body.repeatPassword,
+      }),
     onSuccess: async (response) => {
       try {
         await login(response);

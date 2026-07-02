@@ -83,10 +83,12 @@ const LabelPopperContent = ({
                   justifyContent: "space-between",
                   alignItems: "center",
                   backgroundColor: isLabelSelected(label.id)
-                    ? "background.default"
+                    ? "background.neutral"
                     : "transparent",
                   "&:hover": {
-                    backgroundColor: "background.default",
+                    backgroundColor: isLabelSelected(label.id)
+                      ? "background.neutral"
+                      : "action.hover",
                   },
                   borderRadius: "6px",
                   mb: 0.5,

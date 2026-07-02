@@ -1,0 +1,79 @@
+eval_id: 133
+name: customer_agent_task_completion
+description: Evaluates whether the agent successfully completes the task assigned to it based on the customer-agent interaction,
+  including execution finality, outcome delivery, and correct handling of blockers or policy boundaries.
+criteria: "You are evaluating whether the agent successfully completes the task assigned to it based on the customer-agent\
+  \ interaction.\n\n## Criteria\n1. Task execution and finality: The agent carries out the necessary actions to fully resolve\
+  \ the primary objective or core request of the customer.\n2. Explicit confirmation or outcome delivery: The agent clearly\
+  \ communicates the final result, confirmation, or status of the task so that the customer is aware it has been handled.\n\
+  3. Handling blockers or policy boundaries: The agent correctly navigates system constraints, accurately applying company\
+  \ policies or executing valid workarounds to reach the closest possible resolution.\n\n## Anti-bias Rules\n- If the customer\
+  \ abruptly terminates the conversation or refuses to provide mandatory information (e.g., account verification), do not penalize\
+  \ the agent for non-completion.\n- An accurate, policy-compliant refusal (e.g., correctly denying a refund because it violates\
+  \ terms of service) counts as a successful task completion, as the inquiry was definitively resolved according to business\
+  \ logic.\n- If the task requires back-end processing that takes hours or days to complete, the agent fulfills the criteria\
+  \ by successfully initiating the workflow and setting clear timeline expectations.\n\n## Scoring\n- Return PASS if the agent\
+  \ completely resolves the customer's request, delivers a clear and definitive outcome (including valid policy-based refusals),\
+  \ and ensures all necessary execution steps within the scope of the chat are completed.\n- Return FAIL if the agent leaves\
+  \ the request pending, promises an action but fails to execute it, abandons the interaction mid-process, or incorrectly states\
+  \ a task cannot be done due to agent error.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n<conversation>{{conversation}}</conversation>"
+eval_tags:
+- Agents
+- Conversation
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+choices:
+- Passed
+- Failed
+output_type_normalized: pass_fail
+pass_threshold: 0.5
+config:
+  required_keys:
+  - agent_prompt
+  - conversation
+  output: Pass/Fail
+  eval_type_id: AgentEvaluator
+  config: {}
+  config_params_desc:
+    agent_prompt: The agent's system prompt defining its task and behavior
+    conversation: The conversation to be evaluated
+  param_modalities:
+    agent_prompt:
+    - TEXT
+    - JSON
+    - LIST
+    - NUMBER
+    - BOOLEAN
+    - INTEGER
+    - FLOAT
+    - ARRAY
+    - DATETIME
+    conversation:
+    - TEXT
+    - AUDIO
+    - JSON
+    - LIST
+    - NUMBER
+    - BOOLEAN
+    - INTEGER
+    - FLOAT
+    - ARRAY
+    - DATETIME
+  rule_prompt: "You are evaluating whether the agent successfully completes the task assigned to it based on the customer-agent\
+    \ interaction.\n\n## Criteria\n1. Task execution and finality: The agent carries out the necessary actions to fully resolve\
+    \ the primary objective or core request of the customer.\n2. Explicit confirmation or outcome delivery: The agent clearly\
+    \ communicates the final result, confirmation, or status of the task so that the customer is aware it has been handled.\n\
+    3. Handling blockers or policy boundaries: The agent correctly navigates system constraints, accurately applying company\
+    \ policies or executing valid workarounds to reach the closest possible resolution.\n\n## Anti-bias Rules\n- If the customer\
+    \ abruptly terminates the conversation or refuses to provide mandatory information (e.g., account verification), do not\
+    \ penalize the agent for non-completion.\n- An accurate, policy-compliant refusal (e.g., correctly denying a refund because\
+    \ it violates terms of service) counts as a successful task completion, as the inquiry was definitively resolved according\
+    \ to business logic.\n- If the task requires back-end processing that takes hours or days to complete, the agent fulfills\
+    \ the criteria by successfully initiating the workflow and setting clear timeline expectations.\n\n## Scoring\n- Return\
+    \ PASS if the agent completely resolves the customer's request, delivers a clear and definitive outcome (including valid\
+    \ policy-based refusals), and ensures all necessary execution steps within the scope of the chat are completed.\n- Return\
+    \ FAIL if the agent leaves the request pending, promises an action but fails to execute it, abandons the interaction mid-process,\
+    \ or incorrectly states a task cannot be done due to agent error.\n\n## Input\n<agent_prompt>{{agent_prompt}}</agent_prompt>\n\
+    <conversation>{{conversation}}</conversation>"

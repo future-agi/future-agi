@@ -58,8 +58,10 @@ const CustomViewTab = ({
 
   return (
     <CustomTooltip
-      show={!!shortcut}
-      title={`${view.name} (${shortcut})`}
+      show
+      title={
+        !isActive && shortcut ? `${view.name} · Press ${shortcut}` : view.name
+      }
       placement="bottom"
       arrow
       size="small"
@@ -118,6 +120,9 @@ const CustomViewTab = ({
               fontFamily: "'IBM Plex Sans', sans-serif",
               color: "text.primary",
               whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              maxWidth: 200,
               lineHeight: "20px",
             }}
           >

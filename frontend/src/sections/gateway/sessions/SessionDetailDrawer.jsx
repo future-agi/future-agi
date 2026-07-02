@@ -186,37 +186,41 @@ const SessionDetailDrawer = ({ sessionId, open, onClose }) => {
                     </TableRow>
                   </TableHead>
                   <TableBody>
-                    {requests.map((req) => (
-                      <TableRow key={req.id} hover>
-                        <TableCell>
-                          <Typography variant="body2" fontWeight={500}>
-                            {req.model || "\u2014"}
-                          </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Chip
-                            label={req.status_code || "\u2014"}
-                            color={req.isError ? "error" : "success"}
-                            size="small"
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="body2" color="text.secondary">
-                            {formatMs(req.latencyMs)}
-                          </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="body2" color="text.secondary">
-                            {formatTokens(req.total_tokens)}
-                          </Typography>
-                        </TableCell>
-                        <TableCell>
-                          <Typography variant="body2" color="text.secondary">
-                            {formatDate(req.startedAt)}
-                          </Typography>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {requests.map((req) => {
+                      const isError =
+                        req.is_error ?? Number(req.status_code) >= 400;
+                      return (
+                        <TableRow key={req.id} hover>
+                          <TableCell>
+                            <Typography variant="body2" fontWeight={500}>
+                              {req.model || "\u2014"}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              label={req.status_code || "\u2014"}
+                              color={isError ? "error" : "success"}
+                              size="small"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" color="text.secondary">
+                              {formatMs(req.latency_ms)}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" color="text.secondary">
+                              {formatTokens(req.total_tokens)}
+                            </Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="body2" color="text.secondary">
+                              {formatDate(req.started_at)}
+                            </Typography>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
                   </TableBody>
                 </Table>
               </TableContainer>

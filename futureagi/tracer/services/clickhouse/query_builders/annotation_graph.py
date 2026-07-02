@@ -14,8 +14,8 @@ Supports annotation output types:
 - **text:** ``count()`` per time bucket (count of annotations).
 """
 
-from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple, Union
+from datetime import datetime, timedelta
+from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.expressions import (
@@ -52,11 +52,13 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
         project_id: str,
         annotation_label_id: str,
         annotation_name: str = "",
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
         interval: str = "hour",
         output_type: str = "float",
         value: Any = None,
+        filters: list[dict] | None = None,
+        observe_type: str = "trace",
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
@@ -65,13 +67,20 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
         self.interval = interval
         self.output_type = output_type
         self.value = value
+        self.filters = filters or []
+        self.observe_type = observe_type
 
-        # Default time range
+        # Graph endpoints historically default to a compact 7-day window.
+        # BaseQueryBuilder's list-view fallback is intentionally much wider,
+        # so only use parse_time_range here when the caller supplied filters.
         if start_date is None or end_date is None:
-            from datetime import timedelta
-
-            self.end_date = end_date or datetime.utcnow()
-            self.start_date = start_date or (self.end_date - timedelta(days=7))
+            if self.filters:
+                parsed_start, parsed_end = self.parse_time_range(self.filters)
+            else:
+                parsed_end = datetime.utcnow()
+                parsed_start = parsed_end - timedelta(days=7)
+            self.start_date = start_date or parsed_start
+            self.end_date = end_date or parsed_end
         else:
             self.start_date = start_date
             self.end_date = end_date
@@ -84,7 +93,7 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
     # Public API
     # ------------------------------------------------------------------
 
-    def build(self) -> Tuple[str, Dict[str, Any]]:
+    def build(self) -> tuple[str, dict[str, Any]]:
         """Build the annotation graph query."""
         if self.output_type == "float":
             return self._build_float_query()
@@ -100,9 +109,9 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
 
     def format_result(
         self,
-        rows: List[Tuple],
-        columns: List[str],
-    ) -> Dict[str, Any]:
+        rows: list[tuple],
+        columns: list[str],
+    ) -> dict[str, Any]:
         """Format the query results into the standard annotation graph response.
 
         Returns:
@@ -137,7 +146,52 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
     # Query builders per output type
     # ------------------------------------------------------------------
 
-    def _build_float_query(self) -> Tuple[str, Dict[str, Any]]:
+    def _filtered_spans_subquery(self, select_expr: str) -> str:
+        """Return the row set that defines the currently visible Observe rows."""
+        # Lazy import: a module-level import would form a v1↔v2 circular import.
+        from tracer.services.clickhouse.v2.query_builders.filters import (
+            ClickHouseFilterBuilderV2 as ClickHouseFilterBuilder,
+        )
+
+        query_mode = (
+            ClickHouseFilterBuilder.QUERY_MODE_SPAN
+            if self.observe_type == "span"
+            else ClickHouseFilterBuilder.QUERY_MODE_TRACE
+        )
+        fb = ClickHouseFilterBuilder(
+            table="spans",
+            project_id=self.project_id,
+            query_mode=query_mode,
+        )
+        extra_where, extra_params = fb.translate(self.filters)
+        self.params.update(extra_params)
+        extra_clause = f"AND {extra_where}" if extra_where else ""
+        return f"""
+            SELECT DISTINCT {select_expr}
+            FROM spans
+            WHERE project_id = %(project_id)s
+              AND is_deleted = 0
+              AND start_time >= %(start_date)s
+              AND start_time < %(end_date)s
+              {extra_clause}
+        """
+
+    def _entity_scope_clause(self) -> str:
+        """Scope annotation scores to the same trace/span set as the grid."""
+        if self.observe_type == "span":
+            span_subquery = self._filtered_spans_subquery("toString(id)")
+            return f"AND observation_span_id IN ({span_subquery})"
+
+        trace_subquery = self._filtered_spans_subquery("trace_id")
+        span_subquery = self._filtered_spans_subquery("toString(id)")
+        return f"""
+          AND (
+            (isNotNull(trace_id) AND toString(trace_id) IN ({trace_subquery}))
+            OR observation_span_id IN ({span_subquery})
+          )
+        """
+
+    def _build_float_query(self) -> tuple[str, dict[str, Any]]:
         """Average numeric/star annotation value per time bucket."""
         bucket_fn = self.time_bucket_expr(self.interval)
         # Use the nullable extractor so rows whose JSON payload is missing
@@ -149,17 +203,18 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
             {bucket_fn}(created_at) AS time_bucket,
             avg({nullable_expr}) AS value
         FROM {self.TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
+        WHERE is_deleted = 0
           AND deleted = 0
           AND label_id = toUUID(%(label_id)s)
           AND created_at >= %(start_date)s
           AND created_at < %(end_date)s
+          {self._entity_scope_clause()}
         GROUP BY time_bucket
         ORDER BY time_bucket
         """
         return query, self.params
 
-    def _build_bool_query(self) -> Tuple[str, Dict[str, Any]]:
+    def _build_bool_query(self) -> tuple[str, dict[str, Any]]:
         """Percentage of annotations matching the requested bool value."""
         bucket_fn = self.time_bucket_expr(self.interval)
 
@@ -180,17 +235,18 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
             {bucket_fn}(created_at) AS time_bucket,
             avg(CASE WHEN JSONExtractString(value, 'value') = %(bool_match)s THEN 100.0 ELSE 0.0 END) AS value
         FROM {self.TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
+        WHERE is_deleted = 0
           AND deleted = 0
           AND label_id = toUUID(%(label_id)s)
           AND created_at >= %(start_date)s
           AND created_at < %(end_date)s
+          {self._entity_scope_clause()}
         GROUP BY time_bucket
         ORDER BY time_bucket
         """
         return query, self.params
 
-    def _build_str_list_query(self) -> Tuple[str, Dict[str, Any]]:
+    def _build_str_list_query(self) -> tuple[str, dict[str, Any]]:
         """Percentage of annotations containing the requested choice."""
         bucket_fn = self.time_bucket_expr(self.interval)
 
@@ -213,17 +269,18 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
                 END
             ) AS value
         FROM {self.TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
+        WHERE is_deleted = 0
           AND deleted = 0
           AND label_id = toUUID(%(label_id)s)
           AND created_at >= %(start_date)s
           AND created_at < %(end_date)s
+          {self._entity_scope_clause()}
         GROUP BY time_bucket
         ORDER BY time_bucket
         """
         return query, self.params
 
-    def _build_text_query(self) -> Tuple[str, Dict[str, Any]]:
+    def _build_text_query(self) -> tuple[str, dict[str, Any]]:
         """Count of annotations per time bucket."""
         bucket_fn = self.time_bucket_expr(self.interval)
         query = f"""
@@ -231,11 +288,12 @@ class AnnotationGraphQueryBuilder(BaseQueryBuilder):
             {bucket_fn}(created_at) AS time_bucket,
             count() AS value
         FROM {self.TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
+        WHERE is_deleted = 0
           AND deleted = 0
           AND label_id = toUUID(%(label_id)s)
           AND created_at >= %(start_date)s
           AND created_at < %(end_date)s
+          {self._entity_scope_clause()}
         GROUP BY time_bucket
         ORDER BY time_bucket
         """

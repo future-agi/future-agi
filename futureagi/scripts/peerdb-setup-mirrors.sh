@@ -76,10 +76,25 @@ CREATE PEER IF NOT EXISTS ch_dest FROM CLICKHOUSE WITH (
 echo ""
 echo "==> Creating CDC mirrors..."
 
+# CH25 cutover: skip the tracer_observation_span connector when the
+# legacy CDC chain is retired (default for dev/local docker compose,
+# opt-in for prod via env var). fi-collector is the canonical writer
+# for `spans` post-cutover. See docs/CH25_MIGRATION.md.
+DROP_LEGACY_CDC_CHAIN="${CH25_DROP_LEGACY_CDC_CHAIN:-false}"
+case "${DROP_LEGACY_CDC_CHAIN,,}" in
+    1|true|yes|on) SKIP_OBS_SPAN_MIRROR=1 ;;
+    *)             SKIP_OBS_SPAN_MIRROR=0 ;;
+esac
+
 # Fact tables: high-frequency writes, need initial snapshot, 10s sync
-FACT_TABLES=(
-    # Trace analytics
-    "public.tracer_observation_span:tracer_observation_span"
+FACT_TABLES=()
+if [[ "${SKIP_OBS_SPAN_MIRROR}" -eq 0 ]]; then
+    FACT_TABLES+=("public.tracer_observation_span:tracer_observation_span")
+else
+    echo "==> CH25_DROP_LEGACY_CDC_CHAIN set — skipping tracer_observation_span mirror"
+fi
+FACT_TABLES+=(
+    # Trace analytics (kept — actively used by `trace_dict`, eval reads, sessions)
     "public.tracer_trace:tracer_trace"
     "public.tracer_eval_logger:tracer_eval_logger"
     "public.trace_annotation:trace_annotation"

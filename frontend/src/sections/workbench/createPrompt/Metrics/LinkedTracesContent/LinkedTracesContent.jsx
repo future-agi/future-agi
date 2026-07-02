@@ -113,39 +113,47 @@ const LinkedTracesContent = () => {
     const bottomRowObj = {};
 
     for (const eachCol of columns) {
-      if (eachCol?.groupBy) {
-        if (!grouping[eachCol?.groupBy]) {
-          grouping[eachCol?.groupBy] = [eachCol];
+      if (eachCol?.group_by) {
+        if (!grouping[eachCol?.group_by]) {
+          grouping[eachCol?.group_by] = [eachCol];
         } else {
-          grouping[eachCol?.groupBy].push(eachCol);
+          grouping[eachCol?.group_by].push(eachCol);
         }
       } else {
         grouping[getRandomId()] = [eachCol];
       }
     }
 
-    const columnDefsResult = Object.entries(grouping).map(([group, cols]) => {
-      if (!AllowedGroups.includes(group) && cols.length === 1) {
-        const c = cols[0];
-        bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-        return getMetricsListColumnDefs(c);
-      } else {
-        return {
-          headerName: group,
-          children: cols.map((c) => {
-            bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
-            const colDef = getMetricsListColumnDefs(c);
-            return {
-              ...colDef,
-              minWidth: 200,
-              flex: 1,
-              cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
-            };
-          }),
-          headerGroupComponent: CustomTraceGroupHeaderRenderer,
-        };
-      }
-    });
+    const columnDefsResult = Object.entries(grouping).flatMap(
+      ([group, cols]) => {
+        if (group === "Annotation Metrics") {
+          return cols.map((c) => {
+            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+            return getMetricsListColumnDefs(c);
+          });
+        }
+        if (!AllowedGroups.includes(group) && cols.length === 1) {
+          const c = cols[0];
+          bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+          return getMetricsListColumnDefs(c);
+        } else {
+          return {
+            headerName: group,
+            children: cols.map((c) => {
+              bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
+              const colDef = getMetricsListColumnDefs(c);
+              return {
+                ...colDef,
+                minWidth: 200,
+                flex: 1,
+                cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
+              };
+            }),
+            headerGroupComponent: CustomTraceGroupHeaderRenderer,
+          };
+        }
+      },
+    );
 
     return {
       columnDefs: columnDefsResult,
@@ -217,7 +225,7 @@ const LinkedTracesContent = () => {
       },
 
       // --- Row Identification ---
-      getRowId: ({ data }) => data.spanId,
+      getRowId: ({ data }) => data.span_id,
     }),
     [id, filters, debouncedSearchQuery, setColumns],
   );
