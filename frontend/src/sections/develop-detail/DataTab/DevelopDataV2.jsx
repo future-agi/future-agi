@@ -1011,17 +1011,12 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
             }
           }
 
-          const wasRefreshing = isRefreshingColumns.current;
           isRefreshingColumns.current = columnConfig?.some((v) =>
             RefreshStatus.includes(v?.status),
           );
 
           if (!isRefreshingColumns.current) {
             refreshAverage();
-            if (wasRefreshing) {
-              gridApiRef.current?.api.refreshServerSide();
-              return;
-            }
           }
 
           if (rows?.length === 0) {
