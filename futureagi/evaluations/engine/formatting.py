@@ -150,8 +150,6 @@ def extract_raw_result(eval_result, eval_template):
     first = eval_results[0] if eval_results else {}
     if isinstance(first, list):
         first = first[0] if first else {}
-    if not isinstance(first, dict):
-        first = {"data": first}
     template_config = getattr(eval_template, "config", None) or {}
     return {
         "data": first.get("data"),
