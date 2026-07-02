@@ -13,6 +13,8 @@ Comprehensive tests for workspace_management.py endpoints:
 - ManageTeamView
 """
 
+from unittest.mock import patch
+
 import pytest
 from rest_framework import status
 
@@ -945,6 +947,47 @@ class TestManageTeamViewPost:
             status.HTTP_400_BAD_REQUEST,  # May fail due to email sending
             status.HTTP_429_TOO_MANY_REQUESTS,  # User limit reached
         ]
+
+    @patch(
+        "accounts.views.workspace_management.email_helper",
+        side_effect=RuntimeError("email delivery failed"),
+    )
+    def test_add_team_member_persists_when_invite_email_fails(
+        self,
+        mock_email_helper,
+        auth_client,
+        workspace,
+        django_capture_on_commit_callbacks,
+    ):
+        """Invite email failure should not undo the user or workspace membership."""
+        email = "emailfailteam@futureagi.com"
+
+        with django_capture_on_commit_callbacks(execute=True):
+            response = auth_client.post(
+                "/accounts/team/users/",
+                {
+                    "members": [
+                        {
+                            "email": email,
+                            "name": "Email Failure Team Member",
+                            "organization_role": OrganizationRoles.MEMBER,
+                        }
+                    ]
+                },
+                format="json",
+            )
+
+        assert response.status_code in [
+            status.HTTP_200_OK,
+            status.HTTP_201_CREATED,
+        ]
+        new_member = User.objects.get(email=email, organization=workspace.organization)
+        assert WorkspaceMembership.no_workspace_objects.filter(
+            workspace=workspace,
+            user=new_member,
+            is_active=True,
+        ).exists()
+        mock_email_helper.assert_called_once()
 
     def test_add_team_member_as_admin_forbidden(self, admin_client, workspace):
         """Admin cannot add team members (owner only)."""
