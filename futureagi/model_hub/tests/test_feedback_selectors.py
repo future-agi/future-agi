@@ -42,7 +42,7 @@ def _make_metric(user, workspace, template, dataset=None):
         workspace=workspace,
         user=user,
         template=template,
-        dataset=dataset,
+        dataset=dataset or _make_dataset(user, workspace, marker="metric"),
         config={"mapping": {}},
         status=StatusType.COMPLETED.value,
     )
@@ -119,9 +119,8 @@ def test_experiment_sources_use_two_batched_queries(user, workspace):
         column = _make_column(snapshot_dataset)
         experiment = ExperimentsTable.objects.create(
             name=f"exp-{uuid.uuid4().hex[:8]}",
-            organization=user.organization,
-            workspace=workspace,
             user=user,
+            dataset=snapshot_dataset,
             snapshot_dataset=snapshot_dataset,
         )
         return experiment, Feedback.objects.create(
