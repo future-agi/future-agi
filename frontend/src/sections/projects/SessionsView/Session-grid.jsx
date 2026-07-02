@@ -57,6 +57,7 @@ const SessionGrid = React.forwardRef(
       onGridReady,
       pendingCustomColumnsRef,
       isOnSavedView = false,
+      userIdForUserMode,
     },
     gridApiRef,
   ) => {
@@ -491,6 +492,7 @@ const SessionGrid = React.forwardRef(
                 open={open}
                 onClose={handleDrawerClose}
                 rowData={currentRowData}
+                userIdForUserMode={userIdForUserMode}
               />
             ) : null}
           </Box>
@@ -514,6 +516,7 @@ SessionGrid.propTypes = {
   className: PropTypes.string,
   pendingCustomColumnsRef: PropTypes.object,
   isOnSavedView: PropTypes.bool,
+  userIdForUserMode: PropTypes.string,
 };
 
 export default SessionGrid;
