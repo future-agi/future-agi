@@ -4,14 +4,16 @@ from enum import Enum
 
 import structlog
 
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_utils.evals_result import DataPoint
+
+logger = structlog.get_logger(__name__)
 
 
 class LoadFormat(Enum):
     """Supported load formats."""
 
     JSON = "json"
+    JSONL = "jsonl"
     DICT = "dict"
     FI = "fi"
 
@@ -44,6 +46,8 @@ class BaseLoader(ABC):
         """
         if format == LoadFormat.JSON.value:
             return self.load_json(**kwargs)
+        elif format == LoadFormat.JSONL.value:
+            return self.load_jsonl(**kwargs)
         elif format == LoadFormat.DICT.value:
             return self.load_dict(**kwargs)
         elif format == LoadFormat.FI.value:
@@ -66,6 +70,37 @@ class BaseLoader(ABC):
                 return self._processed_dataset  # type: ignore[attr-defined,no-any-return]
         except (FileNotFoundError, json.JSONDecodeError) as e:
             logger.error(f"Error loading JSON: {e}")
+            raise
+
+    def load_jsonl(self, filename: str) -> list[DataPoint]:
+        """
+        Loads and processes data from a JSON Lines file.
+
+        Raises:
+            FileNotFoundError: If the specified JSONL file is not found.
+            json.JSONDecodeError: If a non-blank line is not valid JSON.
+        """
+        try:
+            raw_dataset = []
+            with open(filename) as f:
+                for line_number, line in enumerate(f, start=1):
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        raw_dataset.append(json.loads(line))
+                    except json.JSONDecodeError as e:
+                        raise json.JSONDecodeError(
+                            f"{e.msg} at JSONL line {line_number}",
+                            e.doc,
+                            e.pos,
+                        ) from e
+
+            self._raw_dataset = raw_dataset
+            self.process()
+            return self._processed_dataset  # type: ignore[attr-defined,no-any-return]
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.error(f"Error loading JSONL: {e}")
             raise
 
     def load_dict(self, data: list) -> list[DataPoint]:
