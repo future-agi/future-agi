@@ -5,6 +5,7 @@ import {
   keepPreviousData,
 } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { normalizeGatewayMetadataField } from "../../utils/metadataDisplay";
 
 const SESSION_KEY = "agentcc-sessions";
 
@@ -27,7 +28,7 @@ export function useSessionDetail(id) {
     queryKey: [SESSION_KEY, "detail", id],
     queryFn: async () => {
       const { data } = await axios.get(endpoints.gateway.sessions.detail(id));
-      return data.result;
+      return normalizeGatewayMetadataField(data.result);
     },
     enabled: Boolean(id),
     staleTime: 15000,

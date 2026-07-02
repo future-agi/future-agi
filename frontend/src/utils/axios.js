@@ -15,6 +15,7 @@ import { HOST_API } from "src/config-global";
 import { resetUser } from "./Mixpanel";
 import logger from "./logger";
 import { RESPONSE_CODES } from "./constants";
+import { markGeneratedCamelAlias } from "./responseAliasMetadata";
 
 // ----------------------------------------------------------------------
 //
@@ -72,7 +73,7 @@ function isSpecialObject(obj) {
   );
 }
 
-function addCamelAliases(obj, seen) {
+function addCamelAliases(obj, seen, markGeneratedAliases = false) {
   if (obj === null || obj === undefined) return obj;
   if (typeof obj !== "object") return obj;
   if (seen.has(obj)) return obj;
@@ -82,7 +83,7 @@ function addCamelAliases(obj, seen) {
 
   if (Array.isArray(obj)) {
     for (let i = 0; i < obj.length; i += 1) {
-      addCamelAliases(obj[i], seen);
+      addCamelAliases(obj[i], seen, markGeneratedAliases);
     }
     return obj;
   }
@@ -93,18 +94,20 @@ function addCamelAliases(obj, seen) {
     if (USER_KEYED_MAP_FIELDS.has(key)) continue;
     const value = obj[key];
     if (value !== null && typeof value === "object") {
-      addCamelAliases(value, seen);
+      addCamelAliases(value, seen, markGeneratedAliases || key === "metadata");
     }
   }
 
   // Keep aliases enumerable because many legacy call sites spread API objects
-  // before reading camelCase keys. Use canonicalKeys/canonicalEntries anywhere
-  // object keys are rendered to users.
+  // before reading camelCase keys. Inside user-owned metadata subtrees, also
+  // mark generated aliases so gateway renderers can hide phantom fields without
+  // changing response object enumerability for existing consumers.
   const aliases = buildAliasTable(obj);
   Object.keys(aliases).forEach((camel) => {
     const snake = aliases[camel];
     try {
       obj[camel] = obj[snake];
+      if (markGeneratedAliases) markGeneratedCamelAlias(obj, camel);
     } catch {
       // Ignore read-only / frozen objects.
     }

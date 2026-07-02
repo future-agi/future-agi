@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { canonicalKeys, canonicalEntries, canonicalValues } from "../utils";
+import {
+  canonicalKeys,
+  canonicalEntries,
+  canonicalValues,
+} from "../canonicalKeys";
+import { canonicalKeys as legacyCanonicalKeys } from "../utils";
 
 // Helper that simulates a legacy object containing both canonical keys and
 // old alias keys so iteration sees both.
@@ -16,7 +21,7 @@ const withAliases = (obj) => {
   return out;
 };
 
-describe("canonicalKeys / canonicalEntries / canonicalValues", () => {
+describe("canonicalKeys / canonicalEntries / canonicalValues Unit", () => {
   it("returns only snake_case keys when both forms exist", () => {
     const obj = withAliases({ user_id: 1, total_rows: 10 });
     // Sanity check: the aliased object has doubled keys
@@ -27,6 +32,12 @@ describe("canonicalKeys / canonicalEntries / canonicalValues", () => {
       "totalRows",
     ]);
     expect(canonicalKeys(obj).sort()).toEqual(["total_rows", "user_id"]);
+  });
+
+  it("preserves the legacy utils export path", () => {
+    expect(legacyCanonicalKeys(withAliases({ user_id: 1 }))).toEqual([
+      "user_id",
+    ]);
   });
 
   it("keeps genuine camelCase keys that have no snake_case twin", () => {
@@ -92,5 +103,67 @@ describe("canonicalKeys / canonicalEntries / canonicalValues", () => {
     const obj = withAliases({ tone_17_apr_2026: { neutral: 10 } });
     expect(Object.keys(obj)).toContain("tone17Apr2026");
     expect(canonicalKeys(obj)).toEqual(["tone_17_apr_2026"]);
+  });
+
+  it("preserves the legacy contract by hiding camelCase twins by key", () => {
+    const metadata = {
+      user_id: "snake-value",
+      userId: "camel-value",
+      nested: {
+        inner_key: 1,
+        innerKey: 2,
+      },
+      events: [
+        {
+          request_id: "snake-request",
+          requestId: "camel-request",
+        },
+      ],
+    };
+
+    expect(canonicalKeys(metadata).sort()).toEqual([
+      "events",
+      "nested",
+      "user_id",
+    ]);
+    expect(canonicalKeys(metadata.nested)).toEqual(["inner_key"]);
+    expect(canonicalKeys(metadata.events[0])).toEqual(["request_id"]);
+  });
+
+  it("preserves __proto__ data while filtering generated aliases", () => {
+    const metadata = JSON.parse(
+      '{"__proto__":{"polluted":true},"safe_key":1,"safeKey":1,"nested":{"__proto__":{"nested":true},"inner_key":2,"innerKey":2}}',
+    );
+
+    const entries = canonicalEntries(metadata);
+    const nestedEntries = canonicalEntries(metadata.nested);
+
+    expect(Object.prototype.polluted).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(metadata, "__proto__")).toBe(
+      true,
+    );
+    expect(entries.map(([key]) => key)).toEqual([
+      "__proto__",
+      "safe_key",
+      "nested",
+    ]);
+    expect(nestedEntries.map(([key]) => key)).toEqual([
+      "__proto__",
+      "inner_key",
+    ]);
+    expect(
+      entries.some(([key, value]) => key === "__proto__" && value.polluted),
+    ).toBe(true);
+    expect(
+      nestedEntries.some(([key, value]) => key === "__proto__" && value.nested),
+    ).toBe(true);
+  });
+
+  it("drops serialized object and array aliases by key at the current level", () => {
+    const metadata = JSON.parse(
+      '{"object_key":{"a":1},"objectKey":{"a":1},"array_key":[{"b":2}],"arrayKey":[{"b":2}]}',
+    );
+
+    expect(canonicalKeys(metadata)).toEqual(["object_key", "array_key"]);
   });
 });

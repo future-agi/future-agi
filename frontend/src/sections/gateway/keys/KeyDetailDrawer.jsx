@@ -22,6 +22,8 @@ import { useTheme } from "@mui/material/styles";
 import { useNavigate } from "react-router-dom";
 import { useApiKeyDetail, useRevokeApiKey } from "./hooks/useApiKeys";
 import EditKeyDialog from "./EditKeyDialog";
+import { GatewayMetadataJson } from "../components/GatewayMetadata";
+import { hasGatewayMetadata } from "../utils/metadataDisplay";
 import { useAnalyticsOverview } from "../analytics/hooks/useAnalyticsOverview";
 import { useAnalyticsUsage } from "../analytics/hooks/useAnalyticsUsage";
 import { val } from "../utils/analyticsHelpers";
@@ -282,7 +284,7 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
             </Box>
 
             {/* Metadata */}
-            {keyData.metadata && Object.keys(keyData.metadata).length > 0 && (
+            {hasGatewayMetadata(keyData.metadata) && (
               <Box>
                 <Typography variant="subtitle2" mb={1}>
                   Metadata
@@ -298,7 +300,7 @@ const KeyDetailDrawer = ({ keyId, open, onClose, gatewayId }) => {
                     overflowX: "auto",
                   }}
                 >
-                  {JSON.stringify(keyData.metadata, null, 2)}
+                  <GatewayMetadataJson metadata={keyData.metadata} />
                 </Box>
               </Box>
             )}
