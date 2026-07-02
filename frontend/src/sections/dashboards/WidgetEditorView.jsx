@@ -2197,14 +2197,10 @@ export default function WidgetEditorView() {
     return previewSeries.filter((_, i) => visibleSeries.has(i));
   }, [previewSeries, visibleSeries]);
 
-  const outOfRangeWarning = useMemo(() => {
-    const rightCfg = axisConfig.rightY || {};
-    const sa = axisConfig.seriesAxis || {};
-    const hasRightAxis =
-      rightCfg.visible && Object.values(sa).some((s) => s === "right");
-    if (hasRightAxis) return null;
-    return getYAxisRangeWarning(chartSeries, axisConfig.leftY);
-  }, [chartSeries, axisConfig]);
+  const outOfRangeWarning = useMemo(
+    () => getYAxisRangeWarning(chartSeries, axisConfig),
+    [chartSeries, axisConfig],
+  );
 
   const autoDecimals = useMemo(
     () => getAutoDecimals(chartSeries),

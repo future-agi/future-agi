@@ -155,15 +155,10 @@ export default function WidgetChart({ widget, globalDateRange }) {
     return series.filter((_, i) => visibleSeries.has(i));
   }, [series, visibleSeries]);
 
-  const outOfRangeWarning = useMemo(() => {
-    const leftCfg = axisConfig?.leftY || {};
-    const rightCfg = axisConfig?.rightY || {};
-    const sa = axisConfig?.seriesAxis || {};
-    const hasRightAxis =
-      rightCfg.visible && Object.values(sa).some((s) => s === "right");
-    if (hasRightAxis) return null;
-    return getYAxisRangeWarning(chartSeries, leftCfg);
-  }, [chartSeries, axisConfig]);
+  const outOfRangeWarning = useMemo(
+    () => getYAxisRangeWarning(chartSeries, axisConfig),
+    [chartSeries, axisConfig],
+  );
 
   const pieValues = useMemo(
     () =>

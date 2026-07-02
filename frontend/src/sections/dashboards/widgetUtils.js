@@ -92,15 +92,21 @@ export const getSuggestedUnitConfig = (metricConfigs = []) => {
 // every point in every series falls outside the configured bounds, the
 // chart renders fully blank with no indication why. Surface that as a
 // message instead of an empty canvas.
-export const getYAxisRangeWarning = (series = [], leftAxisConfig = {}) => {
-  const min =
-    leftAxisConfig?.min !== undefined && leftAxisConfig.min !== ""
-      ? Number(leftAxisConfig.min)
-      : null;
-  const max =
-    leftAxisConfig?.max !== undefined && leftAxisConfig.max !== ""
-      ? Number(leftAxisConfig.max)
-      : null;
+export const getYAxisRangeWarning = (series = [], axisConfig = {}) => {
+  const rightCfg = axisConfig?.rightY || {};
+  const seriesAxis = axisConfig?.seriesAxis || {};
+  const hasRightAxis =
+    rightCfg.visible && Object.values(seriesAxis).some((s) => s === "right");
+  if (hasRightAxis) return null;
+
+  const leftAxisConfig = axisConfig?.leftY || {};
+  const parseBound = (value) => {
+    if (value === undefined || value === "") return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  };
+  const min = parseBound(leftAxisConfig.min);
+  const max = parseBound(leftAxisConfig.max);
   if (min == null && max == null) return null;
 
   let sawPoint = false;
