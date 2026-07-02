@@ -51,7 +51,7 @@ const ACTIVE_QUEUE = {
   status: "active",
   annotations_required: 1,
   annotators: [],
-  labels: [],
+  labels: [{ id: "label-1", name: "Sentiment" }],
 };
 
 describe("CreateQueueDrawer status update", () => {
