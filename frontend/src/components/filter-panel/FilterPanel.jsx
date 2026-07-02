@@ -634,7 +634,7 @@ const QueryInput = forwardRef(function QueryInput(
     if (!partialField || !partialOp) return null;
     const fd = fieldMap[partialField];
     const ops = getOperatorsProp
-      ? getOperatorsProp(fd?.type || "string")
+      ? getOperatorsProp(fd?.type || "string", partialField)
       : getOperators(fd || "string");
     return ops.find((o) => o.value === partialOp);
   }, [partialField, partialOp, fieldMap, getOperatorsProp]);
@@ -654,7 +654,7 @@ const QueryInput = forwardRef(function QueryInput(
     if (phase === "operator") {
       const fd = fieldMap[partialField];
       const ops = getOperatorsProp
-        ? getOperatorsProp(fd?.type || "string")
+        ? getOperatorsProp(fd?.type || "string", partialField)
         : getOperators(fd || "string");
       return ops.map((o) => ({
         id: o.value,
@@ -776,6 +776,17 @@ const QueryInput = forwardRef(function QueryInput(
     setTimeout(() => setDropdownOpen(true), 0);
   }, []);
 
+  const opDefFor = useCallback(
+    (field, op) => {
+      const fd = fieldMap[field];
+      const ops = getOperatorsProp
+        ? getOperatorsProp(fd?.type || "string", field)
+        : getOperators(fd || "string");
+      return ops.find((o) => o.value === op);
+    },
+    [fieldMap, getOperatorsProp],
+  );
+
   const handleSelect = useCallback(
     (_, option) => {
       if (!option || typeof option === "string") return;
@@ -785,6 +796,10 @@ const QueryInput = forwardRef(function QueryInput(
         onFieldChange?.(option.id);
         reopenDropdown();
       } else if (phase === "operator") {
+        if (opDefFor(partialField, option.id)?.noValue) {
+          commitFilter(partialField, option.id, "");
+          return;
+        }
         setPartialOp(option.id);
         setInputValue("");
         setRangeFrom("");
@@ -801,6 +816,7 @@ const QueryInput = forwardRef(function QueryInput(
       commitFilter,
       reopenDropdown,
       onFieldChange,
+      opDefFor,
     ],
   );
 
@@ -810,20 +826,28 @@ const QueryInput = forwardRef(function QueryInput(
       const updated = tokens.filter((_, i) => i !== index);
       setTokens(updated);
       setPartialField(token.field);
-      setPartialOp(token.operator);
-      if (Array.isArray(token.value) && token.value.length === 2) {
-        setRangeFrom(token.value[0] ?? "");
-        setRangeTo(token.value[1] ?? "");
-        setInputValue("");
-      } else {
+      if (opDefFor(token.field, token.operator)?.noValue) {
+        // No-value op: re-pick operator, no value phase.
+        setPartialOp(null);
         setRangeFrom("");
         setRangeTo("");
-        setInputValue(typeof token.value === "string" ? token.value : "");
+        setInputValue("");
+      } else {
+        setPartialOp(token.operator);
+        if (Array.isArray(token.value) && token.value.length === 2) {
+          setRangeFrom(token.value[0] ?? "");
+          setRangeTo(token.value[1] ?? "");
+          setInputValue("");
+        } else {
+          setRangeFrom("");
+          setRangeTo("");
+          setInputValue(typeof token.value === "string" ? token.value : "");
+        }
       }
       setTimeout(() => setDropdownOpen(true), 0);
       onApply(updated.length > 0 ? updated : []);
     },
-    [tokens, onApply],
+    [tokens, onApply, opDefFor],
   );
 
   const handleKeyDown = useCallback(
