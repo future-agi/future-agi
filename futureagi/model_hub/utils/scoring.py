@@ -12,6 +12,7 @@ is NOT modified — these coexist.
 from __future__ import annotations
 
 import math
+from typing import Any
 
 
 def _to_clamped_score(value) -> float:
@@ -24,6 +25,28 @@ def _to_clamped_score(value) -> float:
     if math.isnan(score):
         return 0.0
     return max(0.0, min(1.0, score))
+
+
+def extract_eval_value(value: Any) -> Any:
+    """Unwrap a dict-shaped eval output to its meaningful scalar.
+
+    Non-dict values pass through unchanged. For dicts, keys are consulted in
+    priority order (``failure`` boolean is inverted; the rest are read as-is):
+    ``failure`` → ``score`` → ``result`` → ``output`` → ``choice``. If no key
+    matches, the whole dict is returned so the caller can decide.
+
+    This matches what ``should_run_error_localizer`` uses to unwrap eval
+    results before normalization, kept public here so every consumer of the
+    scoring pipeline shares the same extraction rules.
+    """
+    if not isinstance(value, dict):
+        return value
+    if isinstance(value.get("failure"), bool):
+        return not value["failure"]
+    for key in ("score", "result", "output", "choice"):
+        if value.get(key) is not None:
+            return value[key]
+    return value
 
 
 def normalize_score(
@@ -159,3 +182,29 @@ def validate_pass_threshold(threshold) -> list[str]:
         return [f"pass_threshold must be between 0 and 1, got: {threshold}"]
 
     return []
+
+
+def score_eval_output(value_or_result: Any, eval_template: Any) -> float:
+    """Canonical eval-output → normalized 0-1 score.
+
+    Accepts either a raw ``eval_instance.run()`` result (detected via the
+    ``eval_results`` attribute — routed through ``extract_raw_result`` and
+    ``format_eval_value`` first), or an already-formatted value (str, float,
+    dict) as returned by ``run_eval_func`` or ``format_eval_value``. In both
+    cases the value is unwrapped by ``extract_eval_value`` and normalized by
+    ``normalize_score`` using the template's ``output_type_normalized`` and
+    ``choice_scores``.
+    """
+    if hasattr(value_or_result, "eval_results"):
+        from evaluations.engine.formatting import (
+            extract_raw_result,
+            format_eval_value,
+        )
+
+        raw = extract_raw_result(value_or_result, eval_template)
+        value_or_result = format_eval_value(raw, eval_template)
+
+    scalar = extract_eval_value(value_or_result)
+    output_type = getattr(eval_template, "output_type_normalized", None) or "percentage"
+    choice_scores = getattr(eval_template, "choice_scores", None) or {}
+    return normalize_score(scalar, output_type, choice_scores)
