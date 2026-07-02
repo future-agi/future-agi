@@ -20839,9 +20839,7 @@ export const ModelHubExperimentsV2FeedbackSubmitFeedbackCreateBody = zod.object(
   "action_type": zod.enum(['retune', 'recalculate_row', 'recalculate_dataset', 'retune_recalculate']),
   "feedback_id": zod.string().uuid(),
   "user_eval_metric_id": zod.string().uuid(),
-  "value": zod.object({
-
-}).passthrough().optional(),
+  "value": zod.string().optional(),
   "explanation": zod.string().optional()
 })
 

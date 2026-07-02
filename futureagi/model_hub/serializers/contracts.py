@@ -1379,7 +1379,7 @@ class ExperimentFeedbackSubmitRequestSerializer(serializers.Serializer):
     )
     feedback_id = serializers.UUIDField()
     user_eval_metric_id = serializers.UUIDField()
-    value = serializers.JSONField(required=False)
+    value = serializers.CharField(required=False, allow_blank=True)
     explanation = serializers.CharField(required=False, allow_blank=True)
 
 

@@ -10956,13 +10956,11 @@ export const ExperimentFeedbackSubmitRequestApiActionType = {
   retune_recalculate: 'retune_recalculate',
 } as const;
 
-export type ExperimentFeedbackSubmitRequestApiValue = { [key: string]: unknown };
-
 export interface ExperimentFeedbackSubmitRequestApi {
   action_type: ExperimentFeedbackSubmitRequestApiActionType;
   feedback_id: string;
   user_eval_metric_id: string;
-  value?: ExperimentFeedbackSubmitRequestApiValue;
+  value?: string;
   explanation?: string;
 }
 

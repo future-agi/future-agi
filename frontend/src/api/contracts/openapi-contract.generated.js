@@ -54772,7 +54772,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "value": {
           "title": "Value",
-          "type": "object"
+          "type": "string"
         },
         "explanation": {
           "title": "Explanation",
