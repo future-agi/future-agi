@@ -7316,8 +7316,6 @@ export const DatasetOptimizationDetailApiStatus = {
   cancelled: 'cancelled',
 } as const;
 
-export type DatasetOptimizationDetailApiTableItem = {[key: string]: string};
-
 export type DatasetOptimizationParameterItemApiValue = { [key: string]: unknown };
 
 export interface DatasetOptimizationParameterItemApi {
@@ -7327,6 +7325,16 @@ export interface DatasetOptimizationParameterItemApi {
   label: string;
   description: string;
   value: DatasetOptimizationParameterItemApiValue;
+}
+
+export interface DatasetOptimizationTrialTableRowApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  trial: string;
+  prompt: string;
+  is_best: boolean;
+  score_percentage_change: number;
 }
 
 export interface DatasetOptimizationColumnConfigItemApi {
@@ -7368,7 +7376,7 @@ export interface DatasetOptimizationDetailApi {
   readonly column_name?: string;
   best_score?: number;
   baseline_score?: number;
-  readonly table?: readonly DatasetOptimizationDetailApiTableItem[];
+  readonly table?: readonly DatasetOptimizationTrialTableRowApi[];
   readonly column_config?: readonly DatasetOptimizationColumnConfigItemApi[];
   /** @minLength 1 */
   readonly optimizer_model_id?: string;

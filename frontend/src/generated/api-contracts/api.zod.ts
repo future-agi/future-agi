@@ -15705,6 +15705,8 @@ export const ModelHubDatasetOptimizationReadParams = zod.object({
 
 
 
+
+
 export const ModelHubDatasetOptimizationReadResponse = zod.object({
   "optimiser_name": zod.string().min(1).optional(),
   "optimiser_type": zod.string().min(1).optional(),
@@ -15728,7 +15730,13 @@ export const ModelHubDatasetOptimizationReadResponse = zod.object({
   "column_name": zod.string().min(1).optional(),
   "best_score": zod.number().optional(),
   "baseline_score": zod.number().optional(),
-  "table": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "table": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "trial": zod.string().min(1),
+  "prompt": zod.string(),
+  "is_best": zod.boolean(),
+  "score_percentage_change": zod.number()
+})).optional(),
   "column_config": zod.array(zod.object({
   "id": zod.string().min(1),
   "name": zod.string().min(1),

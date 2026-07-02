@@ -60,9 +60,12 @@ def is_numerically_scorable(
         if not choice_scores:
             return False
         if isinstance(value, str):
-            return value in choice_scores
+            return apply_choice_scores(value, choice_scores) is not None
         if isinstance(value, list) and value:
-            return all(isinstance(v, str) and v in choice_scores for v in value)
+            return any(
+                isinstance(v, str) and apply_choice_scores(v, choice_scores) is not None
+                for v in value
+            )
         return isinstance(value, (int, float))
     if isinstance(value, (bool, int, float)):
         return True

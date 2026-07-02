@@ -188,8 +188,18 @@ class TestIsNumericallyScorable:
             is True
         )
 
-    def test_deterministic_list_each_member_must_be_known(self):
+    def test_deterministic_list_at_least_one_known_member(self):
+        # Matches normalize_score: skip unknown labels, average the known ones.
+        # Preflight should stay symmetric with the scorer.
         scores = {"A": 1.0, "B": 0.0}
         assert is_numerically_scorable(["A"], "deterministic", scores) is True
         assert is_numerically_scorable(["A", "B"], "deterministic", scores) is True
-        assert is_numerically_scorable(["A", "C"], "deterministic", scores) is False
+        assert is_numerically_scorable(["A", "C"], "deterministic", scores) is True
+        assert is_numerically_scorable(["C", "D"], "deterministic", scores) is False
+
+    def test_deterministic_string_case_insensitive(self):
+        # Matches apply_choice_scores.
+        scores = {"Yes": 1.0, "No": 0.0}
+        assert is_numerically_scorable("yes", "deterministic", scores) is True
+        assert is_numerically_scorable("YES", "deterministic", scores) is True
+        assert is_numerically_scorable(" Yes ", "deterministic", scores) is True

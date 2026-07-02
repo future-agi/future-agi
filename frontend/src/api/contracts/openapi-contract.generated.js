@@ -51387,11 +51387,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "table": {
           "type": "array",
           "items": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string",
-              "x-nullable": true
-            }
+            "$ref": "#/definitions/DatasetOptimizationTrialTableRow"
           },
           "readOnly": true
         },
@@ -78787,6 +78783,41 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "value": {
           "title": "Value",
           "type": "object"
+        }
+      }
+    },
+    "DatasetOptimizationTrialTableRow": {
+      "required": [
+        "id",
+        "trial",
+        "prompt",
+        "is_best",
+        "score_percentage_change"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "trial": {
+          "title": "Trial",
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "is_best": {
+          "title": "Is best",
+          "type": "boolean"
+        },
+        "score_percentage_change": {
+          "title": "Score percentage change",
+          "type": "number",
+          "x-nullable": true
         }
       }
     },

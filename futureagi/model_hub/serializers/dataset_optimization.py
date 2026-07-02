@@ -340,9 +340,13 @@ class DatasetOptimizationListSerializer(serializers.ModelSerializer):
         return obj.trials.count()
 
     def get_optimizer_model_id(self, obj):
-        # Return the model name which is what the frontend expects
+        # Return the model name which is what the frontend expects.
+        # Mirror DatasetOptimizationDetailSerializer._model_name so unmatched
+        # names stored in optimizer_config["model_name"] surface on the list.
         if obj.optimizer_model:
             return obj.optimizer_model.user_model_id
+        if obj.optimizer_config and obj.optimizer_config.get("model_name"):
+            return obj.optimizer_config.get("model_name")
         return None
 
 
@@ -418,6 +422,22 @@ class DatasetOptimizationColumnConfigItemSerializer(serializers.Serializer):
     id = serializers.CharField()
     name = serializers.CharField()
     is_visible = serializers.BooleanField()
+
+
+class DatasetOptimizationTrialTableRowSerializer(serializers.Serializer):
+    """Static-field shape of a Trial Runs table row.
+
+    Extra keys (one per eval metric, keyed by UUID) hold
+    ``{"score": float, "percentage_change": float | None}`` objects and are
+    documented via the ``extra_kwargs`` free-form spec — the frontend grid
+    reads them by column id.
+    """
+
+    id = serializers.CharField()
+    trial = serializers.CharField()
+    prompt = serializers.CharField(allow_blank=True)
+    is_best = serializers.BooleanField()
+    score_percentage_change = serializers.FloatField(allow_null=True)
 
 
 class DatasetOptimizationDetailSerializer(serializers.ModelSerializer):
@@ -539,7 +559,7 @@ class DatasetOptimizationDetailSerializer(serializers.ModelSerializer):
         return templates
 
     @swagger_serializer_method(
-        serializer_or_field=serializers.ListField(child=serializers.DictField())
+        serializer_or_field=DatasetOptimizationTrialTableRowSerializer(many=True)
     )
     def get_table(self, obj):
         return self._table
