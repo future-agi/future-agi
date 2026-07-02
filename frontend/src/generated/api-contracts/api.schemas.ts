@@ -5423,7 +5423,8 @@ export interface AnnotationQueueApi {
   readonly is_default?: boolean;
   readonly labels?: readonly QueueLabelNestedApi[];
   readonly annotators?: readonly QueueAnnotatorNestedApi[];
-  label_ids?: string[];
+  /** @minItems 1 */
+  label_ids: string[];
   annotator_ids?: string[];
   annotator_roles?: AnnotationQueueApiAnnotatorRoles;
   readonly label_count?: number;
