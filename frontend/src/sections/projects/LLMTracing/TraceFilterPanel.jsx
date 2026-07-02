@@ -1803,20 +1803,17 @@ const TraceFilterPanel = ({
   const [rows, setRows] = useState([{ ...DEFAULT_ROW }]);
 
   // Convert dashboard properties to QueryInput format (same IDs as dashboard API)
-  const queryFilterFields = useMemo(
-    () => {
-      return properties.map((p) => ({
-        value: p.id,
-        label: p.name,
-        type: p.type || "string",
-        choices: p.choices,
-        panelType: p.type || "string",
-        category: p.category, // system, eval, annotation, attribute
-        apiColType: p.apiColType,
-      }));
-    },
-    [properties],
-  );
+  const queryFilterFields = useMemo(() => {
+    return properties.map((p) => ({
+      value: p.id,
+      label: p.name,
+      type: p.type || "string",
+      choices: p.choices,
+      panelType: p.type || "string",
+      category: p.category, // system, eval, annotation, attribute
+      apiColType: p.apiColType,
+    }));
+  }, [properties]);
   const queryFieldMap = useMemo(
     () => Object.fromEntries(queryFilterFields.map((f) => [f.value, f])),
     [queryFilterFields],
@@ -1922,6 +1919,14 @@ const TraceFilterPanel = ({
       setRows(converted.length ? converted : [{ ...effectiveDefaultRow }]);
     },
     [effectiveDefaultRow, queryTokensToRows],
+  );
+
+  const queryGetOperators = useCallback(
+    (type, field) =>
+      getOperatorsForFilter({ field, fieldType: type }).map((op) =>
+        NO_VALUE_OPS.has(op.value) ? { ...op, noValue: true } : op,
+      ),
+    [],
   );
 
   const handleChange = useCallback((idx, updated) => {
@@ -2192,11 +2197,7 @@ const TraceFilterPanel = ({
               ref={queryInputRef}
               filterFields={queryFilterFields}
               fieldMap={queryFieldMap}
-              getOperators={(type, field) =>
-                getOperatorsForFilter({ field, fieldType: type }).map((op) =>
-                  NO_VALUE_OPS.has(op.value) ? { ...op, noValue: true } : op,
-                )
-              }
+              getOperators={queryGetOperators}
               onApply={handleQueryTokensChange}
               initialTokens={rows
                 .filter((r) => {
@@ -2205,7 +2206,9 @@ const TraceFilterPanel = ({
                     return true;
                   return Array.isArray(r.value)
                     ? r.value.length > 0
-                    : r.value !== "" && r.value !== undefined && r.value !== null;
+                    : r.value !== "" &&
+                        r.value !== undefined &&
+                        r.value !== null;
                 })
                 .map((r) => ({
                   field: r.field,

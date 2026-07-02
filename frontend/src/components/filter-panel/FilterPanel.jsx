@@ -936,7 +936,7 @@ const QueryInput = forwardRef(function QueryInput(
   const tokenChips = tokens.map((token, idx) => (
     <Chip
       key={idx}
-      label={`${fieldMap[token.field]?.label || token.field} ${token.operator} ${Array.isArray(token.value) ? token.value.join(" – ") : token.value}`}
+      label={`${fieldMap[token.field]?.label || token.field} ${opDefFor(token.field, token.operator)?.label || token.operator} ${Array.isArray(token.value) ? token.value.join(" – ") : token.value}`}
       size="small"
       onClick={() => editToken(idx)}
       onDelete={() => handleDeleteToken(idx)}
