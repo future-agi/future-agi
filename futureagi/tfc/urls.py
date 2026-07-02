@@ -140,6 +140,25 @@ urlpatterns = [
 
 if has_ee("ee.usage"):
     urlpatterns += [path("usage/", include("ee.usage.urls"))]
+    from tfc.deployment_telemetry.config import is_cloud_deployment
+
+    if is_cloud_deployment():
+        try:
+            urlpatterns += [
+                path(
+                    "telemetry/",
+                    include("ee.usage.deployment_telemetry_urls"),
+                )
+            ]
+        except ImportError:
+            # The deployment_telemetry URLconf is missing on a cloud install.
+            # Silently passing here previously left an operator with no
+            # signal that ``/telemetry/`` would 404; warn instead.
+            import structlog
+
+            structlog.get_logger(__name__).warning(
+                "deployment_telemetry_url_mount_skipped", exc_info=True
+            )
 
 urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
 

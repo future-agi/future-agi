@@ -33,6 +33,7 @@ const LabelSelectPopover = ({
       subTitle="Save the prompt along with tags to track changes and support prompt reusability."
       actionBtnTitle="Save"
       hideCancelBtn={true}
+      paperSx={{ gap: 1 }}
       dialogActionSx={{
         display: "none",
       }}

@@ -344,6 +344,9 @@ const ObservePage = React.memo(() => {
           filterSpan={headerConfig.filterSpan}
           selectedTab={headerConfig.selectedTab}
           filterSession={headerConfig.filterSession}
+          filterUsers={headerConfig.filterUsers}
+          searchUsers={headerConfig.searchUsers}
+          sortUsers={headerConfig.sortUsers}
           refreshData={headerConfig.refreshData}
           resetFilters={headerConfig.resetFilters}
         />

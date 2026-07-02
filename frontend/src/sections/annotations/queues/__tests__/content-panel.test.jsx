@@ -4,8 +4,6 @@ import { render, screen, waitFor, userEvent } from "src/utils/test-utils";
 import axios from "src/utils/axios";
 import ContentPanel from "../annotate/content-panel";
 
-const traceDetailDrawerMock = vi.hoisted(() => vi.fn());
-
 vi.mock("src/components/iconify", () => ({
   default: ({ icon, ...props }) => (
     <span data-testid="iconify" data-icon={icon} {...props} />
@@ -93,19 +91,6 @@ vi.mock("src/components/CallLogsDetailDrawer/RightSection", () => ({
   default: () => <div data-testid="call-right-section" />,
 }));
 
-vi.mock("src/components/traceDetailDrawer/trace-detail-drawer", () => ({
-  default: (props) => {
-    traceDetailDrawerMock(props);
-    return (
-      <div
-        data-testid="trace-detail-drawer"
-        data-trace-id={props.traceData?.trace_id || ""}
-        data-camel-trace-id={props.traceData?.traceId || ""}
-      />
-    );
-  },
-}));
-
 vi.mock("src/components/traceDetail/SpanTreeTimeline", () => ({
   default: () => <div data-testid="span-tree" />,
 }));
@@ -152,7 +137,6 @@ describe("Annotation queue ContentPanel", () => {
   const clipboardWriteText = vi.fn(() => Promise.resolve());
 
   beforeEach(() => {
-    traceDetailDrawerMock.mockClear();
     clipboardWriteText.mockClear();
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText: clipboardWriteText },
@@ -292,8 +276,7 @@ describe("Annotation queue ContentPanel", () => {
     });
   });
 
-  it("opens session traces with the backend trace_id contract key", async () => {
-    const user = userEvent.setup();
+  it("renders session traces without the legacy trace detail drawer", async () => {
     axios.get.mockResolvedValueOnce({
       data: {
         result: {
@@ -328,22 +311,11 @@ describe("Annotation queue ContentPanel", () => {
       </QueryClientProvider>,
     );
 
-    await user.click(await screen.findByText("customer asks for help"));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("trace-detail-drawer")).toHaveAttribute(
-        "data-trace-id",
-        "trace-123",
-      );
-    });
-    expect(screen.getByTestId("trace-detail-drawer")).toHaveAttribute(
-      "data-camel-trace-id",
-      "",
-    );
-    expect(traceDetailDrawerMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        traceData: expect.objectContaining({ trace_id: "trace-123" }),
-      }),
-    );
+    // Session traces render, and the legacy trace-detail-drawer is gone — the
+    // per-card "View Trace" button now opens TraceDetailDrawerV2 instead.
+    expect(
+      await screen.findByText("customer asks for help"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("trace-detail-drawer")).not.toBeInTheDocument();
   });
 });

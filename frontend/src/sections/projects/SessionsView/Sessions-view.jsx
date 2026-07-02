@@ -1121,6 +1121,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           onGridReady={onGridReady}
           pendingCustomColumnsRef={pendingCustomColumnsRef}
           isOnSavedView={Boolean(activeViewConfig)}
+          userIdForUserMode={userIdForUserMode}
         />
       </Box>
 

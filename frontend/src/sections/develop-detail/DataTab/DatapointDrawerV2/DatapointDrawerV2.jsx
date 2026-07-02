@@ -1134,7 +1134,7 @@ const DatapointDrawerChild = () => {
                     }}
                   >
                     {isAudioColumn ? (
-                      value?.cellValue ? (
+                      value?.cell_value ? (
                         <AudioDatapointCard value={value} column={col} />
                       ) : (
                         <DatapointCard
@@ -1152,7 +1152,7 @@ const DatapointDrawerChild = () => {
                         />
                       )
                     ) : isImageColumn ? (
-                      value?.cellValue ? (
+                      value?.cell_value ? (
                         <ImageDatapointCard value={value} column={col} />
                       ) : (
                         <DatapointCard
@@ -1170,7 +1170,7 @@ const DatapointDrawerChild = () => {
                         />
                       )
                     ) : isImagesColumn ? (
-                      value?.cellValue ? (
+                      value?.cell_value ? (
                         <ImagesDatapointCard value={value} column={col} />
                       ) : (
                         <DatapointCard
@@ -1188,7 +1188,7 @@ const DatapointDrawerChild = () => {
                         />
                       )
                     ) : isDocumentColumn ? (
-                      value?.cellValue ? (
+                      value?.cell_value ? (
                         <DocumentDatapointCard value={value} column={col} />
                       ) : (
                         <DatapointCard

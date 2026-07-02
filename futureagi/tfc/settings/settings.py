@@ -136,6 +136,7 @@ INSTALLED_APPS = [
     # MCP Server (protocol layer for external AI clients)
     "mcp_server",
     "agentcc",
+    "tfc.deployment_telemetry",
     # gRPC framework
     "django_socio_grpc",
     # "djstripe"
@@ -540,6 +541,10 @@ AIRBYTE_HOST = os.getenv("AIRBYTE_HOST")
 AIRBYTE_PORT = os.getenv("AIRBYTE_PORT")
 AIRBYTE_API_URL = f"http://{AIRBYTE_HOST}:{AIRBYTE_PORT}/api/v1"
 SLACK_WEBHOOK_CHANNEL = os.getenv("SLACK_WEBHOOK_CHANNEL", "")
+DEPLOYMENT_TELEMETRY_SLACK_WEBHOOK = os.getenv(
+    "DEPLOYMENT_TELEMETRY_SLACK_WEBHOOK",
+    SLACK_WEBHOOK_CHANNEL,
+)
 ERROR_LOGS_WEBHOOK = os.getenv("ERROR_LOGS_WEBHOOK", "")
 
 AIRBYTE_HEADERS = {
