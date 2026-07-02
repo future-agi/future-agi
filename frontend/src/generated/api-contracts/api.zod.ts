@@ -5290,7 +5290,7 @@ export const AgentccGatewaysConfigResponse = zod.object({
 
 }).passthrough()),
   "is_active": zod.boolean(),
-  "default_timeout": zod.number(),
+  "timeout": zod.number(),
   "max_concurrent": zod.number(),
   "conn_pool_size": zod.number()
 })),

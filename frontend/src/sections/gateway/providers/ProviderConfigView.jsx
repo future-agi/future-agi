@@ -102,11 +102,7 @@ const ProviderConfigView = ({ config, orgConfig, gatewayId }) => {
               />
               <InfoLine
                 label="Timeout"
-                value={
-                  providerConfig.default_timeout ??
-                  providerConfig.defaultTimeout ??
-                  "\u2014"
-                }
+                value={providerConfig.timeout ?? "\u2014"}
               />
               <InfoLine
                 label="Max Concurrent"

@@ -193,7 +193,7 @@ class TestAgentccGatewayAPI:
                     "display_name": "Gateway Action Provider",
                     "api_format": "openai",
                     "models": ["gpt-4o-mini"],
-                    "default_timeout": 17,
+                    "timeout": 17,
                     "max_concurrent": 3,
                     "conn_pool_size": 5,
                     "base_url": "https://api.example.com/v1",

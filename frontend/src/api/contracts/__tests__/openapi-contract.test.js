@@ -148,7 +148,7 @@ describe("OpenAPI runtime contract", () => {
           config: {
             api_format: "bedrock",
             models: ["anthropic.claude-3-haiku-20240307-v1:0"],
-            default_timeout: 45,
+            timeout: 45,
             max_concurrent: 3,
           },
         },

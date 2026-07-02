@@ -81,7 +81,7 @@ def test_gateway_config_provider_uses_uuid_database_id():
             "api_format": "openai",
             "models": ["gpt-4o"],
             "is_active": True,
-            "default_timeout": 60,
+            "timeout": 60,
             "max_concurrent": 100,
             "conn_pool_size": 100,
         }

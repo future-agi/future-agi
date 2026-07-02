@@ -50,7 +50,7 @@ func (p *Plugin) Priority() int { return 60 } // After guardrails (50), before v
 
 // ProcessRequest filters tools based on policy (global → org → per-key).
 func (p *Plugin) ProcessRequest(ctx context.Context, rc *models.RequestContext) pipeline.PluginResult {
-	if len(rc.Request.Tools) == 0 {
+	if rc.Request == nil || len(rc.Request.Tools) == 0 {
 		return pipeline.ResultContinue()
 	}
 
