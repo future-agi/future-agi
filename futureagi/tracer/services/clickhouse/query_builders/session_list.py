@@ -209,6 +209,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 WHERE {self.project_filter_sql()}
                   AND is_deleted = 0
                   AND (parent_span_id IS NULL OR parent_span_id = '')
+                  AND trace_session_id IN %(content_session_ids)s
             ) AS rs
             {ts_join}
         )
@@ -365,6 +366,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         WHERE {self.project_filter_sql()}
           AND is_deleted = 0
           AND (parent_span_id IS NULL OR parent_span_id = '')
+          AND s.trace_session_id IN %(attr_session_ids)s
           AND (
             (span_attributes_raw != '{{}}' AND span_attributes_raw != '')
             OR length(mapKeys(span_attr_str)) > 0
