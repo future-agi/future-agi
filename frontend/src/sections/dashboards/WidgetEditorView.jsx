@@ -1130,6 +1130,9 @@ export default function WidgetEditorView() {
   const [moreMenuAnchor, setMoreMenuAnchor] = useState(null);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 
+  const incomingTimePreset = searchParams.get("timePreset");
+  const dashboardDetailUrl = `${paths.dashboard.dashboards.detail(dashboardId)}${incomingTimePreset ? `?timePreset=${incomingTimePreset}` : ""}`;
+
   const confirmDeleteWidget = () => {
     if (!isEditing) {
       setConfirmDeleteOpen(false);
@@ -1140,15 +1143,16 @@ export default function WidgetEditorView() {
       {
         onSuccess: () => {
           enqueueSnackbar("Widget deleted", { variant: "success" });
-          navigate(paths.dashboard.dashboards.detail(dashboardId));
+          navigate(dashboardDetailUrl);
         },
         // Close once the request settles, not before it starts.
         onSettled: () => setConfirmDeleteOpen(false),
       },
     );
   };
+
   const [timePreset, setTimePreset] = useState(
-    searchParams.get("timePreset") || "30D",
+    incomingTimePreset || "30D",
   );
   const [granularity, setGranularity] = useState("day");
   const [chartType, setChartType] = useState("line");
@@ -2107,7 +2111,7 @@ export default function WidgetEditorView() {
       setSaveStatus("saved");
       clearTimeout(saveNavTimerRef.current);
       saveNavTimerRef.current = setTimeout(() => {
-        navigate(paths.dashboard.dashboards.detail(dashboardId));
+        navigate(dashboardDetailUrl);
         setSaveStatus("idle");
       }, SAVED_NAV_DELAY_MS);
     } catch {
@@ -2895,7 +2899,7 @@ export default function WidgetEditorView() {
               display: "block",
             }}
             onClick={() =>
-              navigate(paths.dashboard.dashboards.detail(dashboardId))
+              navigate(dashboardDetailUrl)
             }
           >
             {dashboard?.name || "Dashboard"}
@@ -3153,7 +3157,7 @@ export default function WidgetEditorView() {
 
         <Button
           onClick={() =>
-            navigate(paths.dashboard.dashboards.detail(dashboardId))
+            navigate(dashboardDetailUrl)
           }
           sx={{ color: "text.primary", fontWeight: 500 }}
         >

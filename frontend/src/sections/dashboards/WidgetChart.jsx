@@ -157,9 +157,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const pieValues = useMemo(
     () =>
       isPie
-        ? chartSeries.map((s) =>
-            s.data.reduce((sum, pt) => sum + (pt.y || 0), 0),
-          )
+        ? chartSeries.map((s) => getSeriesAverage(s.data) ?? 0)
         : [],
     [isPie, chartSeries],
   );
@@ -422,11 +420,16 @@ export default function WidgetChart({ widget, globalDateRange }) {
                         flexShrink: 0,
                       }}
                     />
-                    {s.name === "total"
-                      ? queryConfig?.metrics?.[0]?.display_name ||
-                        queryConfig?.metrics?.[0]?.name ||
-                        "Total"
-                      : s.name}
+                    {(() => {
+                      const label =
+                        s.name === "total"
+                          ? queryConfig?.metrics?.[0]?.display_name ||
+                            queryConfig?.metrics?.[0]?.name ||
+                            "Total"
+                          : s.name;
+                      const unit = leftAxisFormatConfig?.unit;
+                      return unit ? `${label} (${unit})` : label;
+                    })()}
                   </span>
                 </th>
               ))}
@@ -479,7 +482,6 @@ export default function WidgetChart({ widget, globalDateRange }) {
                         {val != null
                           ? formatValueWithConfig(val, leftAxisFormatConfig, {
                               fallbackDecimals: autoDecimals,
-                              includeUnit: false,
                             })
                           : "-"}
                       </td>
@@ -498,12 +500,9 @@ export default function WidgetChart({ widget, globalDateRange }) {
     const isDarkPie = theme.palette.mode === "dark";
     const txtColor = isDarkPie ? "#fff" : "#1a1a2e";
     const pieTotal = pieValues.reduce((a, b) => a + b, 0);
-    const fmtTotal =
-      pieTotal >= 1000000
-        ? `${(pieTotal / 1000000).toFixed(1)}M`
-        : pieTotal >= 1000
-          ? pieTotal.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-          : pieTotal.toFixed(0);
+    const fmtTotal = formatValueWithConfig(pieTotal, leftAxisFormatConfig, {
+      fallbackDecimals: autoDecimals,
+    });
     const pieOptions = {
       chart: {
         type: "donut",
