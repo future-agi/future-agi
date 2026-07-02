@@ -402,7 +402,7 @@ class TestCreateQueue:
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_create_queue_without_label_ids_returns_400(self, auth_client):
-        """TH-6171: a queue requires >=1 label; omitting label_ids is rejected."""
+        """A queue requires >=1 label; omitting label_ids is rejected."""
         resp = auth_client.post(
             QUEUE_URL, {"name": "No Label Queue"}, format="json"
         )
@@ -411,7 +411,7 @@ class TestCreateQueue:
         assert resp.data["code"] == "invalid"
 
     def test_create_queue_with_empty_label_ids_returns_400(self, auth_client):
-        """TH-6171: an explicit empty label_ids list is rejected."""
+        """An explicit empty label_ids list is rejected."""
         resp = auth_client.post(
             QUEUE_URL,
             {"name": "Empty Label Queue", "label_ids": []},
@@ -812,7 +812,7 @@ class TestUpdateQueue:
         assert resp.status_code == status.HTTP_200_OK
 
     def test_update_with_empty_label_ids_returns_400(self, auth_client):
-        """TH-6171: PATCH with an explicit empty label_ids is rejected.
+        """PATCH with an explicit empty label_ids is rejected.
 
         partial=True skips ``required``, but ``min_length`` still fires, so an
         API/SDK caller that toggles labels off via PATCH-with-empty gets 400.

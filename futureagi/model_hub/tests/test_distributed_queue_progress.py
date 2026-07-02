@@ -1,5 +1,5 @@
 """
-Tests for distributed queue progress scoping (TH-3530).
+Tests for distributed queue progress scoping.
 
 Verifies that annotate-detail progress counts are scoped to the current
 user's assigned items when the queue uses a non-manual assignment strategy.
@@ -104,7 +104,7 @@ def _add_rows_to_queue(auth_client, queue_id, rows):
 
 @pytest.mark.django_db
 class TestDistributedQueueProgress:
-    """TH-3530: Progress should be scoped to current user in distributed queues."""
+    """Progress should be scoped to current user in distributed queues."""
 
     def test_manual_queue_shows_total_count(
         self, auth_client, manual_queue, dataset_with_rows

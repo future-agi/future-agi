@@ -117,3 +117,24 @@ describe("CreateQueueDrawer status update", () => {
     expect(screen.queryByRole("option", { name: "Draft" })).toBeNull();
   });
 });
+
+describe("CreateQueueDrawer label requirement", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("blocks create and shows an inline error when no label is selected", async () => {
+    const user = userEvent.setup();
+    render(<CreateQueueDrawer open onClose={vi.fn()} />);
+
+    await user.type(screen.getByLabelText(/queue name/i), "Hallucination QA");
+    await user.click(
+      screen.getByRole("button", { name: /create annotation queue/i }),
+    );
+
+    expect(
+      await screen.findByText(/at least one label is required/i),
+    ).toBeInTheDocument();
+    expect(mockCreateQueue).not.toHaveBeenCalled();
+  });
+});
