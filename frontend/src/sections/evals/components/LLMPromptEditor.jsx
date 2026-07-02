@@ -13,6 +13,7 @@ import PropTypes from "prop-types";
 import React, { useCallback, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
+import { ShowComponent } from "src/components/show";
 import axios, { endpoints } from "src/utils/axios";
 import MessageEditor from "./MessageEditor";
 
@@ -155,8 +156,7 @@ const LLMPromptEditor = ({
         borderBottom: "1px solid",
         borderColor: "divider",
         borderRadius: "8px 8px 0 0",
-        backgroundColor: (theme) =>
-          theme.palette.mode === "dark" ? "#1a1a2e" : "#fafafe",
+        backgroundColor: "background.aiSurface",
       }}
     >
       {/* Row 1: Prompt + Reject/Accept */}
@@ -317,101 +317,100 @@ const LLMPromptEditor = ({
           mb: 0.5,
         }}
       >
-        <Typography variant="body2" fontWeight={600}>
-          Prompt Messages<span style={{ color: "#d32f2f" }}>*</span>
+        <Typography typography="s1" fontWeight={600}>
+          Prompt Messages
+          <Box component="span" sx={{ color: "error.main" }}>
+            *
+          </Box>
         </Typography>
 
-        {onTemplateFormatChange && (
-          <>
-            <Box
-              onClick={(e) => !disabled && setFormatAnchor(e.currentTarget)}
+        <ShowComponent condition={Boolean(onTemplateFormatChange)}>
+          <Box
+            onClick={(e) => !disabled && setFormatAnchor(e.currentTarget)}
+            sx={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 0.75,
+              px: 1.25,
+              py: 0.35,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "6px",
+              cursor: disabled ? "default" : "pointer",
+              "&:hover": disabled ? {} : { borderColor: "text.secondary" },
+            }}
+          >
+            <Typography
+              typography="s2"
               sx={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 0.75,
-                px: 1.25,
-                py: 0.35,
-                border: "1px solid",
-                borderColor: "divider",
-                borderRadius: "6px",
-                cursor: disabled ? "default" : "pointer",
-                "&:hover": disabled ? {} : { borderColor: "text.secondary" },
+                fontWeight: 600,
+                fontFamily: "monospace",
+                color: "text.secondary",
               }}
             >
-              <Typography
-                sx={{
-                  fontSize: "12px",
-                  fontWeight: 600,
-                  fontFamily: "monospace",
-                  color: "text.secondary",
+              {currentFormat.icon}
+            </Typography>
+            <Typography typography="s2">{currentFormat.label}</Typography>
+            <Iconify
+              icon={formatAnchor ? "mdi:chevron-up" : "mdi:chevron-down"}
+              width={14}
+              sx={{ color: "text.disabled" }}
+            />
+          </Box>
+          <Popover
+            open={Boolean(formatAnchor)}
+            anchorEl={formatAnchor}
+            onClose={() => setFormatAnchor(null)}
+            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+            transformOrigin={{ vertical: "top", horizontal: "right" }}
+            slotProps={{
+              paper: { sx: { borderRadius: "8px", p: 0.5, minWidth: 220 } },
+            }}
+          >
+            {TEMPLATE_FORMATS.map((fmt) => (
+              <MenuItem
+                key={fmt.value}
+                selected={templateFormat === fmt.value}
+                onClick={() => {
+                  onTemplateFormatChange(fmt.value);
+                  setFormatAnchor(null);
                 }}
+                sx={{ borderRadius: "6px", py: 1, gap: 1.5 }}
               >
-                {currentFormat.icon}
-              </Typography>
-              <Typography variant="caption" sx={{ fontSize: "12px" }}>
-                {currentFormat.label}
-              </Typography>
-              <Iconify
-                icon={formatAnchor ? "mdi:chevron-up" : "mdi:chevron-down"}
-                width={14}
-                sx={{ color: "text.disabled" }}
-              />
-            </Box>
-            <Popover
-              open={Boolean(formatAnchor)}
-              anchorEl={formatAnchor}
-              onClose={() => setFormatAnchor(null)}
-              anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
-              transformOrigin={{ vertical: "top", horizontal: "right" }}
-              slotProps={{
-                paper: { sx: { borderRadius: "8px", p: 0.5, minWidth: 220 } },
-              }}
-            >
-              {TEMPLATE_FORMATS.map((fmt) => (
-                <MenuItem
-                  key={fmt.value}
-                  selected={templateFormat === fmt.value}
-                  onClick={() => {
-                    onTemplateFormatChange(fmt.value);
-                    setFormatAnchor(null);
+                <Typography
+                  sx={{
+                    fontSize: "14px",
+                    fontWeight: 700,
+                    fontFamily: "monospace",
+                    width: 40,
+                    textAlign: "center",
+                    color:
+                      templateFormat === fmt.value
+                        ? "primary.main"
+                        : "text.secondary",
                   }}
-                  sx={{ borderRadius: "6px", py: 1, gap: 1.5 }}
                 >
+                  {fmt.icon}
+                </Typography>
+                <Box>
                   <Typography
-                    sx={{
-                      fontSize: "14px",
-                      fontWeight: 700,
-                      fontFamily: "monospace",
-                      width: 40,
-                      textAlign: "center",
-                      color:
-                        templateFormat === fmt.value
-                          ? "primary.main"
-                          : "text.secondary",
-                    }}
+                    variant="body2"
+                    sx={{ fontSize: "13px", fontWeight: 600 }}
                   >
-                    {fmt.icon}
+                    {fmt.label}
                   </Typography>
-                  <Box>
-                    <Typography
-                      variant="body2"
-                      sx={{ fontSize: "13px", fontWeight: 600 }}
-                    >
-                      {fmt.label}
-                    </Typography>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{ fontSize: "11px" }}
-                    >
-                      {fmt.description}
-                    </Typography>
-                  </Box>
-                </MenuItem>
-              ))}
-            </Popover>
-          </>
-        )}
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontSize: "11px" }}
+                  >
+                    {fmt.description}
+                  </Typography>
+                </Box>
+              </MenuItem>
+            ))}
+          </Popover>
+        </ShowComponent>
       </Box>
 
       <MessageEditor

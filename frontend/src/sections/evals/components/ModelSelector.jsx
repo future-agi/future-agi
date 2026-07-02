@@ -26,6 +26,7 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
+import { getProviderLogoFilterSx } from "./modelLogo";
 
 // ---------------------------------------------------------------------------
 // Modes — how the evaluator runs
@@ -1196,17 +1197,9 @@ const ModelSelector = ({
                 Your Models
               </Typography>
               {apiModels.map((m) => {
-                // The models_list API returns snake_case `is_available`;
-                // read the camelCase form too in case the contract changes.
+                // API is snake_case; read camelCase too in case the contract changes.
                 const available = (m.isAvailable ?? m.is_available) !== false;
-                // The models_list API returns snake_case `logo_url`; keep
-                // reading the camelCase form too in case the contract changes.
                 const logoUrl = m.logoUrl || m.logo_url;
-                // OpenAI's logo is a solid-black PNG — invert it to white in
-                // dark mode so it stays visible on the dark menu background.
-                const isOpenAI = (m.providers || "")
-                  .toLowerCase()
-                  .includes("openai");
                 return (
                   <MenuItem
                     key={m.model_name}
@@ -1241,12 +1234,7 @@ const ModelSelector = ({
                           height: 18,
                           borderRadius: "4px",
                           flexShrink: 0,
-                          ...(isOpenAI && {
-                            filter: (theme) =>
-                              theme.palette.mode === "dark"
-                                ? "brightness(0) invert(1)"
-                                : "none",
-                          }),
+                          ...getProviderLogoFilterSx(m.providers),
                         }}
                       />
                     ) : (

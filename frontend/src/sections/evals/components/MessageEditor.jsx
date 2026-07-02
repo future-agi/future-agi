@@ -10,6 +10,7 @@ import PropTypes from "prop-types";
 import { useCallback, useMemo } from "react";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
+import { ShowComponent } from "src/components/show";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import MessageEditorBlock from "./MessageEditorBlock";
 import ModelSelector from "./ModelSelector";
@@ -311,7 +312,7 @@ const MessageEditor = ({
             <Box sx={{ flex: 1 }} />
           )}
 
-          {onFalconClick && !aiOpen && (
+          <ShowComponent condition={onFalconClick && !aiOpen}>
             <Tooltip title="Generate with Falcon AI" arrow placement="top">
               <IconButton
                 size="small"
@@ -321,12 +322,7 @@ const MessageEditor = ({
                   width: 32,
                   height: 32,
                   flexShrink: 0,
-                  "&:hover": {
-                    backgroundColor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? "rgba(124,77,255,0.12)"
-                        : "rgba(124,77,255,0.06)",
-                  },
+                  "&:hover": { backgroundColor: "background.aiHover" },
                 }}
               >
                 <SvgColor
@@ -335,7 +331,7 @@ const MessageEditor = ({
                 />
               </IconButton>
             </Tooltip>
-          )}
+          </ShowComponent>
         </Box>
       </Box>
 
