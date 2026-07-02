@@ -28,8 +28,54 @@ from evaluations.engine.preprocessing import (
 
 
 def test_image_preprocessors_registered():
-    for name in ("image_properties", "psnr", "ssim"):
+    for name in (
+        "clip_score",
+        "ClipScore",
+        "fid_score",
+        "FidScore",
+        "image_properties",
+        "ImageProperties",
+        "psnr",
+        "Psnr",
+        "ssim",
+        "Ssim",
+    ):
         assert name in PREPROCESSORS, f"{name} preprocessor must be registered"
+
+
+def test_preprocess_inputs_prefers_stable_eval_type_id(monkeypatch):
+    calls = []
+
+    def stable_preprocessor(inputs):
+        calls.append("stable")
+        return inputs
+
+    def editable_name_preprocessor(inputs):
+        calls.append("editable")
+        return inputs
+
+    monkeypatch.setitem(PREPROCESSORS, "ClipScore", stable_preprocessor)
+    monkeypatch.setitem(
+        PREPROCESSORS, "Renamed Image Quality Eval", editable_name_preprocessor
+    )
+
+    preprocess_inputs("ClipScore", {}, fallback_eval_name="Renamed Image Quality Eval")
+
+    assert calls == ["stable"]
+
+
+def test_preprocess_inputs_falls_back_to_template_slug(monkeypatch):
+    calls = []
+
+    def slug_preprocessor(inputs):
+        calls.append("slug")
+        return inputs
+
+    monkeypatch.setitem(PREPROCESSORS, "clip_score", slug_preprocessor)
+
+    preprocess_inputs("CustomCodeEval", {}, fallback_eval_name="clip_score")
+
+    assert calls == ["slug"]
 
 
 # ---------------------------------------------------------------------------
