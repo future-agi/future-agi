@@ -24,7 +24,24 @@ logger = structlog.get_logger(__name__)
 
 
 class SpeakerRoleResolver:
-    """Interprets CallTranscript.speaker_role by provider + call direction."""
+    """Interprets CallTranscript.speaker_role by provider + call direction.
+
+    READ-SIDE ONLY. This class translates raw provider role labels stored
+    in the DB into the platform-perspective convention that the FE, LLM
+    eval inputs, and downstream analytics expect. Do NOT call it from
+    write paths: transcript rows, recording URLs and ended_reason are
+    all persisted in their raw provider shape (with the single documented
+    exception of ended_reason for VAPI inbound, handled inline by
+    voice_large.py). Using the resolver at write time re-introduces the
+    "coincidental no-op that flips the moment the map is corrected" bug
+    that motivated this class in the first place.
+
+    The only compute-time use that IS legitimate lives in
+    ee/voice/services/conversation_metrics._normalize_roles_for_test_agent,
+    which computes derived metric columns (bot_wpm, user_wpm, talk_ratio,
+    interruption counts) whose field-name contract commits bot_* to the
+    tested agent. That is a derivation, not a raw-storage decision.
+    """
 
     _VAPI_INBOUND: dict[str, str] = {
         "bot": "simulator",
