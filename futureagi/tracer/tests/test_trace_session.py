@@ -1442,7 +1442,7 @@ class TestSessionListLatency:
             "VALUES " + ", ".join(eu_values)
         )
 
-    def _run_session_list_query(self, filters, project_id=None):
+    def _run_session_list_query(self, filters, project_id=None, sort_params=None, page_number=0, page_size=30):
         import time
 
         from tracer.services.clickhouse.query_service import AnalyticsQueryService
@@ -1451,10 +1451,10 @@ class TestSessionListLatency:
         _Cls = get_query_builder_class("SESSION_LIST")
         builder = _Cls(
             project_id=project_id or self.project_id,
-            page_number=0,
-            page_size=30,
+            page_number=page_number,
+            page_size=page_size,
             filters=filters,
-            sort_params=[],
+            sort_params=sort_params or [],
         )
         analytics = AnalyticsQueryService()
         query, params = builder.build()
@@ -1555,26 +1555,11 @@ class TestSessionListLatency:
                 },
             }
         ]
-        import time
-
-        from tracer.services.clickhouse.query_service import AnalyticsQueryService
-        from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
-
-        _Cls = get_query_builder_class("SESSION_LIST")
-        builder = _Cls(
-            project_id=self.project_id,
-            page_number=0,
-            page_size=30,
-            filters=filters,
-            sort_params=[{"column_id": "duration", "direction": "desc"}],
+        main_ms, enrich_ms, count = self._run_session_list_query(
+            filters, sort_params=[{"column_id": "duration", "direction": "desc"}]
         )
-        analytics = AnalyticsQueryService()
-        query, params = builder.build()
-
-        t0 = time.time()
-        result = analytics.execute_ch_query(query, params, timeout_ms=15000)
-        total = (time.time() - t0) * 1000
-        print(f"\n  [BENCHMARK] sort by duration DESC: {total:.0f}ms sessions={len(result.data[:30])}")
+        total = main_ms + enrich_ms
+        print(f"\n  [BENCHMARK] sort by duration DESC: {total:.0f}ms sessions={count}")
         assert total < 2000, f"Session list sorted by duration took {total:.0f}ms (threshold: 2000ms)"
 
     def test_latency_with_tokens_having_filter(self):
@@ -1636,26 +1621,11 @@ class TestSessionListLatency:
                 },
             }
         ]
-        import time
-
-        from tracer.services.clickhouse.query_service import AnalyticsQueryService
-        from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
-
-        _Cls = get_query_builder_class("SESSION_LIST")
-        builder = _Cls(
-            project_id=self.project_id,
-            page_number=0,
-            page_size=30,
-            filters=filters,
-            sort_params=[{"column_id": "total_cost", "direction": "asc"}],
+        main_ms, enrich_ms, count = self._run_session_list_query(
+            filters, sort_params=[{"column_id": "total_cost", "direction": "asc"}]
         )
-        analytics = AnalyticsQueryService()
-        query, params = builder.build()
-
-        t0 = time.time()
-        result = analytics.execute_ch_query(query, params, timeout_ms=15000)
-        total = (time.time() - t0) * 1000
-        print(f"\n  [BENCHMARK] sort by cost ASC: {total:.0f}ms sessions={len(result.data[:30])}")
+        total = main_ms + enrich_ms
+        print(f"\n  [BENCHMARK] sort by cost ASC: {total:.0f}ms sessions={count}")
         assert total < 2000, f"Session list sorted by cost took {total:.0f}ms (threshold: 2000ms)"
 
     def test_latency_narrow_time_range_24h(self):
@@ -1706,26 +1676,10 @@ class TestSessionListLatency:
                 },
             },
         ]
-        import time
-
-        from tracer.services.clickhouse.query_service import AnalyticsQueryService
-        from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
-
-        _Cls = get_query_builder_class("SESSION_LIST")
-        builder = _Cls(
-            project_id=self.project_id,
-            page_number=0,
-            page_size=30,
-            filters=filters,
-            sort_params=[{"column_id": "duration", "direction": "desc"}],
+        main_ms, enrich_ms, count = self._run_session_list_query(
+            filters, sort_params=[{"column_id": "duration", "direction": "desc"}]
         )
-        analytics = AnalyticsQueryService()
-        query, params = builder.build()
-
-        t0 = time.time()
-        result = analytics.execute_ch_query(query, params, timeout_ms=15000)
-        total = (time.time() - t0) * 1000
-        count = len(result.data[:30])
+        total = main_ms + enrich_ms
         print(f"\n  [BENCHMARK] tokens+cost+sort_duration: {total:.0f}ms sessions={count}")
         assert total < 3000, f"Combined filters + sort took {total:.0f}ms (threshold: 3000ms)"
 
@@ -1740,26 +1694,11 @@ class TestSessionListLatency:
                 },
             }
         ]
-        import time
-
-        from tracer.services.clickhouse.query_service import AnalyticsQueryService
-        from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
-
-        _Cls = get_query_builder_class("SESSION_LIST")
-        builder = _Cls(
-            project_id=self.project_id,
-            page_number=1,
-            page_size=10,
-            filters=filters,
-            sort_params=[],
+        main_ms, enrich_ms, count = self._run_session_list_query(
+            filters, page_number=1, page_size=10
         )
-        analytics = AnalyticsQueryService()
-        query, params = builder.build()
-
-        t0 = time.time()
-        result = analytics.execute_ch_query(query, params, timeout_ms=15000)
-        total = (time.time() - t0) * 1000
-        print(f"\n  [BENCHMARK] page 2 (offset 10): {total:.0f}ms sessions={len(result.data[:10])}")
+        total = main_ms + enrich_ms
+        print(f"\n  [BENCHMARK] page 2 (offset 10): {total:.0f}ms sessions={count}")
         assert total < 2000, f"Session list page 2 took {total:.0f}ms (threshold: 2000ms)"
 
 

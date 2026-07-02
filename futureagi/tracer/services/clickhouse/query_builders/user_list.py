@@ -200,12 +200,11 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 sumMerge(prompt_tokens_sum) AS input_tokens,
                 sumMerge(completion_tokens_sum) AS output_tokens,
                 uniqMerge(trace_count) AS num_traces,
-                maxMerge(last_seen) AS last_active,
-                countIfMerge(error_count) AS num_errors
+                maxMerge(last_seen) AS last_active
             FROM span_user_rollup
             WHERE end_user_id IN (SELECT end_user_id FROM filtered_end_users)
               AND hour_first_seen >= %(start_date)s
-              AND hour_first_seen <= %(end_date)s
+              AND hour_first_seen < %(end_date)s
               {project_filter}
             GROUP BY end_user_id
         ),

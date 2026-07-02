@@ -621,7 +621,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 round(sum(cost), 6) AS total_cost,
                 sum(total_tokens) AS total_tokens,
                 count(DISTINCT trace_id) AS total_traces,
-                toString(argMax(end_user_id, spans.start_time)) AS end_user_id
+                toString(argMaxIf(end_user_id, spans.start_time, isNotNull(end_user_id) AND end_user_id != toUUID('00000000-0000-0000-0000-000000000000'))) AS end_user_id
             FROM spans
             {ts_remap_join}
             WHERE project_id = %(project_id)s
