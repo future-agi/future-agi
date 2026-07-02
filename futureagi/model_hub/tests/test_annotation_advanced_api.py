@@ -29,6 +29,8 @@ import pytest
 from django.utils import timezone
 from rest_framework import status
 
+from conftest import create_categorical_label
+
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
     AnnotationQueueAnnotator,
@@ -78,21 +80,6 @@ LABEL_URL = "/model-hub/annotations-labels/"
 # ---------------------------------------------------------------------------
 
 
-def _create_label_via_api(auth_client, name="Default Queue Label"):
-    payload = {
-        "name": name,
-        "type": "categorical",
-        "settings": {
-            "options": [{"label": "A"}, {"label": "B"}],
-            "multi_choice": False,
-            "rule_prompt": "",
-            "auto_annotate": False,
-            "strategy": None,
-        },
-    }
-    auth_client.post(LABEL_URL, payload, format="json")
-    resp = auth_client.get(LABEL_URL, {"search": name})
-    return resp.data["results"][0]["id"]
 
 
 def _create_queue(auth_client, name="Test Queue", **extra):
@@ -100,7 +87,7 @@ def _create_queue(auth_client, name="Test Queue", **extra):
     # by default unless the caller specifies label_ids.
     bootstrap_label = "label_ids" not in extra
     if bootstrap_label:
-        extra["label_ids"] = [str(_create_label_via_api(auth_client))]
+        extra["label_ids"] = [str(create_categorical_label(auth_client))]
     payload = {"name": name, **extra}
     resp = auth_client.post(QUEUE_URL, payload, format="json")
     assert resp.status_code == status.HTTP_201_CREATED, resp.data

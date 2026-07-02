@@ -29,6 +29,8 @@ import pytest
 from django.utils import timezone
 from rest_framework import status
 
+from conftest import create_categorical_label
+
 from accounts.models.user import User
 from accounts.models.organization_membership import OrganizationMembership
 from model_hub.models.annotation_queues import (
@@ -312,31 +314,13 @@ def categorical_label(db, organization, workspace, project):
     )
 
 
-def _make_label(auth_client, name="Default Queue Label"):
-    auth_client.post(
-        "/model-hub/annotations-labels/",
-        {
-            "name": name,
-            "type": "categorical",
-            "settings": {
-                "options": [{"label": "A"}, {"label": "B"}],
-                "multi_choice": False,
-                "rule_prompt": "",
-                "auto_annotate": False,
-                "strategy": None,
-            },
-        },
-        format="json",
-    )
-    resp = auth_client.get("/model-hub/annotations-labels/", {"search": name})
-    return resp.data["results"][0]["id"]
 
 
 @pytest.fixture
 def queue(db, auth_client, user, organization):
     """Active queue. Creator is auto-registered as MANAGER by the serializer."""
     # A queue must have at least one label (serializer-enforced).
-    label_id = _make_label(auth_client, name="Team A Label")
+    label_id = create_categorical_label(auth_client, name="Team A Label")
     resp = auth_client.post(
         QUEUE_URL,
         {"name": "Team A Queue", "label_ids": [str(label_id)]},
@@ -1242,7 +1226,7 @@ class TestQueueCRUD:
 @pytest.mark.integration
 class TestQueueStatusTransitions:
     def test_draft_to_active(self, auth_client):
-        label_id = _make_label(auth_client, name="Draftee Label")
+        label_id = create_categorical_label(auth_client, name="Draftee Label")
         resp = auth_client.post(
             QUEUE_URL,
             {"name": "Draftee", "label_ids": [str(label_id)]},
