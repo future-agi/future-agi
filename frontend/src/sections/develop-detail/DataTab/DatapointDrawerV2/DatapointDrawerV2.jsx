@@ -298,7 +298,6 @@ const DatapointDrawerChild = () => {
     evalMetaBySourceId[column?.col?.sourceId || column?.col?.source_id]
       ?.templateType === "composite";
 
-
   const runEvalData = useMemo(() => {
     const evalColumns = allColumns.filter((i) => i.originType === "evaluation");
     const currentRowData = datapoint?.rowData ? datapoint?.rowData : [];
@@ -312,7 +311,9 @@ const DatapointDrawerChild = () => {
       // Read both shapes for compatibility with any cached/stale data
       // and re-emit as snake_case for downstream consumers.
       const cellValue =
-        rowDataForColumn?.cell_value ?? rowDataForColumn?.cellValue ?? null;
+        rowDataForColumn?.cell_value !== undefined
+          ? rowDataForColumn.cell_value
+          : rowDataForColumn?.cellValue ?? null;
       const valueInfosOutput =
         rowDataForColumn?.value_infos?.output ??
         rowDataForColumn?.valueInfos?.output;
@@ -913,7 +914,7 @@ const DatapointDrawerChild = () => {
                     )}
                   </Box>
                 </Box>
-               
+
                 {!evalOpenIsCode && !isCompositeEval && (
                   <ErrorLocalizationCellSection
                     evalOpen={evalOpen}
