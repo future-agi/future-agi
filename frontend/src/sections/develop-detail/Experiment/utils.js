@@ -144,26 +144,17 @@ const _replaceIdWithColumnName = (content, allColumns = []) => {
         };
       }
 
-      // Handle media content (image, pdf, audio) with nested keys
-      const mediaTypes = {
-        image_url: "imageUrl",
-        pdf_url: "pdfUrl",
-        audio_url: "audioUrl",
-      };
-
-      if (mediaTypes[part?.type] && part[mediaTypes[part?.type]]) {
-        const original = part?.[mediaTypes?.[part?.type]];
-        const converted = Object?.fromEntries(
-          Object.entries(original)?.map(([key, value]) => [
+      const MEDIA_TYPES = ["image_url", "pdf_url", "audio_url"];
+      if (MEDIA_TYPES.includes(part?.type) && part[part.type]) {
+        const original = part[part.type];
+        const converted = Object.fromEntries(
+          Object.entries(original).map(([key, value]) => [
             _.snakeCase(key),
             value,
           ]),
         );
 
-        return {
-          ...part,
-          [mediaTypes[part.type]]: converted,
-        };
+        return { ...part, [part.type]: converted };
       }
 
       return part;

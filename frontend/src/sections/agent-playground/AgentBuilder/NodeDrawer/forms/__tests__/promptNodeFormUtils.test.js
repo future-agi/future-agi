@@ -42,7 +42,7 @@ describe("extractVariablesFromContent", () => {
 
   it("ignores non-text blocks", () => {
     const content = [
-      { type: "image_url", imageUrl: { url: "{{not_a_var}}" } },
+      { type: "image_url", image_url: { url: "{{not_a_var}}" } },
       { type: "text", text: "{{real_var}}" },
     ];
     expect(extractVariablesFromContent(content)).toEqual(["real_var"]);
