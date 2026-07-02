@@ -81,13 +81,15 @@ describe("TraceFilterPanel AI apply (#577)", () => {
         source: "traces",
       });
     });
+    // The AI path now applies computeValidFilters(converted) like every other
+    // path, so the operator is normalized to the canonical string op ("in").
     expect(onApply).toHaveBeenCalledWith([
       {
         field: "status",
         fieldCategory: "system",
         fieldType: "string",
         apiColType: undefined,
-        operator: "equals",
+        operator: "in",
         value: ["ERROR"],
       },
     ]);
