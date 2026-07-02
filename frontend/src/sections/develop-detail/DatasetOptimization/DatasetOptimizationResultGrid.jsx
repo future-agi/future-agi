@@ -31,8 +31,8 @@ const getColumnConfig = (columnConfig) => {
           valueGetter: (params) => {
             return {
               title: params.data?.trial,
-              improvement: params.data?.scorePercentageChange,
-              isBest: params.data?.isBest,
+              improvement: params.data?.score_percentage_change,
+              isBest: params.data?.is_best,
             };
           },
         };
@@ -93,8 +93,8 @@ const DatasetOptimizationResultGrid = ({ optimizationId, onTrialClick }) => {
   });
 
   const columnDefs = useMemo(() => {
-    return getColumnConfig(optimizationData?.columnConfig);
-  }, [optimizationData?.columnConfig]);
+    return getColumnConfig(optimizationData?.column_config);
+  }, [optimizationData?.column_config]);
 
   const rowData = useMemo(() => {
     return optimizationData?.table ?? [];
