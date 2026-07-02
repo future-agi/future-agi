@@ -382,12 +382,23 @@ class TestRunTestRuntimeContracts:
             f"/simulate/run-tests/{run_test_with_v10_scenario.id}/eval-configs/"
             f"{eval_config_id}/update/",
             {
+                "template_id": str(word_count_eval_template.id),
                 "name": "word_count_updated",
                 "mapping": {"text": "agent_output"},
                 "config": {
                     "params": {"min_words": "3", "max_words": "12"},
                     "run_config": {"pass_threshold": 0.9},
                 },
+                "filters": [
+                    {
+                        "column_id": "status",
+                        "filter_config": {
+                            "filter_type": "text",
+                            "filter_op": "not_equals",
+                            "filter_value": "failed",
+                        },
+                    }
+                ],
                 "error_localizer": True,
                 "model": "turing_large",
                 "run": False,
@@ -404,6 +415,8 @@ class TestRunTestRuntimeContracts:
         assert eval_config.config["params"] == {"min_words": 3, "max_words": 12}
         assert eval_config.error_localizer is True
         assert eval_config.model == "turing_large"
+        assert eval_config.eval_template_id == word_count_eval_template.id
+        assert eval_config.filters[0]["filter_config"]["filter_op"] == "not_equals"
 
     def test_eval_config_create_rejects_other_workspace_template(
         self,

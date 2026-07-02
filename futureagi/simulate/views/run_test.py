@@ -4718,16 +4718,37 @@ class UpdateEvalConfigView(APIView):
 
             run = validated.get("run", False)
 
+            # Resolve new template if provided so config normalization uses the
+            # right template schema.
+            new_template = None
+            if "template_id" in validated:
+                template_id = validated.get("template_id")
+                try:
+                    new_template = EvalTemplate.no_workspace_objects.get(
+                        Q(organization=user_organization)
+                        | Q(organization__isnull=True),
+                        id=template_id,
+                    )
+                except EvalTemplate.DoesNotExist:
+                    return self._gm.bad_request("Evaluation template not found")
+
             # Update config if provided (similar to EditAndRunUserEvalView)
             new_config = validated.get("config")
             if new_config:
+                template_config = (
+                    new_template.config if new_template else eval_config.eval_template.config
+                )
                 eval_config.config = normalize_eval_runtime_config(
-                    eval_config.eval_template.config, new_config
+                    template_config, new_config
                 )
 
             # Update mapping if provided at top level
             if "mapping" in validated:
                 eval_config.mapping = validated.get("mapping")
+
+            # Update filters if provided
+            if "filters" in validated:
+                eval_config.filters = validated.get("filters")
 
             # Update other fields if provided
             if "name" in validated:
@@ -4762,6 +4783,11 @@ class UpdateEvalConfigView(APIView):
                         return self._gm.bad_request("Knowledge base not found")
                 else:
                     eval_config.kb_id = None
+
+            # Switch template after config normalization so the existing config
+            # is validated against the new template's schema.
+            if new_template:
+                eval_config.eval_template = new_template
 
             # Save the eval config
             eval_config.save()
