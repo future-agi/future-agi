@@ -52,10 +52,10 @@ export const getConditionalNodeDefaultValues = (initialData, allColumns) => {
       newColumnName: initialData.newColumnName,
       config: initialData.config?.map((con) => ({
         ...con,
-        condition: replaceColumnIdWithName(con.condition, allColumns),
+        condition: replaceColumnIdWithName(con.condition ?? "", allColumns),
         branchNodeConfig: {
-          type: con.branchNodeConfig.type,
-          config: con.branchNodeConfig.config,
+          type: con.branchNodeConfig?.type ?? "",
+          config: con.branchNodeConfig?.config ?? null,
         },
       })),
     };
