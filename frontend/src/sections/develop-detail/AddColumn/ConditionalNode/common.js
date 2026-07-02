@@ -51,11 +51,11 @@ export const getConditionalNodeDefaultValues = (initialData, allColumns) => {
     return {
       newColumnName: initialData.newColumnName,
       config: initialData.config?.map((con) => ({
-        ...con,
+        branchType: con.branch_type,
         condition: replaceColumnIdWithName(con.condition ?? "", allColumns),
         branchNodeConfig: {
-          type: con.branchNodeConfig?.type ?? "",
-          config: con.branchNodeConfig?.config ?? null,
+          type: con.branch_node_config?.type ?? "",
+          config: con.branch_node_config?.config ?? null,
         },
       })),
     };
