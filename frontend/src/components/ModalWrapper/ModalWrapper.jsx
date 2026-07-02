@@ -13,6 +13,12 @@ import PropTypes from "prop-types";
 import React from "react";
 import Iconify from "src/components/iconify";
 
+const actionBtnBaseSx = {
+  minWidth: "90px",
+  minHeight: "32px",
+  textTransform: "none",
+};
+
 export default function ModalWrapper({
   children,
   onSubmit,
@@ -101,12 +107,13 @@ export default function ModalWrapper({
       >
         {!hideCancelBtn && (
           <Button
+            size="small"
             disabled={isLoading}
             onClick={onCancelBtn ? onCancelBtn : onClose}
             variant="outlined"
             type="button"
             sx={{
-              minWidth: "180px",
+              ...actionBtnBaseSx,
               "&:hover": {
                 borderColor: "divider",
               },
@@ -128,7 +135,7 @@ export default function ModalWrapper({
           size="small"
           onClick={onSubmit}
           sx={{
-            minWidth: "180px",
+            ...actionBtnBaseSx,
             marginLeft: "0 !important",
             ...actionBtnSx,
           }}

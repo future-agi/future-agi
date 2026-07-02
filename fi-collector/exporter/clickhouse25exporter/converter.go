@@ -43,12 +43,84 @@ const (
 	attrSessionID    = "session.id"
 	resAttrProjectTy = "project_type"
 
+	// zeroUUIDString: traceIDToUUIDString output for a missing/zero trace id;
+	// collectTrace skips it to avoid an all-zeros-keyed trace_dict row.
+	zeroUUIDString = "00000000-0000-0000-0000-000000000000"
+
 	// projectTypeObserve is ProjectType.OBSERVE.value from the SDK
 	// (fi_instrumentation fi_types.ProjectType). The Django end_user stamp is
 	// gated on `project.trace_type == "observe"`; the collector mirrors that
 	// using the resource `project_type` hint, which carries this value.
 	projectTypeObserve = "observe"
+
+	// observationTypeUnknown is the fallback for an absent/unrecognized span
+	// kind — mirrors Python get_observation_type, which returns "unknown".
+	observationTypeUnknown = "unknown"
 )
+
+// knownObservationTypes mirrors ObservationSpan.OBSERVATION_SPAN_TYPES; the
+// read layer filters LOWERCASE, so store lowercased + validated.
+var knownObservationTypes = map[string]struct{}{
+	"tool": {}, "chain": {}, "llm": {}, "retriever": {}, "embedding": {},
+	"agent": {}, "reranker": {}, "guardrail": {}, "evaluator": {},
+	"conversation": {}, "unknown": {},
+}
+
+// spanKindAttrKeys mirrors AttributeAliases.SPAN_KIND: attribute keys a span
+// kind may arrive under across SDK conventions. First non-empty wins.
+var spanKindAttrKeys = []string{
+	"fi.span.kind",            // FI
+	"gen_ai.span.kind",        // OTEL GenAI
+	"llm.request.type",        // OpenLLMetry
+	"openinference.span.kind", // OpenInference
+}
+
+// operationNameAttrKeys mirrors AttributeAliases.OPERATION_NAME — fallback when
+// no span-kind attr is present (OTEL GenAI sets only the operation name).
+var operationNameAttrKeys = []string{
+	"gen_ai.operation.name", // OTEL GenAI
+}
+
+// spanKindSynonyms mirrors AttributeRegistry.normalize_span_kind: operation /
+// convention values mapped onto an internal observation type.
+var spanKindSynonyms = map[string]string{
+	"chat":             "llm",
+	"generate_content": "llm",
+	"text_completion":  "llm",
+	"embeddings":       "embedding",
+	"execute_tool":     "tool",
+	"invoke":           "chain",
+}
+
+// resolveObservationType mirrors Python get_observation_type ∘ normalize_span_kind:
+// read span-kind aliases across SDK conventions, fall back to operation-name
+// aliases, apply synonyms, validate (else "unknown"). Without the full alias set
+// OTEL-GenAI / OpenLLMetry spans land "unknown" and miss observation_type filters.
+func resolveObservationType(attrsStr map[string]string) string {
+	raw := ""
+	for _, k := range spanKindAttrKeys {
+		if v := attrsStr[k]; v != "" {
+			raw = v
+			break
+		}
+	}
+	if raw == "" {
+		for _, k := range operationNameAttrKeys {
+			if v := attrsStr[k]; v != "" {
+				raw = v
+				break
+			}
+		}
+	}
+	t := strings.ToLower(strings.TrimSpace(raw))
+	if syn, ok := spanKindSynonyms[t]; ok {
+		t = syn
+	}
+	if _, ok := knownObservationTypes[t]; !ok {
+		return observationTypeUnknown
+	}
+	return t
+}
 
 // Convert walks an OTLP Traces payload and returns one map per span. Maps
 // are designed for JSONEachRow encoding: all values are JSON-natural types
@@ -117,10 +189,64 @@ func ConvertWithIdentities(traces ptrace.Traces) ([]map[string]any, *curatedwrit
 				}
 				rows = append(rows, row)
 				identity.addTo(ids)
+				collectTrace(ids, row, projectID)
 			}
 		}
 	}
 	return rows, ids, nil
+}
+
+// collectTrace derives the `traces` identity from a ROOT span (no parent) — the
+// collector is the sole `traces` writer for direct-to-collector traffic. One row
+// per trace, columns read off the already-built span `row`. `rawProjectID` is the
+// UNcoalesced `fi.project_id`: gate on it being a valid UUID, since coalesceUUID
+// stamps a RANDOM project_id for an unauthenticated producer and a traces row
+// keyed on a random project resolves to nothing.
+func collectTrace(ids *curatedwriter.Batch, row map[string]any, rawProjectID string) {
+	if parent, _ := row["parent_span_id"].(string); parent != "" {
+		return // not the root — the root span of this trace writes the row
+	}
+	// Key on the CANONICAL project (lowercase-dashed, as end_users / the app mirror
+	// use) so a noncanonical producer id can't drift project_id for a co-owned
+	// trace; also rejects an orphan span whose project coalesceUUID randomized.
+	pid, ok := canonicalUUID(rawProjectID)
+	if !ok {
+		return // orphan span (no real project) — nothing to resolve to
+	}
+	traceID, _ := row["trace_id"].(string)
+	// A zero trace id formats to all-zeros (never ""); skip it, else every
+	// malformed trace collapses onto one trace_dict entry → last-writer's project.
+	if traceID == "" || traceID == zeroUUIDString {
+		return
+	}
+	// No/zero StartTimestamp yields _version 0 and a 1970 created_at. `traces` is
+	// PARTITION BY toYYYYMM(created_at) with partition-local RMT dedup, so a 1970
+	// row never merges with the app's real-month row, and version-0 loses every
+	// merge. Skip the poisoned trace.
+	version, ok := row["_version"].(uint64)
+	if !ok || version == 0 {
+		return
+	}
+	name, _ := row["name"].(string)
+	input, _ := row["input"].(string)
+	output, _ := row["output"].(string)
+	createdAt, _ := row["start_time"].(string)
+	t := curatedwriter.Trace{
+		ID:        traceID,
+		ProjectID: pid,
+		Name:      name,
+		Input:     input,
+		Output:    output,
+		CreatedAt: createdAt,
+		// Cap at ingest wall-clock so a future-skewed producer clock can't outrank
+		// the app mirror's time.time_ns() version for a co-owned trace. Doesn't stop
+		// a late span un-deleting a soft-deleted trace (inherent dual-writer+RMT).
+		Version: min(version, uint64(time.Now().UTC().UnixNano())),
+	}
+	if sid, ok := row["trace_session_id"].(string); ok {
+		t.SessionID = sid // nil (no session) stays "" → NULL
+	}
+	ids.AddTrace(t)
 }
 
 // spanToRow does the per-span conversion. Keeping this in one function
@@ -182,17 +308,9 @@ func spanToRow(
 		parentID = strings.ToLower(span.ParentSpanID().String())
 	}
 
-	// observation_type: prefer the OTel-GenAI `gen_ai.operation.name`
-	// (chat / embedding / completion) when present; fall back to the
-	// SDK-provided `openinference.span.kind` (LLM / CHAIN / TOOL); else
-	// generic span kind. Matches the legacy adapter behaviour.
-	observationType := strings.ToUpper(attrsStr["openinference.span.kind"])
-	if observationType == "" {
-		observationType = strings.ToUpper(attrsStr["fi.span.kind"])
-	}
-	if observationType == "" {
-		observationType = "SPAN"
-	}
+	// observation_type: resolved across SDK conventions, lowercased + validated
+	// (the read layer filters lowercase, so uppercasing would hide spans).
+	observationType := resolveObservationType(attrsStr)
 
 	// Inputs/outputs: extracted from openinference convention if present.
 	// `input.value` / `output.value` route to the overflow tier (per
@@ -220,6 +338,11 @@ func spanToRow(
 	identity := newSpanIdentity(span.Attributes(), projectID, orgID, projectType)
 	endUserID := identity.endUserColumn()
 	traceSessionID := identity.sessionColumn()
+
+	versionNanos := uint64(0)
+	if startNanos.UnixNano() != 0 {
+		versionNanos = uint64(time.Now().UTC().UnixNano())
+	}
 
 	row := map[string]any{
 		"project_id":        coalesceUUID(projectID),
@@ -257,9 +380,7 @@ func spanToRow(
 		"tags":              "[]",
 		"span_events":       spanEventsJSON(span.Events()),
 		"semconv_source":    semconv,
-		// _version comes from start_time nanos so newer spans always win
-		// the ReplacingMergeTree dedup; matches the adapter.py convention.
-		"_version":   uint64(startNanos.UnixNano()),
+		"_version":   versionNanos,
 		"is_deleted": uint8(0),
 	}
 	return row, identity, nil
@@ -669,8 +790,8 @@ func nullableUUID(s string) any {
 // traceIDToUUIDString formats an OTel 16-byte trace id as the canonical
 // 36-char dashed UUID (8-4-4-4-12), matching PG `tracer_trace.id` and the
 // migration backfill. Uses the same byte-formatting idiom as randomUUID.
-// An empty/zero trace id yields the all-zero UUID string; the caller's
-// upstream validation rejects spans without a trace before we get here.
+// An empty/zero trace id yields zeroUUIDString; the span is still written, but
+// collectTrace skips it so it never seeds an all-zeros-keyed traces row.
 func traceIDToUUIDString(t pcommon.TraceID) string {
 	b := t // pcommon.TraceID is [16]byte
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",

@@ -21,6 +21,7 @@ import { useNavigate, useParams } from "react-router";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
+import { getVersionLabel } from "src/utils/utils";
 import { resetState, useTestEvaluationStoreShallow } from "./states";
 import { useIsMutating } from "@tanstack/react-query";
 import { useTestRunsList } from "src/api/tests/testRuns";
@@ -448,7 +449,7 @@ const TestDetailHeader = () => {
                         testData?.prompt_version_detail?.template_version ??
                         testData?.promptVersionDetail?.templateVersion;
                       if (!tv) return "-";
-                      return String(tv).startsWith("v") ? tv : `v${tv}`;
+                      return getVersionLabel(tv);
                     })()
                   )}
                 </Button>

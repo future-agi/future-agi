@@ -8128,16 +8128,16 @@ export const PromptConfigApiOutputFormat = {
   image: 'image',
 } as const;
 
-export type PromptConfigApiRunPromptConfig = {[key: string]: string};
+export type PromptConfigApiRunPromptConfig = {[key: string]: { [key: string]: unknown }};
 
-export type PromptConfigApiMessagesItem = {[key: string]: string};
+export type PromptConfigApiMessagesItem = {[key: string]: { [key: string]: unknown }};
 
 /**
- * JSON schema for response format if required. Can be a JSON object or string. Defaults to None.
+ * Any valid JSON value.
  */
 export type PromptConfigApiResponseFormat = { [key: string]: unknown };
 
-export type PromptConfigApiToolsItem = {[key: string]: string};
+export type PromptConfigApiToolsItem = {[key: string]: { [key: string]: unknown }};
 
 export interface PromptConfigApi {
   /** @maxLength 255 */
@@ -8175,7 +8175,7 @@ export interface PromptConfigApi {
      * @maximum 1
      */
   top_p?: number;
-  /** JSON schema for response format if required. Can be a JSON object or string. Defaults to None. */
+  /** Any valid JSON value. */
   response_format?: PromptConfigApiResponseFormat;
   /** Tool selection mode: 'auto' or 'required'. */
   tool_choice?: PromptConfigApiToolChoice;
@@ -8430,20 +8430,39 @@ export interface DatasetRowDiffRequestApi {
   compare_column_ids: string[];
 }
 
-export type ExperimentRowDiffCellApiCellValue = { [key: string]: unknown };
+export type ExperimentRowCellInnerMetadataApiErrorAnalysis = { [key: string]: unknown };
 
-export type ExperimentRowDiffCellApiCellDiffValue = { [key: string]: unknown };
-
-export type ExperimentRowDiffCellApiValueInfos = { [key: string]: unknown };
-
-export interface ExperimentRowDiffCellApi {
-  cell_value?: ExperimentRowDiffCellApiCellValue;
-  cell_diff_value?: ExperimentRowDiffCellApiCellDiffValue;
-  status?: string;
-  value_infos?: ExperimentRowDiffCellApiValueInfos;
+export interface ExperimentRowCellInnerMetadataApi {
+  explanation?: string;
+  error_analysis?: ExperimentRowCellInnerMetadataApiErrorAnalysis;
+  selected_input_key?: string;
 }
 
-export type ExperimentRowDiffResponseApiResult = {[key: string]: {[key: string]: ExperimentRowDiffCellApi}};
+export type ExperimentRowCellMetadataApiCost = { [key: string]: unknown };
+
+export interface ExperimentRowCellMetadataApi {
+  response_time_ms?: number;
+  token_count?: number;
+  cost?: ExperimentRowCellMetadataApiCost;
+  cell_metadata?: ExperimentRowCellInnerMetadataApi;
+  reason?: string;
+}
+
+export type ExperimentRowCellApiCellValue = { [key: string]: unknown };
+
+export type ExperimentRowCellApiCellDiffValue = { [key: string]: unknown };
+
+export type ExperimentRowCellApiValueInfos = { [key: string]: unknown };
+
+export interface ExperimentRowCellApi {
+  cell_value?: ExperimentRowCellApiCellValue;
+  cell_diff_value?: ExperimentRowCellApiCellDiffValue;
+  status?: string;
+  metadata?: ExperimentRowCellMetadataApi;
+  value_infos?: ExperimentRowCellApiValueInfos;
+}
+
+export type ExperimentRowDiffResponseApiResult = {[key: string]: {[key: string]: ExperimentRowCellApi}};
 
 export interface ExperimentRowDiffResponseApi {
   status: boolean;
@@ -10967,6 +10986,10 @@ export interface ExperimentTableRowsColumnConfigApi {
   is_final?: boolean;
 }
 
+export interface ExperimentTableRowApi {
+  row_id: string;
+}
+
 export type ExperimentTableRowsMetadataApiDescription = {[key: string]: string};
 
 export interface ExperimentTableRowsMetadataApi {
@@ -10978,11 +11001,9 @@ export interface ExperimentTableRowsMetadataApi {
   description?: ExperimentTableRowsMetadataApiDescription;
 }
 
-export type ExperimentTableRowsResultApiTableItem = { [key: string]: unknown };
-
 export interface ExperimentTableRowsResultApi {
   column_config: ExperimentTableRowsColumnConfigApi[];
-  table?: ExperimentTableRowsResultApiTableItem[];
+  table?: ExperimentTableRowApi[];
   metadata?: ExperimentTableRowsMetadataApi;
   output_format?: string;
   status?: string;
@@ -19413,6 +19434,8 @@ export const ObservabilityProviderApiProvider = {
   retell: 'retell',
   livekit: 'livekit',
   others: 'others',
+  bland: 'bland',
+  twilio: 'twilio',
 } as const;
 
 export type ObservabilityProviderApiMetadata = { [key: string]: unknown };
@@ -19432,6 +19455,41 @@ export interface ObservabilityProviderApi {
   metadata?: ObservabilityProviderApiMetadata;
   readonly created_at?: string;
   readonly updated_at?: string;
+}
+
+export type VerifyApiKeyRequestApiProvider = typeof VerifyApiKeyRequestApiProvider[keyof typeof VerifyApiKeyRequestApiProvider];
+
+
+export const VerifyApiKeyRequestApiProvider = {
+  vapi: 'vapi',
+  retell: 'retell',
+} as const;
+
+export interface VerifyApiKeyRequestApi {
+  provider: VerifyApiKeyRequestApiProvider;
+  api_key?: string;
+  agent_id?: string;
+}
+
+export interface VerifyResponseApi {
+  status?: boolean;
+  /** @minLength 1 */
+  result: string;
+}
+
+export type VerifyAssistantIdRequestApiProvider = typeof VerifyAssistantIdRequestApiProvider[keyof typeof VerifyAssistantIdRequestApiProvider];
+
+
+export const VerifyAssistantIdRequestApiProvider = {
+  vapi: 'vapi',
+  retell: 'retell',
+} as const;
+
+export interface VerifyAssistantIdRequestApi {
+  provider: VerifyAssistantIdRequestApiProvider;
+  assistant_id?: string;
+  api_key?: string;
+  agent_id?: string;
 }
 
 export type ObservationSpanApiObservationType = typeof ObservationSpanApiObservationType[keyof typeof ObservationSpanApiObservationType];
@@ -20790,6 +20848,26 @@ export interface TraceApi {
   /** @maxLength 255 */
   external_id?: string;
   tags?: TraceApiTags;
+}
+
+export type TraceDetailResultApiTrace = { [key: string]: unknown };
+
+export type TraceDetailResultApiObservationSpansItem = { [key: string]: unknown };
+
+export type TraceDetailResultApiSummary = { [key: string]: unknown };
+
+export type TraceDetailResultApiGraph = { [key: string]: unknown };
+
+export interface TraceDetailResultApi {
+  trace: TraceDetailResultApiTrace;
+  observation_spans: TraceDetailResultApiObservationSpansItem[];
+  summary: TraceDetailResultApiSummary;
+  graph: TraceDetailResultApiGraph;
+}
+
+export interface TraceDetailResponseApi {
+  status?: boolean;
+  result: TraceDetailResultApi;
 }
 
 export interface TraceTagsUpdateApi {

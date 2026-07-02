@@ -288,10 +288,13 @@ def _manual_assignment_denial_reason(queue, item, user):
         return None
     if _queue_item_is_assigned_to_user(item, user):
         return None
-    if _is_queue_manager(queue, user) and not _queue_has_any_item_assignments(queue.id):
-        return None
     if _queue_item_has_assignments(item):
         return "This item is assigned to another annotator."
+    # Managers/admins may claim any unassigned item. Checked after the
+    # "assigned to another" guard so we never steal someone else's item, and no
+    # longer gated on the queue being assignment-free.
+    if _is_queue_manager(queue, user):
+        return None
     return "This item must be assigned before it can be annotated."
 
 
@@ -5212,7 +5215,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 "Annotations can only be submitted when the queue is active."
             )
 
-        if not _has_explicit_queue_role(
+        # _has_queue_role (not _has_explicit_queue_role): org/workspace admins
+        # are manager-equivalent, so they can annotate without an explicit role.
+        if not _has_queue_role(
             queue_id,
             request.user,
             AnnotatorRole.ANNOTATOR.value,
@@ -6048,7 +6053,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         if getattr(queue, "is_default", False):
             _ensure_default_queue_member_can_manage(queue, request.user)
 
-        if not _has_explicit_queue_role(
+        # _has_queue_role (not _has_explicit_queue_role): org/workspace admins
+        # are manager-equivalent, so they can assign without an explicit role.
+        if not _has_queue_role(
             queue_id,
             request.user,
             AnnotatorRole.MANAGER.value,
