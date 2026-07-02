@@ -1369,3 +1369,8 @@ export const pluralize = (word, count) => {
   if (/(s|x|z|ch|sh)$/i.test(word)) return `${word}es`;
   return `${word}s`;
 };
+
+export const getVersionLabel = (templateVersion) => {
+  const tv = String(templateVersion ?? "");
+  return tv.startsWith("v") ? tv : `v${tv}`;
+};

@@ -88,6 +88,7 @@ const escapeCsvField = (field) => {
 };
 
 const SAVED_NAV_DELAY_MS = 400;
+const AXIS_LABEL_MAX_LENGTH = 50;
 
 const TIME_PRESETS = [
   { label: "Custom", value: "custom" },
@@ -483,7 +484,8 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
           size="small"
           value={config.label}
           onChange={(e) => onChange("label", e.target.value)}
-          placeholder=""
+          placeholder="e.g. Cost ($)"
+          inputProps={{ maxLength: AXIS_LABEL_MAX_LENGTH }}
           sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
         />
       </Stack>
@@ -5953,7 +5955,8 @@ export default function WidgetEditorView() {
                         onChange={(e) =>
                           updateAxis("xAxis", "label", e.target.value)
                         }
-                        placeholder=""
+                        placeholder="e.g. Time (s)"
+                        inputProps={{ maxLength: AXIS_LABEL_MAX_LENGTH }}
                         sx={{
                           width: 180,
                           "& .MuiOutlinedInput-root": { fontSize: "13px" },

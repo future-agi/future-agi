@@ -175,7 +175,10 @@ const WorkbenchProvider = ({ children }) => {
       const newPre = [...pre];
       const newValue =
         typeof valueOrUpdater === "function"
-          ? { id: pre[index]?.id, prompts: valueOrUpdater(pre[index]?.prompts ?? []) }
+          ? {
+              id: pre[index]?.id,
+              prompts: valueOrUpdater(pre[index]?.prompts ?? []),
+            }
           : valueOrUpdater;
 
       newPre[index] = newValue;
@@ -496,9 +499,6 @@ const WorkbenchProvider = ({ children }) => {
             queryClient.invalidateQueries({
               queryKey: ["prompt-versions", id],
             });
-            queryClient.invalidateQueries({
-              queryKey: ["prompt-latest-version", id],
-            });
             break;
           }
           case "all_completed": {
@@ -507,9 +507,6 @@ const WorkbenchProvider = ({ children }) => {
             runningVersionIndexMapping.current[version] = null;
             queryClient.invalidateQueries({
               queryKey: ["prompt-versions", id],
-            });
-            queryClient.invalidateQueries({
-              queryKey: ["prompt-latest-version", id],
             });
             break;
           }
@@ -869,7 +866,9 @@ const WorkbenchProvider = ({ children }) => {
           lastPayload?.error_message ||
           lastPayload?.executions_result?.error_message;
 
-        if (outputs.length > 0) {
+        // Return only once the run has completed — the backend streams
+        // partial output while status is still "running".
+        if (status === "completed" && outputs.length > 0) {
           return lastPayload;
         }
 
@@ -897,9 +896,6 @@ const WorkbenchProvider = ({ children }) => {
       setLoadingStatusByIndex(index, false);
       queryClient.invalidateQueries({
         queryKey: ["prompt-versions", id],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["prompt-latest-version", id],
       });
     },
     [id, queryClient, setLoadingStatusByIndex, setResultsByIndex],
