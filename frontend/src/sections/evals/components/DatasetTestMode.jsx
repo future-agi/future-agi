@@ -561,13 +561,9 @@ function ColumnTreeSelect({
                   ))
                 ) : (
                   <Typography
-                    sx={{
-                      fontSize: "12px",
-                      fontFamily: "Inter, sans-serif",
-                      color: "text.disabled",
-                      px: 1,
-                      py: 1,
-                    }}
+                    variant="caption"
+                    color="text.disabled"
+                    sx={{ display: "block", px: 1, py: 1 }}
                   >
                     No matching columns
                   </Typography>

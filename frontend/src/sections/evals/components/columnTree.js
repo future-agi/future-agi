@@ -1,10 +1,7 @@
-// Pure helpers for the dataset variable-mapping column picker (ColumnTreeSelect).
-// Kept dependency-free so the tree-building logic is unit-testable without the
-// heavy DatasetTestMode component graph.
+// Dependency-free helpers for the column picker (ColumnTreeSelect), kept unit-testable.
 
-// Parse flat column-path strings into the nested node tree the picker renders.
-// "col" → leaf; "col.a.b" → nested; "col[0].x" → array-indexed nested.
-// Each node is { id, label, path, children }; shared prefixes merge into one node.
+// Parse flat column paths into a nested node tree; shared prefixes merge.
+// "col" → leaf; "col.a.b" → nested; "col[0].x" → array-indexed.
 export function buildTree(columnNames) {
   const roots = [];
   const nodeMap = {}; // path → node
