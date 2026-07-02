@@ -2,7 +2,8 @@
 Code Executor HTTP API Server.
 
 Provides a simple HTTP endpoint for executing untrusted code in nsjail sandboxes.
-Falls back to subprocess isolation when nsjail is not available.
+nsjail is the only execution path — /execute refuses (and /health reports
+unhealthy) when nsjail is unavailable, rather than degrading to a weaker sandbox.
 
 POST /execute
 {
@@ -114,7 +115,8 @@ def _execute_python_nsjail(code: str, input_data: dict, timeout: int) -> dict:
 
 
 def _execute_javascript(code: str, input_data: dict, timeout: int) -> dict:
-    """Execute JavaScript code in nsjail (or fallback subprocess)."""
+    """Execute JavaScript code in the nsjail sandbox. Callers must gate on
+    NSJAIL_AVAILABLE (on_post refuses without it) — nsjail is the only path."""
     if not NODE_PATH:
         return {"status": "error", "data": "Node.js not available"}
 
@@ -126,31 +128,27 @@ def _execute_javascript(code: str, input_data: dict, timeout: int) -> dict:
         f.write(script)
 
     try:
-        if NSJAIL_AVAILABLE:
-            cmd = [
-                NSJAIL_PATH,
-                "-Mo",
-                "-Q",
-                "--rlimit_as",
-                "512",
-                "--rlimit_cpu",
-                str(timeout),
-                "--rlimit_nofile",
-                "64",
-                "--time_limit",
-                str(timeout),
-                "-R",
-                "/",
-                "-T",
-                "/tmp:size=16777216",
-                "--",
-                NODE_PATH,
-                "--max-old-space-size=64",
-                script_path,
-            ]
-        else:
-            # Fail closed: never run untrusted JS without the nsjail boundary.
-            return {"status": "error", "data": "nsjail required for JavaScript execution"}
+        cmd = [
+            NSJAIL_PATH,
+            "-Mo",
+            "-Q",
+            "--rlimit_as",
+            "512",
+            "--rlimit_cpu",
+            str(timeout),
+            "--rlimit_nofile",
+            "64",
+            "--time_limit",
+            str(timeout),
+            "-R",
+            "/",
+            "-T",
+            "/tmp:size=16777216",
+            "--",
+            NODE_PATH,
+            "--max-old-space-size=64",
+            script_path,
+        ]
 
         result = subprocess.run(
             cmd,

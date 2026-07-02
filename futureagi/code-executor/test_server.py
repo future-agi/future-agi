@@ -65,6 +65,18 @@ class TestNoNsjailFailsClosed:
         assert "nsjail" in resp.json["data"].lower()
         assert "refusing" in resp.json["data"].lower()
 
+    def test_js_execute_refuses_without_nsjail(self):
+        # nsjail is the only path for JS too — the dead no-nsjail branch inside
+        # _execute_javascript was removed; on_post refuses before dispatch.
+        with mock.patch.object(server, "NSJAIL_AVAILABLE", False):
+            resp = make_client().simulate_post(
+                "/execute",
+                json={"code": "function evaluate(){return true;}", "language": "javascript"},
+                headers={"X-Internal-Api-Key": KEY},
+            )
+        assert resp.json["status"] == "error"
+        assert "refusing" in resp.json["data"].lower()
+
     def test_health_unhealthy_without_nsjail(self):
         with mock.patch.object(server, "NSJAIL_AVAILABLE", False):
             resp = make_client().simulate_get("/health")
