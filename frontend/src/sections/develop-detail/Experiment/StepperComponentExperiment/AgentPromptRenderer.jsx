@@ -122,16 +122,16 @@ const AgentPromptRenderer = ({
         (v) => v.id === watchedAgentVersion,
       );
       if (
-        !selectedVersion?.globalVariables ||
-        selectedVersion.globalVariables.length === 0
+        !selectedVersion?.global_variables ||
+        selectedVersion.global_variables.length === 0
       ) {
         result = { total: 0, notMapped: 0 };
       } else {
-        const missingCount = selectedVersion.globalVariables.filter(
+        const missingCount = selectedVersion.global_variables.filter(
           (variable) => !columnHeaders.includes(variable),
         ).length;
         result = {
-          total: selectedVersion.globalVariables.length,
+          total: selectedVersion.global_variables.length,
           notMapped: missingCount,
         };
       }
@@ -223,7 +223,7 @@ const AgentPromptRenderer = ({
     if (!selected) return;
     setValue(
       `${fieldPrefix}.versionLabel`,
-      selected.versionNumber != null ? `v${selected.versionNumber}` : "",
+      selected.version_number != null ? `v${selected.version_number}` : "",
       { shouldValidate: false },
     );
     setValue(
@@ -319,7 +319,7 @@ const AgentPromptRenderer = ({
               isFetchingNextPage={isFetchingNextAgentVersionsPage}
               searchQuery={search}
               onSearchChange={setSearch}
-              getOptionLabel={(v) => `v${v?.versionNumber}`}
+              getOptionLabel={(v) => `v${v?.version_number}`}
               getOptionValue={(v) => v?.id}
               placeholder="Select version"
             />

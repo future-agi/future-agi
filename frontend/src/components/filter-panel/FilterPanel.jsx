@@ -61,8 +61,14 @@ const ENUM_OPERATORS = [
   { value: "is_not", label: "Is not" },
 ];
 
-function getOperators(fieldType) {
-  return fieldType === "enum" ? ENUM_OPERATORS : STRING_OPERATORS;
+function getOperators(fieldDef) {
+  const fieldType = typeof fieldDef === "string" ? fieldDef : fieldDef?.type;
+  const base = fieldType === "enum" ? ENUM_OPERATORS : STRING_OPERATORS;
+  const allowed =
+    typeof fieldDef === "object" && Array.isArray(fieldDef?.operators)
+      ? fieldDef.operators
+      : null;
+  return allowed ? base.filter((op) => allowed.includes(op.value)) : base;
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +147,7 @@ function parseNaturalLanguage(query, filterFields, fieldMap) {
 // ---------------------------------------------------------------------------
 // EnumValuePicker — checkbox multi-select popover (matches trace filter design)
 // ---------------------------------------------------------------------------
-function EnumValuePicker({ choices, value = [], onChange }) {
+function EnumValuePicker({ choices, value = [], onChange, single = false }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [search, setSearch] = useState("");
 
@@ -153,11 +159,17 @@ function EnumValuePicker({ choices, value = [], onChange }) {
 
   const toggle = useCallback(
     (val) => {
+      if (single) {
+        onChange(value.includes(val) ? [] : [val]);
+        setAnchorEl(null);
+        setSearch("");
+        return;
+      }
       onChange(
         value.includes(val) ? value.filter((v) => v !== val) : [...value, val],
       );
     },
-    [value, onChange],
+    [value, onChange, single],
   );
 
   return (
@@ -257,7 +269,9 @@ function EnumValuePicker({ choices, value = [], onChange }) {
           <Typography
             sx={{ fontSize: 10, color: "text.disabled", mt: 0.5, px: 0.25 }}
           >
-            Select one or more values (multi-select)
+            {single
+              ? "Select a value"
+              : "Select one or more values (multi-select)"}
           </Typography>
         </Box>
         <Box
@@ -269,7 +283,7 @@ function EnumValuePicker({ choices, value = [], onChange }) {
           }}
         >
           {/* Select all matching */}
-          {search && filtered.length > 0 && (
+          {!single && search && filtered.length > 0 && (
             <Box
               onClick={() => {
                 const allFiltered = filtered.filter((o) => !value.includes(o));
@@ -379,9 +393,13 @@ function EnumValuePicker({ choices, value = [], onChange }) {
               >
                 <Iconify
                   icon={
-                    isSelected
-                      ? "mdi:checkbox-marked"
-                      : "mdi:checkbox-blank-outline"
+                    single
+                      ? isSelected
+                        ? "mdi:radiobox-marked"
+                        : "mdi:radiobox-blank"
+                      : isSelected
+                        ? "mdi:checkbox-marked"
+                        : "mdi:checkbox-blank-outline"
                   }
                   width={18}
                   sx={{
@@ -449,7 +467,7 @@ function FilterRow({
   onRemove,
 }) {
   const fieldDef = fieldMap[filter.field] || filterFields[0];
-  const operators = getOperators(fieldDef.type);
+  const operators = getOperators(fieldDef);
 
   return (
     <Stack direction="row" alignItems="center" gap={0.5}>
@@ -491,6 +509,7 @@ function FilterRow({
       {fieldDef.type === "enum" ? (
         <EnumValuePicker
           choices={fieldDef.choices || []}
+          single={fieldDef.single}
           value={
             Array.isArray(filter.value)
               ? filter.value
@@ -588,7 +607,7 @@ function QueryInput({
       }));
     if (phase === "operator") {
       const fd = fieldMap[partialField];
-      return getOperators(fd?.type || "string").map((o) => ({
+      return getOperators(fd || "string").map((o) => ({
         id: o.value,
         label: o.label,
         type: "operator",

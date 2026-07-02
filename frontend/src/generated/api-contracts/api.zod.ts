@@ -17015,8 +17015,12 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
   "name": zod.string().min(1),
   "config": zod.object({
   "model": zod.string().max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigModelMax).optional(),
-  "run_prompt_config": zod.record(zod.string(), zod.string()).optional(),
-  "messages": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
+  "run_prompt_config": zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.')).optional(),
+  "messages": zod.array(zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
   "temperature": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTemperatureMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTemperatureMax).optional().describe('Controls the randomness. Value between 0 and 2.'),
   "frequency_penalty": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigFrequencyPenaltyMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigFrequencyPenaltyMax).optional().describe('Penalty for word repetition. Value between -2 and 2.'),
   "presence_penalty": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
@@ -17024,9 +17028,11 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
   "top_p": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTopPMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
   "response_format": zod.object({
 
-}).passthrough().optional().describe('JSON schema for response format if required. Can be a JSON object or string. Defaults to None.'),
+}).passthrough().optional().describe('Any valid JSON value.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
-  "tools": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of tools with tool properties if available.'),
+  "tools": zod.array(zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of tools with tool properties if available.'),
   "output_format": zod.enum(['array', 'string', 'number', 'object', 'audio', 'image']).optional().describe('Output format type.'),
   "concurrency": zod.number().min(1).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigConcurrencyMax).optional().describe('Number of concurrent operations allowed. Maximum 10.')
 }).default(modelHubDevelopsAddRunPromptColumnCreateBodyConfigDefault)
@@ -17265,8 +17271,12 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
   "name": zod.string().min(1).optional(),
   "config": zod.object({
   "model": zod.string().max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigModelMax).optional(),
-  "run_prompt_config": zod.record(zod.string(), zod.string()).optional(),
-  "messages": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
+  "run_prompt_config": zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.')).optional(),
+  "messages": zod.array(zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
   "temperature": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTemperatureMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTemperatureMax).optional().describe('Controls the randomness. Value between 0 and 2.'),
   "frequency_penalty": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigFrequencyPenaltyMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigFrequencyPenaltyMax).optional().describe('Penalty for word repetition. Value between -2 and 2.'),
   "presence_penalty": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
@@ -17274,9 +17284,11 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
   "top_p": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTopPMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
   "response_format": zod.object({
 
-}).passthrough().optional().describe('JSON schema for response format if required. Can be a JSON object or string. Defaults to None.'),
+}).passthrough().optional().describe('Any valid JSON value.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
-  "tools": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of tools with tool properties if available.'),
+  "tools": zod.array(zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of tools with tool properties if available.'),
   "output_format": zod.enum(['array', 'string', 'number', 'object', 'audio', 'image']).optional().describe('Output format type.'),
   "concurrency": zod.number().min(1).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigConcurrencyMax).optional().describe('Number of concurrent operations allowed. Maximum 10.')
 }).default(modelHubDevelopsEditRunPromptColumnCreateBodyConfigDefault)
@@ -17427,6 +17439,21 @@ export const ModelHubDevelopsGetRowDiffCreateResponse = zod.object({
 
 }).passthrough().optional(),
   "status": zod.string().optional(),
+  "metadata": zod.object({
+  "response_time_ms": zod.number().optional(),
+  "token_count": zod.number().optional(),
+  "cost": zod.object({
+
+}).passthrough().optional(),
+  "cell_metadata": zod.object({
+  "explanation": zod.string().optional(),
+  "error_analysis": zod.object({
+
+}).passthrough().optional(),
+  "selected_input_key": zod.string().optional()
+}).optional(),
+  "reason": zod.string().optional()
+}).optional(),
   "value_infos": zod.object({
 
 }).passthrough().optional()
@@ -17473,8 +17500,12 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
   "name": zod.string().min(1),
   "config": zod.object({
   "model": zod.string().max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigModelMax).optional(),
-  "run_prompt_config": zod.record(zod.string(), zod.string()).optional(),
-  "messages": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
+  "run_prompt_config": zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.')).optional(),
+  "messages": zod.array(zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
   "temperature": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTemperatureMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTemperatureMax).optional().describe('Controls the randomness. Value between 0 and 2.'),
   "frequency_penalty": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigFrequencyPenaltyMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigFrequencyPenaltyMax).optional().describe('Penalty for word repetition. Value between -2 and 2.'),
   "presence_penalty": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
@@ -17482,9 +17513,11 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
   "top_p": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTopPMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
   "response_format": zod.object({
 
-}).passthrough().optional().describe('JSON schema for response format if required. Can be a JSON object or string. Defaults to None.'),
+}).passthrough().optional().describe('Any valid JSON value.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
-  "tools": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of tools with tool properties if available.'),
+  "tools": zod.array(zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of tools with tool properties if available.'),
   "output_format": zod.enum(['array', 'string', 'number', 'object', 'audio', 'image']).optional().describe('Output format type.'),
   "concurrency": zod.number().min(1).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigConcurrencyMax).optional().describe('Number of concurrent operations allowed. Maximum 10.')
 }).default(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigDefault),
@@ -20361,6 +20394,21 @@ export const ModelHubExperimentsV2RowDiffCreateResponse = zod.object({
 
 }).passthrough().optional(),
   "status": zod.string().optional(),
+  "metadata": zod.object({
+  "response_time_ms": zod.number().optional(),
+  "token_count": zod.number().optional(),
+  "cost": zod.object({
+
+}).passthrough().optional(),
+  "cell_metadata": zod.object({
+  "explanation": zod.string().optional(),
+  "error_analysis": zod.object({
+
+}).passthrough().optional(),
+  "selected_input_key": zod.string().optional()
+}).optional(),
+  "reason": zod.string().optional()
+}).optional(),
   "value_infos": zod.object({
 
 }).passthrough().optional()
@@ -20894,8 +20942,8 @@ export const ModelHubExperimentsV2RowsListResponse = zod.object({
   "is_final": zod.boolean().optional()
 })),
   "table": zod.array(zod.object({
-
-}).passthrough()).optional(),
+  "row_id": zod.string().uuid()
+})).optional(),
   "metadata": zod.object({
   "total_rows": zod.number().optional(),
   "dataset": zod.string().optional(),
@@ -20947,8 +20995,8 @@ export const ModelHubExperimentsV2RowsReadResponse = zod.object({
   "is_final": zod.boolean().optional()
 })),
   "table": zod.array(zod.object({
-
-}).passthrough()).optional(),
+  "row_id": zod.string().uuid()
+})).optional(),
   "metadata": zod.object({
   "total_rows": zod.number().optional(),
   "dataset": zod.string().optional(),
@@ -21061,8 +21109,8 @@ export const ModelHubExperimentsReadResponse = zod.object({
   "is_final": zod.boolean().optional()
 })),
   "table": zod.array(zod.object({
-
-}).passthrough()).optional(),
+  "row_id": zod.string().uuid()
+})).optional(),
   "metadata": zod.object({
   "total_rows": zod.number().optional(),
   "dataset": zod.string().optional(),
@@ -36797,7 +36845,7 @@ export const TracerObservabilityProviderListResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "project": zod.string().uuid().optional(),
   "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
+  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others', 'bland', 'twilio']),
   "enabled": zod.boolean().optional(),
   "organization": zod.string().uuid().optional(),
   "workspace": zod.string().uuid().optional(),
@@ -36818,7 +36866,7 @@ export const TracerObservabilityProviderListResponse = zod.object({
 
 export const TracerObservabilityProviderCreateBody = zod.object({
   "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
+  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others', 'bland', 'twilio']),
   "enabled": zod.boolean().optional(),
   "metadata": zod.object({
 
@@ -36829,32 +36877,37 @@ export const TracerObservabilityProviderCreateBody = zod.object({
 /**
  * API endpoints for managing Observability Providers.
  */
-
-
-
 export const TracerObservabilityProviderVerifyApiKeyBody = zod.object({
-  "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
-  "enabled": zod.boolean().optional(),
-  "metadata": zod.object({
+  "provider": zod.enum(['vapi', 'retell']),
+  "api_key": zod.string().optional(),
+  "agent_id": zod.string().optional()
+})
 
-}).passthrough().optional()
+export const tracerObservabilityProviderVerifyApiKeyResponseStatusDefault = true;
+
+
+export const TracerObservabilityProviderVerifyApiKeyResponse = zod.object({
+  "status": zod.boolean().default(tracerObservabilityProviderVerifyApiKeyResponseStatusDefault),
+  "result": zod.string().min(1)
 })
 
 
 /**
  * API endpoints for managing Observability Providers.
  */
-
-
-
 export const TracerObservabilityProviderVerifyAssistantIdBody = zod.object({
-  "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
-  "enabled": zod.boolean().optional(),
-  "metadata": zod.object({
+  "provider": zod.enum(['vapi', 'retell']),
+  "assistant_id": zod.string().optional(),
+  "api_key": zod.string().optional(),
+  "agent_id": zod.string().optional()
+})
 
-}).passthrough().optional()
+export const tracerObservabilityProviderVerifyAssistantIdResponseStatusDefault = true;
+
+
+export const TracerObservabilityProviderVerifyAssistantIdResponse = zod.object({
+  "status": zod.boolean().default(tracerObservabilityProviderVerifyAssistantIdResponseStatusDefault),
+  "result": zod.string().min(1)
 })
 
 
@@ -36872,7 +36925,7 @@ export const TracerObservabilityProviderReadResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "project": zod.string().uuid().optional(),
   "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
+  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others', 'bland', 'twilio']),
   "enabled": zod.boolean().optional(),
   "organization": zod.string().uuid().optional(),
   "workspace": zod.string().uuid().optional(),
@@ -36896,7 +36949,7 @@ export const TracerObservabilityProviderUpdateParams = zod.object({
 
 export const TracerObservabilityProviderUpdateBody = zod.object({
   "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
+  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others', 'bland', 'twilio']),
   "enabled": zod.boolean().optional(),
   "metadata": zod.object({
 
@@ -36910,7 +36963,7 @@ export const TracerObservabilityProviderUpdateResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "project": zod.string().uuid().optional(),
   "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
+  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others', 'bland', 'twilio']),
   "enabled": zod.boolean().optional(),
   "organization": zod.string().uuid().optional(),
   "workspace": zod.string().uuid().optional(),
@@ -36934,7 +36987,7 @@ export const TracerObservabilityProviderPartialUpdateParams = zod.object({
 
 export const TracerObservabilityProviderPartialUpdateBody = zod.object({
   "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
+  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others', 'bland', 'twilio']),
   "enabled": zod.boolean().optional(),
   "metadata": zod.object({
 
@@ -36948,7 +37001,7 @@ export const TracerObservabilityProviderPartialUpdateResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "project": zod.string().uuid().optional(),
   "project_name": zod.string().min(1).optional().describe('Name of the project. If it doesn\'t exist, it will be created.'),
-  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others']),
+  "provider": zod.enum(['vapi', 'eleven_labs', 'retell', 'livekit', 'others', 'bland', 'twilio']),
   "enabled": zod.boolean().optional(),
   "organization": zod.string().uuid().optional(),
   "workspace": zod.string().uuid().optional(),
@@ -41855,34 +41908,24 @@ export const TracerTraceReadParams = zod.object({
   "id": zod.string()
 })
 
-export const tracerTraceReadResponseNameMax = 2000;
-
-export const tracerTraceReadResponseExternalIdMax = 255;
-
-
+export const tracerTraceReadResponseStatusDefault = true;
 
 export const TracerTraceReadResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "project": zod.string().uuid(),
-  "project_version": zod.string().uuid().optional(),
-  "name": zod.string().max(tracerTraceReadResponseNameMax).optional(),
-  "metadata": zod.object({
+  "status": zod.boolean().default(tracerTraceReadResponseStatusDefault),
+  "result": zod.object({
+  "trace": zod.object({
 
-}).passthrough().optional(),
-  "input": zod.object({
+}).passthrough(),
+  "observation_spans": zod.array(zod.object({
 
-}).passthrough().optional(),
-  "output": zod.object({
+}).passthrough()),
+  "summary": zod.object({
 
-}).passthrough().optional(),
-  "error": zod.object({
+}).passthrough(),
+  "graph": zod.object({
 
-}).passthrough().optional(),
-  "session": zod.string().uuid().optional(),
-  "external_id": zod.string().max(tracerTraceReadResponseExternalIdMax).optional(),
-  "tags": zod.object({
-
-}).passthrough().optional()
+}).passthrough()
+})
 })
 
 

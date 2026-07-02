@@ -45,6 +45,16 @@ export const queueViewerMembership = (queue) => {
 export const canViewerAddItemsToQueue = (queue) =>
   hasQueueRole(queueViewerMembership(queue), QUEUE_ROLES.MANAGER);
 
+// Allowed queue status transitions, mirroring the backend state machine
+// (VALID_STATUS_TRANSITIONS in model_hub/models/annotation_queues.py). The
+// update-status endpoint rejects anything not listed here, so the UI must only
+// offer reachable targets — nothing transitions *to* "draft", for instance.
+export const QUEUE_STATUS_TRANSITIONS = {
+  draft: ["active"],
+  active: ["paused", "completed"],
+  paused: ["active", "completed"],
+  completed: ["active", "paused"],
+};
 
 export const SOURCE_OPTIONS = [
   { value: "dataset_row", label: "Dataset Row" },
