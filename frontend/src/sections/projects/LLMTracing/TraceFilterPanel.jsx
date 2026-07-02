@@ -1955,8 +1955,6 @@ const TraceFilterPanel = ({
   // popover so the user can keep adjusting filters and see them apply live.
   const autoApplyTimerRef = useRef(null);
   // Apply only when the resulting filter set differs from the last one sent.
-  // This keeps a field/operator pick with no value (and re-opening the
-  // popover) from firing a redundant API call.
   const applyIfChanged = useCallback(
     (sourceRows) => {
       const next = computeValidFilters(sourceRows);
@@ -2019,9 +2017,12 @@ const TraceFilterPanel = ({
           value: Array.isArray(f.value) ? f.value : [f.value],
         };
       });
+      // Apply the same normalized/valid-filtered shape every other path sends,
+      // and seed lastAppliedRef with it so dedup matches what we actually sent.
+      const validFilters = computeValidFilters(converted);
       setRows(converted);
-      lastAppliedRef.current = JSON.stringify(computeValidFilters(converted));
-      onApply(converted);
+      lastAppliedRef.current = JSON.stringify(validFilters);
+      onApply(validFilters);
       setAiQuery("");
       onClose();
     }
