@@ -402,10 +402,8 @@ class TestMetricsEndpoint:
         metric_names = [m["name"] for m in data["metrics"]]
         assert "latency" in metric_names
         assert "cost" in metric_names
-        span_duration = next(m for m in data["metrics"] if m["name"] == "latency_ms")
-        assert span_duration["display_name"] == "Duration"
-        assert span_duration["source"] == "spans"
-        assert span_duration["type"] == "number"
+        # latency_ms ("Duration") was removed from the catalog (duplicate of latency)
+        assert "latency_ms" not in metric_names
 
     @pytest.mark.django_db
     def test_metrics_returns_agent_scoped_simulation_eval_metrics(
