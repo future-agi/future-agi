@@ -26,7 +26,13 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
@@ -1805,16 +1811,17 @@ const TraceFilterPanel = ({
 
   // Convert dashboard properties to QueryInput format (same IDs as dashboard API)
   const queryFilterFields = useMemo(
-    () =>
-      properties.map((p) => ({
+    () => {
+      return properties.map((p) => ({
         value: p.id,
         label: p.name,
-        type: p.choices?.length ? "enum" : "string",
+        type: p.type || "string",
         choices: p.choices,
         panelType: p.type || "string",
         category: p.category, // system, eval, annotation, attribute
         apiColType: p.apiColType,
-      })),
+      }));
+    },
     [properties],
   );
   const queryFieldMap = useMemo(
@@ -1886,9 +1893,14 @@ const TraceFilterPanel = ({
     }
   }, [open, currentFilters]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleQueryTokensChange = useCallback(
-    (tokens) => {
-      const converted = tokens.map((t) => {
+  const queryInputRef = useRef(null);
+
+  // Pure converter: query-input tokens → FilterRow shape. Extracted so
+  // handleApply can also run it directly against tokens that were just
+  // flushed from QueryInput, without waiting for the setRows state cycle.
+  const queryTokensToRows = useCallback(
+    (tokens) =>
+      tokens.map((t) => {
         const queryFieldDef = queryFieldMap[t.field];
         const prop = propertyById[t.field];
         return {
@@ -1901,12 +1913,22 @@ const TraceFilterPanel = ({
             (queryFieldDef?.type === "enum" ? "categorical" : "string"),
           apiColType: prop?.apiColType || queryFieldDef?.apiColType,
           operator: QUERY_TO_BASIC_OP[t.operator] || t.operator,
-          value: Array.isArray(t.value) ? t.value : [t.value],
+          value: NO_VALUE_OPS.has(t.operator)
+            ? ""
+            : Array.isArray(t.value)
+              ? t.value
+              : [t.value],
         };
-      });
+      }),
+    [propertyById, queryFieldMap],
+  );
+
+  const handleQueryTokensChange = useCallback(
+    (tokens) => {
+      const converted = queryTokensToRows(tokens);
       setRows(converted.length ? converted : [{ ...effectiveDefaultRow }]);
     },
-    [effectiveDefaultRow, propertyById, queryFieldMap],
+    [effectiveDefaultRow, queryTokensToRows],
   );
 
   const handleChange = useCallback((idx, updated) => {
@@ -1924,7 +1946,14 @@ const TraceFilterPanel = ({
   );
 
   const handleApply = useCallback(() => {
-    const valid = rows.map(normalizeFilterRowOperator).filter((r) => {
+    // Commit any complete partial in the Query tab so Apply doesn't drop
+    // a `field op value` the user typed but never pressed Enter on.
+    // `flushPartial` returns the new tokens only when it actually
+    // committed; null otherwise.
+    const flushed = queryInputRef.current?.flushPartial?.();
+    const effectiveRows = flushed ? queryTokensToRows(flushed) : rows;
+
+    const valid = effectiveRows.map(normalizeFilterRowOperator).filter((r) => {
       if (!r.field) return false;
       if (NO_VALUE_OPS.has(r.operator)) return true;
       const ops = getOperatorsForFilter(r);
@@ -1936,7 +1965,7 @@ const TraceFilterPanel = ({
     });
     onApply(valid.length ? valid : null);
     onClose();
-  }, [rows, onApply, onClose]);
+  }, [rows, queryTokensToRows, onApply, onClose]);
 
   const handleClear = useCallback(() => {
     setRows([{ ...effectiveDefaultRow }]);
@@ -2167,27 +2196,30 @@ const TraceFilterPanel = ({
         {showQueryTab && activeTab === "query" && (
           <Box sx={{ px: 0.5, pt: 0.25 }}>
             <QueryInput
+              ref={queryInputRef}
               filterFields={queryFilterFields}
               fieldMap={queryFieldMap}
+              getOperators={(type, field) =>
+                getOperatorsForFilter({ field, fieldType: type }).map((op) =>
+                  NO_VALUE_OPS.has(op.value) ? { ...op, noValue: true } : op,
+                )
+              }
               onApply={handleQueryTokensChange}
               initialTokens={rows
-                .filter(
-                  (r) =>
-                    r.field &&
-                    (Array.isArray(r.value)
-                      ? r.value.length > 0
-                      : r.value !== "" &&
-                        r.value !== undefined &&
-                        r.value !== null),
-                )
+                .filter((r) => {
+                  if (!r.field) return false;
+                  if (NO_VALUE_OPS.has(normalizeFilterRowOperator(r).operator))
+                    return true;
+                  return Array.isArray(r.value)
+                    ? r.value.length > 0
+                    : r.value !== "" && r.value !== undefined && r.value !== null;
+                })
                 .map((r) => ({
                   field: r.field,
                   operator:
                     BASIC_TO_QUERY_OP[normalizeFilterRowOperator(r).operator] ||
                     normalizeFilterRowOperator(r).operator,
-                  value: Array.isArray(r.value)
-                    ? r.value.join(", ")
-                    : r.value || "",
+                  value: Array.isArray(r.value) ? r.value : r.value || "",
                 }))}
               valueOptions={queryValueOptions}
               valueLoading={queryValuesLoading}
