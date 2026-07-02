@@ -20,6 +20,12 @@ export function getDateRange(preset, reference = new Date()) {
   const now = new Date(reference);
   const start = new Date(reference);
   switch (preset) {
+    case "30m":
+      start.setMinutes(start.getMinutes() - 30);
+      break;
+    case "6h":
+      start.setHours(start.getHours() - 6);
+      break;
     case "today":
       start.setHours(0, 0, 0, 0);
       break;
