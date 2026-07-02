@@ -72,10 +72,16 @@ import {
   DEFAULT_DECIMALS,
   escapeHtml,
   formatValueWithConfig,
+  getAggColumnLabel,
   getAutoDecimals,
   getSeriesAverage,
   getSuggestedUnitConfig,
 } from "./widgetUtils";
+import {
+  AGGREGATION_OPTIONS,
+  ALL_AGGREGATIONS,
+  PERCENTILE_OPTIONS,
+} from "./constants";
 
 const escapeCsvField = (field) => {
   const str = String(field ?? "");
@@ -181,27 +187,6 @@ const CHART_TYPES = [
   { label: "Table", value: "table", icon: "mdi:table", group: "other" },
   { label: "Metric", value: "metric", icon: "mdi:pound", group: "other" },
 ];
-
-const AGGREGATION_OPTIONS = [
-  { label: "Sum", value: "sum" },
-  { label: "Average", value: "avg" },
-  { label: "Median", value: "median" },
-  { label: "Distinct Count", value: "count_distinct" },
-  { label: "Count", value: "count" },
-  { label: "Minimum", value: "min" },
-  { label: "Maximum", value: "max" },
-];
-
-const PERCENTILE_OPTIONS = [
-  { label: "25th Percentile", value: "p25" },
-  { label: "50th Percentile", value: "p50" },
-  { label: "75th Percentile", value: "p75" },
-  { label: "90th Percentile", value: "p90" },
-  { label: "95th Percentile", value: "p95" },
-  { label: "99th Percentile", value: "p99" },
-];
-
-const ALL_AGGREGATIONS = [...AGGREGATION_OPTIONS, ...PERCENTILE_OPTIONS];
 
 // Curated list of unit presets shown in the widget editor's Unit
 // dropdown. Keep in sync with ``UNIT_RENDERING`` in ``widgetUtils.js``
@@ -2189,6 +2174,11 @@ export default function WidgetEditorView() {
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
 
+  const aggColumnLabel = useMemo(
+    () => getAggColumnLabel(metrics, ALL_AGGREGATIONS),
+    [metrics],
+  );
+
   // Filtered series for chart — respects checkbox visibility, preserving original colors
   const chartSeries = useMemo(() => {
     if (visibleSeries === null) return previewSeries;
@@ -3057,7 +3047,7 @@ export default function WidgetEditorView() {
               if (!previewSeries.length) return;
               const header = [
                 "Metric",
-                "Average",
+                aggColumnLabel,
                 ...(previewSeries[0]?.data || []).map((pt) =>
                   format(new Date(pt.x), "yyyy-MM-dd"),
                 ),
@@ -3093,7 +3083,7 @@ export default function WidgetEditorView() {
               if (!previewSeries.length) return;
               const header = [
                 "Metric",
-                "Average",
+                aggColumnLabel,
                 ...(previewSeries[0]?.data || []).map((pt) =>
                   format(new Date(pt.x), "yyyy-MM-dd"),
                 ),
@@ -4405,7 +4395,7 @@ export default function WidgetEditorView() {
                                 zIndex: 2,
                               }}
                             >
-                              Average
+                              {aggColumnLabel}
                             </th>
                             {displayData.map((pt, ci) => (
                               <th
