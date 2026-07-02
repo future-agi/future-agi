@@ -37,6 +37,47 @@ def resolve_org_membership(user, organization):
     )
 
 
+def ensure_org_membership(user, organization, *, invited_by=None):
+    """Return an active ``OrganizationMembership``, creating a minimal one if absent.
+
+    Enforces the invariant "a workspace member belongs to the org" at the single
+    create path, healing the drift that left workspace members with no
+    ``OrganizationMembership`` row (TH-6156).
+
+    Fail-closed on removal: if a row already exists but is *inactive* (the user
+    was deliberately removed from the org), it is NOT resurrected — ``None`` is
+    returned and the caller leaves the FK NULL. New rows are created at the
+    minimal ``Viewer`` level, which grants org membership without global
+    workspace access (that requires ``>= ADMIN``).
+    """
+    if user is None or organization is None:
+        return None
+
+    existing = (
+        OrganizationMembership.no_workspace_objects.filter(
+            user=user, organization=organization
+        )
+        .order_by("-created_at", "-id")
+        .first()
+    )
+    if existing is not None:
+        # The (user, organization) unique constraint (deleted=False) guarantees
+        # at most one such row. Active → use it; inactive → respect the removal.
+        return existing if existing.is_active else None
+
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    return OrganizationMembership.no_workspace_objects.create(
+        user=user,
+        organization=organization,
+        role=OrganizationRoles.MEMBER_VIEW_ONLY,
+        level=Level.VIEWER,
+        invited_by=invited_by,
+        is_active=True,
+    )
+
+
 def create_workspace_membership(
     *,
     workspace,
@@ -60,12 +101,19 @@ def create_workspace_membership(
     # ``setdefault`` would evaluate ``resolve_org_membership`` unconditionally
     # (and fire a wasted query per call — N times inside bulk-invite loops).
     if "organization_membership" not in extra:
-        extra["organization_membership"] = resolve_org_membership(
-            user, workspace.organization
-        )
+        org_membership = resolve_org_membership(user, workspace.organization)
+        if org_membership is None:
+            # No active org membership — create the minimal one so a workspace
+            # member always belongs to the org (TH-6156). Returns None only when
+            # an inactive (deliberately removed) membership exists.
+            org_membership = ensure_org_membership(
+                user, workspace.organization, invited_by=invited_by
+            )
+        extra["organization_membership"] = org_membership
     if extra["organization_membership"] is None:
         # Visibility into the only path that can still produce a NULL FK (user
-        # without an active org membership) — distinct from the old silent drift.
+        # with a deactivated org membership we won't resurrect) — distinct from
+        # the old silent drift.
         logger.warning(
             "workspace_membership_created_without_org_fk",
             workspace_id=str(getattr(workspace, "id", "")),

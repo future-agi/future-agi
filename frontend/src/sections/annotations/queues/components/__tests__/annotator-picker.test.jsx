@@ -3,9 +3,9 @@ import { describe, it, expect, vi } from "vitest";
 import { render, screen, userEvent, within } from "src/utils/test-utils";
 import AnnotatorPicker from "../annotator-picker";
 
-vi.mock("src/auth/hooks", () => ({
-  useAuthContext: () => ({
-    user: { organization: { id: "org-1" } },
+vi.mock("src/contexts/OrganizationContext", () => ({
+  useOrganization: () => ({
+    currentOrganizationId: "org-1",
   }),
 }));
 

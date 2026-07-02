@@ -1732,24 +1732,32 @@ class UserViewSet(viewsets.ModelViewSet):
         )
 
     def _validate_requested_organization(self, organization_id):
-        request_organization = getattr(self.request, "organization", None)
-        if request_organization and str(request_organization.id) != str(
-            organization_id
-        ):
-            raise NotFound(detail="No users found for the specified organization.")
-
-        workspace = getattr(self.request, "workspace", None)
-        if workspace and str(workspace.organization_id) != str(organization_id):
-            raise NotFound(detail="No users found for the specified organization.")
-
+        # Authorization is membership-based: a user may list an organization's
+        # members iff they belong to that organization — via an active
+        # OrganizationMembership, or a WorkspaceMembership in one of its
+        # workspaces (membership drift leaves some workspace members without an
+        # org-membership row).
+        #
+        # We intentionally do NOT require the URL org to equal the request's
+        # *currently-active* org/workspace. That coupling 404s legitimate lookups
+        # for another org the user also belongs to (e.g. the annotation annotator
+        # picker passing the queue's org while a different org is active) without
+        # adding any access control — the membership check below already blocks
+        # foreign orgs, so the coupling was pure breakage (TH-6156).
         from accounts.models.organization_membership import OrganizationMembership
+        from accounts.models.workspace import WorkspaceMembership
 
-        has_membership = OrganizationMembership.no_workspace_objects.filter(
+        has_org_membership = OrganizationMembership.no_workspace_objects.filter(
             user=self.request.user,
             organization_id=organization_id,
             is_active=True,
         ).exists()
-        if not has_membership:
+        has_workspace_membership = WorkspaceMembership.no_workspace_objects.filter(
+            user=self.request.user,
+            workspace__organization_id=organization_id,
+            is_active=True,
+        ).exists()
+        if not (has_org_membership or has_workspace_membership):
             raise NotFound(detail="No users found for the specified organization.")
 
     def get_queryset(self):
@@ -1761,9 +1769,13 @@ class UserViewSet(viewsets.ModelViewSet):
             self._validate_requested_organization(organization_id)
             is_active_param = self.request.query_params.get("is_active")
 
-            # Prefer workspace-level filtering when workspace context is available
+            # Prefer workspace-level filtering only when the active workspace
+            # actually belongs to the requested org. When a different org is
+            # active, request.workspace is from that other org — using it would
+            # return an empty/admin-only slice of the requested org, so fall back
+            # to the org-wide member list instead (TH-6156).
             workspace = getattr(self.request, "workspace", None)
-            if workspace:
+            if workspace and str(workspace.organization_id) == str(organization_id):
                 explicit_workspace_user_ids = WorkspaceMembership.objects.filter(
                     workspace=workspace,
                     workspace__organization_id=organization_id,
@@ -1790,9 +1802,13 @@ class UserViewSet(viewsets.ModelViewSet):
                 ).values_list("user_id", flat=True)
 
             user_ids = list(dict.fromkeys(user_ids))
-            if not user_ids:
-                self._gm.not_found(get_error_message("USER_NOT_FOUND_IN_ORG"))
-                raise NotFound(detail="No users found for the specified organization.")
+            # The requesting user passed the access gate above, so they are a
+            # valid annotator for their own queue — always keep them selectable.
+            # This also guarantees a non-empty list for brand-new/empty
+            # workspaces, where the old empty-list 404 surfaced as the misleading
+            # "No users found for the specified organization." error (TH-6156).
+            if self.request.user.id not in user_ids:
+                user_ids.append(self.request.user.id)
 
             queryset = User.objects.filter(id__in=user_ids)
             if is_active_param is not None:

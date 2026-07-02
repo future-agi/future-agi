@@ -800,7 +800,10 @@ class TestAnnotationsViewSetActions:
             payload,
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_update_cells_rejects_legacy_label_values_alias(
         self, auth_client, annotation, row
@@ -1162,6 +1165,134 @@ class TestUserViewSet:
             str(user_id) for user_id in view.get_queryset().values_list("id", flat=True)
         }
 
+    def test_workspace_only_requester_without_org_membership_passes_gate(
+        self, organization, workspace
+    ):
+        """A workspace member with no OrganizationMembership can still list
+        annotators — the access gate accepts workspace-based access, matching the
+        member-listing it guards (TH-6156)."""
+        from accounts.models.workspace import WorkspaceMembership
+        from model_hub.views.develop_annotations import UserViewSet
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        requester = User.objects.create_user(
+            email="ws-only-requester@example.com",
+            password="testpassword123",
+            name="WS Only Requester",
+            organization=None,
+        )
+        # Deliberate drift: workspace access but NO OrganizationMembership row.
+        WorkspaceMembership.no_workspace_objects.create(
+            user=requester,
+            workspace=workspace,
+            role=OrganizationRoles.WORKSPACE_MEMBER,
+            level=Level.WORKSPACE_MEMBER,
+            is_active=True,
+        )
+
+        view = UserViewSet()
+        view.kwargs = {"organization_id": str(organization.id)}
+        view.request = SimpleNamespace(
+            query_params={},
+            workspace=workspace,
+            organization=organization,
+            user=requester,
+        )
+
+        # Must not raise NotFound, and the requester is a selectable annotator.
+        ids = {
+            str(user_id) for user_id in view.get_queryset().values_list("id", flat=True)
+        }
+        assert str(requester.id) in ids
+
+    def test_requesting_user_always_included_as_annotator(
+        self, organization, workspace
+    ):
+        """The requester is always selectable for their own queue, even when they
+        are neither a member of the active workspace nor an org admin — so an
+        empty workspace no longer surfaces the misleading 404 (TH-6156)."""
+        from accounts.models.organization_membership import OrganizationMembership
+        from model_hub.views.develop_annotations import UserViewSet
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        requester = User.objects.create_user(
+            email="plain-org-member@example.com",
+            password="testpassword123",
+            name="Plain Org Member",
+            organization=None,
+        )
+        # Org Member (not admin) with no WorkspaceMembership in `workspace`:
+        # only self-inclusion can place them in the result.
+        OrganizationMembership.no_workspace_objects.create(
+            user=requester,
+            organization=organization,
+            role=OrganizationRoles.MEMBER,
+            level=Level.MEMBER,
+            is_active=True,
+        )
+
+        view = UserViewSet()
+        view.kwargs = {"organization_id": str(organization.id)}
+        view.request = SimpleNamespace(
+            query_params={},
+            workspace=workspace,
+            organization=organization,
+            user=requester,
+        )
+
+        ids = {
+            str(user_id) for user_id in view.get_queryset().values_list("id", flat=True)
+        }
+        assert str(requester.id) in ids
+
+    def test_lists_members_when_a_different_org_is_active(
+        self, organization, workspace, user
+    ):
+        """The requested org may differ from the active org/workspace. A member
+        of the requested org still gets its member list instead of a 404 — the
+        exact failure from the annotator picker passing the queue's org while a
+        different org is the active context (TH-6156)."""
+        from accounts.models.organization_membership import OrganizationMembership
+        from model_hub.views.develop_annotations import UserViewSet
+        from tfc.constants.levels import Level
+        from tfc.constants.roles import OrganizationRoles
+
+        # `user` (fixture) is an Owner of `organization` with `workspace`.
+        # Create a SECOND org + workspace and make it the active request context.
+        other_org = Organization.objects.create(name="Other Active Org")
+        other_ws = Workspace.objects.create(
+            name="Other Active WS",
+            organization=other_org,
+            is_active=True,
+            created_by=user,
+        )
+        OrganizationMembership.no_workspace_objects.create(
+            user=user,
+            organization=other_org,
+            role=OrganizationRoles.OWNER,
+            level=Level.OWNER,
+            is_active=True,
+        )
+
+        view = UserViewSet()
+        view.kwargs = {"organization_id": str(organization.id)}
+        # Active context points at other_org/other_ws, but the URL asks for
+        # `organization` — the mismatch that used to raise 404.
+        view.request = SimpleNamespace(
+            query_params={},
+            workspace=other_ws,
+            organization=other_org,
+            user=user,
+        )
+
+        ids = {
+            str(user_id) for user_id in view.get_queryset().values_list("id", flat=True)
+        }
+        # Must not 404, and must return the requested org's members (user owns it).
+        assert str(user.id) in ids
+
 
 # ==================== AnnotationSummaryView Tests ====================
 
@@ -1183,9 +1314,7 @@ class TestAnnotationSummaryView:
 
         # Mock the summary service response
         mock_summary_service.return_value = {
-            "header_data": pd.DataFrame(
-                {"label_id": [], "type": [], "name": []}
-            ),
+            "header_data": pd.DataFrame({"label_id": [], "type": [], "name": []}),
             "metric_calc": pd.DataFrame(
                 {"label_id": [], "row_id": [], "user_id": [], "value": []}
             ),
