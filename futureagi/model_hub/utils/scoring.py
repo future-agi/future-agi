@@ -125,8 +125,10 @@ def normalize_score(
     if output_type == "deterministic":
         if choice_scores and isinstance(value, str):
             return apply_choice_scores(value, choice_scores) or 0.0
-        if choice_scores and isinstance(value, list) and len(value) > 0:
-            return apply_choice_scores(str(value[0]), choice_scores) or 0.0
+        if choice_scores and isinstance(value, list) and value:
+            mapped = [apply_choice_scores(str(v), choice_scores) for v in value]
+            mapped = [m for m in mapped if m is not None]
+            return sum(mapped) / len(mapped) if mapped else 0.0
         return _to_clamped_score(value)
 
     return _to_clamped_score(value)
