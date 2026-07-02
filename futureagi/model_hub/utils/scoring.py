@@ -32,21 +32,66 @@ def extract_eval_value(value: Any) -> Any:
 
     Non-dict values pass through unchanged. For dicts, keys are consulted in
     priority order (``failure`` boolean is inverted; the rest are read as-is):
-    ``failure`` → ``score`` → ``result`` → ``output`` → ``choice``. If no key
-    matches, the whole dict is returned so the caller can decide.
+    ``failure`` → ``score`` → ``result`` → ``output`` → ``choice`` →
+    ``value``. If no key matches, the whole dict is returned so the caller
+    can decide.
 
     This matches what ``should_run_error_localizer`` uses to unwrap eval
     results before normalization, kept public here so every consumer of the
-    scoring pipeline shares the same extraction rules.
+    scoring pipeline shares the same extraction rules. ``value`` is included
+    for the ``{"value": 0.85}`` shape that some legacy evaluator classes
+    emit.
     """
     if not isinstance(value, dict):
         return value
     if isinstance(value.get("failure"), bool):
         return not value["failure"]
-    for key in ("score", "result", "output", "choice"):
+    for key in ("score", "result", "output", "choice", "value"):
         if value.get(key) is not None:
             return value[key]
     return value
+
+
+_PASS_FAIL_TOKENS = frozenset(
+    {"passed", "pass", "true", "yes", "failed", "fail", "false", "no"}
+)
+
+
+def is_numerically_scorable(
+    value: Any, output_type: str, choice_scores: dict[str, float]
+) -> bool:
+    """Return True when ``normalize_score`` can produce a meaningful score.
+
+    False for inputs it would silently zero — ``None``, unknown-shape dicts,
+    empty lists, or strings outside the pass/fail token set / configured
+    ``choice_scores`` / float-parseability. Shared by the error localizer's
+    gating check and ``score_eval_output``'s fallback trigger.
+    """
+    if value is None:
+        return False
+    if output_type == "pass_fail":
+        if isinstance(value, (bool, int, float)):
+            return True
+        if isinstance(value, str):
+            return value.strip().lower() in _PASS_FAIL_TOKENS
+        return False
+    if output_type == "deterministic":
+        if not choice_scores:
+            return False
+        if isinstance(value, str):
+            return value in choice_scores
+        if isinstance(value, list) and value:
+            return all(isinstance(v, str) and v in choice_scores for v in value)
+        return isinstance(value, (int, float))
+    if isinstance(value, (bool, int, float)):
+        return True
+    if isinstance(value, str):
+        try:
+            float(value)
+            return True
+        except (TypeError, ValueError):
+            return False
+    return False
 
 
 def normalize_score(
@@ -184,7 +229,11 @@ def validate_pass_threshold(threshold) -> list[str]:
     return []
 
 
-def score_eval_output(value_or_result: Any, eval_template: Any) -> float:
+def score_eval_output(
+    value_or_result: Any,
+    eval_template: Any,
+    default_score: float = 0.0,
+) -> float:
     """Canonical eval-output → normalized 0-1 score.
 
     Accepts either a raw ``eval_instance.run()`` result (detected via the
@@ -194,6 +243,17 @@ def score_eval_output(value_or_result: Any, eval_template: Any) -> float:
     cases the value is unwrapped by ``extract_eval_value`` and normalized by
     ``normalize_score`` using the template's ``output_type_normalized`` and
     ``choice_scores``.
+
+    Args:
+        value_or_result: The eval output to score.
+        eval_template: The eval template supplying ``output_type_normalized``,
+            ``choice_scores``, and ``config`` (for the raw-result path).
+        default_score: Returned when the input is malformed and cannot be
+            interpreted under the template's output type (``None``,
+            empty list, dict with no recognised key, or a string that is
+            neither a pass/fail token, a known choice, nor float-parseable).
+            Defaults to ``0.0``; pass ``0.5`` when the caller wants to hedge
+            unknown outputs instead of scoring them as the worst possible.
     """
     if hasattr(value_or_result, "eval_results"):
         from evaluations.engine.formatting import (
@@ -207,4 +267,8 @@ def score_eval_output(value_or_result: Any, eval_template: Any) -> float:
     scalar = extract_eval_value(value_or_result)
     output_type = getattr(eval_template, "output_type_normalized", None) or "percentage"
     choice_scores = getattr(eval_template, "choice_scores", None) or {}
+
+    if not is_numerically_scorable(scalar, output_type, choice_scores):
+        return default_score
+
     return normalize_score(scalar, output_type, choice_scores)

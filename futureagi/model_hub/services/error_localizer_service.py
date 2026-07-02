@@ -8,6 +8,7 @@ from model_hub.models.evals_metric import EvalTemplate
 from model_hub.utils.scoring import (
     determine_pass_fail,
     extract_eval_value,
+    is_numerically_scorable,
     normalize_score,
 )
 
@@ -19,41 +20,6 @@ def error_localizer_enabled(eval_config: Any) -> bool:
         return True
     config = getattr(eval_config, "config", None) or {}
     return bool(config.get("error_localizer_enabled"))
-
-
-_PASS_FAIL_KEYWORDS = frozenset(
-    {"passed", "pass", "true", "yes", "failed", "fail", "false", "no"}
-)
-
-
-def _is_numerically_scorable(
-    value: Any, output_type: str, choice_scores: dict[str, float]
-) -> bool:
-    if value is None:
-        return False
-    if output_type == "pass_fail":
-        if isinstance(value, (bool, int, float)):
-            return True
-        if isinstance(value, str):
-            return value.strip().lower() in _PASS_FAIL_KEYWORDS
-        return False
-    if output_type == "deterministic":
-        if not choice_scores:
-            return False
-        if isinstance(value, str):
-            return value in choice_scores
-        if isinstance(value, list) and value:
-            return all(isinstance(v, str) and v in choice_scores for v in value)
-        return isinstance(value, (int, float))
-    if isinstance(value, (bool, int, float)):
-        return True
-    if isinstance(value, str):
-        try:
-            float(value)
-            return True
-        except (TypeError, ValueError):
-            return False
-    return False
 
 
 def should_run_error_localizer(
@@ -76,7 +42,7 @@ def should_run_error_localizer(
     choice_scores = getattr(eval_template, "choice_scores", None) or {}
     extracted = extract_eval_value(value)
 
-    if not _is_numerically_scorable(extracted, output_type, choice_scores):
+    if not is_numerically_scorable(extracted, output_type, choice_scores):
         return (
             False,
             "Error localization skipped — this evaluation result is not eligible for localization.",

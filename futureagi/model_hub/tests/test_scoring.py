@@ -339,6 +339,9 @@ class TestExtractEvalValue:
     def test_choice_key(self):
         assert extract_eval_value({"choice": "good"}) == "good"
 
+    def test_value_key(self):
+        assert extract_eval_value({"value": 0.85}) == 0.85
+
     def test_priority_score_over_result(self):
         assert extract_eval_value({"score": 0.5, "result": 0.9}) == 0.5
 
@@ -511,3 +514,76 @@ class TestScoreEvalOutputRawRunResult:
             ]
         )
         assert score_eval_output(run_result, template) == 0.0
+
+    def test_empty_eval_results_returns_default_score(self):
+        template = _FullTemplate(output="score")
+        assert score_eval_output(_EvalRunResult(eval_results=[]), template) == 0.0
+        assert (
+            score_eval_output(
+                _EvalRunResult(eval_results=[]), template, default_score=0.5
+            )
+            == 0.5
+        )
+
+    def test_nested_list_first_element_unwrapped(self):
+        template = _FullTemplate(output="score")
+        run_result = _EvalRunResult(
+            eval_results=[
+                [
+                    {
+                        "data": None,
+                        "failure": False,
+                        "reason": "",
+                        "runtime": 0,
+                        "model": "gpt-4o",
+                        "metrics": [{"value": 0.6}],
+                        "metadata": {},
+                    }
+                ]
+            ]
+        )
+        assert score_eval_output(run_result, template) == 0.6
+
+
+# =============================================================================
+# default_score fallback tests
+# =============================================================================
+
+
+@pytest.mark.unit
+class TestScoreEvalOutputDefaultScore:
+    def test_unparseable_string_returns_default(self):
+        template = _Template(output_type_normalized="percentage")
+        assert score_eval_output("maybe", template) == 0.0
+        assert score_eval_output("maybe", template, default_score=0.5) == 0.5
+
+    def test_pass_fail_unknown_string_returns_default(self):
+        template = _Template(output_type_normalized="pass_fail")
+        assert score_eval_output("0.85", template, default_score=0.5) == 0.5
+
+    def test_deterministic_unknown_choice_returns_default(self):
+        template = _Template(
+            output_type_normalized="deterministic",
+            choice_scores={"good": 1.0, "bad": 0.0},
+        )
+        assert score_eval_output("maybe", template, default_score=0.5) == 0.5
+
+    def test_none_returns_default(self):
+        template = _Template(output_type_normalized="percentage")
+        assert score_eval_output(None, template, default_score=0.5) == 0.5
+
+    def test_empty_list_returns_default(self):
+        template = _Template(output_type_normalized="percentage")
+        assert score_eval_output([], template, default_score=0.5) == 0.5
+
+    def test_dict_without_recognized_key_returns_default(self):
+        template = _Template(output_type_normalized="percentage")
+        assert score_eval_output({"foo": "bar"}, template, default_score=0.5) == 0.5
+
+    def test_default_does_not_override_valid_zero(self):
+        template = _Template(output_type_normalized="pass_fail")
+        assert score_eval_output("Failed", template, default_score=0.5) == 0.0
+
+    def test_value_key_dict_scores_correctly(self):
+        template = _Template(output_type_normalized="percentage")
+        assert score_eval_output({"value": 0.85}, template) == 0.85
