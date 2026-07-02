@@ -15737,10 +15737,10 @@ export const ModelHubDatasetOptimizationReadResponse = zod.object({
   "trial": zod.string().min(1),
   "prompt": zod.string(),
   "is_best": zod.boolean(),
-  "score_percentage_change": zod.number(),
+  "score_percentage_change": zod.number().optional(),
   "eval_scores": zod.record(zod.string(), zod.object({
-  "score": zod.number(),
-  "percentage_change": zod.number()
+  "score": zod.number().optional(),
+  "percentage_change": zod.number().optional()
 }))
 })).optional(),
   "column_config": zod.array(zod.object({

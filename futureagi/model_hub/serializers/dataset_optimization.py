@@ -425,8 +425,8 @@ class DatasetOptimizationColumnConfigItemSerializer(serializers.Serializer):
 
 
 class DatasetOptimizationTrialEvalScoreSerializer(serializers.Serializer):
-    score = serializers.FloatField(allow_null=True)
-    percentage_change = serializers.FloatField(allow_null=True)
+    score = serializers.FloatField(required=False, allow_null=True)
+    percentage_change = serializers.FloatField(required=False, allow_null=True)
 
 
 class DatasetOptimizationTrialTableRowSerializer(serializers.Serializer):
@@ -441,7 +441,7 @@ class DatasetOptimizationTrialTableRowSerializer(serializers.Serializer):
     trial = serializers.CharField()
     prompt = serializers.CharField(allow_blank=True)
     is_best = serializers.BooleanField()
-    score_percentage_change = serializers.FloatField(allow_null=True)
+    score_percentage_change = serializers.FloatField(required=False, allow_null=True)
     eval_scores = serializers.DictField(
         child=DatasetOptimizationTrialEvalScoreSerializer(),
     )

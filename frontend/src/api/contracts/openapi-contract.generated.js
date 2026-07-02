@@ -91966,7 +91966,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "trial",
         "prompt",
         "is_best",
-        "score_percentage_change",
         "eval_scores"
       ],
       "type": "object",
@@ -98249,10 +98248,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
       }
     },
     "DatasetOptimizationTrialEvalScore": {
-      "required": [
-        "score",
-        "percentage_change"
-      ],
       "type": "object",
       "properties": {
         "score": {
