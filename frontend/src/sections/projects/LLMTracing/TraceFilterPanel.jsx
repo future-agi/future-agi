@@ -102,6 +102,33 @@ export const getTraceFilterFields = (tab) => {
   return BASE_TRACE_FILTER_FIELDS;
 };
 
+// Map a static trace field to a picker property. In spans view the root
+// "Trace Name" field is reused as "Span Name" — remap its id so the picker
+// fires a distinct span_name request instead of duplicating the name request.
+export const toStaticFilterProperty = (field, isSpansView = false) => {
+  if (isSpansView && field.value === "name") {
+    return {
+      id: "span_name",
+      name: "Span Name",
+      category: "system",
+      type: "string",
+      apiColType: "SYSTEM_METRIC",
+    };
+  }
+  return {
+    id: field.value,
+    name: field.label,
+    category: "system",
+    // Pinned so the eval-task wire encoding doesn't have to guess
+    // from `category` alone — without this every static field would
+    // round-trip through the chain with apiColType=undefined and
+    // get coerced to SPAN_ATTRIBUTE downstream.
+    apiColType: "SYSTEM_METRIC",
+    type: field.type === "enum" ? "string" : field.type,
+    ...(field.choices ? { choices: field.choices } : {}),
+  };
+};
+
 // ---------------------------------------------------------------------------
 // Category config for dashboard-style property picker
 // ---------------------------------------------------------------------------
@@ -1718,29 +1745,9 @@ const TraceFilterPanel = ({
     // Start with static trace fields (trace_name, status, model, etc.) —
     // prepend trace_id / span_id when rendered inside the LLM Tracing
     // trace or span tab. In spans view, relabel "Trace Name" to "Span Name".
-    const staticProps = getTraceFilterFields(tab).map((f) => {
-      if (isSpansView && f.value === "name") {
-        return {
-          id: "name",
-          name: "Span Name",
-          category: "system",
-          type: "string",
-          apiColType: "SYSTEM_METRIC",
-        };
-      }
-      return {
-        id: f.value,
-        name: f.label,
-        category: "system",
-        // Pinned so the eval-task wire encoding doesn't have to guess
-        // from `category` alone — without this every static field would
-        // round-trip through the chain with apiColType=undefined and
-        // get coerced to SPAN_ATTRIBUTE downstream.
-        apiColType: "SYSTEM_METRIC",
-        type: f.type === "enum" ? "string" : f.type,
-        ...(f.choices ? { choices: f.choices } : {}),
-      };
-    });
+    const staticProps = getTraceFilterFields(tab).map((f) =>
+      toStaticFilterProperty(f, isSpansView),
+    );
     const knownIds = new Set(staticProps.map((p) => p.id));
     // Add dynamic properties not already covered by static fields
     const dynamicExtras = dynamicProperties.filter((p) => !knownIds.has(p.id));

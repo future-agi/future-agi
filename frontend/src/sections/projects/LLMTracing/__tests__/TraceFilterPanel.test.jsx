@@ -6,6 +6,7 @@ import TraceFilterPanel, {
   filterPropertiesForPicker,
   getTraceFilterFields,
   normalizeFilterRowOperator,
+  toStaticFilterProperty,
 } from "../TraceFilterPanel";
 import {
   getPickerOptionSearchText,
@@ -128,6 +129,30 @@ describe("getTraceFilterFields (TH-4571)", () => {
     // are not required; structural equality is what consumers rely on).
     expect(fromNull).toEqual(fromUndefined);
     expect(fromNull).toEqual(fromUnknown);
+  });
+});
+
+describe("toStaticFilterProperty (spans Span Name)", () => {
+  const nameField = { value: "name", label: "Trace Name", type: "string" };
+
+  it("remaps the name field to span_name in spans view", () => {
+    expect(toStaticFilterProperty(nameField, true)).toMatchObject({
+      id: "span_name",
+      name: "Span Name",
+      type: "string",
+    });
+  });
+
+  it("keeps the name field as name outside spans view", () => {
+    expect(toStaticFilterProperty(nameField, false)).toMatchObject({
+      id: "name",
+      name: "Trace Name",
+    });
+  });
+
+  it("does not remap non-name fields in spans view", () => {
+    const field = { value: "status", label: "Status", type: "string" };
+    expect(toStaticFilterProperty(field, true).id).toBe("status");
   });
 });
 

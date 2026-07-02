@@ -33,8 +33,6 @@ import axios, { endpoints } from "src/utils/axios";
 import SessionHistory from "src/sections/projects/TracesDrawer/SessionHistory";
 import { useScrollEnd } from "src/hooks/use-scroll-end";
 import { canonicalKeys, formatMs } from "src/utils/utils";
-import TraceDetailDrawer from "src/components/traceDetailDrawer/trace-detail-drawer";
-import { SelectedNodeProvider } from "src/components/traceDetailDrawer/selectedNodeContext";
 import SpanTreeTimeline from "src/components/traceDetail/SpanTreeTimeline";
 import SpanDetailPane from "src/components/traceDetail/SpanDetailPane";
 import LeftPanelSplit from "src/components/traceDetail/TraceLeftPanel";
@@ -1612,7 +1610,6 @@ SimulationContent.propTypes = {
 // ---------------------------------------------------------------------------
 function SessionContent({ content }) {
   const sessionId = content?.session_id;
-  const [openTraceData, setOpenTraceData] = useState(null);
 
   const {
     data: tracePages,
@@ -1636,10 +1633,6 @@ function SessionContent({ content }) {
       fetchNextPage();
     }
   }, [isFetchingNextPage, isLoading]);
-
-  const handleTraceClick = useCallback((traceId) => {
-    setOpenTraceData({ trace_id: traceId });
-  }, []);
 
   const sessionMetadata = tracePages?.pages[0]?.data?.result?.session_metadata;
   const traceDetail =
@@ -1696,23 +1689,8 @@ function SessionContent({ content }) {
           loading={isLoading}
           isFetchingNextPage={isFetchingNextPage}
           activeSessionId={sessionId}
-          onTraceClick={handleTraceClick}
         />
       </Box>
-
-      {/* Trace detail side drawer */}
-      <SelectedNodeProvider>
-        <TraceDetailDrawer
-          open={Boolean(openTraceData)}
-          onClose={() => setOpenTraceData(null)}
-          traceData={openTraceData}
-          setTraceDetailDrawerOpen={null}
-          setSelectedTraceId={(newTraceId) =>
-            setOpenTraceData((prev) => ({ ...prev, trace_id: newTraceId }))
-          }
-          viewOptions={{ showAnnotation: true, showNavigation: false }}
-        />
-      </SelectedNodeProvider>
     </Stack>
   );
 }

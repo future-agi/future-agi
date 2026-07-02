@@ -10,6 +10,7 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { useAnnotationLabelsList } from "src/api/annotation-labels/annotation-labels";
 import CreateLabelDrawer from "src/sections/annotations/labels/create-label-drawer";
 
@@ -61,9 +62,14 @@ function mergeLabelsById(...labelLists) {
 LabelPicker.propTypes = {
   selectedIds: PropTypes.array,
   onChange: PropTypes.func.isRequired,
+  lockLastSelected: PropTypes.bool,
 };
 
-export default function LabelPicker({ selectedIds = [], onChange }) {
+export default function LabelPicker({
+  selectedIds = [],
+  onChange,
+  lockLastSelected = false,
+}) {
   const [search, setSearch] = useState("");
   const [createDrawerOpen, setCreateDrawerOpen] = useState(false);
   const [createdLabels, setCreatedLabels] = useState([]);
@@ -80,8 +86,12 @@ export default function LabelPicker({ selectedIds = [], onChange }) {
   );
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
+  const isDeselectLocked = (id) =>
+    lockLastSelected && selectedIds.length === 1 && selectedSet.has(id);
+
   const handleToggle = (id) => {
     if (selectedSet.has(id)) {
+      if (isDeselectLocked(id)) return;
       onChange(selectedIds.filter((i) => i !== id));
     } else {
       onChange([...selectedIds, id]);
@@ -120,19 +130,34 @@ export default function LabelPicker({ selectedIds = [], onChange }) {
       {/* Selected labels as removable chips */}
       {selectedLabels.length > 0 && (
         <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mb: 0.5 }}>
-          {selectedLabels.map((label) => (
-            <Chip
-              key={label.id}
-              label={label.name}
-              size="small"
-              color="primary"
-              onDelete={() => handleToggle(label.id)}
-              sx={{
-                borderRadius: 0.5,
-                fontWeight: 500,
-              }}
-            />
-          ))}
+          {selectedLabels.map((label) =>
+            isDeselectLocked(label.id) ? (
+              <CustomTooltip
+                key={label.id}
+                show
+                arrow
+                size="small"
+                placement="top"
+                title="A queue must keep at least one label"
+              >
+                <Chip
+                  label={label.name}
+                  size="small"
+                  color="primary"
+                  sx={{ borderRadius: 0.5, fontWeight: 500 }}
+                />
+              </CustomTooltip>
+            ) : (
+              <Chip
+                key={label.id}
+                label={label.name}
+                size="small"
+                color="primary"
+                onDelete={() => handleToggle(label.id)}
+                sx={{ borderRadius: 0.5, fontWeight: 500 }}
+              />
+            ),
+          )}
         </Box>
       )}
 
@@ -190,11 +215,22 @@ export default function LabelPicker({ selectedIds = [], onChange }) {
                 minWidth: 0,
               }}
             >
-              <Checkbox
-                checked={selectedSet.has(label.id)}
+              <CustomTooltip
+                show={isDeselectLocked(label.id)}
+                arrow
                 size="small"
-                sx={{ p: 0.5 }}
-              />
+                placement="top"
+                title="A queue must keep at least one label"
+              >
+                <Box component="span" sx={{ display: "inline-flex" }}>
+                  <Checkbox
+                    checked={selectedSet.has(label.id)}
+                    disabled={isDeselectLocked(label.id)}
+                    size="small"
+                    sx={{ p: 0.5 }}
+                  />
+                </Box>
+              </CustomTooltip>
               <Typography variant="body2" noWrap>
                 {label.name}
               </Typography>
