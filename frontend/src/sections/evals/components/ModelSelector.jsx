@@ -26,6 +26,7 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
+import { getProviderLogoFilterSx } from "./modelLogo";
 
 // ---------------------------------------------------------------------------
 // Modes — how the evaluator runs
@@ -1196,7 +1197,9 @@ const ModelSelector = ({
                 Your Models
               </Typography>
               {apiModels.map((m) => {
-                const available = m.isAvailable !== false;
+                // API is snake_case; read camelCase too in case the contract changes.
+                const available = (m.isAvailable ?? m.is_available) !== false;
+                const logoUrl = m.logoUrl || m.logo_url;
                 return (
                   <MenuItem
                     key={m.model_name}
@@ -1222,15 +1225,16 @@ const ModelSelector = ({
                       }),
                     }}
                   >
-                    {m.logoUrl ? (
+                    {logoUrl ? (
                       <Box
                         component="img"
-                        src={m.logoUrl}
+                        src={logoUrl}
                         sx={{
                           width: 18,
                           height: 18,
                           borderRadius: "4px",
                           flexShrink: 0,
+                          ...getProviderLogoFilterSx(m.providers),
                         }}
                       />
                     ) : (
