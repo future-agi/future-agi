@@ -1316,14 +1316,31 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         try:
             validated_data = request.validated_query_data
 
-            project_id = str(validated_data["project_id"])
-
-            # Tenant gate via PG (Project + organization filter).
-            Project.objects.get(
-                _project_workspace_scope_q(self.request, project_prefix=""),
-                id=project_id,
-                organization=_get_request_organization(request),
+            project_id = (
+                str(validated_data["project_id"])
+                if validated_data.get("project_id")
+                else None
             )
+            org = _get_request_organization(request)
+
+            org_project_ids = None
+            if project_id:
+                try:
+                    Project.objects.get(
+                        _project_workspace_scope_q(self.request, project_prefix=""),
+                        id=project_id,
+                        organization=org,
+                    )
+                except Project.DoesNotExist:
+                    return self._gm.bad_request("Project not found or access denied")
+            else:
+                org_project_ids = list(
+                    Project.objects.filter(
+                        _project_workspace_scope_q(self.request, project_prefix=""),
+                        organization=org,
+                        deleted=False,
+                    ).values_list("id", flat=True)
+                )
 
             # ClickHouse dispatch
             from tracer.services.clickhouse.query_service import (
@@ -1340,7 +1357,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # Postgres path, which masked CH failures as "0 rows".
             analytics = AnalyticsQueryService()
             return self._list_spans_clickhouse(
-                request, project_id, validated_data, analytics
+                request,
+                project_id,
+                validated_data,
+                analytics,
+                org_project_ids=org_project_ids,
+                org=org,
             )
 
         except Exception as e:
@@ -1349,7 +1371,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"error fetching the spans list of observe {str(e)}"
             )
 
-    def _list_spans_clickhouse(self, request, project_id, validated_data, analytics):
+    def _list_spans_clickhouse(
+        self,
+        request,
+        project_id,
+        validated_data,
+        analytics,
+        org_project_ids=None,
+        org=None,
+    ):
         """List spans using ClickHouse backend.
 
         Builder class is resolved via the v1↔v2 dispatch — set
@@ -1361,6 +1391,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
 
         BuilderCls = get_query_builder_class("SPAN_LIST")  # noqa: N806
+
+        org_scope = bool(org_project_ids)
+        if org is None:
+            org = _get_request_organization(request)
         # The v2 builder is a subclass of the v1 builder, so the pivot
         # helpers below (called as classmethods on the v1 name) work for
         # both — keep the v1 import for those static calls.
@@ -1399,24 +1433,39 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
-        # Get eval config IDs from CH (fast) instead of PG EvalLogger scan,
-        # via the shared service selector (same lookup trace.py uses).
+        # Get eval config IDs. Single-project uses the fast CH dict-lookup;
+        # org-scoped falls back to a PG EvalLogger scan.
         eval_config_ids = []
-        ch_ids = analytics.get_eval_config_ids_with_data_ch(
-            str(project_id), timeout_ms=30000
-        )
-        if ch_ids:
+        if org_scope:
+            _eval_ids = (
+                EvalLogger.objects.filter(
+                    observation_span__project_id__in=org_project_ids
+                )
+                .values("custom_eval_config_id")
+                .distinct()
+            )
             eval_configs = CustomEvalConfig.objects.filter(
-                id__in=ch_ids, deleted=False
+                id__in=_eval_ids, deleted=False
             ).select_related("eval_template")
             eval_config_ids = [str(c.id) for c in eval_configs]
         else:
-            eval_configs = []
+            ch_ids = analytics.get_eval_config_ids_with_data_ch(
+                str(project_id), timeout_ms=30000
+            )
+            if ch_ids:
+                eval_configs = CustomEvalConfig.objects.filter(
+                    id__in=ch_ids, deleted=False
+                ).select_related("eval_template")
+                eval_config_ids = [str(c.id) for c in eval_configs]
+            else:
+                eval_configs = []
 
         # Labels can be project-local or org/shared labels that are referenced
         # by span scores. Use the score-backed helper so span columns and
         # annotation filters match the actual data returned from ClickHouse.
-        annotation_labels = get_annotation_labels_for_project(project_id)
+        annotation_labels = get_annotation_labels_for_project(
+            project_id, project_ids=org_project_ids if org_scope else None
+        )
         annotation_label_ids = [str(lbl.id) for lbl in annotation_labels]
         label_types = {str(lbl.id): lbl.type for lbl in annotation_labels}
 
@@ -1424,7 +1473,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # filter in `filters` (resolved via the remap-aware `end_users` path
         # above), so the builder's bespoke single-id end_user path is unused here.
         builder = BuilderCls(
-            project_id=str(project_id),
+            project_id=None if org_scope else str(project_id),
+            project_ids=[str(p) for p in org_project_ids] if org_scope else None,
             filters=filters,
             page_number=page_number,
             page_size=page_size,

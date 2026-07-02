@@ -32,6 +32,7 @@ from django.utils import timezone
 from temporalio import activity
 
 from simulate.models.test_execution import CallExecution
+from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.temporal.types.activities import (
     RunSimulateEvaluationsInput,
     RunSimulateEvaluationsOutput,
@@ -199,7 +200,6 @@ def _build_transcript_data(call_execution):
     Assembles transcript text from CallTranscript (VOICE) or ChatMessageModel (TEXT)
     records, and reads recording URLs from call_execution fields.
     """
-    from simulate.models import CallTranscript, ChatMessageModel
 
     transcript_data = {
         "transcript": "",
@@ -534,7 +534,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
     from model_hub.models.develop_dataset import Cell, Column
     from model_hub.tasks.user_evaluation import trigger_error_localization_for_simulate
     from model_hub.views.utils.evals import run_eval_func
-    from simulate.models import Scenarios, SimulateEvalConfig
+    from simulate.models import Scenarios
     from tfc.utils.error_codes import get_specific_error_message
 
     try:
@@ -1250,9 +1250,9 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
     from model_hub.models.choices import EvalOutputType
     from sdk.utils.helpers import _get_api_call_type
     from simulate.models import AgentDefinition
+    from tfc.constants.api_calls import APICallStatusChoices
     from tfc.utils.error_codes import get_specific_error_message
     from tracer.models.observability_provider import ProviderChoices
-    from tfc.constants.api_calls import APICallStatusChoices
     try:
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
     except ImportError:
@@ -1316,11 +1316,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     logger.warning("Could not import ee.agenthub.tool_eval_agent.adapters", exc_info=True)
                 return
 
-            customer_api_key = (
-                snapshot.get("api_key")
-                if snapshot and snapshot.get("api_key")
-                else None
-            )
+            customer_api_key = resolve_api_key_for_version(agent_version)
             customer_assistant_id = (
                 snapshot.get("assistant_id")
                 if snapshot and snapshot.get("assistant_id")
@@ -1568,7 +1564,8 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     try:
                         from ee.usage.utils.event_properties import llm_usage_properties
                     except ImportError:
-                        llm_usage_properties = lambda obj: {}
+                        def llm_usage_properties(obj):
+                            return {}
 
                     actual_cost = 0
                     if hasattr(agent, "llm") and agent.llm:

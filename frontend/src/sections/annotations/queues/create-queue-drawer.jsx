@@ -24,10 +24,16 @@ import { useAuthContext } from "src/auth/hooks";
 import {
   useCreateAnnotationQueue,
   useUpdateAnnotationQueue,
+  useUpdateAnnotationQueueStatus,
 } from "src/api/annotation-queues/annotation-queues";
 import LabelPicker from "./components/label-picker";
 import AnnotatorPicker from "./components/annotator-picker";
-import { QUEUE_ROLES, isQueueAnnotatorRole, queueRoleList } from "./constants";
+import {
+  QUEUE_ROLES,
+  QUEUE_STATUS_TRANSITIONS,
+  isQueueAnnotatorRole,
+  queueRoleList,
+} from "./constants";
 
 const STATUS_OPTIONS = [
   { value: "draft", label: "Draft" },
@@ -121,8 +127,21 @@ export default function CreateQueueDrawer({
     useCreateAnnotationQueue();
   const { mutate: updateQueue, isPending: isUpdating } =
     useUpdateAnnotationQueue();
-  const isPending = isCreating || isUpdating;
+  const { mutate: updateStatus, isPending: isStatusUpdating } =
+    useUpdateAnnotationQueueStatus();
+  const isPending = isCreating || isUpdating || isStatusUpdating;
   const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  // Status lives behind its own state-machine endpoint, so only offer targets
+  // the backend will accept from the queue's current status (plus the current
+  // status itself, so the select can show where it stands). Offering an
+  // unreachable target like "draft" just produces a guaranteed error.
+  const currentStatus = editQueue?.status || "draft";
+  const statusOptions = STATUS_OPTIONS.filter(
+    (opt) =>
+      opt.value === currentStatus ||
+      (QUEUE_STATUS_TRANSITIONS[currentStatus] || []).includes(opt.value),
+  );
 
   const { control, handleSubmit, reset, setValue, watch, trigger } = useForm({
     defaultValues: DEFAULT_VALUES,
@@ -207,9 +226,29 @@ export default function CreateQueueDrawer({
     };
 
     if (isEdit) {
+      // `status` is read-only on the queue serializer; it only moves through the
+      // dedicated state-machine endpoint. Save settings first, then transition
+      // status separately (and only when it actually changed — a no-op
+      // same-status transition is rejected by the state machine).
+      const statusChanged = formData.status !== currentStatus;
       updateQueue(
-        { id: editQueue.id, ...payload, status: formData.status },
-        { onSuccess: () => onClose() },
+        { id: editQueue.id, ...payload },
+        {
+          onSuccess: () => {
+            if (!statusChanged) {
+              onClose();
+              return;
+            }
+            updateStatus(
+              { id: editQueue.id, status: formData.status },
+              {
+                onSuccess: () => onClose(),
+                // Keep the drawer open on failure so the user can pick a valid
+                // target; the status hook surfaces the backend reason.
+              },
+            );
+          },
+        },
       );
     } else {
       createQueue(payload, {
@@ -333,7 +372,7 @@ export default function CreateQueueDrawer({
                           "& .MuiOutlinedInput-root": { borderRadius: 0.5 },
                         }}
                       >
-                        {STATUS_OPTIONS.map((opt) => (
+                        {statusOptions.map((opt) => (
                           <MenuItem key={opt.value} value={opt.value}>
                             {opt.label}
                           </MenuItem>

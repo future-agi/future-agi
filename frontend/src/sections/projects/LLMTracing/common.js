@@ -370,11 +370,31 @@ export const applyQuickFilters =
     }
 
     if (filter) {
+      // Quick filters skip the toolbar normalization, so attach the col_type
+      // the backend needs — without it the list 400s on a NORMAL col_type.
+      let field = filter.column_id;
+      let fieldName;
+      const apiColType =
+        col?.groupBy === "Annotation Metrics" ? "ANNOTATION" : "SYSTEM_METRIC";
+      let operator = filter.filter_config?.filter_op;
+      let value = filter.filter_config?.filter_value;
+
+      // Trace Name's column id is `trace_name`, but the backend canonical
+      // field is `name`. Remap to the wire shape the panel sends.
+      if (field === "trace_name") {
+        field = "name";
+        fieldName = "Trace Name";
+        operator = "in";
+        value = Array.isArray(value) ? value : [value];
+      }
+
       const extraFilter = buildApiFilterFromPanelRow({
-        field: filter.column_id,
+        field,
+        fieldName,
         fieldType: filter.filter_config?.filter_type,
-        operator: filter.filter_config?.filter_op,
-        value: filter.filter_config?.filter_value,
+        apiColType,
+        operator,
+        value,
       });
       setFilters((prev) => {
         const exists = (prev || []).some(
@@ -509,7 +529,7 @@ const COLUMN_SIZE_MAP = {
   status: { minWidth: 130, maxWidth: 160, flex: 0 },
   latency: { minWidth: 100, maxWidth: 140, flex: 0 },
   latency_ms: { minWidth: 100, maxWidth: 140, flex: 0 },
-  total_tokens: { minWidth: 200, flex: 1 },
+  total_tokens: { minWidth: 240, flex: 1 },
   prompt_tokens: { minWidth: 100, maxWidth: 130, flex: 0 },
   completion_tokens: { minWidth: 100, maxWidth: 130, flex: 0 },
   total_cost: { minWidth: 130, flex: 0 },
@@ -611,7 +631,10 @@ export const getTraceListColumnDefs = (col) => {
         : {}),
     cellStyle: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
+      // The tags column keeps its default left alignment so an empty "+ Tag"
+      // sits where the chips will, instead of jumping from center to left.
+      const cellColId = params?.colDef?.context?.sourceColumn?.id;
+      if (isCellValueEmpty(value) && cellColId !== "tags") {
         return {
           display: "flex",
           height: "100%",
@@ -630,12 +653,15 @@ export const getTraceListColumnDefs = (col) => {
     },
     cellRendererSelector: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
-        // No renderer for empty values
-        return null;
-      }
       const column = params?.colDef?.context?.sourceColumn;
       const colId = column?.id;
+
+      // The tags column stays interactive even when empty so a first tag can
+      // be added via its "+ Tag" affordance. Other columns render nothing when
+      // empty (valueFormatter shows "-").
+      if (isCellValueEmpty(value) && colId !== "tags") {
+        return null;
+      }
 
       if (RENDERER_CONFIG.nameColumns.includes(colId)) {
         return {

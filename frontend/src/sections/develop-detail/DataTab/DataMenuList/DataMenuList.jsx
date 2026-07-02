@@ -214,7 +214,7 @@ const DataMenuList = ({
         title="Add to Dataset"
         actionButton={
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Icon icon="mdi:plus" width={18} height={18} color="white" />
+            <Icon icon="mdi:plus" width={18} height={18} color="inherit" />
             <Typography
               fontWeight={400}
               fontSize={14}

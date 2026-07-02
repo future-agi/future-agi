@@ -43,6 +43,8 @@ import {
   useUploadGroundTruth,
 } from "../hooks/useGroundTruth";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 // ═══════════════════════════════════════════════════════════════
 // Status Badge
@@ -191,7 +193,13 @@ const parseCsvText = (text) => {
   return { columns, rows };
 };
 
-const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
+const UploadDrawer = ({
+  open,
+  onClose,
+  templateId,
+  evalVariables,
+  canEdit = true,
+}) => {
   const { enqueueSnackbar } = useSnackbar();
   const upload = useUploadGroundTruth(templateId);
 
@@ -985,6 +993,7 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
               size="small"
               onClick={step === 1 ? handleFileUpload : handleDatasetUpload}
               disabled={
+                !canEdit ||
                 (step === 1 && (!file || !name)) ||
                 (step === 3 && (!selectedDataset || !name)) ||
                 isSubmitting
@@ -1009,9 +1018,9 @@ const UploadDrawer = ({ open, onClose, templateId, evalVariables }) => {
 // ═══════════════════════════════════════════════════════════════
 // Empty state
 // ═══════════════════════════════════════════════════════════════
-const EmptyState = ({ onUpload }) => (
+const EmptyState = ({ onUpload, canEdit = true }) => (
   <Box
-    onClick={onUpload}
+    onClick={canEdit ? onUpload : undefined}
     sx={{
       display: "flex",
       flexDirection: "column",
@@ -1020,7 +1029,8 @@ const EmptyState = ({ onUpload }) => (
       py: 8,
       gap: 2,
       height: "100%",
-      cursor: "pointer",
+      cursor: canEdit ? "pointer" : "not-allowed",
+      opacity: canEdit ? 1 : 0.6,
       borderRadius: "12px",
       border: "1px dashed",
       borderColor: "divider",
@@ -1131,6 +1141,7 @@ const GroundTruthSetupForm = ({
   embedPending,
   embeddingStatus,
   embeddingsStale,
+  canEdit = true,
 }) => {
   // Always derive Jinja variables from the live rule prompt so removing
   // a variable from the prompt also drops its row from the mapping UI
@@ -1232,7 +1243,7 @@ const GroundTruthSetupForm = ({
   else if (embedActive) ctaLabel = "Embedding…";
   else if (hasWork) ctaLabel = "Save";
   else ctaLabel = "Saved";
-  const ctaDisabled = !canSave || ctaPending || !hasWork;
+  const ctaDisabled = !canEdit || !canSave || ctaPending || !hasWork;
 
   const buildPayload = () => {
     const role = { output: outputColumn };
@@ -1610,6 +1621,10 @@ const GroundTruthSetupForm = ({
 // ═══════════════════════════════════════════════════════════════
 const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
   const { enqueueSnackbar } = useSnackbar();
+  const { role } = useAuthContext();
+  const canEdit = Boolean(
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role],
+  );
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   // Eval data - to get required_keys (variables)
@@ -1739,10 +1754,13 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
         onClose={() => setDrawerOpen(false)}
         templateId={templateId}
         evalVariables={evalVariables}
+        canEdit={canEdit}
       />
 
       {/* Empty state - clicks opens drawer */}
-      {!datasets.length && <EmptyState onUpload={() => setDrawerOpen(true)} />}
+      {!datasets.length && (
+        <EmptyState onUpload={() => setDrawerOpen(true)} canEdit={canEdit} />
+      )}
 
       {/* Dataset header */}
       {activeDataset && (
@@ -1804,19 +1822,27 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
             <Box sx={{ flex: 1 }} />
 
             <Tooltip title="Upload new dataset">
-              <IconButton size="small" onClick={() => setDrawerOpen(true)}>
-                <Iconify icon="mdi:upload" width={16} />
-              </IconButton>
+              <span>
+                <IconButton
+                  size="small"
+                  onClick={() => setDrawerOpen(true)}
+                  disabled={!canEdit}
+                >
+                  <Iconify icon="mdi:upload" width={16} />
+                </IconButton>
+              </span>
             </Tooltip>
             <Tooltip title="Delete dataset">
-              <IconButton
-                size="small"
-                color="error"
-                onClick={handleDelete}
-                disabled={deleteGt.isPending}
-              >
-                <Iconify icon="mdi:delete-outline" width={16} />
-              </IconButton>
+              <span>
+                <IconButton
+                  size="small"
+                  color="error"
+                  onClick={handleDelete}
+                  disabled={deleteGt.isPending || !canEdit}
+                >
+                  <Iconify icon="mdi:delete-outline" width={16} />
+                </IconButton>
+              </span>
             </Tooltip>
           </Box>
 
@@ -1847,6 +1873,7 @@ const EvalGroundTruthTab = ({ templateId, onSwitchToDetails }) => {
                   activeDataset?.embeddings_stale ||
                     activeDataset?.embeddingsStale,
                 )}
+                canEdit={canEdit}
               />
             </Box>
             {/* Right: data preview - AG Grid spreadsheet */}

@@ -755,10 +755,18 @@ def _trigger_trace_scanner(spans: list[ObservationSpan]):
         ).values_list("id", flat=True)
     }
 
+    # Bound each scan task to a small batch so it finishes well under the scan
+    # activity's time_limit. One big batch at high sampling can exceed the limit
+    # and time out before writing anything — so split into per-task chunks.
+    scan_batch_size = 15
     for project_id, trace_ids in complete_traces_by_project.items():
         if project_id not in observe_project_ids:
             continue
-        scan_traces_task.apply_async(args=(list(trace_ids), project_id))
+        tid_list = list(trace_ids)
+        for i in range(0, len(tid_list), scan_batch_size):
+            scan_traces_task.apply_async(
+                args=(tid_list[i : i + scan_batch_size], project_id)
+            )
 
 
 @temporal_activity(max_retries=0, time_limit=3600, queue="trace_ingestion")

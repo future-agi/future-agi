@@ -6,7 +6,7 @@ Old endpoints remain untouched until Phase 4 cutover.
 """
 
 import structlog
-from django.db import IntegrityError, models, transaction
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -29,10 +29,13 @@ from accounts.serializers.rbac import (
     MemberUserMutationResponseSerializer,
     RBACMessageResponseSerializer,
     WorkspaceMemberListRequestSerializer,
+    WorkspaceMemberListResponseSerializer,
     WorkspaceMemberRemoveSerializer,
     WorkspaceMemberRoleUpdateResponseSerializer,
     WorkspaceMemberRoleUpdateSerializer,
 )
+from accounts.services import member_role_service
+from accounts.services.workspace_members import list_workspace_members
 from accounts.utils import (
     existing_member_access_will_change,
     generate_password,
@@ -833,159 +836,20 @@ class MemberRoleUpdateAPIView(APIView):
         user_id = data["user_id"]
 
         try:
-            target_membership = OrganizationMembership.objects.get(
-                user_id=user_id,
+            changes = member_role_service.update_member_role(
                 organization=organization,
+                actor=request.user,
+                target_user_id=user_id,
+                org_level=data.get("org_level"),
+                ws_level=data.get("ws_level"),
+                workspace_id=data.get("workspace_id"),
+                workspace_access=data.get("workspace_access"),
+                workspace_access_provided="workspace_access" in request.data,
             )
-        except OrganizationMembership.DoesNotExist:
-            return gm.bad_request(get_error_message("MEMBER_NOT_IN_ORG"))
-
-        # BUG-3 fix: reject role changes for deactivated members (but allow for pending invites)
-        # A pending invite has an OrganizationInvite record; a deactivated member does not.
-        if not target_membership.is_active:
-            target_user = User.objects.filter(id=user_id).first()
-            has_pending_invite = (
-                target_user
-                and OrganizationInvite.objects.filter(
-                    organization=organization,
-                    target_email__iexact=target_user.email,
-                    status=InviteStatus.PENDING,
-                ).exists()
-            )
-            if not has_pending_invite:
-                return gm.bad_request(
-                    get_error_message("MEMBER_DEACTIVATED_ROLE_UPDATE")
-                )
-
-        changes = {}
-
-        with transaction.atomic():
-            # Update org level — with escalation guard
-            if data.get("org_level") is not None:
-                old_level = target_membership.level_or_legacy
-                new_level = data["org_level"]
-
-                actor_membership = get_org_membership(request.user)
-                actor_level = (
-                    actor_membership.level_or_legacy if actor_membership else 0
-                )
-                if not can_invite_at_level(actor_level, new_level):
-                    return gm.forbidden_response(
-                        get_error_message("ROLE_ASSIGN_FORBIDDEN")
-                    )
-
-                # B4 fix: Race-safe last-owner check with select_for_update
-                if old_level >= Level.OWNER and new_level < Level.OWNER:
-                    owner_count = (
-                        OrganizationMembership.objects.select_for_update()
-                        .filter(
-                            organization=organization,
-                            is_active=True,
-                            level__gte=Level.OWNER,
-                        )
-                        .count()
-                    )
-                    legacy_owner_count = (
-                        OrganizationMembership.objects.select_for_update()
-                        .filter(
-                            organization=organization,
-                            is_active=True,
-                            level__isnull=True,
-                            role="Owner",
-                        )
-                        .count()
-                    )
-                    if (owner_count + legacy_owner_count) <= 1:
-                        return gm.bad_request(get_error_message("LAST_OWNER_DEMOTE"))
-
-                target_membership.level = new_level
-                target_membership.role = Level.to_org_string(new_level)
-                target_membership.save(update_fields=["level", "role"])
-                changes["org_level"] = {"old": old_level, "new": new_level}
-
-                if new_level >= Level.ADMIN:
-                    # Promote to workspace_admin across all org workspaces
-                    # for consistency with implicit global access.
-                    org_workspaces = Workspace.objects.filter(organization=organization)
-                    for ws in org_workspaces:
-                        WorkspaceMembership._base_manager.update_or_create(
-                            workspace=ws,
-                            user_id=user_id,
-                            defaults={
-                                "level": Level.WORKSPACE_ADMIN,
-                                "role": Level.to_ws_role(Level.WORKSPACE_ADMIN),
-                                "organization_membership": target_membership,
-                                "granted_by": request.user,
-                                "is_active": True,
-                                "deleted": False,
-                                "deleted_at": None,
-                            },
-                        )
-                else:
-                    # Below Admin — use workspace_access to grant explicit memberships.
-                    ws_access = data.get("workspace_access") or []
-                    default_ws_level = (
-                        Level.WORKSPACE_MEMBER
-                        if new_level >= Level.MEMBER
-                        else Level.WORKSPACE_VIEWER
-                    )
-                    for ws_entry in ws_access:
-                        ws_id = ws_entry.get("workspace_id")
-                        ws_level = ws_entry.get("level", default_ws_level)
-                        if ws_id:
-                            WorkspaceMembership._base_manager.update_or_create(
-                                workspace_id=ws_id,
-                                user_id=user_id,
-                                defaults={
-                                    "level": ws_level,
-                                    "role": Level.to_ws_role(ws_level),
-                                    "organization_membership": target_membership,
-                                    "granted_by": request.user,
-                                    "is_active": True,
-                                    "deleted": False,
-                                    "deleted_at": None,
-                                },
-                            )
-
-                # Also update User.organization_role for backward compat
-                User.objects.filter(id=user_id).update(
-                    organization_role=Level.to_org_string(new_level)
-                )
-
-                # Also update OrganizationInvite if user has a pending invite
-                target_user = User.objects.filter(id=user_id).first()
-                if target_user:
-                    OrganizationInvite.objects.filter(
-                        organization=organization,
-                        target_email__iexact=target_user.email,
-                        status=InviteStatus.PENDING,
-                    ).update(level=new_level)
-
-            # Update ws level
-            if data.get("ws_level") is not None and data.get("workspace_id"):
-                # Use all_objects to bypass workspace context filtering and
-                # include soft-deleted rows — the DB unique constraint on
-                # (workspace_id, user_id) still holds for deleted rows.
-                existing_ws = WorkspaceMembership.all_objects.filter(
-                    workspace_id=data["workspace_id"],
-                    user_id=user_id,
-                ).first()
-                old_ws = existing_ws.level_or_legacy if existing_ws else None
-
-                WorkspaceMembership.all_objects.update_or_create(
-                    workspace_id=data["workspace_id"],
-                    user_id=user_id,
-                    defaults={
-                        "level": data["ws_level"],
-                        "role": Level.to_ws_role(data["ws_level"]),
-                        "organization_membership": target_membership,
-                        "granted_by": request.user,
-                        "is_active": True,
-                        "deleted": False,
-                        "deleted_at": None,
-                    },
-                )
-                changes["ws_level"] = {"old": old_ws, "new": data["ws_level"]}
+        except member_role_service.MemberRoleUpdateError as exc:
+            if exc.status_code == 403:
+                return gm.forbidden_response(get_error_message(exc.code))
+            return gm.bad_request(get_error_message(exc.code))
 
         log_audit(
             organization=organization,
@@ -1019,7 +883,10 @@ class MemberRemoveAPIView(APIView):
 
     @validated_request(
         request_serializer=MemberRemoveSerializer,
-        responses={200: MemberUserMutationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: MemberUserMutationResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def delete(self, request):
@@ -1129,7 +996,10 @@ class MemberReactivateAPIView(APIView):
 
     @validated_request(
         request_serializer=MemberRemoveSerializer,
-        responses={200: MemberUserMutationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: MemberUserMutationResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def post(self, request):
@@ -1245,7 +1115,10 @@ class WorkspaceMemberListAPIView(APIView):
 
     @validated_request(
         query_serializer=WorkspaceMemberListRequestSerializer,
-        responses={200: MemberListResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: WorkspaceMemberListResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def get(self, request, workspace_id):
@@ -1254,7 +1127,6 @@ class WorkspaceMemberListAPIView(APIView):
         if not organization:
             return gm.bad_request(get_error_message("USER_NOT_IN_ORG"))
 
-        # Verify workspace exists and belongs to the org
         try:
             workspace = Workspace.objects.get(
                 id=workspace_id, organization=organization, is_active=True
@@ -1262,7 +1134,6 @@ class WorkspaceMemberListAPIView(APIView):
         except Workspace.DoesNotExist:
             return gm.bad_request(get_error_message("WORKSPACE_NOT_FOUND"))
 
-        # Permission: must be WS Admin or Org Admin+
         org_membership = get_org_membership(request.user)
         org_level = org_membership.level_or_legacy if org_membership else 0
         if org_level < Level.ADMIN:
@@ -1271,197 +1142,17 @@ class WorkspaceMemberListAPIView(APIView):
                 return gm.forbidden_response(get_error_message("WS_ADMIN_REQUIRED"))
 
         params = request.validated_query_data
-
-        # 1. Get explicit workspace members
-        # Filter on org membership active status to exclude users who were
-        # deactivated at the org level (covers legacy rows where ws.is_active
-        # was not cascaded during removal).
-        ws_memberships = (
-            WorkspaceMembership.objects.filter(
-                workspace=workspace, is_active=True, user__is_active=True
-            )
-            .exclude(organization_membership__is_active=False)
-            .select_related("user", "organization_membership")
-        )
-
-        explicit_user_ids = set()
-        results = []
-        for ws_mem in ws_memberships:
-            user = ws_mem.user
-            explicit_user_ids.add(user.id)
-            org_mem = ws_mem.organization_membership
-            results.append(
-                {
-                    "id": str(user.id),
-                    "name": user.name or "",
-                    "email": user.email,
-                    "ws_level": ws_mem.level_or_legacy,
-                    "ws_role": Level.to_ws_string(ws_mem.level_or_legacy),
-                    "org_level": org_mem.level_or_legacy if org_mem else None,
-                    "org_role": (
-                        Level.to_org_string(org_mem.level_or_legacy)
-                        if org_mem
-                        else None
-                    ),
-                    "status": "Active",
-                    "created_at": (
-                        ws_mem.created_at.isoformat()
-                        if hasattr(ws_mem, "created_at") and ws_mem.created_at
-                        else ""
-                    ),
-                    "type": "member",
-                }
-            )
-
-        # 2. Add Org Admin+ users who auto-access (no explicit WS membership)
-        org_admins = (
-            OrganizationMembership.objects.filter(
-                organization=organization,
-                is_active=True,
-                user__is_active=True,
-            )
-            .filter(
-                models.Q(level__gte=Level.ADMIN)
-                | models.Q(level__isnull=True, role__in=["Admin", "Owner"])
-            )
-            .select_related("user")
-        )
-
-        for org_mem in org_admins:
-            if org_mem.user_id not in explicit_user_ids:
-                user = org_mem.user
-                results.append(
-                    {
-                        "id": str(user.id),
-                        "name": user.name or "",
-                        "email": user.email,
-                        "ws_level": Level.WORKSPACE_ADMIN,
-                        "ws_role": "Workspace Admin",
-                        "org_level": org_mem.level_or_legacy,
-                        "org_role": Level.to_org_string(org_mem.level_or_legacy),
-                        "status": "Active",
-                        "created_at": (
-                            org_mem.joined_at.isoformat() if org_mem.joined_at else ""
-                        ),
-                        "type": "member",
-                        "auto_access": True,
-                    }
-                )
-
-        # 3. Add pending/expired invites for this workspace
-        invites = self._get_workspace_invites(organization, workspace)
-        invited_emails = {inv["email"] for inv in invites}
-        # Deduplicate: remove active member rows whose email has a pending invite
-        results = [r for r in results if r["email"] not in invited_emails]
-        results.extend(invites)
-
-        # Apply search
-        search = params.get("search", "").lower()
-        if search:
-            results = [
-                r
-                for r in results
-                if search in r.get("name", "").lower()
-                or search in r.get("email", "").lower()
-            ]
-
-        # Apply status filter
-        filter_status = params.get("filter_status", [])
-        if filter_status:
-            results = [r for r in results if r["status"] in filter_status]
-
-        # Apply role filter
-        filter_role = params.get("filter_role", [])
-        if filter_role:
-            ws_levels = set()
-            for val in filter_role:
-                val = str(val)
-                if val.startswith("ws_"):
-                    ws_levels.add(int(val[3:]))
-                else:
-                    try:
-                        ws_levels.add(int(val))
-                    except ValueError:
-                        pass
-            if ws_levels:
-                results = [r for r in results if r.get("ws_level") in ws_levels]
-
-        # Sort
-        ALLOWED_SORT_FIELDS = {
-            "name",
-            "email",
-            "ws_level",
-            "status",
-            "type",
-            "date_joined",
-            "created_at",
-        }
-        sort_field = params.get("sort", "-created_at")
-        reverse = sort_field.startswith("-")
-        sort_key = sort_field.lstrip("-")
-        if sort_key not in ALLOWED_SORT_FIELDS:
-            sort_key = "name"
-        results.sort(
-            key=lambda r: (r.get(sort_key) is None, r.get(sort_key) or ""),
-            reverse=reverse,
-        )
-
-        # Paginate
-        page = params.get("page", 1)
-        limit = params.get("limit", 20)
-        start = (page - 1) * limit
-        end = start + limit
-
-        return gm.success_response(
-            {
-                "results": results[start:end],
-                "total": len(results),
-                "page": page,
-                "limit": limit,
-            }
-        )
-
-    def _get_workspace_invites(self, organization, workspace):
-        """Return pending/expired invites that include this workspace."""
-        invites = OrganizationInvite.objects.filter(
+        page_data = list_workspace_members(
+            workspace=workspace,
             organization=organization,
-            status=InviteStatus.PENDING,
+            search=params.get("search", ""),
+            filter_status=params.get("filter_status", []),
+            filter_role=params.get("filter_role", []),
+            sort=params.get("sort", "-created_at"),
+            page=params.get("page", 1),
+            limit=params.get("limit", 20),
         )
-        results = []
-        for inv in invites:
-            # Check if invite's workspace_access includes this workspace
-            ws_match = None
-            if inv.workspace_access:
-                for ws_entry in inv.workspace_access:
-                    if str(ws_entry.get("workspace_id")) == str(workspace.id):
-                        ws_match = ws_entry
-                        break
-            # Also include Admin+ invites (they auto-access all workspaces)
-            if ws_match is None and inv.level < Level.ADMIN:
-                continue
-
-            ws_level = (
-                ws_match.get("level", Level.WORKSPACE_ADMIN)
-                if ws_match
-                else Level.WORKSPACE_ADMIN
-            )
-            results.append(
-                {
-                    "id": str(inv.id),
-                    "name": inv.target_email.split("@")[0],
-                    "email": inv.target_email,
-                    "ws_level": ws_level,
-                    "ws_role": Level.to_ws_string(ws_level),
-                    "org_level": inv.level,
-                    "org_role": Level.to_org_string(inv.level),
-                    "status": inv.effective_status,  # "Pending" or "Expired"
-                    "created_at": (
-                        inv.created_at.isoformat() if inv.created_at else ""
-                    ),
-                    "type": "invite",
-                }
-            )
-        return results
+        return gm.success_response(page_data)
 
 
 class WorkspaceMemberRoleUpdateAPIView(APIView):
@@ -1579,7 +1270,10 @@ class WorkspaceMemberRemoveAPIView(APIView):
 
     @validated_request(
         request_serializer=WorkspaceMemberRemoveSerializer,
-        responses={200: MemberUserMutationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        responses={
+            200: MemberUserMutationResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
         reject_unknown_fields=True,
     )
     def delete(self, request, workspace_id):

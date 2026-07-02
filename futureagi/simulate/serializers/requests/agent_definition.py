@@ -434,6 +434,7 @@ class FetchAssistantRequestSerializer(serializers.Serializer):
 
     assistant_id = serializers.CharField(required=True)
     api_key = serializers.CharField(required=True)
+    agent_id = serializers.UUIDField(required=False, allow_null=True)
     provider = serializers.ChoiceField(
         choices=[
             ProviderChoices.VAPI,

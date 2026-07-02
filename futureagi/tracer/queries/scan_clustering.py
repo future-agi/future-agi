@@ -32,6 +32,22 @@ CENTROIDS_TABLE = "cluster_centroids"
 COSINE_THRESHOLD = 0.45  # cosine distance: 0 = identical, 2 = opposite
 
 
+def _severity_to_impact(severity: str | None) -> str:
+    """Map the scanner's 4-level severity to the cluster's 3-level impact."""
+    return {
+        "critical": "HIGH", "high": "HIGH", "medium": "MEDIUM", "low": "LOW"
+    }.get(severity or "medium", "MEDIUM")
+
+
+def _seed_severity(category: str, brief: str) -> str | None:
+    """Cheap-LLM user-impact severity for a new cluster's seed (centroid) issue,
+    mirroring the eval-cluster path. Single datapoint, one call per new cluster.
+    EE-absent (OSS) or any LLM failure → None so the caller defaults to medium."""
+    from tracer.ee_boundary import generate_scan_cluster_severity
+
+    return generate_scan_cluster_severity(category, brief)
+
+
 # ---------------------------------------------------------------------------
 # Fetch unclustered issues
 # ---------------------------------------------------------------------------
@@ -187,6 +203,14 @@ def create_cluster(
         ).hexdigest()[:8]
         cluster_id = f"S-{h2.upper()}"
 
+    # Centroid severity: classify the seed (representative) issue once via the
+    # cheap LLM and keep it as the cluster's severity — no scanner change, no
+    # per-issue column. Lazy import avoids a query-module cycle;
+    # severity_to_priority falls back to "medium" when severity is None.
+    from tracer.queries.feed import severity_to_priority
+
+    seed_sev = _seed_severity(issue.category, issue.brief)
+
     cluster = TraceErrorGroup.objects.create(
         project_id=project_id,
         cluster_id=cluster_id,
@@ -197,6 +221,8 @@ def create_cluster(
         title=issue.brief,
         status=FeedIssueStatus.ESCALATING,
         error_type=issue.group,
+        combined_impact=_severity_to_impact(seed_sev),
+        priority=severity_to_priority(seed_sev),
         total_events=1,
         unique_traces=1,
         error_count=1,
@@ -466,15 +492,19 @@ def store_trace_input_embeddings(
         db.close()
 
 
-def find_nearest_success_trace(
+def find_success_trace_baseline(
     query_embedding: List[float],
     project_id: str,
+    k: int = 120,
     exclude_trace_ids: Optional[List[str]] = None,
-) -> Optional[Tuple[str, float]]:
+) -> List[Tuple[str, float]]:
     """
-    KNN: find the nearest success trace (has_issues=False) to the query embedding.
+    KNN: up to ``k`` nearest success traces (has_issues=False) to the query
+    embedding, sorted nearest-first.
 
-    Returns (trace_id, distance) or None if no success traces exist.
+    Powers the Pattern Summary "vs working runs" baseline AND the per-trace
+    Compare-with-passing match (build once, use twice). Returns a list of
+    (trace_id, cosine_distance) — empty if no success traces exist.
     """
     db = ClickHouseVectorDB()
     try:
@@ -496,16 +526,29 @@ def find_nearest_success_trace(
             AND has_issues = false
             {exclude_clause}
             ORDER BY distance ASC
-            LIMIT 1
+            LIMIT {int(k)}
             """,
             {"project_id": project_id},
         )
-
-        if rows:
-            return str(rows[0][0]), rows[0][1]
-        return None
+        return [(str(tid), dist) for tid, dist in rows]
     finally:
         db.close()
+
+
+def find_nearest_success_trace(
+    query_embedding: List[float],
+    project_id: str,
+    exclude_trace_ids: Optional[List[str]] = None,
+) -> Optional[Tuple[str, float]]:
+    """
+    KNN: find the nearest success trace (has_issues=False) to the query embedding.
+
+    Returns (trace_id, distance) or None if no success traces exist.
+    """
+    rows = find_success_trace_baseline(
+        query_embedding, project_id, k=1, exclude_trace_ids=exclude_trace_ids
+    )
+    return rows[0] if rows else None
 
 
 def get_cluster_trace_embeddings(
@@ -518,13 +561,16 @@ def get_cluster_trace_embeddings(
     Picks the first (oldest) trace linked to the cluster that has an embedding.
     Returns (trace_id, embedding) or None.
     """
-    # Get trace IDs in this cluster
-    trace_ids = list(
-        ErrorClusterTraces.objects.filter(
+    # Get trace IDs in this cluster. Session members have trace_id NULL —
+    # interpolating None into the CH IN-clause is a UUID parse error.
+    trace_ids = [
+        str(tid)
+        for tid in ErrorClusterTraces.objects.filter(
             cluster__cluster_id=cluster_id,
             cluster__project_id=project_id,
         ).values_list("trace_id", flat=True)
-    )
+        if tid
+    ]
 
     if not trace_ids:
         return None

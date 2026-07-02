@@ -58,10 +58,10 @@ const PreviewAddColumn = ({ open, previewData }) => {
               paddingY: 2,
             }}
           >
-            {previewData?.data?.result?.previewResults?.map(
-              ({ rowId, output }) => (
+            {previewData?.data?.result?.preview_results?.map(
+              ({ row_id, output }) => (
                 <Box
-                  key={rowId}
+                  key={row_id}
                   sx={{
                     padding: "10px",
                     border: "1px solid",
@@ -86,10 +86,10 @@ const PreviewAddColumn = ({ open, previewData }) => {
               paddingY: 2,
             }}
           >
-            {previewData?.data?.result?.previewResults?.map(
-              ({ rowId, output }) => (
+            {previewData?.data?.result?.preview_results?.map(
+              ({ row_id, output }) => (
                 <Box
-                  key={rowId}
+                  key={row_id}
                   sx={{
                     padding: "10px",
                     border: "1px solid",

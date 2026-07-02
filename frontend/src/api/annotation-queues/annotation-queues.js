@@ -228,7 +228,8 @@ export const useAnnotationQueuesList = (filters = {}, options = {}) => {
     queryFn: () =>
       axios.get(annotationQueueEndpoints.list, { params: filters }),
     select: (d) => d.data,
-    staleTime: 1000 * 60 * 2,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };
@@ -239,6 +240,8 @@ export const useAnnotationQueueDetail = (id, options = {}) => {
     queryFn: () => axios.get(annotationQueueEndpoints.detail(id)),
     select: (d) => extractData(d),
     enabled: !!id,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };
@@ -269,6 +272,7 @@ export const useUpdateAnnotationQueue = () => {
       enqueueSnackbar("Queue updated successfully", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
       queryClient.invalidateQueries({
+
         queryKey: annotationQueueKeys.detail(variables.id),
       });
     },
@@ -420,7 +424,8 @@ export const useQueueItems = (queueId, filters = {}, options = {}) => {
       };
     },
     enabled: !!queueId,
-    staleTime: 1000 * 60 * 2,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };
@@ -512,7 +517,7 @@ export const useQueueProgress = (queueId, options = {}) => {
   });
 };
 
-const getAssignmentUserId = (user) => user?.id ?? user?.user_id;
+const getAssignmentUserId = (user) => user?.user_id ?? user?.id;
 
 const normalizeAssignmentUser = (user, fallbackId) => {
   const id = String(getAssignmentUserId(user) ?? fallbackId ?? "");
@@ -779,6 +784,7 @@ export const useAnnotateDetail = (
     viewMode,
     reviewStatus,
     excludeReviewStatus,
+    reserve,
     ...options
   } = {},
 ) => {
@@ -790,6 +796,7 @@ export const useAnnotateDetail = (
     ...(excludeReviewStatus
       ? { exclude_review_status: excludeReviewStatus }
       : {}),
+    ...(reserve ? { reserve: true } : {}),
   };
   const requestOptions = Object.keys(params).length ? { params } : undefined;
   const detailFilters = {
@@ -799,6 +806,7 @@ export const useAnnotateDetail = (
     ...(excludeReviewStatus
       ? { exclude_review_status: excludeReviewStatus }
       : {}),
+    ...(reserve ? { reserve: true } : {}),
   };
   return useQuery({
     queryKey: annotateKeys.detail(queueId, itemId, annotatorId, detailFilters),

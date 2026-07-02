@@ -60,7 +60,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
 
     def __init__(
         self,
-        project_id: str,
+        project_id: str | None = None,
+        project_ids: list[str] | None = None,
         page_number: int = 0,
         page_size: int = 50,
         filters: list[dict] | None = None,
@@ -71,7 +72,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         project_version_id: str | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(project_id, **kwargs)
+        super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
         self.page_number = page_number
         self.page_size = page_size
         self.filters = filters or []
@@ -245,7 +246,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         SELECT id, input, output, attributes_extra
         FROM {self.TABLE}
         PREWHERE id IN %(content_span_ids)s
-        WHERE project_id = %(project_id)s AND is_deleted = 0
+        WHERE {self.project_filter_sql()} AND is_deleted = 0
         """
         return query, params
 

@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import clickhouse_connect
@@ -110,6 +110,15 @@ class CHSpan:
     semconv_source: str = ""
     is_deleted: int = 0
 
+    # Denormalized onto every span row so a caller gets trace context (e.g. the
+    # cluster-RCA agent) without a separate PG read.
+    trace_name: str = ""
+
+    @property
+    def pk(self):
+        """Django-model parity so callers reading ``.pk`` work on a CHSpan."""
+        return self.id
+
 
 # Stable column ordering for the CH query. JSON columns wrapped in toJSONString
 # so clickhouse-connect can decode them (it cannot yet handle the typed JSON
@@ -160,9 +169,23 @@ _READ_COLUMNS: tuple[str, ...] = (
     "eval_status",
     "semconv_source",
     "is_deleted",
+    "trace_name",
 )
 
 _SELECT_SQL = ", ".join(_READ_COLUMNS)
+
+# Same positional shape with the heavy JSON columns stubbed to '' — decoding
+# attributes_extra/span_events/resource_attrs dominates wide reads (a voice
+# conversation root carries its whole raw_log there). _row_to_chspan works
+# unchanged; the stubbed fields just come back empty.
+_HEAVY_COLUMNS = {
+    "span_events",
+    "toJSONString(resource_attrs) AS resource_attrs",
+    "toJSONString(attributes_extra) AS attributes_extra",
+}
+_LEAN_SELECT_SQL = ", ".join(
+    "''" if col in _HEAVY_COLUMNS else col for col in _READ_COLUMNS
+)
 
 # Order in which result_rows columns arrive — bare names (no `AS` aliases) for the
 # row→dataclass mapping below.
@@ -212,6 +235,7 @@ _DATA_KEYS: tuple[str, ...] = (
     "eval_status",
     "semconv_source",
     "is_deleted",
+    "trace_name",
 )
 
 
@@ -319,32 +343,62 @@ class CHSpanReader:
         return join, predicate
 
     # ─── Single-row by id ────────────────────────────────────────────────────
-    def get(self, span_id: str) -> CHSpan | None:
+    def get(self, span_id: str, *, project_id: str | None = None) -> CHSpan | None:
         """Equivalent to ObservationSpan.objects.get(id=span_id), returns None
-        if absent (matches the pattern most callers wrap with try/except)."""
+        if absent (matches the pattern most callers wrap with try/except).
+
+        ``project_id`` (optional) scopes to one tenant; omit for prior behavior."""
+        where = ["id = %(span_id)s", "is_deleted = 0"]
+        params: dict[str, Any] = {"span_id": span_id}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
         rows = self._client.query(
             f"SELECT {_SELECT_SQL} FROM spans FINAL "
-            "WHERE id = %(span_id)s AND is_deleted = 0 LIMIT 1",
-            parameters={"span_id": span_id},
+            f"WHERE {' AND '.join(where)} LIMIT 1",
+            parameters=params,
         ).result_rows
         if not rows:
             return None
         return _row_to_chspan(rows[0])
 
     # ─── All spans in a trace ────────────────────────────────────────────────
-    def list_by_trace(self, trace_id: str) -> list[CHSpan]:
+    def list_by_trace(
+        self, trace_id: str, *, project_id: str | None = None
+    ) -> list[CHSpan]:
         """Equivalent to ObservationSpan.objects.filter(trace=trace, deleted=False).
 
         Returned in start_time, id order so the eval runner's trace-walking
-        logic sees spans in a deterministic chronological order.
+        logic sees spans in a deterministic chronological order. ``project_id``
+        (optional) scopes the read to one tenant; omit for prior behavior.
         """
+        where = ["trace_id = %(trace_id)s", "is_deleted = 0"]
+        params: dict[str, Any] = {"trace_id": trace_id}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
         rows = self._client.query(
             f"SELECT {_SELECT_SQL} FROM spans FINAL "
-            "WHERE trace_id = %(trace_id)s AND is_deleted = 0 "
+            f"WHERE {' AND '.join(where)} "
             "ORDER BY start_time, id",
-            parameters={"trace_id": trace_id},
+            parameters=params,
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
+
+    def first_span_by_type(self, trace_id: str, observation_type: str) -> CHSpan | None:
+        """First span of a given type in a trace, ordered by start_time.
+
+        Single-row CH read — replaces listing every span in a trace just to
+        find the first LLM/TOOL/etc. span.
+        """
+        rows = self._client.query(
+            f"SELECT {_LEAN_SELECT_SQL} FROM spans FINAL "
+            "WHERE trace_id = %(trace_id)s AND is_deleted = 0 "
+            "AND lower(observation_type) = %(otype)s "
+            "ORDER BY start_time, id LIMIT 1",
+            parameters={"trace_id": trace_id, "otype": observation_type.lower()},
+        ).result_rows
+        return _row_to_chspan(rows[0]) if rows else None
 
     # ─── All spans in a session ──────────────────────────────────────────────
     def list_by_session(self, session_id: str) -> list[CHSpan]:
@@ -389,6 +443,75 @@ class CHSpanReader:
             parameters={"trace_ids": tuple(trace_ids)},
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
+
+    # ─── Root spans only (parentless) across many traces ─────────────────────
+    def roots_by_trace_ids(
+        self,
+        trace_ids: list[str],
+        *,
+        include_heavy: bool = False,
+        project_id: str | None = None,
+    ) -> list[CHSpan]:
+        """Parentless spans for the given traces, same shape/order as
+        list_by_trace_ids. Fetches one row per root instead of every span.
+
+        Unless ``include_heavy``, attributes_extra / span_events /
+        resource_attrs come back as '' — decoding them dominates the read
+        (a voice conversation root carries its whole raw_log in
+        attributes_extra). input/output/attrs_string stay real. ``project_id``
+        (optional) scopes the read to one tenant; omit for prior behavior.
+
+        NOTE: structural root (parentless span), NOT the cluster-RCA agent's
+        argMin "representative trace" — deliberately different reads.
+        """
+        if not trace_ids:
+            return []
+        select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
+        where = [
+            "trace_id IN %(trace_ids)s",
+            "is_deleted = 0",
+            "(parent_span_id IS NULL OR parent_span_id = '')",
+        ]
+        params: dict[str, Any] = {"trace_ids": tuple(trace_ids)}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
+        rows = self._client.query(
+            f"SELECT {select} FROM spans FINAL "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY trace_id, start_time, id",
+            parameters=params,
+        ).result_rows
+        return [_row_to_chspan(r) for r in rows]
+
+    # ─── Per-trace rollups (latency / tokens) ─────────────────────────────────
+    def totals_by_trace_ids(
+        self, trace_ids: list[str]
+    ) -> dict[str, tuple[int | None, int | None, int | None]]:
+        """{trace_id: (latency_ms, prompt_tokens, completion_tokens)} summed
+        in CH — replaces materializing every span just to add three ints.
+
+        No FINAL: analytics-aggregate convention (matches the dashboard query
+        builders) — an unmerged duplicate inflates a sum until the merge runs,
+        acceptable for summary stats and far cheaper on fat-row tables."""
+        if not trace_ids:
+            return {}
+        rows = self._client.query(
+            "SELECT trace_id, sum(latency_ms) AS lat, "
+            "sum(prompt_tokens) AS pt, sum(completion_tokens) AS ct "
+            "FROM spans "
+            "WHERE trace_id IN %(trace_ids)s AND is_deleted = 0 "
+            "GROUP BY trace_id",
+            parameters={"trace_ids": tuple(trace_ids)},
+        ).result_rows
+        return {
+            str(tid): (
+                int(lat) if lat else None,
+                int(pt) if pt else None,
+                int(ct) if ct else None,
+            )
+            for tid, lat, pt, ct in rows
+        }
 
     # ─── Children of a parent span ────────────────────────────────────────────
     def list_by_parent(
@@ -648,6 +771,60 @@ class CHSpanReader:
         for tid, st in rows:
             result[tid] = st
         return result
+
+    # ─── Scan-sweep: completed-trace candidates since a watermark ────────────
+    def ch_now(self) -> datetime:
+        """ClickHouse server clock as tz-aware UTC — the sweep bounds its window
+        off this so the watermark is a real CH timestamp (clock-skew-proof).
+        tz-aware so it compares against Django's tz-aware ``last_swept_at``."""
+        dt = self._client.query("SELECT now64(6, 'UTC')").result_rows[0][0]
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+    # created_at is unindexed, but spans is PARTITION BY toDate(start_time) /
+    # PK toStartOfHour(start_time). A trace's start_time precedes its created_at,
+    # so flooring start_time at (lower - this) prunes old partitions while still
+    # catching exports up to this late. No start_time UPPER bound: created_at is
+    # server-set and skew-proof, start_time is producer-set and may run ahead, so
+    # an upper bound would silently drop valid in-window traces.
+    _CANDIDATE_START_FLOOR = timedelta(days=7)
+
+    def root_trace_candidates(
+        self, project_id: str, lower: datetime, upper: datetime
+    ) -> list[tuple[str, datetime]]:
+        """``(trace_id, created_at)`` for distinct roots (``parent_span_id = ''``)
+        with ``lower <= created_at <= upper`` — the scan sweep's candidates.
+
+        Cursor is ``created_at`` (CH ingest time), not ``start_time``, so long-
+        running / late-exported traces can't slip behind the watermark. The
+        lower bound is INCLUSIVE: the caller parks its watermark on the oldest
+        still-unscanned created_at and must re-see that trace next tick. No
+        ``FINAL``: dedup via ``GROUP BY`` (min created_at per trace), and the
+        caller's anti-join makes a redundant dispatch a no-op.
+        """
+        if lower > upper:
+            return []
+        start_floor = lower - self._CANDIDATE_START_FLOOR
+        rows = self._client.query(
+            "SELECT toString(trace_id) AS tid, min(created_at) AS ca FROM spans "
+            "WHERE project_id = %(p)s AND parent_span_id = '' "
+            "  AND is_deleted = 0 "
+            "  AND start_time >= %(start_floor)s "
+            "  AND created_at >= %(lower)s AND created_at <= %(upper)s "
+            "GROUP BY tid",
+            parameters={
+                "p": str(project_id),
+                "lower": lower,
+                "upper": upper,
+                "start_floor": start_floor,
+            },
+        ).result_rows
+        # CH hands back created_at tz-naive even for a DateTime64(_, 'UTC')
+        # column; force UTC (as ch_now does) so the caller can compare it
+        # against the tz-aware watermark without a naive/aware TypeError.
+        return [
+            (r[0], r[1] if r[1].tzinfo else r[1].replace(tzinfo=timezone.utc))
+            for r in rows
+        ]
 
     # ─── Distinct end_users per trace (feed user-count rollup) ────────────────
     def distinct_end_users_by_trace_ids(

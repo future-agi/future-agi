@@ -240,3 +240,17 @@ class UsersResponseSerializer(serializers.Serializer):
 class UserCodeExampleResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = serializers.CharField()
+
+
+class TraceDetailResultSerializer(serializers.Serializer):
+    """Envelope payload for the trace-detail endpoint (CH-assembled)."""
+
+    trace = serializers.JSONField()
+    observation_spans = serializers.ListField(child=serializers.JSONField())
+    summary = serializers.JSONField()
+    graph = serializers.JSONField()
+
+
+class TraceDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = TraceDetailResultSerializer()
