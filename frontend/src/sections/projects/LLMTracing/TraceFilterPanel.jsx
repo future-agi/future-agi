@@ -26,7 +26,7 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
@@ -324,6 +324,24 @@ const HYDRATE_STRING_OP = { equals: "in", not_equals: "not_in" };
 const HYDRATE_CATEGORICAL_OP = { equals: "is", not_equals: "is_not" };
 
 const NO_VALUE_OPS = new Set(["is_null", "is_not_null"]);
+
+// Build the list of *valid, applyable* filter rows: a row needs a field and,
+// unless its operator takes no value, a non-empty value. Returns null when
+// nothing is applyable. Shared by the debounced auto-apply and the
+// flush-on-close path so both compute the filter set identically.
+const computeValidFilters = (rows) => {
+  const valid = rows.map(normalizeFilterRowOperator).filter((r) => {
+    if (!r.field) return false;
+    if (NO_VALUE_OPS.has(r.operator)) return true;
+    const ops = getOperatorsForFilter(r);
+    const opDef = ops.find((o) => o.value === r.operator);
+    if (opDef?.range)
+      return Array.isArray(r.value) && r.value[0] !== "" && r.value[1] !== "";
+    if (Array.isArray(r.value)) return r.value.length > 0;
+    return r.value !== "" && r.value !== undefined && r.value !== null;
+  });
+  return valid.length ? valid : null;
+};
 
 // Scalar ops — value picker forces single-select. Multi-value goes via in/not_in.
 const SINGLE_VALUE_OPS = new Set([
@@ -1795,6 +1813,11 @@ const TraceFilterPanel = ({
     error: aiError,
   } = useAIFilter(aiFilterSchema);
   const [rows, setRows] = useState([{ ...DEFAULT_ROW }]);
+  // Serialized snapshot of the filter set last sent to onApply. Auto-apply
+  // compares against this so we only hit the API when the applyable filter set
+  // actually changes — picking a field/operator with no value, or re-opening
+  // the popover, yields the same set and is skipped.
+  const lastAppliedRef = useRef(undefined);
 
   // Convert dashboard properties to QueryInput format (same IDs as dashboard API)
   const queryFilterFields = useMemo(
@@ -1873,11 +1896,22 @@ const TraceFilterPanel = ({
           });
         });
         setRows(enriched);
+        // Seed last-applied with the already-applied set so the first
+        // auto-apply pass after opening doesn't refire the same filters.
+        lastAppliedRef.current = JSON.stringify(computeValidFilters(enriched));
       } else {
-        setRows([{ ...effectiveDefaultRow }]);
+        const initialRows = [{ ...effectiveDefaultRow }];
+        setRows(initialRows);
+        lastAppliedRef.current = JSON.stringify(
+          computeValidFilters(initialRows),
+        );
       }
     }
-  }, [open, currentFilters]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Initialize rows only when the popover OPENS. With auto-apply, picking a
+    // value pushes to currentFilters; if this effect also re-ran on
+    // currentFilters it would reset rows and "unchoose" the value (feedback
+    // loop). While open, local rows are the source of truth.
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleQueryTokensChange = useCallback(
     (tokens) => {
@@ -1916,23 +1950,49 @@ const TraceFilterPanel = ({
     [effectiveDefaultRow],
   );
 
-  const handleApply = useCallback(() => {
-    const valid = rows.map(normalizeFilterRowOperator).filter((r) => {
-      if (!r.field) return false;
-      if (NO_VALUE_OPS.has(r.operator)) return true;
-      const ops = getOperatorsForFilter(r);
-      const opDef = ops.find((o) => o.value === r.operator);
-      if (opDef?.range)
-        return Array.isArray(r.value) && r.value[0] !== "" && r.value[1] !== "";
-      if (Array.isArray(r.value)) return r.value.length > 0;
-      return r.value !== "" && r.value !== undefined && r.value !== null;
-    });
-    onApply(valid.length ? valid : null);
-    onClose();
-  }, [rows, onApply, onClose]);
+  // Auto-apply: filters take effect as soon as a value is chosen (debounced),
+  // so there's no Apply button — only Clear all. We apply WITHOUT closing the
+  // popover so the user can keep adjusting filters and see them apply live.
+  const autoApplyTimerRef = useRef(null);
+  // Apply only when the resulting filter set differs from the last one sent.
+  const applyIfChanged = useCallback(
+    (sourceRows) => {
+      const next = computeValidFilters(sourceRows);
+      const serialized = JSON.stringify(next);
+      if (serialized === lastAppliedRef.current) return;
+      lastAppliedRef.current = serialized;
+      onApply(next);
+    },
+    [onApply],
+  );
+
+  useEffect(() => {
+    if (!open) return undefined;
+    if (autoApplyTimerRef.current) clearTimeout(autoApplyTimerRef.current);
+    autoApplyTimerRef.current = setTimeout(() => applyIfChanged(rows), 350);
+    return () => {
+      if (autoApplyTimerRef.current) clearTimeout(autoApplyTimerRef.current);
+    };
+  }, [rows, open, applyIfChanged]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Flush on close: if a value was entered then the popover closed before the
+  // 350ms debounce fired, run the pending apply immediately so the filter
+  // isn't dropped. applyIfChanged dedups, so an unchanged set is a no-op.
+  const wasOpenRef = useRef(open);
+  useEffect(() => {
+    if (wasOpenRef.current && !open) {
+      if (autoApplyTimerRef.current) {
+        clearTimeout(autoApplyTimerRef.current);
+        autoApplyTimerRef.current = null;
+      }
+      applyIfChanged(rows);
+    }
+    wasOpenRef.current = open;
+  }, [open, rows, applyIfChanged]);
 
   const handleClear = useCallback(() => {
     setRows([{ ...effectiveDefaultRow }]);
+    lastAppliedRef.current = JSON.stringify(null);
     onApply(null);
     onClose();
   }, [onApply, onClose, effectiveDefaultRow]);
@@ -1957,20 +2017,16 @@ const TraceFilterPanel = ({
           value: Array.isArray(f.value) ? f.value : [f.value],
         };
       });
+      // Apply the same normalized/valid-filtered shape every other path sends,
+      // and seed lastAppliedRef with it so dedup matches what we actually sent.
+      const validFilters = computeValidFilters(converted);
       setRows(converted);
-      onApply(converted);
+      lastAppliedRef.current = JSON.stringify(validFilters);
+      onApply(validFilters);
       setAiQuery("");
       onClose();
     }
   }, [aiQuery, aiParseQuery, observeId, source, properties, onApply, onClose]);
-
-  const handlePrimaryApply = useCallback(() => {
-    if (showAi && aiQuery.trim()) {
-      handleAiFilter();
-      return;
-    }
-    handleApply();
-  }, [showAi, aiQuery, handleAiFilter, handleApply]);
 
   return (
     <Popover
@@ -2137,20 +2193,6 @@ const TraceFilterPanel = ({
                 >
                   Clear all
                 </Button>
-                <Button
-                  size="small"
-                  variant="contained"
-                  data-filter-panel-action="apply"
-                  onClick={handlePrimaryApply}
-                  disabled={aiLoading}
-                  sx={{
-                    textTransform: "none",
-                    fontSize: 12,
-                    px: 2,
-                  }}
-                >
-                  Apply
-                </Button>
               </Stack>
             </Stack>
           </Box>
@@ -2199,15 +2241,6 @@ const TraceFilterPanel = ({
                 sx={{ textTransform: "none", fontSize: 12 }}
               >
                 Clear all
-              </Button>
-              <Button
-                size="small"
-                variant="contained"
-                data-filter-panel-action="apply"
-                onClick={handleApply}
-                sx={{ textTransform: "none", fontSize: 12, px: 2 }}
-              >
-                Apply
               </Button>
             </Stack>
             <Typography
