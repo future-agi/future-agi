@@ -1,0 +1,98 @@
+eval_id: 202
+name: answer_relevance
+description: Evaluates whether the generated response directly addresses and is relevant to the user's input query.
+criteria: "You are evaluating whether the generated response is relevant to the user's input\
+  \ query.\n\n## Criteria\n\n1. Direct address: The response must attempt to answer\
+  \ the specific question or fulfill the specific request.\n   - Pass: Query asks\
+  \ \"What is the capital of France?\" and response states \"The capital of France\
+  \ is Paris.\"\n   - Fail: Query asks \"What is the capital of France?\" and response\
+  \ discusses French cuisine.\n\n2. Completeness: For multi-part queries, all parts\
+  \ should be addressed.\n   - Pass: Query asks \"What are the pros and cons of X?\"\
+  \ and response covers both pros and cons.\n   - Fail: Query asks for pros and cons\
+  \ but response only discusses pros.\n\n3. Focus: The response should prioritize\
+  \ answering the query over providing tangential information.\n   - Pass: Response\
+  \ answers the question concisely with supporting details.\n   - Fail: Response provides\
+  \ extensive background but never directly answers the question.\n\n## Anti-bias Rules\n\
+  \n- Partial answers to complex queries receive partial credit, not zero.\n- A concise\
+  \ correct answer scores higher than a verbose response that buries the answer in\
+  \ tangential content.\n- Valid refusals (e.g., \"I don't have enough information\
+  \ to answer that\") ARE relevant if the query is genuinely unanswerable from the\
+  \ given context.\n- Answers that reframe or clarify the question before answering\
+  \ are still relevant.\n- Do not penalize responses for including helpful context\
+  \ beyond the direct answer, as long as the direct answer is clearly present.\n\n\
+  ## Scoring\n\nScore 0.0 if the response is entirely unrelated to the query or completely\
+  \ fails to address it. Score 0.5 if the response is partially relevant — it touches\
+  \ on the topic but misses the specific question, or addresses only some parts of\
+  \ a multi-part query. Score 1.0 if the response directly and completely addresses\
+  \ the query with appropriate focus.\n\n## Inputs\n\n<input>{{input}}</input>\n\n\
+  <output>{{output}}</output>"
+eval_tags:
+- RAG
+- Agents
+- Quality
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - input
+  - output
+  output: score
+  eval_type_id: AgentEvaluator
+  config:
+    check_internet:
+      type: boolean
+      default: false
+  config_params_desc:
+    input: The user query or question to evaluate against
+    output: The generated response to evaluate for relevance
+  param_modalities:
+    input:
+    - TEXT
+    - AUDIO
+    - JSON
+    - LIST
+    - NUMBER
+    - BOOLEAN
+    - INTEGER
+    - FLOAT
+    - ARRAY
+    - DATETIME
+    output:
+    - TEXT
+    - JSON
+    - LIST
+    - NUMBER
+    - BOOLEAN
+    - INTEGER
+    - FLOAT
+    - ARRAY
+    - DATETIME
+  rule_prompt: "You are evaluating whether the generated response is relevant to the\
+    \ user's input query.\n\n## Criteria\n\n1. Direct address: The response must attempt\
+    \ to answer the specific question or fulfill the specific request.\n   - Pass:\
+    \ Query asks \"What is the capital of France?\" and response states \"The capital\
+    \ of France is Paris.\"\n   - Fail: Query asks \"What is the capital of France?\"\
+    \ and response discusses French cuisine.\n\n2. Completeness: For multi-part queries,\
+    \ all parts should be addressed.\n   - Pass: Query asks \"What are the pros and\
+    \ cons of X?\" and response covers both pros and cons.\n   - Fail: Query asks\
+    \ for pros and cons but response only discusses pros.\n\n3. Focus: The response\
+    \ should prioritize answering the query over providing tangential information.\n\
+    \   - Pass: Response answers the question concisely with supporting details.\n\
+    \   - Fail: Response provides extensive background but never directly answers the\
+    \ question.\n\n## Anti-bias Rules\n\n- Partial answers to complex queries receive\
+    \ partial credit, not zero.\n- A concise correct answer scores higher than a verbose\
+    \ response that buries the answer in tangential content.\n- Valid refusals (e.g.,\
+    \ \"I don't have enough information to answer that\") ARE relevant if the query\
+    \ is genuinely unanswerable from the given context.\n- Answers that reframe or\
+    \ clarify the question before answering are still relevant.\n- Do not penalize\
+    \ responses for including helpful context beyond the direct answer, as long as\
+    \ the direct answer is clearly present.\n\n## Scoring\n\nScore 0.0 if the response\
+    \ is entirely unrelated to the query or completely fails to address it. Score 0.5\
+    \ if the response is partially relevant — it touches on the topic but misses the\
+    \ specific question, or addresses only some parts of a multi-part query. Score\
+    \ 1.0 if the response directly and completely addresses the query with appropriate\
+    \ focus.\n\n## Inputs\n\n<input>{{input}}</input>\n\n<output>{{output}}</output>"
