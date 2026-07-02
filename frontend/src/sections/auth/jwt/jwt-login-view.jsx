@@ -794,12 +794,19 @@ export default function JwtLoginView() {
   }
 
   return (
-    <Box sx={{ width: "100%", height: "100vh", display: "flex" }}>
+    <Box
+      sx={{
+        width: "100%",
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: { xs: "column", md: "row" },
+      }}
+    >
       {/* Left Side - Form */}
       <Box
         sx={{
-          width: "50%",
-          height: "100vh",
+          width: { xs: "100%", md: "50%" },
+          height: { xs: "auto", md: "100vh" },
           display: "flex",
           justifyContent: "center",
 
@@ -810,9 +817,9 @@ export default function JwtLoginView() {
         <Box
           sx={{
             maxWidth: "640px",
-            paddingY: "100px",
+            paddingY: { xs: "48px", md: "100px" },
             width: "100%",
-            px: 10,
+            px: { xs: 2.5, md: 10 },
             height: "fit-content",
           }}
         >
@@ -823,10 +830,11 @@ export default function JwtLoginView() {
         </Box>
       </Box>
 
-      {/* Right Side - Image with Text Overlay */}
+      {/* Right Side - Image with Text Overlay (desktop only) */}
       <Box
         sx={{
-          width: "50%",
+          display: { xs: "none", md: "block" },
+          width: { xs: "100%", md: "50%" },
           height: "100%",
           backgroundColor: "background.neutral",
         }}
