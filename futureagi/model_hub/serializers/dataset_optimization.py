@@ -424,13 +424,17 @@ class DatasetOptimizationColumnConfigItemSerializer(serializers.Serializer):
     is_visible = serializers.BooleanField()
 
 
-class DatasetOptimizationTrialTableRowSerializer(serializers.Serializer):
-    """Static-field shape of a Trial Runs table row.
+class DatasetOptimizationTrialEvalScoreSerializer(serializers.Serializer):
+    score = serializers.FloatField(allow_null=True)
+    percentage_change = serializers.FloatField(allow_null=True)
 
-    Extra keys (one per eval metric, keyed by UUID) hold
-    ``{"score": float, "percentage_change": float | None}`` objects and are
-    documented via the ``extra_kwargs`` free-form spec — the frontend grid
-    reads them by column id.
+
+class DatasetOptimizationTrialTableRowSerializer(serializers.Serializer):
+    """Trial Runs table row.
+
+    ``eval_scores`` is a mapping keyed by eval-metric UUID; each value is a
+    ``{score, percentage_change}`` object with nullable numbers. Column IDs
+    the frontend renders come from ``column_config`` on the same response.
     """
 
     id = serializers.CharField()
@@ -438,6 +442,9 @@ class DatasetOptimizationTrialTableRowSerializer(serializers.Serializer):
     prompt = serializers.CharField(allow_blank=True)
     is_best = serializers.BooleanField()
     score_percentage_change = serializers.FloatField(allow_null=True)
+    eval_scores = serializers.DictField(
+        child=DatasetOptimizationTrialEvalScoreSerializer(),
+    )
 
 
 class DatasetOptimizationDetailSerializer(serializers.ModelSerializer):

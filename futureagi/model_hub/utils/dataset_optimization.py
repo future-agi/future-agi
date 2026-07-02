@@ -563,7 +563,7 @@ def _build_trial_row(
         "score_percentage_change": score_percentage_change,
         "prompt": trial.prompt,
         "is_best": trial.id == best_trial_id,
-        **eval_scores,
+        "eval_scores": eval_scores,
     }
 
 

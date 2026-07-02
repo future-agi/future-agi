@@ -492,3 +492,49 @@ def test_retrieve_handles_run_without_model_or_evals(auth_client, output_column)
     assert result["provider_logo"] is None
     assert result["user_eval_templates"] == []
     assert result["table"] == []
+
+
+@pytest.mark.django_db
+def test_retrieve_table_row_shape_for_trial_without_baseline(
+    auth_client, output_column, ai_model, user_eval_metric
+):
+    """Regression: non-baseline trial with no baseline present must serialize
+    with score_percentage_change=None and eval_scores as a keyed mapping.
+    """
+    run = create_optimization_run(
+        output_column,
+        optimizer_model=ai_model,
+    )
+    run.user_eval_template_ids.set([user_eval_metric])
+    trial = DatasetOptimizationTrial.objects.create(
+        optimization_run=run,
+        trial_number=1,
+        is_baseline=False,
+        prompt="candidate prompt",
+        average_score=0.75,
+    )
+    item = DatasetOptimizationTrialItem.objects.create(
+        trial=trial,
+        row_id="row-1",
+        score=0.75,
+        reason="",
+    )
+    DatasetOptimizationItemEvaluation.objects.create(
+        trial_item=item,
+        eval_metric=user_eval_metric,
+        score=0.75,
+        reason="",
+    )
+
+    response = auth_client.get(f"/model-hub/dataset-optimization/{run.id}/")
+    assert response.status_code == status.HTTP_200_OK
+    result = response.json()["result"]
+    assert len(result["table"]) == 1
+    row = result["table"][0]
+    assert row["score_percentage_change"] is None
+    assert row["is_best"] is True
+    assert isinstance(row["eval_scores"], dict)
+    metric_id = str(user_eval_metric.id)
+    assert metric_id in row["eval_scores"]
+    assert row["eval_scores"][metric_id]["score"] == 0.75
+    assert row["eval_scores"][metric_id]["percentage_change"] is None

@@ -7326,6 +7326,13 @@ export interface DatasetOptimizationParameterItemApi {
   value: DatasetOptimizationParameterItemApiValue;
 }
 
+export interface DatasetOptimizationTrialEvalScoreApi {
+  score: number;
+  percentage_change: number;
+}
+
+export type DatasetOptimizationTrialTableRowApiEvalScores = {[key: string]: DatasetOptimizationTrialEvalScoreApi};
+
 export interface DatasetOptimizationTrialTableRowApi {
   /** @minLength 1 */
   id: string;
@@ -7334,6 +7341,7 @@ export interface DatasetOptimizationTrialTableRowApi {
   prompt: string;
   is_best: boolean;
   score_percentage_change: number;
+  eval_scores: DatasetOptimizationTrialTableRowApiEvalScores;
 }
 
 export interface DatasetOptimizationColumnConfigItemApi {

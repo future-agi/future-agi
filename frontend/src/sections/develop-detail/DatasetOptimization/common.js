@@ -339,13 +339,13 @@ export const getTrialsColumnConfig = (columnConfig) => {
 
       default:
         return {
-          field: column?.id,
           headerName: column?.name,
           minWidth: 170,
           colId: column?.id,
           cellRenderer: "averageEvalCellRenderer",
           isVisible: true,
           id: column?.id,
+          valueGetter: (params) => params.data?.eval_scores?.[column?.id],
         };
     }
   });

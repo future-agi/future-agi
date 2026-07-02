@@ -91966,7 +91966,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "trial",
         "prompt",
         "is_best",
-        "score_percentage_change"
+        "score_percentage_change",
+        "eval_scores"
       ],
       "type": "object",
       "properties": {
@@ -91992,6 +91993,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Score percentage change",
           "type": "number",
           "x-nullable": true
+        },
+        "eval_scores": {
+          "title": "Eval scores",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/DatasetOptimizationTrialEvalScore"
+          }
         }
       }
     },
@@ -98237,6 +98245,25 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "$ref": "#/definitions/DashboardQuerySeriesPoint"
           }
+        }
+      }
+    },
+    "DatasetOptimizationTrialEvalScore": {
+      "required": [
+        "score",
+        "percentage_change"
+      ],
+      "type": "object",
+      "properties": {
+        "score": {
+          "title": "Score",
+          "type": "number",
+          "x-nullable": true
+        },
+        "percentage_change": {
+          "title": "Percentage change",
+          "type": "number",
+          "x-nullable": true
         }
       }
     },
