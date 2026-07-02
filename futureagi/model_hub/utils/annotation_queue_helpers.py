@@ -1,8 +1,10 @@
 from datetime import datetime, timedelta
 
 import structlog
+from django.db import transaction
 from django.db.models import DateTimeField, Exists, F, FloatField, OuterRef, Q
 from django.db.models.functions import Cast
+from django.db.utils import ProgrammingError
 
 from model_hub.models.choices import (
     AnnotatorRole,
@@ -11,6 +13,31 @@ from model_hub.models.choices import (
 )
 
 logger = structlog.get_logger(__name__)
+
+# Postgres ``undefined_table``. The legacy span/session tables are being dropped
+# as their data moves to ClickHouse; a reader that still touches one gets this
+# once it's gone. Treat only THIS as "row absent" (→ fall through to CH); any
+# other error must propagate so a genuine DB fault isn't disguised as "not found".
+_PG_UNDEFINED_TABLE = "42P01"
+
+
+def is_undefined_table_error(exc: BaseException) -> bool:
+    """True iff *exc* is a Postgres ``undefined_table`` (SQLSTATE 42P01) error —
+    the queried table has been dropped. Any other ProgrammingError is NOT this."""
+    cause = getattr(exc, "__cause__", None)
+    return getattr(cause, "sqlstate", None) == _PG_UNDEFINED_TABLE
+
+
+def _is_swallowable_dropped_table(exc: BaseException) -> bool:
+    """Whether a caught ``ProgrammingError`` from a legacy-table read is a dropped
+    table the caller may degrade past. Logs each hit so the fail-open is never
+    silent — during the CH25 migration it surfaces which reader still touches a
+    dropped legacy table. Returns ``False`` for any other error → caller re-raises."""
+    if not is_undefined_table_error(exc):
+        return False
+    logger.warning("annotation_read_dropped_legacy_table", error=str(exc))
+    return True
+
 
 # Maps source_type to (app_label.ModelName, fk_field_name)
 SOURCE_MODEL_MAP = {
@@ -82,15 +109,26 @@ def _trace_primary_span(trace):
             or (spans[0] if spans else None)
         )
 
-    spans = trace.observation_spans.filter(deleted=False)
-    root_spans = spans.filter(Q(parent_span_id__isnull=True) | Q(parent_span_id=""))
-    return (
-        root_spans.filter(observation_type="conversation")
-        .order_by("start_time", "created_at")
-        .first()
-        or root_spans.order_by("start_time", "created_at").first()
-        or spans.order_by("start_time", "created_at").first()
-    )
+    # The span table may be dropped out from under this (data lives in CH); its
+    # absence degrades to "no primary span" (the trace still previews its own
+    # name/input/output), not a 500. Own savepoint so the abort can't poison a txn.
+    try:
+        with transaction.atomic():
+            spans = trace.observation_spans.filter(deleted=False)
+            root_spans = spans.filter(
+                Q(parent_span_id__isnull=True) | Q(parent_span_id="")
+            )
+            return (
+                root_spans.filter(observation_type="conversation")
+                .order_by("start_time", "created_at")
+                .first()
+                or root_spans.order_by("start_time", "created_at").first()
+                or spans.order_by("start_time", "created_at").first()
+            )
+    except ProgrammingError as exc:
+        if not _is_swallowable_dropped_table(exc):
+            raise
+        return None
 
 
 def _metric_payload(obj, *, response_field="response_time"):
@@ -155,10 +193,20 @@ def is_source_available_for_annotation(source_type, source_obj):
     if source_type != QueueItemSourceType.TRACE.value:
         return True, None
 
-    root_spans = source_obj.observation_spans.filter(_root_span_filter())
-    if not root_spans.exists():
-        return True, None
-    if root_spans.filter(_terminal_trace_span_status_filter()).exists():
+    try:
+        with transaction.atomic():
+            root_spans = source_obj.observation_spans.filter(_root_span_filter())
+            if not root_spans.exists():
+                return True, None
+            if root_spans.filter(_terminal_trace_span_status_filter()).exists():
+                return True, None
+    except ProgrammingError as exc:
+        # Legacy span table dropped (data lives in CH). We can't read the root-span
+        # in-progress state here, so fall open to "available" — same result as the
+        # no-root-span default above. Authoritative in-progress gating for collector
+        # traces should route through CHSpanReader.roots_by_trace_ids (follow-up).
+        if not _is_swallowable_dropped_table(exc):
+            raise
         return True, None
     return False, TRACE_IN_PROGRESS_ADD_ERROR
 
@@ -192,12 +240,21 @@ def filter_available_source_ids_for_annotation(
     if workspace is not None:
         available_qs = available_qs.filter(_trace_project_workspace_filter(workspace))
 
-    available_set = {
-        str(trace_id)
-        for trace_id in available_qs.filter(
-            Q(_has_root_span=False) | Q(_has_terminal_root_span=True)
-        ).values_list("id", flat=True)
-    }
+    try:
+        with transaction.atomic():
+            available_set = {
+                str(trace_id)
+                for trace_id in available_qs.filter(
+                    Q(_has_root_span=False) | Q(_has_terminal_root_span=True)
+                ).values_list("id", flat=True)
+            }
+    except ProgrammingError as exc:
+        # Legacy trace/span table dropped (data lives in CH): can't compute the
+        # in-progress split, so treat all resolved ids as available. Authoritative
+        # gating for collector traces should route through CH (follow-up).
+        if not _is_swallowable_dropped_table(exc):
+            raise
+        return ordered_ids, 0, None
     available_ids = [
         source_id for source_id in ordered_ids if source_id in available_set
     ]
@@ -474,7 +531,12 @@ def resolve_default_queue_item_for_source(source_type, source_obj, organization,
 
 
 def resolve_source_object(
-    source_type, source_id, organization=None, workspace=None, *, allow_ch_fallback=False
+    source_type,
+    source_id,
+    organization=None,
+    workspace=None,
+    *,
+    allow_ch_fallback=False,
 ):
     """Look up a source model instance by type and ID.
 
@@ -502,7 +564,16 @@ def resolve_source_object(
     # PG row and must resolve there (richer object, no CH round-trip); only a
     # collector one (no PG row) needs CH. `source_type` alone can't tell them apart
     # — both are e.g. `observation_span` — so the missing row is the discriminator.
-    obj = model.objects.filter(pk=source_id).first()
+    # A dropped legacy table reads the same as a missing row here: no PG row → CH.
+    # The probe gets its own savepoint so an ``undefined_table`` abort doesn't poison
+    # an enclosing transaction (this helper also runs inside ``evaluate_rule``'s atomic).
+    try:
+        with transaction.atomic():
+            obj = model.objects.filter(pk=source_id).first()
+    except ProgrammingError as exc:
+        if not _is_swallowable_dropped_table(exc):
+            raise
+        obj = None
     if obj is None:
         if not allow_ch_fallback:
             return None
@@ -650,16 +721,25 @@ def _resolve_ch_trace_session(source_id, *, organization=None, workspace=None):
     )
 
 
-def _safe_related(item, attr):
+def safe_related(item, attr: str):
     """Read a ``db_constraint=False`` FK whose target row may not exist in PG
     (collector data lives only in CH). Collapse a missing target
-    (``ObjectDoesNotExist``) to ``None`` so the caller can fall back to CH; other
-    errors propagate."""
+    (``ObjectDoesNotExist``) — or a dropped legacy table (``undefined_table``) —
+    to ``None`` so the caller can fall back to CH; any other error propagates."""
     from django.core.exceptions import ObjectDoesNotExist
 
     try:
-        return getattr(item, attr)
+        # Own savepoint: an ``undefined_table`` abort must not poison an outer txn.
+        with transaction.atomic():
+            return getattr(item, attr)
     except ObjectDoesNotExist:
+        return None
+    except ProgrammingError as exc:
+        # Legacy FK target table dropped mid-migration reads like an absent row:
+        # collapse to None so the caller falls back to CH. A real DB fault still
+        # propagates (only ``undefined_table`` is swallowed).
+        if not _is_swallowable_dropped_table(exc):
+            raise
         return None
 
 
@@ -963,7 +1043,7 @@ def resolve_source_preview(item, *, ch_cache=None):
             }
 
         elif item.source_type == QueueItemSourceType.TRACE.value:
-            trace = item.trace
+            trace = safe_related(item, "trace")
             if not trace:
                 return {"type": "trace", "deleted": True}
             primary_span = _trace_primary_span(trace)
@@ -978,7 +1058,7 @@ def resolve_source_preview(item, *, ch_cache=None):
             }
 
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
-            span = _safe_related(item, "observation_span")
+            span = safe_related(item, "observation_span")
             if not span:
                 # collector span: no PG row, resolve from CH by the soft id
                 ch_span = (
@@ -1033,7 +1113,7 @@ def resolve_source_preview(item, *, ch_cache=None):
             }
 
         elif item.source_type == QueueItemSourceType.TRACE_SESSION.value:
-            session = _safe_related(item, "trace_session")
+            session = safe_related(item, "trace_session")
             if not session:
                 # collector session: no PG row, resolve identity from CH
                 fields = (
@@ -1119,7 +1199,7 @@ def resolve_source_content(item, *, ch_cache=None):
             return data
 
         elif item.source_type == QueueItemSourceType.TRACE.value:
-            trace = item.trace
+            trace = safe_related(item, "trace")
             if not trace:
                 return {"type": "trace", "deleted": True}
             project_source = trace.project.source if trace.project_id else None
@@ -1163,7 +1243,7 @@ def resolve_source_content(item, *, ch_cache=None):
             }
 
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
-            span = _safe_related(item, "observation_span")
+            span = safe_related(item, "observation_span")
             if not span:
                 # collector span: no PG row, rebuild content from CH via the mapper
                 ch_span = (
@@ -1275,7 +1355,7 @@ def resolve_source_content(item, *, ch_cache=None):
             }
 
         elif item.source_type == QueueItemSourceType.TRACE_SESSION.value:
-            session = _safe_related(item, "trace_session")
+            session = safe_related(item, "trace_session")
             if not session:
                 # collector session: no PG row, resolve from CH (first_seen is the
                 # created_at/updated_at proxy — CH has no audit columns)

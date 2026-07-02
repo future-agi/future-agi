@@ -36,11 +36,13 @@ Each test FAILS if the fix is reverted:
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from datetime import UTC, datetime
 from unittest import mock
 
 import pytest
+from django.db.utils import ProgrammingError
 
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
@@ -60,6 +62,7 @@ from model_hub.models.score import Score
 from model_hub.utils import annotation_queue_helpers as helpers
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
+from tracer.models.trace import Trace
 from tracer.services.clickhouse.v2.span_reader import CHSpan
 
 CH_READER_PATH = "tracer.services.clickhouse.v2.get_reader"
@@ -707,10 +710,7 @@ def test_collector_span_round_trips_create_to_annotate(
         organization=organization, workspace=workspace, queue=queue, span=span
     )
 
-    url = (
-        f"/model-hub/annotation-queues/{queue.id}"
-        f"/items/{item.id}/annotations/submit/"
-    )
+    url = f"/model-hub/annotation-queues/{queue.id}/items/{item.id}/annotations/submit/"
     with mock.patch(CH_READER_PATH, return_value=_ReaderCM(span)):
         resp = auth_client.post(
             url,
@@ -830,3 +830,212 @@ def test_list_serializer_batches_collector_ch_reads(organization, workspace, use
     span_previews = [p for p in previews if p["type"] == "observation_span"]
     assert len(span_previews) == 3
     assert all(p["name"] == "collector root span" for p in span_previews)
+
+
+# ─────────────────────── drop-safety: legacy tables dropped ───────────────────
+# The legacy tracer PG tables (tracer_trace / tracer_observation_span /
+# trace_session) are being dropped as their data moves to ClickHouse. The
+# annotation read paths must degrade gracefully (resolve to None / the deleted
+# sentinel / "available"), never surface a 500. Each test FAILS on pre-fix code,
+# where the query propagates ``ProgrammingError`` (undefined_table).
+
+
+@contextlib.contextmanager
+def _dropped_table(model):
+    """Simulate *model*'s PG table being dropped: point ``db_table`` at a name
+    that doesn't exist so every query raises ``UndefinedTable`` (42P01) — exactly
+    what a real DROP does. Restored on exit."""
+    original = model._meta.db_table
+    model._meta.db_table = f"{original}__dropped_in_test"
+    try:
+        yield
+    finally:
+        model._meta.db_table = original
+
+
+def test_is_undefined_table_error_matches_only_undefined_table():
+    """Only Postgres ``undefined_table`` (42P01) counts as a dropped table; any
+    other ProgrammingError (e.g. ``undefined_column`` 42703) must NOT be swallowed
+    — rerouting a real defect to "not found" would hide data loss."""
+
+    def _err(sqlstate):
+        cause = type("_PGErr", (Exception,), {"sqlstate": sqlstate})()
+        exc = ProgrammingError("boom")
+        exc.__cause__ = cause
+        return exc
+
+    assert helpers.is_undefined_table_error(_err("42P01")) is True
+    assert helpers.is_undefined_table_error(_err("42703")) is False
+    assert helpers.is_undefined_table_error(ProgrammingError("no cause")) is False
+
+
+@pytest.mark.django_db
+def test_resolve_source_object_survives_dropped_span_table(organization, workspace):
+    """A dropped span table reads like a missing PG row: resolve_source_object
+    falls through to CH (mocked empty) and returns None — never raises."""
+    with (
+        _dropped_table(ObservationSpan),
+        mock.patch(CH_READER_PATH, return_value=_ReaderCM(None)),
+    ):
+        result = helpers.resolve_source_object(
+            "observation_span",
+            uuid.uuid4(),
+            organization=organization,
+            workspace=workspace,
+            allow_ch_fallback=True,
+        )
+    assert result is None
+
+
+@pytest.mark.django_db
+def test_resolve_source_object_dropped_table_none_without_ch_fallback(organization):
+    """Without ``allow_ch_fallback`` a dropped table still returns None, not a 500."""
+    with _dropped_table(ObservationSpan):
+        result = helpers.resolve_source_object(
+            "observation_span", uuid.uuid4(), organization=organization
+        )
+    assert result is None
+
+
+@pytest.mark.django_db
+def test_resolve_source_object_probe_does_not_poison_transaction(organization):
+    """The guarded probe runs in its own savepoint, so a dropped-table abort does
+    not poison an enclosing transaction — a later query in the same txn still runs."""
+    from django.db import transaction
+
+    with transaction.atomic():
+        with _dropped_table(ObservationSpan):
+            assert (
+                helpers.resolve_source_object(
+                    "observation_span", uuid.uuid4(), organization=organization
+                )
+                is None
+            )
+        # a follow-up query in the SAME transaction must still succeed
+        assert Project.objects.count() >= 0
+
+
+@pytest.mark.django_db
+def test_safe_related_returns_none_on_dropped_table(organization, workspace, user):
+    project = _make_project(organization=organization, workspace=workspace)
+    span = _make_chspan(project_id=project.id)
+    queue = _queue(
+        organization=organization, workspace=workspace, user=user, project=project
+    )
+    item = _collector_item(
+        organization=organization, workspace=workspace, queue=queue, span=span
+    )
+    with _dropped_table(ObservationSpan):
+        assert helpers.safe_related(item, "observation_span") is None
+
+
+@pytest.mark.django_db
+def test_preview_degrades_to_deleted_on_dropped_span_table(
+    organization, workspace, user
+):
+    """Span preview degrades to the deleted sentinel when the PG table is dropped
+    and CH has nothing — never the error dict (which is what pre-fix would return
+    once the unguarded FK deref propagated into the blanket except)."""
+    project = _make_project(organization=organization, workspace=workspace)
+    span = _make_chspan(project_id=project.id)
+    queue = _queue(
+        organization=organization, workspace=workspace, user=user, project=project
+    )
+    item = _collector_item(
+        organization=organization, workspace=workspace, queue=queue, span=span
+    )
+    with (
+        _dropped_table(ObservationSpan),
+        mock.patch(CH_READER_PATH, return_value=_ReaderCM(None)),
+    ):
+        preview = helpers.resolve_source_preview(item)
+    assert preview["type"] == "observation_span"
+    assert preview.get("deleted") is True
+    assert "error" not in preview
+
+
+@pytest.mark.django_db
+def test_is_source_available_falls_open_when_span_table_dropped(
+    organization, workspace
+):
+    """The trace in-progress gate reads the span table via reverse-FK; a dropped
+    table falls open to "available" (same as the no-root-span default), not a 500."""
+    project = _make_project(organization=organization, workspace=workspace)
+    trace = Trace.objects.create(project=project)
+    with _dropped_table(ObservationSpan):
+        available, reason = helpers.is_source_available_for_annotation("trace", trace)
+    assert available is True
+    assert reason is None
+
+
+@pytest.mark.django_db
+def test_filter_available_returns_all_when_trace_table_dropped(organization, workspace):
+    """Filter-mode availability treats every id as available when the trace table
+    is dropped (the in-progress split can't be computed) — no 500."""
+    ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+    with _dropped_table(Trace):
+        available, unavailable, message = (
+            helpers.filter_available_source_ids_for_annotation(
+                "trace", ids, organization=organization, workspace=workspace
+            )
+        )
+    assert available == ids
+    assert unavailable == 0
+    assert message is None
+
+
+@pytest.mark.django_db
+def test_trace_primary_span_none_when_span_table_dropped(organization, workspace):
+    project = _make_project(organization=organization, workspace=workspace)
+    trace = Trace.objects.create(project=project)
+    with _dropped_table(ObservationSpan):
+        assert helpers._trace_primary_span(trace) is None
+
+
+@pytest.mark.django_db
+def test_content_degrades_to_deleted_on_dropped_span_table(
+    organization, workspace, user
+):
+    """resolve_source_content (annotation workspace) degrades to the deleted
+    sentinel when the span table is dropped and CH is empty — never a 500 nor the
+    error dict. Mirrors the preview test on the content path (matrix parity)."""
+    project = _make_project(organization=organization, workspace=workspace)
+    span = _make_chspan(project_id=project.id)
+    queue = _queue(
+        organization=organization, workspace=workspace, user=user, project=project
+    )
+    item = _collector_item(
+        organization=organization, workspace=workspace, queue=queue, span=span
+    )
+    with (
+        _dropped_table(ObservationSpan),
+        mock.patch(CH_READER_PATH, return_value=_ReaderCM(None)),
+    ):
+        content = helpers.resolve_source_content(item)
+    assert content["type"] == "observation_span"
+    assert content.get("deleted") is True
+    assert "error" not in content
+
+
+@pytest.mark.django_db
+def test_span_notes_target_survives_dropped_span_table(organization, workspace, user):
+    """The submit/annotate path's span-notes target resolver (in the views module)
+    reads the span table via ``safe_related``; a dropped table falls through to CH
+    (returns the CHSpan) instead of raising ProgrammingError. FAILS if reverted."""
+    from model_hub.views.annotation_queues import _span_notes_target_for_queue_item
+
+    project = _make_project(organization=organization, workspace=workspace)
+    span = _make_chspan(project_id=project.id)
+    queue = _queue(
+        organization=organization, workspace=workspace, user=user, project=project
+    )
+    item = _collector_item(
+        organization=organization, workspace=workspace, queue=queue, span=span
+    )
+    with (
+        _dropped_table(ObservationSpan),
+        mock.patch(CH_READER_PATH, return_value=_ReaderCM(span)),
+    ):
+        target = _span_notes_target_for_queue_item(item)
+    assert target is not None
+    assert str(target.id) == str(span.id)

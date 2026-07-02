@@ -11,6 +11,7 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, Exists, Max, OuterRef, Prefetch, Q
 from django.db.models.functions import Coalesce, Lower, TruncDate
+from django.db.utils import ProgrammingError
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status, viewsets
@@ -122,8 +123,10 @@ from model_hub.utils.annotation_queue_helpers import (
     filter_available_source_ids_for_annotation,
     get_fk_field_name,
     is_source_available_for_annotation,
+    is_undefined_table_error,
     resolve_source_content,
     resolve_source_object,
+    safe_related,
 )
 from model_hub.utils.utils import send_message_to_channel
 from tfc.utils.api_contracts import validated_request
@@ -1247,15 +1250,16 @@ def _span_notes_target_for_queue_item(item):
     (voice projects) → first root span by start_time → ``None``.
     """
     if item.source_type == "observation_span" and item.observation_span_id:
-        try:
-            return item.observation_span
-        except ObservationSpan.DoesNotExist:
-            # Collector span: no PG row. Resolve from CH — downstream only reads
-            # `.id` (CHSpan exposes it), same as the trace-root CH spans below.
-            from tracer.services.clickhouse.v2 import get_reader
+        span = safe_related(item, "observation_span")
+        if span is not None:
+            return span
+        # No PG row (collector span) or dropped legacy table: resolve from CH —
+        # downstream only reads `.id` (CHSpan exposes it), same as the trace-root
+        # CH spans below.
+        from tracer.services.clickhouse.v2 import get_reader
 
-            with get_reader() as reader:
-                return reader.get(str(item.observation_span_id))
+        with get_reader() as reader:
+            return reader.get(str(item.observation_span_id))
     if item.source_type != "trace" or not item.trace_id:
         return None
 
@@ -4608,11 +4612,13 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             )
             .prefetch_related(
                 "dataset_row",
-                "trace",
-                "observation_span",
+                # Legacy tracer relations (trace / observation_span / trace_session)
+                # are intentionally NOT prefetched: their PG tables are being dropped
+                # (data lives in ClickHouse), and a prefetch 500s at list
+                # materialization once gone. source_preview resolves them drop-safely
+                # via safe_related + the batched CH CollectorSourceCache.
                 "prototype_run",
                 "call_execution",
-                "trace_session",
                 Prefetch(
                     "assignments",
                     queryset=QueueItemAssignment.objects.filter(
@@ -5402,9 +5408,20 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             from tracer.models.observation_span import ObservationSpan
 
             target_id = span_notes_target.id
-            pg_span_exists = ObservationSpan.no_workspace_objects.filter(
-                id=target_id
-            ).exists()
+            # The legacy span table may be dropped (span_notes_target can come from
+            # CH): a dropped table means there's no PG row to attach notes to, so read
+            # it as absent and take the graceful skip below. Own savepoint so the
+            # abort can't poison this request's transaction.
+            try:
+                with transaction.atomic():
+                    pg_span_exists = ObservationSpan.no_workspace_objects.filter(
+                        id=target_id
+                    ).exists()
+            except ProgrammingError as exc:
+                if not is_undefined_table_error(exc):
+                    raise
+                logger.warning("annotation_read_dropped_legacy_table", error=str(exc))
+                pg_span_exists = False
             if not pg_span_exists:
                 logger.warning(
                     "span_notes_skipped_no_pg_row",
@@ -5769,11 +5786,13 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         query_params = request.validated_query_data
 
         try:
+            # Legacy tracer tables (trace / observation_span) are NOT select_related:
+            # their PG tables are being dropped (data in ClickHouse), and a JOIN 500s
+            # every detail open once gone — even for non-tracer source types. This is
+            # one item, so the drop-safe render path (safe_related + CH) reads them
+            # lazily without an N+1.
             item = QueueItem.objects.select_related(
                 "dataset_row",
-                "trace",
-                "trace__project",
-                "observation_span",
                 "prototype_run",
                 "call_execution",
                 "assigned_to",
