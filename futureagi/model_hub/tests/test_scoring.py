@@ -309,11 +309,6 @@ class TestValidatePassThreshold:
         assert validate_pass_threshold(1) == []
 
 
-# =============================================================================
-# extract_eval_value tests
-# =============================================================================
-
-
 @pytest.mark.unit
 class TestExtractEvalValue:
     def test_non_dict_passes_through(self):
@@ -354,30 +349,18 @@ class TestExtractEvalValue:
         assert extract_eval_value(payload) is payload
 
 
-# =============================================================================
-# score_eval_output tests
-# =============================================================================
-
-
 class _Template:
-    """Minimal template stand-in for formatted-value tests."""
-
     def __init__(self, output_type_normalized="percentage", choice_scores=None):
         self.output_type_normalized = output_type_normalized
         self.choice_scores = choice_scores
 
 
 class _EvalRunResult:
-    """Raw ``eval_instance.run()`` return stand-in for pipeline tests."""
-
     def __init__(self, eval_results):
         self.eval_results = eval_results
 
 
 class _FullTemplate:
-    """Template with ``config`` + ``choice_scores`` + ``multi_choice`` — the
-    surface ``format_eval_value`` and ``extract_raw_result`` read from.
-    """
 
     def __init__(
         self,
@@ -547,11 +530,6 @@ class TestScoreEvalOutputRawRunResult:
             ]
         )
         assert score_eval_output(run_result, template) == 0.6
-
-
-# =============================================================================
-# default_score fallback tests
-# =============================================================================
 
 
 @pytest.mark.unit

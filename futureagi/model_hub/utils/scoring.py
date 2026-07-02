@@ -28,20 +28,7 @@ def _to_clamped_score(value) -> float:
 
 
 def extract_eval_value(value: Any) -> Any:
-    """Unwrap a dict-shaped eval output to its meaningful scalar.
-
-    Non-dict values pass through unchanged. For dicts, keys are consulted in
-    priority order (``failure`` boolean is inverted; the rest are read as-is):
-    ``failure`` → ``score`` → ``result`` → ``output`` → ``choice`` →
-    ``value``. If no key matches, the whole dict is returned so the caller
-    can decide.
-
-    This matches what ``should_run_error_localizer`` uses to unwrap eval
-    results before normalization, kept public here so every consumer of the
-    scoring pipeline shares the same extraction rules. ``value`` is included
-    for the ``{"value": 0.85}`` shape that some legacy evaluator classes
-    emit.
-    """
+    """Unwrap a dict eval output to its scalar via failure/score/result/output/choice/value."""
     if not isinstance(value, dict):
         return value
     if isinstance(value.get("failure"), bool):
@@ -60,13 +47,7 @@ _PASS_FAIL_TOKENS = frozenset(
 def is_numerically_scorable(
     value: Any, output_type: str, choice_scores: dict[str, float]
 ) -> bool:
-    """Return True when ``normalize_score`` can produce a meaningful score.
-
-    False for inputs it would silently zero — ``None``, unknown-shape dicts,
-    empty lists, or strings outside the pass/fail token set / configured
-    ``choice_scores`` / float-parseability. Shared by the error localizer's
-    gating check and ``score_eval_output``'s fallback trigger.
-    """
+    """True when ``normalize_score`` can produce a meaningful score for ``value``."""
     if value is None:
         return False
     if output_type == "pass_fail":
@@ -236,27 +217,9 @@ def score_eval_output(
     eval_template: Any,
     default_score: float = 0.0,
 ) -> float:
-    """Canonical eval-output → normalized 0-1 score.
-
-    Accepts either a raw ``eval_instance.run()`` result (detected via the
-    ``eval_results`` attribute — routed through ``extract_raw_result`` and
-    ``format_eval_value`` first), or an already-formatted value (str, float,
-    dict) as returned by ``run_eval_func`` or ``format_eval_value``. In both
-    cases the value is unwrapped by ``extract_eval_value`` and normalized by
-    ``normalize_score`` using the template's ``output_type_normalized`` and
-    ``choice_scores``.
-
-    Args:
-        value_or_result: The eval output to score.
-        eval_template: The eval template supplying ``output_type_normalized``,
-            ``choice_scores``, and ``config`` (for the raw-result path).
-        default_score: Returned when the input is malformed and cannot be
-            interpreted under the template's output type (``None``,
-            empty list, dict with no recognised key, or a string that is
-            neither a pass/fail token, a known choice, nor float-parseable).
-            Defaults to ``0.0``; pass ``0.5`` when the caller wants to hedge
-            unknown outputs instead of scoring them as the worst possible.
-    """
+    """Canonical eval-output → normalized 0-1 score. Accepts raw ``eval_instance.run()``
+    or a formatted value; falls back to ``default_score`` on inputs that cannot
+    be interpreted under the template's output type."""
     if hasattr(value_or_result, "eval_results"):
         from evaluations.engine.formatting import (
             extract_raw_result,

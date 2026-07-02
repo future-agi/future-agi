@@ -27392,9 +27392,7 @@ export const getModelHubDatasetOptimizationReadUrl = (id: string,) => {
 }
 
 /**
- * Payload shape matches AgentPromptOptimiserRunViewSet.retrieve() so the
-frontend simulation-optimizer components can render both endpoints.
- * @summary Get run details with trial comparison table.
+ * Get run details; payload matches AgentPromptOptimiserRunViewSet.retrieve().
  */
 export const modelHubDatasetOptimizationRead = async (id: string, options?: RequestInit): Promise<modelHubDatasetOptimizationReadResponse> => {
 

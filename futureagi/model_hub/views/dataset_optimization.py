@@ -235,11 +235,7 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
     def retrieve(self, request, *args, **kwargs):
-        """Get run details with trial comparison table.
-
-        Payload shape matches AgentPromptOptimiserRunViewSet.retrieve() so the
-        frontend simulation-optimizer components can render both endpoints.
-        """
+        """Get run details; payload matches AgentPromptOptimiserRunViewSet.retrieve()."""
         try:
             instance = self.get_object()
             serializer = self.get_serializer(instance)

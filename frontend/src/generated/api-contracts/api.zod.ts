@@ -15682,9 +15682,7 @@ export const ModelHubDatasetOptimizationCreateBody = zod.object({
 
 
 /**
- * Payload shape matches AgentPromptOptimiserRunViewSet.retrieve() so the
-frontend simulation-optimizer components can render both endpoints.
- * @summary Get run details with trial comparison table.
+ * Get run details; payload matches AgentPromptOptimiserRunViewSet.retrieve().
  */
 export const ModelHubDatasetOptimizationReadParams = zod.object({
   "id": zod.string().uuid().describe('A UUID string identifying this optimize dataset.')

@@ -421,11 +421,8 @@ class DatasetOptimizationColumnConfigItemSerializer(serializers.Serializer):
 
 
 class DatasetOptimizationDetailSerializer(serializers.ModelSerializer):
-    """Retrieve-endpoint payload for the dataset-optimization run-detail view.
-
-    Field names match the contract the frontend simulation-optimizer components
-    consume so that both endpoints render through the same UI.
-    """
+    """Retrieve payload for the dataset-optimization run-detail view; field names
+    match the simulation-optimizer FE contract."""
 
     optimiser_name = serializers.CharField(source="name", read_only=True)
     optimiser_type = serializers.CharField(source="optimizer_algorithm", read_only=True)
