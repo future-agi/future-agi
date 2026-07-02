@@ -10,10 +10,12 @@ import (
 
 // streamState tracks accumulated state across stream events.
 type streamState struct {
-	messageID   string
-	model       string
-	inputTokens int
-	created     int64
+	messageID           string
+	model               string
+	inputTokens         int
+	cacheCreationTokens int
+	cacheReadTokens     int
+	created             int64
 
 	// toolCallIndex tracks the current tool call index for streaming tool calls.
 	// Each content_block_start of type "tool_use" increments this.
@@ -61,9 +63,9 @@ type messageDeltaData struct {
 }
 
 type contentBlockStartData struct {
-	Type  string `json:"type"`
-	ID    string `json:"id,omitempty"`
-	Name  string `json:"name,omitempty"`
+	Type string `json:"type"`
+	ID   string `json:"id,omitempty"`
+	Name string `json:"name,omitempty"`
 }
 
 // parseSSELine parses a single SSE data line and returns a StreamChunk if one should be emitted.
@@ -113,6 +115,8 @@ func (s *streamState) handleMessageStart(event streamEvent) (*models.StreamChunk
 	s.messageID = msg.ID
 	s.model = msg.Model
 	s.inputTokens = msg.Usage.InputTokens
+	s.cacheCreationTokens = msg.Usage.CacheCreationInputTokens
+	s.cacheReadTokens = msg.Usage.CacheReadInputTokens
 
 	role := "assistant"
 	chunk := &models.StreamChunk{
@@ -271,10 +275,13 @@ func (s *streamState) handleMessageDelta(event streamEvent) (*models.StreamChunk
 
 	// Include usage if available.
 	if event.Usage != nil {
+		promptTokens := s.inputTokens + s.cacheCreationTokens + s.cacheReadTokens
 		chunk.Usage = &models.Usage{
-			PromptTokens:     s.inputTokens,
-			CompletionTokens: event.Usage.OutputTokens,
-			TotalTokens:      s.inputTokens + event.Usage.OutputTokens,
+			PromptTokens:        promptTokens,
+			CompletionTokens:    event.Usage.OutputTokens,
+			TotalTokens:         promptTokens + event.Usage.OutputTokens,
+			CachedPromptTokens:  s.cacheReadTokens,
+			PromptTokensDetails: promptTokenDetails(s.cacheReadTokens),
 		}
 	}
 

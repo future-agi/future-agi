@@ -29,8 +29,8 @@ func New(enabled bool, modelDBGetter func() *modeldb.ModelDB, tenantStore *tenan
 	}
 }
 
-func (p *Plugin) Name() string           { return "cost" }
-func (p *Plugin) Priority() int          { return 500 }
+func (p *Plugin) Name() string               { return "cost" }
+func (p *Plugin) Priority() int              { return 500 }
 func (p *Plugin) ShouldSkipOnCacheHit() bool { return true } // No cost to calculate on cache hits.
 
 // ProcessRequest is a no-op for the cost plugin.
@@ -97,7 +97,14 @@ func (p *Plugin) ProcessResponse(_ context.Context, rc *models.RequestContext) p
 		usage := rc.Response.Usage
 		cost, ok = db.CalculateCost(model, usage.PromptTokens, usage.CompletionTokens, opts)
 		if !ok && model == rc.ResolvedModel && rc.Model != "" {
-			cost, ok = db.CalculateCost(rc.Model, usage.PromptTokens, usage.CompletionTokens, opts)
+			model = rc.Model
+			cost, ok = db.CalculateCost(model, usage.PromptTokens, usage.CompletionTokens, opts)
+		}
+		// Re-price the cached portion at the cheaper cache-read rate.
+		if ok && !opts.Cached && usage.CachedPromptTokens > 0 {
+			full, _ := db.CalculateCost(model, usage.CachedPromptTokens, 0, modeldb.CostOptions{})
+			cached, _ := db.CalculateCost(model, usage.CachedPromptTokens, 0, modeldb.CostOptions{Cached: true})
+			cost += cached - full
 		}
 	}
 
