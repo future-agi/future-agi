@@ -612,3 +612,12 @@ class DatasetOptimizationTrialItemSerializer(serializers.ModelSerializer):
             "evaluations",
             "created_at",
         )
+
+
+class DatasetOptimizationDetailApiResponseSerializer(serializers.Serializer):
+    """Envelope for the retrieve endpoint's 200 body, matching what
+    ``GeneralMethods.success_response`` returns at runtime.
+    """
+
+    status = serializers.BooleanField()
+    result = DatasetOptimizationDetailSerializer()

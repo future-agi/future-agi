@@ -15708,6 +15708,8 @@ export const ModelHubDatasetOptimizationReadParams = zod.object({
 
 
 export const ModelHubDatasetOptimizationReadResponse = zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
   "optimiser_name": zod.string().min(1).optional(),
   "optimiser_type": zod.string().min(1).optional(),
   "model": zod.string().min(1).optional(),
@@ -15749,6 +15751,7 @@ export const ModelHubDatasetOptimizationReadResponse = zod.object({
   "name": zod.string().min(1),
   "template_id": zod.string().min(1)
 })).optional()
+})
 })
 
 

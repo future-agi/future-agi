@@ -329,7 +329,7 @@ import type {
   DatasetNamesResponseApi,
   DatasetOptimizationApi,
   DatasetOptimizationCreateApi,
-  DatasetOptimizationDetailApi,
+  DatasetOptimizationDetailApiResponseApi,
   DatasetRowDataRequestApi,
   DatasetRowDataResponseApi,
   DatasetRowDiffRequestApi,
@@ -27365,7 +27365,7 @@ export const modelHubDatasetOptimizationCreate = async (datasetOptimizationCreat
 
 
 export type modelHubDatasetOptimizationReadResponse200 = {
-  data: DatasetOptimizationDetailApi
+  data: DatasetOptimizationDetailApiResponseApi
   status: 200
 }
 

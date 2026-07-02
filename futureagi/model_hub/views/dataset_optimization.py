@@ -22,8 +22,11 @@ from model_hub.models.dataset_optimization_trial_item import (
 )
 from model_hub.models.dataset_optimization_step import DatasetOptimizationStep
 from model_hub.models.optimize_dataset import OptimizeDataset
+from drf_yasg.utils import swagger_auto_schema
+
 from model_hub.serializers.dataset_optimization import (
     DatasetOptimizationCreateSerializer,
+    DatasetOptimizationDetailApiResponseSerializer,
     DatasetOptimizationDetailSerializer,
     DatasetOptimizationListSerializer,
     DatasetOptimizationSerializer,
@@ -234,6 +237,9 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error creating DatasetOptimization: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
+    @swagger_auto_schema(
+        responses={200: DatasetOptimizationDetailApiResponseSerializer}
+    )
     def retrieve(self, request, *args, **kwargs):
         """Get run details; payload matches AgentPromptOptimiserRunViewSet.retrieve()."""
         try:

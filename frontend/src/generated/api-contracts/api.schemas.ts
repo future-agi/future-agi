@@ -7302,8 +7302,6 @@ export interface DatasetOptimizationCreateApi {
   readonly created_at?: string;
 }
 
-export type DatasetOptimizationDetailApiConfiguration = { [key: string]: unknown };
-
 export type DatasetOptimizationDetailApiStatus = typeof DatasetOptimizationDetailApiStatus[keyof typeof DatasetOptimizationDetailApiStatus];
 
 
@@ -7356,6 +7354,8 @@ export interface DatasetOptimizationEvalTemplateItemApi {
   template_id: string;
 }
 
+export type DatasetOptimizationDetailApiConfiguration = { [key: string]: unknown };
+
 export interface DatasetOptimizationDetailApi {
   /** @minLength 1 */
   readonly optimiser_name?: string;
@@ -7381,6 +7381,11 @@ export interface DatasetOptimizationDetailApi {
   /** @minLength 1 */
   readonly optimizer_model_id?: string;
   readonly user_eval_templates?: readonly DatasetOptimizationEvalTemplateItemApi[];
+}
+
+export interface DatasetOptimizationDetailApiResponseApi {
+  status: boolean;
+  result: DatasetOptimizationDetailApi;
 }
 
 export type DatasetOptimizationApiOptimizerAlgorithm = typeof DatasetOptimizationApiOptimizerAlgorithm[keyof typeof DatasetOptimizationApiOptimizerAlgorithm];

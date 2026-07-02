@@ -13757,7 +13757,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "$ref": "#/definitions/DatasetOptimizationDetail"
+            "$ref": "#/definitions/DatasetOptimizationDetailApiResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -51296,121 +51296,19 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "DatasetOptimizationDetail": {
+    "DatasetOptimizationDetailApiResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
       "type": "object",
       "properties": {
-        "optimiser_name": {
-          "title": "Optimiser name",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1
-        },
-        "optimiser_type": {
-          "title": "Optimiser type",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1
-        },
-        "model": {
-          "title": "Model",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "provider_logo": {
-          "title": "Provider logo",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "configuration": {
-          "title": "Configuration",
-          "type": "object",
-          "readOnly": true
-        },
         "status": {
           "title": "Status",
-          "type": "string",
-          "enum": [
-            "not_started",
-            "pending",
-            "running",
-            "completed",
-            "failed",
-            "cancelled"
-          ]
+          "type": "boolean"
         },
-        "error_message": {
-          "title": "Error message",
-          "type": "string",
-          "x-nullable": true
-        },
-        "start_time": {
-          "title": "Start time",
-          "type": "string",
-          "format": "date-time",
-          "readOnly": true
-        },
-        "parameters": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/DatasetOptimizationParameterItem"
-          },
-          "readOnly": true
-        },
-        "column_id": {
-          "title": "Column id",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "column_name": {
-          "title": "Column name",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "best_score": {
-          "title": "Best score",
-          "type": "number",
-          "x-nullable": true
-        },
-        "baseline_score": {
-          "title": "Baseline score",
-          "type": "number",
-          "x-nullable": true
-        },
-        "table": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/DatasetOptimizationTrialTableRow"
-          },
-          "readOnly": true
-        },
-        "column_config": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/DatasetOptimizationColumnConfigItem"
-          },
-          "readOnly": true
-        },
-        "optimizer_model_id": {
-          "title": "Optimizer model id",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "user_eval_templates": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/DatasetOptimizationEvalTemplateItem"
-          },
-          "readOnly": true
+        "result": {
+          "$ref": "#/definitions/DatasetOptimizationDetail"
         }
       }
     },
@@ -78701,123 +78599,121 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "DatasetOptimizationColumnConfigItem": {
-      "required": [
-        "id",
-        "name",
-        "is_visible"
-      ],
+    "DatasetOptimizationDetail": {
       "type": "object",
       "properties": {
-        "id": {
-          "title": "Id",
+        "optimiser_name": {
+          "title": "Optimiser name",
           "type": "string",
+          "readOnly": true,
           "minLength": 1
         },
-        "name": {
-          "title": "Name",
+        "optimiser_type": {
+          "title": "Optimiser type",
           "type": "string",
+          "readOnly": true,
           "minLength": 1
         },
-        "is_visible": {
-          "title": "Is visible",
-          "type": "boolean"
-        }
-      }
-    },
-    "DatasetOptimizationEvalTemplateItem": {
-      "required": [
-        "id",
-        "eval_id",
-        "name",
-        "template_id"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
+        "model": {
+          "title": "Model",
           "type": "string",
-          "minLength": 1
-        },
-        "eval_id": {
-          "title": "Eval id",
-          "type": "string",
-          "minLength": 1
-        },
-        "name": {
-          "title": "Name",
-          "type": "string",
-          "minLength": 1
-        },
-        "template_id": {
-          "title": "Template id",
-          "type": "string",
+          "readOnly": true,
           "minLength": 1,
           "x-nullable": true
-        }
-      }
-    },
-    "DatasetOptimizationParameterItem": {
-      "required": [
-        "key",
-        "label",
-        "description",
-        "value"
-      ],
-      "type": "object",
-      "properties": {
-        "key": {
-          "title": "Key",
+        },
+        "provider_logo": {
+          "title": "Provider logo",
           "type": "string",
-          "minLength": 1
+          "readOnly": true,
+          "minLength": 1,
+          "x-nullable": true
         },
-        "label": {
-          "title": "Label",
+        "configuration": {
+          "title": "Configuration",
+          "type": "object",
+          "readOnly": true
+        },
+        "status": {
+          "title": "Status",
           "type": "string",
-          "minLength": 1
+          "enum": [
+            "not_started",
+            "pending",
+            "running",
+            "completed",
+            "failed",
+            "cancelled"
+          ]
         },
-        "description": {
-          "title": "Description",
-          "type": "string"
-        },
-        "value": {
-          "title": "Value",
-          "type": "object"
-        }
-      }
-    },
-    "DatasetOptimizationTrialTableRow": {
-      "required": [
-        "id",
-        "trial",
-        "prompt",
-        "is_best",
-        "score_percentage_change"
-      ],
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
+        "error_message": {
+          "title": "Error message",
           "type": "string",
-          "minLength": 1
+          "x-nullable": true
         },
-        "trial": {
-          "title": "Trial",
+        "start_time": {
+          "title": "Start time",
           "type": "string",
-          "minLength": 1
+          "format": "date-time",
+          "readOnly": true
         },
-        "prompt": {
-          "title": "Prompt",
-          "type": "string"
+        "parameters": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DatasetOptimizationParameterItem"
+          },
+          "readOnly": true
         },
-        "is_best": {
-          "title": "Is best",
-          "type": "boolean"
+        "column_id": {
+          "title": "Column id",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1,
+          "x-nullable": true
         },
-        "score_percentage_change": {
-          "title": "Score percentage change",
+        "column_name": {
+          "title": "Column name",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "best_score": {
+          "title": "Best score",
           "type": "number",
           "x-nullable": true
+        },
+        "baseline_score": {
+          "title": "Baseline score",
+          "type": "number",
+          "x-nullable": true
+        },
+        "table": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DatasetOptimizationTrialTableRow"
+          },
+          "readOnly": true
+        },
+        "column_config": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DatasetOptimizationColumnConfigItem"
+          },
+          "readOnly": true
+        },
+        "optimizer_model_id": {
+          "title": "Optimizer model id",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "user_eval_templates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/DatasetOptimizationEvalTemplateItem"
+          },
+          "readOnly": true
         }
       }
     },
@@ -91968,6 +91864,126 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "model_type": {
           "title": "Model type",
           "type": "string"
+        }
+      }
+    },
+    "DatasetOptimizationColumnConfigItem": {
+      "required": [
+        "id",
+        "name",
+        "is_visible"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "is_visible": {
+          "title": "Is visible",
+          "type": "boolean"
+        }
+      }
+    },
+    "DatasetOptimizationEvalTemplateItem": {
+      "required": [
+        "id",
+        "eval_id",
+        "name",
+        "template_id"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "eval_id": {
+          "title": "Eval id",
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "template_id": {
+          "title": "Template id",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        }
+      }
+    },
+    "DatasetOptimizationParameterItem": {
+      "required": [
+        "key",
+        "label",
+        "description",
+        "value"
+      ],
+      "type": "object",
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "title": "Label",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "object"
+        }
+      }
+    },
+    "DatasetOptimizationTrialTableRow": {
+      "required": [
+        "id",
+        "trial",
+        "prompt",
+        "is_best",
+        "score_percentage_change"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "trial": {
+          "title": "Trial",
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt": {
+          "title": "Prompt",
+          "type": "string"
+        },
+        "is_best": {
+          "title": "Is best",
+          "type": "boolean"
+        },
+        "score_percentage_change": {
+          "title": "Score percentage change",
+          "type": "number",
+          "x-nullable": true
         }
       }
     },
