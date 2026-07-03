@@ -29,6 +29,9 @@ vi.mock("../../../saveDraftContext", () => ({
 }));
 
 const mockSetGraphData = vi.fn();
+const apiMocks = vi.hoisted(() => ({
+  deleteNodeApi: vi.fn(),
+}));
 vi.mock("../../../../store", () => ({
   useAgentPlaygroundStore: {
     getState: vi.fn(() => ({
@@ -41,7 +44,7 @@ vi.mock("../../../../store", () => ({
 }));
 
 vi.mock("src/api/agent-playground/agent-playground", () => ({
-  deleteNodeApi: vi.fn(),
+  deleteNodeApi: apiMocks.deleteNodeApi,
 }));
 
 vi.mock("../../../../utils/versionPayloadUtils", () => ({
@@ -75,6 +78,7 @@ describe("Unit: useBaseNodeActions", () => {
     vi.clearAllMocks();
     mockAddNode.mockResolvedValue(true);
     mockEnsureDraft.mockResolvedValue("existing");
+    apiMocks.deleteNodeApi.mockResolvedValue({});
   });
 
   // ---- handleNodeClick ----
@@ -279,6 +283,11 @@ describe("Unit: useBaseNodeActions", () => {
 
       expect(mockEnsureDraft).toHaveBeenCalled();
       expect(props.deleteNode).toHaveBeenCalledWith("n1");
+      expect(apiMocks.deleteNodeApi).toHaveBeenCalledWith({
+        graphId: "g1",
+        versionId: "v1",
+        nodeId: "n1",
+      });
     });
 
     it("stops event propagation", async () => {
@@ -313,6 +322,7 @@ describe("Unit: useBaseNodeActions", () => {
       });
 
       expect(props.deleteNode).not.toHaveBeenCalled();
+      expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
     });
 
     it("does nothing while the node is running", async () => {
@@ -327,6 +337,7 @@ describe("Unit: useBaseNodeActions", () => {
       expect(stopPropagation).not.toHaveBeenCalled();
       expect(props.deleteNode).not.toHaveBeenCalled();
       expect(mockEnsureDraft).not.toHaveBeenCalled();
+      expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
     });
   });
 });
@@ -339,6 +350,7 @@ describe("Unit: useBaseNodeActions — edge cases", () => {
     vi.clearAllMocks();
     mockAddNode.mockResolvedValue(true);
     mockEnsureDraft.mockResolvedValue("existing");
+    apiMocks.deleteNodeApi.mockResolvedValue({});
   });
 
   it("handleNodeSelect rejects when getNode returns node without .position property", async () => {

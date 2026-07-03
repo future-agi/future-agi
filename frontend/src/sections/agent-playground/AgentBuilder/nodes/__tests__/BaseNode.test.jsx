@@ -122,7 +122,7 @@ describe("Unit: BaseNode", () => {
     });
 
     expect(
-      screen.queryByRole("button", { name: /delete node/i }),
+      screen.queryByRole("button", { name: /delete canvas node/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -135,7 +135,7 @@ describe("Unit: BaseNode", () => {
     renderBaseNode();
 
     expect(
-      screen.queryByRole("button", { name: /delete node/i }),
+      screen.queryByRole("button", { name: /delete canvas node/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -148,7 +148,7 @@ describe("Unit: BaseNode", () => {
     renderBaseNode();
 
     expect(
-      screen.queryByRole("button", { name: /delete node/i }),
+      screen.queryByRole("button", { name: /delete canvas node/i }),
     ).not.toBeInTheDocument();
   });
 });
