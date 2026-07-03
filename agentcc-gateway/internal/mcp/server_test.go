@@ -5,8 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -898,6 +900,244 @@ func TestSchemaValidation_MissingRequired(t *testing.T) {
 	}
 }
 
+func TestSchemaValidation_EmptyArgumentsStillChecksRequired(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	schema := `{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}`
+	tools := []Tool{{Name: "action", InputSchema: json.RawMessage(schema)}}
+	s.Registry().RegisterServer("srv", tools)
+
+	upstreamCalled := false
+	mockUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalled = true
+		var msg Message
+		json.NewDecoder(r.Body).Decode(&msg)
+		resp, _ := NewResponse(msg.ID, ToolCallResult{Content: []ContentPart{{Type: "text", Text: "ok"}}})
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockUpstream.Close()
+
+	client := NewClient(ClientConfig{ServerID: "srv", URL: mockUpstream.URL, TransportType: "http"})
+	client.transport = NewHTTPTransport(mockUpstream.URL, AuthConfig{})
+	client.healthy.Store(true)
+	client.tools.Store(&tools)
+	s.clientsMu.Lock()
+	s.clients["srv"] = client
+	s.clientsMu.Unlock()
+
+	sessionID := initializeSession(t, s)
+
+	params := ToolCallParams{Name: "srv_action", Arguments: map[string]interface{}{}}
+	paramsData, _ := json.Marshal(params)
+	msg := &Message{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: MethodToolsCall, Params: paramsData}
+
+	w := postMCP(t, s, msg, map[string]string{"MCP-Session-Id": sessionID})
+	resp := decodeResponse(t, w)
+	if resp.Error == nil {
+		t.Fatal("expected error for missing required field with empty arguments")
+	}
+	if resp.Error.Code != ErrCodeInvalidParams {
+		t.Fatalf("expected code %d, got %d", ErrCodeInvalidParams, resp.Error.Code)
+	}
+	if upstreamCalled {
+		t.Fatal("expected schema validation to block before calling upstream")
+	}
+}
+
+func TestSchemaValidation_OmittedArgumentsStillChecksRequired(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	schema := `{"type":"object","required":["name"],"properties":{"name":{"type":"string"}}}`
+	tools := []Tool{{Name: "action", InputSchema: json.RawMessage(schema)}}
+	s.Registry().RegisterServer("srv", tools)
+
+	upstreamCalled := false
+	mockUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalled = true
+		var msg Message
+		json.NewDecoder(r.Body).Decode(&msg)
+		resp, _ := NewResponse(msg.ID, ToolCallResult{Content: []ContentPart{{Type: "text", Text: "ok"}}})
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockUpstream.Close()
+
+	client := NewClient(ClientConfig{ServerID: "srv", URL: mockUpstream.URL, TransportType: "http"})
+	client.transport = NewHTTPTransport(mockUpstream.URL, AuthConfig{})
+	client.healthy.Store(true)
+	client.tools.Store(&tools)
+	s.clientsMu.Lock()
+	s.clients["srv"] = client
+	s.clientsMu.Unlock()
+
+	sessionID := initializeSession(t, s)
+
+	msg := &Message{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  MethodToolsCall,
+		Params:  json.RawMessage(`{"name":"srv_action"}`),
+	}
+
+	w := postMCP(t, s, msg, map[string]string{"MCP-Session-Id": sessionID})
+	resp := decodeResponse(t, w)
+	if resp.Error == nil {
+		t.Fatal("expected error for missing required field with omitted arguments")
+	}
+	if resp.Error.Code != ErrCodeInvalidParams {
+		t.Fatalf("expected code %d, got %d", ErrCodeInvalidParams, resp.Error.Code)
+	}
+	if upstreamCalled {
+		t.Fatal("expected schema validation to block before calling upstream")
+	}
+}
+
+func TestSchemaValidation_MultipleRequiredAndNoAdditionalProperties(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	schema := `{"type":"object","required":["query","limit"],"additionalProperties":false,"properties":{"query":{"type":"string"},"limit":{"type":"integer"}}}`
+	tools := []Tool{{Name: "action", InputSchema: json.RawMessage(schema)}}
+	s.Registry().RegisterServer("srv", tools)
+
+	upstreamCalls := 0
+	mockUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls++
+		var msg Message
+		json.NewDecoder(r.Body).Decode(&msg)
+		resp, _ := NewResponse(msg.ID, ToolCallResult{Content: []ContentPart{{Type: "text", Text: "ok"}}})
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockUpstream.Close()
+
+	client := NewClient(ClientConfig{ServerID: "srv", URL: mockUpstream.URL, TransportType: "http"})
+	client.transport = NewHTTPTransport(mockUpstream.URL, AuthConfig{})
+	client.healthy.Store(true)
+	client.tools.Store(&tools)
+	s.clientsMu.Lock()
+	s.clients["srv"] = client
+	s.clientsMu.Unlock()
+
+	sessionID := initializeSession(t, s)
+
+	tests := []struct {
+		name      string
+		arguments map[string]interface{}
+		want      string
+	}{
+		{
+			name:      "missing required",
+			arguments: map[string]interface{}{"query": "hello"},
+			want:      `missing required argument: "limit"`,
+		},
+		{
+			name:      "unknown field",
+			arguments: map[string]interface{}{"query": "hello", "limit": 5.0, "unexpected": "bad"},
+			want:      `unexpected argument: "unexpected"`,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			params := ToolCallParams{Name: "srv_action", Arguments: tc.arguments}
+			paramsData, _ := json.Marshal(params)
+			msg := &Message{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: MethodToolsCall, Params: paramsData}
+
+			w := postMCP(t, s, msg, map[string]string{"MCP-Session-Id": sessionID})
+			resp := decodeResponse(t, w)
+			if resp.Error == nil {
+				t.Fatal("expected schema validation error")
+			}
+			if resp.Error.Code != ErrCodeInvalidParams {
+				t.Fatalf("expected code %d, got %d", ErrCodeInvalidParams, resp.Error.Code)
+			}
+			if resp.Error.Message != tc.want {
+				t.Fatalf("expected message %q, got %q", tc.want, resp.Error.Message)
+			}
+		})
+	}
+
+	if upstreamCalls != 0 {
+		t.Fatalf("expected schema validation to block before calling upstream, got %d calls", upstreamCalls)
+	}
+}
+
+func TestSchemaValidation_RejectionLogRedactsArgsPreview(t *testing.T) {
+	s := newTestServer(t)
+	defer s.Close()
+
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logBuf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	schema := `{"type":"object","required":["name","token"],"properties":{"name":{"type":"string"},"token":{"type":"string"}}}`
+	tools := []Tool{{Name: "action", InputSchema: json.RawMessage(schema)}}
+	s.Registry().RegisterServer("srv", tools)
+
+	upstreamCalled := false
+	mockUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalled = true
+		var msg Message
+		json.NewDecoder(r.Body).Decode(&msg)
+		resp, _ := NewResponse(msg.ID, ToolCallResult{Content: []ContentPart{{Type: "text", Text: "ok"}}})
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer mockUpstream.Close()
+
+	client := NewClient(ClientConfig{ServerID: "srv", URL: mockUpstream.URL, TransportType: "http"})
+	client.transport = NewHTTPTransport(mockUpstream.URL, AuthConfig{})
+	client.healthy.Store(true)
+	client.tools.Store(&tools)
+	s.clientsMu.Lock()
+	s.clients["srv"] = client
+	s.clientsMu.Unlock()
+
+	sessionID := initializeSession(t, s)
+
+	params := ToolCallParams{
+		Name: "srv_action",
+		Arguments: map[string]interface{}{
+			"name": "Alice",
+			"note": "super-secret-token",
+		},
+	}
+	paramsData, _ := json.Marshal(params)
+	msg := &Message{JSONRPC: "2.0", ID: json.RawMessage(`1`), Method: MethodToolsCall, Params: paramsData}
+
+	w := postMCP(t, s, msg, map[string]string{"MCP-Session-Id": sessionID})
+	resp := decodeResponse(t, w)
+	if resp.Error == nil {
+		t.Fatal("expected schema validation error")
+	}
+	if upstreamCalled {
+		t.Fatal("expected schema validation to block before calling upstream")
+	}
+
+	logs := logBuf.String()
+	for _, want := range []string{
+		"mcp tool call rejected by input schema",
+		`"tool":"srv_action"`,
+		`"server":"srv"`,
+		`"schema_hash"`,
+		`"violation_path":"$.token"`,
+		`"args_preview"`,
+		`"note":"string(len=18)"`,
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("expected logs to contain %q, got %s", want, logs)
+		}
+	}
+	if strings.Contains(logs, "super-secret-token") {
+		t.Fatalf("expected logs to redact raw argument values, got %s", logs)
+	}
+}
+
 func TestSchemaValidation_WrongType(t *testing.T) {
 	s := newTestServer(t)
 	defer s.Close()
@@ -1000,6 +1240,11 @@ func TestValidateArgsAgainstSchema_Unit(t *testing.T) {
 	// Integer as whole float should pass.
 	if msg := validateArgsAgainstSchema(schema, map[string]interface{}{"q": "hello", "limit": 5.0}); msg != "" {
 		t.Errorf("expected pass for 5.0 as integer, got: %s", msg)
+	}
+
+	strictSchema := json.RawMessage(`{"type":"object","required":["q","limit"],"additionalProperties":false,"properties":{"q":{"type":"string"},"limit":{"type":"integer"}}}`)
+	if msg := validateArgsAgainstSchema(strictSchema, map[string]interface{}{"q": "hello", "limit": 5.0, "extra": "bad"}); msg == "" {
+		t.Error("expected error for extra argument when additionalProperties is false")
 	}
 }
 
