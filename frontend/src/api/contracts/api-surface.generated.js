@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 956,
+  "endpointCount": 968,
   "groups": {
     "accounts": {
       "/accounts/2fa/recovery-codes/": [
@@ -3076,6 +3076,13 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/usage/download-invoice/": [
         "post"
       ],
+      "/usage/ee/licenses/": [
+        "get",
+        "post"
+      ],
+      "/usage/ee/licenses/{grant_id}/revoke/": [
+        "post"
+      ],
       "/usage/get-auto-reload-settings/": [
         "get"
       ],
@@ -3199,8 +3206,28 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "post",
         "put"
       ],
+      "/usage/v2/billing-overview/": [
+        "get"
+      ],
+      "/usage/v2/budgets/": [
+        "get",
+        "post"
+      ],
+      "/usage/v2/budgets/{budget_id}/": [
+        "delete",
+        "put"
+      ],
       "/usage/v2/downgrade-to-free/": [
         "post"
+      ],
+      "/usage/v2/invoices/": [
+        "get"
+      ],
+      "/usage/v2/invoices/{invoice_id}/": [
+        "get"
+      ],
+      "/usage/v2/notifications/": [
+        "get"
       ],
       "/usage/v2/payment-methods/": [
         "get",
@@ -3220,6 +3247,9 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "delete",
         "post"
       ],
+      "/usage/v2/plans-and-addons/": [
+        "get"
+      ],
       "/usage/v2/reinstate-addon/": [
         "delete",
         "post",
@@ -3236,6 +3266,15 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       "/usage/v2/upgrade-to-payg/": [
         "post",
         "put"
+      ],
+      "/usage/v2/usage-overview/": [
+        "get"
+      ],
+      "/usage/v2/usage-time-series/": [
+        "get"
+      ],
+      "/usage/v2/usage-workspace-breakdown/": [
+        "get"
       ],
       "/usage/webhook/": [
         "post"
@@ -6294,6 +6333,13 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/usage/download-invoice/": [
     "post"
   ],
+  "/usage/ee/licenses/": [
+    "get",
+    "post"
+  ],
+  "/usage/ee/licenses/{grant_id}/revoke/": [
+    "post"
+  ],
   "/usage/get-auto-reload-settings/": [
     "get"
   ],
@@ -6417,8 +6463,28 @@ export const API_SURFACE_PATHS = Object.freeze({
     "post",
     "put"
   ],
+  "/usage/v2/billing-overview/": [
+    "get"
+  ],
+  "/usage/v2/budgets/": [
+    "get",
+    "post"
+  ],
+  "/usage/v2/budgets/{budget_id}/": [
+    "delete",
+    "put"
+  ],
   "/usage/v2/downgrade-to-free/": [
     "post"
+  ],
+  "/usage/v2/invoices/": [
+    "get"
+  ],
+  "/usage/v2/invoices/{invoice_id}/": [
+    "get"
+  ],
+  "/usage/v2/notifications/": [
+    "get"
   ],
   "/usage/v2/payment-methods/": [
     "get",
@@ -6438,6 +6504,9 @@ export const API_SURFACE_PATHS = Object.freeze({
     "delete",
     "post"
   ],
+  "/usage/v2/plans-and-addons/": [
+    "get"
+  ],
   "/usage/v2/reinstate-addon/": [
     "delete",
     "post",
@@ -6454,6 +6523,15 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/usage/v2/upgrade-to-payg/": [
     "post",
     "put"
+  ],
+  "/usage/v2/usage-overview/": [
+    "get"
+  ],
+  "/usage/v2/usage-time-series/": [
+    "get"
+  ],
+  "/usage/v2/usage-workspace-breakdown/": [
+    "get"
   ],
   "/usage/webhook/": [
     "post"
