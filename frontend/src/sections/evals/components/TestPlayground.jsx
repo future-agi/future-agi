@@ -1103,23 +1103,14 @@ const TestPlayground = React.forwardRef(
                 activeMainTab === "test" ? "primary.main" : "transparent",
             }}
           >
-            <Box
-              component="svg"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={2}
-              strokeLinecap="round"
-              strokeLinejoin="round"
+            <Iconify
+              icon="lucide:play"
+              width={14}
               sx={{
-                width: 14,
-                height: 14,
                 color:
                   activeMainTab === "test" ? "primary.main" : "text.secondary",
               }}
-            >
-              <polygon points="6 3 20 12 6 21 6 3" />
-            </Box>
+            />
             <Typography
               variant="body2"
               sx={{
