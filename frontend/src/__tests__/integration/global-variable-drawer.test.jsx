@@ -1,14 +1,18 @@
 /* eslint-disable react/prop-types */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { render, waitFor } from "../../utils/test-utils";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import GlobalVariableDrawer from "src/sections/agent-playground/AgentBuilder/GlobalVariablesPanel/GlobalVariableDrawer";
 import { useGlobalVariablesDrawerStore } from "src/sections/agent-playground/store";
 
-vi.mock("react-router-dom", () => ({
-  useParams: () => ({ agentId: "agent-1" }),
-  useSearchParams: () => [new URLSearchParams("version=ver-1")],
-}));
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual("react-router-dom");
+  return {
+    ...actual,
+    useParams: () => ({ agentId: "agent-1" }),
+    useSearchParams: () => [new URLSearchParams("version=ver-1")],
+  };
+});
 
 let mockDatasetData = null;
 let mockIsLoading = false;
@@ -66,12 +70,19 @@ vi.mock("src/components/custom-dialog/confirm-dialog", () => ({
     ) : null,
 }));
 
-const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
-});
+function createTestQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: { retry: false, gcTime: 0 },
+      mutations: { retry: false, gcTime: 0 },
+    },
+  });
+}
 
 function renderDrawer(props = {}) {
   const defaultProps = { open: true, onClose: vi.fn(), ...props };
+  const queryClient = createTestQueryClient();
+
   return render(
     <QueryClientProvider client={queryClient}>
       <GlobalVariableDrawer {...defaultProps} />
