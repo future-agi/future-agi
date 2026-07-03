@@ -17,6 +17,7 @@ from accounts.serializers.contracts import (
     OrganizationUpdateRequestSerializer,
     OrganizationUpdateResponseSerializer,
 )
+from accounts.services.workspace_membership import create_workspace_membership
 from accounts.utils import process_post_registration
 from tfc.constants.email import FREE_EMAIL_DOMAINS
 from tfc.constants.levels import Level
@@ -97,12 +98,13 @@ class OrganizationCreateAPIView(APIView):
             )
 
             # 5. Create WorkspaceMembership
-            WorkspaceMembership.objects.create(
+            create_workspace_membership(
                 workspace=workspace,
                 user=user,
                 role=OrganizationRoles.WORKSPACE_ADMIN,
                 level=Level.WORKSPACE_ADMIN,
                 organization_membership=org_membership,
+                manager=WorkspaceMembership.objects,
             )
 
             # 6. Create system API key
@@ -263,7 +265,7 @@ class CreateAdditionalOrganizationView(APIView):
             )
 
             # 4. Create WorkspaceMembership
-            WorkspaceMembership.no_workspace_objects.create(
+            create_workspace_membership(
                 workspace=workspace,
                 user=user,
                 role=OrganizationRoles.WORKSPACE_ADMIN,

@@ -1706,7 +1706,12 @@ func TestGetModel_ReturnsGlobalModelForOrgRequest(t *testing.T) {
 func TestCreateEmbedding_InternalKeySkipsOrgProviderOverride(t *testing.T) {
 	var upstreamAuth string
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstreamAuth = r.Header.Get("Authorization")
+		// The provider's async connectivity check (GET /v1/models, no auth) hits
+		// this same mock; capture auth only from the embedding call so a late ping
+		// can't clobber it to "" and flake the assertion.
+		if strings.HasSuffix(r.URL.Path, "/embeddings") {
+			upstreamAuth = r.Header.Get("Authorization")
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(models.EmbeddingResponse{
 			Object: "list",

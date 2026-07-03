@@ -16,6 +16,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.serializers.chat_message import ChatMessageSerializer
+from simulate.utils.eval_summary import iter_live_eval_outputs
 from tracer.serializers.filters import (
     StrictInputSerializer,
     filter_list_query_param_field,
@@ -474,14 +475,29 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ProviderChoices.VAPI.value
                 )
 
-        if provider_payload:
-            if provider_payload.get("recording"):
-                return provider_payload.get("recording")
+        recordings = None
+        if provider_payload and provider_payload.get("recording"):
+            recordings = provider_payload.get("recording")
+        elif VoiceServiceManager is not None:
+            vsm = VoiceServiceManager(system_voice_provider=ProviderChoices.VAPI)
+            recordings = vsm.get_recording_urls(provider_payload) or {}
 
-        if VoiceServiceManager is None:
-            return {}
-        vsm = VoiceServiceManager(system_voice_provider=ProviderChoices.VAPI)
-        return vsm.get_recording_urls(provider_payload) or {}
+        if isinstance(recordings, dict) and recordings:
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
+
+            provider = SpeakerRoleResolver.detect_provider(
+                getattr(obj, "provider_call_data", None)
+            )
+            is_outbound = SpeakerRoleResolver.detect_is_outbound(obj)
+            if SpeakerRoleResolver.is_simulator(
+                "assistant", provider=provider, is_outbound=is_outbound
+            ):
+                recordings = {
+                    **recordings,
+                    "assistant": recordings.get("customer"),
+                    "customer": recordings.get("assistant"),
+                }
+        return recordings or {}
 
     def get_provider(self, obj):
         """Return the provider that produced this call's stored provider payload.
@@ -630,11 +646,19 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             )
             call_metadata = getattr(obj, "call_metadata", None) or {}
             offset = call_metadata.get("recording_offset_ms", 0)
-            return CallTranscriptSerializer(
-                filtered_transcripts,
-                many=True,
-                context={"recording_offset_ms": offset},
-            ).data
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
+
+            return SpeakerRoleResolver.align_transcript_rows(
+                CallTranscriptSerializer(
+                    filtered_transcripts,
+                    many=True,
+                    context={"recording_offset_ms": offset},
+                ).data,
+                provider=SpeakerRoleResolver.detect_provider(
+                    getattr(obj, "provider_call_data", None)
+                ),
+                is_outbound=SpeakerRoleResolver.detect_is_outbound(obj),
+            )
         return []
 
     def get_response_time(self, obj):
@@ -666,9 +690,25 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         if not eval_outputs:
             return {}
 
-        # Transform eval_outputs to a more structured format
+        eval_configs = (
+            self.context.get("eval_configs")
+            if hasattr(self, "context") and self.context
+            else None
+        )
+        if eval_configs is None:
+
+            logger.debug(
+                "eval_outputs_serialized_without_live_config_context",
+                method="get_eval_outputs",
+            )
+        eval_items = (
+            eval_outputs.items()
+            if eval_configs is None
+            else iter_live_eval_outputs(eval_outputs, eval_configs)
+        )
+
         structured_outputs = {}
-        for eval_id, eval_data in eval_outputs.items():
+        for eval_id, eval_data in eval_items:
             if isinstance(eval_data, dict):
                 if eval_data.get("status") == "pending":
                     structured_outputs[eval_id] = {}
@@ -715,15 +755,25 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         if not eval_outputs:
             return {}
 
-        # Get eval configs from context if available
         eval_configs = (
-            self.context.get("eval_configs", {})
+            self.context.get("eval_configs")
             if hasattr(self, "context") and self.context
-            else {}
+            else None
+        )
+        if eval_configs is None:
+
+            logger.debug(
+                "eval_outputs_serialized_without_live_config_context",
+                method="get_eval_metrics",
+            )
+        eval_items = (
+            eval_outputs.items()
+            if eval_configs is None
+            else iter_live_eval_outputs(eval_outputs, eval_configs)
         )
 
         metrics = {}
-        for eval_id, eval_data in eval_outputs.items():
+        for eval_id, eval_data in eval_items:
             if isinstance(eval_data, dict):
                 if eval_data.get("status") == "pending":
                     metrics[eval_id] = {}
@@ -732,7 +782,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 is_error = bool(raw_error is True or raw_error == "error") or (
                     eval_data.get("status") == "error"
                 )
-                eval_config = eval_configs.get(eval_id)
+                eval_config = (eval_configs or {}).get(eval_id)
                 metrics[eval_id] = {
                     "id": eval_id,
                     "name": eval_data.get(
@@ -1342,11 +1392,19 @@ class CallExecutionSerializer(serializers.ModelSerializer):
             )
             call_metadata = getattr(obj, "call_metadata", None) or {}
             offset = call_metadata.get("recording_offset_ms", 0)
-            return CallTranscriptSerializer(
-                filtered_transcripts,
-                many=True,
-                context={"recording_offset_ms": offset},
-            ).data
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
+
+            return SpeakerRoleResolver.align_transcript_rows(
+                CallTranscriptSerializer(
+                    filtered_transcripts,
+                    many=True,
+                    context={"recording_offset_ms": offset},
+                ).data,
+                provider=SpeakerRoleResolver.detect_provider(
+                    getattr(obj, "provider_call_data", None)
+                ),
+                is_outbound=SpeakerRoleResolver.detect_is_outbound(obj),
+            )
         return []
 
     def get_response_time_seconds(self, obj):

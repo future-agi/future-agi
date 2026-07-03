@@ -64,7 +64,9 @@ class TraceSerializer(serializers.ModelSerializer):
             if getattr(workspace, "is_default", False):
                 project_scope &= (
                     Q(workspace=workspace)
-                    | Q(workspace__is_default=True, workspace__organization=organization)
+                    | Q(
+                        workspace__is_default=True, workspace__organization=organization
+                    )
                     | Q(workspace__isnull=True)
                 )
                 related_project_scope &= (
@@ -115,7 +117,9 @@ class TraceSerializer(serializers.ModelSerializer):
 
         if project_version and project and project_version.project_id != project.id:
             raise serializers.ValidationError(
-                {"project_version": "Project version must belong to the selected project."}
+                {
+                    "project_version": "Project version must belong to the selected project."
+                }
             )
 
         if session and project and session.project_id != project.id:
@@ -200,6 +204,7 @@ class UsersQuerySerializer(StrictInputSerializer):
     current_page_index = serializers.IntegerField(required=False, min_value=0)
     sort_params = SortParamListQueryParamField(required=False, default=list)
     filters = filter_list_query_param_field(required=False, default=list)
+    export = serializers.BooleanField(required=False, default=False)
 
 
 class UsersTableRowSerializer(serializers.Serializer):
@@ -240,3 +245,17 @@ class UsersResponseSerializer(serializers.Serializer):
 class UserCodeExampleResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = serializers.CharField()
+
+
+class TraceDetailResultSerializer(serializers.Serializer):
+    """Envelope payload for the trace-detail endpoint (CH-assembled)."""
+
+    trace = serializers.JSONField()
+    observation_spans = serializers.ListField(child=serializers.JSONField())
+    summary = serializers.JSONField()
+    graph = serializers.JSONField()
+
+
+class TraceDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = TraceDetailResultSerializer()

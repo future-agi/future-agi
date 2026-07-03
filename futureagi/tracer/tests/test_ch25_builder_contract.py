@@ -73,9 +73,22 @@ _LEGIT_ALIAS_RE = re.compile(
 )
 
 # Only these `build*` methods may legitimately be excluded from the rewrite:
-# they read the legacy `tracer_eval_logger` / `model_hub_score` tables, which are
-# not part of the CH 25.3 migration and still carry `_peerdb_is_deleted`.
-_ALLOWED_EXCLUSIONS = frozenset({"build_eval_query", "build_annotation_query"})
+#  • build_eval_query / build_annotation_query read the legacy
+#    `tracer_eval_logger` / `model_hub_score` tables, which are not part of the
+#    CH 25.3 migration and still carry `_peerdb_is_deleted`.
+#  • build_metric_query / build_all_queries are the dashboard builder's
+#    POLYMORPHIC dispatch methods: a single metric may target the migrated
+#    `spans` schema OR a legacy table (eval / annotation), so the blanket
+#    auto-wrap can't apply. DashboardQueryBuilderV2 excludes them and rewrites
+#    per metric inside `build_metric_query`, skipping the legacy-table types.
+_ALLOWED_EXCLUSIONS = frozenset(
+    {
+        "build_eval_query",
+        "build_annotation_query",
+        "build_metric_query",
+        "build_all_queries",
+    }
+)
 
 # Builders cheap to construct (project_id only) whose build* methods compile SQL
 # without a DB round-trip — registry query-type → v2 class name.

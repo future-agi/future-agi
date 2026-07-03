@@ -211,9 +211,7 @@ def test_webhook_signature_uses_original_retell_payload():
         },
     }
     agent_definition = Mock(id="agent-definition-1")
-    agent_definition.latest_version.configuration_snapshot = {
-        "api_key": "retell-secret"
-    }
+    agent_definition.latest_version.credentials.get_api_key.return_value = "retell-secret"
     queryset = Mock()
     queryset.iterator.return_value = [agent_definition]
 
@@ -257,9 +255,7 @@ def test_webhook_invalid_signature_does_not_dispatch_logs():
         },
     }
     agent_definition = Mock(id="agent-definition-1")
-    agent_definition.latest_version.configuration_snapshot = {
-        "api_key": "retell-secret"
-    }
+    agent_definition.latest_version.credentials.get_api_key.return_value = "retell-secret"
     queryset = Mock()
     queryset.iterator.return_value = [agent_definition]
 

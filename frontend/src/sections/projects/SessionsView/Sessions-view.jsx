@@ -71,6 +71,11 @@ import axios, { endpoints } from "src/utils/axios";
 import ColumnConfigureDropDown from "src/sections/project-detail/ColumnDropdown/ColumnConfigureDropDown";
 import useProjectFilterField from "../UsersView/useProjectFilterField";
 import CustomColumnDialog from "../LLMTracing/CustomColumnDialog";
+import {
+  reorderColumns,
+  columnStateToOrder,
+  isColumnOrderDirty,
+} from "../LLMTracing/savedViewColumns";
 import { filtersContentEqual } from "../saved-view-utils";
 
 // ---------------------------------------------------------------------------
@@ -181,7 +186,6 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     activeViewConfig,
     setActiveViewConfig,
     registerGetViewConfig,
-    registerGetTabType,
   } = useObserveHeader();
 
   // --- Filter & date state (reuse trace filter hook) ---
@@ -375,6 +379,10 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     for (let i = 0; i < currentCustomIds.length; i += 1) {
       if (currentCustomIds[i] !== baselineCustomIds[i]) return true;
     }
+    // Did the user reorder columns (or move the custom-columns group)?
+    if (isColumnOrderDirty(sessionColumns, baselineDisplay.columnState)) {
+      return true;
+    }
     return false;
   }, [
     activeViewConfig,
@@ -386,8 +394,8 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     sessionColumns,
   ]);
 
-  // Deferred so the button doesn't flicker between filter state (urgent)
-  // and activeViewConfig (startTransition) settling.
+  // Deferred so the button doesn't flicker while filter state and the baseline
+  // config settle on a view-switch.
   const canSaveViewDeferred = useDeferredValue(canSaveView);
 
   // dateFilter lives inside `display` because the backend serializer only
@@ -425,11 +433,6 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
     registerGetViewConfig(buildViewConfig);
     return () => registerGetViewConfig(null);
   }, [registerGetViewConfig, buildViewConfig]);
-
-  useEffect(() => {
-    registerGetTabType(() => "sessions");
-    return () => registerGetTabType(null);
-  }, [registerGetTabType]);
 
   const { mutate: updateSavedView } = useUpdateSavedView(observeId);
   const { mutate: updateWorkspaceSavedView } =
@@ -538,6 +541,15 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
 
   // Drained in the api-ready effect below once sessionGridApiRef populates.
   const pendingColumnStateRef = useRef(null);
+  // Canonical order, to restore default when leaving a saved view.
+  const canonicalOrderRef = useRef(null);
+  // Saved order; the [sessionColumns] effect re-applies it on each id-set change
+  // (cols land/leave), so it survives the grid-fetch race a one-shot apply lost.
+  const pendingSessionOrderRef = useRef(null);
+  const appliedSessionIdSetRef = useRef(null);
+  // Set once the user manually drags a column; the saved-order re-apply then
+  // stops reordering, so an add/remove (id-set change) doesn't revert the drag.
+  const sessionUserReorderedRef = useRef(false);
   // Set when the apply effect fires before the grid mounts (hard refresh
   // into a saved view). Drained in onGridReady, otherwise the pending
   // custom-col ref is stranded.
@@ -564,9 +576,15 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       }
       if (api?.resetColumnState) api.resetColumnState();
       pendingColumnStateRef.current = null;
+      pendingSessionOrderRef.current = null;
+      appliedSessionIdSetRef.current = null;
+      sessionUserReorderedRef.current = false;
       pendingCustomColumnsRef.current = [];
       setSessionColumns((prev) =>
-        (prev || []).filter((c) => c.groupBy !== "Custom Columns"),
+        reorderColumns(
+          (prev || []).filter((c) => c.groupBy !== "Custom Columns"),
+          canonicalOrderRef.current,
+        ),
       );
       // Re-hydrate from localStorage — the mount hydrate is keyed on
       // displayStorageKey and won't re-fire on a same-project saved-view →
@@ -656,9 +674,12 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       }
     }
     if (Array.isArray(display.columnState) && display.columnState.length > 0) {
-      // Queue columnState when customs are pending — AG Grid silently drops
-      // applyColumnState entries for unknown colIds, so widths/order for
-      // custom cols would be lost otherwise. Drained when the customs land.
+      // Arm the saved order; the [sessionColumns] effect bakes it in once cols
+      // land (applyColumnState alone is clobbered by the next columnDefs rebuild).
+      pendingSessionOrderRef.current = columnStateToOrder(display.columnState);
+      appliedSessionIdSetRef.current = null;
+      sessionUserReorderedRef.current = false;
+      // Queue widths/sort when customs pending — AG Grid drops unknown colIds.
       if (savedCustomCols.length > 0) {
         pendingColumnStateRef.current = display.columnState;
       } else {
@@ -879,6 +900,26 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
       applyOrder: true,
     });
     pendingColumnStateRef.current = null;
+  }, [sessionColumns]);
+
+  // Bake the saved order into sessionColumns, re-applying only on id-set change
+  // (so a manual drag isn't reverted); applyColumnState alone is clobbered on rebuild.
+  useEffect(() => {
+    if (!pendingSessionOrderRef.current) return;
+    const idSetKey = (sessionColumns || [])
+      .map((c) => c?.id)
+      .sort()
+      .join("|");
+    if (idSetKey !== appliedSessionIdSetRef.current) {
+      appliedSessionIdSetRef.current = idSetKey;
+      // Skip the saved-order re-apply once the user has manually reordered, so
+      // an add/remove (id-set change) doesn't revert the drag.
+      if (!sessionUserReorderedRef.current) {
+        setSessionColumns((prev) =>
+          reorderColumns(prev, pendingSessionOrderRef.current),
+        );
+      }
+    }
   }, [sessionColumns]);
 
   // --- Column config for display panel ---
@@ -1111,6 +1152,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
         <SessionGrid
           columns={sessionColumns}
           setColumns={setSessionColumns}
+          onUserReorder={() => {
+            sessionUserReorderedRef.current = true;
+          }}
           ref={sessionGridApiRef}
           updateObj={updateObj}
           filters={finalFilters}
@@ -1120,7 +1164,9 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           className={shouldDisable ? "ag-grid-disabled" : ""}
           onGridReady={onGridReady}
           pendingCustomColumnsRef={pendingCustomColumnsRef}
+          canonicalOrderRef={canonicalOrderRef}
           isOnSavedView={Boolean(activeViewConfig)}
+          userIdForUserMode={userIdForUserMode}
         />
       </Box>
 

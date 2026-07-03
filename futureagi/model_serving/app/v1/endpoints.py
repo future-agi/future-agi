@@ -1,3 +1,5 @@
+import asyncio
+import os
 import traceback
 from typing import Any
 
@@ -16,6 +18,10 @@ except ImportError:
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/v1")
+
+# Cap concurrent audio inferences to bound per-pod memory.
+_AUDIO_INFER_CONCURRENCY = int(os.getenv("AUDIO_INFER_CONCURRENCY", "10"))
+_audio_infer_sem = asyncio.Semaphore(_AUDIO_INFER_CONCURRENCY)
 
 
 @router.get("/models")
@@ -237,9 +243,9 @@ async def embed_audio(data: InferModelRequest) -> dict[str, Any]:
         if not data.audio:
             raise HTTPException(status_code=400, detail="Audio input is required")
 
-        # Use the generic infer endpoint
         data.input_type = "audio"
-        return await infer("audio_embedding", data)
+        async with _audio_infer_sem:
+            return await infer("audio_embedding", data)
 
     except HTTPException:
         raise

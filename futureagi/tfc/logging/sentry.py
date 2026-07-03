@@ -175,6 +175,47 @@ def _event_message(event: dict) -> str:
     return " ".join(p for p in parts if p)
 
 
+def _is_telemetry_url(url: object) -> bool:
+    """True when ``url`` matches a path prefix whose body must never reach Sentry.
+
+    Reuses ``SENSITIVE_BODY_PATH_PREFIXES`` so the OTel middleware and the
+    Sentry scrubber agree on which paths are sensitive; previously the prefix
+    was hardcoded here and could silently drift from the middleware copy.
+    """
+    if not url:
+        return False
+    from tfc.telemetry.middleware import SENSITIVE_BODY_PATH_PREFIXES
+
+    return any(prefix in str(url) for prefix in SENSITIVE_BODY_PATH_PREFIXES)
+
+
+def _scrub_deployment_telemetry_event(event: dict) -> dict:
+    # Sentry's HTTP integrations record outbound POSTs to /telemetry/ as
+    # breadcrumbs with the request body in ``data.body``/``data.data``. The
+    # inbound ``request.url`` check below would not match those (the exception
+    # frame's URL is whatever the caller hit, not the breadcrumb's target), so
+    # the registration payload would still ship to Sentry via breadcrumbs even
+    # though the inbound branch scrubbed the request body. Walk breadcrumbs
+    # unconditionally and strip body fields whose ``url`` points at a telemetry
+    # path before running the inbound scrub.
+    for breadcrumb in event.get("breadcrumbs", {}).get("values", []) or []:
+        data = breadcrumb.get("data") or {}
+        if _is_telemetry_url(data.get("url")):
+            for key in ("body", "data", "http.request.body", "request_body"):
+                data.pop(key, None)
+            breadcrumb["data"] = data
+
+    request = event.get("request") or {}
+    if not _is_telemetry_url(request.get("url")):
+        return event
+
+    request.pop("data", None)
+    for exception in (event.get("exception") or {}).get("values", []):
+        for frame in (exception.get("stacktrace") or {}).get("frames", []):
+            frame.pop("vars", None)
+    return event
+
+
 def _get_before_send() -> Callable:
     """
     Create the before_send hook that runs on every error event.
@@ -187,6 +228,8 @@ def _get_before_send() -> Callable:
     """
 
     def before_send(event: dict, hint: dict) -> dict | None:
+        event = _scrub_deployment_telemetry_event(event)
+
         # 1. Infrastructure logger noise - never actionable as an issue.
         logger_name = event.get("logger") or ""
         if isinstance(logger_name, str) and any(
@@ -407,6 +450,9 @@ def init_sentry(
             in_app_exclude=["celery", "kombu", "temporalio", "django"],
             # Hooks
             before_send=_get_before_send(),
+            before_send_transaction=lambda event, hint: (
+                _scrub_deployment_telemetry_event(event)
+            ),
             # Debug mode in staging for troubleshooting
             debug=IS_STAGING,
             # Session tracking

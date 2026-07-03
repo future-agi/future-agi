@@ -12,7 +12,8 @@ import { ShowComponent } from "src/components/show";
 import RunningSkeletonRenderer from "./DevelopCellRenderer/CellRenderers/RunningSkeletonRenderer";
 
 const ImageDatapointCard = ({ value, column }) => {
-  const hasImage = Boolean(value?.cellValue);
+  const cellValue = value?.cell_value;
+  const hasImage = Boolean(cellValue);
   return (
     <Accordion defaultExpanded disableGutters>
       <AccordionSummary
@@ -63,7 +64,7 @@ const ImageDatapointCard = ({ value, column }) => {
               {hasImage ? (
                 <Image
                   height="100%"
-                  src={value?.cellValue}
+                  src={cellValue}
                   alt=""
                   style={{
                     cursor: "pointer",

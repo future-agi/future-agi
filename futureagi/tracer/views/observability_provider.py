@@ -14,6 +14,11 @@ from retell.lib.webhook_auth import verify as verify_retell_webhook
 
 from accounts.utils import get_request_organization
 from simulate.models import AgentDefinition
+from simulate.services.agent_definition import (
+    is_masked,
+    resolve_api_key_for_version,
+    resolve_stored_api_key,
+)
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
@@ -21,7 +26,12 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.observability_provider import ProviderChoices
 from tracer.models.project import ProjectSourceChoices
-from tracer.serializers.observability_provider import ObservabilityProviderSerializer
+from tracer.serializers.observability_provider import (
+    ObservabilityProviderSerializer,
+    VerifyApiKeyRequestSerializer,
+    VerifyAssistantIdRequestSerializer,
+    VerifyResponseSerializer,
+)
 from tracer.services.observability_providers import ObservabilityService
 from tracer.utils.observability_provider import normalize_and_store_logs
 from tracer.utils.otel import get_or_create_project
@@ -175,16 +185,29 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             workspace=getattr(self.request, "workspace", None),
         )
 
+    @validated_request(
+        request_serializer=VerifyApiKeyRequestSerializer,
+        responses={200: VerifyResponseSerializer, 400: ApiErrorResponseSerializer},
+    )
     @action(detail=False, methods=["post"])
     def verify_api_key(self, request):
         try:
             provider = request.data.get("provider")
             api_key = request.data.get("api_key")
-            if provider in [
-                ProviderChoices.VAPI,
-                ProviderChoices.RETELL,
-                ProviderChoices.OTHERS,
-            ]:
+            agent_id = request.data.get("agent_id")
+
+            if is_masked(api_key):
+                api_key = resolve_stored_api_key(
+                    organization=get_request_organization(request),
+                    workspace=getattr(request, "workspace", None),
+                    agent_id=agent_id,
+                )
+                if not api_key:
+                    msg = "Could not resolve the api key. Please recheck the same"
+                    return self._gm.bad_request(msg)
+
+            # Only VAPI/RETELL support key verification; reject the rest clearly.
+            if provider in (ProviderChoices.VAPI, ProviderChoices.RETELL):
                 status_code = ObservabilityService.verify_api_key(
                     provider=provider,
                     api_key=api_key,
@@ -193,28 +216,38 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                     return self._gm.success_response("API key verified successfully.")
                 else:
                     return self._gm.bad_request("Invalid API key.")
-            # elif provider == ProviderChoices.ELEVEN_LABS:
-            #     return ObservabilityService.verify_api_key(
-            #         api_endpoint=ObservabilityRoutes.ELEVEN_LABS_CONVERSATIONS_URL.value,
-            #         api_key=api_key,
-            #     )
             else:
-                return self._gm.bad_request(f"Invalid choice for provider: {provider}")
+                return self._gm.bad_request(
+                    f"API key verification is not supported for provider: {provider}"
+                )
         except Exception as e:
             logger.exception(f"Error verifying API key: {e}")
             return self._gm.bad_request(f"Error verifying API key: {e}")
 
+    @validated_request(
+        request_serializer=VerifyAssistantIdRequestSerializer,
+        responses={200: VerifyResponseSerializer, 400: ApiErrorResponseSerializer},
+    )
     @action(detail=False, methods=["post"])
     def verify_assistant_id(self, request):
         try:
             assistant_id = request.data.get("assistant_id")
             api_key = request.data.get("api_key")
             provider = request.data.get("provider")
-            if provider in [
-                ProviderChoices.VAPI,
-                ProviderChoices.RETELL,
-                ProviderChoices.OTHERS,
-            ]:
+            agent_id = request.data.get("agent_id")
+            if is_masked(api_key):
+                api_key = resolve_stored_api_key(
+                    organization=get_request_organization(request),
+                    workspace=getattr(request, "workspace", None),
+                    agent_id=agent_id,
+                    assistant_id=assistant_id,
+                )
+                if not api_key:
+                    msg = "Could not resolve the api key. Please recheck the same"
+                    return self._gm.bad_request(msg)
+
+            # Only VAPI/RETELL have an assistant model to verify against.
+            if provider in (ProviderChoices.VAPI, ProviderChoices.RETELL):
                 status_code = ObservabilityService.verify_assistant_id(
                     provider=provider,
                     assistant_id=assistant_id,
@@ -227,7 +260,9 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
                 else:
                     return self._gm.bad_request("Invalid assistant ID.")
             else:
-                return self._gm.bad_request(f"Invalid choice for provider: {provider}")
+                return self._gm.bad_request(
+                    f"Assistant ID verification is not supported for provider: {provider}"
+                )
         except Exception as e:
             logger.exception(f"Error verifying assistant ID: {e}")
             return self._gm.bad_request(f"Error verifying assistant ID: {e}")
@@ -240,20 +275,17 @@ class WebhookHandlerView(APIView):
 
     def get_api_key(self, agent_definition: AgentDefinition):
         try:
-            api_key = None
             if not agent_definition:
                 return None
 
             agent_version = agent_definition.latest_version
-            if agent_version:
-                api_key = agent_version.configuration_snapshot.get("api_key")
-            else:
+            if not agent_version:
                 logger.warning(
                     f"No agent version found for agent {agent_definition.id}"
                 )
                 return None
 
-            return api_key
+            return resolve_api_key_for_version(agent_version)
         except Exception as e:
             logger.exception(f"Error getting webhook secret: {e}")
             return None

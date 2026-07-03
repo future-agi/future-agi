@@ -178,6 +178,13 @@ function schemaToZod(schema, options = {}) {
     );
   }
 
+  if (schema["x-string-or-array"]) {
+    return nullableIfNeeded(
+      z.union([z.string(), z.array(z.unknown())]),
+      schema,
+    );
+  }
+
   if (schema["x-json-value"]) {
     return nullableIfNeeded(z.any(), schema);
   }
@@ -273,10 +280,18 @@ function objectSchemaToZod(schema, options) {
 
   const shape = Object.fromEntries(
     keys.map((key) => {
-      if (options.requestBody && properties[key]?.readOnly) {
+      const property = properties[key];
+      // drf-yasg marks file uploads read-only on the property (single
+      // FileField) or on the array items (ListField of FileField); neither is
+      // client-sent, so accept anything and let multipart File bodies pass.
+      const isReadOnlyRequestField =
+        options.requestBody &&
+        (property?.readOnly ||
+          (property?.type === "array" && property?.items?.readOnly));
+      if (isReadOnlyRequestField) {
         return [key, z.any().optional()];
       }
-      let field = schemaToZod(properties[key], options);
+      let field = schemaToZod(property, options);
       if (!required.has(key)) field = field.optional();
       return [key, field];
     }),

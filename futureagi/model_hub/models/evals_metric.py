@@ -823,12 +823,13 @@ class EvalGroundTruth(ModelBaseModel):
     Embeddings are generated asynchronously for similarity-based retrieval.
     """
 
-    EMBEDDING_STATUS_CHOICES = [
-        ("pending", "Pending"),
-        ("processing", "Processing"),
-        ("completed", "Completed"),
-        ("failed", "Failed"),
-    ]
+    class EmbeddingStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    EMBEDDING_STATUS_CHOICES = EmbeddingStatus.choices
 
     STORAGE_TYPE_CHOICES = [
         ("db", "Database"),
@@ -882,8 +883,8 @@ class EvalGroundTruth(ModelBaseModel):
     # Embedding fields
     embedding_status = models.CharField(
         max_length=20,
-        choices=EMBEDDING_STATUS_CHOICES,
-        default="pending",
+        choices=EmbeddingStatus.choices,
+        default=EmbeddingStatus.PENDING,
         help_text="Status of embedding generation for this dataset",
     )
     embedding_model = models.CharField(
@@ -925,11 +926,25 @@ class EvalGroundTruth(ModelBaseModel):
         related_name="eval_ground_truths",
     )
 
+    is_active = models.BooleanField(default=False)
+    enabled = models.BooleanField(default=False)
+    max_examples = models.PositiveSmallIntegerField(default=3)
+    similarity_threshold = models.FloatField(default=0.7)
+
     class Meta:
         db_table = "model_hub_eval_ground_truth"
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["eval_template", "created_at"]),
+        ]
+        constraints = [
+            # nulls_distinct=False so NULL workspace rows still collide on (template, org).
+            models.UniqueConstraint(
+                fields=["eval_template", "organization", "workspace"],
+                condition=Q(deleted=False, is_active=True),
+                name="uniq_active_gt_per_tenant_template",
+                nulls_distinct=False,
+            ),
         ]
 
     def __str__(self):

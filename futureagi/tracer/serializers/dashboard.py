@@ -411,7 +411,13 @@ class DashboardFilterValuesQuerySerializer(serializers.Serializer):
         default="system_metric",
     )
     source = serializers.ChoiceField(
-        choices=["traces", "datasets", "dataset_column", "simulation"],
+        choices=[
+            "traces",
+            "sessions",
+            "datasets",
+            "dataset_column",
+            "simulation",
+        ],
         required=False,
         default="traces",
     )

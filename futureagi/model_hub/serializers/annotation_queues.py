@@ -27,6 +27,7 @@ from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.serializers.scores import ScoreSerializer
 from model_hub.utils.annotation_queue_helpers import (
     FIELD_MAPPING,
+    CollectorSourceCache,
     get_fk_field_name,
     resolve_source_content,
     resolve_source_object,
@@ -67,8 +68,12 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
     label_ids = serializers.ListField(
         child=serializers.UUIDField(),
         write_only=True,
-        required=False,
-        default=list,
+        required=True,
+        min_length=1,
+        error_messages={
+            "required": "At least one label is required.",
+            "min_length": "At least one label is required.",
+        },
     )
     annotator_ids = serializers.ListField(
         child=serializers.UUIDField(),
@@ -436,6 +441,17 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
         return instance
 
 
+class QueueItemListSerializer(serializers.ListSerializer):
+    """Builds one :class:`CollectorSourceCache` for the page so ``source_preview``
+    resolves collector spans/sessions from a single CH read instead of one point-read
+    per item. Stashed in context for the child's ``get_source_preview`` to pick up."""
+
+    def to_representation(self, data):
+        items = list(data)
+        self.context["ch_source_cache"] = CollectorSourceCache.for_items(items)
+        return super().to_representation(items)
+
+
 class QueueItemSerializer(serializers.ModelSerializer):
     source_id = serializers.CharField(write_only=True, required=False)
     source_preview = serializers.SerializerMethodField()
@@ -484,6 +500,7 @@ class QueueItemSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = ["queue"]
+        list_serializer_class = QueueItemListSerializer
 
     def get_assigned_users(self, obj):
         assignments = getattr(obj, "active_assignments", None)
@@ -499,7 +516,7 @@ class QueueItemSerializer(serializers.ModelSerializer):
         ]
 
     def get_source_preview(self, obj):
-        return resolve_source_preview(obj)
+        return resolve_source_preview(obj, ch_cache=self.context.get("ch_source_cache"))
 
     def get_workflow_status(self, obj):
         if (
@@ -556,12 +573,25 @@ class QueueItemSerializer(serializers.ModelSerializer):
             fk_field = get_fk_field_name(source_type)
             if fk_field:
                 request = self.context.get("request")
+                organization = (
+                    getattr(request, "organization", None) if request else None
+                )
                 workspace = getattr(request, "workspace", None) if request else None
                 source_obj = resolve_source_object(
-                    source_type, source_id, workspace=workspace
+                    source_type,
+                    source_id,
+                    organization=organization,
+                    workspace=workspace,
+                    allow_ch_fallback=True,
                 )
                 if source_obj:
-                    validated_data[fk_field] = source_obj
+                    # Store the soft id, not the FK object: a CH-resolved source
+                    # isn't a Django instance. QueueItem FKs are db_constraint=False
+                    # so a bare ``_id`` persists (and Django FKs accept it too).
+                    source_pk = getattr(source_obj, "pk", None) or getattr(
+                        source_obj, "id", None
+                    )
+                    validated_data[f"{fk_field}_id"] = source_pk
                 else:
                     raise serializers.ValidationError(
                         f"Source object not found: {source_type}={source_id}"
@@ -573,7 +603,7 @@ class QueueItemSerializer(serializers.ModelSerializer):
                     and QueueItem.objects.filter(
                         queue=queue,
                         deleted=False,
-                        **{fk_field: source_obj},
+                        **{f"{fk_field}_id": source_pk},
                     ).exists()
                 ):
                     raise serializers.ValidationError(

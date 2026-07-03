@@ -36,19 +36,33 @@ from tracer.queries.trace_scanner import (
     fetch_trace_data,
     filter_already_scanned,
     get_scan_config,
+    mark_traces_failed,
     write_scan_results,
 )
 from tracer.types.scan_types import ClusteringSummary, SuccessTraceMatch
 
 logger = structlog.get_logger(__name__)
 
+# Scan + write in sub-chunks of this many traces so partial progress survives an
+# activity timeout (the scanner makes one LLM call per trace, serially).
+_SCAN_WRITE_CHUNK = 5
 
-def scan_and_write(trace_ids: List[str], project_id: str) -> List[ScanResult]:
+
+def scan_and_write(
+    trace_ids: List[str], project_id: str, mark_unresolved: bool = False
+) -> List[ScanResult]:
     """
     Full scan pipeline for a batch of traces.
 
     Returns list of ScanResults (including failed ones).
     Returns empty list if scanning is disabled or all traces filtered out.
+
+    ``mark_unresolved`` writes a terminal FAILED marker for requested traces that
+    resolve no spans. The sweep sets it — its candidates are CH-confirmed roots,
+    so an empty resolve is a real disagreement (deletion race) and the marker
+    stops that trace from pinning the watermark. The inline path leaves it off:
+    an as-yet-unreplicated trace may simply be lagging, and the sweep will pick
+    it up once it lands.
     """
     # Config
     config = get_scan_config(project_id)
@@ -70,16 +84,31 @@ def scan_and_write(trace_ids: List[str], project_id: str) -> List[ScanResult]:
 
     # Fetch
     traces_data = fetch_trace_data(trace_ids)
+
+    if mark_unresolved:
+        resolved = {td.trace_id for td in traces_data}
+        unresolved = [t for t in map(str, trace_ids) if t not in resolved]
+        if unresolved:
+            mark_traces_failed(unresolved, project_id, "scan: no span data resolved")
+
     if not traces_data:
         logger.warning("no_trace_data_found", trace_ids=trace_ids)
         return []
 
-    # Scan — convert TraceData → dicts for scanner (scanner expects TRAIL format)
+    # Scan + write in small sub-chunks so partial progress is persisted even if
+    # the surrounding activity hits its time limit mid-batch. Writing only after
+    # scanning the whole batch (the old behavior) meant a large/slow batch that
+    # exceeded the activity time_limit wrote NOTHING — silent data loss under
+    # high sampling/volume.
     scanner = TraceScanner()
-    results = scanner.scan_batch([t.to_dict() for t in traces_data])
+    results: List[ScanResult] = []
+    written = 0
+    for i in range(0, len(traces_data), _SCAN_WRITE_CHUNK):
+        chunk = traces_data[i : i + _SCAN_WRITE_CHUNK]
+        chunk_results = scanner.scan_batch([t.to_dict() for t in chunk])
+        written += write_scan_results(chunk_results, project_id, config.scan_version)
+        results.extend(chunk_results)
 
-    # Write
-    written = write_scan_results(results, project_id, config.scan_version)
     logger.info(
         "scan_pipeline_completed",
         traces_scanned=len(results),

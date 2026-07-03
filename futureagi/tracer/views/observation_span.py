@@ -284,6 +284,60 @@ def _project_workspace_scope_q(request, project_prefix="project__"):
     return Q(**{workspace_field: workspace})
 
 
+def allowed_root_spans_for_request(
+    trace_ids: list[str],
+    *,
+    organization,
+    project_scope_q,
+) -> dict[str, str]:
+    """Resolve ``{trace_id: root_span_id}`` for *trace_ids*, returning only traces
+    whose owning project is org/workspace-accessible. Collector traces have no PG
+    ``Trace`` row, so the project_id is learned from CH and re-checked against the
+    PG ``Project`` authority. FAIL CLOSED: an untenanted / cross-org trace is dropped
+    (no key) — same response shape as before.
+    """
+    if not trace_ids:
+        return {}
+
+    from tracer.services.clickhouse.v2 import get_reader
+
+    with get_reader() as reader:
+        ch_spans = reader.list_by_trace_ids([str(tid) for tid in trace_ids])
+
+    # Root spans only (CH stores parent_span_id as a non-nullable String; root
+    # spans carry ""). Collect the candidate project_ids to verify against PG.
+    root_spans = [s for s in ch_spans if not s.parent_span_id]
+    candidate_project_ids = {
+        str(s.project_id) for s in root_spans if s.project_id
+    }
+    if not candidate_project_ids:
+        return {}
+
+    allowed_project_ids = {
+        str(pid)
+        for pid in Project.objects.filter(
+            project_scope_q,
+            id__in=candidate_project_ids,
+            organization=organization,
+        ).values_list("id", flat=True)
+    }
+    if not allowed_project_ids:
+        return {}
+
+    result: dict[str, str] = {}
+    for span in root_spans:
+        pid = str(span.project_id) if span.project_id else None
+        if pid is None or pid not in allowed_project_ids:
+            # FAIL CLOSED: untenanted or cross-org span — never returned.
+            continue
+        tid = str(span.trace_id)
+        # list_by_trace_ids orders by (trace_id, start_time, id) so the first
+        # parentless span per trace wins.
+        if tid not in result:
+            result[tid] = str(span.id)
+    return result
+
+
 class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -835,43 +889,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             if not trace_ids:
                 return self._gm.bad_request("trace_ids is required")
 
-            # Tenant gate via PG (CH spans don't carry org_id filterability).
-            # Reduce the caller-supplied set to only those traces visible to
-            # the request org/workspace.
+            # Collector traces have no PG ``Trace`` row; the gate resolves the root
+            # span + tenant from CH/PG-Project instead (fail closed). See selector.
             org = _get_request_organization(request)
-            allowed_trace_ids = list(
-                Trace.objects.filter(
-                    _project_workspace_scope_q(request),
-                    id__in=trace_ids,
-                    project__organization=org,
-                ).values_list("id", flat=True)
+            result = allowed_root_spans_for_request(
+                trace_ids,
+                organization=org,
+                project_scope_q=_project_workspace_scope_q(request, project_prefix=""),
             )
-            if not allowed_trace_ids:
-                return self._gm.success_response({})
-
-            # Read root spans from CH and pick the first parentless span per
-            # trace_id (mirrors the pattern in feed.py::_get_root_spans_batch
-            # committed in 50561eb5c).
-            from tracer.services.clickhouse.v2 import get_reader
-
-            with get_reader() as reader:
-                ch_spans = reader.list_by_trace_ids(
-                    [str(tid) for tid in allowed_trace_ids]
-                )
-
-            result: dict[str, str] = {}
-            for span in ch_spans:
-                # CH stores parent_span_id as a non-nullable String; root
-                # spans use "" (empty). list_by_trace_ids orders by
-                # (trace_id, start_time, id) so the first parentless span
-                # per trace wins.
-                if span.parent_span_id:
-                    continue
-                tid = str(span.trace_id)
-                if tid not in result:
-                    result[tid] = str(span.id)
             return self._gm.success_response(result)
         except Exception as e:
+            # fail closed: any CH/PG error returns no data, never a partial leak
             return self._gm.bad_request(f"Error fetching root spans: {str(e)}")
 
     @action(detail=False, methods=["post"])
@@ -1288,14 +1316,31 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         try:
             validated_data = request.validated_query_data
 
-            project_id = str(validated_data["project_id"])
-
-            # Tenant gate via PG (Project + organization filter).
-            Project.objects.get(
-                _project_workspace_scope_q(self.request, project_prefix=""),
-                id=project_id,
-                organization=_get_request_organization(request),
+            project_id = (
+                str(validated_data["project_id"])
+                if validated_data.get("project_id")
+                else None
             )
+            org = _get_request_organization(request)
+
+            org_project_ids = None
+            if project_id:
+                try:
+                    Project.objects.get(
+                        _project_workspace_scope_q(self.request, project_prefix=""),
+                        id=project_id,
+                        organization=org,
+                    )
+                except Project.DoesNotExist:
+                    return self._gm.bad_request("Project not found or access denied")
+            else:
+                org_project_ids = list(
+                    Project.objects.filter(
+                        _project_workspace_scope_q(self.request, project_prefix=""),
+                        organization=org,
+                        deleted=False,
+                    ).values_list("id", flat=True)
+                )
 
             # ClickHouse dispatch
             from tracer.services.clickhouse.query_service import (
@@ -1312,7 +1357,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # Postgres path, which masked CH failures as "0 rows".
             analytics = AnalyticsQueryService()
             return self._list_spans_clickhouse(
-                request, project_id, validated_data, analytics
+                request,
+                project_id,
+                validated_data,
+                analytics,
+                org_project_ids=org_project_ids,
+                org=org,
             )
 
         except Exception as e:
@@ -1321,7 +1371,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"error fetching the spans list of observe {str(e)}"
             )
 
-    def _list_spans_clickhouse(self, request, project_id, validated_data, analytics):
+    def _list_spans_clickhouse(
+        self,
+        request,
+        project_id,
+        validated_data,
+        analytics,
+        org_project_ids=None,
+        org=None,
+    ):
         """List spans using ClickHouse backend.
 
         Builder class is resolved via the v1↔v2 dispatch — set
@@ -1333,6 +1391,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
 
         BuilderCls = get_query_builder_class("SPAN_LIST")  # noqa: N806
+
+        org_scope = bool(org_project_ids)
+        if org is None:
+            org = _get_request_organization(request)
         # The v2 builder is a subclass of the v1 builder, so the pivot
         # helpers below (called as classmethods on the v1 name) work for
         # both — keep the v1 import for those static calls.
@@ -1371,24 +1433,39 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
-        # Get eval config IDs from CH (fast) instead of PG EvalLogger scan,
-        # via the shared service selector (same lookup trace.py uses).
+        # Get eval config IDs. Single-project uses the fast CH dict-lookup;
+        # org-scoped falls back to a PG EvalLogger scan.
         eval_config_ids = []
-        ch_ids = analytics.get_eval_config_ids_with_data_ch(
-            str(project_id), timeout_ms=30000
-        )
-        if ch_ids:
+        if org_scope:
+            _eval_ids = (
+                EvalLogger.objects.filter(
+                    observation_span__project_id__in=org_project_ids
+                )
+                .values("custom_eval_config_id")
+                .distinct()
+            )
             eval_configs = CustomEvalConfig.objects.filter(
-                id__in=ch_ids, deleted=False
+                id__in=_eval_ids, deleted=False
             ).select_related("eval_template")
             eval_config_ids = [str(c.id) for c in eval_configs]
         else:
-            eval_configs = []
+            ch_ids = analytics.get_eval_config_ids_with_data_ch(
+                str(project_id), timeout_ms=30000
+            )
+            if ch_ids:
+                eval_configs = CustomEvalConfig.objects.filter(
+                    id__in=ch_ids, deleted=False
+                ).select_related("eval_template")
+                eval_config_ids = [str(c.id) for c in eval_configs]
+            else:
+                eval_configs = []
 
         # Labels can be project-local or org/shared labels that are referenced
         # by span scores. Use the score-backed helper so span columns and
         # annotation filters match the actual data returned from ClickHouse.
-        annotation_labels = get_annotation_labels_for_project(project_id)
+        annotation_labels = get_annotation_labels_for_project(
+            project_id, project_ids=org_project_ids if org_scope else None
+        )
         annotation_label_ids = [str(lbl.id) for lbl in annotation_labels]
         label_types = {str(lbl.id): lbl.type for lbl in annotation_labels}
 
@@ -1396,7 +1473,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # filter in `filters` (resolved via the remap-aware `end_users` path
         # above), so the builder's bespoke single-id end_user path is unused here.
         builder = BuilderCls(
-            project_id=str(project_id),
+            project_id=None if org_scope else str(project_id),
+            project_ids=[str(p) for p in org_project_ids] if org_scope else None,
             filters=filters,
             page_number=page_number,
             page_size=page_size,
