@@ -104,6 +104,12 @@ export const yellow = {
   o30: "#E6B8004D",
 };
 
+export const amber = {
+  500: "#EAB308",
+  600: "#CA8A04",
+  700: "#A16207",
+};
+
 export const purple = {
   50: "#ECE8FF",
   100: "#D7D0FF",
@@ -267,6 +273,7 @@ const base = {
   action,
   cyan,
   yellow,
+  amber,
   // New Colours
   purple,
   pink,
