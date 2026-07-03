@@ -622,3 +622,29 @@ class TestImagesDataTypeDetection:
         result = determine_data_type(column)
         # Should not be IMAGES since not all values have comma-separated multiple images
         assert result != DataTypeChoices.IMAGES.value
+
+
+class TestExtensionlessImageUrlDetection:
+    """Regression tests for TH-6207: image URLs without a file extension."""
+
+    def test_unsplash_style_urls_detected_as_image(self):
+        """Extensionless Unsplash CDN URLs should be detected as IMAGE, not TEXT."""
+        column = pd.Series(
+            [
+                "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=800",
+                "https://images.unsplash.com/photo-1503376780353-7e6692767b70?w=800",
+            ]
+        )
+        result = determine_data_type(column)
+        assert result == DataTypeChoices.IMAGE.value
+
+    def test_extensionless_photo_path_detected_as_image(self):
+        """A generic host serving a '/photo-<id>' path should be detected as IMAGE."""
+        column = pd.Series(
+            [
+                "https://cdn.example.com/photo-abc123",
+                "https://cdn.example.com/photo-def456",
+            ]
+        )
+        result = determine_data_type(column)
+        assert result == DataTypeChoices.IMAGE.value
