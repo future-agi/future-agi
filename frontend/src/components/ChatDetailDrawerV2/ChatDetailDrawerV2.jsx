@@ -71,8 +71,13 @@ const ChatDetailDrawerV2 = ({
   const { data: savedViewsData } = useGetSavedViews(projectId);
   const { mutate: deleteSavedView } = useDeleteSavedView(projectId);
   const { mutate: reorderSavedViews } = useReorderSavedViews(projectId);
+  // Sort by stored position so the saved tab order is restored on reload
+  // (the list API doesn't guarantee position order).
   const customViews = useMemo(
-    () => savedViewsData?.custom_views || [],
+    () =>
+      [...(savedViewsData?.custom_views || [])].sort(
+        (a, b) => (a.position ?? 0) - (b.position ?? 0),
+      ),
     [savedViewsData?.custom_views],
   );
 
@@ -85,6 +90,7 @@ const ChatDetailDrawerV2 = ({
         label: "Chat",
         icon: "mdi:message-text-outline",
         isDefault: true,
+        visibility: "project",
       },
     ];
     customViews
@@ -107,6 +113,7 @@ const ChatDetailDrawerV2 = ({
         icon: "mdi:creation",
         isDefault: false,
         tabType: "imagine",
+        visibility: "personal",
       });
     }
     return tabs;
@@ -145,19 +152,17 @@ const ChatDetailDrawerV2 = ({
 
   const handleReorderTabs = useCallback(
     (orderedIds) => {
-      const imagineIdSet = new Set(orderedIds);
-      const imaginePosById = Object.fromEntries(
-        orderedIds.map((id, i) => [id, i]),
-      );
-      const nonImagine = customViews.filter((v) => !imagineIdSet.has(v.id));
-      const merged = [
-        ...nonImagine.map((v, i) => ({ id: v.id, position: i })),
-        ...orderedIds.map((id) => ({
-          id,
-          position: nonImagine.length + imaginePosById[id],
-        })),
-      ];
-      reorderSavedViews({ project_id: projectId, order: merged });
+      // Only imagine views reorder here. Reassign just the position slots
+      // those views already occupy (in the new order) and leave every other
+      // view's stored position untouched, so trace views in ObserveTabBar
+      // keep their order.
+      const orderedSet = new Set(orderedIds);
+      const slots = customViews
+        .filter((v) => orderedSet.has(v.id))
+        .map((v) => v.position)
+        .sort((a, b) => (a ?? 0) - (b ?? 0));
+      const order = orderedIds.map((id, i) => ({ id, position: slots[i] ?? i }));
+      reorderSavedViews({ project_id: projectId, order });
     },
     [customViews, projectId, reorderSavedViews],
   );

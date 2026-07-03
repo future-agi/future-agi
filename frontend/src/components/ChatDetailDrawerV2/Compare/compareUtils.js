@@ -59,29 +59,6 @@ export const computeDiff = (textA, textB, side = null) => {
 };
 
 /**
- * Count total removals / additions across an already-matched
- * conversation list (the shape `matchedConversations` from
- * `ChatCompareTranscript`: `[{ baseline, replayed }, …]`).
- */
-export const countDiffs = (matchedConversations) => {
-  let removals = 0;
-  let additions = 0;
-
-  for (const match of matchedConversations) {
-    const baselineContent = match.baseline?.content || "";
-    const replayedContent = match.replayed?.content || "";
-    if (!baselineContent && !replayedContent) continue;
-
-    const diffA = computeDiff(baselineContent, replayedContent, "A");
-    const diffB = computeDiff(baselineContent, replayedContent, "B");
-    for (const part of diffA) if (part.removed) removals++;
-    for (const part of diffB) if (part.added) additions++;
-  }
-
-  return { removalsCount: removals, additionsCount: additions };
-};
-
-/**
  * Pair baseline + replay turns by index so the side-by-side view can
  * render them in lock-step. Missing turns on either side become `null`.
  *

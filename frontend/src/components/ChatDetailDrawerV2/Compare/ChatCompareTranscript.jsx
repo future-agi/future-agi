@@ -14,11 +14,7 @@ import {
   useTheme,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import {
-  computeDiff,
-  countDiffs,
-  matchConversationsByIndex,
-} from "./compareUtils";
+import { computeDiff, matchConversationsByIndex } from "./compareUtils";
 
 // Side-by-side baseline-vs-replay transcript with optional word-level diff.
 
@@ -107,10 +103,13 @@ DiffToken.propTypes = {
   side: PropTypes.oneOf(["A", "B"]).isRequired,
 };
 
-const renderDiff = (textA, textB, side, showDiff) => {
-  if (!showDiff) return side === "A" ? textA : textB;
-  const diff = computeDiff(textA, textB, side);
-  if (diff.length === 0) return side === "A" ? textA : textB;
+// Render one column from a pair whose diff was already computed (see the
+// `pairs` memo). Falls back to plain content when diffing is off or empty.
+const renderSide = (pair, side, showDiff) => {
+  const content = side === "A" ? pair.baselineContent : pair.replayedContent;
+  if (!showDiff) return content;
+  const diff = side === "A" ? pair.diffA : pair.diffB;
+  if (!diff || diff.length === 0) return content;
   return diff.map((part, i) => <DiffToken key={i} part={part} side={side} />);
 };
 
@@ -310,20 +309,47 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
     [data?.baselineSession, data?.replayedSession],
   );
 
+  // Compute each pair's word-diff once (only when diffing is on) and reuse it
+  // for the removal/addition counts and both render columns — no recompute.
+  const pairs = useMemo(
+    () =>
+      matchedConversations.map((m) => {
+        const baselineContent = m.baseline?.content || "";
+        const replayedContent = m.replayed?.content || "";
+        if (!showDiff) {
+          return { ...m, baselineContent, replayedContent, diffA: null, diffB: null };
+        }
+        return {
+          ...m,
+          baselineContent,
+          replayedContent,
+          diffA: computeDiff(baselineContent, replayedContent, "A"),
+          diffB: computeDiff(baselineContent, replayedContent, "B"),
+        };
+      }),
+    [matchedConversations, showDiff],
+  );
+
   const filteredPairs = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return matchedConversations;
-    return matchedConversations.filter((m) => {
-      const a = (m.baseline?.content || "").toLowerCase();
-      const b = (m.replayed?.content || "").toLowerCase();
-      return a.includes(q) || b.includes(q);
-    });
-  }, [matchedConversations, query]);
+    if (!q) return pairs;
+    return pairs.filter(
+      (m) =>
+        m.baselineContent.toLowerCase().includes(q) ||
+        m.replayedContent.toLowerCase().includes(q),
+    );
+  }, [pairs, query]);
 
   const { removalsCount, additionsCount } = useMemo(() => {
     if (!showDiff) return { removalsCount: 0, additionsCount: 0 };
-    return countDiffs(matchedConversations);
-  }, [matchedConversations, showDiff]);
+    let removals = 0;
+    let additions = 0;
+    for (const p of pairs) {
+      if (p.diffA) for (const part of p.diffA) if (part.removed) removals += 1;
+      if (p.diffB) for (const part of p.diffB) if (part.added) additions += 1;
+    }
+    return { removalsCount: removals, additionsCount: additions };
+  }, [pairs, showDiff]);
 
   if (isLoading) {
     return (
@@ -570,47 +596,33 @@ const ChatCompareTranscript = ({ data, isLoading }) => {
               </Typography>
             </Box>
           ) : (
-            filteredPairs.map((match, i) => {
-              const baselineContent = match.baseline?.content || "";
-              const replayedContent = match.replayed?.content || "";
-              return (
-                <Box
-                  key={match.baseline?.id || match.replayed?.id || `pair-${i}`}
-                  sx={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr",
-                    columnGap: 1,
-                    p: 1,
-                    borderBottom: "1px solid",
-                    borderColor: "divider",
-                    "&:last-of-type": { borderBottom: "none" },
-                  }}
-                >
-                  <TurnCell
-                    turn={match.baseline}
-                    colors={colors}
-                    content={renderDiff(
-                      baselineContent,
-                      replayedContent,
-                      "A",
-                      showDiff,
-                    )}
-                    isPlaceholder={!match.baseline}
-                  />
-                  <TurnCell
-                    turn={match.replayed}
-                    colors={colors}
-                    content={renderDiff(
-                      baselineContent,
-                      replayedContent,
-                      "B",
-                      showDiff,
-                    )}
-                    isPlaceholder={!match.replayed}
-                  />
-                </Box>
-              );
-            })
+            filteredPairs.map((match, i) => (
+              <Box
+                key={match.baseline?.id || match.replayed?.id || `pair-${i}`}
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  columnGap: 1,
+                  p: 1,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                  "&:last-of-type": { borderBottom: "none" },
+                }}
+              >
+                <TurnCell
+                  turn={match.baseline}
+                  colors={colors}
+                  content={renderSide(match, "A", showDiff)}
+                  isPlaceholder={!match.baseline}
+                />
+                <TurnCell
+                  turn={match.replayed}
+                  colors={colors}
+                  content={renderSide(match, "B", showDiff)}
+                  isPlaceholder={!match.replayed}
+                />
+              </Box>
+            ))
           )}
         </Box>
       </Box>

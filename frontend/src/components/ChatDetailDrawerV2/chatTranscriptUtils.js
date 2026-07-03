@@ -4,8 +4,10 @@
  * can be unit-tested and reused.
  */
 
-// The chat serializer puts the turn body in `messages[0].content`.
-export const getChatTurnContent = (turn) => turn?.messages?.[0]?.content ?? "";
+// Chat turns store text in `messages` as a list of plain strings (the chat
+// serializer emits `list[str]`), so the turn body is `messages[0]` — not
+// `messages[0].content` (that's the voice CallTranscript shape).
+export const getChatTurnContent = (turn) => turn?.messages?.[0] ?? "";
 
 // Each turn carries a single `created_at` timestamp; parse it once to epoch
 // milliseconds. `TranscriptView.enrichTurns` rebases the earliest value to 0,
