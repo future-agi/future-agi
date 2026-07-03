@@ -816,12 +816,8 @@ CLICKHOUSE_V2 = {
     "QUERY_TYPES_DISABLED":   os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
 }
 
-# dashboard_attr_rollup fast-path (latency-avg × covered-attribute breakdown).
-# Fail-closed: the dashboard only reads the rollup when the flag is ON and the
-# requested window starts at/after COVERED_SINCE (the backfilled-and-soaked
-# range). Off by default so a fresh deploy keeps the spans scan until ops runs
-# the rebuild command and sets the coverage date. COVERED_SINCE is a datetime
-# (or None); set it from CH25_DASHBOARD_ATTR_ROLLUP_COVERED_SINCE (ISO-8601).
+# Fail-closed: rollup routing requires both flag=on and window >= coverage date.
+# Set COVERED_SINCE (ISO-8601) after running rebuild_dashboard_attr_rollup.
 DASHBOARD_ATTR_ROLLUP_ENABLED = (
     os.getenv("DASHBOARD_ATTR_ROLLUP_ENABLED", "false").lower() == "true"
 )

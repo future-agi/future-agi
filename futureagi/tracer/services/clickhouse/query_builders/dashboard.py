@@ -40,7 +40,7 @@ def _sanitize_attr_key(key: str) -> str:
 
 
 def _snap_to_hour(dt: datetime) -> datetime:
-    """Floor a datetime to the top of its hour (ClickHouse ``toStartOfHour``)."""
+    """Truncate a datetime to the hour (ClickHouse ``toStartOfHour``)."""
     return dt.replace(minute=0, second=0, microsecond=0)
 
 
@@ -543,6 +543,29 @@ class DashboardQueryBuilder:
             start_date = start_date.replace(tzinfo=UTC)
         return start_date >= covered_since
 
+    def _should_use_rollup(
+        self,
+        metric_name: str,
+        aggregation: str,
+        single_bd: dict | None,
+        per_metric_filters: list[dict],
+        start_date: datetime,
+    ) -> bool:
+        """True only for the covered latency-breakdown shape on a v2 build with the
+        rollup enabled and the window inside coverage — fail-closed everywhere else."""
+        return (
+            self._attr_rollup_available
+            and metric_name == "latency"
+            and aggregation == "avg"
+            and self.granularity in _ROLLUP_GRANULARITIES
+            and single_bd is not None
+            and single_bd.get("type") == "custom_attribute"
+            and single_bd.get("name") in _ROLLUP_COVERED_ATTRS
+            and not per_metric_filters
+            and not self.global_filters
+            and self._attr_rollup_window_covered(start_date)
+        )
+
     def _build_system_metric_query(
         self,
         metric_name: str,
@@ -554,21 +577,11 @@ class DashboardQueryBuilder:
         # Normalize: saved widgets may have capitalized names (e.g. "Latency")
         metric_name = metric_name.lower() if metric_name else metric_name
 
-        # Covered latency-breakdown shape → the pre-aggregated rollup; any other
-        # shape (or v1 schema / flag off / window outside coverage) falls through
-        # to the spans scan (fail-closed).
+        # Covered latency-breakdown shape → the pre-aggregated rollup; anything
+        # else falls through to the spans scan (fail-closed, see _should_use_rollup).
         single_bd = self.breakdowns[0] if len(self.breakdowns) == 1 else None
-        if (
-            self._attr_rollup_available
-            and metric_name == "latency"
-            and aggregation == "avg"
-            and self.granularity in _ROLLUP_GRANULARITIES
-            and single_bd is not None
-            and single_bd.get("type") == "custom_attribute"
-            and single_bd.get("name") in _ROLLUP_COVERED_ATTRS
-            and not per_metric_filters
-            and not self.global_filters
-            and self._attr_rollup_window_covered(params["start_date"])
+        if self._should_use_rollup(
+            metric_name, aggregation, single_bd, per_metric_filters, params["start_date"]
         ):
             params = dict(params)
             params["attr_key"] = _sanitize_attr_key(single_bd["name"])

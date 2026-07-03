@@ -1,20 +1,9 @@
 """rebuild_dashboard_attr_rollup — reconcile the dashboard_attr_rollup aggregate.
 
-The MV (021_dashboard_attr_rollup.sql) bakes ``is_deleted = 0`` at INSERT time.
-AggregatingMergeTree never retracts, so a span soft-deleted AFTER its insert
-still counts in the rollup — it over-counts vs a raw ``spans FINAL`` read. This
-command is the reconciliation: TRUNCATE the rollup and re-aggregate from the
-current deduplicated spans (``FINAL``, ``is_deleted = 0``) using the SAME SELECT
-shape as the MV, so the rebuilt state matches a fresh raw breakdown.
-
-Idempotent — TRUNCATE then rebuild; a re-run lands the same rows. Run it on a
-schedule and before flipping DASHBOARD_ATTR_ROLLUP_ENABLED on a fresh deploy.
-
-CH target DB: ``get_v2_config()`` (env CH25_DATABASE / CH25_HOST … override).
-
-Operator UX:
-    python manage.py rebuild_dashboard_attr_rollup
-    python manage.py rebuild_dashboard_attr_rollup --dry-run     # print SQL, no writes
+Idempotent TRUNCATE + re-aggregate from ``spans FINAL`` (``is_deleted = 0``) using
+the MV's SELECT shape, so soft-deletes the AggregatingMergeTree can't retract are
+reconciled out. Run before enabling the rollup on a fresh deploy; ``--dry-run``
+prints the SQL without writing.
 """
 
 from __future__ import annotations

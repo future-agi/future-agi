@@ -1,25 +1,9 @@
 """Rollup-equals-raw integration tests for dashboard_attr_rollup.
 
-The numerical-equality guarantee Nikhil asked for: the pre-aggregated rollup
-fast-path must return the SAME per-(bucket, attr_value) average latency as the
-raw spans breakdown it replaces. The aggregate state, the MV, and CH's merge
-semantics can't be mocked meaningfully, so these run against a live CH 25.3
-(v2) instance and SKIP when it isn't reachable.
-
-Marker: ``integration`` (real-CH tier — same convention as
-``test_ch25_typed_json_roundtrip``; the repo's ``e2e`` tier mocks ClickHouse,
-which can't exercise AggregatingMergeTree). NOT runnable in a unit-only run.
-
-Run with:
-    pytest tracer/tests/test_dashboard_attr_rollup_integration.py -v -m integration
-
-Boundary cases (the three Nikhil named):
-- (a) backfill period   — a window starting before COVERED_SINCE FALLS BACK to
-                          the spans scan (never a partial rollup).
-- (b) partial window    — a non-hour-aligned request: the snapped rollup equals
-                          the raw over the snapped window.
-- (c) soft-delete       — soft-delete some spans, run the rebuild command,
-                          assert rollup == raw (deleted excluded).
+Assert the fast-path returns the SAME per-(bucket, attr_value) average as the raw
+spans breakdown across the three boundary cases (see the test names: backfill
+fall-back, partial-window snap, soft-delete rebuild). Marked ``integration``; runs
+against a live CH 25.3 (v2) and SKIPs when unreachable.
 """
 
 from __future__ import annotations
