@@ -474,14 +474,29 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ProviderChoices.VAPI.value
                 )
 
-        if provider_payload:
-            if provider_payload.get("recording"):
-                return provider_payload.get("recording")
+        recordings = None
+        if provider_payload and provider_payload.get("recording"):
+            recordings = provider_payload.get("recording")
+        elif VoiceServiceManager is not None:
+            vsm = VoiceServiceManager(system_voice_provider=ProviderChoices.VAPI)
+            recordings = vsm.get_recording_urls(provider_payload) or {}
 
-        if VoiceServiceManager is None:
-            return {}
-        vsm = VoiceServiceManager(system_voice_provider=ProviderChoices.VAPI)
-        return vsm.get_recording_urls(provider_payload) or {}
+        if isinstance(recordings, dict) and recordings:
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
+
+            provider = SpeakerRoleResolver.detect_provider(
+                getattr(obj, "provider_call_data", None)
+            )
+            is_outbound = SpeakerRoleResolver.detect_is_outbound(obj)
+            if SpeakerRoleResolver.is_simulator(
+                "assistant", provider=provider, is_outbound=is_outbound
+            ):
+                recordings = {
+                    **recordings,
+                    "assistant": recordings.get("customer"),
+                    "customer": recordings.get("assistant"),
+                }
+        return recordings or {}
 
     def get_provider(self, obj):
         """Return the provider that produced this call's stored provider payload.
@@ -630,11 +645,19 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             )
             call_metadata = getattr(obj, "call_metadata", None) or {}
             offset = call_metadata.get("recording_offset_ms", 0)
-            return CallTranscriptSerializer(
-                filtered_transcripts,
-                many=True,
-                context={"recording_offset_ms": offset},
-            ).data
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
+
+            return SpeakerRoleResolver.align_transcript_rows(
+                CallTranscriptSerializer(
+                    filtered_transcripts,
+                    many=True,
+                    context={"recording_offset_ms": offset},
+                ).data,
+                provider=SpeakerRoleResolver.detect_provider(
+                    getattr(obj, "provider_call_data", None)
+                ),
+                is_outbound=SpeakerRoleResolver.detect_is_outbound(obj),
+            )
         return []
 
     def get_response_time(self, obj):
@@ -1342,11 +1365,19 @@ class CallExecutionSerializer(serializers.ModelSerializer):
             )
             call_metadata = getattr(obj, "call_metadata", None) or {}
             offset = call_metadata.get("recording_offset_ms", 0)
-            return CallTranscriptSerializer(
-                filtered_transcripts,
-                many=True,
-                context={"recording_offset_ms": offset},
-            ).data
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
+
+            return SpeakerRoleResolver.align_transcript_rows(
+                CallTranscriptSerializer(
+                    filtered_transcripts,
+                    many=True,
+                    context={"recording_offset_ms": offset},
+                ).data,
+                provider=SpeakerRoleResolver.detect_provider(
+                    getattr(obj, "provider_call_data", None)
+                ),
+                is_outbound=SpeakerRoleResolver.detect_is_outbound(obj),
+            )
         return []
 
     def get_response_time_seconds(self, obj):
