@@ -336,7 +336,7 @@ services:
       resources:
         limits:
           cpus: "4.0"
-          memory: 8G
+          memory: 12G
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 10s
