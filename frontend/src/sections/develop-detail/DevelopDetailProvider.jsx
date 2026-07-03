@@ -16,13 +16,17 @@ const DevelopDetailProvider = ({ children }) => {
     refetchTable.current = refetchFunc;
   };
 
-  const refreshGrid = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["dataset-detail"] });
-    if (typeof refetchTable?.current === "function") {
-      refetchTable.current();
-    }
-    gridApi.current?.refreshServerSide();
-  }, [queryClient]);
+  const refreshGrid = useCallback(
+    (options) => {
+      const { purge } = options || {};
+      queryClient.invalidateQueries({ queryKey: ["dataset-detail"] });
+      if (typeof refetchTable?.current === "function") {
+        refetchTable.current();
+      }
+      gridApi.current?.refreshServerSide(purge ? { purge: true } : undefined);
+    },
+    [queryClient],
+  );
 
   const contextValue = useMemo(
     () => ({

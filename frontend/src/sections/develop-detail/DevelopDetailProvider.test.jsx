@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import React, { useRef, useCallback } from "react";
+import React, { useCallback } from "react";
 import PropTypes from "prop-types";
 import DevelopDetailProvider from "./DevelopDetailProvider";
 import { useDevelopDetailContext } from "./Context/DevelopDetailContext";
@@ -13,17 +13,13 @@ const queryClient = new QueryClient({
 function TestConsumer({ onReady }) {
   const { refreshGrid, setGridApi, setRefetchTable } =
     useDevelopDetailContext();
-  const gridApiRef = useRef(null);
-  const refetchRef = useRef(null);
 
   const handleSetApi = useCallback(() => {
-    gridApiRef.current = { refreshServerSide: onReady.mockRefresh };
-    setGridApi(gridApiRef);
+    setGridApi({ refreshServerSide: onReady.mockRefresh });
   }, [onReady.mockRefresh, setGridApi]);
 
   const handleSetRefetch = useCallback(() => {
-    refetchRef.current = onReady.mockRefetch;
-    setRefetchTable(refetchRef.current);
+    setRefetchTable(onReady.mockRefetch);
   }, [onReady.mockRefetch, setRefetchTable]);
 
   return (
@@ -45,6 +41,12 @@ function TestConsumer({ onReady }) {
         onClick={() => refreshGrid(undefined)}
       >
         refresh-undefined
+      </button>
+      <button
+        data-testid="call-refresh-purge"
+        onClick={() => refreshGrid({ purge: true })}
+      >
+        refresh-purge
       </button>
     </div>
   );
@@ -81,7 +83,7 @@ describe("DevelopDetailProvider", () => {
     renderWithProvider(onReady);
     fireEvent.click(screen.getByTestId("set-api"));
     fireEvent.click(screen.getByTestId("call-refresh"));
-    expect(onReady.mockRefresh).toHaveBeenCalledWith();
+    expect(onReady.mockRefresh).toHaveBeenCalledWith(undefined);
   });
 
   it("does not crash when refreshGrid is called with null", () => {
@@ -107,5 +109,12 @@ describe("DevelopDetailProvider", () => {
     fireEvent.click(screen.getByTestId("call-refresh"));
     expect(onReady.mockRefetch).toHaveBeenCalled();
     expect(onReady.mockRefresh).toHaveBeenCalled();
+  });
+
+  it("calls refreshServerSide with { purge: true } when purge option is passed", () => {
+    renderWithProvider(onReady);
+    fireEvent.click(screen.getByTestId("set-api"));
+    fireEvent.click(screen.getByTestId("call-refresh-purge"));
+    expect(onReady.mockRefresh).toHaveBeenCalledWith({ purge: true });
   });
 });
