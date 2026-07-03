@@ -32,6 +32,7 @@ from django.utils import timezone
 from temporalio import activity
 
 from simulate.models.test_execution import CallExecution
+from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.temporal.types.activities import (
     RunSimulateEvaluationsInput,
     RunSimulateEvaluationsOutput,
@@ -199,7 +200,6 @@ def _build_transcript_data(call_execution):
     Assembles transcript text from CallTranscript (VOICE) or ChatMessageModel (TEXT)
     records, and reads recording URLs from call_execution fields.
     """
-    from simulate.models import CallTranscript, ChatMessageModel
 
     transcript_data = {
         "transcript": "",
@@ -271,34 +271,27 @@ def _build_transcript_data(call_execution):
                             elif chat_message.role == "assistant":
                                 assistant_chat_transcript_text.append(message)
             else:
-                try:
-                    from ee.voice.utils.transcript_roles import SpeakerRoleResolver
-                except ImportError:
-                    SpeakerRoleResolver = None
-                    logger.warning(
-                        "speaker_role_resolver_unavailable_for_xl_transcript",
-                        call_execution_id=str(call_execution.id),
-                    )
-                else:
-                    provider = SpeakerRoleResolver.detect_provider(
-                        call_execution.provider_call_data
-                    )
-                    call_dir = (call_execution.call_metadata or {}).get(
-                        "call_direction", ""
-                    )
-                    is_outbound = str(call_dir).strip().lower() == "outbound"
+                from simulate.utils.speaker_roles import SpeakerRoleResolver
 
+                provider = SpeakerRoleResolver.detect_provider(
+                    call_execution.provider_call_data
+                )
+                call_dir = (call_execution.call_metadata or {}).get(
+                    "call_direction", ""
+                )
+                is_outbound = str(call_dir).strip().lower() == "outbound"
+                conversational_roles = SpeakerRoleResolver.get_conversational_roles()
                 for transcript in transcripts:
-                    if transcript.content.strip():
-                        if SpeakerRoleResolver is None:
-                            eval_role = transcript.speaker_role
-                        else:
-                            eval_role = SpeakerRoleResolver.get_eval_role_label(
-                                transcript.speaker_role,
-                                provider=provider,
-                                is_outbound=is_outbound,
-                            )
-                        transcript_text.append(f"{eval_role}: {transcript.content}")
+                    if not transcript.content.strip():
+                        continue
+                    if transcript.speaker_role not in conversational_roles:
+                        continue
+                    eval_role = SpeakerRoleResolver.get_eval_role_label(
+                        transcript.speaker_role,
+                        provider=provider,
+                        is_outbound=is_outbound,
+                    )
+                    transcript_text.append(f"{eval_role}: {transcript.content}")
 
             transcript_data["transcript"] = "\n".join(transcript_text)
             transcript_data["user_chat_transcript"] = "\n".join(
@@ -534,7 +527,7 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
     from model_hub.models.develop_dataset import Cell, Column
     from model_hub.tasks.user_evaluation import trigger_error_localization_for_simulate
     from model_hub.views.utils.evals import run_eval_func
-    from simulate.models import Scenarios, SimulateEvalConfig
+    from simulate.models import Scenarios
     from tfc.utils.error_codes import get_specific_error_message
 
     try:
@@ -800,27 +793,22 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             }
             call_execution.save(update_fields=["eval_outputs"])
 
-            # Trigger error localization if enabled
-            if eval_config.error_localizer and eval_output is not None:
-                try:
-                    eval_failed = False
-                    if isinstance(eval_output, bool):
-                        eval_failed = not eval_output
-                    elif isinstance(eval_output, int | float):
-                        eval_failed = eval_output < 0.8
-                    else:
-                        eval_failed = True
+            from model_hub.services.error_localizer_service import (
+                error_localizer_enabled,
+            )
 
-                    if eval_failed:
-                        trigger_error_localization_for_simulate(
-                            eval_template=eval_template,
-                            call_execution=call_execution,
-                            eval_config=eval_config,
-                            value=eval_output,
-                            mapping=updated_mapping,
-                            eval_explanation=eval_reason,
-                            log_id=None,
-                        )
+            el_enabled = error_localizer_enabled(eval_config)
+            if el_enabled and eval_output is not None:
+                try:
+                    trigger_error_localization_for_simulate(
+                        eval_template=eval_template,
+                        call_execution=call_execution,
+                        eval_config=eval_config,
+                        value=eval_output,
+                        mapping=updated_mapping,
+                        eval_explanation=eval_reason,
+                        log_id=None,
+                    )
                 except Exception as e:
                     logger.error(
                         f"Error triggering error localization for evaluation {eval_config.id}: {str(e)}"
@@ -1255,9 +1243,9 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
     from model_hub.models.choices import EvalOutputType
     from sdk.utils.helpers import _get_api_call_type
     from simulate.models import AgentDefinition
+    from tfc.constants.api_calls import APICallStatusChoices
     from tfc.utils.error_codes import get_specific_error_message
     from tracer.models.observability_provider import ProviderChoices
-    from tfc.constants.api_calls import APICallStatusChoices
     try:
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
     except ImportError:
@@ -1321,11 +1309,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     logger.warning("Could not import ee.agenthub.tool_eval_agent.adapters", exc_info=True)
                 return
 
-            customer_api_key = (
-                snapshot.get("api_key")
-                if snapshot and snapshot.get("api_key")
-                else None
-            )
+            customer_api_key = resolve_api_key_for_version(agent_version)
             customer_assistant_id = (
                 snapshot.get("assistant_id")
                 if snapshot and snapshot.get("assistant_id")
@@ -1573,7 +1557,8 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     try:
                         from ee.usage.utils.event_properties import llm_usage_properties
                     except ImportError:
-                        llm_usage_properties = lambda obj: {}
+                        def llm_usage_properties(obj):
+                            return {}
 
                     actual_cost = 0
                     if hasattr(agent, "llm") and agent.llm:

@@ -26,7 +26,13 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
@@ -41,6 +47,7 @@ import {
   getPickerOptionSearchText,
   getPickerOptionSecondaryLabel,
   getPickerOptionValue,
+  usesFreeTextValue,
 } from "./filterValuePickerUtils";
 import { ID_ONLY_FIELDS } from "./idFields";
 
@@ -99,6 +106,33 @@ export const getTraceFilterFields = (tab) => {
   if (tab === "spans")
     return [TRACE_ID_FIELD, SPAN_ID_FIELD, ...BASE_TRACE_FILTER_FIELDS];
   return BASE_TRACE_FILTER_FIELDS;
+};
+
+// Map a static trace field to a picker property. In spans view the root
+// "Trace Name" field is reused as "Span Name" — remap its id so the picker
+// fires a distinct span_name request instead of duplicating the name request.
+export const toStaticFilterProperty = (field, isSpansView = false) => {
+  if (isSpansView && field.value === "name") {
+    return {
+      id: "span_name",
+      name: "Span Name",
+      category: "system",
+      type: "string",
+      apiColType: "SYSTEM_METRIC",
+    };
+  }
+  return {
+    id: field.value,
+    name: field.label,
+    category: "system",
+    // Pinned so the eval-task wire encoding doesn't have to guess
+    // from `category` alone — without this every static field would
+    // round-trip through the chain with apiColType=undefined and
+    // get coerced to SPAN_ATTRIBUTE downstream.
+    apiColType: "SYSTEM_METRIC",
+    type: field.type === "enum" ? "string" : field.type,
+    ...(field.choices ? { choices: field.choices } : {}),
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -253,6 +287,40 @@ const normalizeFieldType = (rawType) => {
   if (BOOLEAN_TYPES.has(t)) return "boolean";
   if (ARRAY_TYPES.has(t)) return "array";
   return "string";
+};
+
+export const isValidNumericInput = (v) => {
+  if (v === "" || v === undefined || v === null) return true;
+  return /^-?\d*\.?\d*$/.test(String(v).trim());
+};
+
+// Empty values pass — handleApply already drops empty rows before submit,
+// so this only guards against partial inputs like "-" or "1.5.6" leaking through.
+export const isCompleteNumericValue = (v) => {
+  if (v === undefined || v === null) return true;
+  const str = String(v).trim();
+  if (str === "") return true;
+  if (!/^-?(\d+\.?\d*|\.\d+)$/.test(str)) return false;
+  return Number.isFinite(parseFloat(str));
+};
+
+const NUMERIC_HELPER_TEXT_PROPS = {
+  sx: {
+    fontSize: 10,
+    mx: 0.5,
+    mt: 0,
+    position: "absolute",
+    top: "100%",
+    left: 0,
+    lineHeight: 1.2,
+    whiteSpace: "nowrap",
+  },
+};
+
+const NUMERIC_TEXTFIELD_SX = {
+  flex: "1 1 80px",
+  minWidth: 0,
+  position: "relative",
 };
 
 const getOperators = (fieldType) => {
@@ -1012,9 +1080,6 @@ function ValuePicker({
           })()
         ) : (
           selectedValues.slice(0, 3).map((v) => {
-            // Resolve the display label from static choices or rendered
-            // options. Falls back to the raw value (e.g. plain strings
-            // without a label).
             const match = options.find((o) => {
               const ov = typeof o === "string" ? o : o.value;
               return ov === v;
@@ -1301,6 +1366,12 @@ function FilterRow({
       ? freeSoloValues(filter)
       : freeSoloValues;
 
+  const rowHasInvalidNumeric =
+    isNumber &&
+    (Array.isArray(filter.value)
+      ? filter.value.some((v) => !isValidNumericInput(v))
+      : !isValidNumericInput(filter.value));
+
   const handlePropertySelect = useCallback(
     (prop) => {
       // Preserve custom annotation types (categorical, thumbs, text) —
@@ -1483,6 +1554,10 @@ function FilterRow({
 
     if (isNumber) {
       if (currentOpDef?.range) {
+        const minVal = Array.isArray(filter.value) ? filter.value[0] ?? "" : "";
+        const maxVal = Array.isArray(filter.value) ? filter.value[1] ?? "" : "";
+        const minInvalid = !isValidNumericInput(minVal);
+        const maxInvalid = !isValidNumericInput(maxVal);
         return (
           <Stack
             direction="row"
@@ -1497,60 +1572,78 @@ function FilterRow({
           >
             <TextField
               size="small"
-              type="number"
+              type="text"
+              inputMode="decimal"
               placeholder="Min"
-              value={Array.isArray(filter.value) ? filter.value[0] ?? "" : ""}
+              value={minVal}
+              error={minInvalid}
+              helperText={minInvalid ? "Numbers only" : undefined}
               onChange={(e) => {
                 const cur = Array.isArray(filter.value)
                   ? [...filter.value]
                   : ["", ""];
-                cur[0] = e.target.value;
+                cur[0] = e.target.value.trim();
                 updateRow({ value: cur });
               }}
-              sx={{ flex: "1 1 80px", minWidth: 0 }}
+              sx={NUMERIC_TEXTFIELD_SX}
               inputProps={{
                 style: { fontSize: 12, height: 12, padding: "6px 8px" },
               }}
+              FormHelperTextProps={NUMERIC_HELPER_TEXT_PROPS}
             />
             <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
               and
             </Typography>
             <TextField
               size="small"
-              type="number"
+              type="text"
+              inputMode="decimal"
               placeholder="Max"
-              value={Array.isArray(filter.value) ? filter.value[1] ?? "" : ""}
+              value={maxVal}
+              error={maxInvalid}
+              helperText={maxInvalid ? "Numbers only" : undefined}
               onChange={(e) => {
                 const cur = Array.isArray(filter.value)
                   ? [...filter.value]
                   : ["", ""];
-                cur[1] = e.target.value;
+                cur[1] = e.target.value.trim();
                 updateRow({ value: cur });
               }}
-              sx={{ flex: "1 1 80px", minWidth: 0 }}
+              sx={NUMERIC_TEXTFIELD_SX}
               inputProps={{
                 style: { fontSize: 12, height: 12, padding: "6px 8px" },
               }}
+              FormHelperTextProps={NUMERIC_HELPER_TEXT_PROPS}
             />
           </Stack>
         );
       }
+      const invalid = !isValidNumericInput(filter.value);
       return (
         <TextField
           size="small"
-          type="number"
+          type="text"
+          inputMode="decimal"
           placeholder="Value"
           value={filter.value ?? ""}
-          onChange={(e) => updateRow({ value: e.target.value })}
-          sx={{ flex: "1 1 120px", minWidth: 0, maxWidth: "100%" }}
+          error={invalid}
+          helperText={invalid ? "Numbers only" : undefined}
+          onChange={(e) => updateRow({ value: e.target.value.trim() })}
+          sx={{
+            flex: "1 1 120px",
+            minWidth: 0,
+            maxWidth: "100%",
+            position: "relative",
+          }}
           inputProps={{
             style: { fontSize: 12, height: 12, padding: "6px 8px" },
           }}
+          FormHelperTextProps={NUMERIC_HELPER_TEXT_PROPS}
         />
       );
     }
 
-    if (filter.fieldType === "text") {
+    if (usesFreeTextValue(filter.fieldType, source)) {
       return (
         <TextField
           size="small"
@@ -1576,9 +1669,7 @@ function FilterRow({
         source={source}
         property={properties.find((p) => p.id === filter.field)}
         freeSoloValues={rowFreeSoloValues}
-        singleSelect={
-          ID_ONLY_FIELDS.has(filter.field) || SINGLE_VALUE_OPS.has(safeOperator)
-        }
+        singleSelect={SINGLE_VALUE_OPS.has(safeOperator)}
         onChange={(newVal) => updateRow({ value: newVal })}
       />
     );
@@ -1589,7 +1680,12 @@ function FilterRow({
       direction="row"
       alignItems="center"
       gap={0.5}
-      sx={{ width: "100%", minWidth: 0, flexWrap: "wrap" }}
+      sx={{
+        width: "100%",
+        minWidth: 0,
+        flexWrap: "wrap",
+        mb: rowHasInvalidNumeric ? 1.5 : 0,
+      }}
     >
       <CustomTooltip
         show={!!selectedProp?.name}
@@ -1722,29 +1818,9 @@ const TraceFilterPanel = ({
     // Start with static trace fields (trace_name, status, model, etc.) —
     // prepend trace_id / span_id when rendered inside the LLM Tracing
     // trace or span tab. In spans view, relabel "Trace Name" to "Span Name".
-    const staticProps = getTraceFilterFields(tab).map((f) => {
-      if (isSpansView && f.value === "name") {
-        return {
-          id: "name",
-          name: "Span Name",
-          category: "system",
-          type: "string",
-          apiColType: "SYSTEM_METRIC",
-        };
-      }
-      return {
-        id: f.value,
-        name: f.label,
-        category: "system",
-        // Pinned so the eval-task wire encoding doesn't have to guess
-        // from `category` alone — without this every static field would
-        // round-trip through the chain with apiColType=undefined and
-        // get coerced to SPAN_ATTRIBUTE downstream.
-        apiColType: "SYSTEM_METRIC",
-        type: f.type === "enum" ? "string" : f.type,
-        ...(f.choices ? { choices: f.choices } : {}),
-      };
-    });
+    const staticProps = getTraceFilterFields(tab).map((f) =>
+      toStaticFilterProperty(f, isSpansView),
+    );
     const knownIds = new Set(staticProps.map((p) => p.id));
     // Add dynamic properties not already covered by static fields
     const dynamicExtras = dynamicProperties.filter((p) => !knownIds.has(p.id));
@@ -1801,19 +1877,17 @@ const TraceFilterPanel = ({
   const [rows, setRows] = useState([{ ...DEFAULT_ROW }]);
 
   // Convert dashboard properties to QueryInput format (same IDs as dashboard API)
-  const queryFilterFields = useMemo(
-    () =>
-      properties.map((p) => ({
-        value: p.id,
-        label: p.name,
-        type: p.choices?.length ? "enum" : "string",
-        choices: p.choices,
-        panelType: p.type || "string",
-        category: p.category, // system, eval, annotation, attribute
-        apiColType: p.apiColType,
-      })),
-    [properties],
-  );
+  const queryFilterFields = useMemo(() => {
+    return properties.map((p) => ({
+      value: p.id,
+      label: p.name,
+      type: p.type || "string",
+      choices: p.choices,
+      panelType: p.type || "string",
+      category: p.category, // system, eval, annotation, attribute
+      apiColType: p.apiColType,
+    }));
+  }, [properties]);
   const queryFieldMap = useMemo(
     () => Object.fromEntries(queryFilterFields.map((f) => [f.value, f])),
     [queryFilterFields],
@@ -1883,9 +1957,14 @@ const TraceFilterPanel = ({
     }
   }, [open, currentFilters]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleQueryTokensChange = useCallback(
-    (tokens) => {
-      const converted = tokens.map((t) => {
+  const queryInputRef = useRef(null);
+
+  // Pure converter: query-input tokens → FilterRow shape. Extracted so
+  // handleApply can also run it directly against tokens that were just
+  // flushed from QueryInput, without waiting for the setRows state cycle.
+  const queryTokensToRows = useCallback(
+    (tokens) =>
+      tokens.map((t) => {
         const queryFieldDef = queryFieldMap[t.field];
         const prop = propertyById[t.field];
         return {
@@ -1898,17 +1977,48 @@ const TraceFilterPanel = ({
             (queryFieldDef?.type === "enum" ? "categorical" : "string"),
           apiColType: prop?.apiColType || queryFieldDef?.apiColType,
           operator: QUERY_TO_BASIC_OP[t.operator] || t.operator,
-          value: Array.isArray(t.value) ? t.value : [t.value],
+          value: NO_VALUE_OPS.has(t.operator)
+            ? ""
+            : Array.isArray(t.value)
+              ? t.value
+              : [t.value],
         };
-      });
+      }),
+    [propertyById, queryFieldMap],
+  );
+
+  const handleQueryTokensChange = useCallback(
+    (tokens) => {
+      const converted = queryTokensToRows(tokens);
       setRows(converted.length ? converted : [{ ...effectiveDefaultRow }]);
     },
-    [effectiveDefaultRow, propertyById, queryFieldMap],
+    [effectiveDefaultRow, queryTokensToRows],
+  );
+
+  const queryGetOperators = useCallback(
+    (type, field) =>
+      getOperatorsForFilter({ field, fieldType: type }).map((op) =>
+        NO_VALUE_OPS.has(op.value) ? { ...op, noValue: true } : op,
+      ),
+    [],
   );
 
   const handleChange = useCallback((idx, updated) => {
     setRows((prev) => prev.map((r, i) => (i === idx ? updated : r)));
   }, []);
+
+  const hasInvalidNumericRow = rows.some((r) => {
+    if (normalizeFieldType(r.fieldType) !== "number") return false;
+    if (Array.isArray(r.value)) {
+      if (r.value.some((v) => !isCompleteNumericValue(v))) return true;
+      // Half-filled range: handleApply would silently drop it, so gate Apply.
+      const filledSides = r.value.filter(
+        (v) => String(v ?? "").trim() !== "",
+      ).length;
+      return filledSides === 1;
+    }
+    return !isCompleteNumericValue(r.value);
+  });
 
   const handleRemove = useCallback(
     (idx) => {
@@ -1921,7 +2031,14 @@ const TraceFilterPanel = ({
   );
 
   const handleApply = useCallback(() => {
-    const valid = rows.map(normalizeFilterRowOperator).filter((r) => {
+    // Commit any complete partial in the Query tab so Apply doesn't drop
+    // a `field op value` the user typed but never pressed Enter on.
+    // `flushPartial` returns the new tokens only when it actually
+    // committed; null otherwise.
+    const flushed = queryInputRef.current?.flushPartial?.();
+    const effectiveRows = flushed ? queryTokensToRows(flushed) : rows;
+
+    const valid = effectiveRows.map(normalizeFilterRowOperator).filter((r) => {
       if (!r.field) return false;
       if (NO_VALUE_OPS.has(r.operator)) return true;
       const ops = getOperatorsForFilter(r);
@@ -1933,7 +2050,7 @@ const TraceFilterPanel = ({
     });
     onApply(valid.length ? valid : null);
     onClose();
-  }, [rows, onApply, onClose]);
+  }, [rows, queryTokensToRows, onApply, onClose]);
 
   const handleClear = useCallback(() => {
     setRows([{ ...effectiveDefaultRow }]);
@@ -1967,6 +2084,14 @@ const TraceFilterPanel = ({
       onClose();
     }
   }, [aiQuery, aiParseQuery, observeId, source, properties, onApply, onClose]);
+
+  const handlePrimaryApply = useCallback(() => {
+    if (showAi && aiQuery.trim()) {
+      handleAiFilter();
+      return;
+    }
+    handleApply();
+  }, [showAi, aiQuery, handleAiFilter, handleApply]);
 
   return (
     <Popover
@@ -2133,19 +2258,31 @@ const TraceFilterPanel = ({
                 >
                   Clear all
                 </Button>
-                <Button
+                <CustomTooltip
+                  show={hasInvalidNumericRow}
+                  arrow
                   size="small"
-                  variant="contained"
-                  data-filter-panel-action="apply"
-                  onClick={handleApply}
-                  sx={{
-                    textTransform: "none",
-                    fontSize: 12,
-                    px: 2,
-                  }}
+                  type="black"
+                  placement="top"
+                  title="Fix invalid number values"
                 >
-                  Apply
-                </Button>
+                  <span>
+                    <Button
+                      size="small"
+                      variant="contained"
+                      data-filter-panel-action="apply"
+                      onClick={handlePrimaryApply}
+                      disabled={aiLoading || hasInvalidNumericRow}
+                      sx={{
+                        textTransform: "none",
+                        fontSize: 12,
+                        px: 2,
+                      }}
+                    >
+                      Apply
+                    </Button>
+                  </span>
+                </CustomTooltip>
               </Stack>
             </Stack>
           </Box>
@@ -2155,27 +2292,28 @@ const TraceFilterPanel = ({
         {showQueryTab && activeTab === "query" && (
           <Box sx={{ px: 0.5, pt: 0.25 }}>
             <QueryInput
+              ref={queryInputRef}
               filterFields={queryFilterFields}
               fieldMap={queryFieldMap}
+              getOperators={queryGetOperators}
               onApply={handleQueryTokensChange}
               initialTokens={rows
-                .filter(
-                  (r) =>
-                    r.field &&
-                    (Array.isArray(r.value)
-                      ? r.value.length > 0
-                      : r.value !== "" &&
+                .filter((r) => {
+                  if (!r.field) return false;
+                  if (NO_VALUE_OPS.has(normalizeFilterRowOperator(r).operator))
+                    return true;
+                  return Array.isArray(r.value)
+                    ? r.value.length > 0
+                    : r.value !== "" &&
                         r.value !== undefined &&
-                        r.value !== null),
-                )
+                        r.value !== null;
+                })
                 .map((r) => ({
                   field: r.field,
                   operator:
                     BASIC_TO_QUERY_OP[normalizeFilterRowOperator(r).operator] ||
                     normalizeFilterRowOperator(r).operator,
-                  value: Array.isArray(r.value)
-                    ? r.value.join(", ")
-                    : r.value || "",
+                  value: Array.isArray(r.value) ? r.value : r.value || "",
                 }))}
               valueOptions={queryValueOptions}
               valueLoading={queryValuesLoading}

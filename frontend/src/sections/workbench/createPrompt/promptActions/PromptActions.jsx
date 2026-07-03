@@ -470,6 +470,9 @@ const PromptActions = () => {
               </ShowComponent>
 
               {(() => {
+                if (!isSingleVersion) {
+                  return null;
+                }
                 const versionLabels =
                   baseVersion?.labels?.length > 0
                     ? baseVersion.labels

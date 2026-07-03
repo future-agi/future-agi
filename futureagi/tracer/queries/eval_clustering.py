@@ -10,18 +10,17 @@ within the same eval, never across different evals.
 
 import hashlib
 import re
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
 import structlog
-from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
 from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
 from agentic_eval.core.embeddings.embedding_manager import model_manager
-from tracer.models.observation_span import EvalLogger
+from tracer.models.observation_span import EvalLogger, EvalTargetType
 from tracer.models.trace_error_analysis import (
     ClusterSource,
     ErrorClusterTraces,
@@ -43,6 +42,55 @@ _CLUSTER_WINDOW_DAYS = 60
 # ---------------------------------------------------------------------------
 # Fetch unclustered failing eval results
 # ---------------------------------------------------------------------------
+
+
+def _project_session_eval_ids(
+    project_id: str, since: datetime, base_filters: Q
+) -> set[str]:
+    """``trace_session_id``s of session-target eval rows that belong to
+    ``project_id`` — resolved through ClickHouse, not a PG FK join.
+
+    Session evals anchor to a ``trace_session`` whose FK is unenforced
+    (``db_constraint=False``) and whose PG ``TraceSession`` row is absent for
+    CH-only sessions, so ``Q(trace_session__project_id=...)`` INNER-JOINs to
+    nothing and silently drops every CH-only session eval. Session membership
+    is a span fact, so we read it from CH instead: the candidate eval rows'
+    session ids intersected with the project's live session ids, scoped through
+    ``distinct_session_ids_with_filters`` (which resolves new→old internally so
+    a candidate id matches regardless of cutover side).
+
+    For CH-only (net-new) sessions — the case this fix targets — no id-remap row
+    exists, so the candidate id and the id CH returns are byte-identical and a
+    plain set intersection is exact. Returns the subset of candidate ids that
+    belong to the project, in the id space the eval rows store.
+
+    A CH read failure propagates rather than fail-open: an empty set would
+    wrongly admit no session evals, and the clustering activity is idempotently
+    retried, so starving one run is safer than silently mis-scoping.
+    """
+    from tracer.services.clickhouse.v2 import get_reader
+
+    candidate_ids = list(
+        EvalLogger.objects.filter(
+            base_filters,
+            target_type=EvalTargetType.SESSION,
+            trace_session_id__isnull=False,
+            created_at__gte=since,
+        )
+        .values_list("trace_session_id", flat=True)
+        .distinct()
+    )
+    if not candidate_ids:
+        return set()
+
+    candidate_strs = {str(c) for c in candidate_ids}
+    with get_reader() as reader:
+        in_project = set(
+            reader.distinct_session_ids_with_filters(
+                project_id=str(project_id), session_id=list(candidate_strs)
+            )
+        )
+    return candidate_strs & in_project
 
 
 def get_unclustered_eval_results(
@@ -68,24 +116,35 @@ def get_unclustered_eval_results(
         ).values_list("eval_logger_id", flat=True)
     )
 
-    # PR3: target_type='span' keeps span-level and trace-level results from
-    # being mixed in the same cluster. Trace evals are different semantic
-    # units (one per trace, not per span) and clustering them with span-level
-    # error themes would muddy the cluster centroids. Session evals have no
-    # trace FK and would 404 the trace__project_id filter anyway.
+    since = timezone.now() - timedelta(days=_CLUSTER_WINDOW_DAYS)
+    # Failure + explanation filters shared by both the span/trace branch and the
+    # session-membership pre-pass, so a candidate session id can't enter the CH
+    # set unless it would also survive the main filter.
+    base_filters = (
+        Q(custom_eval_config__isnull=False)
+        & (Q(output_bool=False) | Q(output_float__lt=1.0))
+        & ~Q(eval_explanation__isnull=True)
+        & ~Q(eval_explanation="")
+    )
+
+    # All three eval targets cluster, but never into the SAME cluster — the
+    # centroid family is keyed by (target_type, eval_name) downstream, so
+    # span / trace / session results form separate, homogeneous clusters. The
+    # targets reach their project two different ways: span/trace results anchor
+    # to a trace (scoped by the PG ``trace__project_id`` FK), session results
+    # anchor to a ``trace_session`` whose project we resolve through CH (the FK
+    # is unenforced and absent for CH-only sessions — see
+    # ``_project_session_eval_ids``).
+    session_eval_ids = _project_session_eval_ids(project_id, since, base_filters)
+
     evals = (
         EvalLogger.objects.filter(
-            trace__project_id=project_id,
-            target_type="span",
-            custom_eval_config__isnull=False,
-            created_at__gte=timezone.now() - timedelta(days=_CLUSTER_WINDOW_DAYS),
+            base_filters,
+            Q(trace__project_id=project_id)
+            | Q(trace_session_id__in=session_eval_ids),
+            created_at__gte=since,
         )
-        .filter(
-            Q(output_bool=False) | Q(output_float__lt=1.0),
-        )
-        .exclude(eval_explanation__isnull=True)
-        .exclude(eval_explanation="")
-        .select_related("custom_eval_config", "trace")
+        .select_related("custom_eval_config", "trace", "trace_session")
         .order_by("created_at")
     )
 
@@ -98,11 +157,15 @@ def get_unclustered_eval_results(
         results.append(
             ClusterableEvalResult(
                 eval_logger_id=str(ev.id),
-                trace_id=str(ev.trace_id),
                 project_id=project_id,
                 eval_name=ev.custom_eval_config.name,
                 eval_config_id=str(ev.custom_eval_config_id),
                 explanation=ev.eval_explanation,
+                target_type=ev.target_type,
+                trace_id=str(ev.trace_id) if ev.trace_id else None,
+                session_id=(
+                    str(ev.trace_session_id) if ev.trace_session_id else None
+                ),
                 score=ev.output_float,
             )
         )
@@ -188,9 +251,18 @@ def _ensure_centroid_table(db: ClickHouseVectorDB) -> None:
     )
 
 
-def _eval_family(eval_name: str) -> str:
-    """Family key for eval centroids — prefixed to avoid collision with scanner families."""
-    return f"eval:{eval_name}"
+def _eval_family(eval_name: str, target_type: str = "span") -> str:
+    """Family key for eval centroids — keeps the three targets (and scanner)
+    in separate centroid spaces.
+
+    span keeps the legacy unprefixed ``eval:{name}`` key on purpose: every
+    centroid created before trace/session targets existed was span-level, so
+    leaving span unprefixed means those existing centroids keep matching with
+    no ClickHouse backfill. trace/session get explicit prefixes.
+    """
+    if target_type == "span":
+        return f"eval:{eval_name}"
+    return f"eval:{target_type}:{eval_name}"
 
 
 def _update_centroid(
@@ -206,17 +278,19 @@ def find_nearest_centroid(
     embedding: List[float],
     project_id: str,
     eval_name: str,
+    target_type: str = "span",
 ) -> Optional[Tuple[str, float]]:
     """
     Find nearest cluster centroid for the given eval within threshold.
 
-    Returns (cluster_id, distance) or None if no match.
+    Scoped to the (target_type, eval_name) family so a span result can never
+    match a trace/session cluster. Returns (cluster_id, distance) or None.
     """
     db = ClickHouseVectorDB()
     try:
         _ensure_centroid_table(db)
         vector_str = "[" + ",".join(map(str, embedding)) + "]"
-        family = _eval_family(eval_name)
+        family = _eval_family(eval_name, target_type)
         rows = db.client.execute(
             f"""
             SELECT
@@ -294,25 +368,10 @@ def _eval_cluster_meta(eval_name: str, reasoning: str) -> EvalClusterMeta:
     degrades independently; metadata is best-effort and must never break
     cluster creation.
     """
+    from tracer.ee_boundary import generate_eval_cluster_meta
+
     fallback = EvalClusterMeta(title=_extract_title(reasoning))
-    try:
-        from ee.agenthub.trace_scanner.eval_cluster_title import (
-            generate_eval_cluster_meta,
-        )
-    except ImportError:
-        if settings.DEBUG:
-            logger.warning(
-                "Could not import ee.agenthub.trace_scanner.eval_cluster_title",
-                exc_info=True,
-            )
-        return fallback
-
-    try:
-        meta = generate_eval_cluster_meta(eval_name, reasoning)
-    except Exception:
-        logger.warning("eval_cluster_meta_llm_failed", exc_info=True)
-        meta = None
-
+    meta = generate_eval_cluster_meta(eval_name, reasoning)
     if not meta:
         return fallback
     return EvalClusterMeta(
@@ -337,7 +396,10 @@ def create_cluster(
 
     Returns the new cluster_id.
     """
-    base = f"{project_id}|eval|{result.eval_name}|{result.explanation[:100]}"
+    base = (
+        f"{project_id}|eval|{result.target_type}|{result.eval_name}"
+        f"|{result.explanation[:100]}"
+    )
     h = hashlib.md5(base.encode(), usedforsecurity=False).hexdigest()[:8]
     cluster_id = f"E-{h.upper()}"
 
@@ -363,6 +425,7 @@ def create_cluster(
                 project_id=project_id,
                 cluster_id=cluster_id,
                 source=ClusterSource.EVAL,
+                eval_target_type=result.target_type,
                 issue_group=result.eval_name,
                 issue_category=None,
                 fix_layer=meta.fix_layer,
@@ -392,15 +455,17 @@ def create_cluster(
         assign_to_cluster(cluster_id, project_id, result, embedding)
         return cluster_id
 
-    # Create junction entry
+    # Create junction entry. Session evals anchor to the session (trace NULL);
+    # span/trace evals anchor to the trace.
     ErrorClusterTraces.objects.create(
         cluster=cluster,
         trace_id=result.trace_id,
+        trace_session_id=result.session_id,
         eval_logger_id=result.eval_logger_id,
     )
 
     # Store centroid in ClickHouse
-    family = _eval_family(result.eval_name)
+    family = _eval_family(result.eval_name, result.target_type)
     db = ClickHouseVectorDB()
     try:
         _ensure_centroid_table(db)
@@ -454,11 +519,20 @@ def assign_to_cluster(
         update_fields=["error_count", "total_events", "last_seen", "updated_at"]
     )
 
-    # Create junction entry (ignore if trace already linked for this cluster).
-    # Cannot use get_or_create: the unique key is (cluster, trace, span) and
-    # span is left NULL here, so duplicate (cluster, trace) rows accumulate
-    # and get_or_create's internal .get() raises MultipleObjectsReturned.
-    if not ErrorClusterTraces.objects.filter(
+    # Create junction entry, keyed on the membership unit so a re-run can't
+    # double-link. Session evals dedup on (cluster, trace_session) — a real
+    # unique constraint, so get_or_create is safe. Trace/span evals can't use
+    # get_or_create: the unique key is (cluster, trace, span) with span left
+    # NULL here, so duplicate (cluster, trace) rows accumulate and
+    # get_or_create's internal .get() raises MultipleObjectsReturned — guard
+    # with exists()+create instead.
+    if result.target_type == "session":
+        ErrorClusterTraces.objects.get_or_create(
+            cluster=cluster,
+            trace_session_id=result.session_id,
+            defaults={"eval_logger_id": result.eval_logger_id},
+        )
+    elif not ErrorClusterTraces.objects.filter(
         cluster=cluster, trace_id=result.trace_id
     ).exists():
         ErrorClusterTraces.objects.create(
@@ -467,14 +541,18 @@ def assign_to_cluster(
             eval_logger_id=result.eval_logger_id,
         )
 
-    # Refresh unique traces count + recompute impact from avg score
-    unique = cluster.clusters.values("trace").distinct().count()
+    # Refresh the unique-membership count + recompute impact from avg score.
+    # The unit is sessions for session clusters, traces otherwise.
+    if result.target_type == "session":
+        unique = cluster.clusters.values("trace_session").distinct().count()
+    else:
+        unique = cluster.clusters.values("trace").distinct().count()
     cluster.unique_traces = unique
     cluster.combined_impact = _compute_cluster_impact(cluster)
     cluster.save(update_fields=["unique_traces", "combined_impact", "updated_at"])
 
     # Incrementally update centroid in ClickHouse
-    family = _eval_family(result.eval_name)
+    family = _eval_family(result.eval_name, result.target_type)
     db = ClickHouseVectorDB()
     try:
         rows = db.client.execute(

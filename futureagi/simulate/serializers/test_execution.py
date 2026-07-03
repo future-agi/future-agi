@@ -4,9 +4,11 @@ from datetime import datetime
 
 import structlog
 from django.db.models import Count, Q
+from drf_yasg.utils import swagger_serializer_method
 from rest_framework import serializers
 
 from model_hub.models.develop_dataset import Cell, Column, Row
+from model_hub.services.error_localizer_service import error_localizer_enabled
 from simulate.models import (
     CallExecution,
     CallExecutionSnapshot,
@@ -14,6 +16,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.serializers.chat_message import ChatMessageSerializer
+from simulate.utils.eval_summary import iter_live_eval_outputs
 from tracer.serializers.filters import (
     StrictInputSerializer,
     filter_list_query_param_field,
@@ -196,6 +199,67 @@ class CallExecutionSnapshotSerializer(serializers.ModelSerializer):
             "conversation_metrics_data",
         ]
         read_only_fields = ["id", "snapshot_timestamp"]
+
+
+class CallExecutionEvalMetricSerializer(serializers.Serializer):
+    """One entry of ``eval_metrics``. All fields optional; pending evals emit ``{}``."""
+
+    id = serializers.CharField(required=False, allow_blank=True)
+    name = serializers.CharField(required=False, allow_blank=True)
+    value = serializers.JSONField(
+        required=False,
+        allow_null=True,
+        help_text="number | bool | string | list[string] | null",
+    )
+    reason = serializers.CharField(allow_blank=True, required=False)
+    type = serializers.CharField(allow_blank=True, required=False)
+    template_type = serializers.CharField(
+        allow_blank=True, allow_null=True, required=False
+    )
+    visible = serializers.BooleanField(required=False)
+    error = serializers.BooleanField(required=False)
+    status = serializers.CharField(allow_blank=True, required=False)
+    skipped = serializers.BooleanField(required=False)
+    error_localizer = serializers.BooleanField(required=False)
+    error_analysis = serializers.JSONField(required=False, allow_null=True)
+    error_localizer_status = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    error_localizer_message = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    selected_input_key = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    input_data = serializers.JSONField(required=False, allow_null=True)
+    input_types = serializers.JSONField(required=False, allow_null=True)
+
+
+class CallExecutionErrorLocalizerTaskSerializer(serializers.Serializer):
+    """One entry in ``error_localizer_tasks``."""
+
+    task_id = serializers.CharField()
+    eval_config_id = serializers.CharField(allow_null=True, allow_blank=True)
+    status = serializers.CharField(allow_blank=True)
+    eval_result = serializers.JSONField(allow_null=True)
+    eval_explanation = serializers.CharField(
+        allow_null=True, allow_blank=True, required=False
+    )
+    input_data = serializers.JSONField(allow_null=True, required=False)
+    input_keys = serializers.ListField(
+        child=serializers.CharField(), allow_empty=True, required=False
+    )
+    input_types = serializers.JSONField(allow_null=True, required=False)
+    rule_prompt = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    error_analysis = serializers.JSONField(allow_null=True, required=False)
+    selected_input_key = serializers.CharField(
+        allow_null=True, allow_blank=True, required=False
+    )
+    error_message = serializers.CharField(
+        allow_null=True, allow_blank=True, required=False
+    )
+    created_at = serializers.CharField(allow_null=True, allow_blank=True, required=False)
+    updated_at = serializers.CharField(allow_null=True, allow_blank=True, required=False)
 
 
 def _normalize_eval_value(value, output_type):
@@ -411,14 +475,29 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ProviderChoices.VAPI.value
                 )
 
-        if provider_payload:
-            if provider_payload.get("recording"):
-                return provider_payload.get("recording")
+        recordings = None
+        if provider_payload and provider_payload.get("recording"):
+            recordings = provider_payload.get("recording")
+        elif VoiceServiceManager is not None:
+            vsm = VoiceServiceManager(system_voice_provider=ProviderChoices.VAPI)
+            recordings = vsm.get_recording_urls(provider_payload) or {}
 
-        if VoiceServiceManager is None:
-            return {}
-        vsm = VoiceServiceManager(system_voice_provider=ProviderChoices.VAPI)
-        return vsm.get_recording_urls(provider_payload) or {}
+        if isinstance(recordings, dict) and recordings:
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
+
+            provider = SpeakerRoleResolver.detect_provider(
+                getattr(obj, "provider_call_data", None)
+            )
+            is_outbound = SpeakerRoleResolver.detect_is_outbound(obj)
+            if SpeakerRoleResolver.is_simulator(
+                "assistant", provider=provider, is_outbound=is_outbound
+            ):
+                recordings = {
+                    **recordings,
+                    "assistant": recordings.get("customer"),
+                    "customer": recordings.get("assistant"),
+                }
+        return recordings or {}
 
     def get_provider(self, obj):
         """Return the provider that produced this call's stored provider payload.
@@ -567,11 +646,19 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             )
             call_metadata = getattr(obj, "call_metadata", None) or {}
             offset = call_metadata.get("recording_offset_ms", 0)
-            return CallTranscriptSerializer(
-                filtered_transcripts,
-                many=True,
-                context={"recording_offset_ms": offset},
-            ).data
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
+
+            return SpeakerRoleResolver.align_transcript_rows(
+                CallTranscriptSerializer(
+                    filtered_transcripts,
+                    many=True,
+                    context={"recording_offset_ms": offset},
+                ).data,
+                provider=SpeakerRoleResolver.detect_provider(
+                    getattr(obj, "provider_call_data", None)
+                ),
+                is_outbound=SpeakerRoleResolver.detect_is_outbound(obj),
+            )
         return []
 
     def get_response_time(self, obj):
@@ -603,9 +690,25 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         if not eval_outputs:
             return {}
 
-        # Transform eval_outputs to a more structured format
+        eval_configs = (
+            self.context.get("eval_configs")
+            if hasattr(self, "context") and self.context
+            else None
+        )
+        if eval_configs is None:
+
+            logger.debug(
+                "eval_outputs_serialized_without_live_config_context",
+                method="get_eval_outputs",
+            )
+        eval_items = (
+            eval_outputs.items()
+            if eval_configs is None
+            else iter_live_eval_outputs(eval_outputs, eval_configs)
+        )
+
         structured_outputs = {}
-        for eval_id, eval_data in eval_outputs.items():
+        for eval_id, eval_data in eval_items:
             if isinstance(eval_data, dict):
                 if eval_data.get("status") == "pending":
                     structured_outputs[eval_id] = {}
@@ -632,6 +735,11 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
 
         return structured_outputs
 
+    @swagger_serializer_method(
+        serializer_or_field=serializers.DictField(
+            child=CallExecutionEvalMetricSerializer()
+        )
+    )
     def get_eval_metrics(self, obj):
         """Get evaluation metrics in a format suitable for the UI"""
         # Handle both model instances and dictionaries (from grouping)
@@ -647,15 +755,25 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         if not eval_outputs:
             return {}
 
-        # Get eval configs from context if available
         eval_configs = (
-            self.context.get("eval_configs", {})
+            self.context.get("eval_configs")
             if hasattr(self, "context") and self.context
-            else {}
+            else None
+        )
+        if eval_configs is None:
+
+            logger.debug(
+                "eval_outputs_serialized_without_live_config_context",
+                method="get_eval_metrics",
+            )
+        eval_items = (
+            eval_outputs.items()
+            if eval_configs is None
+            else iter_live_eval_outputs(eval_outputs, eval_configs)
         )
 
         metrics = {}
-        for eval_id, eval_data in eval_outputs.items():
+        for eval_id, eval_data in eval_items:
             if isinstance(eval_data, dict):
                 if eval_data.get("status") == "pending":
                     metrics[eval_id] = {}
@@ -664,7 +782,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 is_error = bool(raw_error is True or raw_error == "error") or (
                     eval_data.get("status") == "error"
                 )
-                eval_config = eval_configs.get(eval_id)
+                eval_config = (eval_configs or {}).get(eval_id)
                 metrics[eval_id] = {
                     "id": eval_id,
                     "name": eval_data.get(
@@ -676,6 +794,11 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ),
                     "reason": eval_data.get("reason", ""),
                     "type": eval_data.get("output_type", ""),
+                    "template_type": (
+                        getattr(eval_config.eval_template, "template_type", None)
+                        if eval_config and getattr(eval_config, "eval_template", None)
+                        else None
+                    ),
                     "visible": True,  # Default to visible
                     "error": is_error,
                     "status": eval_data.get(
@@ -683,10 +806,27 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                     ),
                     "skipped": bool(eval_data.get("skipped", False))
                     or eval_data.get("status") == "skipped",
-                    "error_localizer": (
-                        eval_config.error_localizer if eval_config else False
-                    ),
+                    "error_localizer": error_localizer_enabled(eval_config),
                 }
+
+        call_execution_id = getattr(obj, "id", None)
+        enabled_eval_config_ids = [
+            k for k, m in metrics.items() if m.get("error_localizer")
+        ]
+        if call_execution_id and enabled_eval_config_ids:
+            from model_hub.selectors.error_localizer import (
+                get_error_localizer_state_by_eval_config,
+            )
+
+            request = (self.context or {}).get("request")
+            workspace = getattr(request, "workspace", None) if request else None
+            state_by_eval_config = get_error_localizer_state_by_eval_config(
+                call_execution_id, enabled_eval_config_ids, workspace
+            )
+            for eval_config_id, el_state in state_by_eval_config.items():
+                metric = metrics.get(eval_config_id)
+                if metric:
+                    metric.update(el_state)
 
         return metrics
 
@@ -1252,11 +1392,19 @@ class CallExecutionSerializer(serializers.ModelSerializer):
             )
             call_metadata = getattr(obj, "call_metadata", None) or {}
             offset = call_metadata.get("recording_offset_ms", 0)
-            return CallTranscriptSerializer(
-                filtered_transcripts,
-                many=True,
-                context={"recording_offset_ms": offset},
-            ).data
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
+
+            return SpeakerRoleResolver.align_transcript_rows(
+                CallTranscriptSerializer(
+                    filtered_transcripts,
+                    many=True,
+                    context={"recording_offset_ms": offset},
+                ).data,
+                provider=SpeakerRoleResolver.detect_provider(
+                    getattr(obj, "provider_call_data", None)
+                ),
+                is_outbound=SpeakerRoleResolver.detect_is_outbound(obj),
+            )
         return []
 
     def get_response_time_seconds(self, obj):
@@ -1273,14 +1421,17 @@ class CallExecutionSerializer(serializers.ModelSerializer):
             return round(response_time_ms / 1000, 3)
         return None
 
+    @swagger_serializer_method(
+        serializer_or_field=CallExecutionErrorLocalizerTaskSerializer(many=True)
+    )
     def get_error_localizer_tasks(self, obj):
-        """Get error localizer tasks for this call execution"""
-        try:
-            from model_hub.models.error_localizer_model import (
-                ErrorLocalizerSource,
-                ErrorLocalizerTask,
-            )
+        """Get error localizer tasks for this call execution."""
+        from model_hub.selectors.error_localizer import (
+            list_error_localizer_tasks_for_call_execution,
+            serialize_error_localizer_task,
+        )
 
+        try:
             # Handle both model instances and dictionaries (from grouping)
             if hasattr(obj, "id"):
                 obj_id = obj.id
@@ -1290,41 +1441,12 @@ class CallExecutionSerializer(serializers.ModelSerializer):
             if not obj_id:
                 return []
 
-            # Find error localizer tasks for this call execution
-            # The source_id format is "call_execution_id_eval_config_id"
-            call_execution_tasks = ErrorLocalizerTask.objects.filter(
-                source=ErrorLocalizerSource.SIMULATE.value, source_id=str(obj_id)
+            request = (self.context or {}).get("request")
+            workspace = getattr(request, "workspace", None) if request else None
+            tasks = list_error_localizer_tasks_for_call_execution(
+                obj_id, workspace=workspace
             )
-
-            error_localizer_data = []
-            for task in call_execution_tasks:
-                # Extract eval_config_id from source_id
-                eval_config_id = task.metadata.get("eval_config_id")
-
-                error_localizer_data.append(
-                    {
-                        "task_id": str(task.id),
-                        "eval_config_id": eval_config_id,
-                        "status": task.status,
-                        "eval_result": task.eval_result,
-                        "eval_explanation": task.eval_explanation,
-                        "input_data": task.input_data,
-                        "input_keys": task.input_keys,
-                        "input_types": task.input_types,
-                        "rule_prompt": task.rule_prompt,
-                        "error_analysis": task.error_analysis,
-                        "selected_input_key": task.selected_input_key,
-                        "error_message": task.error_message,
-                        "created_at": (
-                            task.created_at.isoformat() if task.created_at else None
-                        ),
-                        "updated_at": (
-                            task.updated_at.isoformat() if task.updated_at else None
-                        ),
-                    }
-                )
-
-            return error_localizer_data
+            return [serialize_error_localizer_task(task) for task in tasks]
         except Exception as e:
             # Log error but don't fail the serializer
             import logging

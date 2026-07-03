@@ -20,6 +20,10 @@ export const CELL_STATE = {
   EMPTY: "__EMPTY__",
 };
 
+// Unsaved local row: flagged _isLocal on add (cleared once persisted). Not
+// sniffing __EMPTY__ cells, which misfires after the row is run or compared.
+export const isUnsavedRow = (rowData) => !!rowData?._isLocal;
+
 export const COLUMNIDS = {
   COMPARISON: "Comparison",
 };

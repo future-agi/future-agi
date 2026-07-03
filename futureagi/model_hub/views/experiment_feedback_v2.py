@@ -424,6 +424,8 @@ class ExperimentFeedbackSubmitV2View(APIView):
                 column_id = str(cell.column.id)
                 if column_id != str(eval_column.id):
                     row_dict[column_id] = cell.value
+                    if cell.column.name:
+                        row_dict[cell.column.name] = cell.value
 
             row_dict["feedback_comment"] = feedback.explanation
             row_dict["feedback_value"] = feedback.value

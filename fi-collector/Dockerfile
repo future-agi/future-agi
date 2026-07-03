@@ -25,8 +25,8 @@ WORKDIR /
 COPY --from=build /out/fi-collector /usr/local/bin/fi-collector
 COPY config/collector.yaml /etc/fi-collector/config.yaml
 
-# OTLP/gRPC + OTLP/HTTP + admin (health, metrics)
-EXPOSE 4317 4318 9464
+# OTLP/gRPC + OTLP/HTTP
+EXPOSE 4317 4318
 
 # Dead-letter destination — bind-mount in compose for durability across
 # container restarts.

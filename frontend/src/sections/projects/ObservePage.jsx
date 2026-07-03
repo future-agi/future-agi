@@ -1,10 +1,4 @@
-import React, {
-  useMemo,
-  useCallback,
-  useEffect,
-  useRef,
-  startTransition,
-} from "react";
+import React, { useMemo, useCallback, useEffect, useRef } from "react";
 import PropTypes from "prop-types";
 import { Box, Paper, useTheme, CircularProgress, Alert } from "@mui/material";
 import { Outlet, useLocation, useNavigate, useParams } from "react-router";
@@ -162,25 +156,14 @@ const ObservePage = React.memo(() => {
       let viewTabType = "traces";
       if (tabKey.startsWith("view-")) {
         const viewId = tabKey.replace("view-", "");
-        const cachedResult = queryClient.getQueryData([
-          SAVED_VIEWS_KEY,
-          observeId,
-        ]);
-        const customViews = cachedResult?.custom_views ?? [];
+        const cached = queryClient.getQueryData([SAVED_VIEWS_KEY, observeId]);
+        const customViews = cached?.custom_views ?? [];
         const view = customViews.find((v) => v.id === viewId);
         activeConfig = view?.config || null;
         viewTabType = view?.tab_type ?? "traces";
       }
 
-      // Apply effects (activeViewConfig → apply effect → many setters) aren't
-      // urgent for tab responsiveness. Defer via startTransition so the
-      // navigation and URL update feel snappy while the filter apply runs as
-      // a non-blocking transition.
-      startTransition(() => {
-        setActiveViewConfig(activeConfig);
-      });
-
-      // Navigate to the appropriate route
+      let navTo = null;
       if (tabKey.startsWith("view-")) {
         const isUsersView =
           viewTabType === "users" || viewTabType === "user_detail";
@@ -255,9 +238,7 @@ const ObservePage = React.memo(() => {
           }
         }
 
-        navigate(`${basePath}?${params.toString()}`, {
-          replace: true,
-        });
+        navTo = `${basePath}?${params.toString()}`;
       } else {
         const config = TAB_TO_ROUTE[tabKey];
         if (config) {
@@ -265,9 +246,14 @@ const ObservePage = React.memo(() => {
           const params = new URLSearchParams();
           params.set("tab", tabKey);
           Object.entries(config.params).forEach(([k, v]) => params.set(k, v));
-          navigate(`${basePath}?${params.toString()}`, { replace: true });
+          navTo = `${basePath}?${params.toString()}`;
         }
       }
+
+      // Set config + navigate together so React batches them into one render — a
+      // deferred config set left the URL naming a view while config was null.
+      setActiveViewConfig(activeConfig);
+      if (navTo) navigate(navTo, { replace: true });
     },
     [observeId, navigate, queryClient, setActiveViewConfig],
   );
@@ -347,6 +333,9 @@ const ObservePage = React.memo(() => {
           filterSpan={headerConfig.filterSpan}
           selectedTab={headerConfig.selectedTab}
           filterSession={headerConfig.filterSession}
+          filterUsers={headerConfig.filterUsers}
+          searchUsers={headerConfig.searchUsers}
+          sortUsers={headerConfig.sortUsers}
           refreshData={headerConfig.refreshData}
           resetFilters={headerConfig.resetFilters}
         />

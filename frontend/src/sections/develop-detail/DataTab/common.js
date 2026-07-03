@@ -320,14 +320,10 @@ export const getColumnConfig = ({
   const editCell = useEditCellStore.getState().editCell;
   const setEditCell = useEditCellStore.getState().setEditCell;
 
-  // Read both snake_case (canonical API shape) and camelCase (alias) so
-  // this function works whether `eachCol` came straight from the axios
-  // response (has non-enumerable camelCase getters) or from a spread/clone
-  // (only snake_case keys survive).
-  const colDataType = eachCol?.data_type ?? eachCol?.dataType;
-  const colOriginType = eachCol?.origin_type ?? eachCol?.originType;
-  const colIsFrozen = eachCol?.is_frozen ?? eachCol?.isFrozen;
-  const colIsVisible = eachCol?.is_visible ?? eachCol?.isVisible;
+  const colDataType = eachCol?.data_type;
+  const colOriginType = eachCol?.origin_type;
+  const colIsFrozen = eachCol?.is_frozen;
+  const colIsVisible = eachCol?.is_visible;
 
   const isEditable =
     !isViewerRole &&
@@ -339,7 +335,7 @@ export const getColumnConfig = ({
     headerName: eachCol?.name,
     valueGetter: (v) => {
       const cell = v?.data?.[eachCol?.id];
-      const rawValue = cell?.cell_value ?? cell?.cellValue;
+      const rawValue = cell?.cell_value;
       return parseCellValue(rawValue, AGGridCellDataType[colDataType]);
     },
     valueSetter: (params) => {
@@ -421,7 +417,7 @@ export const getColumnConfig = ({
       ...baseConfig,
       valueGetter: (v) => {
         const cell = v.data?.[eachCol.id];
-        const rawValue = cell?.cell_value ?? cell?.cellValue;
+        const rawValue = cell?.cell_value;
         const date = parseDate(rawValue);
         return date;
       },
@@ -968,21 +964,19 @@ export const DATASET_TYPES = {
 export const enhanceCol = (col, averageMetaData) => {
   const columnConfig = averageMetaData?.find((d) => d.id === col.id);
   if (!columnConfig) return col;
-  // Local table column state still reads a few camelCase fields. Keep this
-  // adapter explicit here instead of mutating every API response globally.
   return {
     ...col,
     metadata: columnConfig?.metadata,
-    data_type: col?.data_type ?? col?.dataType,
-    dataType: col?.data_type ?? col?.dataType,
-    origin_type: col?.origin_type ?? col?.originType,
-    originType: col?.origin_type ?? col?.originType,
-    is_frozen: col?.is_frozen ?? col?.isFrozen,
-    isFrozen: col?.is_frozen ?? col?.isFrozen,
-    is_visible: col?.is_visible ?? col?.isVisible,
-    isVisible: col?.is_visible ?? col?.isVisible,
-    source_id: col?.source_id ?? col?.sourceId,
-    sourceId: col?.source_id ?? col?.sourceId,
+    data_type: col?.data_type,
+    dataType: col?.data_type,
+    origin_type: col?.origin_type,
+    originType: col?.origin_type,
+    is_frozen: col?.is_frozen,
+    isFrozen: col?.is_frozen,
+    is_visible: col?.is_visible,
+    isVisible: col?.is_visible,
+    source_id: col?.source_id,
+    sourceId: col?.source_id,
   };
 };
 
@@ -1068,6 +1062,8 @@ export const getDatasetViewOptions = (viewOptions) => {
       viewOptions?.showDrawer !== undefined ? viewOptions?.showDrawer : true,
     bottomRow:
       viewOptions?.bottomRow !== undefined ? viewOptions?.bottomRow : true,
+    showEvals:
+      viewOptions?.showEvals !== undefined ? viewOptions?.showEvals : true,
   };
 };
 

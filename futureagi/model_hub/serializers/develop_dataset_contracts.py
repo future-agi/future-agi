@@ -99,10 +99,36 @@ class DatasetTableMetadataSerializer(serializers.Serializer):
     status = serializers.JSONField(required=False, allow_null=True)
 
 
+class DatasetTableColumnSerializer(serializers.Serializer):
+    id = serializers.CharField()
+    name = serializers.CharField(allow_blank=True)
+    data_type = serializers.CharField(allow_null=True)
+    is_visible = serializers.BooleanField()
+    is_frozen = serializers.BooleanField(allow_null=True)
+    source_type = serializers.CharField()
+    origin_type = serializers.CharField(allow_null=True)
+    source_id = serializers.CharField(allow_null=True)
+    order_index = serializers.IntegerField()
+    status = serializers.CharField(allow_null=True)
+    average_score = serializers.FloatField(allow_null=True)
+    reason_column = serializers.BooleanField()
+    is_numeric_eval = serializers.BooleanField()
+    is_numeric_eval_percentage = serializers.BooleanField()
+    eval_tag = serializers.JSONField()
+    metadata = serializers.JSONField()
+    choices_map = serializers.JSONField()
+
+
+class DatasetTableRowSerializer(serializers.Serializer):
+    row_id = serializers.UUIDField()
+
+
 class DatasetTableResultSerializer(serializers.Serializer):
     metadata = DatasetTableMetadataSerializer(required=False)
-    column_config = serializers.ListField(child=serializers.JSONField())
-    table = serializers.ListField(child=serializers.JSONField(), required=False)
+    column_config = DatasetTableColumnSerializer(many=True)
+    table = serializers.ListField(
+        child=DatasetTableRowSerializer(), required=False
+    )
     dataset_config = serializers.JSONField(required=False)
     synthetic_dataset = serializers.BooleanField(required=False)
     synthetic_dataset_percentage = serializers.FloatField(
@@ -157,11 +183,33 @@ class DatasetColumnsMutationResponseSerializer(serializers.Serializer):
     result = DatasetColumnsMutationResultSerializer()
 
 
+class DatasetCellInnerMetadataSerializer(serializers.Serializer):
+    explanation = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    error_analysis = serializers.JSONField(required=False, allow_null=True)
+    selected_input_key = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+
+
+class DatasetCellMetadataSerializer(serializers.Serializer):
+    response_time_ms = serializers.FloatField(required=False, allow_null=True)
+    token_count = serializers.IntegerField(required=False, allow_null=True)
+    cost = serializers.JSONField(required=False, allow_null=True)
+    cell_metadata = DatasetCellInnerMetadataSerializer(required=False)
+    reason = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+
+
 class DatasetCellValueSerializer(serializers.Serializer):
     cell_value = serializers.JSONField(allow_null=True, required=False)
+    cell_diff_value = serializers.JSONField(required=False, allow_null=True)
     status = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     value_infos = serializers.JSONField(required=False, allow_null=True)
     feedback_info = serializers.JSONField(required=False, allow_null=True)
+    metadata = DatasetCellMetadataSerializer(required=False)
 
 
 class DatasetCellDataResponseSerializer(serializers.Serializer):

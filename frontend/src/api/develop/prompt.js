@@ -79,3 +79,21 @@ export const useModelParams = (model, provider, modelType) => {
     select: (d) => d.data?.result,
   });
 };
+
+const buildPromptDraftBody = ({ configuration, messages, variableNames }) => ({
+  name: "",
+  prompt_config: [{ configuration, messages }],
+  ...(variableNames && Object.keys(variableNames).length > 0
+    ? { variable_names: variableNames }
+    : {}),
+});
+
+export const useCreatePromptDraft = (options = {}) =>
+  useMutation({
+    ...options,
+    mutationFn: (params) =>
+      axios.post(
+        endpoints.develop.runPrompt.createPromptDraft,
+        buildPromptDraftBody(params),
+      ),
+  });

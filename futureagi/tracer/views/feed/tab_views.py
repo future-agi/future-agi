@@ -27,6 +27,7 @@ from tracer.serializers.feed import (
     FeedSidebarQuerySerializer,
     FeedSidebarSerializer,
     OverviewApiResponseSerializer,
+    OverviewQuerySerializer,
     OverviewResponseSerializer,
     TracesTabApiResponseSerializer,
     TracesTabQuerySerializer,
@@ -64,15 +65,21 @@ class FeedOverviewView(APIView):
     _gm = GeneralMethods()
 
     @validated_request(
+        query_serializer=OverviewQuerySerializer,
         responses={200: OverviewApiResponseSerializer, **ERROR_RESPONSES},
     )
     def get(self, request, cluster_id: str):
+        params = request.validated_query_data
         project_ids, response = _accessible_project_ids_or_response(request, self._gm)
         if response is not None:
             return response
 
         try:
-            result = feed_service.get_overview_tab(cluster_id, project_ids)
+            result = feed_service.get_overview_tab(
+                cluster_id,
+                project_ids,
+                rep_limit=params.get("rep_limit", 20),
+            )
         except Exception:
             logger.exception("feed_overview_failed", cluster_id=cluster_id)
             return self._gm.bad_request("Failed to fetch overview")

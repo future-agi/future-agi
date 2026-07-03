@@ -59,6 +59,8 @@ import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 const extract_selected_tools = (tools) => {
   if (Array.isArray(tools)) return tools;
@@ -115,6 +117,9 @@ const getEvalPromptText = (evalData, config = {}) =>
 const EvalDetailPage = () => {
   const { evalId } = useParams();
   const navigate = useNavigate();
+  const { role } = useAuthContext();
+  const canEditEvals =
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
   const [searchParams, setSearchParams] = useSearchParams();
   const { enqueueSnackbar } = useSnackbar();
   const { isOSS } = useDeploymentMode();
@@ -1199,13 +1204,16 @@ const EvalDetailPage = () => {
                       : evalType === "agent"
                         ? "rgba(46,203,113,0.08)"
                         : "rgba(124,77,255,0.08)",
-              color: isComposite
-                ? "info.main"
-                : evalType === "code"
-                  ? "warning.main"
-                  : evalType === "agent"
-                    ? "success.main"
-                    : "primary.main",
+              color: (theme) =>
+                isComposite
+                  ? theme.palette.info.main
+                  : evalType === "code"
+                    ? theme.palette.mode === "light"
+                      ? "#B45309"
+                      : theme.palette.warning.main
+                    : evalType === "agent"
+                      ? theme.palette.success.main
+                      : theme.palette.primary.main,
             }}
           >
             {(() => {
@@ -1251,13 +1259,14 @@ const EvalDetailPage = () => {
             open={Boolean(menuAnchor)}
             onClose={() => setMenuAnchor(null)}
           >
-            <MenuItem onClick={handleDuplicate}>
+            <MenuItem onClick={handleDuplicate} disabled={!canEditEvals}>
               <Iconify icon="solar:copy-bold" width={16} sx={{ mr: 1 }} />{" "}
               Duplicate
             </MenuItem>
             {!isSystemEval && (
               <MenuItem
                 onClick={handleDeleteClick}
+                disabled={!canEditEvals}
                 sx={{ color: "error.main" }}
               >
                 <Iconify
@@ -1859,6 +1868,7 @@ const EvalDetailPage = () => {
                     ref={testPlaygroundRef}
                     templateId={evalId}
                     model={model}
+                    evalName={evalData?.name || ""}
                     instructions={
                       evalType === "code"
                         ? ""
@@ -1952,8 +1962,13 @@ const EvalDetailPage = () => {
                   {isDirty && (
                     <Typography
                       variant="caption"
-                      color="warning.main"
-                      sx={{ fontSize: "11px" }}
+                      sx={{
+                        fontSize: "11px",
+                        color: (theme) =>
+                          theme.palette.mode === "light"
+                            ? theme.palette.amber[700]
+                            : theme.palette.warning.main,
+                      }}
                     >
                       Unsaved changes
                     </Typography>
@@ -1973,7 +1988,12 @@ const EvalDetailPage = () => {
                         variant={isComposite ? "contained" : "outlined"}
                         size="small"
                         onClick={handleTestEvaluation}
-                        disabled={isTesting || !isPlaygroundReady || needsTemplateVariable}
+                        disabled={
+                          isTesting ||
+                          !isPlaygroundReady ||
+                          needsTemplateVariable ||
+                          !canEditEvals
+                        }
                         startIcon={
                           isTesting ? (
                             <CircularProgress size={14} />
@@ -2008,7 +2028,12 @@ const EvalDetailPage = () => {
                           variant="contained"
                           size="small"
                           onClick={handleSaveVersion}
-                          disabled={isSaving || !isDirty || needsTemplateVariable}
+                          disabled={
+                            isSaving ||
+                            !isDirty ||
+                            needsTemplateVariable ||
+                            !canEditEvals
+                          }
                           startIcon={
                             isSaving ? (
                               <CircularProgress size={14} />
@@ -2040,7 +2065,8 @@ const EvalDetailPage = () => {
                           disabled={
                             isSaving ||
                             !isDirty ||
-                            compositeChildren.length === 0
+                            compositeChildren.length === 0 ||
+                            !canEditEvals
                           }
                           startIcon={
                             isSaving ? (
@@ -2084,7 +2110,10 @@ const EvalDetailPage = () => {
       {/* ═══ Ground Truth Tab ═══ */}
       {activeTab === "ground_truth" && (
         <Box sx={{ flex: 1, minHeight: 0 }}>
-          <EvalGroundTruthTab templateId={evalId} />
+          <EvalGroundTruthTab
+            templateId={evalId}
+            onSwitchToDetails={() => setActiveTab("details")}
+          />
         </Box>
       )}
     </Box>

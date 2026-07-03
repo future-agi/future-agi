@@ -80,7 +80,7 @@ const VoiceRightPanel = ({
     if (Array.isArray(data?.messages)) return data.messages;
     if (Array.isArray(data?.transcript)) {
       return data.transcript.map((t) => ({
-        role: t.speakerRole || t.role,
+        role: t.speaker_role || t.role,
         content: t.message || t.content || t.text,
         ...t,
       }));
@@ -257,6 +257,7 @@ const VoiceRightPanel = ({
         // backend used. Makes the shared EvalsTabView render the
         // dropdown / "Run" UX for failed voice evals.
         cell_id: e?.cell_id || e?.cellId,
+        template_type: e?.template_type,
         error_analysis:
           e?.error_analysis || e?.errorAnalysis || e?.error_details,
         error_localizer_status:

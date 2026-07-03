@@ -169,7 +169,7 @@ const EvaluationFeeback = ({
     watch,
   } = useForm({
     defaultValues: {
-      value: existingFeedback?.actionType || "",
+      value: existingFeedback?.action_type || "",
     },
     resolver: zodResolver(feedbackSubmittedValidationSchema),
   });
@@ -256,7 +256,6 @@ const EvaluationFeeback = ({
       action_type: formData.value,
       user_eval_metric_id: metricId,
       feedback_id: feedbackId,
-      row_id: rowId,
     };
     if (newFeedback?.current?.value) {
       payload.value = newFeedback?.current?.value;
@@ -374,7 +373,7 @@ const FeedBackForm = ({ control, data, feedbackData }) => {
         borderRadius={1}
         padding={1.5}
       >
-        <CellMarkdown spacing={0} text={data?.valueInfos?.reason} />
+        <CellMarkdown spacing={0} text={data?.value_infos?.reason} />
       </Box>
 
       <div style={{ borderBottom: "1px solid var(--border-light)" }} />
@@ -497,7 +496,7 @@ const SubmittedFeedback = ({ control, data }) => {
           {data?.name}
         </Typography>
         <Typography sx={{ fontSize: "12px" }}>
-          {data?.valueInfos?.reason}
+          {data?.value_infos?.reason}
         </Typography>
         <Typography sx={{ fontSize: "12px", fontWeight: "600" }}>
           1 row received your feedback.

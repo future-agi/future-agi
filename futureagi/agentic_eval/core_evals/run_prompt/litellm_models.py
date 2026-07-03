@@ -2,13 +2,13 @@ import os
 
 import structlog
 
-logger = structlog.get_logger(__name__)
-from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
-# (available_models always available)
-from model_hub.models.api_key import ApiKey
-from model_hub.models.custom_models import CustomAIModel
 from accounts.models.organization import Organization
 from accounts.models.workspace import Workspace
+from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
+from model_hub.models.api_key import ApiKey
+from model_hub.models.custom_models import CustomAIModel
+
+logger = structlog.get_logger(__name__)
 
 
 class LiteLLMModelManager:
@@ -83,6 +83,24 @@ class LiteLLMModelManager:
             # "whisper-1",  # STT model - keep filtered
             # "tts-1",     # allow
             # "tts-1-hd",  # allow
+            # Deprecated OpenAI image generation models
+            "256-x-256/dall-e-2",
+            "512-x-512/dall-e-2",
+            "1024-x-1024/dall-e-2",
+            "hd/1024-x-1792/dall-e-3",
+            "hd/1792-x-1024/dall-e-3",
+            "hd/1024-x-1024/dall-e-3",
+            "standard/1024-x-1792/dall-e-3",
+            "standard/1792-x-1024/dall-e-3",
+            "standard/1024-x-1024/dall-e-3",
+            # Deprecated Azure dall-e variants
+            "azure/standard/1024-x-1024/dall-e-3",
+            "azure/hd/1024-x-1024/dall-e-3",
+            "azure/standard/1024-x-1792/dall-e-3",
+            "azure/standard/1792-x-1024/dall-e-3",
+            "azure/hd/1024-x-1792/dall-e-3",
+            "azure/hd/1792-x-1024/dall-e-3",
+            "azure/standard/1024-x-1024/dall-e-2",
             # Anthropic legacy models
             "claude-instant-1",
             "claude-2",
@@ -163,14 +181,14 @@ class LiteLLMModelManager:
         except ApiKey.DoesNotExist:
             raise ValueError(
                 f"API key not configured for {provider}. Please add your API key in settings."
-            )
+            ) from None
         except ApiKey.MultipleObjectsReturned:
             # Fallback to first match if multiple keys exist (e.g., workspace not specified)
             api_key_entry = ApiKey.objects.filter(**query).first()
             if not api_key_entry:
                 raise ValueError(
                     f"API key not configured for {provider}. Please add your API key in settings."
-                )
+                ) from None
 
         if api_key_entry.key:
             return api_key_entry.actual_key
@@ -202,13 +220,13 @@ class LiteLLMModelManager:
         except CustomAIModel.MultipleObjectsReturned:
             raise ValueError(
                 f"Multiple custom models found for {model_name} for organization {organization_id} and workspace {workspace_id}"
-            )
+            ) from None
 
         except CustomAIModel.DoesNotExist:
             raise ValueError(
                 f"Model '{model_name}' is not available in the current model catalog. "
                 "It may be deprecated or retired. Please select a supported model from the latest available models list."
-            )
+            ) from None
 
     def get_model_by_provider(self, provider):
         model_name = []

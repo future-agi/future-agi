@@ -43,10 +43,11 @@ export default function ErrorStatusChip({ status, size = "small", onClick }) {
   const isDark = theme.palette.mode === "dark";
   const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.escalating;
 
+  const baseBg = isDark ? cfg.darkBg : cfg.bg;
   return (
     <Chip
       size={size}
-      onClick={onClick}
+      {...(onClick ? { onClick } : {})}
       icon={
         <Iconify
           icon={cfg.icon}
@@ -65,12 +66,13 @@ export default function ErrorStatusChip({ status, size = "small", onClick }) {
         fontWeight: 500,
         letterSpacing: "0.01em",
         color: isDark ? cfg.darkColor : cfg.color,
-        bgcolor: isDark ? cfg.darkBg : cfg.bg,
+        bgcolor: baseBg,
         border: "1px solid",
         borderColor: isDark ? `${cfg.darkColor}40` : `${cfg.color}30`,
         cursor: onClick ? "pointer" : "default",
         "& .MuiChip-label": { px: "6px", lineHeight: 1 },
-        "&:hover": onClick ? { opacity: 0.85 } : {},
+        "&:hover": onClick ? { opacity: 0.85 } : { bgcolor: baseBg },
+        "&:focus": { bgcolor: baseBg },
       }}
     />
   );

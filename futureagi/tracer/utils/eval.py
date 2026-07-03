@@ -1745,21 +1745,23 @@ def _execute_evaluation(
                 "observation_span__project__workspace",
             ).get(pk=eval_log.pk)
 
-        if custom_eval_config.error_localizer:
+        from model_hub.services.error_localizer_service import (
+            error_localizer_enabled,
+        )
+
+        if error_localizer_enabled(custom_eval_config):
             from model_hub.tasks.user_evaluation import (
-                _eval_passed,
                 trigger_error_localization_for_span,
             )
 
-            if not _eval_passed(value):
-                trigger_error_localization_for_span(
-                    eval_template=eval_model,
-                    eval_logger=eval_log,
-                    mapping=raw_mapping,
-                    eval_explanation=logger_kwargs.get("eval_explanation", ""),
-                    value=value,
-                    log_id=str(log_id),
-                )
+            trigger_error_localization_for_span(
+                eval_template=eval_model,
+                eval_logger=eval_log,
+                mapping=raw_mapping,
+                eval_explanation=logger_kwargs.get("eval_explanation", ""),
+                value=value,
+                log_id=str(log_id),
+            )
 
         if type == EXPERIMENT:
             # updating project version config

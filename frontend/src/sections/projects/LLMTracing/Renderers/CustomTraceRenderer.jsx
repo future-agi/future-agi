@@ -86,7 +86,19 @@ const CustomTraceRenderer = (params) => {
   }
 
   if (RENDERER_CONFIG.tagColumns?.includes(colId)) {
-    return <TagsCell value={value} />;
+    return (
+      <TagsCell
+        value={value}
+        traceId={data?.trace_id}
+        spanId={data?.span_id}
+        entityType={params.context?.entityType}
+        canEditTags={params.context?.canEditTags}
+        // This grid is AG-Grid server-side, not React Query, so the popover's
+        // cache invalidation can't refresh it — pull the saved tags via the
+        // grid api instead.
+        onTagsUpdated={() => params.api?.refreshServerSide()}
+      />
+    );
   }
 
   if (isEval && column?.outputType === "Pass/Fail") {

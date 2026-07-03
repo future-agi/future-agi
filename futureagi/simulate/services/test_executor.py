@@ -37,6 +37,16 @@ from tracer.models.observability_provider import ProviderChoices
 logger = structlog.get_logger(__name__)
 
 
+def build_eval_configs_map(call_execution) -> dict[str, "SimulateEvalConfig"]:
+    eval_config_ids = list((call_execution.eval_outputs or {}).keys())
+    if not eval_config_ids:
+        return {}
+    return {
+        str(c.id): c
+        for c in SimulateEvalConfig.objects.filter(id__in=eval_config_ids)
+    }
+
+
 def _empty_call_log_summary(reason: str) -> dict:
     return {
         "total_entries": 0,
@@ -4330,26 +4340,17 @@ class TestExecutor:
                     if has_content and role_lower in customer_roles:
                         has_customer_message = True
         else:
-            try:
-                from ee.voice.utils.transcript_roles import SpeakerRoleResolver
-            except ImportError:
-                logger.warning(
-                    "speaker_role_resolver_unavailable_for_voice_presence",
-                    call_execution_id=str(call_execution.id),
-                )
-                agent_roles = frozenset({CallTranscript.SpeakerRole.ASSISTANT})
-                customer_roles = frozenset({CallTranscript.SpeakerRole.USER})
-            else:
-                provider = SpeakerRoleResolver.detect_provider(
-                    call_execution.provider_call_data
-                )
-                (
-                    agent_roles,
-                    customer_roles,
-                ) = SpeakerRoleResolver.get_skip_decision_role_sets(
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
+
+            provider = SpeakerRoleResolver.detect_provider(
+                call_execution.provider_call_data
+            )
+            agent_roles, customer_roles = (
+                SpeakerRoleResolver.get_skip_decision_role_sets(
                     provider=provider,
                     is_outbound=is_outbound,
                 )
+            )
 
             for role, content in call_execution.transcripts.values_list(
                 "speaker_role", "content"
@@ -4463,42 +4464,35 @@ class TestExecutor:
                                         assistant_chat_transcript_text.append(message)
 
                     else:
-                        try:
-                            from ee.voice.utils.transcript_roles import (
-                                SpeakerRoleResolver,
-                            )
-                        except ImportError:
-                            SpeakerRoleResolver = None
-                            logger.warning(
-                                "speaker_role_resolver_unavailable_for_voice_transcript",
-                                call_execution_id=str(call_execution.id),
-                            )
-                        else:
-                            eval_provider = SpeakerRoleResolver.detect_provider(
-                                call_execution.provider_call_data
-                            )
-                            eval_dir = (call_execution.call_metadata or {}).get(
-                                "call_direction", ""
-                            )
-                            eval_is_outbound = (
-                                str(eval_dir).strip().lower() == "outbound"
-                            )
+                        from simulate.utils.speaker_roles import (
+                            SpeakerRoleResolver,
+                        )
 
+                        eval_provider = SpeakerRoleResolver.detect_provider(
+                            call_execution.provider_call_data
+                        )
+                        eval_dir = (call_execution.call_metadata or {}).get(
+                            "call_direction", ""
+                        )
+                        eval_is_outbound = (
+                            str(eval_dir).strip().lower() == "outbound"
+                        )
+                        conversational_roles = (
+                            SpeakerRoleResolver.get_conversational_roles()
+                        )
                         for transcript in transcripts:
-                            if transcript.content.strip():
-                                if SpeakerRoleResolver is None:
-                                    eval_role = transcript.speaker_role
-                                else:
-                                    eval_role = (
-                                        SpeakerRoleResolver.get_eval_role_label(
-                                            transcript.speaker_role,
-                                            provider=eval_provider,
-                                            is_outbound=eval_is_outbound,
-                                        )
-                                    )
-                                transcript_text.append(
-                                    f"{eval_role}: {transcript.content}"
-                                )
+                            if not transcript.content.strip():
+                                continue
+                            if transcript.speaker_role not in conversational_roles:
+                                continue
+                            eval_role = SpeakerRoleResolver.get_eval_role_label(
+                                transcript.speaker_role,
+                                provider=eval_provider,
+                                is_outbound=eval_is_outbound,
+                            )
+                            transcript_text.append(
+                                f"{eval_role}: {transcript.content}"
+                            )
                     transcript_data["transcript"] = "\n".join(transcript_text)
                     transcript_data["user_chat_transcript"] = "\n".join(
                         user_chat_transcript_text
@@ -4891,33 +4885,22 @@ class TestExecutor:
                 }
                 call_execution.save(update_fields=["eval_outputs"])
 
-                # Trigger error localization if enabled
-                if eval_config.error_localizer and eval_output is not None:
-                    try:
-                        # Determine if evaluation failed (assuming boolean or numeric output)
-                        eval_failed = False
-                        if isinstance(eval_output, bool):
-                            eval_failed = not eval_output
-                        elif isinstance(eval_output, int | float):
-                            # Consider it failed if score is less than 0.5 (assuming 0-1 scale)
-                            eval_failed = eval_output < 0.8
-                        else:
-                            # For string outputs, check if it contains failure indicators
-                            eval_failed = True
+                from model_hub.services.error_localizer_service import (
+                    error_localizer_enabled,
+                )
 
-                        if eval_failed:
-                            trigger_error_localization_for_simulate(
-                                eval_template=eval_template,
-                                call_execution=call_execution,
-                                eval_config=eval_config,
-                                value=eval_output,
-                                mapping=updated_mapping,
-                                eval_explanation=eval_reason,
-                                log_id=None,  # You can add log_id if available
-                            )
-                            logger.info(
-                                f"Triggered error localization for failed evaluation {eval_config.id}"
-                            )
+                el_enabled = error_localizer_enabled(eval_config)
+                if el_enabled and eval_output is not None:
+                    try:
+                        trigger_error_localization_for_simulate(
+                            eval_template=eval_template,
+                            call_execution=call_execution,
+                            eval_config=eval_config,
+                            value=eval_output,
+                            mapping=updated_mapping,
+                            eval_explanation=eval_reason,
+                            log_id=None,
+                        )
                     except Exception as e:
                         logger.error(
                             f"Error triggering error localization for evaluation {eval_config.id}: {str(e)}"

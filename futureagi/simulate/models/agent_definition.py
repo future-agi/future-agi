@@ -185,8 +185,8 @@ class AgentDefinition(BaseModel):
 
     @property
     def active_version(self):
-        """Get the currently active version of this agent"""
-        return self.versions.filter(status="active").first()
+        """Get the currently active version of this agent (highest version number)."""
+        return self.versions.filter(status="active").order_by("-version_number").first()
 
     @property
     def latest_version(self):
@@ -240,10 +240,19 @@ class ProviderCredentials(BaseModel):
         RETELL = "retell", "Retell"
         LIVEKIT = "livekit", "LiveKit"
 
+    agent_version = models.OneToOneField(
+        "simulate.AgentVersion",
+        on_delete=models.CASCADE,
+        related_name="credentials",
+        null=True,
+        blank=True,
+    )
     agent_definition = models.OneToOneField(
         AgentDefinition,
         on_delete=models.CASCADE,
-        related_name="credentials",
+        related_name="credentials_legacy",
+        null=True,
+        blank=True,
     )
     provider_type = models.CharField(
         max_length=50,
@@ -267,7 +276,8 @@ class ProviderCredentials(BaseModel):
         verbose_name_plural = "Provider Credentials"
 
     def __str__(self):
-        return f"{self.provider_type} credentials for {self.agent_definition}"
+        target = self.agent_version or self.agent_definition
+        return f"{self.provider_type} credentials for {target}"
 
     def save(self, *args, **kwargs):
         """Encrypt secrets before saving."""

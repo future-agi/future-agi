@@ -1,14 +1,101 @@
-import { describe, it, expect } from "vitest";
-import {
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { fireEvent, render, screen, waitFor } from "src/utils/test-utils";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import TraceFilterPanel, {
   buildTraceFilterProperties,
   filterPropertiesForPicker,
   getTraceFilterFields,
   normalizeFilterRowOperator,
+  toStaticFilterProperty,
 } from "../TraceFilterPanel";
 import {
   getPickerOptionSearchText,
   getPickerOptionSecondaryLabel,
 } from "../filterValuePickerUtils";
+
+const parseQueryMock = vi.fn();
+
+vi.mock("src/hooks/use-ai-filter", () => ({
+  useAIFilter: () => ({
+    parseQuery: parseQueryMock,
+    loading: false,
+    error: null,
+  }),
+}));
+
+vi.mock("src/hooks/useDashboards", () => ({
+  useDashboardFilterValues: () => ({
+    data: [],
+    isLoading: false,
+    isError: false,
+  }),
+}));
+
+describe("TraceFilterPanel AI apply (#577)", () => {
+  beforeEach(() => {
+    parseQueryMock.mockReset();
+  });
+
+  it("runs the AI filter when Apply is clicked with an AI query present", async () => {
+    parseQueryMock.mockResolvedValue([
+      { field: "status", operator: "equals", value: "ERROR" },
+    ]);
+    const onApply = vi.fn();
+    const onClose = vi.fn();
+    const anchorEl = document.createElement("button");
+    document.body.appendChild(anchorEl);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TraceFilterPanel
+          anchorEl={anchorEl}
+          open
+          onClose={onClose}
+          onApply={onApply}
+          currentFilters={[]}
+          properties={[
+            {
+              id: "status",
+              name: "Status",
+              category: "system",
+              type: "string",
+            },
+          ]}
+          showQueryTab={false}
+        />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.change(screen.getByPlaceholderText(/Ask AI/i), {
+      target: { value: "show errors" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+
+    await waitFor(() => {
+      expect(parseQueryMock).toHaveBeenCalledWith("show errors", {
+        smart: true,
+        projectId: undefined,
+        source: "traces",
+      });
+    });
+    expect(onApply).toHaveBeenCalledWith([
+      {
+        field: "status",
+        fieldCategory: "system",
+        fieldType: "string",
+        apiColType: undefined,
+        operator: "equals",
+        value: ["ERROR"],
+      },
+    ]);
+    expect(onClose).toHaveBeenCalled();
+
+    document.body.removeChild(anchorEl);
+  });
+});
 
 describe("getTraceFilterFields (TH-4571)", () => {
   it("prepends Trace ID when tab is 'trace'", () => {
@@ -42,6 +129,30 @@ describe("getTraceFilterFields (TH-4571)", () => {
     // are not required; structural equality is what consumers rely on).
     expect(fromNull).toEqual(fromUndefined);
     expect(fromNull).toEqual(fromUnknown);
+  });
+});
+
+describe("toStaticFilterProperty (spans Span Name)", () => {
+  const nameField = { value: "name", label: "Trace Name", type: "string" };
+
+  it("remaps the name field to span_name in spans view", () => {
+    expect(toStaticFilterProperty(nameField, true)).toMatchObject({
+      id: "span_name",
+      name: "Span Name",
+      type: "string",
+    });
+  });
+
+  it("keeps the name field as name outside spans view", () => {
+    expect(toStaticFilterProperty(nameField, false)).toMatchObject({
+      id: "name",
+      name: "Trace Name",
+    });
+  });
+
+  it("does not remap non-name fields in spans view", () => {
+    const field = { value: "status", label: "Status", type: "string" };
+    expect(toStaticFilterProperty(field, true).id).toBe("status");
   });
 });
 

@@ -18,6 +18,7 @@ The three result sets are merged in Python to produce the final response.
 
 from typing import Any
 
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 from tracer.services.clickhouse.v2.id_remap_sql import (
@@ -40,8 +41,10 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     """
 
     TABLE = "spans"
-    EVAL_TABLE = "tracer_eval_logger"
     ANNOTATION_TABLE = "model_hub_score"
+    # Filter compiler class; the v2 list builder overrides this to the v2
+    # builder so it reads the v2 dimension tables (end_users, etc.).
+    _FILTER_BUILDER_CLS = ClickHouseFilterBuilder
 
     SORT_FIELD_MAP: dict[str, str] = {
         "created_at": "start_time",
@@ -57,7 +60,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
 
     def __init__(
         self,
-        project_id: str,
+        project_id: str | None = None,
+        project_ids: list[str] | None = None,
         page_number: int = 0,
         page_size: int = 50,
         filters: list[dict] | None = None,
@@ -68,7 +72,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         project_version_id: str | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(project_id, **kwargs)
+        super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
         self.page_number = page_number
         self.page_size = page_size
         self.filters = filters or []
@@ -88,9 +92,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         self.params["start_date"] = start_date
         self.params["end_date"] = end_date
 
-        fb = ClickHouseFilterBuilder(
+        fb = self._FILTER_BUILDER_CLS(
             table=self.TABLE,
-            query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
+            query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
             project_ids=self.project_ids,
@@ -242,15 +246,15 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         SELECT id, input, output, attributes_extra
         FROM {self.TABLE}
         PREWHERE id IN %(content_span_ids)s
-        WHERE project_id = %(project_id)s AND is_deleted = 0
+        WHERE {self.project_filter_sql()} AND is_deleted = 0
         """
         return query, params
 
     def build_count_query(self) -> tuple[str, dict[str, Any]]:
         """Build a count query for total matching spans."""
-        fb = ClickHouseFilterBuilder(
+        fb = self._FILTER_BUILDER_CLS(
             table=self.TABLE,
-            query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
+            query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
             project_ids=self.project_ids,
@@ -330,6 +334,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             "eval_config_ids": tuple(self.eval_config_ids),
         }
 
+        eval_table, eval_not_deleted = eval_logger_source()
+
         # Include errored rows but compute aggregates only over successful
         # rows (error = 0). ``error_count`` and ``success_count`` let the
         # pivot distinguish "no eval run" vs "all errored" vs a real
@@ -371,9 +377,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 output_str_list,
                 error = 0 AND ifNull(output_str, '') != 'ERROR'
             ) AS str_lists
-        FROM {self.EVAL_TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
-          AND (deleted = 0 OR deleted IS NULL)
+        FROM {eval_table} FINAL
+        WHERE {eval_not_deleted}
           AND observation_span_id IN %(span_ids)s
           AND custom_eval_config_id IN %(eval_config_ids)s
         GROUP BY observation_span_id, custom_eval_config_id

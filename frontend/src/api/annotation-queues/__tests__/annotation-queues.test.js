@@ -29,6 +29,7 @@ import {
   useQueueItemsForSource,
   useSkipItem,
   useReopenDiscussionThread,
+  useRestoreAnnotationQueue,
   useReviewItem,
   useResolveDiscussionThread,
   useSubmitAnnotations,
@@ -223,6 +224,25 @@ describe("Annotation Queues API", () => {
         "/model-hub/annotation-queues/get-or-create-default/",
         { project_id: "project-1" },
       );
+    });
+  });
+
+  describe("useRestoreAnnotationQueue", () => {
+    it("posts an explicit empty body so the backend accepts the restore", async () => {
+      axios.post.mockResolvedValueOnce({ data: { status: true } });
+
+      const { result } = renderHook(() => useRestoreAnnotationQueue(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate("queue-1");
+
+      await waitFor(() => {
+        expect(axios.post).toHaveBeenCalledWith(
+          annotationQueueEndpoints.restore("queue-1"),
+          {},
+        );
+      });
     });
   });
 

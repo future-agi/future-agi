@@ -1,14 +1,20 @@
 from datetime import datetime, timedelta
+from typing import Any, TypedDict
 
 import structlog
+from django.core.exceptions import ObjectDoesNotExist
+from django.db import DatabaseError
 from django.db.models import DateTimeField, Exists, F, FloatField, OuterRef, Q
 from django.db.models.functions import Cast
 
+from model_hub.constants import ANNOTATION_LABEL_VALUE_KEYS
 from model_hub.models.choices import (
     AnnotatorRole,
     AutomationRuleTriggerFrequency,
     QueueItemSourceType,
 )
+from simulate.serializers import CallTranscriptSerializer
+from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
 
 logger = structlog.get_logger(__name__)
 
@@ -108,6 +114,25 @@ def _call_execution_metric_payload(call):
         "avg_agent_latency_ms": avg_agent_latency_ms,
     }
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def _call_transcript_turns(call: Any) -> list[dict[str, Any]]:
+    if not call:
+        return []
+    try:
+        rows = getattr(call, "_displayable_transcripts", None)
+        if rows is None:
+            rows = list(
+                call.transcripts.filter(
+                    speaker_role__in=get_displayable_transcript_roles()
+                ).order_by("start_time_ms")
+            )
+        return list(CallTranscriptSerializer(rows, many=True).data)
+    except (ObjectDoesNotExist, AttributeError, DatabaseError) as exc:
+        logger.warning(
+            "call_transcript_fetch_failed", call_id=str(call.id), error=str(exc)
+        )
+        return []
 
 
 def get_source_model(source_type):
@@ -264,6 +289,17 @@ def _resolve_default_queue_scope(source_type, source_obj, organization=None):
                     project = qs.first()
         else:  # trace_session
             project = getattr(source_obj, "project", None)
+            if project is None:
+                # CH trace_session path (_CHTraceSessionSource): no FK, resolve the
+                # PG Project by the carried project_id, org-scoped (fail closed).
+                pid = getattr(source_obj, "project_id", None)
+                if pid:
+                    from tracer.models.project import Project
+
+                    qs = Project.objects.filter(id=pid)
+                    if organization is not None:
+                        qs = qs.filter(organization=organization)
+                    project = qs.first()
         if not project:
             return None, None
         scope_name = (
@@ -462,7 +498,9 @@ def resolve_default_queue_item_for_source(source_type, source_obj, organization,
     return item
 
 
-def resolve_source_object(source_type, source_id, organization=None, workspace=None):
+def resolve_source_object(
+    source_type, source_id, organization=None, workspace=None, *, allow_ch_fallback=False
+):
     """Look up a source model instance by type and ID.
 
     When *organization* is provided the returned object is verified to belong
@@ -475,14 +513,29 @@ def resolve_source_object(source_type, source_id, organization=None, workspace=N
     When *workspace* is provided, an additional check ensures the object
     belongs to that workspace (via direct FK or through a related project /
     dataset).  ``None`` is returned on mismatch.
+
+    ``allow_ch_fallback`` (opt-in): when ``True`` and no PG row exists, fall back
+    to ClickHouse for collector observation_span / trace_session sources, returning
+    a duck-typed CH object (``.id`` / ``.project_id``). Only soft-id-storing add
+    paths opt in; callers that deref ``.pk`` / FKs keep the PG-only default.
     """
     model = get_source_model(source_type)
     if not model:
         return None
-    try:
-        obj = model.objects.get(pk=source_id)
-    except model.DoesNotExist:
-        return None
+
+    # PG-first by row existence, not by source type: a curated span/session has a
+    # PG row and must resolve there (richer object, no CH round-trip); only a
+    # collector one (no PG row) needs CH. `source_type` alone can't tell them apart
+    # — both are e.g. `observation_span` — so the missing row is the discriminator.
+    obj = model.objects.filter(pk=source_id).first()
+    if obj is None:
+        if not allow_ch_fallback:
+            return None
+        # No PG row: collector spans/sessions live only in CH (fail closed). A
+        # PG-native source type that's genuinely absent resolves to None there.
+        return _resolve_ch_source_object(
+            source_type, source_id, organization=organization, workspace=workspace
+        )
 
     if organization is not None:
         obj_org = _get_source_organization(obj)
@@ -512,6 +565,318 @@ def resolve_source_object(source_type, source_id, organization=None, workspace=N
             return None
 
     return obj
+
+
+def _tenant_scoped_project(project_id, *, organization=None, workspace=None):
+    """Tenant gate for CH-resolved collector sources: return the PG ``Project`` for
+    *project_id* iff accessible to the org/workspace, else ``None``. ``organization``
+    is required (a CH source has no tenant of its own — the org distinguishes a
+    same-org null-workspace project from a foreign one). FAIL CLOSED: missing
+    project_id / missing organization / org or workspace mismatch all deny.
+    """
+    if not project_id or organization is None:
+        return None
+    from tracer.models.project import Project
+
+    project = Project.objects.filter(id=project_id, organization=organization).first()
+    if project is None:
+        return None
+    if workspace is not None:
+        proj_ws = getattr(project, "workspace", None)
+        ws_match = proj_ws == workspace or (
+            proj_ws is None and getattr(workspace, "is_default", False)
+        )
+        if not ws_match:
+            return None
+    return project
+
+
+def _resolve_ch_source_object(
+    source_type, source_id, *, organization=None, workspace=None
+):
+    """CH fallback for :func:`resolve_source_object` (collector data, no PG row).
+    Returns a duck-typed CH object (``.id`` / ``.project_id``) or ``None``, tenant-
+    verified against the PG ``Project``. CH errors are logged and denied (fail closed).
+    """
+    if source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
+        from tracer.services.clickhouse.v2 import get_reader
+
+        try:
+            with get_reader() as reader:
+                span = reader.get(str(source_id))
+        except Exception as exc:  # narrow: any CH read failure → deny
+            logger.warning(
+                "ch_source_resolve_error",
+                source_type=source_type,
+                source_id=str(source_id),
+                error=str(exc),
+            )
+            return None
+        if span is None:
+            return None
+        if (
+            _tenant_scoped_project(
+                getattr(span, "project_id", None),
+                organization=organization,
+                workspace=workspace,
+            )
+            is None
+        ):
+            logger.warning(
+                "ch_source_tenant_denied",
+                source_type=source_type,
+                source_id=str(source_id),
+            )
+            return None
+        return span
+
+    if source_type == QueueItemSourceType.TRACE_SESSION.value:
+        return _resolve_ch_trace_session(
+            source_id, organization=organization, workspace=workspace
+        )
+
+    # trace (voice) and other source types are not CH-resolvable in this wave.
+    return None
+
+
+def _resolve_ch_trace_session(source_id, *, organization=None, workspace=None):
+    """CH fallback for a collector ``trace_session`` (no PG row): existence +
+    project_id from the CH reader, tenant-verified against PG. Returns a duck-typed
+    object (``.id`` / ``.project_id`` / ``.name``) or ``None`` (fail closed)."""
+    from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+        resolve_session_fields,
+    )
+
+    try:
+        fields = resolve_session_fields([str(source_id)]).get(str(source_id))
+    except Exception as exc:  # narrow: CH read failure → deny
+        logger.warning(
+            "ch_session_resolve_error",
+            source_id=str(source_id),
+            error=str(exc),
+        )
+        return None
+    if not fields:
+        return None
+    project_id = fields.get("project_id")
+    if (
+        _tenant_scoped_project(
+            project_id, organization=organization, workspace=workspace
+        )
+        is None
+    ):
+        logger.warning("ch_session_tenant_denied", source_id=str(source_id))
+        return None
+    return _CHTraceSessionSource(
+        id=str(source_id),
+        project_id=str(project_id) if project_id else None,
+        name=fields.get("display_name") or fields.get("external_session_id") or "",
+        first_seen=fields.get("first_seen"),
+    )
+
+
+def _safe_related(item, attr):
+    """Read a ``db_constraint=False`` FK whose target row may not exist in PG
+    (collector data lives only in CH). Collapse a missing target
+    (``ObjectDoesNotExist``) to ``None`` so the caller can fall back to CH; other
+    errors propagate."""
+    from django.core.exceptions import ObjectDoesNotExist
+
+    try:
+        return getattr(item, attr)
+    except ObjectDoesNotExist:
+        return None
+
+
+def _ch_span_for_item(span_id):
+    """Best-effort CH point-read for a render path (preview/content). Returns the
+    :class:`CHSpan` or ``None`` (genuinely-gone span OR CH error). FAIL OPEN on the
+    render (None → ``deleted`` sentinel) but logs — never raises into the page."""
+    if not span_id:
+        return None
+    from tracer.services.clickhouse.v2 import get_reader
+
+    try:
+        with get_reader() as reader:
+            return reader.get(str(span_id))
+    except Exception as exc:
+        logger.warning("ch_span_render_error", span_id=str(span_id), error=str(exc))
+        return None
+
+
+def _ch_session_fields_for_item(session_id):
+    """Best-effort CH read of a session's identity fields for a render path.
+    Returns the fields dict or ``None`` (missing session OR CH error). FAIL OPEN on
+    the render but logs."""
+    if not session_id:
+        return None
+    from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+        resolve_session_fields,
+    )
+
+    try:
+        return resolve_session_fields([str(session_id)]).get(str(session_id))
+    except Exception as exc:
+        logger.warning(
+            "ch_session_render_error", session_id=str(session_id), error=str(exc)
+        )
+        return None
+
+
+def _batch_ch_spans(span_ids):
+    """Batch CH point-read for a render path: ``{str(id): CHSpan}`` over *span_ids*
+    in one query. CH error → ``{}`` (FAIL OPEN — the per-item collector branch then
+    renders the ``deleted`` sentinel, same as a single-read miss). Backs
+    :class:`CollectorSourceCache` so list/export pages do one CH read, not one per item."""
+    if not span_ids:
+        return {}
+    from tracer.services.clickhouse.v2 import get_reader
+
+    try:
+        with get_reader() as reader:
+            spans = reader.list_by_ids([str(s) for s in span_ids])
+    except Exception as exc:
+        logger.warning(
+            "ch_span_batch_render_error", count=len(span_ids), error=str(exc)
+        )
+        return {}
+    return {str(span.id): span for span in spans}
+
+
+def _batch_ch_session_fields(session_ids):
+    """Batch CH read of session identity fields: ``{str(id): fields}`` in one query.
+    CH error → ``{}`` (FAIL OPEN). Companion to :func:`_batch_ch_spans`."""
+    if not session_ids:
+        return {}
+    from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+        resolve_session_fields,
+    )
+
+    try:
+        return resolve_session_fields([str(s) for s in session_ids]) or {}
+    except Exception as exc:
+        logger.warning(
+            "ch_session_batch_render_error", count=len(session_ids), error=str(exc)
+        )
+        return {}
+
+
+class CollectorSourceCache:
+    """Page-scoped batch cache of CH-resolved collector sources.
+
+    ``resolve_source_preview`` / ``resolve_source_content`` run once per item; for
+    collector spans/sessions (CH-only, no PG row) each call would otherwise do its
+    own CH point-read — an N+1 against ClickHouse on every list/export page (PG
+    sources are prefetchable, CH has no ORM prefetch). Build one cache per page with
+    :meth:`for_items` and pass it as ``ch_cache=`` so the page does a single CH read
+    per kind. Only the collector branch consults it (a PG hit never does); a cache
+    miss returns ``None`` → ``deleted`` sentinel, matching the single-read fail-open.
+    """
+
+    __slots__ = ("_spans", "_sessions")
+
+    def __init__(self, *, spans=None, sessions=None):
+        self._spans = spans or {}
+        self._sessions = sessions or {}
+
+    @classmethod
+    def for_items(cls, items):
+        """Collect the collector span/session ids across *items* and batch-resolve
+        each kind from CH in one read. ``source_type=trace`` is PG-backed this wave,
+        so only spans and sessions are cached. PG-backed ids may also be fetched (one
+        bounded query); harmless, since the cache is consulted only on a PG miss."""
+        span_ids, session_ids = set(), set()
+        for item in items or []:
+            source_type = getattr(item, "source_type", None)
+            if (
+                source_type == QueueItemSourceType.OBSERVATION_SPAN.value
+                and item.observation_span_id
+            ):
+                span_ids.add(str(item.observation_span_id))
+            elif (
+                source_type == QueueItemSourceType.TRACE_SESSION.value
+                and item.trace_session_id
+            ):
+                session_ids.add(str(item.trace_session_id))
+        return cls(
+            spans=_batch_ch_spans(span_ids),
+            sessions=_batch_ch_session_fields(session_ids),
+        )
+
+    def span(self, span_id):
+        return self._spans.get(str(span_id)) if span_id else None
+
+    def session_fields(self, session_id):
+        return self._sessions.get(str(session_id)) if session_id else None
+
+
+class _CHTraceSessionSource:
+    """Duck-typed stand-in for a PG ``TraceSession`` resolved from CH. Carries only
+    the attributes the annotation scope/store/render path reads off a session
+    (``id`` / ``project_id`` / ``name`` / ``first_seen``); it is NOT a Django model
+    and must never be assigned to a relation (the store path uses the soft id)."""
+
+    __slots__ = ("id", "project_id", "name", "first_seen")
+
+    def __init__(self, *, id, project_id, name, first_seen):
+        self.id = id
+        self.project_id = project_id
+        self.name = name
+        self.first_seen = first_seen
+
+
+def resolve_ch_span_source(source_id, organization=None, workspace=None):
+    """CDC-off fallback for ``resolve_source_object('observation_span', …)``.
+
+    Collector-only spans live only in CH with no PG row; resolve from CH and return
+    the CHSpan (duck-types as a source object). None when absent or org/workspace mismatch.
+    """
+    try:
+        from tracer.services.clickhouse.v2 import get_reader
+
+        reader = get_reader()
+        try:
+            ch = reader.get(str(source_id))
+        finally:
+            close = getattr(reader, "close", None)
+            if callable(close):
+                close()
+    except Exception:
+        logger.exception("resolve_ch_span_source_failed", source_id=str(source_id))
+        return None
+    if ch is None:
+        return None
+
+    if organization is not None:
+        ch_org = str(getattr(ch, "org_id", "") or "")
+        # Deny by default: an empty/missing org is unattributable and must not resolve
+        # under another org's request (a `ch_org and ...` guard would fail open).
+        if ch_org != str(organization.pk):
+            logger.warning(
+                "ch_span_source_org_mismatch",
+                source_id=str(source_id),
+                expected_org=str(organization.pk),
+                actual_org=ch_org or "<empty>",
+            )
+            return None
+
+    if workspace is not None:
+        from tracer.models.project import Project
+
+        proj = Project.objects.filter(id=getattr(ch, "project_id", None)).first()
+        obj_ws = getattr(proj, "workspace", None) if proj else None
+        ws_match = obj_ws == workspace or (
+            obj_ws is None and getattr(workspace, "is_default", False)
+        )
+        if not ws_match:
+            logger.warning(
+                "ch_span_source_workspace_mismatch",
+                source_id=str(source_id),
+                expected_workspace=str(workspace.pk),
+            )
+            return None
+
+    return ch
 
 
 def _get_source_organization(obj):
@@ -604,8 +969,12 @@ def _get_source_workspace(obj):
     return None
 
 
-def resolve_source_preview(item):
-    """Return a standardized preview dict for a QueueItem's source."""
+def resolve_source_preview(item, *, ch_cache=None):
+    """Return a standardized preview dict for a QueueItem's source.
+
+    ``ch_cache`` (opt-in :class:`CollectorSourceCache`): when supplied, collector
+    span/session sources read from the page-batched map instead of a per-item CH
+    point-read. Single-item callers pass ``None`` and keep the per-item read."""
     try:
         if item.source_type == QueueItemSourceType.DATASET_ROW.value:
             row = item.dataset_row
@@ -634,9 +1003,26 @@ def resolve_source_preview(item):
             }
 
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
-            span = item.observation_span
+            span = _safe_related(item, "observation_span")
             if not span:
-                return {"type": "observation_span", "deleted": True}
+                # collector span: no PG row, resolve from CH by the soft id
+                ch_span = (
+                    ch_cache.span(item.observation_span_id)
+                    if ch_cache is not None
+                    else _ch_span_for_item(item.observation_span_id)
+                )
+                if ch_span is None:
+                    return {"type": "observation_span", "deleted": True}
+                return {
+                    "type": "observation_span",
+                    "name": ch_span.name or "",
+                    "observation_type": ch_span.observation_type or "",
+                    "input_preview": _truncate(str(ch_span.input or ""), 200),
+                    "output_preview": _truncate(str(ch_span.output or ""), 200),
+                    # CH has no response_time column; latency is the only signal.
+                    "latency_ms": ch_span.latency_ms,
+                    "response_time_ms": ch_span.latency_ms,
+                }
             return {
                 "type": "observation_span",
                 "name": span.name or "",
@@ -672,9 +1058,26 @@ def resolve_source_preview(item):
             }
 
         elif item.source_type == QueueItemSourceType.TRACE_SESSION.value:
-            session = item.trace_session
+            session = _safe_related(item, "trace_session")
             if not session:
-                return {"type": "trace_session", "deleted": True}
+                # collector session: no PG row, resolve identity from CH
+                fields = (
+                    ch_cache.session_fields(item.trace_session_id)
+                    if ch_cache is not None
+                    else _ch_session_fields_for_item(item.trace_session_id)
+                )
+                if fields is None:
+                    return {"type": "trace_session", "deleted": True}
+                return {
+                    "type": "trace_session",
+                    "session_id": str(item.trace_session_id),
+                    "name": fields.get("display_name")
+                    or fields.get("external_session_id")
+                    or "",
+                    "project_id": (
+                        str(fields["project_id"]) if fields.get("project_id") else None
+                    ),
+                }
             return {
                 "type": "trace_session",
                 "session_id": str(session.id),
@@ -688,8 +1091,12 @@ def resolve_source_preview(item):
     return {"type": item.source_type, "error": "Could not resolve preview"}
 
 
-def resolve_source_content(item):
-    """Return full renderable content for a QueueItem's source (used in annotation view)."""
+def resolve_source_content(item, *, ch_cache=None):
+    """Return full renderable content for a QueueItem's source (used in annotation view).
+
+    ``ch_cache`` (opt-in :class:`CollectorSourceCache`): when supplied, collector
+    span/session sources read from the page-batched map instead of a per-item CH
+    point-read. Single-item callers pass ``None`` and keep the per-item read."""
     try:
         if item.source_type == QueueItemSourceType.DATASET_ROW.value:
             row = item.dataset_row
@@ -781,9 +1188,21 @@ def resolve_source_content(item):
             }
 
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
-            span = item.observation_span
+            span = _safe_related(item, "observation_span")
             if not span:
-                return {"type": "observation_span", "deleted": True}
+                # collector span: no PG row, rebuild content from CH via the mapper
+                ch_span = (
+                    ch_cache.span(item.observation_span_id)
+                    if ch_cache is not None
+                    else _ch_span_for_item(item.observation_span_id)
+                )
+                if ch_span is None:
+                    return {"type": "observation_span", "deleted": True}
+                from tracer.services.clickhouse.v2.span_reader import (
+                    chspan_to_annotation_source_dict,
+                )
+
+                return chspan_to_annotation_source_dict(ch_span)
             return {
                 "type": "observation_span",
                 "span_id": str(span.id),
@@ -835,10 +1254,28 @@ def resolve_source_content(item):
             call = item.call_execution
             if not call:
                 return {"type": "call_execution", "deleted": True}
+            call_meta = getattr(call, "call_metadata", {}) or {}
+            provider = getattr(call, "provider_call_data", {}) or {}
+            transcript_turns = _call_transcript_turns(call)
+            raw_transcript = ""
+            for sub in provider.values():
+                if isinstance(sub, dict) and isinstance(sub.get("transcript"), str):
+                    raw_transcript = sub["transcript"]
+                    break
+            call_summary = getattr(call, "call_summary", "") or ""
+            scenario_name = call_meta.get("scenario_name") or ""
+            row_data = call_meta.get("row_data") or {}
+            if isinstance(row_data, dict) and row_data:
+                scenario_input = row_data
+            elif scenario_name:
+                scenario_input = {"scenario_name": scenario_name}
+            else:
+                scenario_input = {}
             return {
                 "type": "call_execution",
                 "call_id": str(call.id),
                 "source_id": str(call.id),
+                "name": scenario_name or (call_summary[:80] if call_summary else ""),
                 "status": getattr(call, "status", ""),
                 "simulation_call_type": getattr(call, "simulation_call_type", ""),
                 "call_type": getattr(call, "call_type", None),
@@ -859,7 +1296,7 @@ def resolve_source_content(item):
                 "cost": getattr(call, "cost_cents", None),
                 "ended_reason": getattr(call, "ended_reason", None),
                 "message_count": getattr(call, "message_count", None),
-                "call_summary": getattr(call, "call_summary", None),
+                "call_summary": call_summary or None,
                 "user_wpm": getattr(call, "user_wpm", None),
                 "agent_wpm": getattr(call, "bot_wpm", None),
                 "talk_ratio": getattr(call, "talk_ratio", None),
@@ -867,11 +1304,10 @@ def resolve_source_content(item):
                     call, "user_interruption_count", None
                 ),
                 "ai_interruption_count": getattr(call, "ai_interruption_count", None),
-                "input": getattr(call, "input", None),
-                "output": getattr(call, "output", None),
-                "metadata": getattr(call, "call_metadata", {}) or {},
-                "call_metadata": getattr(call, "call_metadata", {}) or {},
-                "provider_call_data": getattr(call, "provider_call_data", {}) or {},
+                "input": scenario_input,
+                "output": transcript_turns or raw_transcript or call_summary or "",
+                "metadata": call_meta,
+                "provider_call_data": provider,
                 "monitor_call_data": getattr(call, "monitor_call_data", {}) or {},
                 "analysis_data": getattr(call, "analysis_data", {}) or {},
                 "evaluation_data": getattr(call, "evaluation_data", {}) or {},
@@ -881,9 +1317,31 @@ def resolve_source_content(item):
             }
 
         elif item.source_type == QueueItemSourceType.TRACE_SESSION.value:
-            session = item.trace_session
+            session = _safe_related(item, "trace_session")
             if not session:
-                return {"type": "trace_session", "deleted": True}
+                # collector session: no PG row, resolve from CH (first_seen is the
+                # created_at/updated_at proxy — CH has no audit columns)
+                fields = (
+                    ch_cache.session_fields(item.trace_session_id)
+                    if ch_cache is not None
+                    else _ch_session_fields_for_item(item.trace_session_id)
+                )
+                if fields is None:
+                    return {"type": "trace_session", "deleted": True}
+                first_seen = fields.get("first_seen")
+                return {
+                    "type": "trace_session",
+                    "session_id": str(item.trace_session_id),
+                    "source_id": str(item.trace_session_id),
+                    "name": fields.get("display_name")
+                    or fields.get("external_session_id")
+                    or "",
+                    "project_id": (
+                        str(fields["project_id"]) if fields.get("project_id") else None
+                    ),
+                    "created_at": first_seen,
+                    "updated_at": first_seen,
+                }
             return {
                 "type": "trace_session",
                 "session_id": str(session.id),
@@ -2613,3 +3071,82 @@ def send_rule_completion_email(
             recipients=len(recipients),
             error=str(exc),
         )
+
+
+EvalOutputScalar = bool | float | int | str | list[str] | dict[str, Any] | None
+
+
+class EvalMetricEntry(TypedDict):
+    score: EvalOutputScalar
+    explanation: str | None
+    tags: list[str] | None
+    error: bool | str | None
+    error_message: str | None
+    created_at: str | None
+
+
+def eval_output_value(source: Any) -> EvalOutputScalar:
+    """Resolve score scalar from an EvalLogger row or a call_execution eval_outputs entry."""
+    if source is None:
+        return None
+    if isinstance(source, dict):
+        if source.get("output_float") is not None:
+            return source["output_float"]
+        if source.get("output_bool") is not None:
+            return source["output_bool"]
+        output_str = source.get("output_str")
+        if output_str not in (None, ""):
+            return output_str
+        if source.get("output_str_list"):
+            return source["output_str_list"]
+        output = source.get("output")
+        if isinstance(output, dict):
+            score = output.get("score")
+            return score if score is not None else output.get("choice")
+        return output
+    if source.output_float is not None:
+        return source.output_float
+    if source.output_bool is not None:
+        return source.output_bool
+    if source.output_str not in (None, ""):
+        return source.output_str
+    return source.output_str_list
+
+
+def eval_metrics_from_call_execution(
+    call: Any,
+) -> dict[str, list[EvalMetricEntry]]:
+    if not call:
+        return {}
+    raw = getattr(call, "eval_outputs", {}) or {}
+    metrics: dict[str, list[EvalMetricEntry]] = {}
+    for eval_id, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        key = entry.get("name") or str(eval_id)
+        error = entry.get("error")
+        metric: EvalMetricEntry = {
+            "score": eval_output_value(entry),
+            "explanation": entry.get("reason") or entry.get("explanation"),
+            "tags": entry.get("tags"),
+            "error": error,
+            "error_message": entry.get("error_message") if error else None,
+            "created_at": entry.get("created_at"),
+        }
+        metrics.setdefault(key, []).append(metric)
+    return metrics
+
+
+def canonical_score_value(label: Any, raw: Any) -> Any:
+    if raw is None or not isinstance(raw, dict):
+        return raw
+    label_type = getattr(label, "type", None) if label else None
+    key = ANNOTATION_LABEL_VALUE_KEYS.get(label_type)
+    if key and key in raw:
+        return raw[key]
+    logger.warning(
+        "label_type_missing_in_value_map",
+        label_type=label_type,
+        label_id=str(getattr(label, "id", "")) or None,
+    )
+    return raw

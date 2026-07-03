@@ -86,7 +86,7 @@ const LeftSectionBottom = ({ data }) => {
 
   const filteredTranscript = useMemo(() => {
     const transcript = data?.transcript;
-    return transcript?.filter((item) => item.speakerRole !== "system");
+    return transcript?.filter((item) => item.speaker_role !== "system");
   }, [data]);
   const observationSpan = data?.observation_span;
   const { isCallInProgress, message: loadingMessage } =
