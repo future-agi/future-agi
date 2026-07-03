@@ -1951,7 +1951,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
     }
     return columns
       .filter((col) => !col.groupBy || col.groupBy === "")
-      .map((col) => getTraceListColumnDefs(col));
+      .map((col) => ({ ...getTraceListColumnDefs(col), hide: false }));
   }, [columns]);
 
   const defaultColDef = useMemo(
@@ -2599,7 +2599,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     }
     return columns
       .filter((col) => !col.groupBy || col.groupBy === "")
-      .map((col) => getTraceListColumnDefs(col));
+      .map((col) => ({ ...getTraceListColumnDefs(col), hide: false }));
   }, [columns]);
 
   const defaultColDef = useMemo(
@@ -3181,7 +3181,10 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
         },
       ];
     }
-    return columns.map((col) => getSessionListColumnDef(col));
+    return columns.map((col) => ({
+      ...getSessionListColumnDef(col),
+      hide: false,
+    }));
   }, [columns]);
 
   const defaultColDef = useMemo(

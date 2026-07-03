@@ -471,7 +471,7 @@ const DatapointDrawerChild = () => {
         setDatapoint({
           index: nextIndex,
           rowData: rowData,
-          valueInfos: rows[nextIndex]?.rowData?.valueInfos,
+          value_infos: rows[nextIndex]?.rowData?.value_infos,
         });
         if (evalOpen) {
           const column = allColumns.find(
@@ -497,7 +497,7 @@ const DatapointDrawerChild = () => {
             setDatapoint({
               index: nextIndex,
               rowData: nextCellData,
-              valueInfos: nextCellData?.valueInfos,
+              value_infos: nextCellData?.value_infos,
             });
             setRows((prev) => {
               const newRows = [...prev];
@@ -557,7 +557,7 @@ const DatapointDrawerChild = () => {
           setDatapoint({
             index: nextIndex,
             rowData: nextCellData,
-            valueInfos: nextCellData?.valueInfos,
+            value_infos: nextCellData?.value_infos,
           });
           if (evalOpen) {
             const column = allColumns.find(
@@ -579,7 +579,7 @@ const DatapointDrawerChild = () => {
       setDatapoint({
         index: datapoint.index - 1,
         rowData,
-        valueInfos: rows[datapoint.index - 1]?.rowData?.valueInfos,
+        value_infos: rows[datapoint.index - 1]?.rowData?.value_infos,
       });
       if (evalOpen) {
         const column = allColumns.find(
@@ -1134,7 +1134,7 @@ const DatapointDrawerChild = () => {
                     }}
                   >
                     {isAudioColumn ? (
-                      value?.cellValue ? (
+                      value?.cell_value ? (
                         <AudioDatapointCard value={value} column={col} />
                       ) : (
                         <DatapointCard
@@ -1152,7 +1152,7 @@ const DatapointDrawerChild = () => {
                         />
                       )
                     ) : isImageColumn ? (
-                      value?.cellValue ? (
+                      value?.cell_value ? (
                         <ImageDatapointCard value={value} column={col} />
                       ) : (
                         <DatapointCard
@@ -1170,7 +1170,7 @@ const DatapointDrawerChild = () => {
                         />
                       )
                     ) : isImagesColumn ? (
-                      value?.cellValue ? (
+                      value?.cell_value ? (
                         <ImagesDatapointCard value={value} column={col} />
                       ) : (
                         <DatapointCard
@@ -1188,7 +1188,7 @@ const DatapointDrawerChild = () => {
                         />
                       )
                     ) : isDocumentColumn ? (
-                      value?.cellValue ? (
+                      value?.cell_value ? (
                         <DocumentDatapointCard value={value} column={col} />
                       ) : (
                         <DatapointCard

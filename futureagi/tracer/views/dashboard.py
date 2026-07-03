@@ -927,22 +927,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 ]
             )
 
-            # Span list system metrics. These are filterable row-level span
-            # fields, so expose them from the backend catalog instead of
-            # injecting span-only fields in frontend views.
-            metrics.extend(
-                [
-                    {
-                        "name": "latency_ms",
-                        "display_name": "Duration",
-                        "category": "system_metric",
-                        "source": "spans",
-                        "sources": ["spans"],
-                        "type": "number",
-                        "unit": "ms",
-                    },
-                ]
-            )
 
             # Eval-specific dimensions (available across all sources)
             metrics.extend(
@@ -1018,6 +1002,52 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         "source": "datasets",
                         "type": "number",
                         "unit": "%",
+                    },
+                ]
+            )
+
+            # 2b. Dataset breakdown/filter dimensions (string)
+            metrics.extend(
+                [
+                    {
+                        "name": "dataset",
+                        "display_name": "Dataset",
+                        "category": "system_metric",
+                        "source": "datasets",
+                        "type": "string",
+                        "unit": "",
+                    },
+                    {
+                        "name": "eval_template",
+                        "display_name": "Eval Template",
+                        "category": "system_metric",
+                        "source": "datasets",
+                        "type": "string",
+                        "unit": "",
+                    },
+                    {
+                        "name": "column_name",
+                        "display_name": "Column Name",
+                        "category": "system_metric",
+                        "source": "datasets",
+                        "type": "string",
+                        "unit": "",
+                    },
+                    {
+                        "name": "column_source",
+                        "display_name": "Column Source",
+                        "category": "system_metric",
+                        "source": "datasets",
+                        "type": "string",
+                        "unit": "",
+                    },
+                    {
+                        "name": "cell_status",
+                        "display_name": "Cell Status",
+                        "category": "system_metric",
+                        "source": "datasets",
+                        "type": "string",
+                        "unit": "",
                     },
                 ]
             )
@@ -1542,6 +1572,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             metrics.extend(
                 [
                     {
+                        "name": "simulation",
+                        "display_name": "Simulation",
+                        "category": "system_metric",
+                        "source": "simulation",
+                        "type": "string",
+                        "unit": "",
+                    },
+                    {
                         "name": "scenario",
                         "display_name": "Scenario",
                         "category": "system_metric",
@@ -1699,7 +1737,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
             for metric in metrics:
                 if (
-                    metric.get("source") == "simulation"
+                    metric.get("source") in ("simulation", "datasets")
                     and metric.get("type") == "string"
                 ):
                     metric["allowed_aggregations"] = ["count", "count_distinct"]
@@ -2218,7 +2256,9 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     null_uuid = "00000000-0000-0000-0000-000000000000"
                     # Trace Name = root span name; restrict to root spans.
                     root_only_clause = (
-                        "AND parent_span_id IS NULL " if metric_name == "name" else ""
+                        "AND (parent_span_id IS NULL OR parent_span_id = '') "
+                        if metric_name == "name"
+                        else ""
                     )
 
                     if metric_name == "session":

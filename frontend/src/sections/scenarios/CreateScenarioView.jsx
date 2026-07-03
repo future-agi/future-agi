@@ -611,7 +611,7 @@ const CreateScenarioView = () => {
         agentType: defaultSelectedAgent.agent_type,
       });
     }
-  }, [defaultAgentDefinitionId, agentDefinitions]);
+  }, [defaultAgentDefinitionId, agentDefinitions, selectedAgent]);
 
   return (
     <Box
