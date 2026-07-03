@@ -67,24 +67,15 @@ class CallTranscriptView(APIView):
                 speaker_role__in=get_displayable_transcript_roles(),
             ).order_by("start_time_ms")
 
-            rows = CallTranscriptSerializer(transcripts, many=True).data
-
             from simulate.utils.speaker_roles import SpeakerRoleResolver
 
-            provider = SpeakerRoleResolver.detect_provider(
-                call_execution.provider_call_data
+            rows = SpeakerRoleResolver.align_transcript_rows(
+                CallTranscriptSerializer(transcripts, many=True).data,
+                provider=SpeakerRoleResolver.detect_provider(
+                    call_execution.provider_call_data
+                ),
+                is_outbound=SpeakerRoleResolver.detect_is_outbound(call_execution),
             )
-            is_outbound = SpeakerRoleResolver.detect_is_outbound(call_execution)
-            for row in rows:
-                raw = row.get("speaker_role")
-                if SpeakerRoleResolver.is_tested_agent(
-                    raw, provider=provider, is_outbound=is_outbound
-                ):
-                    row["speaker_role"] = "assistant"
-                elif SpeakerRoleResolver.is_simulator(
-                    raw, provider=provider, is_outbound=is_outbound
-                ):
-                    row["speaker_role"] = "user"
 
             return Response(
                 {
@@ -150,21 +141,13 @@ class TestExecutionTranscriptsView(APIView):
                 ]
                 transcripts.sort(key=lambda x: x.start_time_ms)
 
-                rows = CallTranscriptSerializer(transcripts, many=True).data
-                provider = SpeakerRoleResolver.detect_provider(
-                    call_execution.provider_call_data
+                rows = SpeakerRoleResolver.align_transcript_rows(
+                    CallTranscriptSerializer(transcripts, many=True).data,
+                    provider=SpeakerRoleResolver.detect_provider(
+                        call_execution.provider_call_data
+                    ),
+                    is_outbound=SpeakerRoleResolver.detect_is_outbound(call_execution),
                 )
-                is_outbound = SpeakerRoleResolver.detect_is_outbound(call_execution)
-                for row in rows:
-                    raw = row.get("speaker_role")
-                    if SpeakerRoleResolver.is_tested_agent(
-                        raw, provider=provider, is_outbound=is_outbound
-                    ):
-                        row["speaker_role"] = "assistant"
-                    elif SpeakerRoleResolver.is_simulator(
-                        raw, provider=provider, is_outbound=is_outbound
-                    ):
-                        row["speaker_role"] = "user"
 
                 call_data = {
                     "call_execution_id": str(call_execution.id),

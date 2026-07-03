@@ -645,29 +645,19 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             )
             call_metadata = getattr(obj, "call_metadata", None) or {}
             offset = call_metadata.get("recording_offset_ms", 0)
-            rows = CallTranscriptSerializer(
-                filtered_transcripts,
-                many=True,
-                context={"recording_offset_ms": offset},
-            ).data
-
             from simulate.utils.speaker_roles import SpeakerRoleResolver
 
-            provider = SpeakerRoleResolver.detect_provider(
-                getattr(obj, "provider_call_data", None)
+            return SpeakerRoleResolver.align_transcript_rows(
+                CallTranscriptSerializer(
+                    filtered_transcripts,
+                    many=True,
+                    context={"recording_offset_ms": offset},
+                ).data,
+                provider=SpeakerRoleResolver.detect_provider(
+                    getattr(obj, "provider_call_data", None)
+                ),
+                is_outbound=SpeakerRoleResolver.detect_is_outbound(obj),
             )
-            is_outbound = SpeakerRoleResolver.detect_is_outbound(obj)
-            for row in rows:
-                raw = row.get("speaker_role")
-                if SpeakerRoleResolver.is_tested_agent(
-                    raw, provider=provider, is_outbound=is_outbound
-                ):
-                    row["speaker_role"] = "assistant"
-                elif SpeakerRoleResolver.is_simulator(
-                    raw, provider=provider, is_outbound=is_outbound
-                ):
-                    row["speaker_role"] = "user"
-            return rows
         return []
 
     def get_response_time(self, obj):
@@ -1375,29 +1365,19 @@ class CallExecutionSerializer(serializers.ModelSerializer):
             )
             call_metadata = getattr(obj, "call_metadata", None) or {}
             offset = call_metadata.get("recording_offset_ms", 0)
-            rows = CallTranscriptSerializer(
-                filtered_transcripts,
-                many=True,
-                context={"recording_offset_ms": offset},
-            ).data
-
             from simulate.utils.speaker_roles import SpeakerRoleResolver
 
-            provider = SpeakerRoleResolver.detect_provider(
-                getattr(obj, "provider_call_data", None)
+            return SpeakerRoleResolver.align_transcript_rows(
+                CallTranscriptSerializer(
+                    filtered_transcripts,
+                    many=True,
+                    context={"recording_offset_ms": offset},
+                ).data,
+                provider=SpeakerRoleResolver.detect_provider(
+                    getattr(obj, "provider_call_data", None)
+                ),
+                is_outbound=SpeakerRoleResolver.detect_is_outbound(obj),
             )
-            is_outbound = SpeakerRoleResolver.detect_is_outbound(obj)
-            for row in rows:
-                raw = row.get("speaker_role")
-                if SpeakerRoleResolver.is_tested_agent(
-                    raw, provider=provider, is_outbound=is_outbound
-                ):
-                    row["speaker_role"] = "assistant"
-                elif SpeakerRoleResolver.is_simulator(
-                    raw, provider=provider, is_outbound=is_outbound
-                ):
-                    row["speaker_role"] = "user"
-            return rows
         return []
 
     def get_response_time_seconds(self, obj):

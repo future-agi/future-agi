@@ -146,6 +146,23 @@ class SpeakerRoleResolver:
         return role_map.get((role or "").lower()) == "simulator"
 
     @classmethod
+    def align_transcript_rows(
+        cls,
+        rows: list[dict[str, Any]],
+        *,
+        provider: ProviderChoices,
+        is_outbound: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Rewrite each row's speaker_role to platform convention in place."""
+        for row in rows:
+            raw = row.get("speaker_role")
+            if cls.is_tested_agent(raw, provider=provider, is_outbound=is_outbound):
+                row["speaker_role"] = "assistant"
+            elif cls.is_simulator(raw, provider=provider, is_outbound=is_outbound):
+                row["speaker_role"] = "user"
+        return rows
+
+    @classmethod
     def get_eval_role_label(
         cls,
         role: str,
