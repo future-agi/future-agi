@@ -838,13 +838,15 @@ class TestTraceSessionOverlayWritePath:
                 return mock.Mock(
                     data=[{"any_id": requested_id, "survivor_id": survivor_id}]
                 )
+            if "trace_session_id_remap" in query:
+                return mock.Mock(data=[])
             if "count(DISTINCT trace_id)" in query:
-                bound_session_ids.append(params["session_id"])
+                bound_session_ids.append(params.get("session_group_ids"))
                 return mock.Mock(
                     data=[
                         {
-                            "start_time": None,
-                            "end_time": None,
+                            "session_start": None,
+                            "session_end": None,
                             "total_cost": 0,
                             "total_tokens": 0,
                             "total_traces": 0,
@@ -852,7 +854,7 @@ class TestTraceSessionOverlayWritePath:
                     ]
                 )
             if "GROUP BY trace_id" in query:
-                bound_session_ids.append(params["session_id"])
+                bound_session_ids.append(params.get("session_group_ids"))
                 return mock.Mock(data=[])
             raise AssertionError(f"unexpected ClickHouse query: {query}")
 
@@ -871,7 +873,8 @@ class TestTraceSessionOverlayWritePath:
             )
 
         assert response.status_code == status.HTTP_200_OK
-        assert bound_session_ids == [survivor_id, survivor_id]
+        expected_group = (survivor_id,)
+        assert bound_session_ids == [expected_group, expected_group]
 
     def test_retrieve_clickhouse_applies_time_window_to_span_scans(
         self, observe_project
