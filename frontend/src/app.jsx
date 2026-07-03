@@ -90,14 +90,8 @@ const queryClient = new QueryClient({
       gcTime: 5 * 60 * 1000,
       // Don't refetch when browser tab regains focus
       refetchOnWindowFocus: false,
-      // Retry network/timeout/5xx failures (survives an intermittently
-      // stalling backend) but not 4xx, which won't change on retry.
-      retry: (failureCount, error) => {
-        const status = error?.response?.status;
-        if (status && status >= 400 && status < 500) return false;
-        return failureCount < 2;
-      },
-      retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
+      // Retry once on failure
+      retry: 1,
     },
   },
 });
