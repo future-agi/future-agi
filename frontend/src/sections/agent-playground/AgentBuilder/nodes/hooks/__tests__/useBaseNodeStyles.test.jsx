@@ -43,7 +43,7 @@ const defaultProps = {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-describe("useBaseNodeStyles", () => {
+describe("Unit: useBaseNodeStyles", () => {
   // ---- borderColor priority ----
   it("returns red borderColor when hasValidationError", () => {
     const { result } = renderWithTheme({

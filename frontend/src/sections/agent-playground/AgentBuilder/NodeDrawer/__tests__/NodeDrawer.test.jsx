@@ -1,6 +1,6 @@
 /* eslint-disable react/prop-types */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import NodeDrawer from "../NodeDrawer";
@@ -17,6 +17,10 @@ const storeMocks = vi.hoisted(() => ({
 
 const queryMocks = vi.hoisted(() => ({
   invalidateQueries: vi.fn(),
+}));
+
+const workflowMocks = vi.hoisted(() => ({
+  isRunning: false,
 }));
 
 // ---- Mocks ----
@@ -37,7 +41,8 @@ vi.mock("../../../store", () => ({
       deleteNode: storeMocks.deleteNode,
       setGraphData: storeMocks.setGraphData,
     }),
-  useWorkflowRunStoreShallow: (selector) => selector({ isRunning: false }),
+  useWorkflowRunStoreShallow: (selector) =>
+    selector({ isRunning: workflowMocks.isRunning }),
 }));
 
 vi.mock("src/api/agent-playground/agent-playground", () => ({
@@ -108,9 +113,10 @@ function renderDrawer(props = {}) {
   );
 }
 
-describe("NodeDrawer", () => {
+describe("Unit: NodeDrawer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    workflowMocks.isRunning = false;
     storeMocks.getState.mockReturnValue({
       nodes: [node],
       edges: [],
@@ -123,10 +129,28 @@ describe("NodeDrawer", () => {
 
     renderDrawer();
 
-    const deleteButton = screen.getByRole("button", { name: "Delete node" });
+    const deleteButton = screen.getByRole("button", {
+      name: "Delete node: Agent node",
+    });
     expect(deleteButton).toBeInTheDocument();
 
     await user.hover(deleteButton);
+
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("Delete node");
+  });
+
+  it("keeps the drawer delete tooltip available when the workflow disables the button", async () => {
+    workflowMocks.isRunning = true;
+
+    renderDrawer();
+
+    const deleteButton = screen.getByRole("button", {
+      name: "Delete node: Agent node",
+    });
+    expect(deleteButton).toBeDisabled();
+
+    fireEvent.mouseOver(deleteButton.parentElement);
 
     const tooltip = await screen.findByRole("tooltip");
     expect(tooltip).toHaveTextContent("Delete node");
@@ -138,7 +162,9 @@ describe("NodeDrawer", () => {
 
     renderDrawer({ onClose });
 
-    const closeButton = screen.getByRole("button", { name: "Close" });
+    const closeButton = screen.getByRole("button", {
+      name: "Close node editor",
+    });
     expect(closeButton).toBeInTheDocument();
 
     await user.hover(closeButton);

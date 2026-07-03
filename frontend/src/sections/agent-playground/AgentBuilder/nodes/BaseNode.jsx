@@ -35,6 +35,11 @@ const BaseNode = ({
   const outputPortLabel = outputPort?.display_name;
   const typeConfig = NODE_TYPE_CONFIG[type] ?? {};
   const iconColor = typeConfig.color ?? "orange.500";
+  const accessibleNodeLabel =
+    typeof label === "string" && label.trim()
+      ? label.trim()
+      : typeConfig.title || "node";
+  const deleteNodeAriaLabel = `Delete node: ${accessibleNodeLabel}`;
 
   const state = useBaseNodeState({ id, data });
   const {
@@ -165,38 +170,44 @@ const BaseNode = ({
               arrow
               placement="bottom"
             >
-              <IconButton
-                aria-label="Delete node"
-                className="node-delete-btn"
+              <Box
+                component="span"
                 sx={{
-                  color: "red.500",
-                  bgcolor: "background.paper",
-                  borderRadius: 0.5,
-                  border: "1px solid",
-                  borderColor: "red.500",
-                  marginLeft: "auto",
-                  p: 0.5,
                   position: "absolute",
                   right: 4,
                   top: "50%",
                   transform: "translateY(-50%)",
-                  "&:hover": {
-                    bgcolor: (theme) =>
-                      theme.palette.mode === "dark"
-                        ? alpha(theme.palette.red[800], 0.3)
-                        : "red.50",
-                  },
+                  display: "inline-flex",
                 }}
-                onClick={handleDeleteClick}
               >
-                <SvgColor
-                  src="/assets/icons/ic_delete.svg"
+                <IconButton
+                  aria-label={deleteNodeAriaLabel}
+                  className="node-delete-btn"
                   sx={{
-                    width: 16,
-                    height: 16,
+                    color: "red.500",
+                    bgcolor: "background.paper",
+                    borderRadius: 0.5,
+                    border: "1px solid",
+                    borderColor: "red.500",
+                    p: 0.5,
+                    "&:hover": {
+                      bgcolor: (theme) =>
+                        theme.palette.mode === "dark"
+                          ? alpha(theme.palette.red[800], 0.3)
+                          : "red.50",
+                    },
                   }}
-                />
-              </IconButton>
+                  onClick={handleDeleteClick}
+                >
+                  <SvgColor
+                    src="/assets/icons/ic_delete.svg"
+                    sx={{
+                      width: 16,
+                      height: 16,
+                    }}
+                  />
+                </IconButton>
+              </Box>
             </CustomTooltip>
           )}
         </Stack>

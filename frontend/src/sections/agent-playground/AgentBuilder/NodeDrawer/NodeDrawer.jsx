@@ -341,6 +341,12 @@ export default function NodeDrawer({
 
   if (!open || !activeNode) return null;
 
+  const activeNodeLabel =
+    typeof activeNode.data?.label === "string" && activeNode.data.label.trim()
+      ? activeNode.data.label.trim()
+      : NODE_TYPE_CONFIG[activeNode.type]?.title || "current node";
+  const deleteNodeAriaLabel = `Delete node: ${activeNodeLabel}`;
+
   return (
     <>
       <Box
@@ -402,7 +408,7 @@ export default function NodeDrawer({
                 >
                   <span>
                     <IconButton
-                      aria-label="Delete node"
+                      aria-label={deleteNodeAriaLabel}
                       size="small"
                       onClick={() => setShowDeleteDialog(true)}
                       disabled={isWorkflowRunning}
@@ -436,7 +442,7 @@ export default function NodeDrawer({
                   placement="bottom"
                 >
                   <IconButton
-                    aria-label="Close"
+                    aria-label="Close node editor"
                     size="small"
                     onClick={handleClose}
                     sx={{ color: "text.primary" }}

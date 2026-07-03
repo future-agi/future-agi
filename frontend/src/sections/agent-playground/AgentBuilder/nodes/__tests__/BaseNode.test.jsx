@@ -39,6 +39,7 @@ const theme = createTheme({
 });
 
 const mockHandleDeleteClick = vi.fn();
+const mockHandleNodeClick = vi.fn();
 
 const defaultState = {
   nodeHeight: 40,
@@ -72,12 +73,13 @@ function renderBaseNode(props = {}) {
   );
 }
 
-describe("BaseNode", () => {
+describe("Unit: BaseNode", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockHandleDeleteClick.mockImplementation((event) => event.stopPropagation());
     useBaseNodeState.mockReturnValue(defaultState);
     useBaseNodeActions.mockReturnValue({
-      handleNodeClick: vi.fn(),
+      handleNodeClick: mockHandleNodeClick,
       handleAddClick: vi.fn(),
       handlePopperClose: vi.fn(),
       handleNodeSelect: vi.fn(),
@@ -90,19 +92,22 @@ describe("BaseNode", () => {
   it("shows the real delete tooltip on hover and preserves delete clicks", async () => {
     renderBaseNode();
 
-    const deleteButton = screen.getByRole("button", { name: "Delete node" });
+    const deleteButton = screen.getByRole("button", {
+      name: "Delete node: Agent node",
+    });
     expect(deleteButton).toHaveClass("node-delete-btn");
 
     // The button starts with pointer-events disabled until the node hover/focus
-    // selector reveals it; fireEvent exercises the real Tooltip without making
-    // this assertion depend on JSDOM pseudo-class support.
-    fireEvent.mouseOver(deleteButton);
+    // selector reveals it. Hover the tooltip wrapper so the test exercises the
+    // same always-hit-testable target used by the browser.
+    fireEvent.mouseOver(deleteButton.parentElement);
 
     const tooltip = await screen.findByRole("tooltip");
     expect(tooltip).toHaveTextContent("Delete node");
 
     fireEvent.click(deleteButton);
     expect(mockHandleDeleteClick).toHaveBeenCalledTimes(1);
+    expect(mockHandleNodeClick).not.toHaveBeenCalled();
   });
 
   it("does not render the delete tooltip control in preview mode", () => {
@@ -115,7 +120,20 @@ describe("BaseNode", () => {
     });
 
     expect(
-      screen.queryByRole("button", { name: "Delete node" }),
+      screen.queryByRole("button", { name: /delete node/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not render the delete tooltip control while the workflow is running", () => {
+    useBaseNodeState.mockReturnValue({
+      ...defaultState,
+      isWorkflowRunning: true,
+    });
+
+    renderBaseNode();
+
+    expect(
+      screen.queryByRole("button", { name: /delete node/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -128,7 +146,7 @@ describe("BaseNode", () => {
     renderBaseNode();
 
     expect(
-      screen.queryByRole("button", { name: "Delete node" }),
+      screen.queryByRole("button", { name: /delete node/i }),
     ).not.toBeInTheDocument();
   });
 });
