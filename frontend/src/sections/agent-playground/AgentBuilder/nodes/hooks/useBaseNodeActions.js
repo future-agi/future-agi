@@ -4,6 +4,7 @@ import { enqueueSnackbar } from "notistack";
 import {
   useAgentPlaygroundStore,
   useAgentPlaygroundStoreShallow,
+  useWorkflowRunStore,
 } from "../../../store";
 import { NODE_X_OFFSET } from "../../../utils/constants";
 import useAddNodeOptimistic from "../../hooks/useAddNodeOptimistic";
@@ -82,12 +83,31 @@ export default function useBaseNodeActions({
 
   const handleDeleteClick = useCallback(
     async (e) => {
-      if (preview || isWorkflowRunning || isRunning) return;
+      const isLiveDeleteBlocked = () =>
+        useWorkflowRunStore.getState().isRunning ||
+        useAgentPlaygroundStore.getState().nodeExecutionStates?.[id] ===
+          "running";
+
+      if (preview || isWorkflowRunning || isRunning || isLiveDeleteBlocked()) {
+        return;
+      }
       e.stopPropagation();
 
       // Always apply optimistic deletion first
       const { nodes, edges } = useAgentPlaygroundStore.getState();
+      const nodeExistsBeforeDelete = nodes.some((n) => n.id === id);
+      if (!nodeExistsBeforeDelete) return;
+
       deleteNode(id);
+      const deleteWasBlocked =
+        nodeExistsBeforeDelete &&
+        useAgentPlaygroundStore.getState().nodes.some((n) => n.id === id);
+      if (deleteWasBlocked) return;
+
+      if (isLiveDeleteBlocked()) {
+        setGraphData(nodes, edges);
+        return;
+      }
 
       const draftResult = await ensureDraft({ skipDirtyCheck: true });
 
@@ -99,6 +119,11 @@ export default function useBaseNodeActions({
 
       if (draftResult === "created") {
         // Deletion included in POST. Done!
+        return;
+      }
+
+      if (isLiveDeleteBlocked()) {
+        setGraphData(nodes, edges);
         return;
       }
 

@@ -13,6 +13,7 @@ const storeMocks = vi.hoisted(() => ({
   deleteNode: vi.fn(),
   setGraphData: vi.fn(),
   getState: vi.fn(),
+  nodeExecutionStates: {},
 }));
 
 const queryMocks = vi.hoisted(() => ({
@@ -29,6 +30,10 @@ const draftMocks = vi.hoisted(() => ({
 
 const workflowMocks = vi.hoisted(() => ({
   isRunning: false,
+}));
+
+const notificationMocks = vi.hoisted(() => ({
+  enqueueSnackbar: vi.fn(),
 }));
 
 // ---- Mocks ----
@@ -48,7 +53,11 @@ vi.mock("../../../store", () => ({
       setNodeFormDirty: storeMocks.setNodeFormDirty,
       deleteNode: storeMocks.deleteNode,
       setGraphData: storeMocks.setGraphData,
+      nodeExecutionStates: storeMocks.nodeExecutionStates,
     }),
+  useWorkflowRunStore: {
+    getState: () => ({ isRunning: workflowMocks.isRunning }),
+  },
   useWorkflowRunStoreShallow: (selector) =>
     selector({ isRunning: workflowMocks.isRunning }),
 }));
@@ -94,7 +103,7 @@ vi.mock("src/components/custom-dialog", () => ({
 }));
 
 vi.mock("notistack", () => ({
-  enqueueSnackbar: vi.fn(),
+  enqueueSnackbar: notificationMocks.enqueueSnackbar,
 }));
 
 const theme = createTheme();
@@ -104,6 +113,8 @@ const node = {
   type: NODE_TYPES.AGENT,
   data: { label: "Agent node" },
 };
+
+let currentStoreState;
 
 function renderDrawer(props = {}) {
   return render(
@@ -125,12 +136,32 @@ describe("Unit: NodeDrawer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     workflowMocks.isRunning = false;
+    storeMocks.nodeExecutionStates = {};
     draftMocks.ensureDraft.mockResolvedValue(true);
     apiMocks.deleteNodeApi.mockResolvedValue({});
-    storeMocks.getState.mockReturnValue({
+    currentStoreState = {
       nodes: [node],
       edges: [],
       currentAgent: { id: "graph-1", version_id: "version-1" },
+      nodeExecutionStates: storeMocks.nodeExecutionStates,
+    };
+    storeMocks.getState.mockImplementation(() => currentStoreState);
+    storeMocks.deleteNode.mockImplementation((nodeId) => {
+      if (workflowMocks.isRunning) return;
+      currentStoreState = {
+        ...currentStoreState,
+        nodes: currentStoreState.nodes.filter((n) => n.id !== nodeId),
+        edges: currentStoreState.edges.filter(
+          (edge) => edge.source !== nodeId && edge.target !== nodeId,
+        ),
+      };
+    });
+    storeMocks.setGraphData.mockImplementation((nodes, edges) => {
+      currentStoreState = {
+        ...currentStoreState,
+        nodes,
+        edges,
+      };
     });
   });
 
@@ -166,7 +197,40 @@ describe("Unit: NodeDrawer", () => {
     expect(deleteButton).toHaveFocus();
 
     const tooltip = await screen.findByRole("tooltip");
-    expect(tooltip).toHaveTextContent("Delete node");
+    expect(tooltip).toHaveTextContent(
+      "Stop the workflow before deleting this node",
+    );
+
+    await user.click(deleteButton);
+    expect(
+      screen.queryByRole("dialog", { name: "Delete Node" }),
+    ).not.toBeInTheDocument();
+    expect(storeMocks.deleteNode).not.toHaveBeenCalled();
+    expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
+  });
+
+  it("keeps the drawer delete action unavailable while the selected node is running", async () => {
+    const user = userEvent.setup();
+    storeMocks.nodeExecutionStates = { "node-1": "running" };
+    currentStoreState = {
+      ...currentStoreState,
+      nodeExecutionStates: storeMocks.nodeExecutionStates,
+    };
+
+    renderDrawer();
+
+    const deleteButton = screen.getByRole("button", {
+      name: "Delete node from editor: Agent node",
+    });
+    expect(deleteButton).not.toBeDisabled();
+    expect(deleteButton).toHaveAttribute("aria-disabled", "true");
+
+    await user.hover(deleteButton);
+
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent(
+      "Wait for this node to finish running before deleting it",
+    );
 
     await user.click(deleteButton);
     expect(
@@ -200,6 +264,130 @@ describe("Unit: NodeDrawer", () => {
       }),
     );
     expect(storeMocks.setGraphData).not.toHaveBeenCalled();
+  });
+
+  it("restores the drawer context when an existing draft delete fails", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    apiMocks.deleteNodeApi.mockRejectedValue(new Error("delete failed"));
+
+    renderDrawer({ onClose });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Delete node from editor: Agent node",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() =>
+      expect(apiMocks.deleteNodeApi).toHaveBeenCalledWith({
+        graphId: "graph-1",
+        versionId: "version-1",
+        nodeId: "node-1",
+      }),
+    );
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(storeMocks.setGraphData).toHaveBeenCalledWith([node], []);
+    expect(storeMocks.setSelectedNode).toHaveBeenCalledWith(node);
+    expect(notificationMocks.enqueueSnackbar).toHaveBeenCalledWith(
+      "Couldn't delete node. Your changes were restored. Try again.",
+      { variant: "error" },
+    );
+  });
+
+  it("restores the drawer context if the workflow starts before delete persists", async () => {
+    const user = userEvent.setup();
+    draftMocks.ensureDraft.mockImplementation(async () => {
+      workflowMocks.isRunning = true;
+      return true;
+    });
+
+    renderDrawer();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Delete node from editor: Agent node",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(draftMocks.ensureDraft).toHaveBeenCalled());
+    expect(storeMocks.deleteNode).toHaveBeenCalledWith("node-1");
+    expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
+    expect(storeMocks.setGraphData).toHaveBeenCalledWith([node], []);
+    expect(storeMocks.setSelectedNode).toHaveBeenCalledWith(node);
+  });
+
+  it("restores the drawer context if the node starts running before delete persists", async () => {
+    const user = userEvent.setup();
+    draftMocks.ensureDraft.mockImplementation(async () => {
+      storeMocks.nodeExecutionStates = { "node-1": "running" };
+      currentStoreState = {
+        ...currentStoreState,
+        nodeExecutionStates: storeMocks.nodeExecutionStates,
+      };
+      return true;
+    });
+
+    renderDrawer();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Delete node from editor: Agent node",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(draftMocks.ensureDraft).toHaveBeenCalled());
+    expect(storeMocks.deleteNode).toHaveBeenCalledWith("node-1");
+    expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
+    expect(storeMocks.setGraphData).toHaveBeenCalledWith([node], []);
+    expect(storeMocks.setSelectedNode).toHaveBeenCalledWith(node);
+  });
+
+  it("does not draft or call the API when the store rejects the drawer delete", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    storeMocks.deleteNode.mockImplementation(() => {});
+
+    renderDrawer({ onClose });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Delete node from editor: Agent node",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    expect(storeMocks.deleteNode).toHaveBeenCalledWith("node-1");
+    expect(onClose).not.toHaveBeenCalled();
+    expect(draftMocks.ensureDraft).not.toHaveBeenCalled();
+    expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
+  });
+
+  it("does not queue duplicate drawer deletes while one is pending", async () => {
+    const user = userEvent.setup();
+    apiMocks.deleteNodeApi.mockReturnValue(new Promise(() => {}));
+
+    renderDrawer();
+
+    const deleteButton = screen.getByRole("button", {
+      name: "Delete node from editor: Agent node",
+    });
+    await user.click(deleteButton);
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() =>
+      expect(apiMocks.deleteNodeApi).toHaveBeenCalledTimes(1),
+    );
+
+    await user.click(deleteButton);
+
+    expect(
+      screen.queryByRole("dialog", { name: "Delete Node" }),
+    ).not.toBeInTheDocument();
+    expect(apiMocks.deleteNodeApi).toHaveBeenCalledTimes(1);
   });
 
   it("closes an open delete confirmation when the workflow starts", async () => {

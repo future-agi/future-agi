@@ -21,6 +21,7 @@ import { NODE_TYPE_CONFIG } from "../../utils/constants";
 import {
   useAgentPlaygroundStore,
   useAgentPlaygroundStoreShallow,
+  useWorkflowRunStore,
   useWorkflowRunStoreShallow,
 } from "../../store";
 import { getDefaultValues, mapNodeDetailToNodeData } from "./nodeFormUtils";
@@ -46,11 +47,14 @@ export default function NodeDrawer({
   const queryClient = useQueryClient();
   const { ensureDraft } = useSaveDraftContext();
   const hadInitialConfigRef = useRef(false);
+  const deletePendingRef = useRef(false);
   const [showDiscardDialog, setShowDiscardDialog] = useState(false);
   const [discardAction, setDiscardAction] = useState(null); // "close" | "switch" | null
   const [activeNode, setActiveNode] = useState(node ?? null);
   const [pendingNode, setPendingNode] = useState(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deleteTargetNode, setDeleteTargetNode] = useState(null);
+  const [isDeletePending, setIsDeletePending] = useState(false);
 
   const isWorkflowRunning = useWorkflowRunStoreShallow((s) => s.isRunning);
 
@@ -61,6 +65,7 @@ export default function NodeDrawer({
     setNodeFormDirty,
     deleteNode,
     setGraphData,
+    nodeExecutionStates,
   } = useAgentPlaygroundStoreShallow((s) => ({
     setSelectedNode: s.setSelectedNode,
     updateNodeData: s.updateNodeData,
@@ -68,7 +73,17 @@ export default function NodeDrawer({
     setNodeFormDirty: s.setNodeFormDirty,
     deleteNode: s.deleteNode,
     setGraphData: s.setGraphData,
+    nodeExecutionStates: s.nodeExecutionStates,
   }));
+
+  const activeNodeIsRunning =
+    nodeExecutionStates?.[activeNode?.id] === "running";
+  const deleteDisabled = isWorkflowRunning || activeNodeIsRunning;
+  const deleteTooltipTitle = isWorkflowRunning
+    ? "Stop the workflow before deleting this node"
+    : activeNodeIsRunning
+      ? "Wait for this node to finish running before deleting it"
+      : "Delete node";
 
   // Fetch fresh node detail from API when drawer opens
   const { data: nodeDetailData, isFetching: isLoadingNodeDetail } =
@@ -169,6 +184,8 @@ export default function NodeDrawer({
       setShowDiscardDialog(false);
       setDiscardAction(null);
       setPendingNode(null);
+      setShowDeleteDialog(false);
+      setDeleteTargetNode(null);
       setActiveNode(node ?? null);
       return;
     }
@@ -286,66 +303,130 @@ export default function NodeDrawer({
 
   const handleDeleteButtonClick = useCallback(
     (event) => {
-      if (isWorkflowRunning) {
+      if (deleteDisabled || isDeletePending || deletePendingRef.current) {
         event.preventDefault();
         return;
       }
 
+      setDeleteTargetNode(activeNode);
       setShowDeleteDialog(true);
     },
-    [isWorkflowRunning],
+    [activeNode, deleteDisabled, isDeletePending],
   );
 
   useEffect(() => {
-    if (isWorkflowRunning) {
+    if (deleteDisabled) {
       setShowDeleteDialog(false);
+      setDeleteTargetNode(null);
     }
-  }, [isWorkflowRunning]);
+  }, [deleteDisabled]);
+
+  useEffect(() => {
+    setShowDeleteDialog(false);
+    setDeleteTargetNode(null);
+  }, [activeNode?.id]);
 
   // Delete node — follows the same pattern as useBaseNodeActions.handleDeleteClick
   const handleDeleteNode = useCallback(async () => {
-    if (!activeNode || isWorkflowRunning) return;
+    const targetNode = deleteTargetNode ?? activeNode;
+    const isLiveDeleteBlocked = () =>
+      useWorkflowRunStore.getState().isRunning ||
+      useAgentPlaygroundStore.getState().nodeExecutionStates?.[
+        targetNode?.id
+      ] === "running";
+
+    if (
+      !targetNode ||
+      deleteDisabled ||
+      isDeletePending ||
+      deletePendingRef.current ||
+      isLiveDeleteBlocked()
+    ) {
+      return;
+    }
+
+    deletePendingRef.current = true;
+    setIsDeletePending(true);
     setShowDeleteDialog(false);
 
-    const nodeId = activeNode.id;
+    const nodeId = targetNode.id;
     const { nodes, edges } = useAgentPlaygroundStore.getState();
+    const nodeExistsBeforeDelete = nodes.some((n) => n.id === nodeId);
+    if (!nodeExistsBeforeDelete) {
+      deletePendingRef.current = false;
+      setIsDeletePending(false);
+      setDeleteTargetNode(null);
+      return;
+    }
 
-    // Optimistic deletion (also clears selectedNode, which closes the drawer)
-    deleteNode(nodeId);
-    onClose();
-
-    const draftResult = await ensureDraft({ skipDirtyCheck: true });
-
-    if (draftResult === false) {
-      // Rollback
+    const restoreDeletedNode = () => {
       setGraphData(nodes, edges);
-      return;
-    }
+      setSelectedNode(nodes.find((n) => n.id === nodeId) ?? targetNode);
+    };
 
-    if (draftResult === "created") {
-      // Deletion was included in the POST that created the draft
-      return;
-    }
-
-    // Already a draft — fire individual DELETE
-    const { currentAgent: agent } = useAgentPlaygroundStore.getState();
     try {
+      // Optimistic deletion (also clears selectedNode, which closes the drawer).
+      deleteNode(nodeId);
+      const deleteWasBlocked =
+        nodeExistsBeforeDelete &&
+        useAgentPlaygroundStore.getState().nodes.some((n) => n.id === nodeId);
+      if (deleteWasBlocked) return;
+
+      onClose();
+
+      if (isLiveDeleteBlocked()) {
+        restoreDeletedNode();
+        return;
+      }
+
+      const draftResult = await ensureDraft({ skipDirtyCheck: true });
+
+      if (draftResult === false) {
+        // Rollback and restore drawer context for retry.
+        restoreDeletedNode();
+        return;
+      }
+
+      if (draftResult === "created") {
+        // Deletion was included in the POST that created the draft
+        return;
+      }
+
+      if (isLiveDeleteBlocked()) {
+        restoreDeletedNode();
+        return;
+      }
+
+      // Already a draft — fire individual DELETE
+      const { currentAgent: agent } = useAgentPlaygroundStore.getState();
       await deleteNodeApi({
         graphId: agent?.id,
         versionId: agent?.version_id,
         nodeId,
       });
     } catch {
-      setGraphData(nodes, edges);
-      enqueueSnackbar("Failed to delete node", { variant: "error" });
+      restoreDeletedNode();
+      enqueueSnackbar(
+        "Couldn't delete node. Your changes were restored. Try again.",
+        {
+          variant: "error",
+        },
+      );
+    } finally {
+      deletePendingRef.current = false;
+      setIsDeletePending(false);
+      setDeleteTargetNode(null);
     }
   }, [
     activeNode,
-    isWorkflowRunning,
+    deleteTargetNode,
+    deleteDisabled,
+    isDeletePending,
     deleteNode,
     onClose,
     ensureDraft,
     setGraphData,
+    setSelectedNode,
   ]);
 
   const handleClose = () => {
@@ -419,20 +500,20 @@ export default function NodeDrawer({
               <Stack direction="row" spacing={0.25} alignItems="center">
                 <CustomTooltip
                   show
-                  title="Delete node"
+                  title={deleteTooltipTitle}
                   size="small"
                   arrow
                   placement="bottom"
                 >
                   <span>
                     <IconButton
-                      aria-disabled={isWorkflowRunning || undefined}
+                      aria-disabled={deleteDisabled || undefined}
                       aria-label={deleteNodeAriaLabel}
                       size="small"
                       onClick={handleDeleteButtonClick}
                       sx={{
                         color: "red.500",
-                        ...(isWorkflowRunning && {
+                        ...(deleteDisabled && {
                           cursor: "not-allowed",
                           opacity: 0.5,
                         }),
@@ -536,7 +617,7 @@ export default function NodeDrawer({
             variant="contained"
             color="error"
             onClick={handleDeleteNode}
-            disabled={isWorkflowRunning}
+            disabled={deleteDisabled || isDeletePending}
             sx={{ paddingX: "24px" }}
           >
             Delete

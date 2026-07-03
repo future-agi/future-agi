@@ -32,15 +32,20 @@ const mockSetGraphData = vi.fn();
 const apiMocks = vi.hoisted(() => ({
   deleteNodeApi: vi.fn(),
 }));
+const storeMocks = vi.hoisted(() => ({
+  getState: vi.fn(),
+}));
+const workflowMocks = vi.hoisted(() => ({
+  getState: vi.fn(),
+}));
 vi.mock("../../../../store", () => ({
   useAgentPlaygroundStore: {
-    getState: vi.fn(() => ({
-      nodes: [],
-      edges: [],
-      currentAgent: { id: "g1", version_id: "v1" },
-    })),
+    getState: storeMocks.getState,
   },
   useAgentPlaygroundStoreShallow: () => mockSetGraphData,
+  useWorkflowRunStore: {
+    getState: workflowMocks.getState,
+  },
 }));
 
 vi.mock("src/api/agent-playground/agent-playground", () => ({
@@ -55,6 +60,8 @@ vi.mock("notistack", () => ({
   enqueueSnackbar: vi.fn(),
 }));
 
+let baseStoreState;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -65,7 +72,15 @@ function makeProps(overrides = {}) {
     isWorkflowRunning: false,
     isRunning: false,
     setSelectedNode: vi.fn(),
-    deleteNode: vi.fn(),
+    deleteNode: vi.fn((nodeId) => {
+      baseStoreState = {
+        ...baseStoreState,
+        nodes: baseStoreState.nodes.filter((n) => n.id !== nodeId),
+        edges: baseStoreState.edges.filter(
+          (edge) => edge.source !== nodeId && edge.target !== nodeId,
+        ),
+      };
+    }),
     ...overrides,
   };
 }
@@ -79,6 +94,14 @@ describe("Unit: useBaseNodeActions", () => {
     mockAddNode.mockResolvedValue(true);
     mockEnsureDraft.mockResolvedValue("existing");
     apiMocks.deleteNodeApi.mockResolvedValue({});
+    baseStoreState = {
+      nodes: [{ id: "n1" }],
+      edges: [],
+      currentAgent: { id: "g1", version_id: "v1" },
+      nodeExecutionStates: {},
+    };
+    storeMocks.getState.mockImplementation(() => baseStoreState);
+    workflowMocks.getState.mockReturnValue({ isRunning: false });
   });
 
   // ---- handleNodeClick ----
@@ -339,6 +362,124 @@ describe("Unit: useBaseNodeActions", () => {
       expect(mockEnsureDraft).not.toHaveBeenCalled();
       expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
     });
+
+    it("does nothing when the live node state is running even if props are stale", async () => {
+      storeMocks.getState.mockReturnValue({
+        nodes: [{ id: "n1" }],
+        edges: [],
+        currentAgent: { id: "g1", version_id: "v1" },
+        nodeExecutionStates: { n1: "running" },
+      });
+      const props = makeProps({ isRunning: false });
+      const stopPropagation = vi.fn();
+      const { result } = renderHook(() => useBaseNodeActions(props));
+
+      await act(async () => {
+        result.current.handleDeleteClick({ stopPropagation });
+      });
+
+      expect(stopPropagation).not.toHaveBeenCalled();
+      expect(props.deleteNode).not.toHaveBeenCalled();
+      expect(mockEnsureDraft).not.toHaveBeenCalled();
+      expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
+    });
+
+    it("does not draft or call the API when the store rejects the optimistic delete", async () => {
+      storeMocks.getState.mockReturnValue({
+        nodes: [{ id: "n1" }],
+        edges: [],
+        currentAgent: { id: "g1", version_id: "v1" },
+        nodeExecutionStates: {},
+      });
+      const props = makeProps({
+        deleteNode: vi.fn(),
+      });
+      const { result } = renderHook(() => useBaseNodeActions(props));
+
+      await act(async () => {
+        result.current.handleDeleteClick({ stopPropagation: vi.fn() });
+      });
+
+      expect(props.deleteNode).toHaveBeenCalledWith("n1");
+      expect(mockEnsureDraft).not.toHaveBeenCalled();
+      expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
+      expect(mockSetGraphData).not.toHaveBeenCalled();
+    });
+
+    it("rolls back and skips the API if workflow running starts before delete persists", async () => {
+      let storeState = {
+        nodes: [{ id: "n1" }],
+        edges: [{ id: "e1", source: "n1", target: "n2" }],
+        currentAgent: { id: "g1", version_id: "v1" },
+        nodeExecutionStates: {},
+      };
+      storeMocks.getState.mockImplementation(() => storeState);
+      const props = makeProps({
+        deleteNode: vi.fn(() => {
+          storeState = {
+            ...storeState,
+            nodes: [],
+            edges: [],
+          };
+        }),
+      });
+      mockEnsureDraft.mockImplementation(async () => {
+        workflowMocks.getState.mockReturnValue({ isRunning: true });
+        return "existing";
+      });
+
+      const { result } = renderHook(() => useBaseNodeActions(props));
+
+      await act(async () => {
+        result.current.handleDeleteClick({ stopPropagation: vi.fn() });
+      });
+
+      expect(props.deleteNode).toHaveBeenCalledWith("n1");
+      expect(mockSetGraphData).toHaveBeenCalledWith(
+        [{ id: "n1" }],
+        [{ id: "e1", source: "n1", target: "n2" }],
+      );
+      expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
+    });
+
+    it("rolls back and skips the API if the node starts running before delete persists", async () => {
+      let storeState = {
+        nodes: [{ id: "n1" }],
+        edges: [{ id: "e1", source: "n1", target: "n2" }],
+        currentAgent: { id: "g1", version_id: "v1" },
+        nodeExecutionStates: {},
+      };
+      storeMocks.getState.mockImplementation(() => storeState);
+      const props = makeProps({
+        deleteNode: vi.fn(() => {
+          storeState = {
+            ...storeState,
+            nodes: [],
+            edges: [],
+          };
+        }),
+      });
+      mockEnsureDraft.mockImplementation(async () => {
+        storeState = {
+          ...storeState,
+          nodeExecutionStates: { n1: "running" },
+        };
+        return "existing";
+      });
+
+      const { result } = renderHook(() => useBaseNodeActions(props));
+
+      await act(async () => {
+        result.current.handleDeleteClick({ stopPropagation: vi.fn() });
+      });
+
+      expect(props.deleteNode).toHaveBeenCalledWith("n1");
+      expect(mockSetGraphData).toHaveBeenCalledWith(
+        [{ id: "n1" }],
+        [{ id: "e1", source: "n1", target: "n2" }],
+      );
+      expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -351,6 +492,14 @@ describe("Unit: useBaseNodeActions — edge cases", () => {
     mockAddNode.mockResolvedValue(true);
     mockEnsureDraft.mockResolvedValue("existing");
     apiMocks.deleteNodeApi.mockResolvedValue({});
+    baseStoreState = {
+      nodes: [{ id: "n1" }],
+      edges: [],
+      currentAgent: { id: "g1", version_id: "v1" },
+      nodeExecutionStates: {},
+    };
+    storeMocks.getState.mockImplementation(() => baseStoreState);
+    workflowMocks.getState.mockReturnValue({ isRunning: false });
   });
 
   it("handleNodeSelect rejects when getNode returns node without .position property", async () => {
