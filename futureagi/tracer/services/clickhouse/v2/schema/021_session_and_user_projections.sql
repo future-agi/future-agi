@@ -18,21 +18,45 @@
 -- optimizer auto-selects the projection when the query's filter/order matches.
 -- =============================================================================
 
--- Session-keyed lookup: covers build_content_query, _fetch_end_user_info,
--- build_span_attributes_query, and _retrieve_clickhouse detail queries.
+-- Session-keyed lookup: covers build_content_query, build_span_attributes_query,
+-- and _retrieve_clickhouse detail aggregation.
 ALTER TABLE spans
 ADD PROJECTION IF NOT EXISTS proj_by_session
 (
-    SELECT *
+    SELECT
+        project_id,
+        trace_session_id,
+        start_time,
+        end_time,
+        is_deleted,
+        parent_span_id,
+        trace_id,
+        end_user_id,
+        cost,
+        total_tokens,
+        input,
+        attributes_extra,
+        attrs_string,
+        attrs_number,
+        observation_type
     ORDER BY (project_id, trace_session_id, start_time)
 );
 
--- User-keyed lookup: covers the UserListQueryBuilder raw_spans scan
--- when end_user_id IN (...) filter is pushed down.
+-- User-keyed lookup: covers the raw_spans_light CTE in UserListQueryBuilder.
 ALTER TABLE spans
 ADD PROJECTION IF NOT EXISTS proj_by_end_user
 (
-    SELECT *
+    SELECT
+        project_id,
+        end_user_id,
+        start_time,
+        end_time,
+        is_deleted,
+        trace_session_id,
+        observation_type,
+        status,
+        latency_ms,
+        trace_id
     ORDER BY (project_id, end_user_id, start_time)
 );
 
