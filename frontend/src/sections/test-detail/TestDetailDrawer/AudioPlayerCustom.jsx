@@ -107,6 +107,7 @@ StereoMultiTrackPlayer.propTypes = {
   id: PropTypes.string,
   height: PropTypes.number,
   onInstance: PropTypes.func,
+  isInbound: PropTypes.bool,
 };
 
 const AudioPlayerCustom = ({ data, onInstance }) => {
