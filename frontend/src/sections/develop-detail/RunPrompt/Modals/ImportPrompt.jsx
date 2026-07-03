@@ -77,9 +77,9 @@ export const ReadOnlyPrompt = ({ title, prompt, allColumns = [] }) => {
             >
               <ImageEmbed
                 key={`image-${i}`}
-                name={prompt[i]?.imageUrl?.imgName}
-                url={prompt[i]?.imageUrl?.url}
-                size={prompt[i]?.imageUrl?.imgSize}
+                name={prompt[i]?.image_url?.img_name}
+                url={prompt[i]?.image_url?.url}
+                size={prompt[i]?.image_url?.img_size}
               />
             </Box>,
           );
@@ -91,9 +91,9 @@ export const ReadOnlyPrompt = ({ title, prompt, allColumns = [] }) => {
             >
               <PdfEmbed
                 key={`pdf-${i}`}
-                name={prompt[i]?.pdfUrl?.fileName}
-                url={prompt[i]?.pdfUrl?.url}
-                size={prompt[i]?.pdfUrl?.pdfSize}
+                name={prompt[i]?.pdf_url?.file_name}
+                url={prompt[i]?.pdf_url?.url}
+                size={prompt[i]?.pdf_url?.pdf_size}
               />
             </Box>,
           );
@@ -105,10 +105,10 @@ export const ReadOnlyPrompt = ({ title, prompt, allColumns = [] }) => {
             >
               <AudioEmbed
                 key={`audio-${i}`}
-                name={prompt[i]?.audioUrl?.audioName}
-                url={prompt[i]?.audioUrl?.url}
-                size={prompt[i]?.audioUrl?.audioSize}
-                mimeType={prompt[i]?.audioUrl?.audioType}
+                name={prompt[i]?.audio_url?.audio_name}
+                url={prompt[i]?.audio_url?.url}
+                size={prompt[i]?.audio_url?.audio_size}
+                mimeType={prompt[i]?.audio_url?.audio_type}
               />
             </Box>,
           );
@@ -307,11 +307,7 @@ export default function ImportPrompt({
       subTitle="You can edit it once applied"
       onSubmit={handleSubmit(handleImportPrompt)}
       isValid={Boolean(isValid && selectedVersionId)}
-      hideCancelBtn
       actionBtnTitle="Apply"
-      actionBtnSx={{
-        widtd: "fit-content",
-      }}
     >
       <DialogContent
         sx={{

@@ -67,15 +67,22 @@ class CallTranscriptView(APIView):
                 speaker_role__in=get_displayable_transcript_roles(),
             ).order_by("start_time_ms")
 
-            # Serialize the transcripts
-            serializer = CallTranscriptSerializer(transcripts, many=True)
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
+
+            rows = SpeakerRoleResolver.align_transcript_rows(
+                CallTranscriptSerializer(transcripts, many=True).data,
+                provider=SpeakerRoleResolver.detect_provider(
+                    call_execution.provider_call_data
+                ),
+                is_outbound=SpeakerRoleResolver.detect_is_outbound(call_execution),
+            )
 
             return Response(
                 {
                     "call_execution_id": str(call_execution.id),
                     "phone_number": call_execution.phone_number,
                     "status": call_execution.status,
-                    "transcripts": serializer.data,
+                    "transcripts": rows,
                     "total_transcripts": len(transcripts),
                 },
                 status=status.HTTP_200_OK,
@@ -120,6 +127,8 @@ class TestExecutionTranscriptsView(APIView):
                 test_execution__run_test__deleted=False,
             ).prefetch_related("transcripts", "scenario")
 
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
+
             all_transcripts = []
             for call_execution in call_executions:
                 # Filter transcripts by speaker role and order by start_time_ms
@@ -132,6 +141,14 @@ class TestExecutionTranscriptsView(APIView):
                 ]
                 transcripts.sort(key=lambda x: x.start_time_ms)
 
+                rows = SpeakerRoleResolver.align_transcript_rows(
+                    CallTranscriptSerializer(transcripts, many=True).data,
+                    provider=SpeakerRoleResolver.detect_provider(
+                        call_execution.provider_call_data
+                    ),
+                    is_outbound=SpeakerRoleResolver.detect_is_outbound(call_execution),
+                )
+
                 call_data = {
                     "call_execution_id": str(call_execution.id),
                     "phone_number": call_execution.phone_number,
@@ -141,9 +158,7 @@ class TestExecutionTranscriptsView(APIView):
                         if call_execution.scenario
                         else "Unknown"
                     ),
-                    "transcripts": CallTranscriptSerializer(
-                        transcripts, many=True
-                    ).data,
+                    "transcripts": rows,
                     "total_transcripts": len(transcripts),
                 }
                 all_transcripts.append(call_data)

@@ -68,8 +68,12 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
     label_ids = serializers.ListField(
         child=serializers.UUIDField(),
         write_only=True,
-        required=False,
-        default=list,
+        required=True,
+        min_length=1,
+        error_messages={
+            "required": "At least one label is required.",
+            "min_length": "At least one label is required.",
+        },
     )
     annotator_ids = serializers.ListField(
         child=serializers.UUIDField(),

@@ -42,7 +42,7 @@ class StringOrObjectField(serializers.JSONField):
 
     A native ``oneOf`` would be cleaner but drf-yasg emits Swagger 2.0
     which does not support ``oneOf``. Tracked for the OpenAPI 3.0
-    migration (TH-6030); until then the custom extension + post-processor
+    migration (TH-6029); until then the custom extension + post-processor
     is the working pattern.
 
     Use this for fields like ``response_format`` and ``model`` that are
@@ -55,7 +55,7 @@ class StringOrObjectField(serializers.JSONField):
         # ``to_internal_value`` would otherwise accept arrays, numbers,
         # booleans and ``null``. Without this override, a request that
         # bypasses the FE contract validator (SDK call, curl, internal
-        # caller) would persist ``response_format: []`` happily.
+        # caller) would persist ``model: []`` happily.
         if isinstance(data, (str, dict)):
             return data
         raise serializers.ValidationError(
@@ -66,6 +66,37 @@ class StringOrObjectField(serializers.JSONField):
         swagger_schema_fields = {
             "x-string-or-object": True,
             "description": "String or JSON object.",
+        }
+
+
+class StringOrArrayField(serializers.JSONField):
+    """Field that accepts either a plain string or a JSON array.
+
+    Use this for ``messages[].content`` which is either a plain text string
+    or an array of content-part objects (OpenAI multi-part format).
+
+    Emits ``x-string-or-array: true`` detected by ``openapi-contract.js``
+    which maps it to ``z.union([z.string(), z.array(z.unknown())])``.
+    """
+
+    def to_internal_value(self, data):
+        # Runtime guard — parallel to ``StringOrObjectField`` above. The
+        # generated contract describes string-or-array but the field
+        # inherits from ``JSONField`` whose base ``to_internal_value`` would
+        # otherwise accept dicts, numbers, booleans and ``null``. Without
+        # this override an SDK / curl / internal caller that bypasses the
+        # FE contract validator would persist ``messages[].content: 42``
+        # or ``content: {}`` happily.
+        if isinstance(data, (str, list)):
+            return data
+        raise serializers.ValidationError(
+            "Expected a string or a JSON array."
+        )
+
+    class Meta:
+        swagger_schema_fields = {
+            "x-string-or-array": True,
+            "description": "Plain text string or array of content-part objects.",
         }
 
 

@@ -1380,7 +1380,7 @@ class ExperimentFeedbackSubmitRequestSerializer(serializers.Serializer):
     )
     feedback_id = serializers.UUIDField()
     user_eval_metric_id = serializers.UUIDField()
-    value = serializers.JSONField(required=False)
+    value = serializers.CharField(required=False, allow_blank=True)
     explanation = serializers.CharField(required=False, allow_blank=True)
 
 
@@ -1766,6 +1766,9 @@ class EvalFeedbackListItemSerializer(serializers.Serializer):
     action_type = serializers.CharField(allow_blank=True)
     user_name = serializers.CharField(allow_blank=True)
     created_at = serializers.CharField()
+    user_eval_metric_id = serializers.CharField(allow_blank=True)
+    custom_eval_config_id = serializers.CharField(allow_blank=True)
+    experiment_id = serializers.CharField(allow_blank=True)
 
 
 class EvalFeedbackListResponseResultSerializer(serializers.Serializer):
@@ -1779,6 +1782,24 @@ class EvalFeedbackListResponseResultSerializer(serializers.Serializer):
 class EvalFeedbackListResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = EvalFeedbackListResponseResultSerializer()
+
+
+class FeedbackDetailsItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    value = serializers.CharField(allow_blank=True, allow_null=True)
+    comment = serializers.CharField(allow_blank=True, allow_null=True)
+    created_at = serializers.CharField()
+    action_type = serializers.CharField(allow_blank=True, allow_null=True)
+
+
+class FeedbackDetailsResultSerializer(serializers.Serializer):
+    feedback = FeedbackDetailsItemSerializer(many=True)
+    total_count = serializers.IntegerField()
+
+
+class FeedbackDetailsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = FeedbackDetailsResultSerializer()
 
 
 class EvalApiLogRowResponseResultSerializer(serializers.Serializer):

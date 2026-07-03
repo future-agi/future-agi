@@ -65,6 +65,7 @@ class VerifyAssistantIdRequestSerializer(serializers.Serializer):
         required=False, allow_blank=True, allow_null=True
     )
     api_key = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    agent_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
 class VerifyResponseSerializer(serializers.Serializer):

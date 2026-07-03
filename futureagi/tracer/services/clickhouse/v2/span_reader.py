@@ -120,6 +120,15 @@ class CHSpan:
         return self.id
 
 
+@dataclass(frozen=True)
+class SpanScope:
+    """Minimal span fields for org/project/trace scope checks — read WITHOUT the
+    wide JSON columns. See ``CHSpanReader.scope_by_ids``."""
+
+    project_id: str | None
+    trace_id: str | None
+
+
 # Stable column ordering for the CH query. JSON columns wrapped in toJSONString
 # so clickhouse-connect can decode them (it cannot yet handle the typed JSON
 # column type in result rows — see DECISIONS #015, #018 of the migration).
@@ -237,6 +246,87 @@ _DATA_KEYS: tuple[str, ...] = (
     "is_deleted",
     "trace_name",
 )
+
+_EXPORT_COLUMN_SQL: dict[str, str] = {
+    "project_id": "toString(project_id)",
+    "trace_id": "trace_id",
+    "parent_span_id": "parent_span_id",
+    "name": "name",
+    "observation_type": "observation_type",
+    "operation_name": "operation_name",
+    "start_time": "start_time",
+    "end_time": "end_time",
+    "latency_ms": "latency_ms",
+    "model": "model",
+    "provider": "provider",
+    "prompt_tokens": "prompt_tokens",
+    "completion_tokens": "completion_tokens",
+    "total_tokens": "total_tokens",
+    "cost": "cost",
+    "status": "status",
+    "status_message": "status_message",
+    "tags": "tags",
+    "metadata": "toJSONString(metadata)",
+    "span_events": "span_events",
+    "resource_attrs": "toJSONString(resource_attrs)",
+    "input": "input",
+    "output": "output",
+    "attrs_string": "attrs_string",
+    "attrs_number": "attrs_number",
+    "attrs_bool": "attrs_bool",
+    "attributes_extra": "attributes_extra",
+    "eval_status": "eval_status",
+    "semconv_source": "semconv_source",
+}
+
+_EXPORT_FIELD_COLUMNS: dict[str, set[str]] = {
+    "project": {"project_id"},
+    "project_id": {"project_id"},
+    "trace": {"trace_id"},
+    "trace_id": {"trace_id"},
+    "parent_span_id": {"parent_span_id"},
+    "id": set(),
+    "name": {"name"},
+    "observation_type": {"observation_type"},
+    "operation_name": {"operation_name"},
+    "start_time": {"start_time"},
+    "end_time": {"end_time"},
+    "latency_ms": {"latency_ms"},
+    "model": {"model"},
+    "provider": {"provider"},
+    "prompt_tokens": {"prompt_tokens"},
+    "completion_tokens": {"completion_tokens"},
+    "total_tokens": {"total_tokens"},
+    "cost": {"cost"},
+    "status": {"status"},
+    "status_message": {"status_message"},
+    "tags": {"tags"},
+    "metadata": {"metadata"},
+    "span_events": {"span_events"},
+    "resource_attributes": {"resource_attrs"},
+    "resource_attrs": {"resource_attrs"},
+    "input": {"input"},
+    "output": {"output"},
+    "span_attributes": {
+        "attrs_string",
+        "attrs_number",
+        "attrs_bool",
+        "attributes_extra",
+    },
+    "model_parameters": {"attributes_extra"},
+    "input_images": {"attributes_extra"},
+    "eval_input": {"attributes_extra"},
+    "eval_attributes": {"attributes_extra"},
+    "eval_status": {"eval_status"},
+    "semconv_source": {"semconv_source"},
+}
+
+
+def _export_columns_for_fields(field_names: set[str]) -> set[str]:
+    columns: set[str] = set()
+    for field_name in field_names:
+        columns.update(_EXPORT_FIELD_COLUMNS.get(field_name, {field_name}))
+    return {column for column in columns if column in _EXPORT_COLUMN_SQL}
 
 
 def _row_to_chspan(row: tuple) -> CHSpan:
@@ -451,6 +541,7 @@ class CHSpanReader:
         *,
         include_heavy: bool = False,
         project_id: str | None = None,
+        org_id: str | None = None,
     ) -> list[CHSpan]:
         """Parentless spans for the given traces, same shape/order as
         list_by_trace_ids. Fetches one row per root instead of every span.
@@ -476,6 +567,9 @@ class CHSpanReader:
         if project_id:
             where.append("project_id = %(pid)s")
             params["pid"] = str(project_id)
+        if org_id:
+            where.append("org_id = %(oid)s")
+            params["oid"] = str(org_id)
         rows = self._client.query(
             f"SELECT {select} FROM spans FINAL "
             f"WHERE {' AND '.join(where)} "
@@ -530,7 +624,13 @@ class CHSpanReader:
         return [_row_to_chspan(r) for r in rows]
 
     # ─── Spans by id batch ────────────────────────────────────────────────────
-    def list_by_ids(self, span_ids: list[str]) -> list[CHSpan]:
+    def list_by_ids(
+        self,
+        span_ids: list[str],
+        *,
+        project_id: str | None = None,
+        org_id: str | None = None,
+    ) -> list[CHSpan]:
         """Equivalent to ObservationSpan.objects.filter(id__in=span_ids).
 
         Result order is NOT preserved relative to the input list (CH orders
@@ -539,13 +639,305 @@ class CHSpanReader:
         """
         if not span_ids:
             return []
+        where = ["id IN %(ids)s", "is_deleted = 0"]
+        params: dict[str, Any] = {"ids": tuple(span_ids)}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
+        if org_id:
+            where.append("org_id = %(oid)s")
+            params["oid"] = str(org_id)
         rows = self._client.query(
             f"SELECT {_SELECT_SQL} FROM spans FINAL "
-            "WHERE id IN %(ids)s AND is_deleted = 0 "
+            f"WHERE {' AND '.join(where)} "
             "ORDER BY id",
-            parameters={"ids": tuple(span_ids)},
+            parameters=params,
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
+
+    def export_fields_by_ids(
+        self,
+        span_ids: list[str],
+        field_names: set[str],
+        *,
+        project_id: str | None = None,
+        org_id: str | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Fetch only the span columns needed for dataset export cells.
+
+        Dataset export can map a handful of fields across hundreds of spans.
+        Using ``list_by_ids`` here hydrates every CHSpan column, including fat
+        payload columns like ``attributes_extra`` and ``span_events``. This
+        method keeps the read on canonical CH25 ``spans`` while avoiding
+        ``FINAL`` and selecting only the columns implied by the requested
+        mapping.
+        """
+        if not span_ids:
+            return {}
+
+        columns = _export_columns_for_fields(field_names)
+        select_exprs = ["id"]
+        aliases = ["id"]
+        for alias in sorted(columns):
+            select_exprs.append(
+                f"argMax({_EXPORT_COLUMN_SQL[alias]}, _version) AS {alias}"
+            )
+            aliases.append(alias)
+
+        where = ["id IN %(ids)s"]
+        params: dict[str, Any] = {"ids": tuple(str(span_id) for span_id in span_ids)}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
+        if org_id:
+            where.append("org_id = %(oid)s")
+            params["oid"] = str(org_id)
+
+        rows = self._client.query(
+            "SELECT "
+            f"{', '.join(select_exprs)} "
+            "FROM spans "
+            f"PREWHERE {' AND '.join(where)} "
+            "GROUP BY id "
+            "HAVING argMax(is_deleted, _version) = 0",
+            parameters=params,
+            settings={
+                "max_threads": 1,
+                "max_bytes_before_external_group_by": 256 * 1024 * 1024,
+            },
+        ).result_rows
+
+        return {
+            str(row[0]): dict(zip(aliases, row, strict=False))
+            for row in rows
+        }
+
+    # ─── Batch helpers for dataset child-tree export ─────────────────────────
+
+    def trace_ids_for_span_ids(
+        self,
+        span_ids: list[str],
+        *,
+        project_id: str | None = None,
+    ) -> dict[str, str]:
+        """Return {span_id: trace_id} for the given span IDs.
+
+        Lightweight query: selects only (id, trace_id), avoids FINAL by using
+        argMax dedup. Used to batch-resolve trace membership before fetching
+        full trace trees.
+        """
+        if not span_ids:
+            return {}
+        where = ["id IN %(ids)s"]
+        params: dict[str, Any] = {"ids": tuple(span_ids)}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
+
+        rows = self._client.query(
+            "SELECT id, argMax(trace_id, _version) AS trace_id "
+            "FROM spans "
+            f"PREWHERE {' AND '.join(where)} "
+            "GROUP BY id "
+            "HAVING argMax(is_deleted, _version) = 0",
+            parameters=params,
+            settings={"max_threads": 2},
+        ).result_rows
+        return {str(r[0]): str(r[1]) for r in rows}
+
+    _CHILD_TREE_COLUMNS: tuple[tuple[str, str], ...] = (
+        ("parent_span_id", "parent_span_id"),
+        ("name", "name"),
+        ("observation_type", "observation_type"),
+        ("operation_name", "operation_name"),
+        ("status", "status"),
+        ("status_message", "status_message"),
+        ("model", "model"),
+        ("provider", "provider"),
+        ("input", "input"),
+        ("output", "output"),
+        ("toJSONString(metadata)", "metadata"),
+        ("attrs_string", "attrs_string"),
+        ("attrs_number", "attrs_number"),
+        ("attrs_bool", "attrs_bool"),
+        ("toJSONString(attributes_extra)", "attributes_extra"),
+        ("prompt_tokens", "prompt_tokens"),
+        ("completion_tokens", "completion_tokens"),
+        ("total_tokens", "total_tokens"),
+        ("latency_ms", "latency_ms"),
+        ("cost", "cost"),
+        ("tags", "tags"),
+        ("span_events", "span_events"),
+        ("start_time", "start_time"),
+    )
+
+    _CHILD_TREE_ALIASES: tuple[str, ...] = (
+        "id",
+        "trace_id",
+        "parent_span_id",
+        "name",
+        "observation_type",
+        "operation_name",
+        "status",
+        "status_message",
+        "model",
+        "provider",
+        "input",
+        "output",
+        "metadata",
+        "attrs_string",
+        "attrs_number",
+        "attrs_bool",
+        "attributes_extra",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "latency_ms",
+        "cost",
+        "tags",
+        "span_events",
+        "start_time",
+    )
+
+    def child_tree_spans_by_trace_ids(
+        self,
+        trace_ids: list[str],
+        *,
+        project_id: str | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Fetch all spans for the given traces, returning only columns needed
+        for child-tree serialization (excludes resource_attrs).
+
+        Uses argMax dedup (no FINAL) with external GROUP BY spill to avoid OOM.
+        Returns {trace_id: [row_dict, ...]} ordered by start_time DESC within
+        each trace (matching legacy ObservationSpan.Meta.ordering).
+        """
+        if not trace_ids:
+            return {}
+
+        select_exprs = ["id", "trace_id"]
+        for expr, alias in self._CHILD_TREE_COLUMNS:
+            select_exprs.append(f"argMax({expr}, _version) AS {alias}")
+
+        where = ["trace_id IN %(tids)s"]
+        params: dict[str, Any] = {"tids": tuple(trace_ids)}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
+
+        rows = self._client.query(
+            f"SELECT {', '.join(select_exprs)} "
+            "FROM spans "
+            f"PREWHERE {' AND '.join(where)} "
+            "GROUP BY id, trace_id "
+            "HAVING argMax(is_deleted, _version) = 0",
+            parameters=params,
+            settings={
+                "max_threads": 2,
+                "max_bytes_before_external_group_by": 512 * 1024 * 1024,
+            },
+        ).result_rows
+
+        result: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            d = dict(zip(self._CHILD_TREE_ALIASES, row, strict=False))
+            tid = str(d["trace_id"])
+            result.setdefault(tid, []).append(d)
+
+        # Sort each trace's spans by start_time DESC (matching legacy ordering)
+        for spans in result.values():
+            spans.sort(key=lambda s: s.get("start_time") or "", reverse=True)
+
+        return result
+
+    def root_ids_by_project(
+        self,
+        project_id: str,
+        *,
+        org_id: str | None = None,
+        exclude_trace_ids: list[str] | None = None,
+    ) -> list[str]:
+        if not project_id:
+            return []
+        where = [
+            "project_id = %(pid)s",
+            "is_deleted = 0",
+            "(parent_span_id IS NULL OR parent_span_id = '')",
+        ]
+        params: dict[str, Any] = {"pid": str(project_id)}
+        if org_id:
+            where.append("org_id = %(oid)s")
+            params["oid"] = str(org_id)
+        if exclude_trace_ids:
+            where.append("trace_id NOT IN %(exclude_trace_ids)s")
+            params["exclude_trace_ids"] = tuple(exclude_trace_ids)
+        rows = self._client.query(
+            "SELECT id FROM spans FINAL "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY trace_id, start_time, id",
+            parameters=params,
+        ).result_rows
+        return [str(row[0]) for row in rows]
+
+    def ids_by_project(
+        self,
+        project_id: str,
+        *,
+        org_id: str | None = None,
+        exclude_ids: list[str] | None = None,
+    ) -> list[str]:
+        if not project_id:
+            return []
+        where = ["project_id = %(pid)s", "is_deleted = 0"]
+        params: dict[str, Any] = {"pid": str(project_id)}
+        if org_id:
+            where.append("org_id = %(oid)s")
+            params["oid"] = str(org_id)
+        if exclude_ids:
+            where.append("id NOT IN %(exclude_ids)s")
+            params["exclude_ids"] = tuple(exclude_ids)
+        rows = self._client.query(
+            "SELECT id FROM spans FINAL "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY start_time, id",
+            parameters=params,
+        ).result_rows
+        return [str(row[0]) for row in rows]
+
+    def scope_by_ids(self, span_ids: list[str]) -> dict[str, SpanScope]:
+        """Map ``span_id -> SpanScope(project_id, trace_id)``, reading ONLY those
+        two columns instead of the full span row.
+
+        The full-row reads (``get`` / ``list_by_ids``) pull the wide JSON
+        columns — ``attributes_extra`` / ``input`` / ``output`` / ``metadata`` /
+        ``attrs_string`` — which on a fat span (a voice root carrying its whole
+        raw log) blow the shared ClickHouse memory limit (code 241). The
+        annotation ``for-source`` scope checks only need each span's project
+        (and, for the scores panel, its trace), so read just those: a single
+        panel-open must not OOM the shared cluster. ``FINAL`` is kept —
+        project/trace are stable across versions and a two-column ``FINAL`` read
+        stays well under the limit.
+        """
+        if not span_ids:
+            return {}
+        rows = self._client.query(
+            "SELECT id, toString(project_id) AS project_id, "
+            "toString(trace_id) AS trace_id FROM spans FINAL "
+            "WHERE id IN %(ids)s AND is_deleted = 0",
+            parameters={"ids": tuple(span_ids)},
+        ).result_rows
+
+        def _norm(v: Any) -> str | None:
+            return (
+                None
+                if v in (None, "", "NULL", "00000000-0000-0000-0000-000000000000")
+                else str(v)
+            )
+
+        return {
+            str(sid): SpanScope(project_id=_norm(pid), trace_id=_norm(tid))
+            for sid, pid, tid in rows
+        }
 
     # ─── Aggregations across many traces ──────────────────────────────────────
     def aggregate_by_trace_ids(self, trace_ids: list[str]) -> dict[str, Any]:

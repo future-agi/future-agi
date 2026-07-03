@@ -930,7 +930,7 @@ const DatapointDrawerChild = ({
             return (
               <div key={key}>
                 {isAudioColumn ? (
-                  value?.cellValue ? (
+                  value?.cell_value ? (
                     <AudioDatapointCard value={value} column={col} />
                   ) : (
                     <DatapointCard
@@ -947,7 +947,7 @@ const DatapointDrawerChild = ({
                     />
                   )
                 ) : isImageColumn ? (
-                  value?.cellValue ? (
+                  value?.cell_value ? (
                     <ImageDatapointCard value={value} column={col} />
                   ) : (
                     <DatapointCard

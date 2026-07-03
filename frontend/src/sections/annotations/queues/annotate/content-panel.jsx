@@ -623,6 +623,7 @@ function VoiceCallContent({ traceId }) {
     status: callData.status,
     simulationCallType: "voice",
     callType: callData.call_type,
+    call_type: callData.call_type,
     timestamp: callData.created_at || callData.started_at,
     duration: callData.duration_seconds,
     scenario: callData.scenario_name,

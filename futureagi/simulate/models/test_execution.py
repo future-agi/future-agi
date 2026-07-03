@@ -406,6 +406,8 @@ class CallExecution(BaseModel):
         help_text="Row ID from the dataset if this call is from a dataset scenario",
     )
 
+    # Snapshot keyed by eval-config id; not pruned on eval delete, so readers
+    # must filter keys against the live (non-deleted) eval configs.
     eval_outputs = models.JSONField(
         null=True, blank=True, help_text="Evaluation output"
     )
