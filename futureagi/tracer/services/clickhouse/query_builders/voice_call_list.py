@@ -161,6 +161,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
           AND start_time >= %(start_date)s
           AND start_time < %(end_date)s
           {filter_fragment}
+        ORDER BY start_time DESC
         LIMIT 1 BY trace_id
         """
         return query, self.params
