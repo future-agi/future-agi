@@ -102,6 +102,14 @@ class TestClickHouseSchema:
             assert names.index("spans") < names.index("spans_mv")
             assert names.index("spans_mv") < names.index("span_metrics_hourly")
 
+    def test_dataset_dict_scopes_to_active_datasets(self):
+        """Dataset dashboards should not surface soft-deleted datasets."""
+        from tracer.services.clickhouse.schema import DATASET_DICT
+
+        assert ".model_hub_dataset" in DATASET_DICT
+        assert "WHERE _peerdb_is_deleted = 0" in DATASET_DICT
+        assert "AND deleted = 0" in DATASET_DICT
+
     def test_eval_logger_ddl_has_target_type_and_trace_session_columns(self):
         """PR3: tracer_eval_logger DDL must carry the new row_type-stack columns.
 
