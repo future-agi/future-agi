@@ -143,7 +143,7 @@ from simulate.utils.agent_optimiser import (
     get_or_create_optimiser_for_test_execution,
 )
 from simulate.utils.baseline import resolve_baseline_id
-from simulate.utils.eval_outputs import iter_live_eval_outputs
+from simulate.utils.eval_summary import iter_live_eval_outputs
 from simulate.utils.eval_summary import (
     _build_template_statistics,
     _calculate_final_template_summaries,

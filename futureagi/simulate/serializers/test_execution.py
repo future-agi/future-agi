@@ -16,7 +16,7 @@ from simulate.models import (
     TestExecution,
 )
 from simulate.serializers.chat_message import ChatMessageSerializer
-from simulate.utils.eval_outputs import iter_live_eval_outputs
+from simulate.utils.eval_summary import iter_live_eval_outputs
 from tracer.serializers.filters import (
     StrictInputSerializer,
     filter_list_query_param_field,
