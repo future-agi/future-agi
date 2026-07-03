@@ -65,10 +65,6 @@ class SpeakerRoleResolver:
     }
     _LIVEKIT_OUTBOUND: dict[str, str] = _LIVEKIT_INBOUND
 
-    # VAPI end reasons use raw provider words; swap only for VAPI inbound
-    # so the reviewer sees the same actor as in the transcript.
-    _VAPI_END_REASON_ROLE_WORDS = ("assistant", "customer")
-
     @staticmethod
     def detect_provider(
         provider_call_data: dict[str, Any] | None,
@@ -93,9 +89,16 @@ class SpeakerRoleResolver:
 
     @staticmethod
     def detect_is_outbound(call_execution: Any) -> bool:
-        """True when the tested agent initiated the call."""
+        """True when the tested agent initiated the call.
+
+        Defaults to True on indeterminate direction. For VAPI, True selects the
+        outbound map (no swap); the raw outbound shape already matches the
+        platform convention, so a records missing both call_direction and a
+        parseable call_type still reads correctly. A False default would
+        silently invert outbound records that lost their metadata.
+        """
         if call_execution is None:
-            return False
+            return True
         call_metadata = getattr(call_execution, "call_metadata", None) or {}
         call_direction = str(call_metadata.get("call_direction", "")).strip().lower()
         if call_direction == "outbound":
@@ -103,7 +106,11 @@ class SpeakerRoleResolver:
         if call_direction == "inbound":
             return False
         call_type = str(getattr(call_execution, "call_type", "") or "").strip().lower()
-        return "outbound" in call_type
+        if "outbound" in call_type:
+            return True
+        if "inbound" in call_type:
+            return False
+        return True
 
     @classmethod
     def _get_map(
@@ -220,21 +227,3 @@ class SpeakerRoleResolver:
             CallTranscript.SpeakerRole.USER,
             CallTranscript.SpeakerRole.ASSISTANT,
         ]
-
-    @classmethod
-    def normalize_end_reason(
-        cls,
-        ended_reason: str,
-        *,
-        provider: ProviderChoices,
-        is_outbound: bool = False,
-    ) -> str:
-        """Rewrite ended_reason to the reviewer's perspective (agent/customer)."""
-        if not ended_reason:
-            return ended_reason
-        if provider != ProviderChoices.VAPI or is_outbound:
-            return ended_reason
-        word_a, word_b = cls._VAPI_END_REASON_ROLE_WORDS
-        swapped = ended_reason.replace(word_a, "\x00")
-        swapped = swapped.replace(word_b, word_a)
-        return swapped.replace("\x00", word_b)

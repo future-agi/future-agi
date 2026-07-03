@@ -362,76 +362,6 @@ class TestStaticRoleLists:
         )
 
 
-class TestNormalizeEndReason:
-
-    # LiveKit: no swap (agent worker normalises at source)
-    def test_livekit_agent_ended_call_passthrough(self):
-        assert (
-            SpeakerRoleResolver.normalize_end_reason(
-                "agent_ended_call", provider=ProviderChoices.LIVEKIT
-            )
-            == "agent_ended_call"
-        )
-
-    def test_livekit_customer_ended_call_passthrough(self):
-        assert (
-            SpeakerRoleResolver.normalize_end_reason(
-                "customer_ended_call", provider=ProviderChoices.LIVEKIT
-            )
-            == "customer_ended_call"
-        )
-
-    # VAPI inbound: assistant <-> customer swap
-    def test_vapi_inbound_assistant_ended_swaps(self):
-        assert (
-            SpeakerRoleResolver.normalize_end_reason(
-                "assistant-ended-call",
-                provider=ProviderChoices.VAPI,
-                is_outbound=False,
-            )
-            == "customer-ended-call"
-        )
-
-    def test_vapi_inbound_customer_ended_swaps(self):
-        assert (
-            SpeakerRoleResolver.normalize_end_reason(
-                "customer-ended-call",
-                provider=ProviderChoices.VAPI,
-                is_outbound=False,
-            )
-            == "assistant-ended-call"
-        )
-
-    # VAPI outbound: no swap (raw Vapi labels already match FAGI perspective)
-    def test_vapi_outbound_assistant_ended_passthrough(self):
-        assert (
-            SpeakerRoleResolver.normalize_end_reason(
-                "assistant-ended-call",
-                provider=ProviderChoices.VAPI,
-                is_outbound=True,
-            )
-            == "assistant-ended-call"
-        )
-
-    def test_vapi_outbound_customer_ended_passthrough(self):
-        assert (
-            SpeakerRoleResolver.normalize_end_reason(
-                "customer-ended-call",
-                provider=ProviderChoices.VAPI,
-                is_outbound=True,
-            )
-            == "customer-ended-call"
-        )
-
-    def test_empty_string(self):
-        assert (
-            SpeakerRoleResolver.normalize_end_reason(
-                "", provider=ProviderChoices.LIVEKIT
-            )
-            == ""
-        )
-
-
 # -------------------------------------------------------------------
 # detect_is_outbound
 # -------------------------------------------------------------------
@@ -462,11 +392,22 @@ class TestDetectIsOutbound:
         obj = self._Fake(call_metadata={}, call_type="outboundPhoneCall")
         assert SpeakerRoleResolver.detect_is_outbound(obj) is True
 
-    def test_defaults_to_inbound_when_both_missing(self):
-        assert SpeakerRoleResolver.detect_is_outbound(self._Fake()) is False
+    def test_defaults_to_outbound_when_both_missing(self):
+        """Indeterminate direction returns True (outbound = no-swap for VAPI).
+        A False default would silently invert outbound records that lost their
+        metadata; a True default lets the raw shape (already platform-correct
+        on outbound) pass through."""
+        assert SpeakerRoleResolver.detect_is_outbound(self._Fake()) is True
+
+    def test_defaults_to_outbound_when_call_type_is_neither(self):
+        """A call_type string that mentions neither 'inbound' nor 'outbound'
+        should be treated as indeterminate and fall through to the safe default."""
+        obj = self._Fake(call_type="webCall")
+        assert SpeakerRoleResolver.detect_is_outbound(obj) is True
 
     def test_handles_none_call_execution(self):
-        assert SpeakerRoleResolver.detect_is_outbound(None) is False
+        """None call_execution is treated as indeterminate; return the safe default."""
+        assert SpeakerRoleResolver.detect_is_outbound(None) is True
 
     def test_case_insensitive_call_metadata(self):
         obj = self._Fake(call_metadata={"call_direction": "OUTBOUND"})
@@ -531,40 +472,3 @@ class TestRegressionContracts:
         assert "tool_calls" not in roles
         assert "tool_call_result" not in roles
 
-    def test_normalize_end_reason_swap_is_involutive_for_vapi_inbound(self):
-        """Two swaps == no swap. If it isn't, the placeholder was chosen
-        badly (collision with a substring of a real ended_reason) and the
-        function is silently corrupting data."""
-        for reason in [
-            "assistant-ended-call",
-            "customer-ended-call",
-            "customer-did-not-answer",
-            "assistant-forwarded-call",
-        ]:
-            once = SpeakerRoleResolver.normalize_end_reason(
-                reason, provider=ProviderChoices.VAPI, is_outbound=False
-            )
-            twice = SpeakerRoleResolver.normalize_end_reason(
-                once, provider=ProviderChoices.VAPI, is_outbound=False
-            )
-            assert twice == reason
-
-    def test_normalize_end_reason_leaves_non_role_words_untouched(self):
-        """Only "assistant" and "customer" are role words. Real ended_reason
-        values that don't contain either must pass through unchanged so
-        the FE reasonColorMap keeps working."""
-        for reason in [
-            "silence-timed-out",
-            "max-duration-reached",
-            "error",
-            "twilio-failed-to-connect",
-        ]:
-            for is_outbound in [False, True]:
-                assert (
-                    SpeakerRoleResolver.normalize_end_reason(
-                        reason,
-                        provider=ProviderChoices.VAPI,
-                        is_outbound=is_outbound,
-                    )
-                    == reason
-                )

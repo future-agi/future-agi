@@ -362,16 +362,6 @@ class TestEndedReasonInlineSwap:
         ]:
             assert self._inline_swap(self._inline_swap(raw)) == raw
 
-    def test_swap_matches_resolver_for_vapi_inbound(self):
-        for raw in [
-            "assistant-ended-call",
-            "customer-ended-call",
-            "customer-did-not-answer",
-        ]:
-            assert self._inline_swap(raw) == SpeakerRoleResolver.normalize_end_reason(
-                raw, provider=ProviderChoices.VAPI, is_outbound=False
-            )
-
     def test_non_role_reasons_pass_through(self):
         for raw in [
             "silence-timed-out",
