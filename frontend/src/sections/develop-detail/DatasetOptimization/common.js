@@ -319,8 +319,8 @@ export const getTrialsColumnConfig = (columnConfig) => {
           colId: "trial",
           valueGetter: (params) => ({
             title: params.data?.trial,
-            improvement: params.data?.scorePercentageChange,
-            isBest: params.data?.isBest,
+            improvement: params.data?.score_percentage_change,
+            isBest: params.data?.is_best,
           }),
         };
 
@@ -339,13 +339,13 @@ export const getTrialsColumnConfig = (columnConfig) => {
 
       default:
         return {
-          field: column?.id,
           headerName: column?.name,
           minWidth: 170,
           colId: column?.id,
           cellRenderer: "averageEvalCellRenderer",
           isVisible: true,
           id: column?.id,
+          valueGetter: (params) => params.data?.eval_scores?.[column?.id],
         };
     }
   });

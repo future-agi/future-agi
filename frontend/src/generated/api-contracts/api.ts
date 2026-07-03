@@ -329,7 +329,7 @@ import type {
   DatasetNamesResponseApi,
   DatasetOptimizationApi,
   DatasetOptimizationCreateApi,
-  DatasetOptimizationDetailApi,
+  DatasetOptimizationDetailApiResponseApi,
   DatasetRowDataRequestApi,
   DatasetRowDataResponseApi,
   DatasetRowDiffRequestApi,
@@ -27365,7 +27365,7 @@ export const modelHubDatasetOptimizationCreate = async (datasetOptimizationCreat
 
 
 export type modelHubDatasetOptimizationReadResponse200 = {
-  data: DatasetOptimizationDetailApi
+  data: DatasetOptimizationDetailApiResponseApi
   status: 200
 }
 
@@ -27392,9 +27392,7 @@ export const getModelHubDatasetOptimizationReadUrl = (id: string,) => {
 }
 
 /**
- * Returns data in the same format as AgentPromptOptimiserRunViewSet.retrieve()
-to allow reuse of frontend simulation components.
- * @summary Get run details with trial comparison table.
+ * Get run details; payload matches AgentPromptOptimiserRunViewSet.retrieve().
  */
 export const modelHubDatasetOptimizationRead = async (id: string, options?: RequestInit): Promise<modelHubDatasetOptimizationReadResponse> => {
 

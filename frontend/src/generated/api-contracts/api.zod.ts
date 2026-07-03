@@ -15682,62 +15682,80 @@ export const ModelHubDatasetOptimizationCreateBody = zod.object({
 
 
 /**
- * Returns data in the same format as AgentPromptOptimiserRunViewSet.retrieve()
-to allow reuse of frontend simulation components.
- * @summary Get run details with trial comparison table.
+ * Get run details; payload matches AgentPromptOptimiserRunViewSet.retrieve().
  */
 export const ModelHubDatasetOptimizationReadParams = zod.object({
   "id": zod.string().uuid().describe('A UUID string identifying this optimize dataset.')
 })
 
-export const modelHubDatasetOptimizationReadResponseNameMax = 255;
 
 
-export const modelHubDatasetOptimizationReadResponseStepsItemNameMax = 255;
 
-export const modelHubDatasetOptimizationReadResponseStepsItemStepNumberMin = -2147483648;
-export const modelHubDatasetOptimizationReadResponseStepsItemStepNumberMax = 2147483647;
 
-export const modelHubDatasetOptimizationReadResponseTrialsItemTrialNumberMin = -2147483648;
-export const modelHubDatasetOptimizationReadResponseTrialsItemTrialNumberMax = 2147483647;
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
 export const ModelHubDatasetOptimizationReadResponse = zod.object({
-  "id": zod.string().uuid().optional(),
-  "name": zod.string().min(1).max(modelHubDatasetOptimizationReadResponseNameMax),
-  "column": zod.string().uuid().optional().describe('Column being optimized'),
-  "optimizer_algorithm": zod.enum(['random_search', 'bayesian', 'metaprompt', 'protegi', 'promptwizard', 'gepa']).optional(),
-  "optimizer_model": zod.string().uuid().optional().describe('Model used for optimization (separate from eval model)'),
-  "optimizer_config": zod.object({
-
-}).passthrough().optional().describe('Optimizer-specific configuration (num_trials, etc.)'),
-  "status": zod.enum(['not_started', 'pending', 'running', 'completed', 'failed', 'cancelled']).optional(),
-  "error_message": zod.string().optional(),
-  "best_score": zod.number().optional(),
-  "baseline_score": zod.number().optional(),
-  "optimized_k_prompts": zod.array(zod.string().min(1)).optional(),
-  "steps": zod.array(zod.object({
-  "id": zod.string().uuid().optional(),
-  "name": zod.string().min(1).max(modelHubDatasetOptimizationReadResponseStepsItemNameMax),
-  "description": zod.string().optional(),
-  "status": zod.enum(['pending', 'running', 'completed', 'failed']).optional(),
-  "metadata": zod.object({
+  "status": zod.boolean(),
+  "result": zod.object({
+  "optimiser_name": zod.string().min(1).optional(),
+  "optimiser_type": zod.string().min(1).optional(),
+  "model": zod.string().min(1).optional(),
+  "provider_logo": zod.string().min(1).optional(),
+  "configuration": zod.object({
 
 }).passthrough().optional(),
-  "step_number": zod.number().min(modelHubDatasetOptimizationReadResponseStepsItemStepNumberMin).max(modelHubDatasetOptimizationReadResponseStepsItemStepNumberMax),
-  "created_at": zod.string().datetime({"offset":true}).optional(),
-  "updated_at": zod.string().datetime({"offset":true}).optional()
+  "status": zod.enum(['not_started', 'pending', 'running', 'completed', 'failed', 'cancelled']).optional(),
+  "error_message": zod.string().optional(),
+  "start_time": zod.string().datetime({"offset":true}).optional(),
+  "parameters": zod.array(zod.object({
+  "key": zod.string().min(1),
+  "label": zod.string().min(1),
+  "description": zod.string(),
+  "value": zod.object({
+
+}).passthrough()
 })).optional(),
-  "trials": zod.array(zod.object({
-  "id": zod.string().uuid().optional(),
-  "trial_number": zod.number().min(modelHubDatasetOptimizationReadResponseTrialsItemTrialNumberMin).max(modelHubDatasetOptimizationReadResponseTrialsItemTrialNumberMax),
-  "is_baseline": zod.boolean().optional(),
-  "average_score": zod.number(),
-  "created_at": zod.string().datetime({"offset":true}).optional()
+  "column_id": zod.string().min(1).optional(),
+  "column_name": zod.string().min(1).optional(),
+  "best_score": zod.number().optional(),
+  "baseline_score": zod.number().optional(),
+  "table": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "trial": zod.string().min(1),
+  "prompt": zod.string(),
+  "is_best": zod.boolean(),
+  "score_percentage_change": zod.number().optional(),
+  "eval_scores": zod.record(zod.string(), zod.object({
+  "score": zod.number().optional(),
+  "percentage_change": zod.number().optional()
+}))
 })).optional(),
-  "trial_count": zod.string().optional(),
-  "created_at": zod.string().datetime({"offset":true}).optional()
+  "column_config": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "name": zod.string().min(1),
+  "is_visible": zod.boolean()
+})).optional(),
+  "optimizer_model_id": zod.string().min(1).optional(),
+  "user_eval_templates": zod.array(zod.object({
+  "id": zod.string().min(1),
+  "eval_id": zod.string().min(1),
+  "name": zod.string().min(1),
+  "template_id": zod.string().min(1)
+})).optional()
+})
 })
 
 
