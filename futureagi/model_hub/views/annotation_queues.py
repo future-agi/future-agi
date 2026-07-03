@@ -7482,25 +7482,6 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
                 ),
             )
 
-        # Multi-click guard. If the rule fired in the last 30s, refuse with
-        # 409 so a second click while the first run is still in flight
-        # doesn't blow up to two workflows + two emails + two PG row-lock
-        # waits. The lower-level QueueItem unique constraint already prevents
-        # data corruption, but it's still wasteful work and confusing UX.
-        # 30s is small enough that legitimate re-runs aren't impacted —
-        # users can wait, and the FE keeps the Run button disabled for the
-        # same window.
-        if rule.last_triggered_at and (
-            timezone.now() - rule.last_triggered_at
-        ) < timedelta(seconds=30):
-            return self._gm.custom_error_response(
-                status_code=status.HTTP_409_CONFLICT,
-                result=(
-                    "A run is already in progress for this rule. "
-                    "Please wait a few seconds before trying again."
-                ),
-            )
-
         from model_hub.utils.annotation_queue_helpers import (
             RULE_RUN_SYNC_THRESHOLD,
         )
@@ -7530,29 +7511,21 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
             result = evaluate_rule(rule, user=request.user, cap=RULE_RUN_SYNC_THRESHOLD)
             return self._gm.success_response(result)
 
-        # Large run — hand off to Temporal. task_id is suffixed with a
-        # millisecond timestamp so two clicks of "Run" don't collide on the
-        # same workflow_id. Activity-level serialisation already handles
-        # concurrency: ``evaluate_rule`` holds a ``select_for_update`` on
-        # the rule row inside the activity, and ``QueueItem`` unique
-        # constraints make the bulk_create idempotent.
+        # Large run — hand off to Temporal. The workflow id is stable per rule,
+        # so Temporal itself rejects a second "Run" click while a run for this
+        # rule is still open (its default id-conflict behaviour raises
+        # WorkflowAlreadyStartedError), which we surface as a 409 — no duplicate
+        # workflow, no duplicate completion email. A run that has already
+        # finished (closed workflow) never blocks a fresh one, so a re-run after
+        # completion still works. Concurrency within a run is handled at the
+        # activity: ``evaluate_rule`` holds a ``select_for_update`` on the rule
+        # row and ``QueueItem`` unique constraints make the bulk_create
+        # idempotent.
+        from temporalio.exceptions import WorkflowAlreadyStartedError
+
         from tfc.temporal.drop_in.runner import start_activity_sync
 
-        # Reserve the rule *before* scheduling — the 30s multi-click guard
-        # above only catches in-flight runs once the worker has bumped
-        # ``last_triggered_at`` via ``_update_rule_stats``. For async runs
-        # that bump happens minutes later (inside the Temporal activity),
-        # leaving a window where two clicks both pass the guard and schedule
-        # duplicate workflows + duplicate completion emails. Bump now from
-        # the view so the second click sees a fresh timestamp.
-        previous_last_triggered_at = rule.last_triggered_at
-        scheduled_at = timezone.now()
-        AutomationRule.objects.filter(pk=rule.pk).update(last_triggered_at=scheduled_at)
-        rule.last_triggered_at = scheduled_at
-
-        task_id = (
-            f"automation-rule-eval-{rule.pk}-{int(scheduled_at.timestamp() * 1000)}"
-        )
+        task_id = f"automation-rule-eval-{rule.pk}"
 
         try:
             workflow_id = start_activity_sync(
@@ -7566,13 +7539,17 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
                 queue="tasks_l",
                 task_id=task_id,
             )
-        except Exception as exc:
-            # Schedule failed — release the reservation so the user can
-            # retry immediately without waiting out the 30s lockout.
-            AutomationRule.objects.filter(pk=rule.pk).update(
-                last_triggered_at=previous_last_triggered_at
+        except WorkflowAlreadyStartedError:
+            # A run for this rule is already open on Temporal — refuse the
+            # duplicate rather than spawning a second workflow + second email.
+            return self._gm.custom_error_response(
+                status_code=status.HTTP_409_CONFLICT,
+                result=(
+                    "A run is already in progress for this rule. "
+                    "Please wait for it to finish before starting another."
+                ),
             )
-            rule.last_triggered_at = previous_last_triggered_at
+        except Exception as exc:
             logger.exception(
                 "automation_rule_manual_run_schedule_failed",
                 rule_id=str(rule.pk),
