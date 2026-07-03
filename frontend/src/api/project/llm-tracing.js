@@ -3,18 +3,20 @@ import axios, { endpoints } from "src/utils/axios";
 import { apiPath } from "src/api/contracts/api-surface";
 
 /**
- * Fetch root span IDs for the given trace IDs.
- * Root span = the span whose parent_span_id is NULL for that trace.
+ * Fetch root span IDs for the given trace IDs (POST — large trace lists exceed
+ * URL length limits). Root span = the span whose parent_span_id is NULL.
  *
  * @param {string[]} traceIds
+ * @param {string[]} [projectIds] optional — prunes the ClickHouse scan
  * @returns {Promise<Record<string, string>>} map of trace_id → root span_id
  */
-export async function fetchRootSpans(traceIds) {
+export async function fetchRootSpans(traceIds, projectIds = []) {
   if (!traceIds || traceIds.length === 0) return {};
-  const params = new URLSearchParams();
-  traceIds.forEach((id) => params.append("trace_ids", id));
-  const res = await axios.get(
-    `${apiPath("/tracer/observation-span/root-spans/")}?${params.toString()}`,
+  const body = { trace_ids: traceIds };
+  if (projectIds?.length) body.project_ids = projectIds;
+  const res = await axios.post(
+    apiPath("/tracer/observation-span/root-spans/"),
+    body,
   );
   return res.data?.result || {};
 }

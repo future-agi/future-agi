@@ -25955,24 +25955,6 @@ export type TracerObservationSpanRetrieveLoading200 = {
   results: ObservationSpanApi[];
 };
 
-export type TracerObservationSpanRootSpansParams = {
-/**
- * A page number within the paginated result set.
- */
-page?: number;
-/**
- * Number of results to return per page.
- */
-limit?: number;
-};
-
-export type TracerObservationSpanRootSpans200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: ObservationSpanApi[];
-};
-
 export type TracerProjectVersionListParams = {
 /**
  * A page number within the paginated result set.

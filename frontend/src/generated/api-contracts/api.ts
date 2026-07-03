@@ -1150,8 +1150,6 @@ import type {
   TracerObservationSpanListSpansParams,
   TracerObservationSpanRetrieveLoading200,
   TracerObservationSpanRetrieveLoadingParams,
-  TracerObservationSpanRootSpans200,
-  TracerObservationSpanRootSpansParams,
   TracerProjectFetchSystemMetrics200,
   TracerProjectFetchSystemMetricsParams,
   TracerProjectGetGraphData200,
@@ -62445,17 +62443,17 @@ export const tracerObservationSpanRetrieveLoading = async (params?: TracerObserv
 
 
 
-export type tracerObservationSpanRootSpansResponse200 = {
-  data: TracerObservationSpanRootSpans200
-  status: 200
+export type tracerObservationSpanRootSpansResponse201 = {
+  data: ObservationSpanApi
+  status: 201
 }
 
 export type tracerObservationSpanRootSpansResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 201>
 }
 
-export type tracerObservationSpanRootSpansResponseSuccess = (tracerObservationSpanRootSpansResponse200) & {
+export type tracerObservationSpanRootSpansResponseSuccess = (tracerObservationSpanRootSpansResponse201) & {
   headers: Headers;
 };
 export type tracerObservationSpanRootSpansResponseError = (tracerObservationSpanRootSpansResponseDefault) & {
@@ -62464,39 +62462,30 @@ export type tracerObservationSpanRootSpansResponseError = (tracerObservationSpan
 
 export type tracerObservationSpanRootSpansResponse = (tracerObservationSpanRootSpansResponseSuccess | tracerObservationSpanRootSpansResponseError)
 
-export const getTracerObservationSpanRootSpansUrl = (params?: TracerObservationSpanRootSpansParams,) => {
-  const normalizedParams = new URLSearchParams();
+export const getTracerObservationSpanRootSpansUrl = () => {
 
-  Object.entries(params || {}).forEach(([key, value]) => {
 
-    if (Array.isArray(value)) {
-      value
-        .filter((item) => item !== undefined && item !== null)
-        .forEach((item) => normalizedParams.append(key, item.toString()))
-    } else if (value !== undefined && value !== null) {
-      normalizedParams.append(key, value.toString())
-    }
-  });
 
-  const stringifiedParams = normalizedParams.toString();
 
-  return stringifiedParams.length > 0 ? `/tracer/observation-span/root-spans/?${stringifiedParams}` : `/tracer/observation-span/root-spans/`
+  return `/tracer/observation-span/root-spans/`
 }
 
 /**
  * Given a list of trace_ids, return the root span ID for each trace.
 Root span = the span where parent_span_id IS NULL for that trace.
 
-Query param: trace_ids (repeated, e.g. ?trace_ids=<id>&trace_ids=<id>)
+POST JSON body (large trace lists exceed URL limits): trace_ids (list) +
+optional project_ids (list, prunes the CH scan).
  */
-export const tracerObservationSpanRootSpans = async (params?: TracerObservationSpanRootSpansParams, options?: RequestInit): Promise<tracerObservationSpanRootSpansResponse> => {
+export const tracerObservationSpanRootSpans = async (observationSpanApi: NonReadonly<ObservationSpanApi>, options?: RequestInit): Promise<tracerObservationSpanRootSpansResponse> => {
 
-  return apiMutator<tracerObservationSpanRootSpansResponse>(getTracerObservationSpanRootSpansUrl(params),
+  return apiMutator<tracerObservationSpanRootSpansResponse>(getTracerObservationSpanRootSpansUrl(),
   {
     ...options,
-    method: 'GET'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      observationSpanApi,)
   }
 );}
 

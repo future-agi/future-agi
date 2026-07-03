@@ -591,6 +591,47 @@ class CHSpanReader:
             for sid, pid, tid in rows
         }
 
+    def root_ids_by_trace_ids(
+        self, trace_ids: list[str], project_ids: list[str] | None = None
+    ) -> dict[str, tuple[str, str | None]]:
+        """``{trace_id: (root_span_id, project_id)}`` reading only id/trace_id/
+        project_id — leaner than ``roots_by_trace_ids`` (whose lean select still
+        reads input/output), to dodge the CH OOM (code 241) on fat voice roots.
+        ``project_ids`` (optional) prunes the scan via the sort-key prefix.
+        Ordered so the first parentless span per trace wins."""
+        if not trace_ids:
+            return {}
+        where = [
+            "trace_id IN %(trace_ids)s",
+            "is_deleted = 0",
+            "(parent_span_id IS NULL OR parent_span_id = '')",
+        ]
+        params: dict[str, Any] = {"trace_ids": tuple(trace_ids)}
+        if project_ids:
+            where.append("project_id IN %(project_ids)s")
+            params["project_ids"] = tuple(project_ids)
+        rows = self._client.query(
+            "SELECT id, toString(trace_id) AS trace_id, "
+            "toString(project_id) AS project_id FROM spans FINAL "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY trace_id, start_time, id",
+            parameters=params,
+        ).result_rows
+
+        def _norm(v: Any) -> str | None:
+            return (
+                None
+                if v in (None, "", "NULL", "00000000-0000-0000-0000-000000000000")
+                else str(v)
+            )
+
+        result: dict[str, tuple[str, str | None]] = {}
+        for sid, tid, pid in rows:
+            tid = str(tid)
+            if tid not in result:  # first root per trace wins
+                result[tid] = (str(sid), _norm(pid))
+        return result
+
     # ─── Aggregations across many traces ──────────────────────────────────────
     def aggregate_by_trace_ids(self, trace_ids: list[str]) -> dict[str, Any]:
         """Sum(tokens, cost) + count across multiple traces in one query.

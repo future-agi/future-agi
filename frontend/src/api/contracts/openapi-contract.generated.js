@@ -32966,53 +32966,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
       }
     },
     "/tracer/observation-span/root-spans/": {
-      "get": {
+      "post": {
         "operationId": "tracer_observation-span_root_spans",
         "runtimeRequestValidation": false,
         "runtimeResponseValidation": false,
-        "requestBody": null,
-        "queryParameters": {
-          "page": {
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          "limit": {
-            "required": false,
-            "schema": {
-              "type": "integer"
-            }
-          }
+        "requestBody": {
+          "$ref": "#/definitions/ObservationSpan"
         },
+        "queryParameters": {},
         "responses": {
-          "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/ObservationSpan"
-                }
-              }
-            }
+          "201": {
+            "$ref": "#/definitions/ObservationSpan"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
