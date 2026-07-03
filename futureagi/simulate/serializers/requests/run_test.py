@@ -16,19 +16,7 @@ from rest_framework import serializers
 from simulate.models import AgentDefinition, RunTest, Scenarios, SimulateEvalConfig
 from simulate.serializers.requests.run_test_evals import EvalConfigDefinitionSerializer
 from tracer.serializers.filters import StrictInputSerializer
-
-
-def _active_organization(serializer):
-    """Resolve the active organization for org-scoped validation.
-
-    Prefer the request's resolved active org (set by authentication from the
-    ``X-Organization-Id`` header / last-switched config) and fall back to the
-    user's legacy ``organization`` FK. This mirrors how the create views resolve
-    the org for the write path, so validation and creation agree on the same org
-    for multi-org users whose active org differs from their legacy FK.
-    """
-    request = serializer.context["request"]
-    return getattr(request, "organization", None) or request.user.organization
+from tracer.utils.workspace_scope import get_request_organization
 
 
 class RunTestFilterSerializer(StrictInputSerializer):
@@ -88,7 +76,7 @@ class CreateRunTestSerializer(StrictInputSerializer):
 
     def validate_agent_definition_id(self, value):
         """Validate that the agent definition exists"""
-        organization = _active_organization(self)
+        organization = get_request_organization(self.context["request"])
         if not AgentDefinition.objects.filter(
             id=value, organization=organization
         ).exists():
@@ -97,7 +85,7 @@ class CreateRunTestSerializer(StrictInputSerializer):
 
     def validate_scenario_ids(self, value):
         """Validate that all scenario IDs exist"""
-        organization = _active_organization(self)
+        organization = get_request_organization(self.context["request"])
         existing_ids = set(
             Scenarios.objects.filter(
                 id__in=value, organization=organization
@@ -124,7 +112,7 @@ class CreateRunTestSerializer(StrictInputSerializer):
         if not valid_uuids:
             return []
 
-        organization = _active_organization(self)
+        organization = get_request_organization(self.context["request"])
         existing_ids = set(
             SimulateEvalConfig.objects.filter(
                 id__in=valid_uuids, run_test__organization=organization
@@ -218,7 +206,7 @@ class CreatePromptSimulationSerializer(PromptSimulationCreateFieldsSerializer):
         """Validate that the prompt template exists"""
         from model_hub.models.run_prompt import PromptTemplate
 
-        organization = _active_organization(self)
+        organization = get_request_organization(self.context["request"])
         if not PromptTemplate.objects.filter(
             id=value, organization=organization, deleted=False
         ).exists():
@@ -235,7 +223,7 @@ class CreatePromptSimulationSerializer(PromptSimulationCreateFieldsSerializer):
 
     def validate_scenario_ids(self, value):
         """Validate that all scenario IDs exist"""
-        organization = _active_organization(self)
+        organization = get_request_organization(self.context["request"])
         existing_ids = set(
             Scenarios.objects.filter(
                 id__in=value, organization=organization

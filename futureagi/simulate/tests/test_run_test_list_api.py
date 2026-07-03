@@ -235,6 +235,95 @@ class TestRunTestRuntimeContracts:
         run_test = RunTest.objects.get(id=response.json()["id"])
         assert run_test.organization_id == agent_definition.organization_id
 
+    def test_create_uses_active_org_for_eval_config_ids(
+        self,
+        auth_client,
+        user,
+        organization,
+        workspace,
+        agent_definition,
+        scenario_with_prompt_version,
+    ):
+        """Sibling to test_create_uses_active_org_not_legacy_user_fk, exercising
+        `CreateRunTestSerializer.validate_eval_config_ids`. Same active-org vs
+        legacy-FK divergence; the eval_config referenced in the payload lives in
+        the active org via its parent RunTest.
+        """
+        from accounts.models import Organization
+
+        seed_run_test = RunTest.objects.create(
+            name="Seed run test for eval config",
+            organization=organization,
+            workspace=workspace,
+            source_type=RunTest.SourceTypes.AGENT_DEFINITION,
+            agent_definition=agent_definition,
+        )
+        eval_config = SimulateEvalConfig.objects.create(
+            name="Active-org eval config",
+            eval_template=EvalTemplate.objects.create(
+                name="Reusable template",
+                eval_id=99001,
+                config={},
+            ),
+            run_test=seed_run_test,
+            model="turing_small",
+            error_localizer=False,
+        )
+
+        legacy_primary_org = Organization.objects.create(name="Legacy Primary Org")
+        user.organization = legacy_primary_org
+        user.save(update_fields=["organization"])
+
+        response = auth_client.post(
+            "/simulate/run-tests/create/",
+            {
+                "name": "Multi-org run using eval_config from active org",
+                "agent_definition_id": str(agent_definition.id),
+                "scenario_ids": [str(scenario_with_prompt_version.id)],
+                "eval_config_ids": [str(eval_config.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED, response.content
+        run_test = RunTest.objects.get(id=response.json()["id"])
+        assert run_test.organization_id == agent_definition.organization_id
+
+    def test_prompt_simulation_create_uses_active_org_not_legacy_user_fk(
+        self,
+        auth_client,
+        user,
+        prompt_template,
+        prompt_version_v10,
+        scenario_with_prompt_version,
+    ):
+        """Regression for TH-6191 on the prompt-simulation create path.
+
+        `CreatePromptSimulationSerializer.validate_prompt_template_id` and
+        `validate_scenario_ids` had the same legacy-FK vs active-org drift.
+        Multi-org users creating a prompt simulation against a template + scenario
+        that live in the active org must succeed.
+        """
+        from accounts.models import Organization
+
+        legacy_primary_org = Organization.objects.create(name="Legacy Primary Org")
+        user.organization = legacy_primary_org
+        user.save(update_fields=["organization"])
+
+        response = auth_client.post(
+            f"/simulate/prompt-templates/{prompt_template.id}/simulations/",
+            {
+                "name": "Multi-org Prompt Simulation",
+                "prompt_version_id": str(prompt_version_v10.id),
+                "scenario_ids": [str(scenario_with_prompt_version.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED, response.content
+        run_test = RunTest.objects.get(id=response.json()["result"]["id"])
+        assert run_test.organization_id == prompt_template.organization_id
+
     def test_create_rejects_unknown_body_field(
         self, auth_client, agent_definition, scenario_with_prompt_version
     ):
@@ -390,9 +479,9 @@ class TestRunTestRuntimeContracts:
             format="json",
         )
 
-        assert (
-            create_response.status_code == status.HTTP_201_CREATED
-        ), create_response.content
+        assert create_response.status_code == status.HTTP_201_CREATED, (
+            create_response.content
+        )
         eval_config_id = create_response.json()["created_eval_configs"][0]["id"]
         eval_config = SimulateEvalConfig.objects.get(id=eval_config_id)
         assert eval_config.run_test_id == run_test_with_v10_scenario.id
@@ -405,9 +494,9 @@ class TestRunTestRuntimeContracts:
             f"{eval_config_id}/get-structure/"
         )
 
-        assert (
-            structure_response.status_code == status.HTTP_200_OK
-        ), structure_response.content
+        assert structure_response.status_code == status.HTTP_200_OK, (
+            structure_response.content
+        )
         structure = structure_response.json()["result"]["eval"]
         assert structure["id"] == eval_config_id
         assert structure["template_id"] == str(word_count_eval_template.id)
@@ -431,9 +520,9 @@ class TestRunTestRuntimeContracts:
             format="json",
         )
 
-        assert (
-            update_response.status_code == status.HTTP_200_OK
-        ), update_response.content
+        assert update_response.status_code == status.HTTP_200_OK, (
+            update_response.content
+        )
         eval_config.refresh_from_db()
         assert eval_config.name == "word_count_updated"
         assert eval_config.mapping == {"text": "agent_output"}
