@@ -235,6 +235,6 @@ class SpeakerRoleResolver:
         if provider != ProviderChoices.VAPI or is_outbound:
             return ended_reason
         word_a, word_b = cls._VAPI_END_REASON_ROLE_WORDS
-        swapped = ended_reason.replace(word_a, "__PH__")
+        swapped = ended_reason.replace(word_a, "\x00")
         swapped = swapped.replace(word_b, word_a)
-        return swapped.replace("__PH__", word_b)
+        return swapped.replace("\x00", word_b)
