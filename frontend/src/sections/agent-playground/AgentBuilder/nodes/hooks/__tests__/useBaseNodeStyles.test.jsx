@@ -138,10 +138,19 @@ describe("useBaseNodeStyles", () => {
   });
 
   // ---- boxSx properties ----
-  it("includes hover styles when idle and not preview", () => {
+  it("reveals the delete button on hover and keyboard focus", () => {
     const { result } = renderWithTheme(defaultProps);
     expect(result.current.boxSx["&:hover"]).toBeDefined();
-    expect(result.current.boxSx["&:hover .node-delete-btn"]).toBeDefined();
+
+    const revealSx =
+      result.current.boxSx[
+        "&:hover .node-delete-btn, &:focus-within .node-delete-btn"
+      ];
+
+    expect(revealSx).toEqual({
+      opacity: 1,
+      pointerEvents: "auto",
+    });
   });
 
   it("excludes hover styles in preview mode", () => {

@@ -1,0 +1,134 @@
+/* eslint-disable react/prop-types */
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { ThemeProvider, createTheme } from "@mui/material/styles";
+import BaseNode from "../BaseNode";
+import { NODE_TYPES, PORT_DIRECTION } from "../../../utils/constants";
+import useBaseNodeState from "../hooks/useBaseNodeState";
+import useBaseNodeActions from "../hooks/useBaseNodeActions";
+
+// ---- Mocks ----
+vi.mock("@xyflow/react", () => ({
+  Handle: ({ id, type }) => <div data-testid={`handle-${type}-${id}`} />,
+  Position: { Left: "left", Right: "right" },
+}));
+
+vi.mock("../hooks/useBaseNodeState", () => ({
+  default: vi.fn(),
+}));
+
+vi.mock("../hooks/useBaseNodeActions", () => ({
+  default: vi.fn(),
+}));
+
+vi.mock("../../../components/NodeSelectionPopper", () => ({
+  default: () => null,
+}));
+
+vi.mock("../StartIndicator", () => ({
+  default: () => <div data-testid="start-indicator" />,
+}));
+
+const theme = createTheme({
+  palette: {
+    red: { 50: "#fff1f1", 500: "#ef4444", 700: "#dc2626", 800: "#991b1b" },
+    green: { 50: "#ecfdf5", 500: "#22c55e" },
+    blue: { 100: "#dbeafe", 500: "#3b82f6", 600: "#2563eb" },
+    black: { 200: "#e5e7eb", 400: "#9ca3af", 800: "#1f2937" },
+  },
+});
+
+const mockHandleDeleteClick = vi.fn();
+
+const defaultState = {
+  nodeHeight: 40,
+  selected: false,
+  hasValidationError: false,
+  hasIncomingEdge: true,
+  hasOutgoingEdge: true,
+  isRunning: false,
+  isCompleted: false,
+  isError: false,
+  isWorkflowRunning: false,
+  preview: false,
+};
+
+function renderBaseNode(props = {}) {
+  return render(
+    <ThemeProvider theme={theme}>
+      <BaseNode
+        id="node-1"
+        type={NODE_TYPES.AGENT}
+        isConnectable
+        selected={false}
+        data={{
+          label: "Agent node",
+          preview: false,
+          ports: [{ id: "input", direction: PORT_DIRECTION.INPUT }],
+        }}
+        {...props}
+      />
+    </ThemeProvider>,
+  );
+}
+
+describe("BaseNode", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useBaseNodeState.mockReturnValue(defaultState);
+    useBaseNodeActions.mockReturnValue({
+      handleNodeClick: vi.fn(),
+      handleAddClick: vi.fn(),
+      handlePopperClose: vi.fn(),
+      handleNodeSelect: vi.fn(),
+      handleDeleteClick: mockHandleDeleteClick,
+      popperOpen: false,
+      addButtonRef: { current: null },
+    });
+  });
+
+  it("shows the real delete tooltip on hover and preserves delete clicks", async () => {
+    renderBaseNode();
+
+    const deleteButton = screen.getByRole("button", { name: "Delete node" });
+    expect(deleteButton).toHaveClass("node-delete-btn");
+
+    // The button starts with pointer-events disabled until the node hover/focus
+    // selector reveals it; fireEvent exercises the real Tooltip without making
+    // this assertion depend on JSDOM pseudo-class support.
+    fireEvent.mouseOver(deleteButton);
+
+    const tooltip = await screen.findByRole("tooltip");
+    expect(tooltip).toHaveTextContent("Delete node");
+
+    fireEvent.click(deleteButton);
+    expect(mockHandleDeleteClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not render the delete tooltip control in preview mode", () => {
+    renderBaseNode({
+      data: {
+        label: "Agent node",
+        preview: true,
+        ports: [{ id: "input", direction: PORT_DIRECTION.INPUT }],
+      },
+    });
+
+    expect(
+      screen.queryByRole("button", { name: "Delete node" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not render the delete tooltip control while the node is running", () => {
+    useBaseNodeState.mockReturnValue({
+      ...defaultState,
+      isRunning: true,
+    });
+
+    renderBaseNode();
+
+    expect(
+      screen.queryByRole("button", { name: "Delete node" }),
+    ).not.toBeInTheDocument();
+  });
+});
