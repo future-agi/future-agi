@@ -14,8 +14,10 @@ from typing import Any
 
 import structlog
 
-from tracer.services.clickhouse.query_builders import UserListQueryBuilder
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.v2.query_builders.user_list import (
+    UserListQueryBuilderV2,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -109,7 +111,11 @@ def _users_attr_enrichment_query(project_id=None):
     )
     WHERE resolved_end_user_id IN %(eu_ids)s
     """
-    return sql, params
+    from tracer.services.clickhouse.v2.query_builders.filters import (
+        _append_v2_settings,
+    )
+
+    return _append_v2_settings(sql), params
 
 
 class UsersListManager:
@@ -153,9 +159,9 @@ class UsersListManager:
 
     def _fetch_rows(
         self, *, limit: int | None, offset: int | None, max_rows: int | None = None
-    ) -> tuple[list[dict], int]:
+    ) -> tuple[list[dict], int, UserListQueryBuilderV2]:
         analytics = AnalyticsQueryService()
-        builder = UserListQueryBuilder(
+        builder = UserListQueryBuilderV2(
             organization_id=self.organization_id,
             project_ids=self.scoped_project_ids,
             search=self.search,
@@ -169,7 +175,7 @@ class UsersListManager:
         query, params = builder.build()
         result = analytics.execute_ch_query(query, params, timeout_ms=_CH_TIMEOUT_MS)
         formatted = builder.format_rows(result.data)
-        return formatted["table"], formatted["total_count"]
+        return formatted["table"], formatted["total_count"], builder
 
     def _enrich_with_span_attributes(self, rows: list[dict]) -> None:
         """Fold aggregated span attributes into each user row, in place (fail-open).
@@ -234,10 +240,39 @@ class UsersListManager:
         except Exception as e:
             logger.warning(f"User span attribute enrichment failed: {e}")
 
+    def _enrich_with_evals(self, rows: list[dict], builder: UserListQueryBuilderV2) -> None:
+        """Enrich rows with eval pass rate (post-pagination for perf). Fail-open."""
+        end_user_ids = [r.get("end_user_id") for r in rows if r.get("end_user_id")]
+        if not end_user_ids:
+            return
+        try:
+            eval_query, eval_params = builder.build_eval_query(
+                [str(e) for e in end_user_ids]
+            )
+            if not eval_query:
+                return
+            analytics = AnalyticsQueryService()
+            eval_result = analytics.execute_ch_query(
+                eval_query, eval_params, timeout_ms=10000
+            )
+            eval_map = {
+                str(r.get("end_user_id", "")): r for r in eval_result.data
+            }
+            for entry in rows:
+                euid = str(entry.get("end_user_id", ""))
+                ev = eval_map.get(euid, {})
+                entry["bool_eval_pass_rate"] = ev.get("bool_eval_pass_rate", 0)
+                entry["avg_output_float"] = ev.get("avg_output_float", 0)
+        except Exception as e:
+            logger.warning(f"User eval enrichment failed: {e}")
+
     def list_payload(self, *, page_size: int, current_page: int) -> dict:
-        """Paginated list response: rows + span enrichment + page totals."""
-        rows, count = self._fetch_rows(limit=page_size, offset=current_page * page_size)
+        """Paginated list response: rows + span/eval enrichment + page totals."""
+        rows, count, builder = self._fetch_rows(
+            limit=page_size, offset=current_page * page_size
+        )
         self._enrich_with_span_attributes(rows)
+        self._enrich_with_evals(rows, builder)
         total_pages = (count // page_size) + (1 if count % page_size > 0 else 0)
         return {"table": rows, "total_count": count, "total_pages": total_pages}
 
@@ -275,7 +310,7 @@ class UsersListManager:
 
         try:
             # Fetch cap + 1 so a full page can be distinguished from a truncation.
-            rows, _ = self._fetch_rows(
+            rows, _, _builder = self._fetch_rows(
                 limit=None, offset=None, max_rows=MAX_EXPORT_ROWS + 1
             )
         except Exception:

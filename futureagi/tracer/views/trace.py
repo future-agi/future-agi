@@ -80,6 +80,9 @@ from tracer.services.clickhouse.query_builders import (
 )
 from tracer.services.clickhouse.query_builders.base import NIL_UUID
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.v2.query_builders.user_list import (
+    UserListQueryBuilderV2,
+)
 from tracer.services.observability_providers import ObservabilityService
 from tracer.services.users_list_manager import UsersListManager
 from tracer.utils.annotations import (
@@ -101,6 +104,7 @@ ERROR_RESPONSES = {
     400: ApiErrorResponseSerializer,
     500: ApiErrorResponseSerializer,
 }
+
 
 
 class TraceTagsUpdateSerializer(serializers.Serializer):
@@ -4297,17 +4301,10 @@ class UsersView(APIView):
             )
 
             if export:
-                # iter_export_csv() pulls rows lazily inside the generator and
-                # yields the header first, so the slow CH fetch happens while the
-                # socket is already streaming — not eagerly before the response.
                 response = StreamingHttpResponse(
                     manager.iter_export_csv(),
                     content_type="text/csv",
                 )
-                # Mark it a download but DON'T name it: the frontend owns the
-                # filename (UsersView grid label + suffix). Keeping a server-side
-                # name here would be dead weight cross-origin anyway — the browser
-                # can't read Content-Disposition without CORS_EXPOSE_HEADERS.
                 response["Content-Disposition"] = "attachment"
                 return response
 
