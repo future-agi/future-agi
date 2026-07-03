@@ -6367,12 +6367,15 @@ class DatatypeConverter:
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-            # Always validate the URL, even if extracted from a JSON array
-            validate_file_url(str(image_value), "image")
-
             # Skip re-upload only if it's already in our S3 bucket
             if is_s3_url:
                 return image_value, {}
+
+            # No extension/HEAD pre-check here: upload_image_to_s3 downloads the
+            # URL and opens it with PIL, so it already rejects non-images. A strict
+            # validate_file_url pre-gate wrongly errors on valid extensionless /
+            # signed CDN image URLs, unlike the ingest path (upload_cell_media)
+            # which uploads without pre-validation.
 
             image_key = f"images/{self.dataset_id}/{uuid.uuid4()}"
             image_url = upload_image_to_s3(
