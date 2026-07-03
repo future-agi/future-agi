@@ -67,15 +67,31 @@ class CallTranscriptView(APIView):
                 speaker_role__in=get_displayable_transcript_roles(),
             ).order_by("start_time_ms")
 
-            # Serialize the transcripts
-            serializer = CallTranscriptSerializer(transcripts, many=True)
+            rows = CallTranscriptSerializer(transcripts, many=True).data
+
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
+
+            provider = SpeakerRoleResolver.detect_provider(
+                call_execution.provider_call_data
+            )
+            is_outbound = SpeakerRoleResolver.detect_is_outbound(call_execution)
+            for row in rows:
+                raw = row.get("speaker_role")
+                if SpeakerRoleResolver.is_tested_agent(
+                    raw, provider=provider, is_outbound=is_outbound
+                ):
+                    row["speaker_role"] = "assistant"
+                elif SpeakerRoleResolver.is_simulator(
+                    raw, provider=provider, is_outbound=is_outbound
+                ):
+                    row["speaker_role"] = "user"
 
             return Response(
                 {
                     "call_execution_id": str(call_execution.id),
                     "phone_number": call_execution.phone_number,
                     "status": call_execution.status,
-                    "transcripts": serializer.data,
+                    "transcripts": rows,
                     "total_transcripts": len(transcripts),
                 },
                 status=status.HTTP_200_OK,
@@ -120,6 +136,8 @@ class TestExecutionTranscriptsView(APIView):
                 test_execution__run_test__deleted=False,
             ).prefetch_related("transcripts", "scenario")
 
+            from simulate.utils.speaker_roles import SpeakerRoleResolver
+
             all_transcripts = []
             for call_execution in call_executions:
                 # Filter transcripts by speaker role and order by start_time_ms
@@ -132,6 +150,22 @@ class TestExecutionTranscriptsView(APIView):
                 ]
                 transcripts.sort(key=lambda x: x.start_time_ms)
 
+                rows = CallTranscriptSerializer(transcripts, many=True).data
+                provider = SpeakerRoleResolver.detect_provider(
+                    call_execution.provider_call_data
+                )
+                is_outbound = SpeakerRoleResolver.detect_is_outbound(call_execution)
+                for row in rows:
+                    raw = row.get("speaker_role")
+                    if SpeakerRoleResolver.is_tested_agent(
+                        raw, provider=provider, is_outbound=is_outbound
+                    ):
+                        row["speaker_role"] = "assistant"
+                    elif SpeakerRoleResolver.is_simulator(
+                        raw, provider=provider, is_outbound=is_outbound
+                    ):
+                        row["speaker_role"] = "user"
+
                 call_data = {
                     "call_execution_id": str(call_execution.id),
                     "phone_number": call_execution.phone_number,
@@ -141,9 +175,7 @@ class TestExecutionTranscriptsView(APIView):
                         if call_execution.scenario
                         else "Unknown"
                     ),
-                    "transcripts": CallTranscriptSerializer(
-                        transcripts, many=True
-                    ).data,
+                    "transcripts": rows,
                     "total_transcripts": len(transcripts),
                 }
                 all_transcripts.append(call_data)
