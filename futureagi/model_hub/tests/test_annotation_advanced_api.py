@@ -29,6 +29,8 @@ import pytest
 from django.utils import timezone
 from rest_framework import status
 
+from conftest import create_categorical_label
+
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
     AnnotationQueueAnnotator,
@@ -78,11 +80,23 @@ LABEL_URL = "/model-hub/annotations-labels/"
 # ---------------------------------------------------------------------------
 
 
+
+
 def _create_queue(auth_client, name="Test Queue", **extra):
+    # A queue must have at least one label (serializer-enforced); attach one
+    # by default unless the caller specifies label_ids.
+    bootstrap_label = "label_ids" not in extra
+    if bootstrap_label:
+        extra["label_ids"] = [str(create_categorical_label(auth_client))]
     payload = {"name": name, **extra}
     resp = auth_client.post(QUEUE_URL, payload, format="json")
     assert resp.status_code == status.HTTP_201_CREATED, resp.data
     queue_id = resp.data["id"]
+    if bootstrap_label:
+        # The bootstrap label only satisfies the "at least one label" creation
+        # rule. Mark it non-required so tests that annotate their own label can
+        # still complete items (a required, un-annotated label blocks completion).
+        AnnotationQueueLabel.objects.filter(queue_id=queue_id).update(required=False)
     # Activate queue so submit/complete endpoints work (they require ACTIVE).
     auth_client.post(
         f"{QUEUE_URL}{queue_id}/update-status/",
@@ -217,6 +231,38 @@ class TestReservations:
         item.refresh_from_db()
         assert item.reserved_by == user
         assert item.reservation_expires_at is not None
+
+    def test_reviewer_reopening_reviewed_item_does_not_reserve(
+        self, auth_client, organization, workspace, user
+    ):
+        """After a reviewer requests changes, re-opening the item must not grab
+        the editing lock. The FE re-fetches annotate-detail with reserve=true
+        right after the review; if the reviewer takes the reservation it
+        survives the hand-back and strands the annotator who has to rework the
+        item until expiry (the review/reservation deadlock).
+        """
+        queue_id = _create_queue(auth_client, name="Res Review Q")
+        _, row = _create_dataset_row(organization, workspace)
+        item = _add_item(auth_client, queue_id, row)
+
+        # Item sent back for rework: the auth user (a queue manager => reviewer)
+        # is recorded as its reviewer.
+        item.status = "in_progress"
+        item.review_status = "rejected"
+        item.reviewed_by = user
+        item.reviewed_at = timezone.now()
+        item.save(
+            update_fields=["status", "review_status", "reviewed_by", "reviewed_at"]
+        )
+
+        resp = auth_client.get(
+            f"{QUEUE_URL}{queue_id}/items/{item.id}/annotate-detail/",
+            {"reserve": "true"},
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        item.refresh_from_db()
+        assert item.reserved_by is None
+        assert item.reservation_expires_at is None
 
     def test_release_reservation(self, auth_client, organization, workspace):
         queue_id = _create_queue(auth_client, name="Res Q2")

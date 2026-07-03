@@ -1006,6 +1006,52 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 ]
             )
 
+            # 2b. Dataset breakdown/filter dimensions (string)
+            metrics.extend(
+                [
+                    {
+                        "name": "dataset",
+                        "display_name": "Dataset",
+                        "category": "system_metric",
+                        "source": "datasets",
+                        "type": "string",
+                        "unit": "",
+                    },
+                    {
+                        "name": "eval_template",
+                        "display_name": "Eval Template",
+                        "category": "system_metric",
+                        "source": "datasets",
+                        "type": "string",
+                        "unit": "",
+                    },
+                    {
+                        "name": "column_name",
+                        "display_name": "Column Name",
+                        "category": "system_metric",
+                        "source": "datasets",
+                        "type": "string",
+                        "unit": "",
+                    },
+                    {
+                        "name": "column_source",
+                        "display_name": "Column Source",
+                        "category": "system_metric",
+                        "source": "datasets",
+                        "type": "string",
+                        "unit": "",
+                    },
+                    {
+                        "name": "cell_status",
+                        "display_name": "Cell Status",
+                        "category": "system_metric",
+                        "source": "datasets",
+                        "type": "string",
+                        "unit": "",
+                    },
+                ]
+            )
+
             # Project IDs for trace-scoped metrics (custom attrs, evals, annotations)
             # If caller passes project_ids, scope to those; otherwise all workspace projects.
             req_project_ids_str = request.query_params.get("project_ids", "")
@@ -1526,6 +1572,14 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             metrics.extend(
                 [
                     {
+                        "name": "simulation",
+                        "display_name": "Simulation",
+                        "category": "system_metric",
+                        "source": "simulation",
+                        "type": "string",
+                        "unit": "",
+                    },
+                    {
                         "name": "scenario",
                         "display_name": "Scenario",
                         "category": "system_metric",
@@ -1683,7 +1737,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
             for metric in metrics:
                 if (
-                    metric.get("source") == "simulation"
+                    metric.get("source") in ("simulation", "datasets")
                     and metric.get("type") == "string"
                 ):
                     metric["allowed_aggregations"] = ["count", "count_distinct"]

@@ -15,7 +15,6 @@ import {
   CircularProgress,
   IconButton,
   Stack,
-  TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -68,7 +67,7 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
 ) {
   const [editing, setEditing] = useState(false);
   const [values, setValues] = useState({});
-  const [notes, setNotes] = useState("");
+  const [labelNotes, setLabelNotes] = useState({});
   const [addLabelDrawerOpen, setAddLabelDrawerOpen] = useState(false);
   const [queueLabels, setQueueLabels] = useState([]);
   const [labelsFetchKey, setLabelsFetchKey] = useState(0);
@@ -79,7 +78,7 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
     stopEditing: () => {
       setEditing(false);
       setValues({});
-      setNotes("");
+      setLabelNotes({});
     },
   }));
 
@@ -87,7 +86,7 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
   useEffect(() => {
     setEditing(false);
     setValues({});
-    setNotes("");
+    setLabelNotes({});
   }, [sourceId]);
 
   // Allow parent to trigger edit mode via incrementing editTrigger
@@ -142,10 +141,13 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
     if (editing && !editInitializedRef.current) {
       editInitializedRef.current = true;
       const initial = {};
+      const initialNotes = {};
       for (const [labelId, score] of Object.entries(scoresByLabel)) {
         initial[labelId] = score.value;
+        if (score.notes) initialNotes[labelId] = score.notes;
       }
       setValues(initial);
+      setLabelNotes(initialNotes);
     }
     if (!editing) {
       editInitializedRef.current = false;
@@ -156,18 +158,23 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
     setValues((prev) => ({ ...prev, [labelId]: value }));
   }, []);
 
+  const handleNotesChange = useCallback((labelId, note) => {
+    setLabelNotes((prev) => ({ ...prev, [labelId]: note }));
+  }, []);
+
   const handleSubmit = useCallback(() => {
     const scores = Object.entries(values)
       .filter(([_, v]) => v !== null && v !== undefined)
       .map(([labelId, value]) => ({
         label_id: labelId,
         value,
+        notes: labelNotes[labelId] || "",
       }));
 
     if (scores.length === 0) return;
 
     bulkCreate(
-      { sourceType, sourceId, scores, notes, spanNotes: notes },
+      { sourceType, sourceId, scores },
       {
         onSuccess: (response) => {
           // Inspect errors[] before exiting edit mode. The mutation hook
@@ -182,17 +189,17 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
             return;
           }
           setEditing(false);
-          setNotes("");
+          setLabelNotes({});
           onScoresChanged?.();
         },
       },
     );
-  }, [values, notes, sourceType, sourceId, bulkCreate, onScoresChanged]);
+  }, [values, labelNotes, sourceType, sourceId, bulkCreate, onScoresChanged]);
 
   const handleCancel = () => {
     setEditing(false);
     setValues({});
-    setNotes("");
+    setLabelNotes({});
   };
 
   const hasValues = Object.values(values).some(
@@ -278,7 +285,6 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
           </Stack>
         </Stack>
 
-        {/* Existing scores */}
         {Object.keys(scoresByLabel).length > 0 ? (
           <Stack spacing={1}>
             {labels.map((label) => {
@@ -287,9 +293,7 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
               return (
                 <Stack
                   key={label.id}
-                  direction="row"
-                  alignItems="center"
-                  justifyContent="space-between"
+                  spacing={0.5}
                   sx={{
                     px: 1.5,
                     py: 0.75,
@@ -297,10 +301,25 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
                     bgcolor: "background.neutral",
                   }}
                 >
-                  <Typography variant="caption" fontWeight={600}>
-                    {label.name}
-                  </Typography>
-                  <ScoreValueChip label={label} score={score} />
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    justifyContent="space-between"
+                  >
+                    <Typography variant="caption" fontWeight={600}>
+                      {label.name}
+                    </Typography>
+                    <ScoreValueChip label={label} score={score} />
+                  </Stack>
+                  {score?.notes && (
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+                    >
+                      {score?.notes}
+                    </Typography>
+                  )}
                 </Stack>
               );
             })}
@@ -360,22 +379,15 @@ const InlineAnnotator = forwardRef(function InlineAnnotator(
               type: label.type,
               settings: label.settings || {},
               description: label.description,
+              required: label.required,
+              allow_notes: label.allow_notes,
             }}
             value={values[label.id] ?? null}
             onChange={(val) => handleChange(label.id, val)}
+            labelNotes={labelNotes[label.id] || ""}
+            onLabelNotesChange={(note) => handleNotesChange(label.id, note)}
           />
         ))}
-
-        <TextField
-          fullWidth
-          size="small"
-          multiline
-          minRows={1}
-          maxRows={3}
-          placeholder="Notes (optional)"
-          value={notes}
-          onChange={(e) => setNotes(e.target.value)}
-        />
 
         <Stack direction="row" justifyContent={"flex-end"} spacing={1}>
           <Button

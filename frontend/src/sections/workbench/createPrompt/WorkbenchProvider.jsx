@@ -1385,6 +1385,7 @@ const WorkbenchProvider = ({ children }) => {
         version: eachCompareVersions.template_version,
         lastSaved: eachCompareVersions.updated_at,
         isDefault: eachCompareVersions.is_default,
+        labels: eachCompareVersions.labels || [],
         id: getRandomId(),
       });
 

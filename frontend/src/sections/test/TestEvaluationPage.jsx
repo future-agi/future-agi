@@ -123,6 +123,14 @@ const TestEvaluationPage = ({
       queryClient.invalidateQueries({
         queryKey: ["test-runs-detail", testId],
       });
+      queryClient.invalidateQueries({
+        queryKey: ["test-execution-detail", "KPIS"],
+      });
+      if (executionIds) {
+        onSuccessOfAdditionOfEvals?.();
+      } else {
+        refreshTestRunGrid?.();
+      }
       enqueueSnackbar("Eval deleted successfully", {
         variant: "success",
       });

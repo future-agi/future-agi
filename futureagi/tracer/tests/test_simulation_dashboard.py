@@ -274,6 +274,13 @@ class TestSimulationQueryBuilderBreakdowns(unittest.TestCase):
         self.assertIn("breakdown_value", sql)
         self.assertIn("simulate_scenario_dict", sql)
 
+    def test_simulation_breakdown(self):
+        builder = SimulationQueryBuilder(self._make_config("simulation"))
+        queries = builder.build_all_queries()
+        sql, _, _ = queries[0]
+        self.assertIn("breakdown_value", sql)
+        self.assertIn("simulate_run_test_dict", sql)
+
     def test_agent_definition_breakdown(self):
         builder = SimulationQueryBuilder(self._make_config("agent_definition"))
         queries = builder.build_all_queries()
@@ -346,6 +353,23 @@ class TestSimulationQueryBuilderFilters(unittest.TestCase):
         sql, params, _ = queries[0]
         self.assertIn("c.status", sql)
         self.assertIn("sf_0_val", params)
+
+    def test_simulation_filter(self):
+        config = self._make_config(
+            [
+                {
+                    "metric_type": "system_metric",
+                    "metric_name": "simulation",
+                    "operator": "equal_to",
+                    "value": "Regression suite",
+                }
+            ]
+        )
+        builder = SimulationQueryBuilder(config)
+        queries = builder.build_all_queries()
+        sql, params, _ = queries[0]
+        self.assertIn("simulate_run_test_dict", sql)
+        self.assertEqual(params["sf_0_val"], "Regression suite")
 
     def test_call_type_filter(self):
         config = self._make_config(
