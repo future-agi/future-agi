@@ -172,6 +172,8 @@ class CustomPromptEvaluator(LLM):
             is_turing=self._is_turing,
             input_keys=list(kwargs.keys()),
         )
+        # Track if any input was truncated
+        truncation_warning_fields = []
 
         # Create template context from kwargs with context windowing for large values
         from .context_window import fit_to_context
@@ -183,11 +185,16 @@ class CustomPromptEvaluator(LLM):
             value = kwargs[key]
             # Apply context windowing for large values (traces, spans, JSON blobs)
             if isinstance(value, str) and len(value) > _MAX_CONTEXT_CHARS:
+                logger.warning("input_truncated", field=key, original_length=len(value), max_chars=_MAX_CONTEXT_CHARS)
+                truncation_warning_fields.append(key)
                 value = fit_to_context(value, max_total_chars=_MAX_CONTEXT_CHARS, label=key)
             elif isinstance(value, (dict, list)):
                 serialized = json.dumps(value, default=str)
                 if len(serialized) > _MAX_CONTEXT_CHARS:
+                    logger.warning("input_truncated", field=key, original_length=len(serialized), max_chars=_MAX_CONTEXT_CHARS)
+                    truncation_warning_fields.append(key)
                     value = fit_to_context(value, max_total_chars=_MAX_CONTEXT_CHARS, label=key)
+            
             template_context[key] = value
 
         # Render the rule prompt with the template context using Jinja2
@@ -494,6 +501,8 @@ class CustomPromptEvaluator(LLM):
             },
             "response_time": eval_runtime_ms,
             "explanation": chat_completion_response_json["explanation"],
+            "truncated": bool(truncation_warning_fields),
+            "truncated_fields": truncation_warning_fields,
             # "data": chat_history,
         })
 
