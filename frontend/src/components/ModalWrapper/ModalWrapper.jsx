@@ -38,6 +38,7 @@ export default function ModalWrapper({
   actionBtnProps = {},
   cancelBtnProps = {},
   onCancelBtn,
+  paperSx = {},
 }) {
   const theme = useTheme();
   return (
@@ -56,6 +57,7 @@ export default function ModalWrapper({
           display: "flex",
           flexDirection: "column",
           gap: theme.spacing(2),
+          ...paperSx,
         },
       }}
     >
@@ -170,4 +172,5 @@ ModalWrapper.propTypes = {
   modalWidth: PropTypes.string,
   actionBtnProps: PropTypes.object,
   cancelBtnProps: PropTypes.object,
+  paperSx: PropTypes.object,
 };

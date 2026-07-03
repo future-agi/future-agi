@@ -5423,7 +5423,8 @@ export interface AnnotationQueueApi {
   readonly is_default?: boolean;
   readonly labels?: readonly QueueLabelNestedApi[];
   readonly annotators?: readonly QueueAnnotatorNestedApi[];
-  label_ids?: string[];
+  /** @minItems 1 */
+  label_ids: string[];
   annotator_ids?: string[];
   annotator_roles?: AnnotationQueueApiAnnotatorRoles;
   readonly label_count?: number;
@@ -10490,13 +10491,74 @@ export const ExperimentCreateV2ApiExperimentType = {
   image: 'image',
 } as const;
 
-export type PromptConfigEntryApiModel = { [key: string]: unknown };
+/**
+ * String or JSON object.
+ */
+export type PromptModelParamsApiResponseFormat = string | { [key: string]: unknown };
 
-export type PromptConfigEntryApiModelParams = {[key: string]: string};
+export interface PromptModelParamsApi {
+  temperature?: number;
+  max_tokens?: number;
+  top_p?: number;
+  frequency_penalty?: number;
+  presence_penalty?: number;
+  /** String or JSON object. */
+  response_format?: PromptModelParamsApiResponseFormat;
+  [key: string]: unknown;
+ }
 
-export type PromptConfigEntryApiConfiguration = {[key: string]: string};
+/**
+ * Any valid JSON value.
+ */
+export type PromptConfigurationApiToolsItem = { [key: string]: unknown };
 
-export type PromptConfigEntryApiMessagesItem = {[key: string]: string};
+/**
+ * Any valid JSON value.
+ */
+export type PromptConfigurationApiModelDetail = { [key: string]: unknown };
+
+export interface PromptConfigurationApi {
+  tool_choice?: string;
+  template_format?: string;
+  tools?: PromptConfigurationApiToolsItem[];
+  output_format?: string;
+  model_type?: string;
+  /** Any valid JSON value. */
+  model_detail?: PromptConfigurationApiModelDetail;
+  voice_id?: string;
+  [key: string]: unknown;
+ }
+
+/**
+ * Plain text string or array of content-part objects.
+ */
+export type MessageItemApiContent = string | unknown[];
+
+/**
+ * Any valid JSON value.
+ */
+export type MessageItemApiToolCalls = { [key: string]: unknown };
+
+export interface MessageItemApi {
+  /** @minLength 1 */
+  role: string;
+  /** Plain text string or array of content-part objects. */
+  content: MessageItemApiContent;
+  /** @minLength 1 */
+  name?: string;
+  /** Any valid JSON value. */
+  tool_calls?: MessageItemApiToolCalls;
+  /** @minLength 1 */
+  tool_call_id?: string;
+  /** @minLength 1 */
+  id?: string;
+  [key: string]: unknown;
+ }
+
+/**
+ * String or JSON object.
+ */
+export type PromptConfigEntryApiModel = string | { [key: string]: unknown };
 
 export interface PromptConfigEntryApi {
   id?: string;
@@ -10505,12 +10567,13 @@ export interface PromptConfigEntryApi {
   prompt_version?: string;
   agent_id?: string;
   agent_version?: string;
+  /** String or JSON object. */
   model?: PromptConfigEntryApiModel;
-  model_params?: PromptConfigEntryApiModelParams;
-  configuration?: PromptConfigEntryApiConfiguration;
+  model_params?: PromptModelParamsApi;
+  configuration?: PromptConfigurationApi;
   /** @minLength 1 */
   output_format?: string;
-  messages?: PromptConfigEntryApiMessagesItem[];
+  messages?: MessageItemApi[];
   voice_input_column_id?: string;
 }
 
@@ -26558,6 +26621,7 @@ sort_params?: string;
  * @minLength 1
  */
 filters?: string;
+export?: boolean;
 };
 
 export type UsageAdminCustomPlanListParams = {

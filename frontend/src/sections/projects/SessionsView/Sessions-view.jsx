@@ -1166,6 +1166,7 @@ const SessionsView = ({ mode = "project", userIdForUserMode = null }) => {
           pendingCustomColumnsRef={pendingCustomColumnsRef}
           canonicalOrderRef={canonicalOrderRef}
           isOnSavedView={Boolean(activeViewConfig)}
+          userIdForUserMode={userIdForUserMode}
         />
       </Box>
 

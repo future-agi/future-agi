@@ -16,6 +16,8 @@ import pytest
 from django.utils import timezone
 from rest_framework import status
 
+from conftest import create_categorical_label
+
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
 from model_hub.models.annotation_queues import (
@@ -62,7 +64,13 @@ QUEUE_URL = "/model-hub/annotation-queues/"
 # ---------------------------------------------------------------------------
 
 
+
+
 def _create_queue(auth_client, name, **extra):
+    # A queue must have at least one label (serializer-enforced); attach one
+    # by default unless the caller specifies label_ids.
+    if "label_ids" not in extra:
+        extra["label_ids"] = [str(create_categorical_label(auth_client))]
     payload = {"name": name, **extra}
     resp = auth_client.post(QUEUE_URL, payload, format="json")
     assert resp.status_code == status.HTTP_201_CREATED, resp.data

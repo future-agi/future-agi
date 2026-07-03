@@ -36639,6 +36639,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
               "minLength": 1,
               "default": "[]"
             }
+          },
+          "export": {
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
           }
         },
         "responses": {
@@ -45812,7 +45819,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     },
     "AnnotationQueue": {
       "required": [
-        "name"
+        "name",
+        "label_ids"
       ],
       "type": "object",
       "properties": {
@@ -45931,7 +45939,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "type": "string",
             "format": "uuid"
           },
-          "default": []
+          "minItems": 1
         },
         "annotator_ids": {
           "type": "array",
@@ -80563,25 +80571,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "model": {
           "title": "Model",
-          "type": "object"
+          "type": "object",
+          "x-string-or-object": true,
+          "description": "String or JSON object."
         },
         "model_params": {
-          "title": "Model params",
-          "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
-          },
-          "default": {}
+          "$ref": "#/definitions/PromptModelParams"
         },
         "configuration": {
-          "title": "Configuration",
-          "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
-          },
-          "default": {}
+          "$ref": "#/definitions/PromptConfiguration"
         },
         "output_format": {
           "title": "Output format",
@@ -80592,11 +80590,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "messages": {
           "type": "array",
           "items": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string",
-              "x-nullable": true
-            }
+            "$ref": "#/definitions/MessageItem"
           }
         },
         "voice_input_column_id": {
@@ -93173,6 +93167,122 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "x-nullable": true
         }
       }
+    },
+    "MessageItem": {
+      "required": [
+        "role",
+        "content"
+      ],
+      "type": "object",
+      "properties": {
+        "role": {
+          "title": "Role",
+          "type": "string",
+          "minLength": 1
+        },
+        "content": {
+          "title": "Content",
+          "type": "object",
+          "x-string-or-array": true,
+          "description": "Plain text string or array of content-part objects."
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "tool_calls": {
+          "title": "Tool calls",
+          "type": "object",
+          "x-json-value": true,
+          "description": "Any valid JSON value."
+        },
+        "tool_call_id": {
+          "title": "Tool call id",
+          "type": "string",
+          "minLength": 1
+        },
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": true
+    },
+    "PromptConfiguration": {
+      "type": "object",
+      "properties": {
+        "tool_choice": {
+          "title": "Tool choice",
+          "type": "string"
+        },
+        "template_format": {
+          "title": "Template format",
+          "type": "string"
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "x-json-value": true,
+            "description": "Any valid JSON value."
+          }
+        },
+        "output_format": {
+          "title": "Output format",
+          "type": "string"
+        },
+        "model_type": {
+          "title": "Model type",
+          "type": "string"
+        },
+        "model_detail": {
+          "title": "Model detail",
+          "type": "object",
+          "x-json-value": true,
+          "description": "Any valid JSON value."
+        },
+        "voice_id": {
+          "title": "Voice id",
+          "type": "string"
+        }
+      },
+      "default": {},
+      "additionalProperties": true
+    },
+    "PromptModelParams": {
+      "type": "object",
+      "properties": {
+        "temperature": {
+          "title": "Temperature",
+          "type": "number"
+        },
+        "max_tokens": {
+          "title": "Max tokens",
+          "type": "integer"
+        },
+        "top_p": {
+          "title": "Top p",
+          "type": "number"
+        },
+        "frequency_penalty": {
+          "title": "Frequency penalty",
+          "type": "number"
+        },
+        "presence_penalty": {
+          "title": "Presence penalty",
+          "type": "number"
+        },
+        "response_format": {
+          "title": "Response format",
+          "type": "object",
+          "x-string-or-object": true,
+          "description": "String or JSON object."
+        }
+      },
+      "default": {},
+      "additionalProperties": true
     },
     "ExperimentComparisonDatasetMetric": {
       "required": [

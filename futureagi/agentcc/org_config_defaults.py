@@ -45,7 +45,15 @@ def normalize_cache_config(value):
     if not isinstance(value, dict):
         value = {}
     normalized = value.copy()
+    for alias in ("defaultTtl", "defaultTTL"):
+        if "default_ttl" not in normalized and alias in normalized:
+            normalized["default_ttl"] = normalized[alias]
+    if "max_entries" not in normalized and "maxEntries" in normalized:
+        normalized["max_entries"] = normalized["maxEntries"]
     for key, default in DEFAULT_CACHE.items():
         normalized.setdefault(key, default)
     normalized["default_ttl"] = _coerce_ttl_seconds(normalized.get("default_ttl"))
+    normalized.pop("defaultTtl", None)
+    normalized.pop("defaultTTL", None)
+    normalized.pop("maxEntries", None)
     return normalized

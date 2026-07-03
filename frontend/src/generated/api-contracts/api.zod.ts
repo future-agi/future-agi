@@ -11603,7 +11603,7 @@ export const modelHubAnnotationQueuesListResponseResultsItemLabelsItemOrderMax =
 
 export const modelHubAnnotationQueuesListResponseResultsItemAnnotatorsItemRoleDefault = `annotator`;
 
-export const modelHubAnnotationQueuesListResponseResultsItemLabelIdsDefault = [];
+
 export const modelHubAnnotationQueuesListResponseResultsItemAnnotatorIdsDefault = [];
 export const modelHubAnnotationQueuesListResponseResultsItemAnnotatorRolesDefault = {  };
 
@@ -11644,7 +11644,7 @@ export const ModelHubAnnotationQueuesListResponse = zod.object({
   "role": zod.string().min(1).default(modelHubAnnotationQueuesListResponseResultsItemAnnotatorsItemRoleDefault),
   "roles": zod.string().optional()
 })).optional(),
-  "label_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesListResponseResultsItemLabelIdsDefault),
+  "label_ids": zod.array(zod.string().uuid()).min(1),
   "annotator_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesListResponseResultsItemAnnotatorIdsDefault),
   "annotator_roles": zod.record(zod.string(), zod.object({
 
@@ -11671,7 +11671,7 @@ export const modelHubAnnotationQueuesCreateBodyAnnotationsRequiredMax = 21474836
 export const modelHubAnnotationQueuesCreateBodyReservationTimeoutMinutesMin = -2147483648;
 export const modelHubAnnotationQueuesCreateBodyReservationTimeoutMinutesMax = 2147483647;
 
-export const modelHubAnnotationQueuesCreateBodyLabelIdsDefault = [];
+
 export const modelHubAnnotationQueuesCreateBodyAnnotatorIdsDefault = [];
 export const modelHubAnnotationQueuesCreateBodyAnnotatorRolesDefault = {  };
 
@@ -11684,7 +11684,7 @@ export const ModelHubAnnotationQueuesCreateBody = zod.object({
   "reservation_timeout_minutes": zod.number().min(modelHubAnnotationQueuesCreateBodyReservationTimeoutMinutesMin).max(modelHubAnnotationQueuesCreateBodyReservationTimeoutMinutesMax).optional(),
   "requires_review": zod.boolean().optional(),
   "auto_assign": zod.boolean().optional().describe('When enabled, all queue members can annotate any item without explicit assignment.'),
-  "label_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesCreateBodyLabelIdsDefault),
+  "label_ids": zod.array(zod.string().uuid()).min(1),
   "annotator_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesCreateBodyAnnotatorIdsDefault),
   "annotator_roles": zod.record(zod.string(), zod.object({
 
@@ -11831,7 +11831,7 @@ export const modelHubAnnotationQueuesReadResponseLabelsItemOrderMax = 2147483647
 
 export const modelHubAnnotationQueuesReadResponseAnnotatorsItemRoleDefault = `annotator`;
 
-export const modelHubAnnotationQueuesReadResponseLabelIdsDefault = [];
+
 export const modelHubAnnotationQueuesReadResponseAnnotatorIdsDefault = [];
 export const modelHubAnnotationQueuesReadResponseAnnotatorRolesDefault = {  };
 
@@ -11868,7 +11868,7 @@ export const ModelHubAnnotationQueuesReadResponse = zod.object({
   "role": zod.string().min(1).default(modelHubAnnotationQueuesReadResponseAnnotatorsItemRoleDefault),
   "roles": zod.string().optional()
 })).optional(),
-  "label_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesReadResponseLabelIdsDefault),
+  "label_ids": zod.array(zod.string().uuid()).min(1),
   "annotator_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesReadResponseAnnotatorIdsDefault),
   "annotator_roles": zod.record(zod.string(), zod.object({
 
@@ -11901,7 +11901,7 @@ export const modelHubAnnotationQueuesUpdateBodyAnnotationsRequiredMax = 21474836
 export const modelHubAnnotationQueuesUpdateBodyReservationTimeoutMinutesMin = -2147483648;
 export const modelHubAnnotationQueuesUpdateBodyReservationTimeoutMinutesMax = 2147483647;
 
-export const modelHubAnnotationQueuesUpdateBodyLabelIdsDefault = [];
+
 export const modelHubAnnotationQueuesUpdateBodyAnnotatorIdsDefault = [];
 export const modelHubAnnotationQueuesUpdateBodyAnnotatorRolesDefault = {  };
 
@@ -11914,7 +11914,7 @@ export const ModelHubAnnotationQueuesUpdateBody = zod.object({
   "reservation_timeout_minutes": zod.number().min(modelHubAnnotationQueuesUpdateBodyReservationTimeoutMinutesMin).max(modelHubAnnotationQueuesUpdateBodyReservationTimeoutMinutesMax).optional(),
   "requires_review": zod.boolean().optional(),
   "auto_assign": zod.boolean().optional().describe('When enabled, all queue members can annotate any item without explicit assignment.'),
-  "label_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesUpdateBodyLabelIdsDefault),
+  "label_ids": zod.array(zod.string().uuid()).min(1),
   "annotator_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesUpdateBodyAnnotatorIdsDefault),
   "annotator_roles": zod.record(zod.string(), zod.object({
 
@@ -11938,7 +11938,7 @@ export const modelHubAnnotationQueuesUpdateResponseLabelsItemOrderMax = 21474836
 
 export const modelHubAnnotationQueuesUpdateResponseAnnotatorsItemRoleDefault = `annotator`;
 
-export const modelHubAnnotationQueuesUpdateResponseLabelIdsDefault = [];
+
 export const modelHubAnnotationQueuesUpdateResponseAnnotatorIdsDefault = [];
 export const modelHubAnnotationQueuesUpdateResponseAnnotatorRolesDefault = {  };
 
@@ -11975,7 +11975,7 @@ export const ModelHubAnnotationQueuesUpdateResponse = zod.object({
   "role": zod.string().min(1).default(modelHubAnnotationQueuesUpdateResponseAnnotatorsItemRoleDefault),
   "roles": zod.string().optional()
 })).optional(),
-  "label_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesUpdateResponseLabelIdsDefault),
+  "label_ids": zod.array(zod.string().uuid()).min(1),
   "annotator_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesUpdateResponseAnnotatorIdsDefault),
   "annotator_roles": zod.record(zod.string(), zod.object({
 
@@ -12005,7 +12005,7 @@ export const modelHubAnnotationQueuesPartialUpdateBodyAnnotationsRequiredMax = 2
 export const modelHubAnnotationQueuesPartialUpdateBodyReservationTimeoutMinutesMin = -2147483648;
 export const modelHubAnnotationQueuesPartialUpdateBodyReservationTimeoutMinutesMax = 2147483647;
 
-export const modelHubAnnotationQueuesPartialUpdateBodyLabelIdsDefault = [];
+
 export const modelHubAnnotationQueuesPartialUpdateBodyAnnotatorIdsDefault = [];
 export const modelHubAnnotationQueuesPartialUpdateBodyAnnotatorRolesDefault = {  };
 
@@ -12018,7 +12018,7 @@ export const ModelHubAnnotationQueuesPartialUpdateBody = zod.object({
   "reservation_timeout_minutes": zod.number().min(modelHubAnnotationQueuesPartialUpdateBodyReservationTimeoutMinutesMin).max(modelHubAnnotationQueuesPartialUpdateBodyReservationTimeoutMinutesMax).optional(),
   "requires_review": zod.boolean().optional(),
   "auto_assign": zod.boolean().optional().describe('When enabled, all queue members can annotate any item without explicit assignment.'),
-  "label_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesPartialUpdateBodyLabelIdsDefault),
+  "label_ids": zod.array(zod.string().uuid()).min(1),
   "annotator_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesPartialUpdateBodyAnnotatorIdsDefault),
   "annotator_roles": zod.record(zod.string(), zod.object({
 
@@ -12042,7 +12042,7 @@ export const modelHubAnnotationQueuesPartialUpdateResponseLabelsItemOrderMax = 2
 
 export const modelHubAnnotationQueuesPartialUpdateResponseAnnotatorsItemRoleDefault = `annotator`;
 
-export const modelHubAnnotationQueuesPartialUpdateResponseLabelIdsDefault = [];
+
 export const modelHubAnnotationQueuesPartialUpdateResponseAnnotatorIdsDefault = [];
 export const modelHubAnnotationQueuesPartialUpdateResponseAnnotatorRolesDefault = {  };
 
@@ -12079,7 +12079,7 @@ export const ModelHubAnnotationQueuesPartialUpdateResponse = zod.object({
   "role": zod.string().min(1).default(modelHubAnnotationQueuesPartialUpdateResponseAnnotatorsItemRoleDefault),
   "roles": zod.string().optional()
 })).optional(),
-  "label_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesPartialUpdateResponseLabelIdsDefault),
+  "label_ids": zod.array(zod.string().uuid()).min(1),
   "annotator_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesPartialUpdateResponseAnnotatorIdsDefault),
   "annotator_roles": zod.record(zod.string(), zod.object({
 
@@ -12453,7 +12453,7 @@ export const modelHubAnnotationQueuesRestoreResponseResultLabelsItemOrderMax = 2
 
 export const modelHubAnnotationQueuesRestoreResponseResultAnnotatorsItemRoleDefault = `annotator`;
 
-export const modelHubAnnotationQueuesRestoreResponseResultLabelIdsDefault = [];
+
 export const modelHubAnnotationQueuesRestoreResponseResultAnnotatorIdsDefault = [];
 export const modelHubAnnotationQueuesRestoreResponseResultAnnotatorRolesDefault = {  };
 
@@ -12492,7 +12492,7 @@ export const ModelHubAnnotationQueuesRestoreResponse = zod.object({
   "role": zod.string().min(1).default(modelHubAnnotationQueuesRestoreResponseResultAnnotatorsItemRoleDefault),
   "roles": zod.string().optional()
 })).optional(),
-  "label_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesRestoreResponseResultLabelIdsDefault),
+  "label_ids": zod.array(zod.string().uuid()).min(1),
   "annotator_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesRestoreResponseResultAnnotatorIdsDefault),
   "annotator_roles": zod.record(zod.string(), zod.object({
 
@@ -12537,7 +12537,7 @@ export const modelHubAnnotationQueuesUpdateStatusResponseResultLabelsItemOrderMa
 
 export const modelHubAnnotationQueuesUpdateStatusResponseResultAnnotatorsItemRoleDefault = `annotator`;
 
-export const modelHubAnnotationQueuesUpdateStatusResponseResultLabelIdsDefault = [];
+
 export const modelHubAnnotationQueuesUpdateStatusResponseResultAnnotatorIdsDefault = [];
 export const modelHubAnnotationQueuesUpdateStatusResponseResultAnnotatorRolesDefault = {  };
 
@@ -12576,7 +12576,7 @@ export const ModelHubAnnotationQueuesUpdateStatusResponse = zod.object({
   "role": zod.string().min(1).default(modelHubAnnotationQueuesUpdateStatusResponseResultAnnotatorsItemRoleDefault),
   "roles": zod.string().optional()
 })).optional(),
-  "label_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesUpdateStatusResponseResultLabelIdsDefault),
+  "label_ids": zod.array(zod.string().uuid()).min(1),
   "annotator_ids": zod.array(zod.string().uuid()).default(modelHubAnnotationQueuesUpdateStatusResponseResultAnnotatorIdsDefault),
   "annotator_roles": zod.record(zod.string(), zod.object({
 
@@ -20265,6 +20265,10 @@ export const modelHubExperimentsV2CreateBodyPromptConfigItemModelParamsDefault =
 export const modelHubExperimentsV2CreateBodyPromptConfigItemConfigurationDefault = {  };
 export const modelHubExperimentsV2CreateBodyPromptConfigItemOutputFormatDefault = `string`;
 
+
+
+
+
 export const modelHubExperimentsV2CreateBodyUserEvalMetricsItemNameMax = 2000;
 
 export const modelHubExperimentsV2CreateBodyUserEvalMetricsItemModelDefault = ``;
@@ -20284,13 +20288,39 @@ export const ModelHubExperimentsV2CreateBody = zod.object({
   "prompt_version": zod.string().uuid().optional(),
   "agent_id": zod.string().uuid().optional(),
   "agent_version": zod.string().uuid().optional(),
-  "model": zod.object({
+  "model": zod.union([zod.string(), zod.object({}).passthrough()]).optional().describe('String or JSON object.'),
+  "model_params": zod.object({
+  "temperature": zod.number().optional(),
+  "max_tokens": zod.number().optional(),
+  "top_p": zod.number().optional(),
+  "frequency_penalty": zod.number().optional(),
+  "presence_penalty": zod.number().optional(),
+  "response_format": zod.union([zod.string(), zod.object({}).passthrough()]).optional().describe('String or JSON object.')
+}).passthrough().default(modelHubExperimentsV2CreateBodyPromptConfigItemModelParamsDefault),
+  "configuration": zod.object({
+  "tool_choice": zod.string().optional(),
+  "template_format": zod.string().optional(),
+  "tools": zod.array(zod.object({
 
-}).passthrough().optional(),
-  "model_params": zod.record(zod.string(), zod.string()).default(modelHubExperimentsV2CreateBodyPromptConfigItemModelParamsDefault),
-  "configuration": zod.record(zod.string(), zod.string()).default(modelHubExperimentsV2CreateBodyPromptConfigItemConfigurationDefault),
+}).passthrough().describe('Any valid JSON value.')).optional(),
+  "output_format": zod.string().optional(),
+  "model_type": zod.string().optional(),
+  "model_detail": zod.object({
+
+}).passthrough().optional().describe('Any valid JSON value.'),
+  "voice_id": zod.string().optional()
+}).passthrough().default(modelHubExperimentsV2CreateBodyPromptConfigItemConfigurationDefault),
   "output_format": zod.string().min(1).default(modelHubExperimentsV2CreateBodyPromptConfigItemOutputFormatDefault),
-  "messages": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "messages": zod.array(zod.object({
+  "role": zod.string().min(1),
+  "content": zod.union([zod.string(), zod.array(zod.unknown())]).describe('Plain text string or array of content-part objects.'),
+  "name": zod.string().min(1).optional(),
+  "tool_calls": zod.object({
+
+}).passthrough().optional().describe('Any valid JSON value.'),
+  "tool_call_id": zod.string().min(1).optional(),
+  "id": zod.string().min(1).optional()
+}).passthrough()).optional(),
   "voice_input_column_id": zod.string().uuid().optional()
 })),
   "user_eval_metrics": zod.array(zod.object({
@@ -20489,6 +20519,10 @@ export const modelHubExperimentsV2UpdateBodyPromptConfigItemModelParamsDefault =
 export const modelHubExperimentsV2UpdateBodyPromptConfigItemConfigurationDefault = {  };
 export const modelHubExperimentsV2UpdateBodyPromptConfigItemOutputFormatDefault = `string`;
 
+
+
+
+
 export const modelHubExperimentsV2UpdateBodyUserEvalMetricsItemNameMax = 2000;
 
 export const modelHubExperimentsV2UpdateBodyUserEvalMetricsItemModelDefault = ``;
@@ -20505,13 +20539,39 @@ export const ModelHubExperimentsV2UpdateBody = zod.object({
   "prompt_version": zod.string().uuid().optional(),
   "agent_id": zod.string().uuid().optional(),
   "agent_version": zod.string().uuid().optional(),
-  "model": zod.object({
+  "model": zod.union([zod.string(), zod.object({}).passthrough()]).optional().describe('String or JSON object.'),
+  "model_params": zod.object({
+  "temperature": zod.number().optional(),
+  "max_tokens": zod.number().optional(),
+  "top_p": zod.number().optional(),
+  "frequency_penalty": zod.number().optional(),
+  "presence_penalty": zod.number().optional(),
+  "response_format": zod.union([zod.string(), zod.object({}).passthrough()]).optional().describe('String or JSON object.')
+}).passthrough().default(modelHubExperimentsV2UpdateBodyPromptConfigItemModelParamsDefault),
+  "configuration": zod.object({
+  "tool_choice": zod.string().optional(),
+  "template_format": zod.string().optional(),
+  "tools": zod.array(zod.object({
 
-}).passthrough().optional(),
-  "model_params": zod.record(zod.string(), zod.string()).default(modelHubExperimentsV2UpdateBodyPromptConfigItemModelParamsDefault),
-  "configuration": zod.record(zod.string(), zod.string()).default(modelHubExperimentsV2UpdateBodyPromptConfigItemConfigurationDefault),
+}).passthrough().describe('Any valid JSON value.')).optional(),
+  "output_format": zod.string().optional(),
+  "model_type": zod.string().optional(),
+  "model_detail": zod.object({
+
+}).passthrough().optional().describe('Any valid JSON value.'),
+  "voice_id": zod.string().optional()
+}).passthrough().default(modelHubExperimentsV2UpdateBodyPromptConfigItemConfigurationDefault),
   "output_format": zod.string().min(1).default(modelHubExperimentsV2UpdateBodyPromptConfigItemOutputFormatDefault),
-  "messages": zod.array(zod.record(zod.string(), zod.string())).optional(),
+  "messages": zod.array(zod.object({
+  "role": zod.string().min(1),
+  "content": zod.union([zod.string(), zod.array(zod.unknown())]).describe('Plain text string or array of content-part objects.'),
+  "name": zod.string().min(1).optional(),
+  "tool_calls": zod.object({
+
+}).passthrough().optional().describe('Any valid JSON value.'),
+  "tool_call_id": zod.string().min(1).optional(),
+  "id": zod.string().min(1).optional()
+}).passthrough()).optional(),
   "voice_input_column_id": zod.string().uuid().optional()
 })).optional(),
   "user_eval_metrics": zod.array(zod.object({
@@ -43251,7 +43311,7 @@ export const tracerUsersListQuerySortParamsDefault = `[]`;
 
 export const tracerUsersListQueryFiltersDefault = `[]`;
 
-
+export const tracerUsersListQueryExportDefault = false;
 
 export const TracerUsersListQueryParams = zod.object({
   "project_id": zod.string().uuid().optional(),
@@ -43259,7 +43319,8 @@ export const TracerUsersListQueryParams = zod.object({
   "page_size": zod.number().min(1).max(tracerUsersListQueryPageSizeMax).optional(),
   "current_page_index": zod.number().min(tracerUsersListQueryCurrentPageIndexMin).optional(),
   "sort_params": zod.string().min(1).default(tracerUsersListQuerySortParamsDefault),
-  "filters": zod.string().min(1).default(tracerUsersListQueryFiltersDefault)
+  "filters": zod.string().min(1).default(tracerUsersListQueryFiltersDefault),
+  "export": zod.boolean().default(tracerUsersListQueryExportDefault)
 })
 
 export const tracerUsersListResponseStatusDefault = true;
