@@ -1327,10 +1327,8 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
                         const datapointValue = {
                           index: params.rowIndex,
                           rowData: params.data,
-                          valueInfos:
-                            params?.data[params?.colDef?.col?.id]
-                              ?.value_infos ??
-                            params?.data[params?.colDef?.col?.id]?.valueInfos,
+                          value_infos:
+                            params?.data[params?.colDef?.col?.id]?.value_infos,
                         };
                         useDatapointDrawerStore
                           .getState()

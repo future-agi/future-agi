@@ -165,8 +165,12 @@ class PromptConfigSerializer(serializers.Serializer):
     model = serializers.CharField(max_length=255, required=False, allow_blank=True)
     # Free-form config: values are mixed JSON (model_name str, isAvailable
     # bool, booleans/dropdowns objects, …). Use JsonValueField so the contract
-    # doesn't constrain every value to a string.
-    run_prompt_config = serializers.DictField(child=JsonValueField(), required=False)
+    # doesn't constrain every value to a string. allow_null because the FE
+    # sends null for unset model params (temperature, top_p, …) meaning "use
+    # provider default" — JSONField's default allow_null=False would 400 them.
+    run_prompt_config = serializers.DictField(
+        child=JsonValueField(allow_null=True), required=False
+    )
     messages = serializers.ListField(
         # content can be a string or a list of typed parts — keep values open.
         child=serializers.DictField(child=JsonValueField()),
