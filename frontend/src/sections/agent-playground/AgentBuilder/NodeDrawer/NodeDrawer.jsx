@@ -284,6 +284,24 @@ export default function NodeDrawer({
     setPendingNode(null);
   };
 
+  const handleDeleteButtonClick = useCallback(
+    (event) => {
+      if (isWorkflowRunning) {
+        event.preventDefault();
+        return;
+      }
+
+      setShowDeleteDialog(true);
+    },
+    [isWorkflowRunning],
+  );
+
+  useEffect(() => {
+    if (isWorkflowRunning) {
+      setShowDeleteDialog(false);
+    }
+  }, [isWorkflowRunning]);
+
   // Delete node — follows the same pattern as useBaseNodeActions.handleDeleteClick
   const handleDeleteNode = useCallback(async () => {
     if (!activeNode || isWorkflowRunning) return;
@@ -314,7 +332,7 @@ export default function NodeDrawer({
     try {
       await deleteNodeApi({
         graphId: agent?.id,
-        versionId: agent?.versionId,
+        versionId: agent?.version_id,
         nodeId,
       });
     } catch {
@@ -345,7 +363,7 @@ export default function NodeDrawer({
     typeof activeNode.data?.label === "string" && activeNode.data.label.trim()
       ? activeNode.data.label.trim()
       : NODE_TYPE_CONFIG[activeNode.type]?.title || "current node";
-  const deleteNodeAriaLabel = `Delete node: ${activeNodeLabel}`;
+  const deleteNodeAriaLabel = `Delete node from editor: ${activeNodeLabel}`;
 
   return (
     <>
@@ -408,12 +426,16 @@ export default function NodeDrawer({
                 >
                   <span>
                     <IconButton
+                      aria-disabled={isWorkflowRunning || undefined}
                       aria-label={deleteNodeAriaLabel}
                       size="small"
-                      onClick={() => setShowDeleteDialog(true)}
-                      disabled={isWorkflowRunning}
+                      onClick={handleDeleteButtonClick}
                       sx={{
                         color: "red.500",
+                        ...(isWorkflowRunning && {
+                          cursor: "not-allowed",
+                          opacity: 0.5,
+                        }),
                         "&:hover": {
                           bgcolor: (theme) =>
                             theme.palette.mode === "dark"
@@ -514,6 +536,7 @@ export default function NodeDrawer({
             variant="contained"
             color="error"
             onClick={handleDeleteNode}
+            disabled={isWorkflowRunning}
             sx={{ paddingX: "24px" }}
           >
             Delete

@@ -14,6 +14,7 @@ export default function useBaseNodeActions({
   id,
   preview,
   isWorkflowRunning,
+  isRunning,
   setSelectedNode,
   deleteNode,
 }) {
@@ -81,7 +82,7 @@ export default function useBaseNodeActions({
 
   const handleDeleteClick = useCallback(
     async (e) => {
-      if (preview || isWorkflowRunning) return;
+      if (preview || isWorkflowRunning || isRunning) return;
       e.stopPropagation();
 
       // Always apply optimistic deletion first
@@ -114,7 +115,15 @@ export default function useBaseNodeActions({
         enqueueSnackbar("Failed to delete node", { variant: "error" });
       }
     },
-    [id, preview, isWorkflowRunning, deleteNode, setGraphData, ensureDraft],
+    [
+      id,
+      preview,
+      isWorkflowRunning,
+      isRunning,
+      deleteNode,
+      setGraphData,
+      ensureDraft,
+    ],
   );
 
   return {

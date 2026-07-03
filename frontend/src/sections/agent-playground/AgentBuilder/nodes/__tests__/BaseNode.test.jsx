@@ -76,7 +76,9 @@ function renderBaseNode(props = {}) {
 describe("Unit: BaseNode", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockHandleDeleteClick.mockImplementation((event) => event.stopPropagation());
+    mockHandleDeleteClick.mockImplementation((event) =>
+      event.stopPropagation(),
+    );
     useBaseNodeState.mockReturnValue(defaultState);
     useBaseNodeActions.mockReturnValue({
       handleNodeClick: mockHandleNodeClick,
@@ -93,7 +95,7 @@ describe("Unit: BaseNode", () => {
     renderBaseNode();
 
     const deleteButton = screen.getByRole("button", {
-      name: "Delete node: Agent node",
+      name: "Delete canvas node: Agent node",
     });
     expect(deleteButton).toHaveClass("node-delete-btn");
 

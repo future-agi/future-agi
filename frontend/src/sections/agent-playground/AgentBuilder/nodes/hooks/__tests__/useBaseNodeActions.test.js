@@ -34,7 +34,7 @@ vi.mock("../../../../store", () => ({
     getState: vi.fn(() => ({
       nodes: [],
       edges: [],
-      currentAgent: { id: "g1", versionId: "v1" },
+      currentAgent: { id: "g1", version_id: "v1" },
     })),
   },
   useAgentPlaygroundStoreShallow: () => mockSetGraphData,
@@ -60,6 +60,7 @@ function makeProps(overrides = {}) {
     id: "n1",
     preview: false,
     isWorkflowRunning: false,
+    isRunning: false,
     setSelectedNode: vi.fn(),
     deleteNode: vi.fn(),
     ...overrides,
@@ -69,7 +70,7 @@ function makeProps(overrides = {}) {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-describe("useBaseNodeActions", () => {
+describe("Unit: useBaseNodeActions", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAddNode.mockResolvedValue(true);
@@ -313,13 +314,27 @@ describe("useBaseNodeActions", () => {
 
       expect(props.deleteNode).not.toHaveBeenCalled();
     });
+
+    it("does nothing while the node is running", async () => {
+      const props = makeProps({ isRunning: true });
+      const stopPropagation = vi.fn();
+      const { result } = renderHook(() => useBaseNodeActions(props));
+
+      await act(async () => {
+        result.current.handleDeleteClick({ stopPropagation });
+      });
+
+      expect(stopPropagation).not.toHaveBeenCalled();
+      expect(props.deleteNode).not.toHaveBeenCalled();
+      expect(mockEnsureDraft).not.toHaveBeenCalled();
+    });
   });
 });
 
 // ---------------------------------------------------------------------------
 // Edge-case tests
 // ---------------------------------------------------------------------------
-describe("useBaseNodeActions — edge cases", () => {
+describe("Unit: useBaseNodeActions — edge cases", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAddNode.mockResolvedValue(true);

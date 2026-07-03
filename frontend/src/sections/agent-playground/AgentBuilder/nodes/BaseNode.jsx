@@ -39,7 +39,7 @@ const BaseNode = ({
     typeof label === "string" && label.trim()
       ? label.trim()
       : typeConfig.title || "node";
-  const deleteNodeAriaLabel = `Delete node: ${accessibleNodeLabel}`;
+  const deleteNodeAriaLabel = `Delete canvas node: ${accessibleNodeLabel}`;
 
   const state = useBaseNodeState({ id, data });
   const {
