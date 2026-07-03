@@ -138,17 +138,4 @@ describe("Unit: BaseNode", () => {
       screen.queryByRole("button", { name: /delete canvas node/i }),
     ).not.toBeInTheDocument();
   });
-
-  it("does not render the delete tooltip control while the node is running", () => {
-    useBaseNodeState.mockReturnValue({
-      ...defaultState,
-      isRunning: true,
-    });
-
-    renderBaseNode();
-
-    expect(
-      screen.queryByRole("button", { name: /delete canvas node/i }),
-    ).not.toBeInTheDocument();
-  });
 });

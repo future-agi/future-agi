@@ -35,11 +35,7 @@ const BaseNode = ({
   const outputPortLabel = outputPort?.display_name;
   const typeConfig = NODE_TYPE_CONFIG[type] ?? {};
   const iconColor = typeConfig.color ?? "orange.500";
-  const accessibleNodeLabel =
-    typeof label === "string" && label.trim()
-      ? label.trim()
-      : typeConfig.title || "node";
-  const deleteNodeAriaLabel = `Delete canvas node: ${accessibleNodeLabel}`;
+  const accessibleNodeLabel = label || typeConfig.title || type;
 
   const state = useBaseNodeState({ id, data });
   const {
@@ -162,7 +158,7 @@ const BaseNode = ({
           >
             {label}
           </Typography>
-          {!preview && !isWorkflowRunning && !isRunning && (
+          {!preview && !isWorkflowRunning && (
             <CustomTooltip
               show
               title="Delete node"
@@ -181,8 +177,8 @@ const BaseNode = ({
                 }}
               >
                 <IconButton
-                  aria-label={deleteNodeAriaLabel}
                   className="node-delete-btn"
+                  aria-label={`Delete canvas node: ${accessibleNodeLabel}`}
                   sx={{
                     color: "red.500",
                     bgcolor: "background.paper",

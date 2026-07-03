@@ -43,7 +43,7 @@ const defaultProps = {
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
-describe("Unit: useBaseNodeStyles", () => {
+describe("useBaseNodeStyles", () => {
   // ---- borderColor priority ----
   it("returns red borderColor when hasValidationError", () => {
     const { result } = renderWithTheme({
@@ -138,16 +138,14 @@ describe("Unit: useBaseNodeStyles", () => {
   });
 
   // ---- boxSx properties ----
-  it("reveals the delete button on hover and keyboard focus", () => {
+  it("includes hover styles when idle and not preview", () => {
     const { result } = renderWithTheme(defaultProps);
     expect(result.current.boxSx["&:hover"]).toBeDefined();
-
-    const revealSx =
+    expect(
       result.current.boxSx[
         "&:hover .node-delete-btn, &:focus-within .node-delete-btn"
-      ];
-
-    expect(revealSx).toEqual({
+      ],
+    ).toEqual({
       opacity: 1,
       pointerEvents: "auto",
     });

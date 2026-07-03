@@ -21,7 +21,6 @@ import { NODE_TYPE_CONFIG } from "../../utils/constants";
 import {
   useAgentPlaygroundStore,
   useAgentPlaygroundStoreShallow,
-  useWorkflowRunStore,
   useWorkflowRunStoreShallow,
 } from "../../store";
 import { getDefaultValues, mapNodeDetailToNodeData } from "./nodeFormUtils";
@@ -47,14 +46,11 @@ export default function NodeDrawer({
   const queryClient = useQueryClient();
   const { ensureDraft } = useSaveDraftContext();
   const hadInitialConfigRef = useRef(false);
-  const deletePendingRef = useRef(false);
   const [showDiscardDialog, setShowDiscardDialog] = useState(false);
   const [discardAction, setDiscardAction] = useState(null); // "close" | "switch" | null
   const [activeNode, setActiveNode] = useState(node ?? null);
   const [pendingNode, setPendingNode] = useState(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
-  const [deleteTargetNode, setDeleteTargetNode] = useState(null);
-  const [isDeletePending, setIsDeletePending] = useState(false);
 
   const isWorkflowRunning = useWorkflowRunStoreShallow((s) => s.isRunning);
 
@@ -65,7 +61,6 @@ export default function NodeDrawer({
     setNodeFormDirty,
     deleteNode,
     setGraphData,
-    nodeExecutionStates,
   } = useAgentPlaygroundStoreShallow((s) => ({
     setSelectedNode: s.setSelectedNode,
     updateNodeData: s.updateNodeData,
@@ -73,17 +68,7 @@ export default function NodeDrawer({
     setNodeFormDirty: s.setNodeFormDirty,
     deleteNode: s.deleteNode,
     setGraphData: s.setGraphData,
-    nodeExecutionStates: s.nodeExecutionStates,
   }));
-
-  const activeNodeIsRunning =
-    nodeExecutionStates?.[activeNode?.id] === "running";
-  const deleteDisabled = isWorkflowRunning || activeNodeIsRunning;
-  const deleteTooltipTitle = isWorkflowRunning
-    ? "Stop the workflow before deleting this node"
-    : activeNodeIsRunning
-      ? "Wait for this node to finish running before deleting it"
-      : "Delete node";
 
   // Fetch fresh node detail from API when drawer opens
   const { data: nodeDetailData, isFetching: isLoadingNodeDetail } =
@@ -184,8 +169,6 @@ export default function NodeDrawer({
       setShowDiscardDialog(false);
       setDiscardAction(null);
       setPendingNode(null);
-      setShowDeleteDialog(false);
-      setDeleteTargetNode(null);
       setActiveNode(node ?? null);
       return;
     }
@@ -301,132 +284,50 @@ export default function NodeDrawer({
     setPendingNode(null);
   };
 
-  const handleDeleteButtonClick = useCallback(
-    (event) => {
-      if (deleteDisabled || isDeletePending || deletePendingRef.current) {
-        event.preventDefault();
-        return;
-      }
-
-      setDeleteTargetNode(activeNode);
-      setShowDeleteDialog(true);
-    },
-    [activeNode, deleteDisabled, isDeletePending],
-  );
-
-  useEffect(() => {
-    if (deleteDisabled) {
-      setShowDeleteDialog(false);
-      setDeleteTargetNode(null);
-    }
-  }, [deleteDisabled]);
-
-  useEffect(() => {
-    setShowDeleteDialog(false);
-    setDeleteTargetNode(null);
-  }, [activeNode?.id]);
-
   // Delete node — follows the same pattern as useBaseNodeActions.handleDeleteClick
   const handleDeleteNode = useCallback(async () => {
-    const targetNode = deleteTargetNode ?? activeNode;
-    const isLiveDeleteBlocked = () =>
-      useWorkflowRunStore.getState().isRunning ||
-      useAgentPlaygroundStore.getState().nodeExecutionStates?.[
-        targetNode?.id
-      ] === "running";
-
-    if (
-      !targetNode ||
-      deleteDisabled ||
-      isDeletePending ||
-      deletePendingRef.current ||
-      isLiveDeleteBlocked()
-    ) {
-      return;
-    }
-
-    deletePendingRef.current = true;
-    setIsDeletePending(true);
+    if (!activeNode || isWorkflowRunning) return;
     setShowDeleteDialog(false);
 
-    const nodeId = targetNode.id;
+    const nodeId = activeNode.id;
     const { nodes, edges } = useAgentPlaygroundStore.getState();
-    const nodeExistsBeforeDelete = nodes.some((n) => n.id === nodeId);
-    if (!nodeExistsBeforeDelete) {
-      deletePendingRef.current = false;
-      setIsDeletePending(false);
-      setDeleteTargetNode(null);
+
+    // Optimistic deletion (also clears selectedNode, which closes the drawer)
+    deleteNode(nodeId);
+    onClose();
+
+    const draftResult = await ensureDraft({ skipDirtyCheck: true });
+
+    if (draftResult === false) {
+      // Rollback
+      setGraphData(nodes, edges);
       return;
     }
 
-    const restoreDeletedNode = () => {
-      setGraphData(nodes, edges);
-      setSelectedNode(nodes.find((n) => n.id === nodeId) ?? targetNode);
-    };
+    if (draftResult === "created") {
+      // Deletion was included in the POST that created the draft
+      return;
+    }
 
+    // Already a draft — fire individual DELETE
+    const { currentAgent: agent } = useAgentPlaygroundStore.getState();
     try {
-      // Optimistic deletion (also clears selectedNode, which closes the drawer).
-      deleteNode(nodeId);
-      const deleteWasBlocked =
-        nodeExistsBeforeDelete &&
-        useAgentPlaygroundStore.getState().nodes.some((n) => n.id === nodeId);
-      if (deleteWasBlocked) return;
-
-      onClose();
-
-      if (isLiveDeleteBlocked()) {
-        restoreDeletedNode();
-        return;
-      }
-
-      const draftResult = await ensureDraft({ skipDirtyCheck: true });
-
-      if (draftResult === false) {
-        // Rollback and restore drawer context for retry.
-        restoreDeletedNode();
-        return;
-      }
-
-      if (draftResult === "created") {
-        // Deletion was included in the POST that created the draft
-        return;
-      }
-
-      if (isLiveDeleteBlocked()) {
-        restoreDeletedNode();
-        return;
-      }
-
-      // Already a draft — fire individual DELETE
-      const { currentAgent: agent } = useAgentPlaygroundStore.getState();
       await deleteNodeApi({
         graphId: agent?.id,
-        versionId: agent?.version_id,
+        versionId: agent?.versionId,
         nodeId,
       });
     } catch {
-      restoreDeletedNode();
-      enqueueSnackbar(
-        "Couldn't delete node. Your changes were restored. Try again.",
-        {
-          variant: "error",
-        },
-      );
-    } finally {
-      deletePendingRef.current = false;
-      setIsDeletePending(false);
-      setDeleteTargetNode(null);
+      setGraphData(nodes, edges);
+      enqueueSnackbar("Failed to delete node", { variant: "error" });
     }
   }, [
     activeNode,
-    deleteTargetNode,
-    deleteDisabled,
-    isDeletePending,
+    isWorkflowRunning,
     deleteNode,
     onClose,
     ensureDraft,
     setGraphData,
-    setSelectedNode,
   ]);
 
   const handleClose = () => {
@@ -439,12 +340,6 @@ export default function NodeDrawer({
   };
 
   if (!open || !activeNode) return null;
-
-  const activeNodeLabel =
-    typeof activeNode.data?.label === "string" && activeNode.data.label.trim()
-      ? activeNode.data.label.trim()
-      : NODE_TYPE_CONFIG[activeNode.type]?.title || "current node";
-  const deleteNodeAriaLabel = `Delete node from editor: ${activeNodeLabel}`;
 
   return (
     <>
@@ -500,23 +395,19 @@ export default function NodeDrawer({
               <Stack direction="row" spacing={0.25} alignItems="center">
                 <CustomTooltip
                   show
-                  title={deleteTooltipTitle}
+                  title="Delete node"
                   size="small"
                   arrow
                   placement="bottom"
                 >
                   <span>
                     <IconButton
-                      aria-disabled={deleteDisabled || undefined}
-                      aria-label={deleteNodeAriaLabel}
                       size="small"
-                      onClick={handleDeleteButtonClick}
+                      aria-label="Delete node"
+                      onClick={() => setShowDeleteDialog(true)}
+                      disabled={isWorkflowRunning}
                       sx={{
                         color: "red.500",
-                        ...(deleteDisabled && {
-                          cursor: "not-allowed",
-                          opacity: 0.5,
-                        }),
                         "&:hover": {
                           bgcolor: (theme) =>
                             theme.palette.mode === "dark"
@@ -545,8 +436,8 @@ export default function NodeDrawer({
                   placement="bottom"
                 >
                   <IconButton
-                    aria-label="Close node editor"
                     size="small"
+                    aria-label="Close node editor"
                     onClick={handleClose}
                     sx={{ color: "text.primary" }}
                   >
@@ -617,7 +508,6 @@ export default function NodeDrawer({
             variant="contained"
             color="error"
             onClick={handleDeleteNode}
-            disabled={deleteDisabled || isDeletePending}
             sx={{ paddingX: "24px" }}
           >
             Delete

@@ -4,7 +4,6 @@ import { enqueueSnackbar } from "notistack";
 import {
   useAgentPlaygroundStore,
   useAgentPlaygroundStoreShallow,
-  useWorkflowRunStore,
 } from "../../../store";
 import { NODE_X_OFFSET } from "../../../utils/constants";
 import useAddNodeOptimistic from "../../hooks/useAddNodeOptimistic";
@@ -15,7 +14,6 @@ export default function useBaseNodeActions({
   id,
   preview,
   isWorkflowRunning,
-  isRunning,
   setSelectedNode,
   deleteNode,
 }) {
@@ -83,60 +81,23 @@ export default function useBaseNodeActions({
 
   const handleDeleteClick = useCallback(
     async (e) => {
+      if (preview || isWorkflowRunning) return;
       e.stopPropagation();
-      e.preventDefault?.();
-
-      const isLiveDeleteBlocked = () =>
-        useWorkflowRunStore.getState().isRunning ||
-        useAgentPlaygroundStore.getState().nodeExecutionStates?.[id] ===
-          "running";
-
-      if (preview || isWorkflowRunning || isRunning || isLiveDeleteBlocked()) {
-        return;
-      }
 
       // Always apply optimistic deletion first
-      const { nodes, edges, selectedNode } = useAgentPlaygroundStore.getState();
-      const nodeExistsBeforeDelete = nodes.some((n) => n.id === id);
-      if (!nodeExistsBeforeDelete) return;
-
-      const restoredSelectedNode =
-        selectedNode?.id === id
-          ? nodes.find((node) => node.id === id) ?? selectedNode
-          : null;
-      const restoreDeletedNode = () => {
-        setGraphData(nodes, edges);
-        if (restoredSelectedNode) {
-          setSelectedNode(restoredSelectedNode);
-        }
-      };
-
+      const { nodes, edges } = useAgentPlaygroundStore.getState();
       deleteNode(id);
-      const deleteWasBlocked =
-        nodeExistsBeforeDelete &&
-        useAgentPlaygroundStore.getState().nodes.some((n) => n.id === id);
-      if (deleteWasBlocked) return;
-
-      if (isLiveDeleteBlocked()) {
-        restoreDeletedNode();
-        return;
-      }
 
       const draftResult = await ensureDraft({ skipDirtyCheck: true });
 
       if (draftResult === false) {
         // Rollback
-        restoreDeletedNode();
+        setGraphData(nodes, edges);
         return;
       }
 
       if (draftResult === "created") {
         // Deletion included in POST. Done!
-        return;
-      }
-
-      if (isLiveDeleteBlocked()) {
-        restoreDeletedNode();
         return;
       }
 
@@ -149,23 +110,11 @@ export default function useBaseNodeActions({
           nodeId: id,
         });
       } catch {
-        restoreDeletedNode();
-        enqueueSnackbar(
-          "Couldn't delete node. Your changes were restored. Try again.",
-          { variant: "error" },
-        );
+        setGraphData(nodes, edges);
+        enqueueSnackbar("Failed to delete node", { variant: "error" });
       }
     },
-    [
-      id,
-      preview,
-      isWorkflowRunning,
-      isRunning,
-      deleteNode,
-      setGraphData,
-      setSelectedNode,
-      ensureDraft,
-    ],
+    [id, preview, isWorkflowRunning, deleteNode, setGraphData, ensureDraft],
   );
 
   return {
