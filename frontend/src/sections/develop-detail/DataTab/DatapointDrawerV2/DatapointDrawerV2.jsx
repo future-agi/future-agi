@@ -305,17 +305,8 @@ const DatapointDrawerChild = () => {
       const columnId = column.field;
       const rowDataForColumn = currentRowData?.[columnId];
 
-      // The axios snake→camel response interceptor was removed
-      // (2026-04-12) so backend payloads land as snake_case in JS.
-      // Read both shapes for compatibility with any cached/stale data
-      // and re-emit as snake_case for downstream consumers.
-      const cellValue =
-        rowDataForColumn?.cell_value !== undefined
-          ? rowDataForColumn.cell_value
-          : rowDataForColumn?.cellValue ?? null;
-      const valueInfosOutput =
-        rowDataForColumn?.value_infos?.output ??
-        rowDataForColumn?.valueInfos?.output;
+      const cellValue = rowDataForColumn?.cell_value ?? null;
+      const valueInfosOutput = rowDataForColumn?.value_infos?.output;
       const baseData = {
         data: {
           column: {

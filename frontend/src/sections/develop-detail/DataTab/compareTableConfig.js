@@ -17,12 +17,8 @@ export const ExperimentDataDefaultColDef = {
 };
 
 export const getEachCompareColumnDef = (eachCol, diffModeRef) => {
-  const colDataType =
-    eachCol?.data_type !== undefined ? eachCol.data_type : eachCol?.dataType;
-  const colOriginType =
-    eachCol?.origin_type !== undefined
-      ? eachCol.origin_type
-      : eachCol?.originType;
+  const colDataType = eachCol?.data_type;
+  const colOriginType = eachCol?.origin_type;
   return {
     field: eachCol.id,
     headerName: eachCol.name,
@@ -32,16 +28,12 @@ export const getEachCompareColumnDef = (eachCol, diffModeRef) => {
       let valueToParse;
       let dataTypeToUse;
 
-      const diffValue =
-        cell?.cell_diff_value !== undefined
-          ? cell.cell_diff_value
-          : cell?.cellDiffValue;
+      const diffValue = cell?.cell_diff_value;
       if (isDiffMode && diffValue) {
         valueToParse = diffValue;
         dataTypeToUse = "";
       } else {
-        valueToParse =
-          cell?.cell_value !== undefined ? cell.cell_value : cell?.cellValue;
+        valueToParse = cell?.cell_value;
         dataTypeToUse = AGGridCellDataType[colDataType];
       }
 
