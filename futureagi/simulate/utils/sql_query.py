@@ -216,6 +216,14 @@ def get_kpi_eval_metrics_query(test_execution_id):
           AND e.value ? 'output_type'
           -- Exclude soft-deleted eval configs: eval_outputs is not pruned
           -- when an eval is deleted, so its keys still linger here.
+          --
+          -- This guard is deliberately soft-deleted-only. It does NOT require a
+          -- backing config row to exist: KPI aggregation intentionally surfaces
+          -- every eval_outputs key whose config isn't explicitly soft-deleted,
+          -- including keys with no config row. Flipping to
+          -- EXISTS (...deleted = false) (inner-join semantics) would also drop
+          -- orphaned/config-less keys -- stricter, but it changes that contract
+          -- and drops legitimately-surfaced evals.
           AND NOT EXISTS (
               SELECT 1
               FROM simulate_eval_config ec

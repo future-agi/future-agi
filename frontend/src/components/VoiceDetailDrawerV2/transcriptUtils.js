@@ -84,9 +84,7 @@ export const enrichTurns = (transcript) => {
 
   // Step 1: raw extract
   const raw = transcript.map((item, i) => {
-    const role = normalizeRole(
-      item.speaker_role 
-    );
+    const role = normalizeRole(item.speaker_role || item.role);
     const start = readTime(item, [
       "startTimeSeconds",
       "start_time_seconds",

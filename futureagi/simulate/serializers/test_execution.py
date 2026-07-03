@@ -672,6 +672,12 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             if hasattr(self, "context") and self.context
             else None
         )
+        if eval_configs is None:
+
+            logger.debug(
+                "eval_outputs_serialized_without_live_config_context",
+                method="get_eval_outputs",
+            )
         eval_items = (
             eval_outputs.items()
             if eval_configs is None
@@ -731,6 +737,12 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             if hasattr(self, "context") and self.context
             else None
         )
+        if eval_configs is None:
+
+            logger.debug(
+                "eval_outputs_serialized_without_live_config_context",
+                method="get_eval_metrics",
+            )
         eval_items = (
             eval_outputs.items()
             if eval_configs is None
