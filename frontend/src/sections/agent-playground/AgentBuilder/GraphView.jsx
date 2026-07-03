@@ -18,6 +18,7 @@ import { enqueueSnackbar } from "notistack";
 import {
   useAgentPlaygroundStore,
   useAgentPlaygroundStoreShallow,
+  useWorkflowRunStore,
   useWorkflowRunStoreShallow,
 } from "../store";
 import { NODE_TYPES } from "../utils/constants";
@@ -55,6 +56,19 @@ const MAX_ZOOM = 2;
 
 // Initial viewport
 const DEFAULT_VIEWPORT = { x: 40, y: 400, zoom: 0.8 };
+
+const getRunningNodeBeingDeleted = (deletingNodes = []) => {
+  const { nodeExecutionStates } = useAgentPlaygroundStore.getState();
+  return deletingNodes.find(
+    (node) => nodeExecutionStates?.[node.id] === "running",
+  );
+};
+
+const notifyRunningNodeDeleteBlocked = () => {
+  enqueueSnackbar("Wait for this node to finish running before deleting it", {
+    variant: "info",
+  });
+};
 
 export default function GraphView() {
   const { screenToFlowPosition } = useReactFlow();
@@ -114,7 +128,15 @@ export default function GraphView() {
 
   const onBeforeDelete = useCallback(
     ({ nodes: deletingNodes, edges: deletingEdges }) => {
-      if (isRunning) return Promise.resolve(false);
+      if (isRunning || useWorkflowRunStore.getState().isRunning) {
+        return Promise.resolve(false);
+      }
+
+      if (getRunningNodeBeingDeleted(deletingNodes)) {
+        notifyRunningNodeDeleteBlocked();
+        return Promise.resolve(false);
+      }
+
       if (deletingNodes.length === 0 && deletingEdges.length === 0)
         return Promise.resolve(true);
 
@@ -140,6 +162,20 @@ export default function GraphView() {
 
   const handleConfirmDelete = useCallback(async () => {
     const { resolve } = pendingDelete;
+
+    if (useWorkflowRunStore.getState().isRunning) {
+      resolve(false);
+      setPendingDelete(null);
+      return;
+    }
+
+    if (getRunningNodeBeingDeleted(pendingDelete.nodes)) {
+      notifyRunningNodeDeleteBlocked();
+      resolve(false);
+      setPendingDelete(null);
+      return;
+    }
+
     const { currentAgent } = useAgentPlaygroundStore.getState();
     const isActive = !currentAgent?.is_draft;
 
@@ -245,7 +281,15 @@ export default function GraphView() {
         return;
       }
 
-      // Node deletion — ensureDraft already called in handleConfirmDelete
+      // Node deletion — ensureDraft already called in handleConfirmDelete.
+      // Re-check in case this path is invoked from a stale ReactFlow delete.
+      if (getRunningNodeBeingDeleted(deletedNodes)) {
+        if (snapshot) setGraphData(snapshot.nodes, snapshot.edges);
+        snapshotRef.current = null;
+        notifyRunningNodeDeleteBlocked();
+        return;
+      }
+
       const results = await Promise.allSettled([
         ...deletedNodes.map((node) =>
           deleteNodeApi({

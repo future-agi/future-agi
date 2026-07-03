@@ -1,28 +1,79 @@
 /* eslint-disable react/prop-types */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { useAgentPlaygroundStore } from "../../store";
-
-// Since GraphView uses ReactFlow internally (which requires a DOM provider),
-// we test the callback logic extracted from GraphViewInner via the store
-// and isolated callback tests.
+import { act, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import GraphView from "../GraphView";
+import { useAgentPlaygroundStore, useWorkflowRunStore } from "../../store";
 
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
-const mockScreenToFlowPosition = vi.fn((pos) => pos);
+const reactFlowMocks = vi.hoisted(() => ({
+  props: null,
+  screenToFlowPosition: vi.fn((pos) => pos),
+}));
+
 vi.mock("@xyflow/react", () => ({
-  ReactFlow: ({ children }) => <div data-testid="react-flow">{children}</div>,
+  ReactFlow: (props) => {
+    reactFlowMocks.props = props;
+    return <div data-testid="react-flow">{props.children}</div>;
+  },
   Controls: () => <div data-testid="controls" />,
   ConnectionLineType: { SmoothStep: "smoothstep" },
   useReactFlow: () => ({
-    screenToFlowPosition: mockScreenToFlowPosition,
+    screenToFlowPosition: reactFlowMocks.screenToFlowPosition,
   }),
   ReactFlowProvider: ({ children }) => <div>{children}</div>,
+  addEdge: (edge, edges) => [...edges, edge],
+  applyNodeChanges: (changes, nodes) =>
+    nodes.filter(
+      (node) => !changes.some((c) => c.type === "remove" && c.id === node.id),
+    ),
+  applyEdgeChanges: (changes, edges) =>
+    edges.filter(
+      (edge) => !changes.some((c) => c.type === "remove" && c.id === edge.id),
+    ),
 }));
 
-const mockSaveDraft = vi.fn();
+const draftMocks = vi.hoisted(() => ({
+  ensureDraft: vi.fn(),
+}));
 vi.mock("../saveDraftContext", () => ({
-  useSaveDraftContext: () => ({ saveDraft: mockSaveDraft }),
+  useSaveDraftContext: () => ({ ensureDraft: draftMocks.ensureDraft }),
+}));
+
+const addNodeMocks = vi.hoisted(() => ({
+  addNode: vi.fn(),
+}));
+vi.mock("../hooks/useAddNodeOptimistic", () => ({
+  default: () => ({ addNode: addNodeMocks.addNode }),
+}));
+
+const queryMocks = vi.hoisted(() => ({
+  invalidateQueries: vi.fn(),
+}));
+vi.mock("@tanstack/react-query", () => ({
+  useQueryClient: () => queryMocks,
+}));
+
+const apiMocks = vi.hoisted(() => ({
+  createConnectionApi: vi.fn(),
+  deleteConnectionApi: vi.fn(),
+  updateNodeApi: vi.fn(),
+  deleteNodeApi: vi.fn(),
+}));
+vi.mock("src/api/agent-playground/agent-playground", () => ({
+  createConnectionApi: apiMocks.createConnectionApi,
+  deleteConnectionApi: apiMocks.deleteConnectionApi,
+  updateNodeApi: apiMocks.updateNodeApi,
+  deleteNodeApi: apiMocks.deleteNodeApi,
+}));
+
+const notificationMocks = vi.hoisted(() => ({
+  enqueueSnackbar: vi.fn(),
+}));
+vi.mock("notistack", () => ({
+  enqueueSnackbar: notificationMocks.enqueueSnackbar,
 }));
 
 vi.mock("../nodes", () => ({
@@ -36,9 +87,9 @@ vi.mock("../edges", () => ({
 }));
 
 vi.mock("../../components/ConfirmationDialog", () => ({
-  ConfirmationDialog: ({ open, onClose, onConfirm }) =>
+  ConfirmationDialog: ({ open, onClose, onConfirm, title }) =>
     open ? (
-      <div data-testid="confirm-dialog">
+      <div data-testid="confirm-dialog" role="dialog" aria-label={title}>
         <button data-testid="confirm-btn" onClick={onConfirm}>
           Confirm
         </button>
@@ -49,104 +100,143 @@ vi.mock("../../components/ConfirmationDialog", () => ({
     ) : null,
 }));
 
+vi.mock("src/utils/logger", () => ({
+  default: { error: vi.fn() },
+}));
+
+const node = {
+  id: "n1",
+  type: "agent",
+  position: { x: 0, y: 0 },
+  data: { label: "Agent node" },
+};
+
+const edge = { id: "e1", source: "n1", target: "n2" };
+
+function setGraphState(overrides = {}) {
+  useAgentPlaygroundStore.setState({
+    nodes: [node],
+    edges: [edge],
+    currentAgent: { id: "graph-1", version_id: "version-1", is_draft: true },
+    nodeExecutionStates: {},
+    ...overrides,
+  });
+}
+
+function renderGraphView() {
+  render(<GraphView />);
+  expect(reactFlowMocks.props).toBeTruthy();
+  return reactFlowMocks.props;
+}
+
 // ---------------------------------------------------------------------------
 // Tests: GraphView callback logic
 // ---------------------------------------------------------------------------
 describe("GraphView – callback logic", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    reactFlowMocks.props = null;
+    reactFlowMocks.screenToFlowPosition.mockImplementation((pos) => pos);
+    draftMocks.ensureDraft.mockResolvedValue("existing");
+    addNodeMocks.addNode.mockResolvedValue(true);
+    apiMocks.createConnectionApi.mockResolvedValue({});
+    apiMocks.deleteConnectionApi.mockResolvedValue({});
+    apiMocks.updateNodeApi.mockResolvedValue({});
+    apiMocks.deleteNodeApi.mockResolvedValue({});
     useAgentPlaygroundStore.getState().reset();
+    useWorkflowRunStore.getState().reset();
+    setGraphState();
   });
 
-  // ---- onBeforeDelete ----
   describe("onBeforeDelete logic", () => {
     it("resolves immediately for empty deletions", async () => {
-      // Simulating the onBeforeDelete callback behavior
-      const onBeforeDelete = ({ nodes }) => {
-        if (nodes.length === 0) return Promise.resolve(true);
-        return new Promise((resolve) => resolve(true));
-      };
+      const props = renderGraphView();
 
-      const result = await onBeforeDelete({ nodes: [] });
+      const result = await props.onBeforeDelete({ nodes: [], edges: [] });
+
       expect(result).toBe(true);
     });
 
-    it("returns a promise for non-empty deletions", () => {
-      const onBeforeDelete = ({ nodes }) => {
-        if (nodes.length === 0) return Promise.resolve(true);
-        return new Promise(() => {
-          // Waits for user confirmation
-        });
-      };
+    it("opens confirmation for non-running node deletions", async () => {
+      const user = userEvent.setup();
+      const props = renderGraphView();
 
-      const promise = onBeforeDelete({ nodes: [{ id: "n1" }] });
-      expect(promise).toBeInstanceOf(Promise);
-    });
-  });
-
-  // ---- handleConfirmDelete / handleCancelDelete ----
-  describe("delete confirmation flow", () => {
-    it("confirm resolves promise with true", async () => {
-      let resolveRef;
-      const promise = new Promise((resolve) => {
-        resolveRef = resolve;
+      let deletePromise;
+      await act(async () => {
+        deletePromise = props.onBeforeDelete({ nodes: [node], edges: [] });
       });
 
-      // Simulate confirm
-      resolveRef(true);
-      const result = await promise;
-      expect(result).toBe(true);
+      expect(screen.getByTestId("confirm-dialog")).toBeInTheDocument();
+
+      await user.click(screen.getByTestId("confirm-btn"));
+      await expect(deletePromise).resolves.toBe(true);
+      expect(draftMocks.ensureDraft).toHaveBeenCalledWith({
+        skipDirtyCheck: true,
+      });
     });
 
-    it("cancel resolves promise with false", async () => {
-      let resolveRef;
-      const promise = new Promise((resolve) => {
-        resolveRef = resolve;
-      });
+    it("blocks ReactFlow deletion before confirmation when a target node is running", async () => {
+      setGraphState({ nodeExecutionStates: { n1: "running" } });
+      const props = renderGraphView();
 
-      resolveRef(false);
-      const result = await promise;
+      const result = await props.onBeforeDelete({ nodes: [node], edges: [] });
+
       expect(result).toBe(false);
+      expect(screen.queryByTestId("confirm-dialog")).not.toBeInTheDocument();
+      expect(draftMocks.ensureDraft).not.toHaveBeenCalled();
+      expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
+      expect(notificationMocks.enqueueSnackbar).toHaveBeenCalledWith(
+        "Wait for this node to finish running before deleting it",
+        { variant: "info" },
+      );
     });
-  });
 
-  // ---- handlePostDelete ----
-  describe("handlePostDelete logic", () => {
-    it("calls saveDraft with rollback callback", () => {
-      const setGraphData = vi.fn();
-      const snapshot = {
-        nodes: [{ id: "n1" }],
-        edges: [{ id: "e1" }],
-      };
+    it("re-checks node running state before confirming a pending delete", async () => {
+      const user = userEvent.setup();
+      const props = renderGraphView();
 
-      // Simulate handlePostDelete
-      mockSaveDraft({
-        onError: () => {
-          if (snapshot) {
-            setGraphData(snapshot.nodes, snapshot.edges);
-          }
-        },
+      let deletePromise;
+      await act(async () => {
+        deletePromise = props.onBeforeDelete({ nodes: [node], edges: [] });
+      });
+      expect(screen.getByTestId("confirm-dialog")).toBeInTheDocument();
+
+      useAgentPlaygroundStore.setState({
+        nodeExecutionStates: { n1: "running" },
       });
 
-      expect(mockSaveDraft).toHaveBeenCalledWith(
-        expect.objectContaining({ onError: expect.any(Function) }),
+      await user.click(screen.getByTestId("confirm-btn"));
+
+      await expect(deletePromise).resolves.toBe(false);
+      expect(draftMocks.ensureDraft).not.toHaveBeenCalled();
+      expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
+      expect(notificationMocks.enqueueSnackbar).toHaveBeenCalledWith(
+        "Wait for this node to finish running before deleting it",
+        { variant: "info" },
       );
-
-      // Simulate error — should rollback
-      const onError = mockSaveDraft.mock.calls[0][0].onError;
-      onError();
-
-      expect(setGraphData).toHaveBeenCalledWith([{ id: "n1" }], [{ id: "e1" }]);
     });
   });
 
-  // ---- onDrop ----
-  describe("onDrop logic", () => {
-    it("extracts node type and adds node at converted position", () => {
-      const addNode = vi.fn();
-      mockScreenToFlowPosition.mockReturnValue({ x: 100, y: 200 });
+  describe("handlePostDelete logic", () => {
+    it("does not persist a stale ReactFlow delete for a running node", async () => {
+      setGraphState({ nodeExecutionStates: { n1: "running" } });
+      const props = renderGraphView();
 
-      // Simulate onDrop
+      await props.onDelete({ nodes: [node], edges: [] });
+
+      expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
+      expect(apiMocks.deleteConnectionApi).not.toHaveBeenCalled();
+      expect(notificationMocks.enqueueSnackbar).toHaveBeenCalledWith(
+        "Wait for this node to finish running before deleting it",
+        { variant: "info" },
+      );
+    });
+  });
+
+  describe("onDrop", () => {
+    it("extracts node type and adds node at converted position", () => {
+      reactFlowMocks.screenToFlowPosition.mockReturnValue({ x: 100, y: 200 });
+      const props = renderGraphView();
       const event = {
         preventDefault: vi.fn(),
         clientX: 170,
@@ -160,26 +250,18 @@ describe("GraphView – callback logic", () => {
         },
       };
 
-      event.preventDefault();
-      const type = event.dataTransfer.getData("application/reactflow");
-      const nodeTemplateId =
-        event.dataTransfer.getData("application/node-template-id") || undefined;
-      const position = mockScreenToFlowPosition({
-        x: event.clientX - 70,
-        y: event.clientY - 20,
-      });
-      addNode(type, position, nodeTemplateId);
+      props.onDrop(event);
 
-      expect(addNode).toHaveBeenCalledWith(
-        "llm_prompt",
-        { x: 100, y: 200 },
-        "tpl-1",
-      );
+      expect(event.preventDefault).toHaveBeenCalled();
+      expect(addNodeMocks.addNode).toHaveBeenCalledWith({
+        type: "llm_prompt",
+        position: { x: 100, y: 200 },
+        node_template_id: "tpl-1",
+      });
     });
 
     it("does nothing when type is empty", () => {
-      const addNode = vi.fn();
-
+      const props = renderGraphView();
       const event = {
         preventDefault: vi.fn(),
         dataTransfer: {
@@ -187,66 +269,28 @@ describe("GraphView – callback logic", () => {
         },
       };
 
-      event.preventDefault();
-      const type = event.dataTransfer.getData("application/reactflow");
-      if (typeof type === "undefined" || !type) return;
-      addNode(type);
+      props.onDrop(event);
 
-      expect(addNode).not.toHaveBeenCalled();
+      expect(event.preventDefault).toHaveBeenCalled();
+      expect(addNodeMocks.addNode).not.toHaveBeenCalled();
     });
   });
 
-  // ---- onConnect ----
-  describe("onConnect logic", () => {
-    it("calls storeOnConnect then saveDraft", () => {
-      const storeOnConnect = vi.fn();
-      const connection = { source: "n1", target: "n2" };
-
-      // Simulate onConnect
-      storeOnConnect(connection);
-      mockSaveDraft();
-
-      expect(storeOnConnect).toHaveBeenCalledWith(connection);
-      expect(mockSaveDraft).toHaveBeenCalled();
-    });
-  });
-
-  // ---- onNodeDragStop ----
-  describe("onNodeDragStop logic", () => {
-    it("calls saveDraft on node drag stop", () => {
-      mockSaveDraft();
-      expect(mockSaveDraft).toHaveBeenCalled();
-    });
-  });
-
-  // ---- onConnectStart / onConnectEnd ----
   describe("connection tracking", () => {
-    it("sets connection state on connect start", () => {
-      useAgentPlaygroundStore.setState({
-        isConnecting: false,
-        connectingFromNodeId: null,
-      });
+    it("sets and clears connection state", () => {
+      const props = renderGraphView();
 
-      useAgentPlaygroundStore.getState().setIsConnecting?.(true);
-      useAgentPlaygroundStore.getState().setConnectingFromNodeId?.("n1");
+      props.onConnectStart(null, { nodeId: "n1" });
+      expect(useAgentPlaygroundStore.getState().isConnecting).toBe(true);
+      expect(useAgentPlaygroundStore.getState().connectingFromNodeId).toBe(
+        "n1",
+      );
 
-      const state = useAgentPlaygroundStore.getState();
-      expect(state.isConnecting).toBe(true);
-      expect(state.connectingFromNodeId).toBe("n1");
-    });
-
-    it("clears connection state on connect end", () => {
-      useAgentPlaygroundStore.setState({
-        isConnecting: true,
-        connectingFromNodeId: "n1",
-      });
-
-      useAgentPlaygroundStore.getState().setIsConnecting?.(false);
-      useAgentPlaygroundStore.getState().setConnectingFromNodeId?.(null);
-
-      const state = useAgentPlaygroundStore.getState();
-      expect(state.isConnecting).toBe(false);
-      expect(state.connectingFromNodeId).toBeNull();
+      props.onConnectEnd();
+      expect(useAgentPlaygroundStore.getState().isConnecting).toBe(false);
+      expect(
+        useAgentPlaygroundStore.getState().connectingFromNodeId,
+      ).toBeNull();
     });
   });
 });

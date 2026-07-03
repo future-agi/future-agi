@@ -296,6 +296,28 @@ describe("Unit: NodeDrawer", () => {
     );
   });
 
+  it("restores the drawer context when draft creation declines the delete", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    draftMocks.ensureDraft.mockResolvedValue(false);
+
+    renderDrawer({ onClose });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Delete node from editor: Agent node",
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() => expect(draftMocks.ensureDraft).toHaveBeenCalled());
+    expect(storeMocks.deleteNode).toHaveBeenCalledWith("node-1");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
+    expect(storeMocks.setGraphData).toHaveBeenCalledWith([node], []);
+    expect(storeMocks.setSelectedNode).toHaveBeenCalledWith(node);
+  });
+
   it("restores the drawer context if the workflow starts before delete persists", async () => {
     const user = userEvent.setup();
     draftMocks.ensureDraft.mockImplementation(async () => {
@@ -422,6 +444,63 @@ describe("Unit: NodeDrawer", () => {
     );
     expect(storeMocks.deleteNode).not.toHaveBeenCalled();
     expect(apiMocks.deleteNodeApi).not.toHaveBeenCalled();
+  });
+
+  it("clears a stale delete confirmation when the active node changes", async () => {
+    const user = userEvent.setup();
+    const nextNode = {
+      id: "node-2",
+      type: NODE_TYPES.AGENT,
+      data: { label: "Second agent node" },
+    };
+    currentStoreState = {
+      ...currentStoreState,
+      nodes: [node, nextNode],
+    };
+    const onClose = vi.fn();
+    const view = renderDrawer({ onClose });
+
+    await user.click(
+      screen.getByRole("button", {
+        name: "Delete node from editor: Agent node",
+      }),
+    );
+    expect(screen.getByRole("dialog", { name: "Delete Node" })).toBeVisible();
+
+    view.rerender(
+      <ThemeProvider theme={theme}>
+        <NodeDrawer
+          open
+          onClose={onClose}
+          node={nextNode}
+          width={520}
+          isResizing={false}
+          onResizeStart={vi.fn()}
+        />
+      </ThemeProvider>,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", { name: "Delete Node" }),
+      ).not.toBeInTheDocument(),
+    );
+
+    const nextDeleteButton = await screen.findByRole("button", {
+      name: "Delete node from editor: Second agent node",
+    });
+    await user.click(nextDeleteButton);
+    await user.click(screen.getByRole("button", { name: "Delete" }));
+
+    await waitFor(() =>
+      expect(apiMocks.deleteNodeApi).toHaveBeenCalledWith({
+        graphId: "graph-1",
+        versionId: "version-1",
+        nodeId: "node-2",
+      }),
+    );
+    expect(storeMocks.deleteNode).not.toHaveBeenCalledWith("node-1");
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("shows the close tooltip and preserves close clicks", async () => {
