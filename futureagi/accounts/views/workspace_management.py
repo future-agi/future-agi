@@ -154,6 +154,34 @@ def clear_user_redis_cache(user_id):
         return False
 
 
+def persist_pending_org_invite(
+    organization, target_email, org_role, workspace_role, workspaces, invited_by
+):
+    """Persist a PENDING OrganizationInvite for a newly invited user.
+
+    The accept-invite flow (accept_invitation_mail) rejects any link that has
+    no pending invite, and invite.accept() materializes the org + workspace
+    memberships from level/workspace_access. Without this row the invite email
+    link always renders as "expired or invalid".
+    """
+    from accounts.models.organization_invite import InviteStatus, OrganizationInvite
+
+    org_level = Level.from_string(org_role) if org_role else Level.VIEWER
+    ws_level = Level.from_string(Level.normalize_ws_role(workspace_role))
+    OrganizationInvite.objects.update_or_create(
+        organization=organization,
+        target_email=target_email,
+        status=InviteStatus.PENDING,
+        defaults={
+            "level": org_level,
+            "workspace_access": [
+                {"workspace_id": str(w.id), "level": ws_level} for w in workspaces
+            ],
+            "invited_by": invited_by,
+        },
+    )
+
+
 class WorkspaceListAPIView(APIView):
     """API for getting paginated list of workspaces"""
 
@@ -605,40 +633,13 @@ class WorkspaceInviteAPIView(APIView):
                                         invited_by=user,
                                     )
 
-                            # Persist a PENDING OrganizationInvite so the
-                            # accept-invite flow (accept_invitation_mail) can
-                            # validate the link and, on accept, materialize the
-                            # org + workspace memberships from level/
-                            # workspace_access. Without this row the invite email
-                            # link always renders as "expired or invalid".
-                            from accounts.models.organization_invite import (
-                                InviteStatus,
-                                OrganizationInvite,
-                            )
-
-                            org_level = (
-                                Level.from_string(org_role)
-                                if org_role
-                                else Level.VIEWER
-                            )
-                            ws_level = Level.from_string(
-                                Level.normalize_ws_role(workspace_role)
-                            )
-                            OrganizationInvite.objects.update_or_create(
+                            persist_pending_org_invite(
                                 organization=organization,
                                 target_email=email,
-                                status=InviteStatus.PENDING,
-                                defaults={
-                                    "level": org_level,
-                                    "workspace_access": [
-                                        {
-                                            "workspace_id": str(w.id),
-                                            "level": ws_level,
-                                        }
-                                        for w in workspaces
-                                    ],
-                                    "invited_by": user,
-                                },
+                                org_role=org_role,
+                                workspace_role=workspace_role,
+                                workspaces=workspaces,
+                                invited_by=user,
                             )
 
                             # Send invitation email with credentials
@@ -2277,37 +2278,13 @@ class ManageTeamView(APIView):
                             request.user,
                         )
 
-                        # Persist a PENDING OrganizationInvite. The accept-invite
-                        # flow (accept_invitation_mail) rejects any link that has
-                        # no pending invite, and its accept() materializes the
-                        # org + workspace memberships from level/workspace_access.
-                        # Without this row the invite email link always renders as
-                        # "expired or invalid".
-                        from accounts.models.organization_invite import (
-                            InviteStatus,
-                            OrganizationInvite,
-                        )
-
-                        org_level = (
-                            Level.from_string(org_role) if org_role else Level.VIEWER
-                        )
-                        ws_level = Level.from_string(
-                            Level.normalize_ws_role(workspace_role)
-                        )
-                        OrganizationInvite.objects.update_or_create(
+                        persist_pending_org_invite(
                             organization=organization,
                             target_email=member_data["email"],
-                            status=InviteStatus.PENDING,
-                            defaults={
-                                "level": org_level,
-                                "workspace_access": [
-                                    {
-                                        "workspace_id": str(workspace.id),
-                                        "level": ws_level,
-                                    }
-                                ],
-                                "invited_by": request.user,
-                            },
+                            org_role=org_role,
+                            workspace_role=workspace_role,
+                            workspaces=[workspace],
+                            invited_by=request.user,
                         )
 
                         token = default_token_generator.make_token(new_member)
