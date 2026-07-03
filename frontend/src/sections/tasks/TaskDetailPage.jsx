@@ -4,7 +4,7 @@ import { LoadingButton } from "@mui/lab";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
 import Iconify from "src/components/iconify";
@@ -30,6 +30,7 @@ const TAB_OPTIONS = [
 
 const TaskDetailPage = () => {
   const { taskId } = useParams();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState("details");
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -118,6 +119,23 @@ const TaskDetailPage = () => {
       queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
       queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
       enqueueSnackbar("Task renamed", { variant: "success" });
+    },
+  });
+
+  const { mutate: duplicateTask, isPending: isDuplicating } = useMutation({
+    mutationFn: () => axios.post(endpoints.project.duplicateEvalTask(taskId)),
+    onSuccess: (response) => {
+      const newTaskId = response?.data?.result?.id || response?.data?.id || response?.result?.id || response?.id;
+      queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
+      enqueueSnackbar("Task duplicated successfully", { variant: "success" });
+      if (newTaskId) {
+        navigate(`/dashboard/tasks/${newTaskId}`);
+      }
+    },
+    onError: (err) => {
+      enqueueSnackbar(err?.response?.data?.result || "Failed to duplicate task", {
+        variant: "error",
+      });
     },
   });
 
@@ -227,6 +245,21 @@ const TaskDetailPage = () => {
           Resume
         </Button>
       )}
+      <LoadingButton
+        variant="outlined"
+        size="small"
+        loading={isDuplicating}
+        onClick={() => duplicateTask()}
+        startIcon={<Iconify icon="solar:copy-linear" width={14} />}
+        sx={{
+          textTransform: "none",
+          fontWeight: 500,
+          fontSize: "12px",
+          height: 30,
+        }}
+      >
+        Duplicate
+      </LoadingButton>
     </>
   );
 

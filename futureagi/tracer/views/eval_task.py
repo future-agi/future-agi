@@ -1167,6 +1167,45 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             traceback.print_exc()
             return self._gm.bad_request(str(e))
 
+    @action(detail=False, methods=["post"])
+    def duplicate_eval_task(self, request, *args, **kwargs):
+        try:
+            eval_task_id = self.request.query_params.get("eval_task_id")
+            if not eval_task_id:
+                return self._gm.bad_request("Eval task ID is required")
+
+            try:
+                eval_task = EvalTask.objects.prefetch_related("evals").get(
+                    id=eval_task_id,
+                    project__organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                )
+            except EvalTask.DoesNotExist:
+                return self._gm.bad_request("Eval task not found")
+
+            # Duplicate the EvalTask
+            new_eval_task = EvalTask.objects.create(
+                project=eval_task.project,
+                name=f"Copy of {eval_task.name}" if eval_task.name else "Copy of Task",
+                filters=eval_task.filters.copy() if eval_task.filters else {},
+                sampling_rate=eval_task.sampling_rate,
+                spans_limit=eval_task.spans_limit,
+                run_type=eval_task.run_type,
+                status=EvalTaskStatus.PENDING,
+                evals_details=eval_task.evals_details.copy() if eval_task.evals_details else [],
+                row_type=eval_task.row_type,
+            )
+
+            # Copy Many-to-Many configurations
+            new_eval_task.evals.set(eval_task.evals.all())
+
+            serializer = self.get_serializer(new_eval_task)
+            return self._gm.success_response(serializer.data)
+
+        except Exception as e:
+            traceback.print_exc()
+            return self._gm.bad_request(str(e))
+
     @action(detail=False, methods=["get"])
     def list_eval_tasks_with_project_name(self, request, *args, **kwargs):
         """
