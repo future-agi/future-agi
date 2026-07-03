@@ -28,9 +28,14 @@ yarn test                # Interactive watch mode
 yarn test:run            # One-shot run
 yarn test:changed        # Only tests related to changed files
 yarn test:coverage       # Full run with coverage report
-yarn test:unit           # Unit tests only
-yarn test:integration    # Integration tests only
+yarn test:unit           # Dedicated src/__tests__/unit suite only
+yarn test:integration    # Dedicated src/__tests__/integration suite only
 ```
+
+`test:unit` and `test:integration` run the dedicated
+`frontend/src/__tests__/unit/` and `frontend/src/__tests__/integration/`
+directories. Component-local tests outside those directories are still covered
+by `test:run` and `test:coverage`.
 
 Coverage thresholds (global): **70%** for branches, functions, lines, and statements.
 

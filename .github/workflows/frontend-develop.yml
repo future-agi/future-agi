@@ -37,7 +37,12 @@ jobs:
         run: yarn type-check
 
       - name: Run unit tests
-        run: yarn test:unit --coverage --reporter=verbose
+        run: yarn test:unit
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Run frontend coverage
+        run: yarn test:coverage --reporter=verbose
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 

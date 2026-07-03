@@ -66,6 +66,11 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
+      - name: Run full test suite
+        run: yarn test:run --reporter=verbose
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
       - name: Build check
         run: yarn build
         env:
@@ -106,6 +111,7 @@ jobs:
             ✅ Branch naming convention: PASSED
             ✅ Type checking: PASSED
             ✅ Unit tests: PASSED
+            ✅ Full test suite: PASSED
             ✅ Build check: PASSED
 
             Ready for review! 🎉`;
