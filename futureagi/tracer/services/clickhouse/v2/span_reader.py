@@ -32,8 +32,9 @@ read-only.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import clickhouse_connect
@@ -451,6 +452,55 @@ class CHSpanReader:
         if not rows:
             return None
         return _row_to_chspan(rows[0])
+
+    # ─── One trace's curated fields (the `traces` store the list endpoints read)
+    def get_trace_row(
+        self, trace_id: str, *, project_id: str | None = None
+    ) -> dict | None:
+        """Read one trace's curated fields from the CH ``traces`` table by id."""
+        where = ["id = %(tid)s", "is_deleted = 0"]
+        params: dict[str, Any] = {"tid": str(trace_id)}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
+        keys = (
+            "id",
+            "project_id",
+            "project_version_id",
+            "name",
+            "session_id",
+            "external_id",
+            "tags",
+            "metadata",
+            "input",
+            "output",
+            "error",
+            "error_analysis_status",
+            "created_at",
+        )
+        cols = (
+            "toString(id)",
+            "toString(project_id)",
+            "toString(project_version_id)",
+            "name",
+            "toString(session_id)",
+            "external_id",
+            "tags",
+            "metadata",
+            "input",
+            "output",
+            "error",
+            "error_analysis_status",
+            "created_at",
+        )
+        rows = self._client.query(
+            f"SELECT {', '.join(cols)} FROM traces FINAL "
+            f"WHERE {' AND '.join(where)} LIMIT 1",
+            parameters=params,
+        ).result_rows
+        if not rows:
+            return None
+        return dict(zip(keys, rows[0], strict=False))
 
     # ─── All spans in a trace ────────────────────────────────────────────────
     def list_by_trace(
@@ -1170,7 +1220,7 @@ class CHSpanReader:
         off this so the watermark is a real CH timestamp (clock-skew-proof).
         tz-aware so it compares against Django's tz-aware ``last_swept_at``."""
         dt = self._client.query("SELECT now64(6, 'UTC')").result_rows[0][0]
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
 
     # created_at is unindexed, but spans is PARTITION BY toDate(start_time) /
     # PK toStartOfHour(start_time). A trace's start_time precedes its created_at,
@@ -1213,10 +1263,7 @@ class CHSpanReader:
         # CH hands back created_at tz-naive even for a DateTime64(_, 'UTC')
         # column; force UTC (as ch_now does) so the caller can compare it
         # against the tz-aware watermark without a naive/aware TypeError.
-        return [
-            (r[0], r[1] if r[1].tzinfo else r[1].replace(tzinfo=timezone.utc))
-            for r in rows
-        ]
+        return [(r[0], r[1] if r[1].tzinfo else r[1].replace(tzinfo=UTC)) for r in rows]
 
     # ─── Distinct end_users per trace (feed user-count rollup) ────────────────
     def distinct_end_users_by_trace_ids(
@@ -1762,6 +1809,29 @@ class CHSpanReader:
         # `trace_ids` derived from `session_id` (Trace lookup) is the
         # caller's responsibility; this helper stays narrow.
         return out
+
+    def stream_query(
+        self,
+        sql: str,
+        params: dict[str, Any] | None = None,
+        *,
+        batch_size: int = 10_000,
+    ) -> Iterator[list[str]]:
+        """Stream a query's first column as strings, re-chunked to ``batch_size``
+        so neither the client nor the caller holds the full result in memory — a
+        large historical scan can be consumed in waves."""
+        batch: list[str] = []
+        with self._client.query_row_block_stream(
+            sql, parameters=params or {}
+        ) as stream:
+            for block in stream:
+                for row in block:
+                    batch.append(str(row[0]))
+                    if len(batch) >= batch_size:
+                        yield batch
+                        batch = []
+        if batch:
+            yield batch
 
     # ─── Wave-3 reader extensions (commit 2f7d55e14 follow-up) ────────────────
 
