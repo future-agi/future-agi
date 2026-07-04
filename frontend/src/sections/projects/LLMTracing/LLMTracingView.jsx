@@ -1944,6 +1944,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     primarySpansPendingRef.current = [];
     compareSpansPendingRef.current = [];
 
+<<<<<<< HEAD
     // Land this view's customs in its own tab's slots (primary + compare for a
     // later compare-mode toggle). Pending refs only drain on a datasource
     // fetch, and a warm slot may never refetch (params unchanged) — so merge
@@ -1975,6 +1976,26 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
         });
         return next;
       });
+=======
+    // Queue this view's customs into its own tab's refs (primary + compare for a
+    // later compare-mode toggle). Clone per slot so we don't mutate the cache.
+    if (display.customColumns?.length > 0) {
+      if (viewTabType === "trace") {
+        primaryTracePendingRef.current = display.customColumns.map((c) => ({
+          ...c,
+        }));
+        compareTracePendingRef.current = display.customColumns.map((c) => ({
+          ...c,
+        }));
+      } else {
+        primarySpansPendingRef.current = display.customColumns.map((c) => ({
+          ...c,
+        }));
+        compareSpansPendingRef.current = display.customColumns.map((c) => ({
+          ...c,
+        }));
+      }
+>>>>>>> ee70af01259541d0ea1f4e1a45c6ff0d86fe8546
     }
 
     // Voice/simulator: same-tab-type saved-view switch doesn't trigger
@@ -2044,11 +2065,22 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       }
     }
 
+<<<<<<< HEAD
     // Hydrate persisted filters and upgrade the legacy pre-contract key names
     // before they hit the strict API serializer.
     const nextFilters = hydrateStoredFilterList(
       activeViewConfig.filters,
       getRandomId,
+=======
+    // Array.isArray guard: UsersView writes `filters` as an object, which can
+    // briefly leak across a cross-tab switch before this config resolves.
+    const rawFilters = activeViewConfig.filters;
+    const nextFilters = (Array.isArray(rawFilters) ? rawFilters : []).map(
+      (f) => ({
+        ...f,
+        id: f.id || getRandomId(),
+      }),
+>>>>>>> ee70af01259541d0ea1f4e1a45c6ff0d86fe8546
     );
     if (viewTabType === "trace") {
       setPrimaryTraceFilters(nextFilters);
@@ -2062,10 +2094,20 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     );
 
     // Compare state — always replace, regardless of current showCompare state.
+<<<<<<< HEAD
     const nextCompareFilters = hydrateStoredFilterList(
       activeViewConfig.compare_filters,
       getRandomId,
     );
+=======
+    const rawCompareFilters = activeViewConfig.compareFilters;
+    const nextCompareFilters = (
+      Array.isArray(rawCompareFilters) ? rawCompareFilters : []
+    ).map((f) => ({
+      ...f,
+      id: f.id || getRandomId(),
+    }));
+>>>>>>> ee70af01259541d0ea1f4e1a45c6ff0d86fe8546
     if (viewTabType === "trace") {
       setCompareTraceFilters(nextCompareFilters);
       if (activeViewConfig.compare_date_filter !== undefined) {
@@ -2190,6 +2232,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
 
   // Fallback: release the gate even if a saved custom col never loads, so the
   // Save-view button can't get stuck hidden (the merge check above clears sooner).
+<<<<<<< HEAD
   // Armed only once the view's slot has columns and re-armed on every columns
   // change — on a cold load the first fetch can outlast the timer, and releasing
   // before columns exist skips the order-applying branch above for good.
@@ -2203,6 +2246,13 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     const t = setTimeout(() => setIsHydratingView(false), 2500);
     return () => clearTimeout(t);
   }, [isHydratingView, columns, selectedTab]);
+=======
+  useEffect(() => {
+    if (!isHydratingView) return undefined;
+    const t = setTimeout(() => setIsHydratingView(false), 2500);
+    return () => clearTimeout(t);
+  }, [isHydratingView]);
+>>>>>>> ee70af01259541d0ea1f4e1a45c6ff0d86fe8546
 
   // ---------------------------------------------------------------------------
   // View persistence — auto-save display + reset/default
@@ -2639,6 +2689,19 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     const baselineColumnFilters = hydrateStoredFilterList(
       activeViewConfig.filters,
     );
+
+    // Compare against the view's own tab type (selectedTab can point at the
+    // other table mid cross-type switch and falsely flag dirty).
+    const savedColIds = Array.isArray(baselineDisplay.columnState)
+      ? baselineDisplay.columnState.map((c) => c?.colId)
+      : [];
+    const viewTabType = savedColIds.includes("span_name")
+      ? "spans"
+      : savedColIds.includes("trace_name")
+        ? "trace"
+        : selectedTab;
+    const viewSlotKey =
+      viewTabType === "spans" ? "primary-spans" : "primary-trace";
 
     // Compare against the view's own tab type (selectedTab can point at the
     // other table mid cross-type switch and falsely flag dirty).

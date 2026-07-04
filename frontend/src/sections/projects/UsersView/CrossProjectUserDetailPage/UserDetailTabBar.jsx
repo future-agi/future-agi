@@ -160,7 +160,13 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
       "workspace",
       USER_DETAIL_TAB_TYPE,
     ]);
+<<<<<<< HEAD
     const cachedList = cachedResult?.custom_views ?? [];
+=======
+    const cachedResult = cached?.data?.result;
+    const cachedList =
+      cachedResult?.customViews ?? cachedResult?.custom_views ?? [];
+>>>>>>> ee70af01259541d0ea1f4e1a45c6ff0d86fe8546
     const view =
       cachedList.find((v) => v.id === id) ??
       customViews.find((v) => v.id === id);

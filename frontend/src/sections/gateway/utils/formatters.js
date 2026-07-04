@@ -16,9 +16,16 @@ export function formatCost(value) {
   if (value == null) return "$0.00";
   const num = Number(value);
   if (Number.isNaN(num)) return "$0.00";
-  if (num >= 1000) return `$${(num / 1000).toFixed(1)}K`;
-  if (num >= 1) return `$${num.toFixed(2)}`;
-  return `$${num.toFixed(4)}`;
+
+  const abs = Math.abs(num);
+
+  if (abs >= 1000) return `$${(num / 1000).toFixed(1)}K`;
+  if (abs >= 1) return `$${num.toFixed(2)}`;
+  if (abs >= 0.01) return `$${num.toFixed(4)}`;
+  if (abs >= 0.001) return `$${num.toFixed(5)}`;
+  if (abs > 0) return `$${num.toFixed(7).replace(/0+$/, "0")}`;
+
+  return "$0.00";
 }
 
 export function formatPercent(value, decimals = 1) {

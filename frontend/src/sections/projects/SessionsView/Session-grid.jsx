@@ -59,7 +59,10 @@ const SessionGrid = React.forwardRef(
       canonicalOrderRef,
       isOnSavedView = false,
       onUserReorder,
+<<<<<<< HEAD
       userIdForUserMode,
+=======
+>>>>>>> ee70af01259541d0ea1f4e1a45c6ff0d86fe8546
     },
     gridApiRef,
   ) => {
@@ -161,12 +164,15 @@ const SessionGrid = React.forwardRef(
 
       const columnDefsResult = Object.entries(grouping).flatMap(
         ([group, cols]) => {
+<<<<<<< HEAD
           if (group === "Annotation Metrics") {
             return cols.map((c) => {
               bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
               return getSessionListColumnDef(c);
             });
           }
+=======
+>>>>>>> ee70af01259541d0ea1f4e1a45c6ff0d86fe8546
           if (cols.length === 1) {
             const c = cols[0];
             bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;

@@ -604,10 +604,15 @@ const UsersView = ({
     if (!activeViewConfig) return false;
 
     const baselineDisplay = activeViewConfig.display || {};
+<<<<<<< HEAD
     const baselineExtraFilters = hydrateStoredFilterList(
       activeViewConfig.extra_filters,
     );
     const baselineDateOption = baselineDisplay.dateFilter?.dateOption ?? null;
+=======
+    const baselineExtraFilters = baselineFilters.extraFilters || [];
+    const baselineDateOption = baselineFilters.dateFilter?.dateOption ?? null;
+>>>>>>> ee70af01259541d0ea1f4e1a45c6ff0d86fe8546
 
     // The `actions` column is an always-present UI column (not user data); its
     // visibility/position must not count toward "modified" (TH-6119).

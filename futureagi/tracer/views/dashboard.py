@@ -1312,8 +1312,66 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             except Exception:
                 logger.exception("annotation_metrics_failed")
 
+<<<<<<< HEAD
             # Collect span attributes from background thread
             custom_attributes = f_attrs.result()
+=======
+            # 6. Span attributes (traces only) — single query for all projects
+            custom_attributes = []
+            try:
+                if is_clickhouse_enabled() and project_ids:
+                    from tracer.services.clickhouse.client import get_clickhouse_client
+
+                    ch = get_clickhouse_client()
+                    rows, cols, _ = ch.execute_read(
+                        """
+                        SELECT key, argMax(type, cnt) AS type FROM (
+                            SELECT
+                                pair.1 AS key,
+                                pair.2 AS type,
+                                count() AS cnt
+                            FROM (
+                                SELECT span_attr_str, span_attr_num, span_attr_bool
+                                FROM spans
+                                WHERE project_id IN %(project_ids)s
+                                  AND _peerdb_is_deleted = 0
+                                LIMIT 100000
+                            )
+                            ARRAY JOIN arrayConcat(
+                                arrayMap(k -> (k, 'text'),    mapKeys(span_attr_str)),
+                                arrayMap(k -> (k, 'number'),  mapKeys(span_attr_num)),
+                                arrayMap(k -> (k, 'boolean'), mapKeys(span_attr_bool))
+                            ) AS pair
+                            GROUP BY pair.1, pair.2
+                        )
+                        GROUP BY key ORDER BY key LIMIT 2000
+                        """,
+                        {"project_ids": project_ids},
+                        timeout_ms=15000,
+                    )
+                    for r in rows:
+                        if isinstance(r, dict):
+                            k, t = r.get("key", ""), r.get("type", "string")
+                        elif isinstance(r, (list, tuple)) and len(r) >= 2:
+                            k, t = r[0], r[1]
+                        else:
+                            continue
+                        if k:
+                            custom_attributes.append({"key": k, "type": t})
+                elif project_ids:
+                    for pid in project_ids:
+                        keys = SQL_query_handler.get_span_attributes_for_project(pid)
+                        for key in keys:
+                            k = key if isinstance(key, str) else str(key)
+                            if k not in [
+                                a.get("key") if isinstance(a, dict) else a
+                                for a in custom_attributes
+                            ]:
+                                custom_attributes.append({"key": k, "type": "string"})
+            except Exception:
+                pass  # non-fatal — attributes just won't appear in picker
+
+>>>>>>> ee70af01259541d0ea1f4e1a45c6ff0d86fe8546
             for attr in custom_attributes:
                 k = attr["key"] if isinstance(attr, dict) else attr
                 t = attr.get("type", "string") if isinstance(attr, dict) else "string"

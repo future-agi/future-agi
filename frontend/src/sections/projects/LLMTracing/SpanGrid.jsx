@@ -44,6 +44,29 @@ import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 const ROWS_LIMIT = 100;
 
+<<<<<<< HEAD
+=======
+// snake_case → camelCase keys (id preserved). Dedup by id: the spans config can
+// list a column twice → AG Grid would otherwise mint a phantom `<id>_1` column.
+const normalizeConfigKeys = (config) => {
+  if (!Array.isArray(config)) return config;
+  const seen = new Set();
+  const out = [];
+  for (const obj of config) {
+    const result = {};
+    for (const [key, value] of Object.entries(obj)) {
+      result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
+    }
+    if (result.id != null) {
+      if (seen.has(result.id)) continue;
+      seen.add(result.id);
+    }
+    out.push(result);
+  }
+  return out;
+};
+
+>>>>>>> ee70af01259541d0ea1f4e1a45c6ff0d86fe8546
 const getSpanListColumnDefs = (col) => {
   const colId = col?.id;
   const isInputOutput = colId === "input" || colId === "output";
