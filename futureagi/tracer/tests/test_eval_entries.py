@@ -6,8 +6,10 @@ shape and stamping the config hash. Idempotent via the PR 3b unique indexes.
 """
 
 import uuid
+from datetime import timedelta
 
 import pytest
+from django.utils import timezone
 
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask, EvalTaskStatus, RowType, RunType
@@ -51,6 +53,19 @@ def _task(project, *, row_type=RowType.SPANS, evals=(), sampling_rate=100.0):
     return task
 
 
+def _seed_past(spans, *, delta=timedelta(minutes=1)):
+    """Seed spans stamped a moment in the past so each span's start_time is
+    strictly before the desired-row query's now() upper bound — otherwise a span
+    created in the same second as materialize (as these tests do) is excluded by
+    ``start_time < end_date`` and never materializes."""
+    ObservationSpan.objects.filter(id__in=[s.id for s in spans]).update(
+        created_at=timezone.now() - delta
+    )
+    for s in spans:
+        s.refresh_from_db()
+    seed_ch_spans(spans)
+
+
 def _make_spans(
     project, n, *, session=None, shared_trace=None, parent_span_id=None, prefix="s"
 ):
@@ -69,7 +84,7 @@ def _make_spans(
                 parent_span_id=parent_span_id,
             )
         )
-    seed_ch_spans(spans)
+    _seed_past(spans)
     return spans
 
 
@@ -137,7 +152,7 @@ class TestMaterializeTracesAndSessions:
             observation_type="tool",
             parent_span_id=root.id,
         )
-        seed_ch_spans([root, child])
+        _seed_past([root, child])
         task = _task(project, row_type=RowType.TRACES, evals=[custom_eval_config])
         materialize_pending(task)
         row = _live(task).get()
@@ -155,7 +170,7 @@ class TestMaterializeTracesAndSessions:
             observation_type="llm",
             parent_span_id="missing-parent",
         )
-        seed_ch_spans([orphan])
+        _seed_past([orphan])
         task = _task(project, row_type=RowType.TRACES, evals=[custom_eval_config])
         materialize_pending(task)  # must not raise
         assert _live(task).count() == 0

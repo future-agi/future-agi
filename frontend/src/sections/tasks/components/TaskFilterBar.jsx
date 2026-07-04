@@ -78,15 +78,6 @@ const OP_DISPLAY = {
   not_between: "not between",
 };
 
-const TASK_FILTER_CATEGORIES = [
-  { key: "all", label: "All", icon: "mdi:view-grid-outline" },
-  { key: "system", label: "Span type", icon: "mdi:shape-outline" },
-  { key: "attribute", label: "Attributes", icon: "mdi:code-braces" },
-];
-
-const isTaskFilterProperty = (property) =>
-  property?.id === "span_kind" || property?.category === "attribute";
-
 // Panel filter → form row(s). List/range ops keep array `filterValue`;
 // no-value ops drop it; other ops explode into one scalar row per value.
 function convertNewToOld(newFilters) {
@@ -553,8 +544,6 @@ const TaskFilterBar = ({
         projectId={projectId}
         isSimulator={isSimulator}
         tab={rowTypeToFilterTab(rowType)}
-        categories={TASK_FILTER_CATEGORIES}
-        propertyFilter={isTaskFilterProperty}
         onApply={(next) => applyPanelFilters(next || [])}
       />
     </Box>

@@ -56,18 +56,24 @@ def _task(
 
 
 def _make_spans(project, n, *, observation_type="llm", prefix="s"):
+    # Stamp a moment in the past so the seeded span's start_time is strictly
+    # before the desired-row query's now() upper bound — otherwise a span
+    # created in the same second as the reconcile (as these tests do) is
+    # excluded by ``start_time < end_date`` and never materializes.
+    seeded_at = timezone.now() - timedelta(minutes=1)
     spans = []
     for i in range(n):
         trace = Trace.objects.create(project=project, name=f"tr-{prefix}-{i}")
-        spans.append(
-            ObservationSpan.objects.create(
-                id=f"{prefix}-{i}-{uuid.uuid4().hex[:8]}",
-                project=project,
-                trace=trace,
-                name=f"sp-{prefix}-{i}",
-                observation_type=observation_type,
-            )
+        span = ObservationSpan.objects.create(
+            id=f"{prefix}-{i}-{uuid.uuid4().hex[:8]}",
+            project=project,
+            trace=trace,
+            name=f"sp-{prefix}-{i}",
+            observation_type=observation_type,
         )
+        ObservationSpan.objects.filter(id=span.id).update(created_at=seeded_at)
+        span.refresh_from_db()
+        spans.append(span)
     seed_ch_spans(spans)
     return spans
 
