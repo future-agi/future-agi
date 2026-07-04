@@ -764,19 +764,22 @@ class ScoreViewSet(viewsets.ModelViewSet):
             #     .values_list("trace_id", flat=True).first()
             # Org-tenant scope is verified by checking the span's project_id
             # against the requesting org via Project (the only side of the
-            # FK that's still in PG).
+            # FK that's still in PG). Read the lean ``scope_by_ids`` projection
+            # (project_id + trace_id only): pulling the full span row here blows
+            # the shared ClickHouse memory limit (code 241) on fat voice spans.
             with get_reader() as reader:
-                span = reader.get(str(source_id))
+                span_scope = reader.scope_by_ids([str(source_id)]).get(str(source_id))
             span_belongs_to_org = False
             trace_id = None
             if (
-                span is not None
+                span_scope is not None
+                and span_scope.project_id is not None
                 and Project.objects.filter(
-                    id=span.project_id, organization=request.organization
+                    id=span_scope.project_id, organization=request.organization
                 ).exists()
             ):
                 span_belongs_to_org = True
-                trace_id = span.trace_id or None
+                trace_id = span_scope.trace_id or None
 
             queue_note_filter = Q(queue_item__observation_span_id=source_id)
             if trace_id:

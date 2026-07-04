@@ -1,4 +1,13 @@
+from model_hub.models.choices import AnnotationTypeChoices
 from tfc.settings.settings import BASE_URL
+
+ANNOTATION_LABEL_VALUE_KEYS = {
+    AnnotationTypeChoices.TEXT.value: "text",
+    AnnotationTypeChoices.NUMERIC.value: "value",
+    AnnotationTypeChoices.STAR.value: "rating",
+    AnnotationTypeChoices.THUMBS_UP_DOWN.value: "value",
+    AnnotationTypeChoices.CATEGORICAL.value: "selected",
+}
 
 # ---------------------------------------------------------------------------
 # Dataset validation constants

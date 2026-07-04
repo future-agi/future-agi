@@ -2,6 +2,7 @@ import { Box, Typography } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
 import React, { useCallback, useEffect, useMemo, useRef } from "react";
 import {
+  getColumnDefsSignature,
   getSelectedCallExecutionIdsFilter,
   getTestRunDetailColumnQuery,
   getTestRunDetailGridColumnDefs,
@@ -204,7 +205,10 @@ const TestRunDetailGrid = () => {
             const newColDefs = getTestRunDetailGridColumnDefs(
               data?.column_order,
             );
-            if (currentColumnDef.length !== newColDefs?.length) {
+            if (
+              getColumnDefsSignature(currentColumnDef) !==
+              getColumnDefsSignature(newColDefs)
+            ) {
               setColumnDef(applyReasonColumnVisibility(newColDefs));
             }
 
@@ -337,7 +341,10 @@ const TestRunDetailGrid = () => {
 
         const currentColumnDef = useTestDetailStore.getState().columnDef;
         const newColDefs = getTestRunDetailGridColumnDefs(columns);
-        if (newColDefs.length !== currentColumnDef?.length) {
+        if (
+          getColumnDefsSignature(newColDefs) !==
+          getColumnDefsSignature(currentColumnDef)
+        ) {
           // If the columns have changed, update the query data no need to use transaction
           logger.debug("columns have changed, updating query data", {
             columns,

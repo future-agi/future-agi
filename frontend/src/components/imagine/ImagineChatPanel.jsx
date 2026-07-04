@@ -119,7 +119,7 @@ const ImagineChatPanel = forwardRef(function ImagineChatPanel(
         traceId +
         ".\n\n" +
         "Available data in traceData.trace:\n" +
-        "- transcript: array of {speakerRole, message/content, time, duration, startTimeSeconds, endTimeSeconds} — the full call conversation\n" +
+        "- transcript: array of {speaker_role, message/content, time, duration, startTimeSeconds, endTimeSeconds} — the full call conversation\n" +
         "- call_summary: AI-generated summary of the call\n" +
         "- recordings: audio URLs (stereo, mono, assistant, customer channels)\n" +
         "- provider: voice provider (e.g. vapi, retell, livekit)\n" +
@@ -130,11 +130,11 @@ const ImagineChatPanel = forwardRef(function ImagineChatPanel(
         "traceData.transcript is a shortcut to the transcript array.\n\n" +
         "Best widget types for voice calls:\n" +
         "- data_table with rowsFrom: show the transcript as a table\n" +
-        "  {dataBinding: {rowsFrom: 'transcript', columns: [{field: 'speakerRole', headerName: 'Speaker'}, {field: 'message', headerName: 'Message'}, {field: 'duration', headerName: 'Duration (s)'}]}}\n" +
+        "  {dataBinding: {rowsFrom: 'transcript', columns: [{field: 'speaker_role', headerName: 'Speaker'}, {field: 'message', headerName: 'Message'}, {field: 'duration', headerName: 'Duration (s)'}]}}\n" +
         "- pie_chart with groupFrom: speaker turn distribution\n" +
-        "  {dataBinding: {groupFrom: 'transcript', groupBy: 'speakerRole', aggregate: 'count'}}\n" +
+        "  {dataBinding: {groupFrom: 'transcript', groupBy: 'speaker_role', aggregate: 'count'}}\n" +
         "- bar_chart with seriesFrom: duration per turn\n" +
-        "  {dataBinding: {seriesFrom: 'transcript', seriesConfig: {name: 'Duration', valuePath: 'duration'}, categoryPath: 'speakerRole'}}\n" +
+        "  {dataBinding: {seriesFrom: 'transcript', seriesConfig: {name: 'Duration', valuePath: 'duration'}, categoryPath: 'speaker_role'}}\n" +
         "- key_value: call metadata (provider, status, duration, ended reason)\n" +
         "  {dataBinding: {items: [{key: 'Provider', valuePath: 'trace.provider'}, {key: 'Summary', valuePath: 'trace.call_summary'}]}}\n" +
         "- metric_card: computed values\n" +

@@ -43,17 +43,6 @@ _COMPOSITE_FIELDS = (
     "composite_child_axis",
 )
 
-# A pinned child runs the version snapshot, not the live template.
-_VERSION_FIELDS = (
-    "prompt_messages",
-    "config_snapshot",
-    "criteria",
-    "model",
-    "output_type_normalized",
-    "pass_threshold",
-    "choice_scores",
-)
-
 
 def resolved_config_hash(config: CustomEvalConfig) -> str:
     payload: dict[str, Any] = {
@@ -89,7 +78,7 @@ def _children_component(
 ) -> list[dict[str, Any]]:
     links = (
         CompositeEvalChild.objects.filter(parent=template, deleted=False)
-        .select_related("child", "pinned_version")
+        .select_related("child")
         .order_by("order")
     )
     return [
@@ -105,5 +94,6 @@ def _children_component(
 
 def _child_content(link: CompositeEvalChild, stack: tuple[UUID, ...]) -> dict[str, Any]:
     if link.pinned_version_id:
-        return {field: getattr(link.pinned_version, field) for field in _VERSION_FIELDS}
+        # Versions are immutable, so the id is a complete fingerprint of the pin.
+        return {"pinned_version": str(link.pinned_version_id)}
     return _template_component(link.child, stack)

@@ -110,7 +110,7 @@ services:
       context: ../agentcc-gateway
       dockerfile: Dockerfile
     ports:
-      - "${AGENTCC_GATEWAY_PORT:-8090}:8080"
+      - "${AGENTCC_GATEWAY_PORT:-8090}:8090"
     volumes:
       - ../${AGENTCC_CONFIG_PATH:-agentcc-gateway/config.example.yaml}:/app/config.yaml:ro
       - ${GOOGLE_APPLICATION_CREDENTIALS:-/dev/null}:/app/Vertex_AI_Creds.json:ro
@@ -335,8 +335,8 @@ services:
     deploy:
       resources:
         limits:
-          cpus: "2.0"
-          memory: 4G
+          cpus: "4.0"
+          memory: 12G
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 10s

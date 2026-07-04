@@ -288,7 +288,7 @@ const AddEvalsFeedbackForm = ({
             color="text.primary"
             mb={1}
           >
-            What would you like to improve{" "}
+            Write the right explanation{" "}
             <span style={{ color: "red" }}>*</span>
           </Typography>
           <FormTextFieldV2
@@ -298,7 +298,7 @@ const AddEvalsFeedbackForm = ({
             control={control}
             fullWidth
             multiline
-            placeholder="What was wrong with the original explanation? Please be specific as possible in your argument"
+            placeholder="Write the explanation the eval should have given for this result, and why it's correct"
             helperText=""
             sx={{
               "& .MuiOutlinedInput-root": {
@@ -311,7 +311,7 @@ const AddEvalsFeedbackForm = ({
         <Divider orientation="horizontal" />
         <Box
           sx={{
-            gap: 1,
+            gap: 2,
             display: "flex",
             flexDirection: "column",
           }}
@@ -325,10 +325,10 @@ const AddEvalsFeedbackForm = ({
             label={""}
             required
             groupSx={{
-              borderRadius: "8px",
-              border: "1px solid var(--border-default)",
-              padding: "10px",
+              border: "none",
+              padding: 0,
               gap: 3,
+              marginTop: "2px",
             }}
             optionSx={{
               alignItems: "start",
