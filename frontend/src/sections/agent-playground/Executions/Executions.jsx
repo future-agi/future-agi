@@ -24,8 +24,8 @@ export default function Executions() {
         (page.data?.result?.executions ?? []).map((e) => ({
           id: e.id,
           status: e.status?.toLowerCase(),
-          startedAt: e.startedAt,
-          completedAt: e.completedAt,
+          startedAt: e.started_at,
+          completedAt: e.completed_at,
         })),
       ),
     [data],
