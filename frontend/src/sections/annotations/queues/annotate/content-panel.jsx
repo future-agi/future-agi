@@ -14,7 +14,6 @@ import {
   CircularProgress,
   Dialog,
   Divider,
-  Grid,
   IconButton,
   LinearProgress,
   Stack,
@@ -48,32 +47,13 @@ import {
 import ImagineTab from "src/components/imagine/ImagineTab";
 import useImagineStore from "src/components/imagine/useImagineStore";
 import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
-import CallStatus from "src/sections/test/CallLogs/CallStatus";
-import { format, isValid } from "date-fns";
-import AudioPlayerCustom from "src/sections/test-detail/TestDetailDrawer/AudioPlayerCustom";
-import LeftSection from "src/components/CallLogsDetailDrawer/LeftSection";
-import TestDetailDrawerRightSection from "src/sections/test-detail/TestDetailDrawer/TestDetailDrawerRightSection";
 import { AGENT_TYPES } from "src/sections/agents/constants";
-import { formatDurationSafe } from "src/components/CallLogsDrawer/CustomCallLogHeader";
-import { getCsatScoreColor } from "src/components/CallLogsDrawer/common";
-import SvgColor from "src/components/svg-color";
 import { useVoiceCallDetail } from "src/sections/agents/helper";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
-import ScenarioView from "src/components/VoiceDetailDrawerV2/ScenarioView";
+import ChatDetailDrawerV2 from "src/components/ChatDetailDrawerV2";
 
 const CustomJsonViewer = lazy(
   () => import("src/components/custom-json-viewer/CustomJsonViewer"),
-);
-
-const Separator = () => (
-  <Typography
-    typography="s2_1"
-    color="text.disabled"
-    fontWeight="fontWeightRegular"
-    sx={{ mx: 0.5 }}
-  >
-    |
-  </Typography>
 );
 
 const SOURCE_LABELS = {
@@ -623,6 +603,7 @@ function VoiceCallContent({ traceId }) {
     status: callData.status,
     simulationCallType: "voice",
     callType: callData.call_type,
+    call_type: callData.call_type,
     timestamp: callData.created_at || callData.started_at,
     duration: callData.duration_seconds,
     scenario: callData.scenario_name,
@@ -1390,212 +1371,22 @@ function SimulationContent({ content, hideAnnotationTab = false }) {
       sx={{
         display: "flex",
         flexDirection: "column",
-        gap: 2,
-        p: 3,
-        overflow: "auto",
+        flex: 1,
+        minWidth: 0,
+        minHeight: 0,
+        width: "100%",
         height: "100%",
       }}
     >
-      {/* Header — same style as CustomCallLogHeader without nav/close buttons */}
-      <Box
-        sx={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 1,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          pb: 2,
-        }}
-      >
-        <Typography typography="m3" fontWeight="fontWeightSemiBold">
-          {simulationCallType === AGENT_TYPES.CHAT
-            ? "Chat Log Details"
-            : "Call Log Details"}
-        </Typography>
-        <Box
-          sx={{
-            display: "flex",
-            alignItems: "center",
-            flexWrap: "wrap",
-            gap: 0.5,
-          }}
-        >
-          {drawerData.scenario && (
-            <>
-              <Typography
-                typography="s2_1"
-                color="text.disabled"
-                fontWeight="fontWeightRegular"
-              >
-                {drawerData.scenario}
-              </Typography>
-              <Separator />
-            </>
-          )}
-          {drawerData.timestamp && (
-            <>
-              <Typography
-                typography="s2_1"
-                color="text.disabled"
-                fontWeight="fontWeightRegular"
-              >
-                {(() => {
-                  const ts = new Date(drawerData.timestamp);
-                  return isValid(ts)
-                    ? format(ts, "yyyy-MM-dd HH:mm:ss")
-                    : drawerData.timestamp;
-                })()}
-              </Typography>
-              <Separator />
-            </>
-          )}
-          {drawerData.duration && (
-            <>
-              <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                <Iconify
-                  icon="material-symbols:schedule-outline"
-                  width="14px"
-                  height="14px"
-                  color="text.disabled"
-                />
-                <Typography
-                  typography="s2_1"
-                  color="text.disabled"
-                  fontWeight="fontWeightRegular"
-                >
-                  {formatDurationSafe(drawerData.duration)}
-                </Typography>
-              </Box>
-              <Separator />
-            </>
-          )}
-          {drawerData.overallScore && (
-            <>
-              <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                <Typography typography="s2_1" fontWeight="fontWeightRegular">
-                  CSAT Score:
-                </Typography>
-                <Typography
-                  typography="s2_1"
-                  color={getCsatScoreColor(drawerData.overallScore)}
-                  fontWeight="fontWeightSemiBold"
-                >
-                  {`${drawerData.overallScore}/10`}
-                </Typography>
-              </Box>
-              <Separator />
-            </>
-          )}
-          {drawerData.callType && isVoice && (
-            <>
-              <Chip
-                label={
-                  (drawerData.callType ?? "").toLowerCase().includes("inbound")
-                    ? "Inbound"
-                    : "Outbound"
-                }
-                icon={
-                  <SvgColor
-                    sx={{ width: 20 }}
-                    src={
-                      (drawerData.callType ?? "")
-                        .toLowerCase()
-                        .includes("inbound")
-                        ? "/assets/icons/ic_call_inbound.svg"
-                        : "/assets/icons/ic_call_outbound.svg"
-                    }
-                  />
-                }
-                size="small"
-                sx={{
-                  typography: "s1",
-                  fontWeight: "fontWeightMedium",
-                  color: "blue.700",
-                  bgcolor: "blue.o10",
-                  borderRadius: 0.25,
-                  paddingX: 1,
-                  "& .MuiChip-icon": { color: "blue.700" },
-                }}
-              />
-              <Separator />
-            </>
-          )}
-          <CallStatus value={drawerData.status ?? ""} />
-        </Box>
-        {drawerData.endedReason && (
-          <Typography
-            variant="s2_1"
-            color="text.disabled"
-            fontWeight="fontWeightRegular"
-          >
-            {simulationCallType === AGENT_TYPES.CHAT ? "Chat" : "Call"} end
-            reason : {drawerData.endedReason}
-          </Typography>
-        )}
-      </Box>
-
-      <ScenarioView data={drawerData} />
-
-      {/* Recording — only for voice */}
-      {isVoice && (
-        <Stack
-          sx={{
-            mx: 0,
-            display: "flex",
-            flexDirection: "column",
-            gap: 2,
-            backgroundColor: "background.neutral",
-            padding: "14px",
-            borderRadius: 0.5,
-            border: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Typography variant="m3" fontWeight="fontWeightMedium">
-            Recording
-          </Typography>
-          <AudioPlayerCustom data={drawerData} />
-        </Stack>
-      )}
-
-      {/* Two-column layout — Left: Transcript, Right: Analytics/Evaluations */}
-      <Grid container spacing={2}>
-        <Grid
-          item
-          xs={6}
-          md={6}
-          display="flex"
-          flexDirection="column"
-          gap={2}
-          height="100%"
-        >
-          <LeftSection data={drawerData} />
-        </Grid>
-        <Grid item xs={6} md={6} height="100%">
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 0.5,
-              alignItems: "center",
-            }}
-          >
-            <TestDetailDrawerRightSection
-              scenarioId={drawerData.scenarioId}
-              openedExecutionId={callId}
-              latencies={drawerData.customerLatencyMetrics?.systemMetrics}
-              analysisSummary={drawerData.callSummary}
-              costBreakdown={drawerData.customerCostBreakdown}
-              evalOutputs={drawerData.evalMetrics}
-              callStatus={drawerData.overallStatus}
-              status={drawerData.status}
-              simulationCallType={drawerData.simulationCallType}
-              sessionId={drawerData.sessionId}
-              hideAnnotationTab={hideAnnotationTab}
-            />
-          </Box>
-        </Grid>
-      </Grid>
+      <ChatDetailDrawerV2
+        data={drawerData}
+        onClose={() => {}}
+        hasPrev={false}
+        hasNext={false}
+        scenarioId={drawerData.scenarioId}
+        hideAnnotationTab={hideAnnotationTab}
+        embedded
+      />
     </Box>
   );
 }

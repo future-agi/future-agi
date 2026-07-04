@@ -1204,13 +1204,16 @@ const EvalDetailPage = () => {
                       : evalType === "agent"
                         ? "rgba(46,203,113,0.08)"
                         : "rgba(124,77,255,0.08)",
-              color: isComposite
-                ? "info.main"
-                : evalType === "code"
-                  ? "warning.main"
-                  : evalType === "agent"
-                    ? "success.main"
-                    : "primary.main",
+              color: (theme) =>
+                isComposite
+                  ? theme.palette.info.main
+                  : evalType === "code"
+                    ? theme.palette.mode === "light"
+                      ? "#B45309"
+                      : theme.palette.warning.main
+                    : evalType === "agent"
+                      ? theme.palette.success.main
+                      : theme.palette.primary.main,
             }}
           >
             {(() => {
@@ -1959,8 +1962,13 @@ const EvalDetailPage = () => {
                   {isDirty && (
                     <Typography
                       variant="caption"
-                      color="warning.main"
-                      sx={{ fontSize: "11px" }}
+                      sx={{
+                        fontSize: "11px",
+                        color: (theme) =>
+                          theme.palette.mode === "light"
+                            ? theme.palette.amber[700]
+                            : theme.palette.warning.main,
+                      }}
                     >
                       Unsaved changes
                     </Typography>

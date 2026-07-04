@@ -301,20 +301,17 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         visMap[c.field] = c.isVisible !== false;
         orderIndex.set(c.field, i);
       }
-      if (c.groupBy === "Custom Columns") customCols.push(c);
+      if (c.groupBy === "Custom Columns") {
+        customCols.push(c);
+        // colId key so customs sort into their own store position.
+        orderIndex.set(c.id, i);
+      }
     });
 
-    const updated = callLogsColumnDefs
-      .map((col) => ({
-        ...col,
-        ...(col.field &&
-          col.field in visMap && { hide: !visMap[col.field] }),
-      }))
-      .sort((a, b) => {
-        const ai = orderIndex.get(a?.field) ?? Infinity;
-        const bi = orderIndex.get(b?.field) ?? Infinity;
-        return ai - bi;
-      });
+    const updated = callLogsColumnDefs.map((col) => ({
+      ...col,
+      ...(col.field && col.field in visMap && { hide: !visMap[col.field] }),
+    }));
 
     // Add column defs for custom columns not already in the grid
     const existingFields = new Set(callLogsColumnDefs.map((c) => c.field));
@@ -361,14 +358,14 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
         },
       }));
 
-    // Group under a "Custom Columns" header for parity with the other grids.
-    if (newCustomDefs.length > 0) {
-      return [
-        ...updated,
-        { headerName: "Custom Columns", children: newCustomDefs },
-      ];
-    }
-    return updated;
+    // Sort base + custom together so customs sit flat at their own positions.
+    const combined = [...updated, ...newCustomDefs];
+    combined.sort((a, b) => {
+      const ai = orderIndex.get(a?.field ?? a?.colId) ?? Infinity;
+      const bi = orderIndex.get(b?.field ?? b?.colId) ?? Infinity;
+      return ai - bi;
+    });
+    return combined;
   }, [callLogsColumnDefs, columnVisibility, isLoading]);
   useEffect(() => {
     return () => {
@@ -379,7 +376,15 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
   // Propagate reorder to parent so the View columns dropdown stays in sync.
   const onColumnMoved = useCallback(
     (params) => {
-      if (!params?.finished || !params?.api || typeof onColumnsChange !== "function") return;
+      if (
+        !params?.finished ||
+        !params?.api ||
+        typeof onColumnsChange !== "function"
+      )
+        return;
+      // User drags only — a programmatic move would rebuild the shared trace
+      // `columns` from this grid's voice-only state and corrupt it.
+      if (params.source !== "uiColumnMoved") return;
       const newOrder = (params?.api?.getColumnState() ?? [])
         .map((s) => s.colId)
         .filter((id) => id !== APP_CONSTANTS.AG_GRID_SELECTION_COLUMN);
@@ -394,8 +399,7 @@ const CallLogsGrid = React.forwardRef(function CallLogsGrid(
       const sameOrder =
         next.length === cols.length &&
         next.every(
-          (c, i) =>
-            (c?.field || c?.id) === (cols[i]?.field || cols[i]?.id),
+          (c, i) => (c?.field || c?.id) === (cols[i]?.field || cols[i]?.id),
         );
       if (!sameOrder) onColumnsChange(next);
     },

@@ -407,7 +407,7 @@ export const buildProperties = (allColumns) => {
   return allColumns
     .map((column) => {
       const colData = column?.col;
-      const dataType = colData?.data_type ?? colData?.dataType;
+      const dataType = colData?.data_type;
       if (!ALLOWED_DATA_TYPES.has(dataType)) return null;
       const panelType = DATA_TYPE_TO_PANEL_TYPE[dataType] || "string";
       const originType = colData?.origin_type;

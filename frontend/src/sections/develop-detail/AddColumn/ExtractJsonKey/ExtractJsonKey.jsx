@@ -1,5 +1,5 @@
 import { Box, Drawer, IconButton, Typography } from "@mui/material";
-import React, { useEffect } from "react";
+import React, { useEffect, useMemo } from "react";
 import { useForm } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import PropTypes from "prop-types";
@@ -15,9 +15,13 @@ import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useExtractJsonKeyStore } from "../../states";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
-import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
+import {
+  useDatasetColumnConfig,
+  useGetJsonColumnSchema,
+} from "src/api/develop/develop-detail";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
+import { isJsonColumn } from "./columnFilterUtils";
 
 const getDefaultValue = () => {
   return {
@@ -50,6 +54,23 @@ export const ExtractJsonKeyChild = ({
 
   const { dataset } = useParams();
   const allColumns = useDatasetColumnConfig(dataset);
+  // refetchOnMount: "always" ensures the schema is fresh when the drawer opens,
+  // so a newly-created api_call column isn't hidden by a stale cache entry.
+  const { data: jsonSchemas = {} } = useGetJsonColumnSchema(dataset, {
+    refetchOnMount: "always",
+  });
+
+  const columnOptions = useMemo(
+    () =>
+      allColumns
+        ?.filter((column) => isJsonColumn(column, jsonSchemas))
+        ?.map((column) => ({
+          label: column.headerName,
+          value: column.field,
+        })),
+    [allColumns, jsonSchemas],
+  );
+
   useEffect(() => {
     if (initialData) {
       reset(initialData);
@@ -200,12 +221,7 @@ export const ExtractJsonKeyChild = ({
             size="small"
             control={control}
             fieldName="columnId"
-            options={allColumns
-              ?.filter((column) => column.dataType === "json")
-              ?.map((column) => ({
-                label: column.headerName,
-                value: column.field,
-              }))}
+            options={columnOptions}
             noOptions={"No suitable column"}
           />
           <FormTextFieldV2
@@ -305,19 +321,31 @@ const ExtractJsonKey = ({ initialData, onFormSubmit }) => {
         },
       }}
     >
-      {isLoadingColumnConfig && (
-        <Box sx={{ minWidth: "510px", height: "100%" }}>
-          <DynamicColumnSkeleton />
-        </Box>
+      {/* Mount the child only while the drawer is open. The drawer is
+          variant="persistent" so it stays in the DOM, which means without
+          this gate the child + its useGetJsonColumnSchema hook would mount
+          once on first open and never refetch — newly-created API call
+          columns would stay invisible until a full page refresh. Gating
+          on openExtractJsonKey forces a fresh mount each open, which makes
+          the existing `refetchOnMount: "always"` on the schema hook actually
+          do its job. */}
+      {openExtractJsonKey && (
+        <>
+          {isLoadingColumnConfig && (
+            <Box sx={{ minWidth: "510px", height: "100%" }}>
+              <DynamicColumnSkeleton />
+            </Box>
+          )}
+          <ShowComponent condition={!isLoadingColumnConfig}>
+            <ExtractJsonKeyChild
+              initialData={columnConfig ?? initialData}
+              onFormSubmit={onFormSubmit}
+              onClose={onClose}
+              editId={editId}
+            />
+          </ShowComponent>
+        </>
       )}
-      <ShowComponent condition={!isLoadingColumnConfig}>
-        <ExtractJsonKeyChild
-          initialData={columnConfig ?? initialData}
-          onFormSubmit={onFormSubmit}
-          onClose={onClose}
-          editId={editId}
-        />
-      </ShowComponent>
     </Drawer>
   );
 };

@@ -6266,7 +6266,7 @@ export default function WidgetEditorView() {
 
                   return (
                     <Box
-                      key={`${opt.type}-${opt.id}`}
+                      key={`${opt.source || "all"}-${opt.type}-${opt.id}`}
                       onClick={
                         alreadyUsed ? undefined : () => handlePickerSelect(opt)
                       }

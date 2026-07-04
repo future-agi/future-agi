@@ -77,7 +77,9 @@ def go_ref_type(schema: dict[str, Any], optional: bool = False) -> str:
     return f"*{name}" if optional else name
 
 
-def go_type(schema: dict[str, Any], optional: bool = False, map_value: bool = False) -> str:
+def go_type(
+    schema: dict[str, Any], optional: bool = False, map_value: bool = False
+) -> str:
     if "$ref" in schema:
         name = ref_name(schema)
         if map_value:
@@ -121,6 +123,38 @@ def py_field_name(json_name: str) -> str:
     return json_name
 
 
+def lower_camel_name(json_name: str) -> str:
+    head, *tail = json_name.split("_")
+    return head + "".join(part[:1].upper() + part[1:] for part in tail)
+
+
+def acronym_camel_name(json_name: str) -> str:
+    parts = json_name.split("_")
+    if not parts:
+        return json_name
+
+    rendered = [parts[0]]
+    for part in parts[1:]:
+        lower = part.lower()
+        if lower in ACRONYMS:
+            rendered.append(ACRONYMS[lower])
+        else:
+            rendered.append(part[:1].upper() + part[1:])
+    return "".join(rendered)
+
+
+def validation_aliases(json_name: str) -> list[str]:
+    aliases = []
+    for alias in (
+        json_name,
+        lower_camel_name(json_name),
+        acronym_camel_name(json_name),
+    ):
+        if alias not in aliases:
+            aliases.append(alias)
+    return aliases
+
+
 def py_field_line(name: str, schema: dict[str, Any], required: bool) -> str:
     field = py_field_name(name)
     annotation = py_type(schema)
@@ -129,8 +163,18 @@ def py_field_line(name: str, schema: dict[str, Any], required: bool) -> str:
     else:
         annotation = f"{annotation} | None"
         default = "None"
+
+    field_args = []
     if field != name:
-        default = f'Field({default}, alias="{name}")'
+        field_args.append(f'alias="{name}"')
+
+    aliases = validation_aliases(name)
+    if len(aliases) > 1 or field != name:
+        choices = ", ".join(repr(alias) for alias in aliases)
+        field_args.append(f"validation_alias=AliasChoices({choices})")
+
+    if field_args:
+        default = f"Field({default}, {', '.join(field_args)})"
     return f"    {field}: {annotation} = {default}"
 
 
@@ -141,11 +185,34 @@ def generate_python(schema: dict[str, Any]) -> str:
         "",
         "from typing import Any",
         "",
-        "from pydantic import BaseModel, ConfigDict, Field",
+        "from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator",
         "",
         "",
         "class GatewayAdminContractModel(BaseModel):",
-        "    model_config = ConfigDict(extra=\"forbid\", populate_by_name=True)",
+        '    model_config = ConfigDict(extra="forbid", populate_by_name=True)',
+        "",
+        '    @model_validator(mode="before")',
+        "    @classmethod",
+        "    def _normalize_input_aliases(cls, data):",
+        "        if not isinstance(data, dict):",
+        "            return data",
+        "",
+        "        result = dict(data)",
+        "        for field_name, field in cls.model_fields.items():",
+        "            validation_alias = field.validation_alias",
+        "            if validation_alias is None:",
+        "                continue",
+        "",
+        '            choices = getattr(validation_alias, "choices", (validation_alias,))',
+        "            present = [choice for choice in choices if isinstance(choice, str) and choice in result]",
+        "            if not present:",
+        "                continue",
+        "",
+        "            result[field_name] = result[present[0]]",
+        "            for alias in present:",
+        "                if alias != field_name:",
+        "                    result.pop(alias, None)",
+        "        return result",
         "",
     ]
     for name, definition in schema["$defs"].items():
@@ -157,7 +224,9 @@ def generate_python(schema: dict[str, Any]) -> str:
             lines.append("    pass")
         else:
             for field_name, field_schema in properties.items():
-                lines.append(py_field_line(field_name, field_schema, field_name in required))
+                lines.append(
+                    py_field_line(field_name, field_schema, field_name in required)
+                )
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
@@ -177,7 +246,7 @@ def generate_go(schema: dict[str, Any]) -> str:
             is_required = field_name in required
             field_type = go_type(field_schema, optional=not is_required)
             tag = field_name if is_required else f"{field_name},omitempty"
-            lines.append(f"\t{go_field_name(field_name)} {field_type} `json:\"{tag}\"`")
+            lines.append(f'\t{go_field_name(field_name)} {field_type} `json:"{tag}"`')
         lines.append("}")
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
@@ -209,7 +278,9 @@ def write_or_check(path: Path, contents: str, check: bool) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--check", action="store_true", help="fail if generated files differ")
+    parser.add_argument(
+        "--check", action="store_true", help="fail if generated files differ"
+    )
     args = parser.parse_args()
 
     schema = load_schema()

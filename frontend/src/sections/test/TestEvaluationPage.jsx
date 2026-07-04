@@ -64,6 +64,8 @@ const TestEvaluationPage = ({
 
   const { refreshTestRunGrid } = useTestDetailContext();
 
+  const refreshOpeningGrid = onSuccessOfAdditionOfEvals ?? refreshTestRunGrid;
+
   const selectedCount = useTestRunsSelectedCount();
 
   const [openUpdateKeysDialog, setOpenUpdateKeysDialog] = useState(false);
@@ -123,6 +125,10 @@ const TestEvaluationPage = ({
       queryClient.invalidateQueries({
         queryKey: ["test-runs-detail", testId],
       });
+      queryClient.invalidateQueries({
+        queryKey: ["test-execution-detail", "KPIS"],
+      });
+      refreshOpeningGrid?.();
       enqueueSnackbar("Eval deleted successfully", {
         variant: "success",
       });
@@ -140,12 +146,10 @@ const TestEvaluationPage = ({
     onSuccess: () => {
       setOpenConfirmRunEvaluations(false);
       onClose();
-      if (executionIds) {
-        onSuccessOfAdditionOfEvals?.();
-      } else {
+      if (!executionIds) {
         clearSelection();
-        refreshTestRunGrid?.();
       }
+      refreshOpeningGrid?.();
 
       enqueueSnackbar("Evals run successfully", {
         variant: "success",

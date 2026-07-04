@@ -348,7 +348,7 @@ class TestExecutionUtils:
 
                 elif column_id == "call_execution_id":
                     # Filter by call execution IDs
-                    if filter_type == "list" and isinstance(filter_value, list):
+                    if filter_type == "categorical" and isinstance(filter_value, list):
                         # Handle list of IDs
                         if filter_op == "in":
                             call_executions = call_executions.filter(

@@ -102,10 +102,23 @@ def _build_sample_query(
         params["otypes"] = tuple(
             str(o) for o in (ot if isinstance(ot, list | tuple | set) else [ot])
         )
+        params["ot_project_id"] = str(project_id)
         src = "toString(trace_session_id)" if row_type == "sessions" else id_col
+        # For traces, the trace list derives observation_type from the ROOT span
+        # (it scans parent_span_id IS NULL), so match root spans only for parity.
+        root_pred = (
+            " AND (parent_span_id IS NULL OR parent_span_id = '')"
+            if row_type == "traces"
+            else ""
+        )
+        # Scope the subquery like the outer scan (project + not-deleted) so it
+        # can't match ids from another project or soft-deleted rows.
         ot_pred = (
             f"AND {id_col} IN "
-            f"(SELECT {src} FROM spans WHERE observation_type IN %(otypes)s)"
+            f"(SELECT {src} FROM spans "
+            f"WHERE observation_type IN %(otypes)s "
+            f"AND project_id = %(ot_project_id)s AND is_deleted = 0"
+            f"{root_pred})"
         )
 
     limit_sql = ""
