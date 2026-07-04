@@ -28,6 +28,7 @@ STATUS_PENDING = "pending"
 STATUS_RUNNING = "running"
 STATUS_PAUSED = "paused"
 STATUS_COMPLETED = "completed"
+STATUS_FAILED = "failed"
 
 # Phase query values.
 PHASE_STARTING = "starting"

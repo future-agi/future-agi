@@ -132,6 +132,43 @@ class TestWorkflowLabels:
         await asyncio.sleep(0.2)
         await sync_to_async(close_old_connections)()
 
+    async def test_status_sa_reflects_real_status_not_blanket_paused(
+        self, registered_sas, eval_task, make_pending_entries, monkeypatch
+    ):
+        """A task that goes inactive for a reason other than pause (here FAILED)
+        must stamp EvalTaskStatus with its real status, not a blanket "paused" —
+        else ops filtering the fleet by EvalTaskStatus=failed silently miss it."""
+        from tfc.temporal.eval_tasks.types import EvalTaskWorkflowInput
+        from tfc.temporal.eval_tasks.workflows import HistoricalEvalTaskWorkflow
+
+        _patch_noop_reconcile(monkeypatch)
+        _patch_completing_run_entry(monkeypatch)
+        await sync_to_async(make_pending_entries)(eval_task, 2)
+
+        env = registered_sas
+        queue = f"eval-task-test-{uuid.uuid4().hex[:8]}"
+        task_id = str(eval_task.id)
+        # Task failed before the drain loop's first state check.
+        await _set_status(task_id, EvalTaskStatus.FAILED)
+        async with _worker(env, queue):
+            result = await env.client.execute_workflow(
+                HistoricalEvalTaskWorkflow.run,
+                EvalTaskWorkflowInput(task_id=task_id, task_queue=queue, batch_size=2),
+                id=f"eval-task-{task_id}",
+                task_queue=queue,
+            )
+            # The run's own outcome is "paused" (its inactive-exit label), but the
+            # search attribute must carry the real status for fleet filtering.
+            assert result.status == "paused"
+            desc = await env.client.get_workflow_handle(
+                f"eval-task-{task_id}"
+            ).describe()
+
+        assert desc.typed_search_attributes[TASK_STATUS] == EvalTaskStatus.FAILED
+
+        await asyncio.sleep(0.2)
+        await sync_to_async(close_old_connections)()
+
     async def test_labels_reapplied_after_continue_as_new(
         self, registered_sas, eval_task, make_pending_entries, monkeypatch
     ):

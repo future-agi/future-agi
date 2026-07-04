@@ -1,14 +1,20 @@
 from datetime import datetime, timedelta
+from typing import Any, TypedDict
 
 import structlog
+from django.core.exceptions import ObjectDoesNotExist
+from django.db import DatabaseError
 from django.db.models import DateTimeField, Exists, F, FloatField, OuterRef, Q
 from django.db.models.functions import Cast
 
+from model_hub.constants import ANNOTATION_LABEL_VALUE_KEYS
 from model_hub.models.choices import (
     AnnotatorRole,
     AutomationRuleTriggerFrequency,
     QueueItemSourceType,
 )
+from simulate.serializers import CallTranscriptSerializer
+from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
 
 logger = structlog.get_logger(__name__)
 
@@ -108,6 +114,25 @@ def _call_execution_metric_payload(call):
         "avg_agent_latency_ms": avg_agent_latency_ms,
     }
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def _call_transcript_turns(call: Any) -> list[dict[str, Any]]:
+    if not call:
+        return []
+    try:
+        rows = getattr(call, "_displayable_transcripts", None)
+        if rows is None:
+            rows = list(
+                call.transcripts.filter(
+                    speaker_role__in=get_displayable_transcript_roles()
+                ).order_by("start_time_ms")
+            )
+        return list(CallTranscriptSerializer(rows, many=True).data)
+    except (ObjectDoesNotExist, AttributeError, DatabaseError) as exc:
+        logger.warning(
+            "call_transcript_fetch_failed", call_id=str(call.id), error=str(exc)
+        )
+        return []
 
 
 def get_source_model(source_type):
@@ -1229,10 +1254,28 @@ def resolve_source_content(item, *, ch_cache=None):
             call = item.call_execution
             if not call:
                 return {"type": "call_execution", "deleted": True}
+            call_meta = getattr(call, "call_metadata", {}) or {}
+            provider = getattr(call, "provider_call_data", {}) or {}
+            transcript_turns = _call_transcript_turns(call)
+            raw_transcript = ""
+            for sub in provider.values():
+                if isinstance(sub, dict) and isinstance(sub.get("transcript"), str):
+                    raw_transcript = sub["transcript"]
+                    break
+            call_summary = getattr(call, "call_summary", "") or ""
+            scenario_name = call_meta.get("scenario_name") or ""
+            row_data = call_meta.get("row_data") or {}
+            if isinstance(row_data, dict) and row_data:
+                scenario_input = row_data
+            elif scenario_name:
+                scenario_input = {"scenario_name": scenario_name}
+            else:
+                scenario_input = {}
             return {
                 "type": "call_execution",
                 "call_id": str(call.id),
                 "source_id": str(call.id),
+                "name": scenario_name or (call_summary[:80] if call_summary else ""),
                 "status": getattr(call, "status", ""),
                 "simulation_call_type": getattr(call, "simulation_call_type", ""),
                 "call_type": getattr(call, "call_type", None),
@@ -1253,7 +1296,7 @@ def resolve_source_content(item, *, ch_cache=None):
                 "cost": getattr(call, "cost_cents", None),
                 "ended_reason": getattr(call, "ended_reason", None),
                 "message_count": getattr(call, "message_count", None),
-                "call_summary": getattr(call, "call_summary", None),
+                "call_summary": call_summary or None,
                 "user_wpm": getattr(call, "user_wpm", None),
                 "agent_wpm": getattr(call, "bot_wpm", None),
                 "talk_ratio": getattr(call, "talk_ratio", None),
@@ -1261,11 +1304,10 @@ def resolve_source_content(item, *, ch_cache=None):
                     call, "user_interruption_count", None
                 ),
                 "ai_interruption_count": getattr(call, "ai_interruption_count", None),
-                "input": getattr(call, "input", None),
-                "output": getattr(call, "output", None),
-                "metadata": getattr(call, "call_metadata", {}) or {},
-                "call_metadata": getattr(call, "call_metadata", {}) or {},
-                "provider_call_data": getattr(call, "provider_call_data", {}) or {},
+                "input": scenario_input,
+                "output": transcript_turns or raw_transcript or call_summary or "",
+                "metadata": call_meta,
+                "provider_call_data": provider,
                 "monitor_call_data": getattr(call, "monitor_call_data", {}) or {},
                 "analysis_data": getattr(call, "analysis_data", {}) or {},
                 "evaluation_data": getattr(call, "evaluation_data", {}) or {},
@@ -3029,3 +3071,82 @@ def send_rule_completion_email(
             recipients=len(recipients),
             error=str(exc),
         )
+
+
+EvalOutputScalar = bool | float | int | str | list[str] | dict[str, Any] | None
+
+
+class EvalMetricEntry(TypedDict):
+    score: EvalOutputScalar
+    explanation: str | None
+    tags: list[str] | None
+    error: bool | str | None
+    error_message: str | None
+    created_at: str | None
+
+
+def eval_output_value(source: Any) -> EvalOutputScalar:
+    """Resolve score scalar from an EvalLogger row or a call_execution eval_outputs entry."""
+    if source is None:
+        return None
+    if isinstance(source, dict):
+        if source.get("output_float") is not None:
+            return source["output_float"]
+        if source.get("output_bool") is not None:
+            return source["output_bool"]
+        output_str = source.get("output_str")
+        if output_str not in (None, ""):
+            return output_str
+        if source.get("output_str_list"):
+            return source["output_str_list"]
+        output = source.get("output")
+        if isinstance(output, dict):
+            score = output.get("score")
+            return score if score is not None else output.get("choice")
+        return output
+    if source.output_float is not None:
+        return source.output_float
+    if source.output_bool is not None:
+        return source.output_bool
+    if source.output_str not in (None, ""):
+        return source.output_str
+    return source.output_str_list
+
+
+def eval_metrics_from_call_execution(
+    call: Any,
+) -> dict[str, list[EvalMetricEntry]]:
+    if not call:
+        return {}
+    raw = getattr(call, "eval_outputs", {}) or {}
+    metrics: dict[str, list[EvalMetricEntry]] = {}
+    for eval_id, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        key = entry.get("name") or str(eval_id)
+        error = entry.get("error")
+        metric: EvalMetricEntry = {
+            "score": eval_output_value(entry),
+            "explanation": entry.get("reason") or entry.get("explanation"),
+            "tags": entry.get("tags"),
+            "error": error,
+            "error_message": entry.get("error_message") if error else None,
+            "created_at": entry.get("created_at"),
+        }
+        metrics.setdefault(key, []).append(metric)
+    return metrics
+
+
+def canonical_score_value(label: Any, raw: Any) -> Any:
+    if raw is None or not isinstance(raw, dict):
+        return raw
+    label_type = getattr(label, "type", None) if label else None
+    key = ANNOTATION_LABEL_VALUE_KEYS.get(label_type)
+    if key and key in raw:
+        return raw[key]
+    logger.warning(
+        "label_type_missing_in_value_map",
+        label_type=label_type,
+        label_id=str(getattr(label, "id", "")) or None,
+    )
+    return raw

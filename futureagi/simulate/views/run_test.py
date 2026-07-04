@@ -143,6 +143,7 @@ from simulate.utils.agent_optimiser import (
     get_or_create_optimiser_for_test_execution,
 )
 from simulate.utils.baseline import resolve_baseline_id
+from simulate.utils.eval_summary import iter_live_eval_outputs
 from simulate.utils.eval_summary import (
     _build_template_statistics,
     _calculate_final_template_summaries,
@@ -2508,9 +2509,16 @@ class TestExecutionDetailView(APIView):
                 call_executions_serializer.data
             )
 
-            # Add column order and metadata to response
+            # Add column order and metadata to response. Drop evaluation
+            # columns whose config was soft-deleted from the run test —
+            # column_order is persisted and is not pruned on eval delete.
             response_data = paginated_response.data
-            response_data["column_order"] = column_order
+            response_data["column_order"] = [
+                col
+                for col in column_order
+                if col.get("type") != "evaluation"
+                or str(col.get("id")) in eval_configs_map
+            ]
             response_data["error_messages"] = error_messages
             response_data["status"] = test_execution.status
             response_data["provider"] = (
@@ -5355,6 +5363,16 @@ class CSVExportView(APIView):
             # Order by updated date (newest/most recently rerun first)
             call_executions = call_executions.order_by("-updated_at")
 
+            run_test_for_evals = (
+                run_test if export_type == "runtest" else test_execution.run_test
+            )
+            live_eval_config_ids = {
+                str(eid)
+                for eid in SimulateEvalConfig.objects.filter(
+                    run_test=run_test_for_evals
+                ).values_list("id", flat=True)
+            }
+
             # Create a CSV response
             response = HttpResponse(content_type="text/csv")
             response["Content-Disposition"] = f'attachment; filename="{filename}"'
@@ -5362,13 +5380,11 @@ class CSVExportView(APIView):
             # Get all unique evaluation names from eval_outputs to create dynamic columns
             eval_columns = set()
             for call_execution in call_executions:
-                if call_execution.eval_outputs:
-                    for (
-                        eval_config_id,
-                        eval_data,
-                    ) in call_execution.eval_outputs.items():
-                        eval_name = eval_data.get("name", f"Eval_{eval_config_id}")
-                        eval_columns.add(eval_name)
+                for eval_config_id, eval_data in iter_live_eval_outputs(
+                    call_execution.eval_outputs, live_eval_config_ids
+                ):
+                    eval_name = eval_data.get("name", f"Eval_{eval_config_id}")
+                    eval_columns.add(eval_name)
 
             # Get all unique tool output names from tool_outputs to create dynamic columns
             tool_columns = set()
@@ -5457,16 +5473,14 @@ class CSVExportView(APIView):
                     row_data[f"{eval_name}_reason"] = ""
 
                 # Add evaluation outputs and reasons as separate columns
-                if call_execution.eval_outputs:
-                    for (
-                        eval_config_id,
-                        eval_data,
-                    ) in call_execution.eval_outputs.items():
-                        eval_name = eval_data.get("name", f"Eval_{eval_config_id}")
-                        eval_output = eval_data.get("output", "")
-                        eval_reason = eval_data.get("reason", "")
-                        row_data[eval_name] = str(eval_output)
-                        row_data[f"{eval_name}_reason"] = str(eval_reason)
+                for eval_config_id, eval_data in iter_live_eval_outputs(
+                    call_execution.eval_outputs, live_eval_config_ids
+                ):
+                    eval_name = eval_data.get("name", f"Eval_{eval_config_id}")
+                    eval_output = eval_data.get("output", "")
+                    eval_reason = eval_data.get("reason", "")
+                    row_data[eval_name] = str(eval_output)
+                    row_data[f"{eval_name}_reason"] = str(eval_reason)
 
                 # Initialize all tool output columns with empty values
                 for tool_name in tool_columns:

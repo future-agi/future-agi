@@ -71,36 +71,26 @@ const EvaluateArrayCellRenderer = ({
           overflow: "auto",
         }}
       >
-        {finalArray?.length ? (
-          finalArray?.map((item) => (
-            <Chip
-              key={item}
-              label={item}
-              size="small"
-              variant="outlined"
-              sx={{
-                borderRadius: theme.spacing(0.5),
-                borderColor:
-                  choicesBorderColourMap?.[choicesMap?.[item] ?? "neutral"],
-                color: choicesFontColourMap?.[choicesMap?.[item] ?? "neutral"],
-                fontWeight: 400,
-                typography: "s3",
-              }}
-            />
-          ))
-        ) : (
-          <Chip
-            label={"None"}
-            size="small"
-            variant="outlined"
-            sx={{
-              borderRadius: theme.spacing(0.5),
-              borderColor: choicesBorderColourMap["fail"],
-              color: choicesBorderColourMap["fail"],
-              fontWeight: 400,
-            }}
-          />
-        )}
+        {/* Empty result renders nothing (it means "no result yet", not "None"). */}
+        {finalArray?.length
+          ? finalArray?.map((item) => (
+              <Chip
+                key={item}
+                label={item}
+                size="small"
+                variant="outlined"
+                sx={{
+                  borderRadius: theme.spacing(0.5),
+                  borderColor:
+                    choicesBorderColourMap?.[choicesMap?.[item] ?? "neutral"],
+                  color:
+                    choicesFontColourMap?.[choicesMap?.[item] ?? "neutral"],
+                  fontWeight: 400,
+                  typography: "s3",
+                }}
+              />
+            ))
+          : null}
       </Box>
       <RenderMeta
         originType="evaluation"

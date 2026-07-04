@@ -80,7 +80,7 @@ const VoiceRightPanel = ({
     if (Array.isArray(data?.messages)) return data.messages;
     if (Array.isArray(data?.transcript)) {
       return data.transcript.map((t) => ({
-        role: t.speakerRole || t.role,
+        role: t.speaker_role || t.role,
         content: t.message || t.content || t.text,
         ...t,
       }));

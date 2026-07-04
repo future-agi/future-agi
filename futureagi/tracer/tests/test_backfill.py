@@ -79,3 +79,30 @@ class TestBaselineBackfill:
         backfill_config_hash_and_status()
         entry.refresh_from_db()
         assert entry.config_hash is None
+
+    def test_multi_batch_sweep_visits_every_row(self, project, custom_eval_config):
+        """A batch smaller than the row count exercises the keyset advancement
+        (status pass, ``last_id = max(ids)``) and the per-config hash pass's
+        inner ``while`` loop — the O(n) sweep the whole design rests on. Five
+        rows over ``batch_size=2`` paginate 2 + 2 + 1; every row must be visited
+        exactly once (no row skipped or re-counted)."""
+        error_entries = [
+            _entry(project, custom_eval_config, error=True) for _ in range(3)
+        ]
+        skipped_entries = [
+            _entry(project, custom_eval_config, skipped_reason="missing: input")
+            for _ in range(2)
+        ]
+
+        result = backfill_config_hash_and_status(batch_size=2)
+
+        assert result.status_changed == 5
+        assert result.hashed == 5
+        for entry in error_entries:
+            entry.refresh_from_db()
+            assert entry.status == EvalEntryStatus.ERRORED
+            assert entry.config_hash == resolved_config_hash(custom_eval_config)
+        for entry in skipped_entries:
+            entry.refresh_from_db()
+            assert entry.status == EvalEntryStatus.SKIPPED
+            assert entry.config_hash == resolved_config_hash(custom_eval_config)

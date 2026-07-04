@@ -47,8 +47,10 @@ from django.conf import settings
 
 if TYPE_CHECKING:
     from tracer.models.observation_span import ObservationSpan
+    from tracer.models.project import Project
     from tracer.models.trace import Trace
     from tracer.models.trace_session import TraceSession
+    from tracer.services.clickhouse.v2.span_reader import CHSpanReader
 
 logger = structlog.get_logger(__name__)
 
@@ -240,6 +242,11 @@ def _construct_from_chspan(ch_row) -> ObservationSpan:
     # would create a phantom span. The new engine records the terminal result on
     # the EvalLogger entry, not the span — so eval_status writeback is a no-op
     # against PG here.
+    # Flag-gated behavior change: if EVAL_SPAN_READ_SOURCE=clickhouse is ever set
+    # *globally* (not just per-run by the engine), the legacy
+    # eval_observation_span_runner's observation_span.save() eval_status
+    # writeback to PG silently no-ops through here too. Safe on the default
+    # postgres path, where the legacy cron actually runs.
     obj.save = lambda *args, **kwargs: None
 
     # Resolve span.trace without a PG hit: the span eval path reads
@@ -255,12 +262,18 @@ def _construct_from_chspan(ch_row) -> ObservationSpan:
     return obj
 
 
-def get_trace(trace_id: str, *, select_related: tuple[str, ...] = ()) -> Trace:
+def get_trace(
+    trace_id: str,
+    *,
+    select_related: tuple[str, ...] = (),
+    reader: CHSpanReader | None = None,
+) -> Trace:
     """Return a Trace instance for the id. CH mode hydrates it from the CH
     ``traces`` table (the same store the trace list endpoints read), so
     trace-level fields (input/output/tags/metadata/error) match the UI; PG mode
     keeps the Django path. Raises Trace.DoesNotExist when forced-CH and the
-    trace isn't in ClickHouse."""
+    trace isn't in ClickHouse. Pass ``reader`` to reuse an open CHSpanReader
+    across a loop of traces instead of opening (and leaking) one per call."""
     import json as _json
 
     from tracer.models.trace import Trace
@@ -273,7 +286,11 @@ def get_trace(trace_id: str, *, select_related: tuple[str, ...] = ()) -> Trace:
         return qs.get(id=trace_id)
 
     try:
-        row = get_reader().get_trace_row(str(trace_id))
+        if reader is not None:
+            row = reader.get_trace_row(str(trace_id))
+        else:
+            with get_reader() as _reader:
+                row = _reader.get_trace_row(str(trace_id))
     except Exception as e:  # noqa: BLE001 — CH transient errors → fall back to PG
         logger.warning(
             "eval_trace_ch_read_fallback", trace_id=str(trace_id), err=repr(e)[:200]
@@ -315,7 +332,7 @@ def get_trace(trace_id: str, *, select_related: tuple[str, ...] = ()) -> Trace:
     return obj
 
 
-def get_trace_session(session_id: str, *, project) -> TraceSession:
+def get_trace_session(session_id: str, *, project: Project) -> TraceSession:
     """Return a TraceSession for the id. CH mode builds an unsaved vehicle from
     the curated CH session fields (the same source the session list endpoint
     uses); PG mode keeps the Django path. Raises TraceSession.DoesNotExist when

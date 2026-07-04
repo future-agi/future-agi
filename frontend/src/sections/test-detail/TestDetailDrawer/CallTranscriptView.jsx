@@ -22,8 +22,8 @@ const CallTranscriptView = ({
       {transcript?.map((item) => (
         <ConversationCard
           key={item.id}
-          role={item.speakerRole}
-          align={item.speakerRole === "user" ? "flex-end" : "flex-start"}
+          role={item.speaker_role}
+          align={item.speaker_role === "user" ? "flex-end" : "flex-start"}
           content={item.content}
           duration={Math.floor(
             (item.endTimeSeconds - item.startTimeSeconds) / 1000,

@@ -25,6 +25,7 @@ import {
 import { useTabStoreShallow } from "src/sections/projects/LLMTracing/tabStore";
 import { useObserveHeader } from "src/sections/project/context/ObserveHeaderContext";
 
+import { useSearchParams } from "react-router-dom";
 import FixedTab from "./FixedTab";
 import CustomViewTab from "./CustomViewTab";
 import SaveViewPopover from "src/components/traceDetail/SaveViewDialog";
@@ -120,25 +121,29 @@ const ObserveTabBar = ({
   const [saveViewAnchor, setSaveViewAnchor] = useState(null);
   const [isSavingView, setIsSavingView] = useState(false);
   const { mutate: createSavedView } = useCreateSavedView(projectId);
-  const { getViewConfig, getTabType } = useObserveHeader();
+  const { getViewConfig } = useObserveHeader();
+  const [searchParams] = useSearchParams();
 
   // Derive tab_type for a new saved view. Priority:
   //  - on a saved view tab, inherit the view's tab_type.
   //  - on the Users fixed tab, save as "users".
   //  - on the Sessions fixed tab, save as "sessions".
-  //  - on the Traces fixed tab, fall back to LLMTracingView's registered
-  //    callback (distinguishes trace vs span sub-tab).
+  //  - on the Traces fixed tab, read the trace/span grouping from the URL.
   const resolveTabType = useCallback(() => {
     if (activeTab === "users") return "users";
     if (activeTab === "sessions") return "sessions";
-    if (activeTab === "traces") return getTabType?.() ?? "traces";
+    if (activeTab === "traces" || activeTab === "spans") {
+      // URL is the source of truth; the old getTabType callback raced and
+      // mis-saved spans as traces.
+      return searchParams.get("selectedTab") === "spans" ? "spans" : "traces";
+    }
     if (activeTab?.startsWith("view-")) {
       const currentId = activeTab.replace("view-", "");
       const current = customViews.find((v) => v.id === currentId);
-      return current?.tab_type ?? "traces";
+      return current?.tab_type ?? current?.tabType ?? "traces";
     }
     return "traces";
-  }, [activeTab, customViews, getTabType]);
+  }, [activeTab, customViews, searchParams]);
 
   const handleSaveViewConfirm = useCallback(
     (name) => {

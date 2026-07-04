@@ -224,11 +224,11 @@ class TestUsersExport:
 
         with (
             patch(
-                "tracer.services.users_list_manager.UserListQueryBuilder",
+                "tracer.services.users_list_manager.UserListQueryBuilderV2",
                 wraps=__import__(
-                    "tracer.services.clickhouse.query_builders.user_list",
-                    fromlist=["UserListQueryBuilder"],
-                ).UserListQueryBuilder,
+                    "tracer.services.clickhouse.v2.query_builders.user_list",
+                    fromlist=["UserListQueryBuilderV2"],
+                ).UserListQueryBuilderV2,
             ) as builder_cls,
             patch.object(
                 AnalyticsQueryService,
@@ -276,11 +276,11 @@ class TestUsersExport:
 
         with (
             patch(
-                "tracer.services.users_list_manager.UserListQueryBuilder",
+                "tracer.services.users_list_manager.UserListQueryBuilderV2",
                 wraps=__import__(
-                    "tracer.services.clickhouse.query_builders.user_list",
-                    fromlist=["UserListQueryBuilder"],
-                ).UserListQueryBuilder,
+                    "tracer.services.clickhouse.v2.query_builders.user_list",
+                    fromlist=["UserListQueryBuilderV2"],
+                ).UserListQueryBuilderV2,
             ) as builder_cls,
             patch.object(
                 AnalyticsQueryService,
@@ -390,11 +390,11 @@ class TestUsersExport:
 
         with (
             patch(
-                "tracer.services.users_list_manager.UserListQueryBuilder",
+                "tracer.services.users_list_manager.UserListQueryBuilderV2",
                 wraps=__import__(
-                    "tracer.services.clickhouse.query_builders.user_list",
-                    fromlist=["UserListQueryBuilder"],
-                ).UserListQueryBuilder,
+                    "tracer.services.clickhouse.v2.query_builders.user_list",
+                    fromlist=["UserListQueryBuilderV2"],
+                ).UserListQueryBuilderV2,
             ) as builder_cls,
             patch.object(
                 AnalyticsQueryService,
@@ -491,7 +491,7 @@ class TestUsersExportStreaming:
         # read timeout.
         manager = self._manager()
         with patch.object(
-            UsersListManager, "_fetch_rows", return_value=([], 0)
+            UsersListManager, "_fetch_rows", return_value=([], 0, MagicMock())
         ) as fetch:
             gen = manager.iter_export_csv()
             first_chunk = next(gen)
@@ -521,7 +521,7 @@ class TestUsersExportStreaming:
             {"user_id": f"u{i}", "end_user_id": uuid.uuid4()}
             for i in range(MAX_EXPORT_ROWS + 5)
         ]
-        with patch.object(UsersListManager, "_fetch_rows", return_value=(oversized, 0)):
+        with patch.object(UsersListManager, "_fetch_rows", return_value=(oversized, 0, MagicMock())):
             body = "".join(manager.iter_export_csv())
 
         rows = [r for r in csv.reader(io.StringIO(body)) if r]
@@ -536,7 +536,7 @@ class TestUsersExportStreaming:
         manager = self._manager()
         base_rows = [{"user_id": "u1", "end_user_id": uuid.uuid4()}]
         with (
-            patch.object(UsersListManager, "_fetch_rows", return_value=(base_rows, 1)),
+            patch.object(UsersListManager, "_fetch_rows", return_value=(base_rows, 1, MagicMock())),
             patch.object(
                 AnalyticsQueryService,
                 "execute_ch_query",

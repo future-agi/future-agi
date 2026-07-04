@@ -148,7 +148,7 @@ const DevelopBarLeftSection = ({
 
         const newColumnOrder = existingColumnOrder.map((col) => {
           columnOrder.push(col.id);
-          const currentVisible = col.is_visible ?? col.isVisible;
+          const currentVisible = col.is_visible;
           const nextVisible =
             col.id === columnId ? !currentVisible : currentVisible;
           columnConfig[col.id] = {

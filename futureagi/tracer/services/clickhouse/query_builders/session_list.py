@@ -74,6 +74,18 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         "last_message": "last_message",
     }
 
+    # Aggregate projections shared by build() and build_id_query() so a HAVING on
+    # any of these aliases resolves in both (build_id_query returns only session_id
+    # but still applies the same HAVING).
+    _AGGREGATE_SELECT = (
+        "min(start_time) AS session_start, "
+        "max(end_time) AS session_end, "
+        "dateDiff('second', min(start_time), max(end_time)) AS duration, "
+        "sum(cost) AS total_cost, "
+        "sum(total_tokens) AS total_tokens, "
+        "uniq(trace_id) AS traces_count"
+    )
+
     def __init__(
         self,
         project_id: str | None = None,
@@ -93,8 +105,6 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         self.user_id = user_id
         self.start_date: datetime | None = None
         self.end_date: datetime | None = None
-        # Populated by _extract_end_user_ids() during build
-        self._end_user_ids: list[str] | None = None
 
     def build(self) -> tuple[str, dict[str, Any]]:
         """Build the session list query.
@@ -105,10 +115,6 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         self.start_date, self.end_date = self.parse_time_range(self.filters)
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
-
-        # Extract end_user_id filters — these need a subquery because
-        # end_user_id is set on child spans, not root spans.
-        self._end_user_ids = self._extract_end_user_ids()
 
         # Translate span-level filters (exclude session-level aggregate
         # filters AND end_user_id filters handled via subquery)
@@ -158,12 +164,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         query = f"""
         SELECT
             trace_session_id AS session_id,
-            min(start_time) AS session_start,
-            max(end_time) AS session_end,
-            dateDiff('second', min(start_time), max(end_time)) AS duration,
-            sum(cost) AS total_cost,
-            sum(total_tokens) AS total_tokens,
-            uniq(trace_id) AS traces_count
+            {self._AGGREGATE_SELECT}
             {message_select}
         {from_where}
         GROUP BY trace_session_id
@@ -182,7 +183,6 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
 
-        self._end_user_ids = self._extract_end_user_ids()
         span_filters = self._extract_span_filters()
         fb = ClickHouseFilterBuilder(
             table=self.TABLE,
@@ -208,7 +208,8 @@ class SessionListQueryBuilder(BaseQueryBuilder):
 
         query = f"""
         SELECT
-            trace_session_id AS session_id
+            trace_session_id AS session_id,
+            {self._AGGREGATE_SELECT}
             {message_select}
         {from_where}
         GROUP BY trace_session_id
@@ -251,6 +252,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 WHERE {self.project_filter_sql()}
                   AND is_deleted = 0
                   AND (parent_span_id IS NULL OR parent_span_id = '')
+                  AND trace_session_id IN %(content_session_ids)s
             ) AS rs
             {ts_join}
         )
@@ -407,6 +409,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         WHERE {self.project_filter_sql()}
           AND is_deleted = 0
           AND (parent_span_id IS NULL OR parent_span_id = '')
+          AND s.trace_session_id IN %(attr_session_ids)s
           AND (
             (span_attributes_raw != '{{}}' AND span_attributes_raw != '')
             OR length(mapKeys(span_attr_str)) > 0
@@ -494,24 +497,6 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     # unifies. `user` is the FilterBuilder alias for `end_user_id`.
     _ENDUSER_ID_FILTER_COLS = frozenset({"end_user_id", "user"})
     _SESSION_ID_FILTER_COLS = SESSION_ID_FILTER_COLS
-
-    def _extract_end_user_ids(self) -> list[str]:
-        """Return synthetic end-user UUID filters for legacy callers.
-
-        The active predicate is built by ``_build_resolved_user_clause`` so that
-        end-user IDs are resolved through the remap join. This method keeps the
-        older build/count hooks harmless after the P3b rewrite.
-        """
-        ids: list[str] = []
-        for f in self.filters:
-            col_id = f.get("column_id") or f.get("columnId")
-            if col_id not in self._ENDUSER_ID_FILTER_COLS:
-                continue
-            config = f.get("filter_config") or f.get("filterConfig") or {}
-            raw_val = config.get("filter_value", config.get("filterValue"))
-            values = raw_val if isinstance(raw_val, list) else [raw_val]
-            ids.extend(str(v) for v in values if v)
-        return ids
 
     def _build_end_user_subquery(self) -> str:
         """Compatibility shim for pre-remap session-list code paths.

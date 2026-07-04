@@ -105,7 +105,10 @@ def _backfill_hashes(batch_size: int) -> int:
     total = 0
     with connection.cursor() as cur:
         for config_id in config_ids:
-            config = CustomEvalConfig.objects.filter(id=config_id).first()
+            # no_workspace_objects matches the raw scan's global scope; the
+            # default manager would workspace-filter and silently leave configs
+            # from other workspaces null if this ever runs in a request context.
+            config = CustomEvalConfig.no_workspace_objects.filter(id=config_id).first()
             if config is None:
                 continue  # eval no longer exists — outside the current eval-set
             config_hash = resolved_config_hash(config)
