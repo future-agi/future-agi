@@ -333,14 +333,10 @@ const CreateRunTestPage = ({ open, onClose }) => {
       // Call-level runtime vocabulary — resolved server-side at eval run time
       "call.transcript",
       "call.agent_prompt",
-      "call.summary",
       "call.ended_reason",
       "call.duration_seconds",
       "call.status",
       "call.overall_score",
-      "call.phone_number",
-      "call.recording_url",
-      "call.stereo_recording_url",
       // Modality-specific runtime vocabulary
       ...(isText
         ? ["call.user_chat_transcript", "call.assistant_chat_transcript"]
@@ -349,6 +345,11 @@ const CreateRunTestPage = ({ open, onClose }) => {
             "call.stereo_recording",
             "call.assistant_recording",
             "call.customer_recording",
+            // Only the voice pipeline populates these; chat resolves them to "".
+            "call.summary",
+            "call.phone_number",
+            "call.recording_url",
+            "call.stereo_recording_url",
           ]),
     ];
     return keys.map((key) => ({
