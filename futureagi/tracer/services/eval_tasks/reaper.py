@@ -1,5 +1,5 @@
 """Reaper — resets stale ``running`` entries back to ``pending`` so a worker
-that died mid-run can't strand them (§7.5). A poison cap fails an item that
+that died mid-run can't strand them. A poison cap fails an item that
 keeps dying after ``max_attempts`` reclaims, so it can't block task completion.
 """
 

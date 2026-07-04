@@ -1,4 +1,4 @@
-"""Per-target_type live-entry uniqueness (§3.2): at most one live entry per
+"""Per-target_type live-entry uniqueness: at most one live entry per
 (task, row, eval), keyed on the row's identity column for its target_type
 (span->observation_span, trace->trace, session->trace_session)."""
 

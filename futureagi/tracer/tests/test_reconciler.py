@@ -1,5 +1,5 @@
 """Tests for the reconciler — the single idempotent engine that makes a task's
-live entries match its desired state (§4 + §10 edge cases)."""
+live entries match its desired state (incl. edge cases)."""
 
 import uuid
 
@@ -237,12 +237,12 @@ class TestScopeChange:
 @pytest.mark.integration
 @pytest.mark.django_db
 class TestLifecycleFlows:
-    """§6 flows the reconciler is responsible for. (The option table / which
+    """Lifecycle flows the reconciler is responsible for. (The option table / which
     buttons, immutable validation, continuous->historical window requirement,
     continuous_cursor, and the forward tail are PR 9 / PR 6 concerns.)"""
 
     def test_delete_and_rerun_recreates_fresh(self, project, custom_eval_config):
-        # §6.2 Delete & rerun = wipe live entries, then reconcile.
+        # Delete & rerun = wipe live entries, then reconcile.
         _make_spans(project, 4)
         task = _task(project, evals=[custom_eval_config])
         reconcile(task)
@@ -264,7 +264,7 @@ class TestLifecycleFlows:
     def test_both_evals_and_rows_change_handled_in_one_pass(
         self, project, eval_template, custom_eval_config
     ):
-        # §6.2 case 3: the reconcile engine handles both axes at once.
+        # Case 3: the reconcile engine handles both axes at once.
         _make_spans(project, 40)
         task = _task(project, evals=[custom_eval_config], sampling_rate=100.0)
         reconcile(task)
@@ -291,7 +291,7 @@ class TestLifecycleFlows:
         )
 
     def test_limit_shrink_drops_out_of_scope_pending(self, project, custom_eval_config):
-        # §6.2 case 2: rows change via row limit.
+        # Rows change via row limit.
         _make_spans(project, 20)
         task = _task(project, evals=[custom_eval_config])
         reconcile(task)
@@ -303,7 +303,7 @@ class TestLifecycleFlows:
     def test_filter_change_drops_out_of_scope_pending(
         self, project, custom_eval_config
     ):
-        # §6.2 case 2: rows change via filters.
+        # Rows change via filters.
         _make_spans(project, 5, observation_type="llm", prefix="llm")
         _make_spans(project, 5, observation_type="tool", prefix="tool")
         task = _task(project, evals=[custom_eval_config])
@@ -317,7 +317,7 @@ class TestLifecycleFlows:
     def test_scope_regrow_reuses_completed_without_duplication(
         self, project, custom_eval_config
     ):
-        # §6.2 / §10: out-of-scope completed are kept and reused on regrow.
+        # Out-of-scope completed are kept and reused on regrow.
         _make_spans(project, 40)
         task = _task(project, evals=[custom_eval_config], sampling_rate=100.0)
         reconcile(task)
@@ -336,7 +336,7 @@ class TestLifecycleFlows:
     def test_continuous_task_materializes_and_is_idempotent(
         self, project, custom_eval_config
     ):
-        # §6.1 / §6.3: continuous reconcile materializes the matching slice (no limit).
+        # Continuous reconcile materializes the matching slice (no limit).
         _make_spans(project, 5)
         task = _task(project, evals=[custom_eval_config], run_type=RunType.CONTINUOUS)
         reconcile(task)
@@ -345,7 +345,7 @@ class TestLifecycleFlows:
         assert result.created == 0  # idempotent
 
     def test_historical_to_continuous_keeps_entries(self, project, custom_eval_config):
-        # §6.4: switching to continuous keeps existing entries (no wipe).
+        # Switching to continuous keeps existing entries (no wipe).
         _make_spans(project, 5)
         task = _task(project, evals=[custom_eval_config])
         reconcile(task)

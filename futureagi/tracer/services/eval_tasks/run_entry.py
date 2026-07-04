@@ -3,7 +3,7 @@
 Reuses the existing per-target_type evaluation core (the same inner functions
 the old ``evaluate_*_observe`` wrappers call), minus their existence-check, so
 the result lands on the already-materialized entry rather than creating a new
-row. Maps the outcome to a terminal status (§7.5) and stamps the config hash;
+row. Maps the outcome to a terminal status and stamps the config hash;
 the temporary overlap with the wrappers goes away when they're retired at
 cutover.
 """
@@ -42,7 +42,7 @@ def run_entry(entry: EvalLogger) -> str:
 
     try:
         _run_for_target(fresh, config)
-    except Exception as e:  # §7.5: every failure becomes a terminal state.
+    except Exception as e:  # Every failure becomes a terminal state.
         skipped_reason = getattr(e, "skipped_reason", None)
         if skipped_reason:
             mark_terminal(
