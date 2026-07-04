@@ -325,6 +325,10 @@ CREATE TABLE IF NOT EXISTS tracer_eval_logger (
     error UInt8 DEFAULT 0,
     error_message Nullable(String),
 
+    -- Work-item state (mirror of EvalLogger.status / config_hash)
+    status LowCardinality(String) DEFAULT 'completed',
+    config_hash Nullable(String),
+
     -- Explanation / metadata
     eval_explanation Nullable(String),
     output_metadata String DEFAULT '{}',
@@ -1918,6 +1922,11 @@ POST_DDL_ALTERS: list[str] = [
     "idx_trace_session_id trace_session_id TYPE bloom_filter GRANULARITY 1",
     "ALTER TABLE tracer_eval_logger ADD INDEX IF NOT EXISTS "
     "idx_target_type target_type TYPE bloom_filter GRANULARITY 1",
+    # Work-item columns (mirror of EvalLogger.status / config_hash).
+    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+    "status LowCardinality(String) DEFAULT 'completed'",
+    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+    "config_hash Nullable(String)",
     # Strip the legacy 365d TTL from the v1 hourly rollup tables. The CREATE
     # strings above no longer declare TTL, but existing prod clusters carry
     # the original TTL on the live tables — these ALTERs remove it.
