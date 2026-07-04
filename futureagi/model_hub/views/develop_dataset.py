@@ -2681,19 +2681,51 @@ class GetRowDataView(APIView):
     permission_classes = [IsAuthenticated]
     # parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    def _normalize_search(self, search):
+        if not search:
+            return {}
+
+        if isinstance(search, str):
+            search = search.strip()
+            if not search:
+                return {}
+
+            try:
+                parsed_search = json.loads(search)
+            except json.JSONDecodeError:
+                return {"key": search, "type": ["text", "image", "audio"]}
+
+            if isinstance(parsed_search, str):
+                return {"key": parsed_search, "type": ["text", "image", "audio"]}
+
+            search = parsed_search
+
+        if not isinstance(search, dict):
+            return {}
+
+        search_key = search.get("key", "")
+        if not search_key:
+            return {}
+
+        return {
+            "key": search_key,
+            "type": search.get("type") or ["text", "image", "audio"],
+        }
+
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             # Get request parameters
             filters = request.data.get("filters", [])
             sort_configs = request.data.get("sort", [])
+            search = self._normalize_search(request.data.get("search", {}))
             row_id = request.data.get("row_id", None)
 
             # Get base dataset and rows
             dataset = get_object_or_404(Dataset, id=dataset_id, deleted=False)
             rows = Row.objects.filter(dataset=dataset, deleted=False).order_by("order")
             error_messages = []
-            cells = Cell.objects.filter(row__in=rows, deleted=False)
             column_order = dataset.column_order or []
+            column_order_set = set(column_order)
             qs = Column.objects.filter(dataset=dataset, deleted=False)
             if dataset.source != DatasetSourceChoices.EXPERIMENT_SNAPSHOT.value:
                 qs = qs.exclude(source__in=[
@@ -2704,32 +2736,44 @@ class GetRowDataView(APIView):
             all_columns = list(qs)
             columns_map = {str(col.id): col for col in all_columns}
 
-            # Apply filters if any
+            ordered_columns = []
+            for col_id in column_order:
+                if col_id in columns_map:
+                    ordered_columns.append(columns_map[col_id])
+            for col in all_columns:
+                if str(col.id) not in column_order_set:
+                    ordered_columns.append(col)
+
+            cells = Cell.objects.filter(
+                row__in=rows, column__in=ordered_columns, deleted=False
+            )
+            table_view = GetDatasetTableView()
+
             if filters:
-                rows = GetDatasetTableView()._apply_filters(
+                rows = table_view._apply_filters(
                     cells, rows, filters, error_messages, columns_map
                 )
+            if search:
+                rows, _search_results = table_view._apply_search(
+                    cells, rows, search, dataset.id, error_messages
+                )
 
-            # Apply sorting
             if sort_configs:
-                rows = GetDatasetTableView()._apply_sorting(
-                    rows, sort_configs, columns_map
+                rows = table_view._apply_sorting(
+                    cells, rows, sort_configs, error_messages, columns_map
                 )
 
             # print("exiting sort")
-
-            column_order = dataset.column_order or []
 
             current_row = get_object_or_404(
                 rows, id=row_id, dataset=dataset, deleted=False
             )
 
-            # Get the next 50 rows ordered after the current row
-            next_row_ids = list(
-                rows.filter(dataset=dataset, deleted=False, order__gt=current_row.order)
-                .order_by("order")
-                .values_list("id", flat=True)[:50]
-            )
+            ordered_row_ids = list(rows.values_list("id", flat=True))
+            current_row_index = ordered_row_ids.index(current_row.id)
+            next_row_ids = ordered_row_ids[
+                current_row_index + 1 : current_row_index + 51
+            ]
 
             # result = rows.annotate(
             #     next_row_id=StringAgg(

@@ -423,6 +423,8 @@ body {
   --vscode-editor-background: var(--monaco-bg);
   --vscode-editorGutter-background: var(--monaco-gutter-bg);
 }
+.develop-data-grid.datapoint-drawer-v2-grid .ag-row.active-row,
+.develop-data-grid.datapoint-drawer-v2-grid .ag-row-focus.active-row,
 .ag-row-focus.active-row {
   background-color: var(--surface-row-active);
 }

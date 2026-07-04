@@ -16,12 +16,15 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   useAddEvaluationFeebackStore,
   useDatapointDrawerStore,
+  useDevelopFilterStore,
+  useDevelopSearchStore,
   useImprovePromptStore,
 } from "../../states";
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
 import { enhanceCol, getStatusColor } from "../common";
 import { getLabel, normalizeEvalCellValue } from "../common";
+import { transformFilter, validateFilter } from "../DevelopFilters/common";
 import DatapointCard from "src/sections/common/DatapointCard";
 import ImageDatapointCard from "src/sections/common/ImageDatapointCard";
 import ImagesDatapointCard from "src/sections/common/ImagesDatapointCard";
@@ -40,6 +43,7 @@ import logger from "src/utils/logger";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
+import { enqueueSnackbar } from "src/components/snackbar";
 import DocumentDatapointCard from "../../../common/DocumentDatapointCard";
 import StatusCellRenderer from "./StatusCellRenderer";
 import LoadingOverlay from "src/components/loading-screen/LoadingOverlayDataPointDataset";
@@ -50,6 +54,14 @@ import AddLabelDrawer from "src/components/traceDetailDrawer/AddLabelDrawer";
 import { useEvalsList } from "src/sections/common/EvaluationDrawer/getEvalsList";
 import CompositeResultView from "src/sections/evals/components/CompositeResultView";
 import { canonicalEntries } from "src/utils/utils";
+import {
+  canNavigatePreviousDrawerRowFromGrid,
+  createDrawerNavigationHandler,
+  getDisplayedDrawerRows,
+  handleDrawerNavigationShortcut,
+  isDrawerNavigationSourceCurrent,
+  navigateDrawerRows,
+} from "./navigation";
 
 const SkeletonLoader = () => (
   <Box
@@ -129,44 +141,90 @@ const DATAPOINT_DRAWER_THEME_PARAMS = {
   headerFontSize: "14px",
 };
 
-const NavIconButton = ({ icon, tooltip, onClick, disabled, loading }) => (
-  <Tooltip title={tooltip} arrow placement="bottom">
-    <span>
-      <Box
-        component="button"
-        type="button"
-        onClick={onClick}
-        disabled={disabled}
-        sx={{
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          width: 24,
-          height: 24,
-          p: 0,
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: "2px",
-          bgcolor: "background.paper",
-          cursor: disabled ? "default" : "pointer",
-          opacity: disabled ? 0.4 : 1,
-          flexShrink: 0,
-          "&:hover:not(:disabled)": {
-            bgcolor: "action.hover",
-            borderColor: "text.disabled",
-          },
-          transition: "all 120ms",
-        }}
-      >
-        {loading ? (
-          <CircularProgress size={12} sx={{ color: "text.secondary" }} />
-        ) : (
-          <Iconify icon={icon} width={20} sx={{ color: "text.primary" }} />
-        )}
-      </Box>
-    </span>
-  </Tooltip>
-);
+const getDrawerNavigationRequestParams = (gridApi) => {
+  const sort = (gridApi?.getColumnState?.() ?? []).reduce(
+    (acc, { colId, sort }) => {
+      if (sort) {
+        acc.push({
+          columnId: colId,
+          type: sort === "asc" ? "ascending" : "descending",
+        });
+      }
+      return acc;
+    },
+    [],
+  );
+  const filters = useDevelopFilterStore.getState().filters ?? [];
+  const search = useDevelopSearchStore.getState().search;
+
+  return {
+    filters: filters.filter(validateFilter).map(transformFilter),
+    ...(search && {
+      search: {
+        key: search,
+        type: ["text", "image", "audio"],
+      },
+    }),
+    sort,
+  };
+};
+
+const NavIconButton = ({ icon, tooltip, onClick, disabled, loading }) => {
+  const unavailable = disabled || loading;
+
+  const handleClick = (event) => {
+    if (unavailable) {
+      event.preventDefault();
+      return;
+    }
+
+    onClick?.(event);
+  };
+
+  return (
+    <Tooltip title={tooltip} arrow placement="bottom">
+      <span>
+        <Box
+          component="button"
+          type="button"
+          aria-busy={loading || undefined}
+          aria-disabled={unavailable || undefined}
+          aria-label={tooltip}
+          onClick={handleClick}
+          disabled={disabled}
+          sx={{
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 24,
+            height: 24,
+            p: 0,
+            border: "1px solid",
+            borderColor: "divider",
+            borderRadius: "2px",
+            bgcolor: "background.paper",
+            cursor: unavailable ? "default" : "pointer",
+            opacity: unavailable ? 0.4 : 1,
+            flexShrink: 0,
+            "&:hover:not(:disabled)": unavailable
+              ? {}
+              : {
+                  bgcolor: "action.hover",
+                  borderColor: "text.disabled",
+                },
+            transition: "all 120ms",
+          }}
+        >
+          {loading ? (
+            <CircularProgress size={12} sx={{ color: "text.secondary" }} />
+          ) : (
+            <Iconify icon={icon} width={20} sx={{ color: "text.primary" }} />
+          )}
+        </Box>
+      </span>
+    </Tooltip>
+  );
+};
 
 NavIconButton.propTypes = {
   icon: PropTypes.string.isRequired,
@@ -190,6 +248,8 @@ const DatapointDrawerChild = () => {
   const [annotateOpen, setAnnotateOpen] = useState(false);
   const [addLabelDrawerOpen, setAddLabelDrawerOpen] = useState(false);
   const isNavigatingRef = useRef(false);
+  const navigationInFlightRef = useRef(false);
+  const navigationRequestIdRef = useRef(0);
 
   useEffect(() => {
     if (datapoint) {
@@ -208,6 +268,20 @@ const DatapointDrawerChild = () => {
       setShowContent(false);
     }
   }, [datapoint]);
+
+  useEffect(() => {
+    navigationRequestIdRef.current += 1;
+    isNavigatingRef.current = false;
+  }, [datapoint?.index, datapoint?.rowData]);
+
+  useEffect(
+    () => () => {
+      navigationRequestIdRef.current += 1;
+      navigationInFlightRef.current = false;
+      isNavigatingRef.current = false;
+    },
+    [],
+  );
 
   const onClose = () => {
     setDatapoint(null);
@@ -233,17 +307,9 @@ const DatapointDrawerChild = () => {
       },
     });
 
-  const [rows, setRows] = useState(() => {
-    const newRows = [];
-
-    gridApi.current?.forEachNode((node) => {
-      if (node.displayed && node.id) {
-        newRows.push({ rowData: node.data, id: node.id });
-      }
-    });
-
-    return newRows;
-  });
+  const [rows, setRows] = useState(() =>
+    getDisplayedDrawerRows(gridApi.current),
+  );
 
   const mainData = useMemo(() => {
     const evalColumnFields = allColumns
@@ -295,7 +361,6 @@ const DatapointDrawerChild = () => {
   const isCompositeEval =
     evalMetaBySourceId[column?.col?.sourceId || column?.col?.source_id]
       ?.templateType === "composite";
-
 
   const runEvalData = useMemo(() => {
     const evalColumns = allColumns.filter((i) => i.originType === "evaluation");
@@ -457,176 +522,75 @@ const DatapointDrawerChild = () => {
     return Array.isArray(v) ? v : undefined;
   }, [evalOpen?.cellValue]);
 
-  const onNavigate = async (direction) => {
-    isNavigatingRef.current = true;
+  const onNavigate = createDrawerNavigationHandler({
+    getNavigationParams: () => {
+      const requestId = navigationRequestIdRef.current;
+      const sourceRowData = datapoint?.rowData;
+      const sourceRowId = sourceRowData?.rowId;
 
-    if (direction === "next") {
-      const nextIndex = datapoint.index + 1;
-      if (rows?.[nextIndex] && rows[nextIndex]?.rowData) {
-        const rowData = rows[nextIndex]?.rowData;
-        setDatapoint({
-          index: nextIndex,
-          rowData: rowData,
-          valueInfos: rows[nextIndex]?.rowData?.valueInfos,
-        });
-        if (evalOpen) {
-          const column = allColumns.find(
-            (i) => i?.col?.sourceId === evalOpen?.evalMetricId,
-          );
-
-          setEvalOpen({
-            ...evalOpen,
-            ...rowData[column?.field],
+      return {
+        allColumns,
+        datapoint,
+        evalOpen,
+        getCellData,
+        getNextItemIds,
+        getNextRowsRequestParams: () =>
+          getDrawerNavigationRequestParams(gridApi.current),
+        gridApi: gridApi.current,
+        isNavigationCurrent: () =>
+          isDrawerNavigationSourceCurrent({
+            getCurrentDatapoint: () =>
+              useDatapointDrawerStore.getState().datapoint,
+            navigationRequestIdRef,
+            requestId,
+            sourceRowData,
+            sourceRowId,
+          }),
+        logger,
+        onNavigationLoadError: () => {
+          enqueueSnackbar("Couldn’t load the datapoint. Please try again.", {
+            variant: "error",
           });
-        }
-      } else if (rows?.[nextIndex] && !rows[nextIndex]?.rowData) {
-        const nextId = rows[nextIndex]?.id;
-        try {
-          const newCellData = await getCellData({
-            row_ids: [nextId],
-            column_ids: allColumns.map((i) => i?.col?.id),
-          });
+        },
+        rows,
+        setDatapoint,
+        setEvalOpen,
+        setRows,
+      };
+    },
+    isNavigatingRef,
+    logger,
+    navigateRows: navigateDrawerRows,
+    navigationInFlightRef,
+  });
 
-          const nextCellData = newCellData?.data?.result?.[nextId];
+  const canNavigatePrevious = canNavigatePreviousDrawerRowFromGrid(
+    rows,
+    datapoint,
+    gridApi.current,
+    { allowFullScan: false },
+  );
 
-          if (nextCellData) {
-            setDatapoint({
-              index: nextIndex,
-              rowData: nextCellData,
-              valueInfos: nextCellData?.valueInfos,
-            });
-            setRows((prev) => {
-              const newRows = [...prev];
-              newRows[nextIndex] = {
-                rowData: nextCellData,
-                id: nextId,
-              };
-              return newRows;
-            });
-            if (evalOpen) {
-              const column = allColumns.find(
-                (i) => i?.col?.sourceId === evalOpen?.evalMetricId,
-              );
-              setEvalOpen({
-                ...evalOpen,
-                ...nextCellData[column?.field],
-              });
-            }
-          }
-        } catch (e) {
-          logger.error("Failed to get next item ids", { e });
-        }
-      } else {
-        const mergedRows = [...rows];
-        try {
-          const nextIds = await getNextItemIds({
-            row_id: datapoint?.rowData?.rowId,
-          });
-          const newIds = nextIds?.data?.result?.next?.rowId;
-          if (newIds && newIds?.length > 0) {
-            newIds.forEach((id) => {
-              mergedRows.push({ rowData: null, id: id });
-            });
-          }
-        } catch (e) {
-          logger.error("Failed to get next item ids", { e });
-        }
-
-        const nextId = mergedRows[nextIndex]?.id;
-
-        try {
-          const newCellData = await getCellData({
-            row_ids: [nextId],
-            column_ids: allColumns.map((i) => i?.col?.id),
-          });
-
-          const nextCellData = newCellData?.data?.result?.[nextId];
-
-          if (nextCellData) {
-            mergedRows[nextIndex] = {
-              rowData: nextCellData,
-              id: nextId,
-            };
-          }
-          setDatapoint({
-            index: nextIndex,
-            rowData: nextCellData,
-            valueInfos: nextCellData?.valueInfos,
-          });
-          if (evalOpen) {
-            const column = allColumns.find(
-              (i) => i?.col?.sourceId === evalOpen?.evalMetricId,
-            );
-            setEvalOpen({
-              ...evalOpen,
-              ...nextCellData[column?.field],
-            });
-          }
-        } catch (e) {
-          logger.error("Failed to get previous item ids", { e });
-        }
-
-        setRows(mergedRows);
-      }
-    } else if (direction === "previous") {
-      const rowData = rows[datapoint.index - 1].rowData;
-      setDatapoint({
-        index: datapoint.index - 1,
-        rowData,
-        valueInfos: rows[datapoint.index - 1]?.rowData?.valueInfos,
-      });
-      if (evalOpen) {
-        const column = allColumns.find(
-          (i) => i?.col?.sourceId === evalOpen?.evalMetricId,
-        );
-        setEvalOpen({
-          ...evalOpen,
-          ...rowData[column?.field],
-        });
-      }
-    }
-  };
-
-  const navStateRef = useRef({});
+  const navStateRef = useRef({
+    onNavigate: () => {},
+    datapointIndex: undefined,
+    totalRowCount: undefined,
+    navLoading: false,
+    canNavigatePrevious: false,
+    enabled: false,
+  });
   navStateRef.current = {
     onNavigate,
     datapointIndex: datapoint?.index,
     totalRowCount,
     navLoading: isLoadingNextItemIds || isLoadingCellData,
+    canNavigatePrevious,
     enabled: Boolean(datapoint),
   };
 
   useEffect(() => {
     const handleKeyDown = (e) => {
-      const state = navStateRef.current;
-      if (!state.enabled) return;
-
-      const target = e.target;
-      if (
-        target?.tagName === "INPUT" ||
-        target?.tagName === "TEXTAREA" ||
-        target?.isContentEditable
-      )
-        return;
-
-      const isNext = e.key === "j" || e.key === "J";
-      const isPrev = e.key === "k" || e.key === "K";
-      if (!isNext && !isPrev) return;
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-
-      if (
-        isNext &&
-        !state.navLoading &&
-        state.datapointIndex !== state.totalRowCount - 1
-      ) {
-        e.preventDefault();
-        e.stopPropagation();
-        state.onNavigate("next");
-      } else if (isPrev && state.datapointIndex !== 0) {
-        e.preventDefault();
-        e.stopPropagation();
-        state.onNavigate("previous");
-      }
+      handleDrawerNavigationShortcut(e, navStateRef.current);
     };
 
     window.addEventListener("keydown", handleKeyDown, true);
@@ -808,7 +772,9 @@ const DatapointDrawerChild = () => {
                                 }}
                               />
                             </ShowComponent>
-                            <ShowComponent condition={(finalArray?.length ?? 0) > 0}>
+                            <ShowComponent
+                              condition={(finalArray?.length ?? 0) > 0}
+                            >
                               {finalArray?.map((val) => (
                                 <Chip
                                   key={val}
@@ -904,7 +870,7 @@ const DatapointDrawerChild = () => {
                     )}
                   </Box>
                 </Box>
-               
+
                 {!evalOpenIsCode && !isCompositeEval && (
                   <ErrorLocalizationCellSection
                     evalOpen={evalOpen}
@@ -1054,17 +1020,14 @@ const DatapointDrawerChild = () => {
                     icon="mdi:chevron-up"
                     tooltip="Previous datapoint (K)"
                     onClick={() => onNavigate("previous")}
-                    disabled={datapoint?.index === 0}
+                    disabled={!canNavigatePrevious}
+                    loading={isLoadingNextItemIds || isLoadingCellData}
                   />
                   <NavIconButton
                     icon="mdi:chevron-down"
                     tooltip="Next datapoint (J)"
                     onClick={() => onNavigate("next")}
-                    disabled={
-                      datapoint?.index === totalRowCount - 1 ||
-                      isLoadingNextItemIds ||
-                      isLoadingCellData
-                    }
+                    disabled={datapoint?.index === totalRowCount - 1}
                     loading={isLoadingNextItemIds || isLoadingCellData}
                   />
                 </Box>
