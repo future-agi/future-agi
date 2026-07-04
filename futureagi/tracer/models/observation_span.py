@@ -474,4 +474,29 @@ class EvalLogger(BaseModel):
                 ),
                 name="eval_logger_target_type_fks",
             ),
+            # §3.2: one live entry per (task, row, eval), keyed per target_type
+            # on the row's identity column. Scoped to work-items (non-null
+            # task); inline evals are exempt. Built CONCURRENTLY in the
+            # migration. voiceCalls ride the span index (target_type='span').
+            models.UniqueConstraint(
+                fields=["eval_task_id", "observation_span", "custom_eval_config"],
+                condition=models.Q(
+                    target_type="span", deleted=False, eval_task_id__isnull=False
+                ),
+                name="eval_logger_live_span_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["eval_task_id", "trace", "custom_eval_config"],
+                condition=models.Q(
+                    target_type="trace", deleted=False, eval_task_id__isnull=False
+                ),
+                name="eval_logger_live_trace_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["eval_task_id", "trace_session", "custom_eval_config"],
+                condition=models.Q(
+                    target_type="session", deleted=False, eval_task_id__isnull=False
+                ),
+                name="eval_logger_live_session_uniq",
+            ),
         ]
