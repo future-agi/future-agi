@@ -85,6 +85,18 @@ class TestDeterminismAndCosmetic:
         template.save()
         assert _hash(custom_eval_config) == before
 
+    @pytest.mark.parametrize("field,value", [("eval_id", 999), ("proxy_agi", False)])
+    def test_non_output_template_fields_excluded(
+        self, custom_eval_config, field, value
+    ):
+        # eval_id (seed/lookup) and proxy_agi (routing) don't determine per-row
+        # output, so editing them must not change the hash.
+        before = _hash(custom_eval_config)
+        template = custom_eval_config.eval_template
+        setattr(template, field, value)
+        template.save()
+        assert _hash(custom_eval_config) == before
+
 
 @pytest.mark.integration
 @pytest.mark.django_db
@@ -137,6 +149,7 @@ class TestTemplateOutputFields:
             ("eval_type", "code"),
             ("template_type", "composite"),
             ("error_localizer_enabled", True),
+            ("evaluator_id", "12345678-1234-5678-1234-567812345678"),
         ],
     )
     def test_template_output_field_changes_hash(self, custom_eval_config, field, value):
@@ -281,6 +294,35 @@ class TestPinnedVersion:
             organization=organization,
             workspace=workspace,
         )
+        link.pinned_version = v2
+        link.save()
+        assert _hash(config) != before
+
+    def test_repin_error_localizer_only_changes_hash(
+        self, project, organization, workspace
+    ):
+        # v1/v2 are identical except error_localizer_enabled, which the pinned
+        # snapshot omits — repinning must still flip the hash.
+        parent = _single_template(organization, workspace, template_type="composite")
+        child = _single_template(organization, workspace, criteria="live child")
+        common = {
+            "eval_template": child,
+            "criteria": "same",
+            "model": "same-model",
+            "organization": organization,
+            "workspace": workspace,
+        }
+        v1 = EvalTemplateVersion.objects.create(
+            version_number=1, error_localizer_enabled=False, **common
+        )
+        v2 = EvalTemplateVersion.objects.create(
+            version_number=2, error_localizer_enabled=True, **common
+        )
+        link = CompositeEvalChild.objects.create(
+            parent=parent, child=child, order=0, pinned_version=v1
+        )
+        config = _config_for(project, parent)
+        before = _hash(config)
         link.pinned_version = v2
         link.save()
         assert _hash(config) != before

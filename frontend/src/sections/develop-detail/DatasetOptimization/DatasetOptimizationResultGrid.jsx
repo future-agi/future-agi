@@ -31,8 +31,8 @@ const getColumnConfig = (columnConfig) => {
           valueGetter: (params) => {
             return {
               title: params.data?.trial,
-              improvement: params.data?.scorePercentageChange,
-              isBest: params.data?.isBest,
+              improvement: params.data?.score_percentage_change,
+              isBest: params.data?.is_best,
             };
           },
         };
@@ -52,9 +52,9 @@ const getColumnConfig = (columnConfig) => {
         };
 
       default:
-        // Eval columns - data is already in { score, percentageChange } format
+        // Eval columns - values live under data.eval_scores keyed by column.id
+        // each value is { score, percentage_change }.
         return {
-          field: column?.id,
           headerName: column?.name,
           minWidth: 170,
           colId: column?.id,
@@ -62,6 +62,7 @@ const getColumnConfig = (columnConfig) => {
           headerComponent: OptimizeResultHeader,
           isVisible: true,
           id: column?.id,
+          valueGetter: (params) => params.data?.eval_scores?.[column?.id],
         };
     }
   });
