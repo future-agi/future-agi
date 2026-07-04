@@ -380,6 +380,8 @@ class EvalLogger(BaseModel):
     )
     # sha256 of the resolved eval definition that produced this result.
     config_hash = models.CharField(max_length=64, null=True, blank=True)
+    # Reaper reclaim count; capped so a poison item can't block completion.
+    attempts = models.IntegerField(default=0)
 
     def __str__(self):
         return f"Eval Log {self.id}"
@@ -421,7 +423,10 @@ class EvalLogger(BaseModel):
         # writes via ``.save()`` get this validation; ``bulk_create`` / raw
         # inserts rely on the DB CHECK constraint instead (Django skips
         # ``clean()`` for ``bulk_create`` by design).
-        self.full_clean()
+        # The target FKs are ``db_constraint=False`` and may reference rows that
+        # live only in ClickHouse (the eval engine reads spans/traces from CH),
+        # so they're excluded from full_clean's non-PG existence check.
+        self.full_clean(exclude=["observation_span", "trace", "trace_session"])
         super().save(*args, **kwargs)
 
     class Meta:

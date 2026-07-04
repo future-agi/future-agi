@@ -204,6 +204,80 @@ def seed_ch_trace_sessions(
             client.close()
     return len(rows)
 
+
+_TRACES_COLUMNS = [
+    "id",
+    "project_id",
+    "project_version_id",
+    "name",
+    "session_id",
+    "external_id",
+    "tags",
+    "metadata",
+    "input",
+    "output",
+    "error",
+    "error_analysis_status",
+    "created_at",
+    "updated_at",
+    "is_deleted",
+]
+
+
+def seed_ch_trace(trace_or_dict: Any, *, client: Any | None = None) -> int:
+    """Insert ONE trace into the CH ``traces`` table (schema 015) — the curated
+    store the trace list endpoints + the eval engine's ``get_trace`` read."""
+    return seed_ch_traces([trace_or_dict], client=client)
+
+
+def seed_ch_traces(traces: Iterable[Any], *, client: Any | None = None) -> int:
+    """Bulk-insert curated CH ``traces`` rows for test ``Trace``s. JSON-ish
+    columns (tags/metadata/input/output/error) are stored as strings, mirroring
+    the production dual-write."""
+    import json as _json
+
+    now = datetime.now(UTC)
+
+    def _s(v, empty):
+        return _json.dumps(v) if v is not None else empty
+
+    rows: list[tuple] = []
+    for t in traces:
+        if isinstance(t, dict):
+            rows.append(tuple(t[c] for c in _TRACES_COLUMNS))
+            continue
+        pv = getattr(t, "project_version_id", None)
+        sid = getattr(t, "session_id", None)
+        rows.append(
+            (
+                str(t.id),
+                str(t.project_id),
+                str(pv) if pv else None,
+                t.name or "",
+                str(sid) if sid else None,
+                getattr(t, "external_id", None),
+                _s(getattr(t, "tags", None), "[]"),
+                _s(getattr(t, "metadata", None), "{}"),
+                _s(getattr(t, "input", None), ""),
+                _s(getattr(t, "output", None), ""),
+                _s(getattr(t, "error", None), ""),
+                getattr(t, "error_analysis_status", None) or "PENDING",
+                getattr(t, "created_at", None) or now,
+                now,
+                0,
+            )
+        )
+    if not rows:
+        return 0
+
+    own_client = client is None
+    if own_client:
+        client = _get_ch_client()
+    try:
+        client.insert("traces", rows, column_names=_TRACES_COLUMNS)
+    finally:
+        if own_client:
+            client.close()
     return len(rows)
 
 
