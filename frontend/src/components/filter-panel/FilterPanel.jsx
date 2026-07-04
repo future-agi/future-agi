@@ -588,6 +588,17 @@ const rangeInputTypeFor = (fieldType) => {
 const isValidRangeNumericInput = (v) =>
   v === "" || /^-?\d*\.?\d*$/.test(String(v).trim());
 
+// Complete (fully-typed) number. Unlike the partial check above, this rejects
+// mid-type states ("-", ".", "1.5.6"); used to gate commit/flush so a partial
+// value never becomes an applied token (TH-5195). Empty passes — an empty
+// bound is handled by the non-empty checks, not this.
+const isCompleteNumericInput = (v) => {
+  const str = String(v ?? "").trim();
+  if (str === "") return true;
+  if (!/^-?(\d+\.?\d*|\.\d+)$/.test(str)) return false;
+  return Number.isFinite(parseFloat(str));
+};
+
 const QueryInput = forwardRef(function QueryInput(
   {
     filterFields,
@@ -649,6 +660,10 @@ const QueryInput = forwardRef(function QueryInput(
     : "text";
   const isNumericRange =
     isRangePhase && RANGE_NUMERIC_TYPES.has(fieldMap[partialField]?.type);
+  const isNumericScalar =
+    phase === "value" &&
+    !isRangePhase &&
+    RANGE_NUMERIC_TYPES.has(fieldMap[partialField]?.type);
   const rangeFromInvalid =
     isNumericRange && !isValidRangeNumericInput(rangeFrom);
   const rangeToInvalid = isNumericRange && !isValidRangeNumericInput(rangeTo);
@@ -751,6 +766,13 @@ const QueryInput = forwardRef(function QueryInput(
         if (isRangePhase) {
           if (rangeFrom === "" || rangeTo === "") return null;
           if (rangeFromInvalid || rangeToInvalid) return null;
+          // partial-regex above still allows "-"/"." — require complete numbers
+          if (
+            isNumericRange &&
+            (!isCompleteNumericInput(rangeFrom) ||
+              !isCompleteNumericInput(rangeTo))
+          )
+            return null;
           const updated = [
             ...tokens,
             {
@@ -769,6 +791,8 @@ const QueryInput = forwardRef(function QueryInput(
         }
         const v = inputValue.trim();
         if (!v) return null;
+        // Don't commit a partial/invalid numeric on close (TH-5195).
+        if (isNumericScalar && !isCompleteNumericInput(v)) return null;
         const updated = [
           ...tokens,
           { field: partialField, operator: partialOp, value: v },
@@ -789,6 +813,8 @@ const QueryInput = forwardRef(function QueryInput(
       rangeTo,
       rangeFromInvalid,
       rangeToInvalid,
+      isNumericRange,
+      isNumericScalar,
       inputValue,
     ],
   );
@@ -890,7 +916,8 @@ const QueryInput = forwardRef(function QueryInput(
         !isRangePhase &&
         e.key === "Enter" &&
         inputValue.trim() &&
-        filtered.length === 0
+        filtered.length === 0 &&
+        (!isNumericScalar || isCompleteNumericInput(inputValue.trim()))
       ) {
         e.preventDefault();
         commitFilter(partialField, partialOp, inputValue.trim());
@@ -914,6 +941,7 @@ const QueryInput = forwardRef(function QueryInput(
     [
       phase,
       isRangePhase,
+      isNumericScalar,
       inputValue,
       partialField,
       partialOp,

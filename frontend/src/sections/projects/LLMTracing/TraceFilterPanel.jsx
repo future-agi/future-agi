@@ -410,6 +410,41 @@ const computeValidFilters = (rows) => {
   return valid.length ? valid : null;
 };
 
+// Canonical projection for dedup: two filter sets that produce the same API
+// query serialize identically regardless of row key order or display-only
+// fields (fieldName/fieldCategory can differ between the open/AI/apply init
+// paths), so an identical set never fires a redundant request.
+export const serializeFilterSet = (filters) =>
+  JSON.stringify(
+    (filters || []).map((f) => ({
+      field: f.field,
+      operator: normalizeFilterRowOperator(f).operator,
+      value: f.value,
+    })),
+  );
+
+// Hold auto-apply while a numeric row is mid-edit: a partial/invalid value
+// ("-", "1.5.6"), or a range with only one bound filled. Mirrors the old
+// disabled-Apply gate (TH-5195) so invalid numbers never reach the API and a
+// half-filled range doesn't drop the already-applied filter and refire.
+export const hasIncompleteNumericRow = (rows) =>
+  rows.some((r) => {
+    if (normalizeFieldType(r.fieldType) !== "number") return false;
+    if (Array.isArray(r.value)) {
+      const filled = r.value.filter(
+        (v) => v !== "" && v !== undefined && v !== null,
+      );
+      if (r.value.length >= 2 && filled.length === 1) return true;
+      return filled.some((v) => !isCompleteNumericValue(v));
+    }
+    return (
+      r.value !== "" &&
+      r.value !== undefined &&
+      r.value !== null &&
+      !isCompleteNumericValue(r.value)
+    );
+  });
+
 // Scalar ops — value picker forces single-select. Multi-value goes via in/not_in.
 const SINGLE_VALUE_OPS = new Set([
   "equals",
@@ -1976,11 +2011,13 @@ const TraceFilterPanel = ({
         setRows(enriched);
         // Seed last-applied with the already-applied set so the first
         // auto-apply pass after opening doesn't refire the same filters.
-        lastAppliedRef.current = JSON.stringify(computeValidFilters(enriched));
+        lastAppliedRef.current = serializeFilterSet(
+          computeValidFilters(enriched),
+        );
       } else {
         const initialRows = [{ ...effectiveDefaultRow }];
         setRows(initialRows);
-        lastAppliedRef.current = JSON.stringify(
+        lastAppliedRef.current = serializeFilterSet(
           computeValidFilters(initialRows),
         );
       }
@@ -2058,8 +2095,11 @@ const TraceFilterPanel = ({
   // Apply only when the resulting filter set differs from the last one sent.
   const applyIfChanged = useCallback(
     (sourceRows) => {
+      // Hold while a numeric row is mid-edit so partial/invalid values don't
+      // auto-fire and a half-filled range doesn't drop the applied filter.
+      if (hasIncompleteNumericRow(sourceRows)) return;
       const next = computeValidFilters(sourceRows);
-      const serialized = JSON.stringify(next);
+      const serialized = serializeFilterSet(next);
       if (serialized === lastAppliedRef.current) return;
       lastAppliedRef.current = serialized;
       onApply(next);
@@ -2078,7 +2118,10 @@ const TraceFilterPanel = ({
 
   // Flush on close: if a value was entered then the popover closed before the
   // 350ms debounce fired, run the pending apply immediately so the filter
-  // isn't dropped. applyIfChanged dedups, so an unchanged set is a no-op.
+  // isn't dropped. On the Query tab a value can be typed but not committed
+  // (no Enter) — it lives only in QueryInput's internal state, so flush that
+  // partial token to rows first. applyIfChanged dedups, so an unchanged set
+  // is a no-op.
   const wasOpenRef = useRef(open);
   useEffect(() => {
     if (wasOpenRef.current && !open) {
@@ -2086,14 +2129,21 @@ const TraceFilterPanel = ({
         clearTimeout(autoApplyTimerRef.current);
         autoApplyTimerRef.current = null;
       }
-      applyIfChanged(rows);
+      const flushed = queryInputRef.current?.flushPartial?.();
+      if (flushed && flushed.length) {
+        const flushedRows = queryTokensToRows(flushed);
+        setRows(flushedRows);
+        applyIfChanged(flushedRows);
+      } else {
+        applyIfChanged(rows);
+      }
     }
     wasOpenRef.current = open;
-  }, [open, rows, applyIfChanged]);
+  }, [open, rows, applyIfChanged, queryTokensToRows]);
 
   const handleClear = useCallback(() => {
     setRows([{ ...effectiveDefaultRow }]);
-    lastAppliedRef.current = JSON.stringify(null);
+    lastAppliedRef.current = serializeFilterSet(null);
     onApply(null);
     onClose();
   }, [onApply, onClose, effectiveDefaultRow]);
@@ -2122,7 +2172,7 @@ const TraceFilterPanel = ({
       // and seed lastAppliedRef with it so dedup matches what we actually sent.
       const validFilters = computeValidFilters(converted);
       setRows(converted);
-      lastAppliedRef.current = JSON.stringify(validFilters);
+      lastAppliedRef.current = serializeFilterSet(validFilters);
       onApply(validFilters);
       setAiQuery("");
       onClose();
