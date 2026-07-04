@@ -29,6 +29,7 @@ import {
   useVoiceCallDetail,
 } from "src/sections/agents/helper";
 import VoiceDetailDrawerV2 from "src/components/VoiceDetailDrawerV2";
+import ChatDetailDrawerV2 from "src/components/ChatDetailDrawerV2";
 import { buildVoiceCallAnnotationSources } from "src/components/voiceAnnotationSources";
 
 const BaselineVsReplayHeader = lazy(() => import("./BasLineCompare/Header"));
@@ -474,8 +475,43 @@ const TestDetailSideDrawerChild = ({
         />
       </ShowComponent>
 
+      {/* Chat simulate rows render in the revamped ChatDetailDrawerV2 —
+          including the Compare with baseline flow, which lives inside the
+          drawer (body swaps; chrome stays). The drawer reads `compareReplay`
+          and toggles its content between the two-panel chat layout and the
+          ChatCompareView, with `onExitCompare` for the back-arrow affordance.
+          The legacy fallback branch's condition still excludes chat sims so
+          we don't render two drawers. */}
       <ShowComponent
-        condition={isFetching !== "initial" && !(isVoiceCall && !compareReplay)}
+        condition={
+          isFetching !== "initial" &&
+          urlModule === "simulate" &&
+          isChatSim
+        }
+      >
+        <ChatDetailDrawerV2
+          data={mergedData}
+          onClose={onClose}
+          onPrev={() => navigateRecord("prev")}
+          onNext={() => navigateRecord("next")}
+          hasPrev={(updatedRowIndex ?? 0) > 0}
+          hasNext={totalCount ? (updatedRowIndex ?? 0) < totalCount - 1 : true}
+          isFetching={isFetching}
+          onAnnotate={() => setAnnotationSidebarOpen(true)}
+          onCompareBaseline={setCompareReplay}
+          compareReplay={compareReplay}
+          onExitCompare={() => setCompareReplay(false)}
+          scenarioId={scenarioId}
+          isLoading={isVoiceDetailLoading}
+        />
+      </ShowComponent>
+
+      <ShowComponent
+        condition={
+          isFetching !== "initial" &&
+          !(isVoiceCall && !compareReplay) &&
+          !(urlModule === "simulate" && isChatSim)
+        }
       >
         <Box
           sx={{

@@ -20,6 +20,7 @@ import {
 } from "@xyflow/react";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import axios, { endpoints } from "src/utils/axios";
 import useKpis from "src/hooks/useKpis";
 import GraphView from "src/components/GraphBuilder/GraphView";
@@ -1567,17 +1568,23 @@ const PathStepNode = React.memo(({ data }) => {
   const prompt = data?.prompt;
 
   return (
-    <Tooltip
+    <CustomTooltip
+      show
       arrow
       placement="top"
       title={
         <Box sx={{ maxWidth: 280 }}>
-          <Typography sx={{ fontSize: 11, fontWeight: 700 }}>
+          <Typography sx={{ typography: "c1", color: "text.primary" }}>
             {data?.name}
           </Typography>
           {opener && (
             <Typography
-              sx={{ fontSize: 10, mt: 0.25, color: "text.secondary" }}
+              sx={{
+                typography: "s3",
+                mt: 0.5,
+                color: "text.secondary",
+                lineHeight: 1.4,
+              }}
             >
               “{opener.slice(0, 160)}
               {opener.length > 160 ? "…" : ""}”
@@ -1586,10 +1593,11 @@ const PathStepNode = React.memo(({ data }) => {
           {prompt && (
             <Typography
               sx={{
-                fontSize: 9.5,
+                typography: "s3",
                 mt: 0.5,
-                color: "text.disabled",
+                color: "text.secondary",
                 fontStyle: "italic",
+                lineHeight: 1.4,
               }}
             >
               {prompt.slice(0, 180)}
@@ -1649,7 +1657,7 @@ const PathStepNode = React.memo(({ data }) => {
           style={{ background: color, width: 6, height: 6, border: "none" }}
         />
       </Box>
-    </Tooltip>
+    </CustomTooltip>
   );
 });
 
