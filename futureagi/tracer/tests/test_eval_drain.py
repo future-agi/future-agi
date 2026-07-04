@@ -93,7 +93,7 @@ class TestClaimPendingBatch:
 class TestMarkTerminal:
     def test_completed_sets_status_and_hash(self, project, custom_eval_config):
         task = _task(project, custom_eval_config)
-        [entry] = _entries(task, custom_eval_config, 1)
+        [entry] = _entries(task, custom_eval_config, 1, status=EvalEntryStatus.RUNNING)
         assert (
             mark_terminal(entry, EvalEntryStatus.COMPLETED, config_hash="a" * 64)
             is True
@@ -104,7 +104,7 @@ class TestMarkTerminal:
 
     def test_errored_sets_error_fields(self, project, custom_eval_config):
         task = _task(project, custom_eval_config)
-        [entry] = _entries(task, custom_eval_config, 1)
+        [entry] = _entries(task, custom_eval_config, 1, status=EvalEntryStatus.RUNNING)
         mark_terminal(
             entry,
             EvalEntryStatus.ERRORED,
@@ -119,7 +119,7 @@ class TestMarkTerminal:
 
     def test_skipped_sets_skipped_reason(self, project, custom_eval_config):
         task = _task(project, custom_eval_config)
-        [entry] = _entries(task, custom_eval_config, 1)
+        [entry] = _entries(task, custom_eval_config, 1, status=EvalEntryStatus.RUNNING)
         mark_terminal(
             entry,
             EvalEntryStatus.SKIPPED,
@@ -142,6 +142,18 @@ class TestMarkTerminal:
         )
         # Still deleted, not resurrected.
         assert _live(task).count() == 0
+
+    def test_noop_on_non_running_entry(self, project, custom_eval_config):
+        # Fence: a stale worker's terminal write must not land after the reaper
+        # requeued the entry (RUNNING is the only writable state).
+        task = _task(project, custom_eval_config)
+        [entry] = _entries(task, custom_eval_config, 1, status=EvalEntryStatus.PENDING)
+        assert (
+            mark_terminal(entry, EvalEntryStatus.COMPLETED, config_hash="e" * 64)
+            is False
+        )
+        entry.refresh_from_db()
+        assert entry.status == EvalEntryStatus.PENDING  # untouched
 
 
 @pytest.mark.integration

@@ -2705,13 +2705,26 @@ def _resolve_session_path(trace_session: TraceSession, path: str):
         from tracer.services.clickhouse.v2.eval_loader import _read_source, get_trace
 
         if _read_source() == "clickhouse":
-            traces = []
-            for tid in _trace_ids:
-                try:
-                    traces.append(get_trace(str(tid)))
-                except Trace.DoesNotExist:
-                    continue
-            traces.sort(key=lambda t: (t.created_at is None, t.created_at, str(t.id)))
+            # Order by earliest root-span start_time (parity with the PG branch
+            # and list_traces_of_session), falling back to created_at. One reader
+            # is shared across the root-start lookup and every get_trace hydration
+            # so the CH branch doesn't open (and leak) a reader per trace.
+            with get_reader() as reader:
+                root_starts = reader.per_trace_root_span_start_times(
+                    [str(t) for t in _trace_ids]
+                )
+                traces = []
+                for tid in _trace_ids:
+                    try:
+                        traces.append(get_trace(str(tid), reader=reader))
+                    except Trace.DoesNotExist:
+                        continue
+
+            def _trace_order(t):
+                key = root_starts.get(str(t.id)) or t.created_at
+                return (key is None, key, str(t.id))
+
+            traces.sort(key=_trace_order)
         else:
             root_start = (
                 # Earliest-root-span ordering stays a PG correlated Subquery; the

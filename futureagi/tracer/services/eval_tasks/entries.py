@@ -9,7 +9,7 @@ via the per-target_type unique indexes (``bulk_create(ignore_conflicts=True)``).
 from __future__ import annotations
 
 import contextvars
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -69,7 +69,7 @@ _RESULT_SKIP = {
 
 
 @contextmanager
-def writing_onto_entry(entry_id):
+def writing_onto_entry(entry_id: str) -> Iterator[None]:
     """Within this block, eval result writes update the materialized entry in
     place instead of creating a new (colliding) EvalLogger row."""
     token = _engine_entry_id.set(str(entry_id))
@@ -85,7 +85,7 @@ def in_engine_write_mode() -> bool:
     return _engine_entry_id.get() is not None
 
 
-def persist_eval_result(logger_kwargs: dict[str, Any]):
+def persist_eval_result(logger_kwargs: dict[str, Any]) -> EvalLogger | None:
     """Persist an eval result. In engine mode (inside ``writing_onto_entry``)
     update the materialized entry — a queryset update that skips the live-unique
     create conflict and ``full_clean`` (so a CH-only FK is fine). Otherwise
@@ -97,7 +97,11 @@ def persist_eval_result(logger_kwargs: dict[str, Any]):
     fields = {
         k: v for k, v in logger_kwargs.items() if k in valid and k not in _RESULT_SKIP
     }
-    EvalLogger.objects.filter(id=entry_id).update(**fields)
+    # Fence on RUNNING so a stale worker's late result write no-ops after a
+    # reaper requeue + re-claim (see mark_terminal).
+    EvalLogger.objects.filter(id=entry_id, status=EvalEntryStatus.RUNNING).update(
+        **fields
+    )
     return EvalLogger.objects.filter(id=entry_id).first()
 
 
@@ -198,7 +202,14 @@ def mark_terminal(
         fields["error_message"] = error_message
     if skipped_reason is not None:
         fields["skipped_reason"] = skipped_reason
-    return EvalLogger.objects.filter(id=entry.id).update(**fields) > 0
+    # Fence on RUNNING so a stale worker's late write no-ops after the reaper
+    # requeued the entry (and another worker re-claimed it).
+    return (
+        EvalLogger.objects.filter(id=entry.id, status=EvalEntryStatus.RUNNING).update(
+            **fields
+        )
+        > 0
+    )
 
 
 def _resolve_entry_fks(
