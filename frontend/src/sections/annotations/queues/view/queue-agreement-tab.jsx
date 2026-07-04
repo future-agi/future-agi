@@ -1,4 +1,6 @@
 import PropTypes from "prop-types";
+import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   Box,
   Card,
@@ -11,8 +13,13 @@ import {
   TableHead,
   TableRow,
   Typography,
+  Popover,
+  Link,
+  Stack,
 } from "@mui/material";
 import { useQueueAgreement } from "src/api/annotation-queues/annotation-queues";
+import { paths } from "src/routes/paths";
+import Iconify from "src/components/iconify";
 
 function getAgreementColor(pct) {
   if (pct === null || pct === undefined) return "text.secondary";
@@ -27,7 +34,22 @@ function formatPct(val) {
 }
 
 export default function QueueAgreementTab({ queueId }) {
+  const navigate = useNavigate();
   const { data: agreement, isLoading } = useQueueAgreement(queueId);
+  const [anchorEl, setAnchorEl] = useState(null);
+  const [selectedLabel, setSelectedLabel] = useState(null);
+
+  const handleOpenPopover = (event, label) => {
+    setAnchorEl(event.currentTarget);
+    setSelectedLabel(label);
+  };
+
+  const handleClosePopover = () => {
+    setAnchorEl(null);
+    setSelectedLabel(null);
+  };
+
+  const popoverOpen = Boolean(anchorEl);
 
   if (isLoading) {
     return (
@@ -103,7 +125,42 @@ export default function QueueAgreementTab({ queueId }) {
                         : "—"}
                     </TableCell>
                     <TableCell align="right">
-                      {label.disagreement_count ?? 0}
+                      {label.disagreement_count > 0 ? (
+                        <Link
+                          id={`disagreement-trigger-${id}`}
+                          component="button"
+                          variant="body2"
+                          onClick={(e) => handleOpenPopover(e, label)}
+                          aria-haspopup="true"
+                          aria-expanded={
+                            popoverOpen && selectedLabel === label
+                              ? "true"
+                              : "false"
+                          }
+                          aria-controls={
+                            popoverOpen && selectedLabel === label
+                              ? "disagreement-popover"
+                              : undefined
+                          }
+                          sx={{
+                            fontWeight: 600,
+                            color: "primary.main",
+                            textDecoration: "underline",
+                            cursor: "pointer",
+                            border: "none",
+                            background: "none",
+                            padding: 0,
+                            fontFamily: "inherit",
+                            "&:hover": {
+                              color: "primary.dark",
+                            },
+                          }}
+                        >
+                          {label.disagreement_count}
+                        </Link>
+                      ) : (
+                        label.disagreement_count ?? 0
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -152,6 +209,89 @@ export default function QueueAgreementTab({ queueId }) {
           </TableContainer>
         </Box>
       )}
+
+      <Popover
+        id="disagreement-popover"
+        open={popoverOpen}
+        anchorEl={anchorEl}
+        onClose={handleClosePopover}
+        anchorOrigin={{
+          vertical: "bottom",
+          horizontal: "right",
+        }}
+        transformOrigin={{
+          vertical: "top",
+          horizontal: "right",
+        }}
+        PaperProps={{
+          sx: {
+            p: 2,
+            width: 240,
+            maxHeight: 300,
+            display: "flex",
+            flexDirection: "column",
+            boxShadow: (theme) => theme.shadows[8],
+          },
+        }}
+      >
+        {selectedLabel && (
+          <>
+            <Typography variant="subtitle2" sx={{ mb: 1.5, fontWeight: 600 }}>
+              Disagreed Items: {selectedLabel.label_name}
+            </Typography>
+            <Stack spacing={1} sx={{ overflowY: "auto", flexGrow: 1 }}>
+              {(selectedLabel.disagreement_items ?? []).map((itemId) => (
+                <Link
+                  key={itemId}
+                  component="button"
+                  variant="body2"
+                  onClick={() => {
+                    navigate(
+                      `${paths.dashboard.annotations.annotate(queueId)}?itemId=${itemId}&mode=review`
+                    );
+                    handleClosePopover();
+                  }}
+                  sx={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    textAlign: "left",
+                    py: 0.5,
+                    px: 1,
+                    borderRadius: 0.5,
+                    width: "100%",
+                    textDecoration: "none",
+                    color: "primary.main",
+                    backgroundColor: "transparent",
+                    border: "none",
+                    cursor: "pointer",
+                    "&:hover": {
+                      backgroundColor: "action.hover",
+                      textDecoration: "underline",
+                    },
+                  }}
+                >
+                  <span>Item #{itemId}</span>
+                  <Iconify icon="eva:arrow-ios-forward-fill" width={16} />
+                </Link>
+              ))}
+            </Stack>
+            {selectedLabel.disagreement_count >
+              (selectedLabel.disagreement_items ?? []).length && (
+              <Typography
+                variant="caption"
+                color="text.secondary"
+                sx={{ mt: 1.5, display: "block", textAlign: "center" }}
+              >
+                +{" "}
+                {selectedLabel.disagreement_count -
+                  (selectedLabel.disagreement_items ?? []).length}{" "}
+                more disagreements
+              </Typography>
+            )}
+          </>
+        )}
+      </Popover>
     </Box>
   );
 }
