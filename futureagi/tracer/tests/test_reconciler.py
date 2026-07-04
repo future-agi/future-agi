@@ -164,6 +164,18 @@ class TestEvalChanges:
         assert result.requeued == 0
         assert _live(task, status=EvalEntryStatus.COMPLETED).count() == 4
 
+    def test_empty_config_hash_treated_as_not_stale(self, project, custom_eval_config):
+        # Transient-window guard: legacy completed rows not yet backfilled
+        # (config_hash empty) must NOT be re-run, even though "" != current hash.
+        _make_spans(project, 4)
+        task = _task(project, evals=[custom_eval_config])
+        reconcile(task)
+        _mark(task, EvalEntryStatus.COMPLETED)
+        _live(task).update(config_hash=None)  # simulate pre-backfill legacy rows
+        result = reconcile(task)
+        assert result.requeued == 0
+        assert _live(task, status=EvalEntryStatus.COMPLETED).count() == 4
+
     def test_errored_entries_requeued(self, project, custom_eval_config):
         _make_spans(project, 4)
         task = _task(project, evals=[custom_eval_config])
