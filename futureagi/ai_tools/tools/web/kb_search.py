@@ -45,6 +45,19 @@ class KBSearchTool(BaseTool):
 
     def execute(self, params: KBSearchInput, context: ToolContext) -> ToolResult:
         try:
+            from model_hub.models.kb import KnowledgeBase
+
+            try:
+                KnowledgeBase.objects.get(
+                    id=params.kb_id,
+                    organization_id=context.organization_id,
+                )
+            except (KnowledgeBase.DoesNotExist, ValueError):
+                return ToolResult.error(
+                    f"Knowledge Base '{params.kb_id}' not found or permission denied.",
+                    error_code="KB_NOT_FOUND",
+                )
+
             from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
 
             manager = EmbeddingManager()
