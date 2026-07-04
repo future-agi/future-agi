@@ -393,10 +393,7 @@ const EvalDetailPage = () => {
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
-          next.set(
-            "v",
-            String(versionToLoad.version_number),
-          );
+          next.set("v", String(versionToLoad.version_number));
           return next;
         },
         { replace: true },
@@ -529,9 +526,7 @@ const EvalDetailPage = () => {
       if (urlVersion && !initialLoadDone.current) {
         if (!versionsData) return;
         const match = (versionsData?.versions || []).find(
-          (ver) =>
-            String(ver.version_number) ===
-            String(urlVersion),
+          (ver) => String(ver.version_number) === String(urlVersion),
         );
         if (match) {
           initialLoadDone.current = true;
@@ -842,12 +837,9 @@ const EvalDetailPage = () => {
         criteria: evalType === "code" ? code : instructions,
         model,
       });
-      enqueueSnackbar(
-        `Version V${newVersion?.version_number ?? ""} saved`,
-        {
-          variant: "success",
-        },
-      );
+      enqueueSnackbar(`Version V${newVersion?.version_number ?? ""} saved`, {
+        variant: "success",
+      });
       setIsDirty(false);
       // Switch to viewing the newly created version
       if (newVersion?.version_number) {
@@ -855,10 +847,7 @@ const EvalDetailPage = () => {
         setSearchParams(
           (prev) => {
             const next = new URLSearchParams(prev);
-            next.set(
-              "v",
-              String(newVersion.version_number),
-            );
+            next.set("v", String(newVersion.version_number));
             return next;
           },
           { replace: true },
@@ -1274,6 +1263,7 @@ const EvalDetailPage = () => {
                   arrow
                 >
                   <MenuItem
+                    disabled={!canEditEvals}
                     onClick={handleDeleteClick}
                     sx={{ color: "error.main" }}
                   >
@@ -1424,10 +1414,7 @@ const EvalDetailPage = () => {
                         sx={{ flex: 1, fontSize: "12px" }}
                       >
                         Viewing{" "}
-                        <strong>
-                          V
-                          {viewingVersion.version_number}
-                        </strong>{" "}
+                        <strong>V{viewingVersion.version_number}</strong>{" "}
                         config. Edit and save to create a new version.
                       </Typography>
                       <Button
@@ -2032,7 +2019,10 @@ const EvalDetailPage = () => {
                           size="small"
                           onClick={handleSaveVersion}
                           disabled={
-                            isSaving || !isDirty || needsTemplateVariable || !canEditEvals
+                            isSaving ||
+                            !isDirty ||
+                            needsTemplateVariable ||
+                            !canEditEvals
                           }
                           startIcon={
                             isSaving ? (
