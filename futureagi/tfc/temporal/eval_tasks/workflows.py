@@ -21,6 +21,7 @@ from datetime import timedelta
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
+from temporalio.exceptions import ApplicationError
 
 from tfc.temporal.eval_tasks.search_attributes import (
     ORG_ID,
@@ -32,7 +33,7 @@ from tfc.temporal.eval_tasks.search_attributes import (
     PROJECT_ID,
     RUN_TYPE,
     STATUS_COMPLETED,
-    STATUS_PAUSED,
+    STATUS_FAILED,
     STATUS_RUNNING,
     TASK_STATUS,
 )
@@ -141,13 +142,14 @@ async def _claim(task_id: str, n: int) -> dict:
     )
 
 
-async def _finalize(task_id: str) -> None:
-    await workflow.execute_activity(
+async def _finalize(task_id: str) -> bool:
+    result = await workflow.execute_activity(
         "finalize_eval_task_activity",
         FinalizeInput(task_id=task_id),
         start_to_close_timeout=_CONTROL_TIMEOUT,
         retry_policy=CONTROL_RETRY_POLICY,
     )
+    return result["finalized"]
 
 
 async def _drain_batch(entry_ids: list[str], max_concurrent: int) -> None:
@@ -232,12 +234,14 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
             await _reap(input.task_id)
 
         self._phase = PHASE_DRAINING
-        processed = 0
+        processed = input.processed
         batches = 0
         while True:
             state = await _task_state(input.task_id)
             if not state["active"]:
-                _set_status(STATUS_PAUSED)
+                # Stamp the real terminal status (paused / failed / deleted),
+                # not a blanket "paused" — the fleet is filtered by it.
+                _set_status(state["status"])
                 self._phase = PHASE_DONE
                 return EvalTaskWorkflowOutput(
                     task_id=input.task_id,
@@ -263,11 +267,23 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
                         batch_size=input.batch_size,
                         max_concurrent=input.max_concurrent,
                         already_reconciled=True,
+                        processed=processed,
                         continue_as_new_after_batches=input.continue_as_new_after_batches,
                     )
                 )
 
-        await _finalize(input.task_id)
+        if not await _finalize(input.task_id):
+            # The drain loop only ends on an empty *pending* claim, so a task
+            # that still won't finalize has entries stranded RUNNING — both
+            # run_entry and fail_eval_entry exhausted their retries. reap only
+            # runs at first start (skipped across continue-as-new), so these
+            # can't self-heal here; fail loudly rather than report COMPLETED
+            # over undrained work. A fresh workflow start reaps and re-drains.
+            _set_status(STATUS_FAILED)
+            raise ApplicationError(
+                f"eval task {input.task_id} drained but did not finalize",
+                non_retryable=True,
+            )
         _set_status(STATUS_COMPLETED)
         self._phase = PHASE_DONE
         return EvalTaskWorkflowOutput(
@@ -290,7 +306,9 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
         while True:
             tstate = await _task_state(state.task_id)
             if not tstate["active"]:
-                _set_status(STATUS_PAUSED)
+                # Stamp the real terminal status (paused / failed / deleted),
+                # not a blanket "paused" — the fleet is filtered by it.
+                _set_status(tstate["status"])
                 self._phase = PHASE_DONE
                 return
 

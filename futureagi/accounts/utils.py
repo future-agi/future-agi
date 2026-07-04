@@ -13,6 +13,7 @@ from django.utils.http import urlsafe_base64_encode
 from slack_sdk import WebhookClient
 
 from accounts.models.organization import Organization
+from accounts.models.organization_invite import InviteStatus, OrganizationInvite
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import OrgApiKey, User
 from accounts.serializers.user import UserSignupSerializer
@@ -25,6 +26,7 @@ from analytics.utils import (
 )
 from saml2_auth.models import SAMLMetadataModel
 from tfc.constants.email import FREE_EMAIL_DOMAINS
+from tfc.constants.levels import Level
 from tfc.settings.settings import ssl
 from tfc.utils.email import email_helper
 from tfc.utils.parse_errors import parse_serialized_errors
@@ -293,6 +295,36 @@ def first_signup(data, mode=None):
         raise Exception(str(error_messages))
 
 
+def persist_pending_org_invite(
+    organization, target_email, org_role, workspace_role, workspaces, invited_by
+):
+    """Create or refresh the PENDING OrganizationInvite for a newly invited user.
+
+    The accept-invite flow (accept_invitation_mail) rejects any link that has
+    no pending invite, and invite.accept() materializes the org + workspace
+    memberships from level/workspace_access. Without this row the invite email
+    link always renders as "expired or invalid".
+
+    Keyed on (organization, target_email, status=PENDING) to match the
+    unique_pending_invite_per_org_email constraint. org_role may be None for
+    workspace-only invites (falls back to Level.VIEWER).
+    """
+    org_level = Level.from_string(org_role) if org_role else Level.VIEWER
+    ws_level = Level.from_string(Level.normalize_ws_role(workspace_role))
+    OrganizationInvite.objects.update_or_create(
+        organization=organization,
+        target_email=target_email,
+        status=InviteStatus.PENDING,
+        defaults={
+            "level": org_level,
+            "workspace_access": [
+                {"workspace_id": str(w.id), "level": ws_level} for w in workspaces
+            ],
+            "invited_by": invited_by,
+        },
+    )
+
+
 def send_invite_email(email, organization, inviter):
     """Send invite email to the target user."""
     try:
@@ -493,7 +525,9 @@ def _run_post_registration(user_id, generated_password):
             send_slack_notification(user, updated=updated, err=err)
 
 
-def existing_member_access_will_change(existing_user, organization, org_level, workspace_access):
+def existing_member_access_will_change(
+    existing_user, organization, org_level, workspace_access
+):
     """Check if re-inviting an existing active member would actually grant new access."""
     from accounts.models.workspace import WorkspaceMembership
     from tfc.constants.levels import Level

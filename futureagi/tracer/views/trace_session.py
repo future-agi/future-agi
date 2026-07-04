@@ -2,6 +2,7 @@ import io
 import json
 import traceback
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 
 try:
@@ -117,6 +118,34 @@ def _resolve_session_ids_to_canonical(analytics, session_ids):
         else:
             id_to_survivor[str(row[0])] = str(row[1])
     return {i: id_to_survivor.get(i, i) for i in ids}
+
+
+def _expand_session_group(analytics, canonical_session_id: str) -> tuple[str, ...]:
+    """Return all trace_session_ids (old + new) that share the same canonical.
+
+    For a single session detail lookup this replaces the heavy
+    ``LEFT JOIN (survivor_map_subquery)`` with a cheap ``IN (...)`` filter
+    that uses the bloom index on ``trace_session_id``.
+    """
+    q = (
+        "SELECT DISTINCT toString(old_id) AS id "
+        "FROM trace_session_id_remap FINAL "
+        "WHERE new_id = ("
+        "  SELECT new_id FROM trace_session_id_remap FINAL "
+        "  WHERE old_id = %(canonical_id)s LIMIT 1"
+        ") "
+        "UNION ALL "
+        "SELECT DISTINCT toString(new_id) AS id "
+        "FROM trace_session_id_remap FINAL "
+        "WHERE old_id = %(canonical_id)s"
+    )
+    res = analytics.execute_ch_query(q, {"canonical_id": canonical_session_id}, timeout_ms=3000)
+    ids = {canonical_session_id}
+    for row in res.data or []:
+        val = str(row.get("id") if isinstance(row, dict) else row[0])
+        if val and val != "00000000-0000-0000-0000-000000000000":
+            ids.add(val)
+    return tuple(ids)
 
 
 def _get_request_organization(request):
@@ -586,61 +615,61 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         page_size = query_data["page_size"]
         page_start = page_number * page_size
 
-        # P3b step1.5 (DESIGN §3 / id_remap_sql): the session detail is keyed by the
-        # OLD curated `TraceSession.id` (the URL pk). A cross-cutover straddler's
-        # NEW (deterministic-id) spans carry `trace_session_id = new_id`, so resolve
-        # each span's `trace_session_id` new→old through `trace_session_id_remap`
-        # and match the OLD id on the RESOLVED value — the detail aggregates AND the
-        # paginated trace list then see old + new spans as ONE session. The remap
-        # table only carries `old_id`/`new_id`, so the unqualified span columns stay
-        # unambiguous under the join. `resolved_id_expr` is the zero-uuid-guarded map
-        # (NOT a COALESCE). Pre-flip NO span matches a `new_id` → resolved id == own
-        # id → byte-identical no-op (gate B).
-        from tracer.services.clickhouse.v2.id_remap_sql import (
-            remap_left_join,
-            resolved_id_expr,
-        )
-
-        ts_remap_join = remap_left_join(
-            "spans.trace_session_id", "trace_session_id_remap", "ts_remap"
-        )
-        ts_resolved = resolved_id_expr("spans.trace_session_id", "ts_remap")
-        # A caller can arrive with either member of a remap pair; bind the same
-        # survivor id that the span side resolves to before comparing.
+        # P3b step1.5: resolve the session's canonical ID and expand it to
+        # all group member IDs (old + new). Use IN (...) instead of the heavy
+        # LEFT JOIN (survivor_map_subquery) to avoid OOM on large remap tables.
         requested_session_id = str(trace_session_id)
         canonical_session_id = _resolve_session_ids_to_canonical(
             analytics, [requested_session_id]
         ).get(requested_session_id, requested_session_id)
+        session_group_ids = _expand_session_group(analytics, canonical_session_id)
 
         # Get session-level aggregates from CH
-        agg_query = f"""
+        agg_query = """
             SELECT
-                min(start_time) AS start_time,
-                max(end_time) AS end_time,
+                min(start_time) AS session_start,
+                max(end_time) AS session_end,
                 round(sum(cost), 6) AS total_cost,
                 sum(total_tokens) AS total_tokens,
-                count(DISTINCT trace_id) AS total_traces
+                count(DISTINCT trace_id) AS total_traces,
+                toString(argMaxIf(end_user_id, start_time, isNotNull(end_user_id) AND end_user_id != toUUID('00000000-0000-0000-0000-000000000000'))) AS end_user_id
             FROM spans
-            {ts_remap_join}
             WHERE project_id = %(project_id)s
-              AND {ts_resolved} = %(session_id)s
+              AND trace_session_id IN %(session_group_ids)s
               AND is_deleted = 0
         """
         agg_result = analytics.execute_ch_query(
             agg_query,
-            {"project_id": str(project_id), "session_id": canonical_session_id},
+            {"project_id": str(project_id), "session_group_ids": session_group_ids},
             timeout_ms=5000,
         )
 
         agg = agg_result.data[0] if agg_result.data else {}
-        session_start = agg.get("start_time")
-        session_end = agg.get("end_time")
+        session_start = agg.get("session_start")
+        session_end = agg.get("session_end")
         duration = 0
         if session_start and session_end:
             try:
                 duration = (session_end - session_start).total_seconds()
             except (TypeError, AttributeError):
                 duration = 0
+
+        end_user_id = agg.get("end_user_id") or ""
+        null_uuid = "00000000-0000-0000-0000-000000000000"
+        user_id_label = None
+        if end_user_id and end_user_id != null_uuid:
+            try:
+                from tracer.services.clickhouse.v2.end_user_dict_reader import (
+                    resolve_user_ids,
+                )
+
+                user_map = resolve_user_ids([end_user_id])
+                user_id_label = user_map.get(end_user_id)
+            except Exception:
+                logger.debug(
+                    "session_retrieve_user_id_resolve_failed",
+                    end_user_id=end_user_id,
+                )
 
         session_metadata = {
             "session_id": str(trace_session_id),
@@ -650,11 +679,11 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             "start_time": format_datetime_to_iso(session_start),
             "end_time": format_datetime_to_iso(session_end),
             "total_tokens": agg.get("total_tokens", 0),
+            "user_id": user_id_label,
         }
 
-        # Get paginated trace data from CH (same id-remap resolution as the agg so
-        # a straddler's new-id traces appear in the unified session's trace list).
-        trace_query = f"""
+        # Get paginated trace data from CH
+        trace_query = """
             SELECT
                 toString(trace_id) AS trace_id,
                 any(input) AS input,
@@ -666,9 +695,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 sum(prompt_tokens) AS input_tokens,
                 sum(completion_tokens) AS output_tokens
             FROM spans
-            {ts_remap_join}
             WHERE project_id = %(project_id)s
-              AND {ts_resolved} = %(session_id)s
+              AND trace_session_id IN %(session_group_ids)s
               AND is_deleted = 0
             GROUP BY trace_id
             ORDER BY trace_min_start_time ASC
@@ -679,7 +707,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             trace_query,
             {
                 "project_id": str(project_id),
-                "session_id": canonical_session_id,
+                "session_group_ids": session_group_ids,
                 "limit": page_size + 1,
                 "offset": page_start,
             },
@@ -740,6 +768,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 "output": trace_row.get("output"),
                 "system_metrics": {
                     "total_latency_ms": trace_row.get("root_latency_ms", 0),
+                    "user_id": user_id_label,
                     "total_cost": trace_row.get("total_cost", 0),
                     "start_time": format_datetime_to_iso(
                         trace_row.get("trace_min_start_time")
@@ -2167,28 +2196,47 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             list(actual_data[0].keys()) if actual_data else [],
         )
 
-        # CH-derived-dimensions cutover (DESIGN §5.2): the curated session
-        # fields — display name, end-user labels, created_at — are no longer
-        # back-filled from PG ``TraceSession``/``tracer_enduser``. They now come
-        # from the CH dicts + the PG overlay, keyed by the span's own
-        # ``trace_session_id`` / ``end_user_id`` soft ids.
+        # Phase 2: Parallel enrichment — session names, end-user info, and
+        # span attributes are independent of each other; run concurrently.
         _curated_project_ids = org_project_ids or ([project_id] if project_id else None)
+        name_map: dict = {}
+        end_user_map: dict = {}
+        attr_result_data: list = []
         if session_ids_page:
-            # session_name = COALESCE(overlay.display_name, external_session_id).
-            # Replaces the old back-fill that read TraceSession.name straight off
-            # PG (which conflated the immutable external id and the UI rename).
-            name_map = self._fetch_session_names(session_ids_page, _curated_project_ids)
-            # end-user curated fields from the CH dict (was the PG FK join).
-            end_user_map = self._fetch_end_user_info(
-                session_ids_page, analytics, _curated_project_ids
-            )
+            def _fetch_attrs():
+                try:
+                    aq, ap = builder.build_span_attributes_query(session_ids_page)
+                    if aq:
+                        ar = analytics.execute_ch_query(aq, ap, timeout_ms=5000)
+                        return ar.data
+                except Exception as exc:
+                    logger.warning("session_enrichment_attrs_failed", error=str(exc)[:200])
+                return []
+
+            # Submit the slow attrs query to a background thread (uses only
+            # the thread-safe clickhouse_driver connection pool). Run the fast
+            # name/end-user lookups in the main thread — they use the non-
+            # thread-safe clickhouse_connect singleton clients and must not
+            # overlap with other Django request threads using the same clients.
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                f_attrs = pool.submit(_fetch_attrs)
+                try:
+                    name_map = self._fetch_session_names(
+                        session_ids_page, _curated_project_ids
+                    )
+                except Exception as exc:
+                    logger.warning("session_enrichment_names_failed", error=str(exc)[:200])
+                try:
+                    end_user_map = self._fetch_end_user_info(
+                        session_ids_page, analytics, _curated_project_ids
+                    )
+                except Exception as exc:
+                    logger.warning("session_enrichment_end_user_failed", error=str(exc)[:200])
+                attr_result_data = f_attrs.result()
+
             for entry in formatted:
                 sid = str(entry.get("session_id", ""))
                 entry["session_name"] = name_map.get(sid)
-                # created_at: the CH list builder emits no created_at; per
-                # DESIGN §5.2 the session's creation is its first observed
-                # activity = min(start_time), which the builder already computed
-                # as `start_time`. (Documented divergence from PG `created_at`.)
                 entry["created_at"] = entry.get("start_time")
                 eu = end_user_map.get(sid, {})
                 entry["user_id"] = eu.get("user_id")
@@ -2207,7 +2255,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 entry["user_id_type"] = end_user_display["user_id_type"]
                 entry["user_id_hash"] = end_user_display["user_id_hash"]
 
-        # Phase 2: Aggregated span attributes for custom columns
+        # Phase 3: Aggregated span attributes for custom columns
         _SKIP_ATTR_PREFIXES = (
             "raw.",
             "llm.input_messages",
@@ -2216,77 +2264,65 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             "output.value",
         )
         _MAX_ATTR_KEYS_PER_SESSION = 50
-        if session_ids_page:
+        if session_ids_page and attr_result_data:
             try:
-                attr_query, attr_params = builder.build_span_attributes_query(
-                    session_ids_page
-                )
-                if attr_query:
-                    attr_result = analytics.execute_ch_query(
-                        attr_query, attr_params, timeout_ms=5000
-                    )
-                    # Aggregate per session: session_id -> {attr_key -> set(values)}
-                    aggregated_attrs: dict[str, dict] = {}
-                    for attr_row in attr_result.data:
-                        sid = str(attr_row.get("session_id", ""))
-                        # Skip if this session already has max keys
-                        if (
-                            sid in aggregated_attrs
-                            and len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION
-                        ):
+                aggregated_attrs: dict[str, dict] = {}
+                for attr_row in attr_result_data:
+                    sid = str(attr_row.get("session_id", ""))
+                    if (
+                        sid in aggregated_attrs
+                        and len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION
+                    ):
+                        continue
+                    raw = attr_row.get("span_attributes_raw", "{}")
+                    try:
+                        attrs = (
+                            _json_loads(raw)
+                            if isinstance(raw, str) and raw
+                            else (raw or {})
+                        )
+                    except (json.JSONDecodeError, ValueError, TypeError):
+                        attrs = {}
+                    if not attrs:
+                        str_map = attr_row.get("attrs_string") or {}
+                        num_map = attr_row.get("attrs_number") or {}
+                        if isinstance(str_map, dict):
+                            attrs.update(str_map)
+                        if isinstance(num_map, dict):
+                            for k, v in num_map.items():
+                                if k not in attrs:
+                                    attrs[k] = v
+                    if sid not in aggregated_attrs:
+                        aggregated_attrs[sid] = {}
+                    for key, value in attrs.items():
+                        if len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION:
+                            break
+                        if key.startswith(_SKIP_ATTR_PREFIXES):
                             continue
-                        # Primary: parse raw JSON blob (using orjson if available)
-                        raw = attr_row.get("span_attributes_raw", "{}")
-                        try:
-                            attrs = (
-                                _json_loads(raw)
-                                if isinstance(raw, str) and raw
-                                else (raw or {})
+                        if isinstance(value, str) and len(value) > 500:
+                            continue
+                        if key not in aggregated_attrs[sid]:
+                            aggregated_attrs[sid][key] = (
+                                set()
+                                if isinstance(value, (str, int, float, bool))
+                                else []
                             )
-                        except (json.JSONDecodeError, ValueError, TypeError):
-                            attrs = {}
-                        # Fallback: merge from typed Map columns when raw is empty
-                        if not attrs:
-                            str_map = attr_row.get("attrs_string") or {}
-                            num_map = attr_row.get("attrs_number") or {}
-                            if isinstance(str_map, dict):
-                                attrs.update(str_map)
-                            if isinstance(num_map, dict):
-                                for k, v in num_map.items():
-                                    if k not in attrs:
-                                        attrs[k] = v
-                        if sid not in aggregated_attrs:
-                            aggregated_attrs[sid] = {}
-                        for key, value in attrs.items():
-                            if len(aggregated_attrs[sid]) >= _MAX_ATTR_KEYS_PER_SESSION:
-                                break
-                            if key.startswith(_SKIP_ATTR_PREFIXES):
-                                continue
-                            if isinstance(value, str) and len(value) > 500:
-                                continue
-                            if key not in aggregated_attrs[sid]:
-                                aggregated_attrs[sid][key] = (
-                                    set()
-                                    if isinstance(value, (str, int, float, bool))
-                                    else []
-                                )
-                            if isinstance(value, (str, int, float, bool)):
-                                aggregated_attrs[sid][key].add(
-                                    value
-                                    if not isinstance(value, bool)
-                                    else str(value).lower()
-                                )
-                    # Merge into formatted rows
-                    for entry in formatted:
-                        sid = entry.get("session_id", "")
-                        session_attrs = aggregated_attrs.get(sid, {})
-                        for key, values in session_attrs.items():
-                            if key not in entry:
-                                if isinstance(values, set):
-                                    vals = sorted(values, key=str)
-                                    entry[key] = vals[0] if len(vals) == 1 else vals
-                                else:
-                                    entry[key] = values
+                        if isinstance(value, (str, int, float, bool)):
+                            aggregated_attrs[sid][key].add(
+                                value
+                                if not isinstance(value, bool)
+                                else str(value).lower()
+                            )
+                for entry in formatted:
+                    sid = entry.get("session_id", "")
+                    session_attrs = aggregated_attrs.get(sid, {})
+                    for key, values in session_attrs.items():
+                        if key not in entry:
+                            if isinstance(values, set):
+                                vals = sorted(values, key=str)
+                                entry[key] = vals[0] if len(vals) == 1 else vals
+                            else:
+                                entry[key] = values
             except Exception as e:
                 logger.warning(f"Session span attribute aggregation failed: {e}")
 

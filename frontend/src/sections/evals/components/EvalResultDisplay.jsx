@@ -107,6 +107,7 @@ const FormattedResult = ({ result }) => {
   const normalizedRaw = normalizeEvalCellValue(rawInput);
 
   let raw = normalizedRaw;
+  let choiceScore = null;
   if (
     normalizedRaw &&
     typeof normalizedRaw === "object" &&
@@ -115,6 +116,7 @@ const FormattedResult = ({ result }) => {
   ) {
     if (normalizedRaw.choice != null || normalizedRaw.choices != null) {
       const choiceVal = normalizedRaw.choices ?? normalizedRaw.choice;
+      if (typeof normalizedRaw.score === "number") choiceScore = normalizedRaw.score;
       raw = Array.isArray(choiceVal)
         ? choiceVal.map((c) => ({ label: c }))
         : { label: choiceVal };
@@ -173,20 +175,49 @@ const FormattedResult = ({ result }) => {
                 typeof c.label === "string"
                   ? c.label.charAt(0).toUpperCase() + c.label.slice(1)
                   : String(c.label);
+              const itemScore =
+                typeof c.score === "number"
+                  ? c.score
+                  : items.length === 1 && typeof choiceScore === "number"
+                    ? choiceScore
+                    : null;
               return (
-                <Chip
+                <Box
                   key={i}
-                  label={label}
-                  size="small"
-                  variant="outlined"
-                  sx={{
-                    borderRadius: "4px",
-                    borderColor: "purple.500",
-                    color: "purple.500",
-                    fontWeight: 400,
-                    typography: "s3",
-                  }}
-                />
+                  sx={{ display: "flex", alignItems: "center", gap: "8px" }}
+                >
+                  <Chip
+                    label={label}
+                    size="small"
+                    variant="outlined"
+                    sx={{
+                      borderRadius: "4px",
+                      borderColor: "purple.500",
+                      color: "purple.500",
+                      fontWeight: 400,
+                      typography: "s3",
+                    }}
+                  />
+                  {itemScore != null && (
+                    <Chip
+                      label={itemScore.toFixed(1)}
+                      size="small"
+                      color={
+                        itemScore >= 0.7
+                          ? "success"
+                          : itemScore >= 0.3
+                            ? "warning"
+                            : "error"
+                      }
+                      sx={{
+                        minWidth: 40,
+                        fontSize: "12px",
+                        fontWeight: 600,
+                        height: 24,
+                      }}
+                    />
+                  )}
+                </Box>
               );
             })}
           </Box>

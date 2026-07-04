@@ -21,6 +21,9 @@ class EvalTaskWorkflowInput:
     max_concurrent: int = 10
     # Set on continue-as-new so the next run skips the one-time reconcile + reap.
     already_reconciled: bool = False
+    # Carried across continue-as-new so the final output reports the lifetime
+    # total drained, not just the last segment.
+    processed: int = 0
     # Test/ops override; production relies on the server's CAN suggestion.
     continue_as_new_after_batches: int | None = None
 

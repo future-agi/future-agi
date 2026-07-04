@@ -128,25 +128,20 @@ const UsersGrid = React.memo(
         };
       };
 
-      const customCols = columns.filter((c) => c?.groupBy === "Custom Columns");
-      const otherCols = columns.filter((c) => c?.groupBy !== "Custom Columns");
-
-      const result = otherCols.map(buildColDef);
-
-      // Group custom columns under a "Custom Columns" header (TH-4151)
-      if (customCols.length > 0) {
-        result.push({
-          headerName: "Custom Columns",
-          children: customCols.map((c) => {
-            const colDef = buildColDef(c);
-            return {
-              ...colDef,
-              minWidth: 200,
-              flex: 1,
-              cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
-            };
-          }),
-        });
+      // Custom columns flat (ungrouped), in store order.
+      const result = [];
+      for (const c of columns) {
+        if (c?.groupBy === "Custom Columns") {
+          const colDef = buildColDef(c);
+          result.push({
+            ...colDef,
+            minWidth: 200,
+            flex: 1,
+            cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
+          });
+          continue;
+        }
+        result.push(buildColDef(c));
       }
 
       return result;
@@ -403,6 +398,8 @@ const UsersGrid = React.memo(
     const onColumnMoved = useCallback(
       (params) => {
         if (!params.finished) return;
+        // User drags only; programmatic moves would feed back into setColumns.
+        if (params.source !== "uiColumnMoved") return;
 
         const newOrder = params.api
           .getColumnState()

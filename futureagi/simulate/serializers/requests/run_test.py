@@ -16,6 +16,7 @@ from rest_framework import serializers
 from simulate.models import AgentDefinition, RunTest, Scenarios, SimulateEvalConfig
 from simulate.serializers.requests.run_test_evals import EvalConfigDefinitionSerializer
 from tracer.serializers.filters import StrictInputSerializer
+from tracer.utils.workspace_scope import get_request_organization
 
 
 class RunTestFilterSerializer(StrictInputSerializer):
@@ -75,7 +76,7 @@ class CreateRunTestSerializer(StrictInputSerializer):
 
     def validate_agent_definition_id(self, value):
         """Validate that the agent definition exists"""
-        organization = self.context["request"].user.organization
+        organization = get_request_organization(self.context["request"])
         if not AgentDefinition.objects.filter(
             id=value, organization=organization
         ).exists():
@@ -84,7 +85,7 @@ class CreateRunTestSerializer(StrictInputSerializer):
 
     def validate_scenario_ids(self, value):
         """Validate that all scenario IDs exist"""
-        organization = self.context["request"].user.organization
+        organization = get_request_organization(self.context["request"])
         existing_ids = set(
             Scenarios.objects.filter(
                 id__in=value, organization=organization
@@ -111,7 +112,7 @@ class CreateRunTestSerializer(StrictInputSerializer):
         if not valid_uuids:
             return []
 
-        organization = self.context["request"].user.organization
+        organization = get_request_organization(self.context["request"])
         existing_ids = set(
             SimulateEvalConfig.objects.filter(
                 id__in=valid_uuids, run_test__organization=organization
@@ -205,7 +206,7 @@ class CreatePromptSimulationSerializer(PromptSimulationCreateFieldsSerializer):
         """Validate that the prompt template exists"""
         from model_hub.models.run_prompt import PromptTemplate
 
-        organization = self.context["request"].user.organization
+        organization = get_request_organization(self.context["request"])
         if not PromptTemplate.objects.filter(
             id=value, organization=organization, deleted=False
         ).exists():
@@ -222,7 +223,7 @@ class CreatePromptSimulationSerializer(PromptSimulationCreateFieldsSerializer):
 
     def validate_scenario_ids(self, value):
         """Validate that all scenario IDs exist"""
-        organization = self.context["request"].user.organization
+        organization = get_request_organization(self.context["request"])
         existing_ids = set(
             Scenarios.objects.filter(
                 id__in=value, organization=organization

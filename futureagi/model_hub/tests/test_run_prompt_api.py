@@ -354,6 +354,43 @@ class TestAddRunPromptColumnView:
             name="AI Response", dataset=dataset, deleted=False
         ).exists()
 
+    def test_add_run_prompt_column_accepts_null_model_params(
+        self, auth_client, dataset, input_column, valid_run_prompt_config
+    ):
+        """Null values inside run_prompt_config mean "use provider default"
+        and must not be rejected (TH-6409)."""
+        config = {
+            **valid_run_prompt_config,
+            "run_prompt_config": {
+                "model_name": "gpt-4o-mini",
+                "model_type": "llm",
+                "temperature": None,
+                "top_p": None,
+                "max_tokens": None,
+                "presence_penalty": None,
+                "frequency_penalty": None,
+            },
+        }
+        payload = {
+            "dataset_id": str(dataset.id),
+            "name": "AI Response Nulls",
+            "config": config,
+        }
+
+        with patch(
+            "model_hub.tasks.run_prompt.process_prompts_single.apply_async"
+        ):
+            response = auth_client.post(
+                "/model-hub/develops/add_run_prompt_column/",
+                payload,
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert Column.objects.filter(
+            name="AI Response Nulls", dataset=dataset, deleted=False
+        ).exists()
+
     def test_add_run_prompt_column_duplicate_name(
         self, auth_client, dataset, input_column, valid_run_prompt_config
     ):

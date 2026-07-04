@@ -201,6 +201,9 @@ class TestHistoricalWorkflow:
         )
 
         assert result.status == "completed"
+        # processed is carried across every CAN hop — the lifetime total, not
+        # just the last segment (which would be 1 here).
+        assert result.processed == 4
         counts = await _status_counts(str(eval_task.id))
         assert counts["completed"] == 4
         assert counts["pending"] == 0 and counts["running"] == 0
@@ -278,6 +281,48 @@ class TestHistoricalWorkflow:
         assert counts["completed"] == 3
         assert counts["errored"] == 1
         assert counts["pending"] == 0 and counts["running"] == 0
+
+    async def test_stranded_entry_fails_workflow_not_false_completed(
+        self, workflow_environment, eval_task, make_pending_entries, monkeypatch
+    ):
+        """When both run_entry and fail_eval_entry exhaust their retries, the
+        entry is left stranded RUNNING and the task can't finalize. The workflow
+        must fail loudly rather than report COMPLETED over undrained work (the
+        drain loop breaks on an empty *pending* claim, so a naive finalize would
+        no-op and the run would otherwise still return completed)."""
+        from temporalio.client import WorkflowFailureError
+        from temporalio.common import RetryPolicy
+
+        import tfc.temporal.eval_tasks.workflows as wf
+
+        entries = await sync_to_async(make_pending_entries)(eval_task, 4)
+        bad_id = entries[0].id
+        _patch_noop_reconcile(monkeypatch)
+        _patch_run_entry_failing_one(monkeypatch, bad_id)
+
+        # The fail path can't converge it either — mark_terminal raises, so the
+        # fail_eval_entry activity also exhausts its retries and the entry is
+        # never marked errored; it stays RUNNING.
+        def _mark_terminal_raises(*args, **kwargs):
+            raise RuntimeError("simulated infra fault (fail path)")
+
+        monkeypatch.setattr(
+            "tracer.services.eval_tasks.entries.mark_terminal", _mark_terminal_raises
+        )
+        # Shrink both retry policies so the two exhaustion paths finish fast.
+        one_shot = RetryPolicy(maximum_attempts=1)
+        monkeypatch.setattr(wf, "RUN_ENTRY_RETRY_POLICY", one_shot)
+        monkeypatch.setattr(wf, "CONTROL_RETRY_POLICY", one_shot)
+
+        with pytest.raises(WorkflowFailureError):
+            await _run_historical(
+                workflow_environment, str(eval_task.id), batch_size=4, max_concurrent=4
+            )
+
+        counts = await _status_counts(str(eval_task.id))
+        assert counts["completed"] == 3  # the healthy entries still drained
+        assert counts["running"] == 1  # the stranded one, left non-terminal
+        assert await _task_status(str(eval_task.id)) != EvalTaskStatus.COMPLETED
 
     async def test_entry_passes_through_running_mid_drain(
         self, workflow_environment, eval_task, make_pending_entries, monkeypatch
