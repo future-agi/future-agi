@@ -13,6 +13,7 @@ Callers handle their own:
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -26,6 +27,62 @@ from evaluations.engine.params import prepare_run_params
 from evaluations.engine.registry import get_eval_class
 
 logger = structlog.get_logger(__name__)
+
+
+_REQUIRED_COST_KEYS = {"total_cost", "prompt_cost", "completion_cost"}
+_REQUIRED_TOKEN_USAGE_KEYS = {
+    "total_tokens",
+    "prompt_tokens",
+    "completion_tokens",
+}
+_OPTIONAL_TOKEN_USAGE_KEYS = {
+    "cache_creation_input_tokens",
+    "cache_read_input_tokens",
+}
+
+
+def _valid_cost_number(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value >= 0
+    )
+
+
+def _valid_token_count(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _sanitize_cost_payload(payload: Any) -> dict | None:
+    if not isinstance(payload, dict) or not _REQUIRED_COST_KEYS.issubset(
+        payload.keys()
+    ):
+        return None
+    if not all(_valid_cost_number(payload[key]) for key in _REQUIRED_COST_KEYS):
+        return None
+
+    sanitized = {key: payload[key] for key in _REQUIRED_COST_KEYS}
+    pricing_source = payload.get("pricing_source")
+    if isinstance(pricing_source, str):
+        sanitized["pricing_source"] = pricing_source
+    return sanitized
+
+
+def _sanitize_token_usage_payload(payload: Any) -> dict | None:
+    if not isinstance(payload, dict) or not _REQUIRED_TOKEN_USAGE_KEYS.issubset(
+        payload.keys()
+    ):
+        return None
+    if not all(_valid_token_count(payload[key]) for key in _REQUIRED_TOKEN_USAGE_KEYS):
+        return None
+
+    sanitized = {key: payload[key] for key in _REQUIRED_TOKEN_USAGE_KEYS}
+    for key in _OPTIONAL_TOKEN_USAGE_KEYS:
+        value = payload.get(key)
+        if _valid_token_count(value):
+            sanitized[key] = value
+    return sanitized
 
 
 @dataclass
@@ -68,8 +125,8 @@ class EvalResult:
     end_time: float | None = None
     duration: float | None = None
 
-    # Cost tracking (populated from the evaluator instance post-run so callers
-    # can emit billing events without having to hold the instance themselves).
+    # Cost tracking (prefer valid, complete response-level fields; fall back to
+    # evaluator instance fields for compatibility).
     cost: dict | None = None
     token_usage: dict | None = None
 
@@ -81,7 +138,10 @@ def run_eval(request: EvalRequest) -> EvalResult:
     This is the single point of truth for:
     resolve class → create instance → prepare params → run → format.
 
-    No result persistence. No cost tracking. Callers handle all side effects.
+    No result persistence or billing side effects. The returned EvalResult may
+    include valid, complete response-level cost/token_usage fields, and falls back to
+    evaluator instance fields for compatibility. Callers handle all other side
+    effects.
 
     Args:
         request: EvalRequest with template, inputs, and config
@@ -181,6 +241,17 @@ def run_eval(request: EvalRequest) -> EvalResult:
         duration=round(response["duration"], 3),
     )
 
+    response_cost = _sanitize_cost_payload(response.get("cost"))
+    response_token_usage = _sanitize_token_usage_payload(response.get("token_usage"))
+    cost: dict | None
+    token_usage: dict | None
+    if response_cost is not None and response_token_usage is not None:
+        cost = response_cost
+        token_usage = response_token_usage
+    else:
+        cost = getattr(eval_instance, "cost", None)
+        token_usage = getattr(eval_instance, "token_usage", None)
+
     return EvalResult(
         value=value,
         data=response.get("data"),
@@ -194,6 +265,6 @@ def run_eval(request: EvalRequest) -> EvalResult:
         start_time=start_time,
         end_time=end_time,
         duration=end_time - start_time,
-        cost=getattr(eval_instance, "cost", None),
-        token_usage=getattr(eval_instance, "token_usage", None),
+        cost=cost,
+        token_usage=token_usage,
     )
