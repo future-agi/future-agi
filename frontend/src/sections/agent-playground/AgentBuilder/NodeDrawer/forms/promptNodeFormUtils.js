@@ -264,9 +264,12 @@ export function mapPatchResponseToStoreData(response) {
   };
 
   if (pt) {
+    const outputFormat = pt.output_format || pt.outputFormat || "string";
+
     storeData.config = {
       prompt_template_id: pt.prompt_template_id,
       prompt_version_id: pt.prompt_version_id,
+      outputFormat,
       templateFormat: pt.template_format || "mustache",
       modelConfig: {
         model: pt.model || "",
@@ -298,6 +301,7 @@ export function mapPatchResponseToStoreData(response) {
               presencePenalty: pt.presence_penalty,
               tools: pt.tools || [],
               toolChoice: pt.tool_choice || "auto",
+              output_format: outputFormat,
               ...(pt.response_schema && {
                 response_schema: pt.response_schema,
               }),

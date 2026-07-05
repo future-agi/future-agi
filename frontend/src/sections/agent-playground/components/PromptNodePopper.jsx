@@ -34,8 +34,9 @@ const SUPPORTED_PROMPT_ROLES = new Set(["system", "user", "assistant"]);
 // not carry active tool capabilities into runnable agent nodes until those
 // trust boundaries have explicit server-side approval/re-resolution.
 const SUPPORTED_CONTENT_TYPES = new Set(["text"]);
+const SUPPORTED_LIBRARY_OUTPUT_FORMATS = new Set(["string", "json"]);
 const INCOMPATIBLE_LIBRARY_TEMPLATE_MESSAGE =
-  "This library template can't be added because Agent Builder currently supports text-only library prompt templates.";
+  "This library template can't be added because Agent Builder currently supports text-only library prompt templates with string or JSON outputs.";
 const CONFIGURATION_KEYS_TO_LIFT = [
   "model",
   "model_detail",
@@ -136,6 +137,12 @@ function normalizeTemplateSnapshot(template) {
 
   const configuration = normalizeTemplateConfiguration(snapshot);
   if (!configuration) {
+    return null;
+  }
+
+  const outputFormat =
+    configuration.output_format || configuration.outputFormat || "string";
+  if (!SUPPORTED_LIBRARY_OUTPUT_FORMATS.has(outputFormat)) {
     return null;
   }
 

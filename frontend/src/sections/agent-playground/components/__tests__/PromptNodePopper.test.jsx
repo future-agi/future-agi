@@ -371,7 +371,40 @@ describe("PromptNodePopper", () => {
     expect(mockAddNode).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(enqueueSnackbar).toHaveBeenCalledWith(
-      "This library template can't be added because Agent Builder currently supports text-only library prompt templates.",
+      "This library template can't be added because Agent Builder currently supports text-only library prompt templates with string or JSON outputs.",
+      { variant: "error" },
+    );
+  });
+
+  it("rejects library templates with unsupported output formats before inserting a node", () => {
+    const onClose = vi.fn();
+    const onNodeSelect = vi.fn();
+    useGetLibraryTemplatesInfinite.mockReturnValue(
+      libraryTemplatesResult([
+        {
+          ...libraryTemplate,
+          id: "image-output-library-template",
+          name: "Image Output Library Template",
+          prompt_config_snapshot: {
+            ...libraryTemplate.prompt_config_snapshot,
+            configuration: {
+              ...libraryTemplate.prompt_config_snapshot.configuration,
+              output_format: "image",
+            },
+          },
+        },
+      ]),
+    );
+
+    renderPopper({ onClose, onNodeSelect });
+
+    fireEvent.click(screen.getByText("Image Output Library Template"));
+
+    expect(onNodeSelect).not.toHaveBeenCalled();
+    expect(mockAddNode).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "This library template can't be added because Agent Builder currently supports text-only library prompt templates with string or JSON outputs.",
       { variant: "error" },
     );
   });
@@ -402,7 +435,7 @@ describe("PromptNodePopper", () => {
     expect(mockAddNode).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(enqueueSnackbar).toHaveBeenCalledWith(
-      "This library template can't be added because Agent Builder currently supports text-only library prompt templates.",
+      "This library template can't be added because Agent Builder currently supports text-only library prompt templates with string or JSON outputs.",
       { variant: "error" },
     );
   });

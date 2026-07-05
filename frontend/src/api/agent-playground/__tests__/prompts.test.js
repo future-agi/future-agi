@@ -58,7 +58,7 @@ describe("useGetLibraryTemplatesInfinite", () => {
     vi.clearAllMocks();
   });
 
-  it("requests library templates with search and legacy page_size/page_number pagination", async () => {
+  it("requests library templates with search and generated plus legacy pagination aliases", async () => {
     axios.get
       .mockResolvedValueOnce({
         data: { result: { data: templates(10), total_count: 12 } },
@@ -79,6 +79,8 @@ describe("useGetLibraryTemplatesInfinite", () => {
       expect.objectContaining({
         params: {
           name: "research",
+          page: 1,
+          limit: 10,
           page_size: 10,
           page_number: 0,
         },
@@ -95,6 +97,8 @@ describe("useGetLibraryTemplatesInfinite", () => {
       expect.objectContaining({
         params: {
           name: "research",
+          page: 2,
+          limit: 10,
           page_size: 10,
           page_number: 1,
         },
@@ -130,6 +134,8 @@ describe("useGetLibraryTemplatesInfinite", () => {
       expect.objectContaining({
         params: {
           name: "legacy",
+          page: 2,
+          limit: 10,
           page_size: 10,
           page_number: 1,
         },
@@ -177,6 +183,8 @@ describe("useGetLibraryTemplatesInfinite", () => {
       expect.objectContaining({
         params: {
           name: "wrapped",
+          page: 2,
+          limit: 10,
           page_size: 10,
           page_number: 1,
         },

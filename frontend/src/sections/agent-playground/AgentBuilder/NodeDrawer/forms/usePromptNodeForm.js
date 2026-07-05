@@ -64,17 +64,21 @@ export function usePromptNodeForm() {
   // even before the response-schema API list has loaded.
   const responseFormatMenuItems = useMemo(() => {
     const currentSchema = modelConfig?.responseSchema;
+    const menuItems = [...baseMenuItems];
+    if (
+      responseFormatField.value === "json_schema" &&
+      !menuItems.some((m) => m.value === "json_schema")
+    ) {
+      menuItems.push({ label: "JSON Schema", value: "json_schema" });
+    }
     if (
       currentSchema?.id &&
-      !baseMenuItems.some((m) => m.value === currentSchema.id)
+      !menuItems.some((m) => m.value === currentSchema.id)
     ) {
-      return [
-        ...baseMenuItems,
-        { label: currentSchema.name, value: currentSchema.id },
-      ];
+      menuItems.push({ label: currentSchema.name, value: currentSchema.id });
     }
-    return baseMenuItems;
-  }, [baseMenuItems, modelConfig?.responseSchema]);
+    return menuItems;
+  }, [baseMenuItems, modelConfig?.responseSchema, responseFormatField.value]);
 
   // Model parameters management
   const {

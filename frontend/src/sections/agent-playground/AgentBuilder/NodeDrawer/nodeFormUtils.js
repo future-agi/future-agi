@@ -111,6 +111,8 @@ export function getDefaultValues(nodeData) {
           mergedConfig.outputFormat ||
           mergedConfig.payload?.promptConfig?.[0]?.configuration
             ?.outputFormat ||
+          mergedConfig.payload?.promptConfig?.[0]?.configuration
+            ?.output_format ||
           "string",
         templateFormat:
           mergedConfig.templateFormat ||

@@ -399,6 +399,10 @@ describe("mapPatchResponseToStoreData", () => {
       responseFormat: "json_schema",
       responseSchema,
     });
+    expect(mapped.config.outputFormat).toBe("json");
+    expect(
+      mapped.config.payload.promptConfig[0].configuration.output_format,
+    ).toBe("json");
     expect(
       mapped.config.payload.promptConfig[0].configuration.response_schema,
     ).toEqual(responseSchema);

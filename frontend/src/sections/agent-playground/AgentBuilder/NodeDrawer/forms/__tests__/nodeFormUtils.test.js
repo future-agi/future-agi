@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { NODE_TYPES } from "../../../../utils/constants";
-import { mapNodeDetailToNodeData } from "../../nodeFormUtils";
+import { getDefaultValues, mapNodeDetailToNodeData } from "../../nodeFormUtils";
 
 vi.mock("src/utils/utils", () => ({
   getRandomId: vi.fn(() => "random-id"),
@@ -15,6 +15,28 @@ const responseSchema = {
 };
 
 describe("mapNodeDetailToNodeData", () => {
+  it("uses snake_case payload output_format when hydrating prompt defaults", () => {
+    const defaults = getDefaultValues({
+      type: NODE_TYPES.LLM_PROMPT,
+      data: {
+        label: "json_prompt",
+        config: {
+          payload: {
+            promptConfig: [
+              {
+                configuration: {
+                  output_format: "json",
+                },
+              },
+            ],
+          },
+        },
+      },
+    });
+
+    expect(defaults.outputFormat).toBe("json");
+  });
+
   it("maps snake_case prompt_template node detail into prompt form store data", () => {
     const mapped = mapNodeDetailToNodeData(
       {

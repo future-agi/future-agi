@@ -120,6 +120,12 @@ export const useGetLibraryTemplatesInfinite = (search, options = {}) =>
       axios.get(endpoints.develop.runPrompt.promptTemplate, {
         params: {
           ...(search && { name: search }),
+          // The live base-template view currently reads zero-indexed
+          // page_number/page_size, while generated contracts expose
+          // one-indexed page/limit. Send both coherent pairs so this
+          // selector stays compatible during that contract convergence.
+          page: pageParam + 1,
+          limit: LIBRARY_TEMPLATE_PAGE_SIZE,
           page_size: LIBRARY_TEMPLATE_PAGE_SIZE,
           page_number: pageParam,
         },
