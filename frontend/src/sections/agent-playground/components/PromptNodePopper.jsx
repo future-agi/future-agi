@@ -49,7 +49,7 @@ function normalizeTemplateContentBlock(block) {
 
   if (block.type === "text") {
     return typeof block.text === "string"
-      ? { ...block, type: "text", text: block.text }
+      ? { type: "text", text: block.text }
       : null;
   }
 

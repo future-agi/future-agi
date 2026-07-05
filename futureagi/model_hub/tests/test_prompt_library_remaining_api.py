@@ -296,6 +296,42 @@ def test_prompt_base_template_list_accepts_generated_and_legacy_pagination(
     )
     assert zero_limit_response.status_code == http_status.HTTP_400_BAD_REQUEST
 
+    negative_legacy_page_response = auth_client.get(
+        "/model-hub/prompt-base-templates/",
+        {"page_size": 5, "page_number": -1},
+    )
+    assert (
+        negative_legacy_page_response.status_code
+        == http_status.HTTP_400_BAD_REQUEST
+    )
+
+    invalid_legacy_page_size_response = auth_client.get(
+        "/model-hub/prompt-base-templates/",
+        {"page_size": "not-a-number", "page_number": 0},
+    )
+    assert (
+        invalid_legacy_page_size_response.status_code
+        == http_status.HTTP_400_BAD_REQUEST
+    )
+
+    capped_limit_response = auth_client.get(
+        "/model-hub/prompt-base-templates/",
+        {
+            "category": "pagination",
+            "sort_by": "name",
+            "sort_order": "asc",
+            "limit": 500,
+            "page": 2,
+        },
+    )
+    assert capped_limit_response.status_code == http_status.HTTP_200_OK
+    capped_limit_body = capped_limit_response.json()
+    assert capped_limit_body["results"] == []
+    assert capped_limit_body["next"] is None
+    assert capped_limit_body["previous"] is not None
+    assert "page=1" in capped_limit_body["previous"]
+    assert "limit=100" in capped_limit_body["previous"]
+
 
 @pytest.mark.django_db
 def test_prompt_folder_put_scopes_workspace_and_blocks_samples(

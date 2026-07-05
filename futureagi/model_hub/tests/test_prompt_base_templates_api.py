@@ -43,6 +43,32 @@ def _create_prompt_version(
     return template, prompt_version
 
 
+def _media_prompt_config():
+    return {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Summarize this image"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "https://example.com/image.png"},
+                    },
+                    {"audio_url": {"url": "https://example.com/audio.mp3"}},
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/answer.png"},
+                },
+            },
+        ],
+        "configuration": {"model": "gpt-4o-mini", "output_format": "string"},
+    }
+
+
 @pytest.mark.django_db
 def test_prompt_base_template_crud_scopes_workspace_and_samples(
     auth_client, organization, workspace, user
@@ -231,3 +257,97 @@ def test_prompt_base_template_crud_scopes_workspace_and_samples(
     base_template.refresh_from_db()
     assert base_template.deleted is True
     assert base_template.deleted_at is not None
+
+
+@pytest.mark.django_db
+def test_prompt_base_template_rejects_remote_media_snapshots(
+    auth_client, organization, workspace, user
+):
+    media_template = PromptTemplate.no_workspace_objects.create(
+        name="Media base template source",
+        description="Source with remote media",
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+        variable_names=["topic"],
+    )
+    media_version = PromptVersion.no_workspace_objects.create(
+        original_template=media_template,
+        template_version="v1",
+        prompt_config_snapshot=_media_prompt_config(),
+        variable_names={"topic": ["coverage"]},
+        output=[],
+        is_default=True,
+    )
+
+    direct_response = auth_client.post(
+        "/model-hub/prompt-base-templates/",
+        {
+            "name": "Blocked direct media snapshot",
+            "category": "Security",
+            "prompt_config_snapshot": _media_prompt_config(),
+        },
+        format="json",
+    )
+    assert direct_response.status_code == http_status.HTTP_400_BAD_REQUEST
+    assert not PromptBaseTemplate.no_workspace_objects.filter(
+        name="Blocked direct media snapshot"
+    ).exists()
+
+    version_response = auth_client.post(
+        "/model-hub/prompt-base-templates/",
+        {
+            "name": "Blocked prompt version media snapshot",
+            "category": "Security",
+            "prompt_version": str(media_version.id),
+        },
+        format="json",
+    )
+    assert version_response.status_code == http_status.HTTP_400_BAD_REQUEST
+    assert not PromptBaseTemplate.no_workspace_objects.filter(
+        name="Blocked prompt version media snapshot"
+    ).exists()
+
+
+@pytest.mark.django_db
+def test_prompt_base_template_responses_strip_legacy_remote_media_blocks(
+    auth_client, organization, workspace, user
+):
+    legacy_template = PromptBaseTemplate.no_workspace_objects.create(
+        name="Legacy media base template",
+        organization=organization,
+        workspace=workspace,
+        category="Security",
+        prompt_config_snapshot=_media_prompt_config(),
+        created_by=user,
+    )
+
+    list_response = auth_client.get(
+        "/model-hub/prompt-base-templates/",
+        {
+            "category": "Security",
+            "page_size": 25,
+            "page_number": 0,
+        },
+    )
+    assert list_response.status_code == http_status.HTTP_200_OK
+    row = next(
+        row
+        for row in _result(list_response)["data"]
+        if row["id"] == str(legacy_template.id)
+    )
+    content = row["prompt_config_snapshot"]["messages"][0]["content"]
+    assert content == [{"type": "text", "text": "Summarize this image"}]
+    assert row["prompt_config_snapshot"]["messages"][1]["content"] == []
+
+    detail_response = auth_client.get(
+        f"/model-hub/prompt-base-templates/{legacy_template.id}/"
+    )
+    assert detail_response.status_code == http_status.HTTP_200_OK
+    detail_content = _result(detail_response)["prompt_config_snapshot"]["messages"][0][
+        "content"
+    ]
+    assert detail_content == [{"type": "text", "text": "Summarize this image"}]
+    assert _result(detail_response)["prompt_config_snapshot"]["messages"][1][
+        "content"
+    ] == []

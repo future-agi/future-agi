@@ -4,6 +4,12 @@ from rest_framework import serializers
 from model_hub.models.prompt_base_template import PromptBaseTemplate
 from model_hub.models.run_prompt import PromptVersion
 
+TEXT_ONLY_BASE_TEMPLATE_ERROR = (
+    "Prompt base templates can only contain text content blocks. "
+    "Remote media URL blocks are not supported in shared base templates."
+)
+MEDIA_CONTENT_KEYS = {"image_url", "audio_url", "pdf_url"}
+
 
 def _workspace_filter(workspace, field_name):
     if workspace is None:
@@ -21,6 +27,102 @@ def _workspace_filter(workspace, field_name):
         query |= Q(**{f"{field_name}__isnull": True})
         return query
     return Q(**{field_name: workspace})
+
+
+def _snapshot_configs(snapshot):
+    if isinstance(snapshot, dict):
+        return [snapshot]
+    if isinstance(snapshot, list):
+        return [config for config in snapshot if isinstance(config, dict)]
+    return []
+
+
+def _has_media_content(item):
+    return item.get("type", "text") != "text" or bool(MEDIA_CONTENT_KEYS & set(item))
+
+
+def _validate_text_only_content(content):
+    if isinstance(content, str):
+        return
+    if isinstance(content, dict):
+        if _has_media_content(content):
+            raise serializers.ValidationError(TEXT_ONLY_BASE_TEMPLATE_ERROR)
+        return
+    if not isinstance(content, list):
+        return
+
+    for item in content:
+        if not isinstance(item, dict):
+            continue
+        if _has_media_content(item):
+            raise serializers.ValidationError(TEXT_ONLY_BASE_TEMPLATE_ERROR)
+
+
+def _validate_text_only_snapshot(snapshot):
+    """Keep shared prompt base templates from storing remote media URL blocks."""
+
+    for config in _snapshot_configs(snapshot):
+        for message in config.get("messages") or []:
+            if not isinstance(message, dict):
+                continue
+
+            _validate_text_only_content(message.get("content"))
+
+
+def _sanitize_text_only_content(content):
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, dict):
+        if _has_media_content(content):
+            return []
+        text = content.get("text")
+        return [{"type": "text", "text": text}] if isinstance(text, str) else []
+
+    if not isinstance(content, list):
+        return content
+
+    text_content = []
+    for item in content:
+        if isinstance(item, str):
+            text_content.append({"type": "text", "text": item})
+            continue
+        if (
+            not isinstance(item, dict)
+            or _has_media_content(item)
+            or not isinstance(item.get("text"), str)
+        ):
+            continue
+        text_content.append({"type": "text", "text": item["text"]})
+
+    return text_content
+
+
+def _sanitize_text_only_snapshot(snapshot):
+    """Serialize legacy rows without exposing remote media URL blocks."""
+
+    if isinstance(snapshot, list):
+        return [_sanitize_text_only_snapshot(config) for config in snapshot]
+    if not isinstance(snapshot, dict):
+        return snapshot
+
+    sanitized = {**snapshot}
+    messages = sanitized.get("messages")
+    if not isinstance(messages, list):
+        return sanitized
+
+    sanitized_messages = []
+    for message in messages:
+        if not isinstance(message, dict):
+            sanitized_messages.append(message)
+            continue
+
+        sanitized_messages.append(
+            {**message, "content": _sanitize_text_only_content(message.get("content"))}
+        )
+
+    sanitized["messages"] = sanitized_messages
+    return sanitized
 
 
 class PromptBaseTemplateSerializer(serializers.ModelSerializer):
@@ -51,6 +153,13 @@ class PromptBaseTemplateSerializer(serializers.ModelSerializer):
         if obj.created_by:
             return obj.created_by.name
         return obj.organization.name if obj.organization else None
+
+    def to_representation(self, instance):
+        representation = super().to_representation(instance)
+        representation["prompt_config_snapshot"] = _sanitize_text_only_snapshot(
+            representation.get("prompt_config_snapshot")
+        )
+        return representation
 
     def validate_prompt_version(self, value):
         """
@@ -92,6 +201,10 @@ class PromptBaseTemplateSerializer(serializers.ModelSerializer):
 
         return value
 
+    def validate_prompt_config_snapshot(self, value):
+        _validate_text_only_snapshot(value)
+        return value
+
     def validate(self, attrs):
         """
         Additional validation that can access all fields.
@@ -104,5 +217,8 @@ class PromptBaseTemplateSerializer(serializers.ModelSerializer):
         if "prompt_version" in attrs and "prompt_config_snapshot" not in attrs:
             prompt_version = attrs["prompt_version"]
             attrs["prompt_config_snapshot"] = prompt_version.prompt_config_snapshot
+
+        if "prompt_config_snapshot" in attrs:
+            _validate_text_only_snapshot(attrs["prompt_config_snapshot"])
 
         return attrs
