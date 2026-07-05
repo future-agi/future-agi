@@ -157,3 +157,24 @@ func TestAddr(t *testing.T) {
 		t.Errorf("Addr() = %q, want %q", addr, "0.0.0.0:8080")
 	}
 }
+
+// TestExampleConfigEnablesSelfHostedFeatures guards against config.example.yaml
+// regressing to a state where self-hosted installs silently lose: API key
+// management (auth.enabled gates the /-/keys routes) and the log flusher /
+// dashboard request logs (control_plane.url gates the flusher's startup).
+func TestExampleConfigEnablesSelfHostedFeatures(t *testing.T) {
+	cfg, err := Load("../../config.example.yaml")
+	if err != nil {
+		t.Fatalf("Load error: %v", err)
+	}
+
+	if !cfg.Auth.Enabled {
+		t.Error("auth.enabled = false, want true (required for /-/keys UI key management)")
+	}
+	if cfg.ControlPlane.URL == "" {
+		t.Error("control_plane.url is empty, want a value (required to start the log flusher)")
+	}
+	if !cfg.Logging.RequestLogging.Enabled {
+		t.Error("logging.request_logging.enabled = false, want true")
+	}
+}
