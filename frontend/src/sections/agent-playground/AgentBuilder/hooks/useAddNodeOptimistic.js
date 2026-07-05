@@ -9,6 +9,7 @@ import logger from "src/utils/logger";
 import { API_NODE_TYPES, NODE_TYPES } from "../../utils/constants";
 import { useSaveDraftContext } from "../saveDraftContext";
 import { buildPatchPayload } from "../NodeDrawer/forms/promptNodeFormUtils";
+import { normalizePromptOutputPorts } from "../../utils/promptPortUtils";
 
 /**
  * Encapsulates the addNode pattern with optimistic-first approach:
@@ -67,6 +68,10 @@ export default function useAddNodeOptimistic() {
 
       const { nodeId, edgeId, position, ports, label } = result;
       const config = payload.config;
+      const apiPorts =
+        payload.type === NODE_TYPES.LLM_PROMPT
+          ? normalizePromptOutputPorts(ports, config)
+          : ports;
 
       // Don't select the node yet — wait until ensureDraft completes
       // to avoid triggering the discard dialog if a drawer is open with dirty form.
@@ -105,7 +110,7 @@ export default function useAddNodeOptimistic() {
           position,
           source_node_id: payload.sourceNodeId,
           ...(payload.sourceNodeId && edgeId && { edge_id: edgeId }),
-          ports,
+          ports: apiPorts,
           ...(payload.type === NODE_TYPES.LLM_PROMPT && {
             prompt_template: buildPromptTemplatePayload(config),
           }),

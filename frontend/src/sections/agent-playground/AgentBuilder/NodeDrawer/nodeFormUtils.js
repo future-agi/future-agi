@@ -119,6 +119,7 @@ export function getDefaultValues(nodeData) {
           mergedConfig.payload?.promptConfig?.[0]?.configuration
             ?.template_format ||
           "mustache",
+        payload: mergedConfig.payload,
         modelConfig: mergedConfig.modelConfig || PROMPT_DEFAULT_MODEL_CONFIG,
         messages: mergedConfig.messages || [
           {

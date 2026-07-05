@@ -4,6 +4,7 @@ import {
   resolveResponseSchema,
   resolveResponseFormatForApi,
 } from "../AgentBuilder/NodeDrawer/nodeFormUtils";
+import { normalizePromptOutputPorts } from "./promptPortUtils";
 
 /**
  * Transform backend prompt_template (API schema) → form config (Zustand).
@@ -108,8 +109,9 @@ export function buildVersionPayload(nodes = [], edges = [], options = {}) {
         : node.data?.config;
       apiNode.prompt_template = buildPromptTemplateForApi(effectiveConfig);
 
-      const atomicOutputPorts = (node.data?.ports || []).filter(
-        (p) => p.direction === "output",
+      const atomicOutputPorts = normalizePromptOutputPorts(
+        (node.data?.ports || []).filter((p) => p.direction === "output"),
+        effectiveConfig,
       );
       if (atomicOutputPorts.length > 0) {
         apiNode.ports = atomicOutputPorts.map((port) => ({

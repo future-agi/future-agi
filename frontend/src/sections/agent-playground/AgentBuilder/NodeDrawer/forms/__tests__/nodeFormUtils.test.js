@@ -37,6 +37,33 @@ describe("mapNodeDetailToNodeData", () => {
     expect(defaults.outputFormat).toBe("json");
   });
 
+  it("preserves prompt payload defaults for imported model parameters", () => {
+    const payload = {
+      promptConfig: [
+        {
+          configuration: {
+            temperature: 0.2,
+            maxTokens: 512,
+            topP: 0.9,
+          },
+        },
+      ],
+    };
+
+    const defaults = getDefaultValues({
+      type: NODE_TYPES.LLM_PROMPT,
+      data: {
+        label: "imported_prompt",
+        config: {
+          outputFormat: "json",
+          payload,
+        },
+      },
+    });
+
+    expect(defaults.payload).toBe(payload);
+  });
+
   it("maps snake_case prompt_template node detail into prompt form store data", () => {
     const mapped = mapNodeDetailToNodeData(
       {

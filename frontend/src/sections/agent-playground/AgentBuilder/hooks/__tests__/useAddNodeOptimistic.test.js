@@ -281,6 +281,54 @@ describe("useAddNodeOptimistic", () => {
     );
   });
 
+  it("draft path: derives JSON output port schema from prompt config", async () => {
+    const responseSchema = {
+      type: "object",
+      properties: { answer: { type: "string" } },
+    };
+
+    mockEnsureDraft.mockResolvedValue("existing-draft");
+    mockAddOptimisticNode.mockReturnValue({
+      ...defaultOptimisticResult,
+      ports: [
+        {
+          id: "port-response",
+          key: "response",
+          display_name: "response",
+          direction: "output",
+          data_schema: { type: "string" },
+          required: true,
+        },
+      ],
+    });
+    mockGetNodeById.mockReturnValue({ id: "node-123", type: "llm_prompt" });
+
+    const { result } = renderHook(() => useAddNodeOptimistic());
+
+    await act(async () => {
+      await result.current.addNode({
+        ...defaultPayload,
+        config: {
+          outputFormat: "json",
+          modelConfig: { responseSchema },
+        },
+      });
+    });
+
+    expect(addNodeApi).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          ports: [
+            expect.objectContaining({
+              key: "response",
+              data_schema: responseSchema,
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
   it("draft path: syncs optimistic edge ID from snake_case node_connection response", async () => {
     mockEnsureDraft.mockResolvedValue("existing-draft");
     mockAddOptimisticNode.mockReturnValue(defaultOptimisticResult);

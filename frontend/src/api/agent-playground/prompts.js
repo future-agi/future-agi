@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { getNextLibraryTemplatePageParam } from "./libraryTemplateResponseUtils";
 
 /**
  * Hook for fetching prompt templates filtered by chat modality.
@@ -98,14 +99,6 @@ export const useGetPromptTemplatesInfinite = (search, options = {}) =>
 
 const LIBRARY_TEMPLATE_PAGE_SIZE = 10;
 
-function getLibraryTemplateItems(data) {
-  return data?.result?.data ?? data?.result?.results ?? data?.results ?? [];
-}
-
-function getLibraryTemplateTotalCount(data) {
-  return data?.result?.total_count ?? data?.result?.count ?? data?.count ?? 0;
-}
-
 /**
  * Infinite-scroll hook for the prompt library/base templates.
  * Used by PromptNodePopper to show reusable library templates alongside
@@ -131,20 +124,7 @@ export const useGetLibraryTemplatesInfinite = (search, options = {}) =>
         },
         signal,
       }),
-    getNextPageParam: (lastPage, allPages) => {
-      if (lastPage.data?.next || lastPage.data?.result?.next) {
-        return allPages.length;
-      }
-
-      const totalCount = getLibraryTemplateTotalCount(lastPage.data);
-      const fetchedCount = allPages.reduce(
-        (count, page) => count + getLibraryTemplateItems(page.data).length,
-        0,
-      );
-
-      if (fetchedCount < totalCount) return allPages.length;
-      return undefined;
-    },
+    getNextPageParam: getNextLibraryTemplatePageParam,
     initialPageParam: 0,
     staleTime: 30 * 1000,
     ...options,

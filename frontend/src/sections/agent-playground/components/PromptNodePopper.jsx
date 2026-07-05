@@ -25,160 +25,14 @@ import {
 import axios, { endpoints } from "src/utils/axios";
 import { NODE_TYPES } from "../utils/constants";
 import { mapVersionToFormConfig } from "../utils/promptVersionUtils";
+import { getLibraryTemplateItems } from "src/api/agent-playground/libraryTemplateResponseUtils";
+import {
+  INCOMPATIBLE_LIBRARY_TEMPLATE_MESSAGE,
+  toDetachedLibraryTemplateConfig,
+} from "../utils/libraryTemplateUtils";
 import useAddNodeOptimistic from "../AgentBuilder/hooks/useAddNodeOptimistic";
 import { useDebounce } from "src/hooks/use-debounce";
 import { enqueueSnackbar } from "notistack";
-
-const SUPPORTED_PROMPT_ROLES = new Set(["system", "user", "assistant"]);
-// Library templates are shared content; import only text chat messages and do
-// not carry active tool capabilities into runnable agent nodes until those
-// trust boundaries have explicit server-side approval/re-resolution.
-const SUPPORTED_CONTENT_TYPES = new Set(["text"]);
-const SUPPORTED_LIBRARY_OUTPUT_FORMATS = new Set(["string", "json"]);
-const INCOMPATIBLE_LIBRARY_TEMPLATE_MESSAGE =
-  "This library template can't be added because Agent Builder currently supports text-only library prompt templates with string or JSON outputs.";
-const CONFIGURATION_KEYS_TO_LIFT = [
-  "model",
-  "model_detail",
-  "response_format",
-  "response_schema",
-  "output_format",
-  "temperature",
-  "max_tokens",
-  "top_p",
-  "frequency_penalty",
-  "presence_penalty",
-  "template_format",
-  "reasoning",
-  "tools",
-  "tool_choice",
-];
-const STRIPPED_LIBRARY_CONFIGURATION_KEYS = ["tools", "tool_choice"];
-
-function normalizeTemplateContentBlock(block) {
-  if (typeof block === "string") {
-    return { type: "text", text: block };
-  }
-
-  if (
-    !block ||
-    typeof block !== "object" ||
-    !SUPPORTED_CONTENT_TYPES.has(block.type)
-  ) {
-    return null;
-  }
-
-  if (block.type === "text") {
-    return typeof block.text === "string"
-      ? { type: "text", text: block.text }
-      : null;
-  }
-
-  return null;
-}
-
-function normalizeTemplateContent(content) {
-  if (typeof content === "string") {
-    return [{ type: "text", text: content }];
-  }
-
-  if (!Array.isArray(content) || content.length === 0) {
-    return null;
-  }
-
-  const normalizedContent = content.map(normalizeTemplateContentBlock);
-
-  if (normalizedContent.some((block) => block === null)) {
-    return null;
-  }
-
-  return normalizedContent;
-}
-
-function normalizeTemplateConfiguration(snapshot) {
-  if (
-    snapshot.configuration !== undefined &&
-    snapshot.configuration !== null &&
-    (typeof snapshot.configuration !== "object" ||
-      Array.isArray(snapshot.configuration))
-  ) {
-    return null;
-  }
-
-  const liftedConfiguration = CONFIGURATION_KEYS_TO_LIFT.reduce(
-    (config, key) => {
-      if (snapshot[key] !== undefined) {
-        return { ...config, [key]: snapshot[key] };
-      }
-      return config;
-    },
-    {},
-  );
-
-  const configuration = {
-    ...liftedConfiguration,
-    ...(snapshot.configuration || {}),
-  };
-
-  STRIPPED_LIBRARY_CONFIGURATION_KEYS.forEach((key) => {
-    delete configuration[key];
-  });
-
-  return configuration;
-}
-
-function normalizeTemplateSnapshot(template) {
-  const rawSnapshot = template?.prompt_config_snapshot;
-  const snapshot = Array.isArray(rawSnapshot) ? rawSnapshot[0] : rawSnapshot;
-
-  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
-    return null;
-  }
-
-  const configuration = normalizeTemplateConfiguration(snapshot);
-  if (!configuration) {
-    return null;
-  }
-
-  const outputFormat =
-    configuration.output_format || configuration.outputFormat || "string";
-  if (!SUPPORTED_LIBRARY_OUTPUT_FORMATS.has(outputFormat)) {
-    return null;
-  }
-
-  if (!Array.isArray(snapshot.messages) || snapshot.messages.length === 0) {
-    return null;
-  }
-
-  const normalizedMessages = snapshot.messages.map((message) => {
-    if (
-      !message ||
-      typeof message !== "object" ||
-      !SUPPORTED_PROMPT_ROLES.has(message.role)
-    ) {
-      return null;
-    }
-
-    const normalizedContent = normalizeTemplateContent(message.content);
-    if (!normalizedContent) return null;
-
-    return {
-      ...message,
-      role: message.role,
-      content: normalizedContent,
-    };
-  });
-
-  if (normalizedMessages.some((message) => message === null)) {
-    return null;
-  }
-
-  return {
-    ...snapshot,
-    configuration,
-    messages: normalizedMessages,
-  };
-}
 
 function LoadingListItem({ size = 20 }) {
   return (
@@ -235,12 +89,8 @@ export default function PromptNodePopper({
 
   const libraryTemplates = useMemo(
     () =>
-      libraryTemplatesData?.pages?.flatMap(
-        (p) =>
-          p.data?.result?.data ??
-          p.data?.result?.results ??
-          p.data?.results ??
-          [],
+      libraryTemplatesData?.pages?.flatMap((p) =>
+        getLibraryTemplateItems(p.data),
       ) ?? [],
     [libraryTemplatesData],
   );
@@ -328,21 +178,13 @@ export default function PromptNodePopper({
 
   const handleLibraryTemplateClick = useCallback(
     (template) => {
-      const promptConfigSnapshot = normalizeTemplateSnapshot(template);
-      if (!promptConfigSnapshot) {
+      const config = toDetachedLibraryTemplateConfig(template);
+      if (!config) {
         enqueueSnackbar(INCOMPATIBLE_LIBRARY_TEMPLATE_MESSAGE, {
           variant: "error",
         });
         return;
       }
-
-      const config = {
-        prompt_template_id: null,
-        prompt_version_id: null,
-        ...mapVersionToFormConfig({
-          prompt_config_snapshot: promptConfigSnapshot,
-        }),
-      };
 
       if (onNodeSelect) {
         onNodeSelect(NODE_TYPES.LLM_PROMPT, llmPromptTemplateId, {
