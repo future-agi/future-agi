@@ -1,9 +1,12 @@
+import base64
 import gc
 import json
+import mimetypes
 import os
 import traceback
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 
 import pandas as pd
 import requests
@@ -19,9 +22,93 @@ from tfc.settings.settings import (
     HUGGINGFACE_API_TOKEN,
 )
 from tfc.utils.error_codes import get_error_message
-from tfc.utils.storage import upload_audio_to_s3_duration, upload_image_to_s3
+from tfc.utils.storage import (
+    upload_audio_to_s3_duration,
+    upload_document_to_s3,
+    upload_image_to_s3,
+)
 
 _HUGGINGFACE_DATASET_INFO_TIMEOUT_SECONDS = 30
+
+
+def _guess_document_content_type(path):
+    content_type, _ = mimetypes.guess_type(str(path or ""))
+    return content_type or "application/pdf"
+
+
+def _document_bytes_to_data_uri(raw_bytes, path=None):
+    return (
+        f"data:{_guess_document_content_type(path)};base64,"
+        f"{base64.b64encode(bytes(raw_bytes)).decode('ascii')}"
+    )
+
+
+def _document_name_from_path(path, fallback="document"):
+    if not path:
+        return fallback
+    name = os.path.basename(str(path))
+    return name or fallback
+
+
+def _is_remote_document_path(path):
+    return urlparse(str(path)).scheme in ("http", "https")
+
+
+def _pdfplumber_document_to_bytes(value):
+    stream = getattr(value, "stream", None)
+    if stream and hasattr(stream, "read") and hasattr(stream, "seek"):
+        position = None
+        try:
+            position = stream.tell()
+        except Exception:
+            position = None
+
+        try:
+            stream.seek(0)
+            raw_bytes = stream.read()
+        finally:
+            if position is not None:
+                stream.seek(position)
+
+        if isinstance(raw_bytes, str):
+            return raw_bytes.encode()
+        return bytes(raw_bytes)
+
+    from datasets.features.pdf import pdf_to_bytes
+
+    return pdf_to_bytes(value)
+
+
+def _coerce_huggingface_document_for_upload(value, fallback_name):
+    if isinstance(value, dict):
+        path = value.get("path")
+        raw_bytes = value.get("bytes")
+        document_name = _document_name_from_path(path, fallback=fallback_name)
+        if raw_bytes is not None:
+            return _document_bytes_to_data_uri(raw_bytes, path), document_name
+        if path:
+            if _is_remote_document_path(path):
+                return str(path), document_name
+            raise ValueError(
+                "HuggingFace document payload did not include document bytes"
+            )
+        return value, document_name
+
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return _document_bytes_to_data_uri(value), fallback_name
+
+    try:
+        if value.__class__.__module__.startswith("pdfplumber"):
+            return (
+                _document_bytes_to_data_uri(_pdfplumber_document_to_bytes(value)),
+                fallback_name,
+            )
+    except Exception as e:
+        logger.exception("huggingface: Error converting decoded PDF document")
+        raise ValueError("Unable to convert HuggingFace decoded PDF document") from e
+
+    document_name = _document_name_from_path(value, fallback=fallback_name)
+    return value, document_name
 
 
 def get_huggingface_dataset_info(dataset_path, organization_id):
@@ -115,6 +202,28 @@ def process_huggingface_columns(data_dict, dataset_id, column_id, rows, index):
             except Exception as e:
                 traceback.print_exc()
                 logger.exception(f"huggingface: Error uploading audio: {str(e)}")
+                cell_value = ""
+                cell_value_infos["reason"] = str(e)
+                cell_status = CellStatus.ERROR.value
+
+        elif column.data_type == DataTypeChoices.DOCUMENT.value:
+            try:
+                document_key = f"documents/{dataset.id}/{uuid.uuid4()}"
+                document_input, document_name = _coerce_huggingface_document_for_upload(
+                    value, fallback_name=f"{column.name}.pdf"
+                )
+                document_url = upload_document_to_s3(
+                    document_input,
+                    bucket_name=os.getenv("S3_FOR_DATA"),
+                    object_key=document_key,
+                    org_id=str(dataset.organization_id),
+                )
+                cell_value = document_url
+                cell_value_infos["document_url"] = document_url
+                cell_value_infos["document_name"] = document_name[:400]
+                cell_status = CellStatus.PASS.value
+            except Exception as e:
+                logger.exception(f"huggingface: Error uploading document: {str(e)}")
                 cell_value = ""
                 cell_value_infos["reason"] = str(e)
                 cell_status = CellStatus.ERROR.value
