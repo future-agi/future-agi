@@ -145,7 +145,7 @@ if [ -f manage.py ]; then
     echo -e "${GREEN}✓${NC} manage.py found"
 
     # Try to run Django checks (may fail if DB not set up)
-    if python manage.py check --deploy > /dev/null 2>&1; then
+    if python3 manage.py check --deploy > /dev/null 2>&1; then
         echo -e "${GREEN}✓${NC} Django system check passed"
     else
         echo -e "${YELLOW}⚠${NC} Django system check has warnings (may be expected)"
