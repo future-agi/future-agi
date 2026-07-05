@@ -156,6 +156,41 @@ def test_extract_jinja_variable_expressions_returns_empty_tuple_for_empty_input(
     assert run_prompt_module._extract_jinja_variable_expressions("") == ()
 
 
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{{ missing_column == none }}",
+        "{% if missing_column != none %}masked{% endif %}",
+        "{% if missing_column in [] %}masked{% endif %}",
+    ],
+)
+def test_render_template_jinja_comparisons_raise_for_missing_root(template):
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        render_template(template, {}, strict=True)
+
+    assert "missing_column" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{{ missing_column == none }}",
+        "{% if missing_column != none %}masked{% endif %}",
+        "{% if missing_column in [] %}masked{% endif %}",
+    ],
+)
+def test_render_template_jinja_comparisons_raise_for_unresolved_root(template):
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        render_template(
+            template,
+            {"missing_column": ""},
+            strict=True,
+            unresolved_placeholders={"missing_column"},
+        )
+
+    assert "missing_column" in str(exc_info.value)
+
+
 @pytest.mark.parametrize("test_name", ["defined", "undefined"])
 def test_render_template_jinja_defined_tests_raise_for_missing_root(test_name):
     with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
@@ -264,6 +299,28 @@ def test_render_template_mustache_strict_raises_for_missing_column():
         )
 
     assert "Missing Column" in str(exc_info.value)
+
+
+def test_render_template_fstring_raises_for_missing_placeholder():
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        render_template(
+            "Answer {missing_column}",
+            {},
+            template_format="f-string",
+            strict=True,
+        )
+
+    assert "missing_column" in str(exc_info.value)
+
+
+def test_render_template_fstring_raises_template_syntax_error_for_bad_format():
+    with pytest.raises(PromptTemplateSyntaxError):
+        render_template(
+            "Answer {missing_column",
+            {"missing_column": "value"},
+            template_format="f-string",
+            strict=True,
+        )
 
 
 def test_render_template_mustache_strict_raises_for_absent_section_guard():
@@ -504,6 +561,30 @@ def test_render_template_strict_raises_for_null_backing_placeholder():
     assert "Input Column" in str(exc_info.value)
 
 
+def test_render_template_strict_unresolved_false_branch_does_not_fail_source_wide():
+    assert (
+        render_template(
+            "{% if false %}{{ Input Column }}{% endif %}Rendered",
+            {"Input Column": ""},
+            strict=True,
+            unresolved_placeholders={"Input Column"},
+        )
+        == "Rendered"
+    )
+
+
+def test_render_template_strict_unresolved_evaluated_placeholder_still_fails():
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        render_template(
+            "{% if true %}{{ Input Column }}{% endif %}",
+            {"Input Column": ""},
+            strict=True,
+            unresolved_placeholders={"Input Column"},
+        )
+
+    assert "Input Column" in str(exc_info.value)
+
+
 def test_render_template_strict_preserves_raw_literal_braces_with_unresolved_placeholder_text():
     assert (
         render_template(
@@ -547,6 +628,28 @@ def test_render_template_strict_hyphen_placeholder_value_with_jinja_syntax_rende
             strict=True,
         )
         == "Answer {{other}}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("column_name", "value"),
+    [
+        ("Cost ($)", "12.50"),
+        ("Input / Output", "Resolved"),
+        ("User: Email", "user@example.com"),
+    ],
+)
+def test_render_template_strict_punctuated_column_names_render_by_exact_context_match(
+    column_name,
+    value,
+):
+    assert (
+        render_template(
+            f"Answer {{{{{column_name}}}}}",
+            {column_name: value},
+            strict=True,
+        )
+        == f"Answer {value}"
     )
 
 
@@ -712,6 +815,20 @@ def test_process_text_with_media_mustache_reraises_unresolved_placeholders():
     assert "Missing Column" in str(exc_info.value)
 
 
+def test_process_text_with_media_fstring_reraises_unresolved_placeholders():
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        process_text_with_media(
+            "Answer {missing_column}",
+            {},
+            {},
+            0,
+            "gpt-4o",
+            template_format="f-string",
+        )
+
+    assert "missing_column" in str(exc_info.value)
+
+
 def test_process_text_with_media_populates_uuid_placeholder_without_db():
     column_id = uuid.uuid4()
 
@@ -807,6 +924,58 @@ def test_populate_placeholders_normalizes_template_syntax_error_without_db(monke
         )
 
 
+def test_populate_placeholders_fstring_missing_value_raises_without_db(monkeypatch):
+    monkeypatch.setattr(
+        Dataset.objects,
+        "get",
+        lambda **kwargs: SimpleNamespace(column_order=[]),
+    )
+
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        populate_placeholders(
+            _message("Hello {missing_column}"),
+            uuid.uuid4(),
+            uuid.uuid4(),
+            uuid.uuid4(),
+            "gpt-4o",
+            template_format="f-string",
+        )
+
+    assert "missing_column" in str(exc_info.value)
+
+
+def test_populate_placeholders_fail_closed_reraises_unexpected_setup_errors(
+    monkeypatch,
+):
+    messages = _message("Hello")
+
+    def fail_dataset_get(**kwargs):
+        raise RuntimeError("dataset lookup failed")
+
+    monkeypatch.setattr(Dataset.objects, "get", fail_dataset_get)
+
+    assert (
+        populate_placeholders(
+            messages,
+            uuid.uuid4(),
+            uuid.uuid4(),
+            uuid.uuid4(),
+            "gpt-4o",
+        )
+        == messages
+    )
+
+    with pytest.raises(RuntimeError, match="dataset lookup failed"):
+        populate_placeholders(
+            messages,
+            uuid.uuid4(),
+            uuid.uuid4(),
+            uuid.uuid4(),
+            "gpt-4o",
+            fail_closed=True,
+        )
+
+
 def test_process_text_with_media_hyphenated_column_error_uses_full_placeholder():
     with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
         process_text_with_media(
@@ -834,6 +1003,31 @@ def test_run_prompt_populates_known_column_name_placeholder(
     )
 
     assert result[0]["content"][0]["text"] == "Answer Resolved input value"
+
+
+@pytest.mark.django_db
+def test_run_prompt_populates_punctuated_column_name_placeholder(
+    dataset, output_column, row
+):
+    column = Column.objects.create(
+        name="Cost ($)",
+        dataset=dataset,
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.OTHERS.value,
+    )
+    dataset.column_order.append(str(column.id))
+    dataset.save(update_fields=["column_order"])
+    Cell.objects.create(dataset=dataset, column=column, row=row, value="12.50")
+
+    result = populate_placeholders(
+        _message("Answer {{Cost ($)}}"),
+        dataset.id,
+        row.id,
+        output_column.id,
+        "gpt-4o",
+    )
+
+    assert result[0]["content"][0]["text"] == "Answer 12.50"
 
 
 @pytest.mark.django_db
@@ -1263,8 +1457,10 @@ def test_run_prompts_process_row_validates_without_media_before_accounting_then_
         order.append(("populate", process_media))
         if process_media is False:
             assert ("accounting", None) not in order
+            assert kwargs.get("fail_closed") is True
             return [{"role": "user", "content": "validation only"}]
         assert ("accounting", None) in order
+        assert "fail_closed" not in kwargs
         return [{"role": "user", "content": "provider ready"}]
 
     monkeypatch.setattr(
@@ -1497,7 +1693,12 @@ def test_run_prompts_process_row_unresolved_placeholders_skip_provider_and_creat
         fail_log_and_deduct,
     )
 
+    populate_calls = []
+
     def fail_populate(*args, **kwargs):
+        populate_calls.append({"args": args, "kwargs": kwargs})
+        assert kwargs["process_media"] is False
+        assert kwargs["fail_closed"] is True
         raise UnresolvedPromptPlaceholdersError("Missing Column")
 
     monkeypatch.setattr(run_prompt_module, "populate_placeholders", fail_populate)
@@ -1530,9 +1731,67 @@ def test_run_prompts_process_row_unresolved_placeholders_skip_provider_and_creat
     )
 
     assert emitted_events == []
+    assert len(populate_calls) == 1
     assert len(created_cells) == 1
     assert created_cells[0]["status"] == CellStatus.ERROR.value
     assert "Missing Column" in created_cells[0]["value"]
+
+
+def test_run_prompts_process_row_fstring_validation_failure_skips_accounting_and_provider(
+    monkeypatch,
+):
+    def fail_log_and_deduct(*args, **kwargs):
+        raise AssertionError("API accounting should not run for f-string validation")
+
+    monkeypatch.setattr(
+        run_prompt_module,
+        "log_and_deduct_cost_for_api_request",
+        fail_log_and_deduct,
+    )
+
+    populate_calls = []
+
+    def fail_populate(*args, **kwargs):
+        populate_calls.append(kwargs)
+        assert kwargs["template_format"] == "f-string"
+        assert kwargs["process_media"] is False
+        assert kwargs["fail_closed"] is True
+        raise UnresolvedPromptPlaceholdersError("missing_column")
+
+    monkeypatch.setattr(run_prompt_module, "populate_placeholders", fail_populate)
+    monkeypatch.setattr(
+        run_prompt_module,
+        "get_specific_error_message",
+        lambda exc, is_llm_error=False: str(exc),
+    )
+
+    class ProviderShouldNotBeCalled:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("RunPrompt should not be instantiated")
+
+    monkeypatch.setattr(run_prompt_module, "RunPrompt", ProviderShouldNotBeCalled)
+
+    created_cells = []
+
+    def fake_create(**kwargs):
+        created_cells.append(kwargs)
+        return SimpleNamespace(id=uuid.uuid4(), **kwargs)
+
+    monkeypatch.setattr(run_prompt_module.Cell.objects, "create", fake_create)
+
+    dataset = SimpleNamespace(id=uuid.uuid4(), workspace=SimpleNamespace(id=uuid.uuid4()))
+    runner = _build_process_row_runner(dataset)
+    runner.run_prompt_model.run_prompt_config = {"template_format": "f-string"}
+
+    runner.process_row(
+        SimpleNamespace(id=uuid.uuid4(), dataset=dataset),
+        SimpleNamespace(id=uuid.uuid4()),
+    )
+
+    assert len(populate_calls) == 1
+    assert len(created_cells) == 1
+    assert created_cells[0]["status"] == CellStatus.ERROR.value
+    assert "missing_column" in created_cells[0]["value"]
 
 
 def test_run_prompts_process_row_error_save_failure_raises_after_error_cell(
@@ -1705,9 +1964,110 @@ def test_conditional_process_row_propagates_run_prompt_placeholder_error_with_te
                 "col_id": None,
                 "model_name": "gpt-4o-mini",
                 "template_format": "mustache",
+                "fail_closed": True,
             },
         }
     ]
+
+
+def test_conditional_column_async_rerun_missing_cell_persists_placeholder_error(
+    monkeypatch,
+):
+    dataset_id = uuid.uuid4()
+    new_column_id = uuid.uuid4()
+    row = SimpleNamespace(id=uuid.uuid4())
+    organization_id = uuid.uuid4()
+    created_cells = []
+
+    monkeypatch.setattr(
+        dynamic_columns_module,
+        "Row",
+        SimpleNamespace(
+            objects=SimpleNamespace(
+                filter=lambda **kwargs: [row],
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        dynamic_columns_module,
+        "Dataset",
+        SimpleNamespace(
+            objects=SimpleNamespace(
+                get=lambda **kwargs: SimpleNamespace(
+                    organization=SimpleNamespace(id=organization_id)
+                )
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        dynamic_columns_module,
+        "Column",
+        SimpleNamespace(
+            objects=SimpleNamespace(
+                filter=lambda **kwargs: SimpleNamespace(update=lambda **updates: None)
+            )
+        ),
+    )
+
+    class FakeCell:
+        objects = SimpleNamespace(filter=lambda **kwargs: [])
+
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+            self.saved = False
+            created_cells.append(self)
+
+        def save(self):
+            self.saved = True
+
+    monkeypatch.setattr(dynamic_columns_module, "Cell", FakeCell)
+    monkeypatch.setattr(dynamic_columns_module, "wrap_for_thread", lambda fn: fn)
+    monkeypatch.setattr(
+        dynamic_columns_module.ConditionalColumnView,
+        "_process_row",
+        lambda self, row, config, org_id: (
+            None,
+            {"reason": "Unresolved prompt placeholders: Missing Column"},
+        ),
+    )
+
+    class FakeFuture:
+        def __init__(self, result):
+            self._result = result
+
+        def result(self):
+            return self._result
+
+    class FakeExecutor:
+        def __init__(self, max_workers):
+            self.max_workers = max_workers
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def submit(self, fn, *args, **kwargs):
+            return FakeFuture(fn(*args, **kwargs))
+
+    monkeypatch.setattr(dynamic_columns_module, "ThreadPoolExecutor", FakeExecutor)
+    monkeypatch.setattr(dynamic_columns_module, "as_completed", lambda futures: futures)
+
+    conditional_column_async = getattr(
+        dynamic_columns_module.conditional_column_async,
+        "__wrapped__",
+        dynamic_columns_module.conditional_column_async,
+    )
+    conditional_column_async({}, dataset_id, 1, new_column_id, is_rerun=True)
+
+    assert len(created_cells) == 1
+    assert created_cells[0].value is None
+    assert json.loads(created_cells[0].value_infos) == {
+        "reason": "Unresolved prompt placeholders: Missing Column"
+    }
+    assert created_cells[0].status == CellStatus.ERROR.value
+    assert created_cells[0].saved is True
 
 
 @pytest.mark.parametrize(
@@ -1848,3 +2208,198 @@ def test_preview_run_prompt_column_view_passes_effective_template_format_to_popu
             "template_format": expected_template_format,
         },
     }
+
+
+def test_render_template_strict_unresolved_placeholder_in_false_branch_renders():
+    assert (
+        render_template(
+            "{% if false %}{{ input_column }}{% endif %}Rendered",
+            {},
+            strict=True,
+            unresolved_placeholders={"input_column"},
+        )
+        == "Rendered"
+    )
+
+
+def test_render_template_strict_unresolved_placeholder_in_evaluated_print_raises():
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        render_template(
+            "{{ input_column }}",
+            {},
+            strict=True,
+            unresolved_placeholders={"input_column"},
+        )
+
+    assert "input_column" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{{ missing == none }}",
+        "{% if missing != none %}Rendered{% endif %}",
+        "{% if missing in [] %}Rendered{% endif %}",
+    ],
+)
+def test_render_template_strict_missing_comparison_and_membership_raise(template):
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        render_template(template, {}, strict=True)
+
+    assert "missing" in str(exc_info.value)
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "{{ input_column == none }}",
+        "{% if input_column != none %}Rendered{% endif %}",
+        "{% if input_column in [] %}Rendered{% endif %}",
+    ],
+)
+def test_render_template_strict_unresolved_comparison_and_membership_raise(template):
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        render_template(
+            template,
+            {"input_column": ""},
+            strict=True,
+            unresolved_placeholders={"input_column"},
+        )
+
+    assert "input_column" in str(exc_info.value)
+
+
+@pytest.mark.django_db
+def test_populate_placeholders_punctuated_column_name_renders(
+    dataset, output_column, row
+):
+    punctuated_column = Column.objects.create(
+        name="Cost ($)",
+        dataset=dataset,
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.OTHERS.value,
+    )
+    dataset.column_order.append(str(punctuated_column.id))
+    dataset.save(update_fields=["column_order"])
+    Cell.objects.create(
+        dataset=dataset,
+        column=punctuated_column,
+        row=row,
+        value="12.50",
+    )
+
+    result = populate_placeholders(
+        _message("Cost is {{Cost ($)}}"),
+        dataset.id,
+        row.id,
+        output_column.id,
+        "gpt-4o",
+    )
+
+    assert result[0]["content"][0]["text"] == "Cost is 12.50"
+
+
+def test_populate_placeholders_fail_closed_reraises_per_column_errors(monkeypatch):
+    messages = _message("Hello")
+    column_id = uuid.uuid4()
+    monkeypatch.setattr(
+        Dataset.objects,
+        "get",
+        lambda **kwargs: SimpleNamespace(column_order=[str(column_id)]),
+    )
+
+    def fail_column_get(**kwargs):
+        raise RuntimeError("column lookup failed")
+
+    monkeypatch.setattr(Column.objects, "get", fail_column_get)
+
+    assert (
+        populate_placeholders(
+            messages,
+            uuid.uuid4(),
+            uuid.uuid4(),
+            uuid.uuid4(),
+            "gpt-4o",
+        )
+        == [{"role": "user", "content": [{"type": "text", "text": "Hello"}]}]
+    )
+
+    with pytest.raises(RuntimeError, match="column lookup failed"):
+        populate_placeholders(
+            messages,
+            uuid.uuid4(),
+            uuid.uuid4(),
+            uuid.uuid4(),
+            "gpt-4o",
+            fail_closed=True,
+        )
+
+
+def test_conditional_column_async_rerun_missing_cell_error_creates_error_cell(monkeypatch):
+    saved_cells = []
+    row = SimpleNamespace(id=uuid.uuid4())
+    dataset_id = uuid.uuid4()
+    new_column_id = uuid.uuid4()
+
+    class FakeCell:
+        class objects:
+            @staticmethod
+            def filter(**kwargs):
+                return []
+
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+        def save(self):
+            saved_cells.append(self)
+
+    class FakeRowObjects:
+        @staticmethod
+        def filter(**kwargs):
+            return [row]
+
+    class FakeDatasetObjects:
+        @staticmethod
+        def get(**kwargs):
+            return SimpleNamespace(organization=SimpleNamespace(id=uuid.uuid4()))
+
+    class FakeColumnQuerySet:
+        def update(self, **kwargs):
+            return 1
+
+    class FakeColumnObjects:
+        @staticmethod
+        def filter(**kwargs):
+            return FakeColumnQuerySet()
+
+    monkeypatch.setattr(dynamic_columns_module, "Cell", FakeCell)
+    monkeypatch.setattr(
+        dynamic_columns_module.Row,
+        "objects",
+        FakeRowObjects(),
+    )
+    monkeypatch.setattr(
+        dynamic_columns_module.Dataset,
+        "objects",
+        FakeDatasetObjects(),
+    )
+    monkeypatch.setattr(
+        dynamic_columns_module.Column,
+        "objects",
+        FakeColumnObjects(),
+    )
+    monkeypatch.setattr(dynamic_columns_module, "wrap_for_thread", lambda fn: fn)
+    monkeypatch.setattr(
+        dynamic_columns_module.ConditionalColumnView,
+        "_process_row",
+        lambda self, row, config, org_id=None: (None, {"reason": "validation failed"}),
+    )
+
+    dynamic_columns_module.conditional_column_async(
+        [], dataset_id, 1, new_column_id, is_rerun=True
+    )
+
+    assert len(saved_cells) == 1
+    assert saved_cells[0].value is None
+    assert json.loads(saved_cells[0].value_infos) == {"reason": "validation failed"}
+    assert saved_cells[0].status == CellStatus.ERROR.value

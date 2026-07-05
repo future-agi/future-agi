@@ -1599,6 +1599,7 @@ class ConditionalColumnView(APIView):
                         col_id=None,
                         model_name=config.get("model"),
                         template_format=template_format,
+                        fail_closed=True,
                     )
                 except (
                     UnresolvedPromptPlaceholdersError,
@@ -2945,13 +2946,18 @@ def conditional_column_async(
                         existing_cell.save()
                     else:
                         # Create new cell if it doesn't exist during rerun
+                        is_error = bool(value_infos and "reason" in value_infos)
                         new_cell = Cell(
                             dataset_id=dataset_id,
                             column_id=new_column_id,
                             row=row,
-                            value=None,
+                            value=None if is_error else value,
                             value_infos=json.dumps(value_infos if value_infos else {}),
-                            status=CellStatus.PASS.value,
+                            status=(
+                                CellStatus.ERROR.value
+                                if is_error
+                                else CellStatus.PASS.value
+                            ),
                         )
                         new_cell.save()
                         logger.error(

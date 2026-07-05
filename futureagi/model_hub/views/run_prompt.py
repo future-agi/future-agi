@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import re
+import string
 import traceback
 import uuid
 from collections.abc import Collection, Mapping
@@ -467,6 +468,41 @@ class _MissingPromptValue:
     def __getitem__(self, key):
         self._raise()
 
+    def __contains__(self, item):
+        self._raise()
+
+    def __hash__(self):
+        self._raise()
+
+    def __eq__(self, other):
+        self._raise()
+
+    def __ne__(self, other):
+        self._raise()
+
+    def __lt__(self, other):
+        self._raise()
+
+    def __le__(self, other):
+        self._raise()
+
+    def __gt__(self, other):
+        self._raise()
+
+    def __ge__(self, other):
+        self._raise()
+
+    def _binary_op(self, *args, **kwargs):
+        self._raise()
+
+    __add__ = __radd__ = _binary_op
+    __sub__ = __rsub__ = _binary_op
+    __mul__ = __rmul__ = _binary_op
+    __truediv__ = __rtruediv__ = _binary_op
+    __floordiv__ = __rfloordiv__ = _binary_op
+    __mod__ = __rmod__ = _binary_op
+    __pow__ = __rpow__ = _binary_op
+
 
 class UnresolvedPromptPlaceholdersError(ValueError):
     """Raised when strict prompt rendering encounters unresolved placeholders."""
@@ -560,7 +596,16 @@ def _extract_jinja_variable_expressions(template_str: str) -> tuple[str, ...]:
 
     expressions: list[str] = []
     current_tokens: list[str] | None = None
-    for _, token_type, value in _jinja2_env.lex(template_str):
+    try:
+        tokens = list(_jinja2_env.lex(template_str))
+    except TemplateSyntaxError:
+        return tuple(
+            match.group(1).strip()
+            for match in _JINJA_PLACEHOLDER_PATTERN.finditer(template_str)
+            if match.group(1).strip()
+        )
+
+    for _, token_type, value in tokens:
         if token_type == "variable_begin":
             current_tokens = []
             continue
@@ -583,7 +628,9 @@ _NUMERIC_DASH_EXPRESSION_PATTERN = re.compile(r"^[\d\s-]+$")
 
 
 def _human_named_placeholder_subject(
-    expression: str, context: dict | None = None
+    expression: str,
+    context: dict | None = None,
+    unresolved_placeholders: set[str] | None = None,
 ) -> str | None:
     """Return a single human-named placeholder subject, if expression is one.
 
@@ -596,6 +643,12 @@ def _human_named_placeholder_subject(
     filter_subject = expression.split("|", maxsplit=1)[0].strip()
     if not filter_subject:
         return None
+
+    # Exact dataset-column matches win before syntax heuristics. Column names are
+    # free-form strings, so resolved prompts like ``{{Cost ($)}}`` or
+    # ``{{Input / Output}}`` should render instead of being parsed as Jinja code.
+    if context is not None and filter_subject in context:
+        return filter_subject
 
     has_human_name_syntax = " " in filter_subject or "-" in filter_subject
     if not has_human_name_syntax:
@@ -623,6 +676,9 @@ def _human_named_placeholder_subject(
     if not _HUMAN_PLACEHOLDER_NAME_PATTERN.fullmatch(filter_subject):
         return None
 
+    if _is_unresolved_placeholder_reference(filter_subject, unresolved_placeholders):
+        return filter_subject
+
     if "-" in filter_subject and context is not None and filter_subject not in context:
         try:
             ast = _jinja2_env.parse("{{ " + expression + " }}")
@@ -637,7 +693,9 @@ def _human_named_placeholder_subject(
 
 
 def _extract_unrenderable_named_placeholders(
-    template_str: str, context: dict | None = None
+    template_str: str,
+    context: dict | None = None,
+    unresolved_placeholders: set[str] | None = None,
 ) -> list[str]:
     if not template_str:
         return []
@@ -648,7 +706,9 @@ def _extract_unrenderable_named_placeholders(
         # cannot contain spaces and hyphenated names parse as subtraction. Detect
         # only actual single human placeholder subjects so raw blocks, string
         # constants, and arithmetic expressions remain valid Jinja.
-        placeholder = _human_named_placeholder_subject(expression, context)
+        placeholder = _human_named_placeholder_subject(
+            expression, context, unresolved_placeholders
+        )
         if placeholder:
             placeholders.append(placeholder)
     return placeholders
@@ -660,7 +720,10 @@ def _safe_identifier_for_human_placeholder(name: str, index: int) -> str:
 
 
 def _rewrite_unrenderable_jinja_placeholders(
-    template_str: str, context: dict
+    template_str: str,
+    context: dict,
+    unresolved_placeholders: set[str] | None = None,
+    placeholder_display_map: dict[str, str] | None = None,
 ) -> tuple[str, dict, set[str]]:
     """Rewrite human-named Jinja variables to safe identifiers token-wise.
 
@@ -682,8 +745,16 @@ def _rewrite_unrenderable_jinja_placeholders(
 
     def rewrite_expression(expression: str) -> str:
         filter_subject = expression.split("|", maxsplit=1)[0]
-        stripped = _human_named_placeholder_subject(expression, context)
-        if not (stripped and stripped in safe_ctx):
+        stripped = _human_named_placeholder_subject(
+            expression, context, unresolved_placeholders
+        )
+        if not stripped:
+            return expression
+
+        is_unresolved = _is_unresolved_placeholder_reference(
+            stripped, unresolved_placeholders
+        )
+        if stripped not in safe_ctx and not is_unresolved:
             return expression
 
         synthetic = synthetic_by_name.get(stripped)
@@ -694,7 +765,12 @@ def _rewrite_unrenderable_jinja_placeholders(
             while synthetic in safe_ctx:
                 synthetic = f"{synthetic}_{len(synthetic_by_name)}"
             synthetic_by_name[stripped] = synthetic
-            safe_ctx[synthetic] = safe_ctx[stripped]
+            if is_unresolved:
+                safe_ctx[synthetic] = _MissingPromptValue(
+                    _placeholder_display_name(stripped, placeholder_display_map)
+                )
+            else:
+                safe_ctx[synthetic] = safe_ctx[stripped]
         rewritten_names.add(stripped)
 
         prefix_length = len(filter_subject) - len(filter_subject.lstrip())
@@ -707,7 +783,46 @@ def _rewrite_unrenderable_jinja_placeholders(
         )
         return f"{prefix}{synthetic}{suffix}{expression[len(filter_subject):]}"
 
-    for _, token_type, value in _jinja2_env.lex(template_str):
+    try:
+        tokens = list(_jinja2_env.lex(template_str))
+    except TemplateSyntaxError:
+        def replace_exact_match(match):
+            expression = match.group(1).strip()
+            stripped = _human_named_placeholder_subject(
+                expression, context, unresolved_placeholders
+            )
+            if not stripped:
+                return match.group(0)
+            is_unresolved = _is_unresolved_placeholder_reference(
+                stripped, unresolved_placeholders
+            )
+            if stripped not in safe_ctx and not is_unresolved:
+                return match.group(0)
+            synthetic = synthetic_by_name.get(stripped)
+            if synthetic is None:
+                synthetic = _safe_identifier_for_human_placeholder(
+                    stripped, len(synthetic_by_name)
+                )
+                while synthetic in safe_ctx:
+                    synthetic = f"{synthetic}_{len(synthetic_by_name)}"
+                synthetic_by_name[stripped] = synthetic
+                if is_unresolved:
+                    safe_ctx[synthetic] = _MissingPromptValue(
+                        _placeholder_display_name(stripped, placeholder_display_map)
+                    )
+                else:
+                    safe_ctx[synthetic] = safe_ctx[stripped]
+            rewritten_names.add(stripped)
+            suffix = expression[len(stripped) :]
+            return "{{ " + synthetic + suffix + " }}"
+
+        return (
+            _JINJA_PLACEHOLDER_PATTERN.sub(replace_exact_match, template_str),
+            safe_ctx,
+            rewritten_names,
+        )
+
+    for _, token_type, value in tokens:
         if token_type == "variable_begin":
             output.append(value)
             current_tokens = []
@@ -880,6 +995,124 @@ def _raise_for_undefined_tests_on_unresolved_references(
         raise _format_unresolved_placeholder_error(
             missing_references, placeholder_display_map
         )
+
+
+def _missing_external_reference(
+    node: nodes.Node,
+    context: dict,
+    unresolved_placeholders: set[str] | None,
+    external_roots: set[str],
+) -> str | None:
+    reference = _jinja_reference_from_node(node)
+    if not reference:
+        return None
+
+    root = reference.split(".", maxsplit=1)[0]
+    if root not in external_roots:
+        return None
+
+    if _is_unresolved_placeholder_reference(reference, unresolved_placeholders):
+        return reference
+
+    if root not in context:
+        return reference
+
+    return None
+
+
+def _raise_for_missing_value_comparisons(
+    template_str: str,
+    context: dict,
+    unresolved_placeholders: set[str] | None,
+    placeholder_display_map: dict[str, str] | None = None,
+) -> None:
+    """Fail closed when missing prompt values are used as branch decisions.
+
+    Render-time sentinels catch truthiness, stringification, iteration, and most
+    operations only when the expression is evaluated, preserving dead Jinja
+    branches. Comparisons and membership tests can otherwise turn a missing
+    value into a boolean without touching sentinel methods (for example
+    ``missing in []``), so guard those AST nodes explicitly.
+    """
+    try:
+        ast = _jinja2_env.parse(template_str)
+    except TemplateSyntaxError:
+        return
+
+    external_roots = set(meta.find_undeclared_variables(ast))
+    missing_references = []
+    seen = set()
+    for compare_node in ast.find_all(nodes.Compare):
+        candidates = [compare_node.expr, *(operand.expr for operand in compare_node.ops)]
+        for candidate in candidates:
+            reference = _missing_external_reference(
+                candidate,
+                context,
+                unresolved_placeholders,
+                external_roots,
+            )
+            if not reference or reference in seen:
+                continue
+            seen.add(reference)
+            missing_references.append(reference)
+
+    if missing_references:
+        raise _format_unresolved_placeholder_error(
+            missing_references, placeholder_display_map
+        )
+
+
+def _apply_unresolved_prompt_sentinels(
+    context: dict,
+    unresolved_placeholders: set[str] | None,
+    placeholder_display_map: dict[str, str] | None = None,
+    external_roots: Collection[str] | None = None,
+) -> None:
+    """Install render-time sentinels for null/missing dataset-backed values."""
+    if not unresolved_placeholders:
+        return
+
+    for placeholder in unresolved_placeholders:
+        if not placeholder:
+            continue
+        parts = placeholder.split(".")
+        display = _placeholder_display_name(placeholder, placeholder_display_map)
+        sentinel = _MissingPromptValue(display)
+
+        if len(parts) == 1:
+            context[parts[0]] = sentinel
+            continue
+
+        root = parts[0]
+        if root not in context:
+            if external_roots is not None and root not in external_roots:
+                continue
+            context[root] = sentinel
+            continue
+
+        current = context[root]
+        for part in parts[1:-1]:
+            if isinstance(current, Mapping):
+                if part not in current or isinstance(
+                    current.get(part), _MissingPromptValue
+                ):
+                    current[part] = KeyPriorityDict()
+                current = current[part]
+                continue
+            try:
+                current = getattr(current, part)
+            except AttributeError:
+                context[root] = sentinel
+                break
+        else:
+            leaf = parts[-1]
+            if isinstance(current, Mapping):
+                current[leaf] = sentinel
+            else:
+                try:
+                    setattr(current, leaf, sentinel)
+                except Exception:
+                    context[root] = sentinel
 
 
 
@@ -1113,6 +1346,41 @@ def _validate_mustache_placeholders(
         )
 
 
+def _resolve_fstring_missing_placeholder(
+    template_str: str, context: dict, exc: Exception
+) -> str:
+    if isinstance(exc, KeyError) and exc.args:
+        return str(exc.args[0])
+
+    formatter = string.Formatter()
+    try:
+        field_names = [
+            field_name
+            for _, field_name, _, _ in formatter.parse(template_str)
+            if field_name is not None
+        ]
+    except ValueError:
+        field_names = []
+
+    if isinstance(exc, IndexError):
+        for field_name in field_names:
+            root = field_name.split(".", maxsplit=1)[0].split("[", maxsplit=1)[0]
+            if field_name == "" or root.isdigit():
+                return field_name or str(exc)
+        return str(exc)
+
+    if isinstance(exc, AttributeError):
+        attr_match = re.search(r"attribute ['\"]([^'\"]+)['\"]", str(exc))
+        missing_attr = attr_match.group(1) if attr_match else None
+        if missing_attr:
+            for field_name in field_names:
+                if field_name.endswith(f".{missing_attr}"):
+                    return field_name
+            return missing_attr
+
+    return str(exc)
+
+
 def render_template(
     template_str: str,
     context: dict,
@@ -1146,7 +1414,20 @@ def render_template(
         template_format = DEFAULT_TEMPLATE_FORMAT
 
     if template_format == TEMPLATE_FORMAT_FSTRING:
-        return template_str.format(**context)
+        try:
+            return template_str.format(**context)
+        except ValueError as exc:
+            detail = str(exc).strip() or exc.__class__.__name__
+            raise PromptTemplateSyntaxError(
+                f"Invalid prompt template syntax: {detail}"
+            ) from exc
+        except (KeyError, IndexError, AttributeError) as exc:
+            missing_placeholder = _resolve_fstring_missing_placeholder(
+                template_str, context, exc
+            )
+            raise _format_unresolved_placeholder_error(
+                [missing_placeholder], placeholder_display_map
+            ) from exc
 
     elif template_format == TEMPLATE_FORMAT_MUSTACHE:
         if strict and "{{" not in template_str:
@@ -1174,18 +1455,23 @@ def render_template(
         )
         try:
             processed, safe_ctx, rewritten_human_placeholders = (
-                _rewrite_unrenderable_jinja_placeholders(template_str, context)
+                _rewrite_unrenderable_jinja_placeholders(
+                    template_str,
+                    context,
+                    unresolved_placeholders=unresolved_placeholders,
+                    placeholder_display_map=placeholder_display_map,
+                )
             )
             referenced_roots = _extract_jinja_referenced_roots(processed)
             safe_ctx = _wrap_referenced_context_roots(safe_ctx, referenced_roots)
             if strict:
-                _raise_for_strict_unresolved_references(
+                _raise_for_undefined_tests_on_unresolved_references(
                     template_str,
+                    context,
                     unresolved_placeholders,
                     placeholder_display_map,
-                    context,
                 )
-                _raise_for_undefined_tests_on_unresolved_references(
+                _raise_for_missing_value_comparisons(
                     template_str,
                     context,
                     unresolved_placeholders,
@@ -1198,20 +1484,22 @@ def render_template(
                     safe_ctx[root] = _MissingPromptValue(
                         _placeholder_display_name(root, placeholder_display_map)
                     )
-                if unresolved_placeholders:
-                    for placeholder in unresolved_placeholders:
-                        root = placeholder.split(".", maxsplit=1)[0]
-                        if root in safe_ctx and placeholder == root:
-                            safe_ctx[root] = _MissingPromptValue(
-                                _placeholder_display_name(root, placeholder_display_map)
-                            )
+                _apply_unresolved_prompt_sentinels(
+                    safe_ctx,
+                    unresolved_placeholders,
+                    placeholder_display_map,
+                    referenced_roots,
+                )
                 unrenderable_placeholders = []
                 for filter_subject in _extract_unrenderable_named_placeholders(
-                    template_str, context
+                    template_str, context, unresolved_placeholders
                 ):
                     if (
                         filter_subject not in context
                         and filter_subject not in rewritten_human_placeholders
+                        and not _is_unresolved_placeholder_reference(
+                            filter_subject, unresolved_placeholders
+                        )
                     ):
                         unrenderable_placeholders.append(filter_subject)
                 if unrenderable_placeholders:
@@ -1292,11 +1580,14 @@ def populate_placeholders(
     model_name,
     template_format=None,
     process_media=True,
+    fail_closed=False,
 ):
     media_error = False
     try:
-        # Debug: Log input messages to see what template we're processing
-        logger.info(f"populate_placeholders called with messages: {messages}")
+        logger.debug(
+            "populate_placeholders called",
+            message_count=len(messages or []),
+        )
 
         dataset = Dataset.objects.get(id=dataset_id)
         column_ids = dataset.column_order
@@ -1375,23 +1666,28 @@ def populate_placeholders(
                     context[sanitized_col_id] = cell_value
 
                     # Debug: Log what we're adding to context
-                    logger.info(
-                        f"Added to context: column_name={column.name}, data_type={column.data_type}, "
-                        f"value_type={type(cell_value).__name__}, "
-                        f"value_preview={str(cell_value)[:100] if cell_value else 'None'}"
+                    logger.debug(
+                        "Added prompt placeholder context entry",
+                        column_name=column.name,
+                        data_type=column.data_type,
+                        value_type=type(cell_value).__name__,
                     )
             except Exception as e:
                 logger.exception(
                     f"Error processing column {column_id} ({column.name if 'column' in locals() else 'unknown'}): {e}"
                 )
+                if fail_closed:
+                    raise
                 continue
 
         # Debug: Log final context structure
-        logger.info(f"Final context keys: {list(context.keys())}")
+        logger.debug("Final prompt placeholder context keys", keys=list(context.keys()))
         for key, value in context.items():
             if isinstance(value, dict):
-                logger.info(
-                    f"Context['{key}'] is a dict with keys: {list(value.keys())}"
+                logger.debug(
+                    "Prompt placeholder context nested keys",
+                    key=key,
+                    nested_keys=list(value.keys()),
                 )
 
         # Process messages
@@ -1412,6 +1708,7 @@ def populate_placeholders(
                         template_format=template_format,
                         unresolved_placeholders=unresolved_placeholders,
                         process_media=process_media,
+                        fail_closed=fail_closed,
                     )
                 elif isinstance(content, str):
                     processed_content = process_string_content(
@@ -1423,6 +1720,7 @@ def populate_placeholders(
                         template_format=template_format,
                         unresolved_placeholders=unresolved_placeholders,
                         process_media=process_media,
+                        fail_closed=fail_closed,
                     )
 
                 # If no content was processed, keep original
@@ -1449,8 +1747,12 @@ def populate_placeholders(
     except Exception as e:
         if media_error:
             raise
+        if fail_closed:
+            raise
         traceback.print_exc()
         logger.exception(f"Fatal error processing messages: {e}")
+        if fail_closed:
+            raise
         # Return original messages as fallback
         return messages
 
@@ -1464,6 +1766,7 @@ def process_list_content(
     template_format=None,
     unresolved_placeholders=None,
     process_media=True,
+    fail_closed: bool = False,
 ):
     """Process list-type content with proper media handling"""
     processed_content = []
@@ -1480,6 +1783,7 @@ def process_list_content(
                 template_format=template_format,
                 unresolved_placeholders=unresolved_placeholders,
                 process_media=process_media,
+                fail_closed=fail_closed,
             )
             processed_content.extend(text_segments)
         else:
@@ -1491,6 +1795,8 @@ def process_list_content(
                     processed_content.append(item)
             except Exception as e:
                 logger.exception(f"Error handling media item: {e}")
+                if fail_closed:
+                    raise
                 # Keep original item if processing fails
                 processed_content.append(item)
 
@@ -1506,6 +1812,7 @@ def process_string_content(
     template_format=None,
     unresolved_placeholders=None,
     process_media=True,
+    fail_closed: bool = False,
 ):
     """Process string-type content with proper media handling"""
     return process_text_with_media(
@@ -1517,6 +1824,7 @@ def process_string_content(
         template_format=template_format,
         unresolved_placeholders=unresolved_placeholders,
         process_media=process_media,
+        fail_closed=fail_closed,
     )
 
 
@@ -1529,6 +1837,7 @@ def process_text_with_media(
     template_format=None,
     unresolved_placeholders=None,
     process_media=True,
+    fail_closed: bool = False,
 ):
     """Process text content, handling both templates and media placeholders"""
     strict_render = False
@@ -1647,6 +1956,7 @@ def process_text_with_media(
         if effective_format == "jinja":
             effective_format = TEMPLATE_FORMAT_JINJA2
         strict_render = effective_format in (
+            TEMPLATE_FORMAT_FSTRING,
             TEMPLATE_FORMAT_JINJA2,
             TEMPLATE_FORMAT_MUSTACHE,
         )
@@ -1705,6 +2015,8 @@ def process_text_with_media(
         logger.exception(f"Error processing text with media: {e}")
         logger.exception(f"Template text: {text[:200]}...")
         logger.exception(f"Context keys: {list(context.keys())}")
+        if fail_closed:
+            raise
         if strict_render:
             remaining_placeholders = [
                 placeholder.strip()
@@ -2175,7 +2487,6 @@ class RunPrompts:
             api_call_log_row = None
             api_call_error_status_attempted = False
             cell_persisted = False
-            pass_cell_persisted = False
 
             def persist_api_call_terminal_status(target_status):
                 nonlocal api_call_error_status_attempted
@@ -2247,6 +2558,7 @@ class RunPrompts:
                         "template_format"
                     ),
                     process_media=False,
+                    fail_closed=True,
                 )
                 logger.info(
                     "RunPrompts_process_row_placeholders_populated",
@@ -2453,7 +2765,6 @@ class RunPrompts:
 
                     cell.save()
                     cell_persisted = True
-                    pass_cell_persisted = status == CellStatus.PASS.value
                     logger.info(
                         "cell_updated",
                         cell_id=str(cell.id),
@@ -2500,7 +2811,6 @@ class RunPrompts:
                         response_time=response_time,
                     )
                     cell_persisted = True
-                    pass_cell_persisted = status == CellStatus.PASS.value
                     logger.info(
                         "cell_created_in_edit_mode",
                         cell_id=str(cell.id),
@@ -2548,7 +2858,6 @@ class RunPrompts:
                     response_time=response_time,
                 )
                 cell_persisted = True
-                pass_cell_persisted = status == CellStatus.PASS.value
                 logger.info(
                     "cell_created",
                     cell_id=str(cell.id),
