@@ -49,6 +49,8 @@ const AVATAR_COLORS = [
 
 const DASHBOARD_LIST_COLUMNS =
   "minmax(220px, 1fr) 96px 112px minmax(160px, 220px) 88px 32px";
+const DASHBOARD_LIST_CONTENT_COLUMNS =
+  "minmax(220px, 1fr) 96px 112px minmax(160px, 220px) 88px";
 
 function getAvatarColor(name) {
   let hash = 0;
@@ -79,11 +81,28 @@ function getDashboardCreatorName(db) {
 }
 
 function formatDashboardListDate(date) {
-  return fDate(date) || "—";
+  if (!date) return "—";
+  try {
+    return fDate(date) || "—";
+  } catch {
+    return "—";
+  }
 }
 
 function formatDashboardTooltipDate(date) {
-  return fDateTime(date) || "";
+  if (!date) return "";
+  try {
+    return fDateTime(date) || "";
+  } catch {
+    return "";
+  }
+}
+
+function formatDashboardWidgetCount(count) {
+  const numericCount = Number(count || 0);
+  const safeCount = Number.isFinite(numericCount) ? numericCount : 0;
+
+  return `${safeCount} widget${safeCount === 1 ? "" : "s"}`;
 }
 
 function getDashboardViewers(db) {
@@ -638,21 +657,20 @@ export default function DashboardsListView() {
                 Created by
               </Typography>
               <Typography variant="caption" fontWeight={600}>
-                Viewers
+                People
               </Typography>
               <Box />
             </Box>
             {filteredDashboards.map((db) => {
               const creatorName = getDashboardCreatorName(db);
               const dashboardDate = db.updated_at || db.created_at;
+              const widgetCountText = formatDashboardWidgetCount(
+                db.widget_count,
+              );
 
               return (
                 <Box
                   key={db.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => openDashboard(db.id)}
-                  onKeyDown={(event) => handleDashboardRowKeyDown(event, db.id)}
                   sx={{
                     display: "grid",
                     gridTemplateColumns: {
@@ -664,7 +682,6 @@ export default function DashboardsListView() {
                     alignItems: "center",
                     px: 2,
                     py: 1.25,
-                    cursor: "pointer",
                     borderRadius: 1.5,
                     border: (t) =>
                       `1px solid ${
@@ -684,57 +701,78 @@ export default function DashboardsListView() {
                           : "rgba(0,0,0,0.16)",
                       "& .row-actions": { opacity: 1 },
                     },
-                    "&:focus-visible": {
-                      outline: (t) => `2px solid ${t.palette.primary.main}`,
-                      outlineOffset: 2,
-                    },
                     "&:focus-within .row-actions": { opacity: 1 },
+                    "@media (hover: none)": {
+                      "& .row-actions": { opacity: 1 },
+                    },
                   }}
                 >
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    gap={1.5}
+                  <Box
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Open ${db.name}`}
+                    onClick={() => openDashboard(db.id)}
+                    onKeyDown={(event) =>
+                      handleDashboardRowKeyDown(event, db.id)
+                    }
                     sx={{
+                      display: "grid",
+                      gridTemplateColumns: {
+                        xs: "minmax(0, 1fr)",
+                        md: DASHBOARD_LIST_CONTENT_COLUMNS,
+                      },
+                      columnGap: 1.5,
+                      rowGap: { xs: 0.75, md: 0 },
+                      alignItems: "center",
+                      cursor: "pointer",
                       minWidth: 0,
-                      gridColumn: { xs: "1 / 2", md: "auto" },
+                      gridColumn: { xs: "1 / 2", md: "1 / 6" },
+                      width: "100%",
+                      textAlign: "left",
+                      borderRadius: 1,
+                      "&:focus-visible": {
+                        outline: (t) => `2px solid ${t.palette.primary.main}`,
+                        outlineOffset: 2,
+                      },
                     }}
                   >
-                    <Iconify
-                      icon="mdi:view-dashboard-outline"
-                      width={18}
-                      sx={{ color: "primary.main", flexShrink: 0 }}
-                    />
-
-                    <Typography
-                      variant="body2"
-                      fontWeight={600}
-                      noWrap
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      gap={1.5}
                       sx={{ minWidth: 0 }}
                     >
-                      {db.name}
-                    </Typography>
-                  </Stack>
+                      <Iconify
+                        icon="mdi:view-dashboard-outline"
+                        width={18}
+                        sx={{ color: "primary.main", flexShrink: 0 }}
+                      />
 
-                  <Stack
-                    direction="row"
-                    alignItems="center"
-                    gap={1.5}
-                    useFlexGap
-                    flexWrap="wrap"
-                    sx={{
-                      minWidth: 0,
-                      gridColumn: { xs: "1 / -1", md: "auto" },
-                      display: { xs: "flex", md: "contents" },
-                    }}
-                  >
+                      <Typography
+                        variant="body2"
+                        fontWeight={600}
+                        noWrap
+                        sx={{ minWidth: 0 }}
+                      >
+                        {db.name}
+                      </Typography>
+                    </Stack>
+
                     <Typography
                       variant="caption"
                       color="text.disabled"
                       sx={{ whiteSpace: "nowrap" }}
                     >
-                      {db.widget_count || 0} widget
-                      {db.widget_count !== 1 ? "s" : ""}
+                      <Box
+                        component="span"
+                        sx={{
+                          display: { xs: "inline", md: "none" },
+                          fontWeight: 600,
+                        }}
+                      >
+                        Widgets:{" "}
+                      </Box>
+                      {widgetCountText}
                     </Typography>
 
                     <Tooltip
@@ -746,6 +784,16 @@ export default function DashboardsListView() {
                         color="text.secondary"
                         sx={{ whiteSpace: "nowrap" }}
                       >
+                        <Box
+                          component="span"
+                          sx={{
+                            display: { xs: "inline", md: "none" },
+                            color: "text.disabled",
+                            fontWeight: 600,
+                          }}
+                        >
+                          Updated:{" "}
+                        </Box>
                         {formatDashboardListDate(dashboardDate)}
                       </Typography>
                     </Tooltip>
@@ -756,6 +804,17 @@ export default function DashboardsListView() {
                       gap={1}
                       sx={{ minWidth: 0 }}
                     >
+                      <Typography
+                        variant="caption"
+                        color="text.disabled"
+                        sx={{
+                          display: { xs: "inline", md: "none" },
+                          flexShrink: 0,
+                          fontWeight: 600,
+                        }}
+                      >
+                        Created by:
+                      </Typography>
                       {db.created_by && (
                         <Avatar
                           sx={{
@@ -781,10 +840,26 @@ export default function DashboardsListView() {
                       </Typography>
                     </Stack>
 
-                    <Box sx={{ minWidth: 0 }}>
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      gap={1}
+                      sx={{ minWidth: 0 }}
+                    >
+                      <Typography
+                        variant="caption"
+                        color="text.disabled"
+                        sx={{
+                          display: { xs: "inline", md: "none" },
+                          flexShrink: 0,
+                          fontWeight: 600,
+                        }}
+                      >
+                        People:
+                      </Typography>
                       <ViewerAvatars db={db} />
-                    </Box>
-                  </Stack>
+                    </Stack>
+                  </Box>
 
                   <IconButton
                     className="row-actions"
@@ -800,6 +875,7 @@ export default function DashboardsListView() {
                       justifySelf: "end",
                       gridColumn: { xs: "2 / 3", md: "auto" },
                       gridRow: { xs: "1 / 2", md: "auto" },
+                      "@media (hover: none)": { opacity: 1 },
                     }}
                   >
                     <Iconify icon="mdi:delete-outline" width={18} />

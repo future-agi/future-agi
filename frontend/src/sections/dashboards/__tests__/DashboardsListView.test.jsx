@@ -66,7 +66,7 @@ const DASHBOARDS = [
   {
     id: "dash-1",
     name: "Latency Overview",
-    widget_count: 1,
+    widget_count: "1",
     created_at: "2026-06-01T12:00:00.000Z",
     updated_at: "2026-06-15T12:00:00.000Z",
     created_by: {
@@ -81,12 +81,20 @@ const DASHBOARDS = [
   {
     id: "dash-2",
     name: "Fallback Owner Dashboard",
-    widget_count: 0,
+    widget_count: "0",
     created_at: "2026-05-20T12:00:00.000Z",
     updated_at: null,
     created_by: {
       email: "owner@example.com",
     },
+  },
+  {
+    id: "dash-3",
+    name: "No Metadata Dashboard",
+    widget_count: "2",
+    created_at: null,
+    updated_at: null,
+    created_by: null,
   },
 ];
 
@@ -105,7 +113,7 @@ describe("DashboardsListView list metadata", () => {
     expect(screen.getByText("Widgets")).toBeInTheDocument();
     expect(screen.getByText("Last updated")).toBeInTheDocument();
     expect(screen.getByText("Created by")).toBeInTheDocument();
-    expect(screen.getByText("Viewers")).toBeInTheDocument();
+    expect(screen.getByText("People")).toBeInTheDocument();
   });
 
   it("renders shared calendar-date text instead of relative row timestamps", () => {
@@ -123,6 +131,15 @@ describe("DashboardsListView list metadata", () => {
     expect(screen.getByText("owner@example.com")).toBeInTheDocument();
   });
 
+  it("normalizes API-shaped widget counts and missing metadata", () => {
+    render(<DashboardsListView />);
+
+    expect(screen.getByText("1 widget")).toBeInTheDocument();
+    expect(screen.getByText("2 widgets")).toBeInTheDocument();
+    expect(screen.getByText("No Metadata Dashboard")).toBeInTheDocument();
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
+  });
+
   it("does not render list column headers for the empty state", () => {
     h.dashboards = [];
 
@@ -133,14 +150,28 @@ describe("DashboardsListView list metadata", () => {
     expect(screen.queryByText("Widgets")).not.toBeInTheDocument();
     expect(screen.queryByText("Last updated")).not.toBeInTheDocument();
     expect(screen.queryByText("Created by")).not.toBeInTheDocument();
-    expect(screen.queryByText("Viewers")).not.toBeInTheDocument();
+    expect(screen.queryByText("People")).not.toBeInTheDocument();
+  });
+
+  it("keeps headers hidden when search filters all dashboards out", () => {
+    render(<DashboardsListView />);
+
+    fireEvent.change(screen.getByLabelText("Search"), {
+      target: { value: "does-not-exist" },
+    });
+
+    expect(
+      screen.getByText("No dashboards match your search"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Name")).not.toBeInTheDocument();
+    expect(screen.queryByText("Latency Overview")).not.toBeInTheDocument();
   });
 
   it("keeps row navigation on click and keyboard activation", () => {
     render(<DashboardsListView />);
 
     const latencyRow = screen.getByRole("button", {
-      name: /Latency Overview 1 widget/i,
+      name: "Open Latency Overview",
     });
 
     fireEvent.click(latencyRow);
@@ -149,5 +180,25 @@ describe("DashboardsListView list metadata", () => {
     h.navigate.mockClear();
     fireEvent.keyDown(latencyRow, { key: "Enter" });
     expect(h.navigate).toHaveBeenCalledWith("/dashboard/dashboards/dash-1");
+
+    h.navigate.mockClear();
+    fireEvent.keyDown(latencyRow, { key: " " });
+    expect(h.navigate).toHaveBeenCalledWith("/dashboard/dashboards/dash-1");
+  });
+
+  it("keeps delete as a separate action from row navigation", () => {
+    render(<DashboardsListView />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete Latency Overview" }),
+    );
+
+    expect(h.navigate).not.toHaveBeenCalled();
+    expect(screen.getByText("Delete Dashboard")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Are you sure you want to delete "Latency Overview"? This action cannot be undone.',
+      ),
+    ).toBeInTheDocument();
   });
 });
