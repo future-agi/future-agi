@@ -34,7 +34,7 @@ import SvgColor from "src/components/svg-color";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { useSnackbar } from "src/components/snackbar";
-import { formatDistanceToNowStrict, format } from "date-fns";
+import { fDate, fDateTime, fToNowStrict } from "src/utils/format-time";
 
 const AVATAR_COLORS = [
   "#7C4DFF",
@@ -46,6 +46,9 @@ const AVATAR_COLORS = [
   "#00BFA6",
   "#8C9EFF",
 ];
+
+const DASHBOARD_LIST_COLUMNS =
+  "minmax(220px, 1fr) 96px 112px minmax(160px, 220px) 88px 32px";
 
 function getAvatarColor(name) {
   let hash = 0;
@@ -65,10 +68,22 @@ function getInitials(name) {
 function timeAgo(date) {
   if (!date) return "";
   try {
-    return formatDistanceToNowStrict(new Date(date), { addSuffix: true });
+    return fToNowStrict(date);
   } catch {
     return "";
   }
+}
+
+function getDashboardCreatorName(db) {
+  return db?.created_by?.name || db?.created_by?.email || "";
+}
+
+function formatDashboardListDate(date) {
+  return fDate(date) || "—";
+}
+
+function formatDashboardTooltipDate(date) {
+  return fDateTime(date) || "";
 }
 
 function getDashboardViewers(db) {
@@ -161,12 +176,7 @@ function ViewerAvatars({ db }) {
                     color: isDark ? "rgba(255,255,255,0.45)" : "text.secondary",
                   }}
                 >
-                  {db.created_at
-                    ? format(
-                        new Date(db.created_at),
-                        "MMM d, yyyy \u00b7 h:mm a",
-                      )
-                    : ""}
+                  {formatDashboardTooltipDate(db.created_at)}
                 </Typography>
               </Box>
             </Stack>
@@ -255,9 +265,7 @@ function ViewerAvatars({ db }) {
                   color: isDark ? "rgba(255,255,255,0.5)" : "text.secondary",
                 }}
               >
-                {db.updated_at
-                  ? format(new Date(db.updated_at), "MMM d, yyyy \u00b7 h:mm a")
-                  : ""}
+                {formatDashboardTooltipDate(db.updated_at)}
               </Typography>
             </Box>
           )}
@@ -375,6 +383,17 @@ export default function DashboardsListView() {
   const handleDelete = (e, db) => {
     e.stopPropagation();
     setDeleteTarget(db);
+  };
+
+  const openDashboard = (dashboardId) => {
+    navigate(paths.dashboard.dashboards.detail(dashboardId));
+  };
+
+  const handleDashboardRowKeyDown = (event, dashboardId) => {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    openDashboard(dashboardId);
   };
 
   const confirmDelete = () => {
@@ -592,89 +611,202 @@ export default function DashboardsListView() {
           )
         ) : (
           <Stack spacing={1}>
-            {filteredDashboards.map((db) => (
-              <Stack
-                key={db.id}
-                direction="row"
-                alignItems="center"
-                onClick={() =>
-                  navigate(paths.dashboard.dashboards.detail(db.id))
-                }
-                sx={{
-                  px: 2,
-                  py: 1.25,
-                  cursor: "pointer",
-                  borderRadius: 1.5,
-                  border: (t) =>
-                    `1px solid ${
-                      t.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.08)"
-                        : "rgba(0,0,0,0.08)"
-                    }`,
-                  transition: "all 0.15s",
-                  "&:hover": {
-                    bgcolor: (t) =>
-                      t.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.04)"
-                        : "rgba(0,0,0,0.02)",
-                    borderColor: (t) =>
-                      t.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.16)"
-                        : "rgba(0,0,0,0.16)",
-                    "& .row-actions": { opacity: 1 },
-                  },
-                }}
+            <Box
+              sx={{
+                display: { xs: "none", md: "grid" },
+                gridTemplateColumns: DASHBOARD_LIST_COLUMNS,
+                columnGap: 1.5,
+                alignItems: "center",
+                px: 2,
+                color: "text.disabled",
+              }}
+            >
+              <Typography
+                variant="caption"
+                fontWeight={600}
+                sx={{ minWidth: 0 }}
               >
-                <Iconify
-                  icon="mdi:view-dashboard-outline"
-                  width={18}
-                  sx={{ color: "primary.main", mr: 1.5, flexShrink: 0 }}
-                />
+                Name
+              </Typography>
+              <Typography variant="caption" fontWeight={600}>
+                Widgets
+              </Typography>
+              <Typography variant="caption" fontWeight={600}>
+                Last updated
+              </Typography>
+              <Typography variant="caption" fontWeight={600}>
+                Created by
+              </Typography>
+              <Typography variant="caption" fontWeight={600}>
+                Viewers
+              </Typography>
+              <Box />
+            </Box>
+            {filteredDashboards.map((db) => {
+              const creatorName = getDashboardCreatorName(db);
+              const dashboardDate = db.updated_at || db.created_at;
 
-                <Typography
-                  variant="body2"
-                  fontWeight={600}
-                  noWrap
-                  sx={{ flex: 1, mr: 2, minWidth: 0 }}
-                >
-                  {db.name}
-                </Typography>
-
-                <Typography
-                  variant="caption"
-                  color="text.disabled"
-                  sx={{ mr: 1.5, whiteSpace: "nowrap", flexShrink: 0 }}
-                >
-                  {db.widget_count || 0} widget
-                  {db.widget_count !== 1 ? "s" : ""}
-                </Typography>
-
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ mr: 2, whiteSpace: "nowrap", flexShrink: 0 }}
-                >
-                  {timeAgo(db.updated_at || db.created_at)}
-                </Typography>
-
-                <Box sx={{ mr: 1, flexShrink: 0 }}>
-                  <ViewerAvatars db={db} />
-                </Box>
-
-                <IconButton
-                  className="row-actions"
-                  size="small"
-                  onClick={(e) => handleDelete(e, db)}
+              return (
+                <Box
+                  key={db.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openDashboard(db.id)}
+                  onKeyDown={(event) => handleDashboardRowKeyDown(event, db.id)}
                   sx={{
-                    opacity: 0,
-                    transition: "opacity 0.15s",
-                    flexShrink: 0,
+                    display: "grid",
+                    gridTemplateColumns: {
+                      xs: "minmax(0, 1fr) 32px",
+                      md: DASHBOARD_LIST_COLUMNS,
+                    },
+                    columnGap: 1.5,
+                    rowGap: { xs: 1, md: 0 },
+                    alignItems: "center",
+                    px: 2,
+                    py: 1.25,
+                    cursor: "pointer",
+                    borderRadius: 1.5,
+                    border: (t) =>
+                      `1px solid ${
+                        t.palette.mode === "dark"
+                          ? "rgba(255,255,255,0.08)"
+                          : "rgba(0,0,0,0.08)"
+                      }`,
+                    transition: "all 0.15s",
+                    "&:hover": {
+                      bgcolor: (t) =>
+                        t.palette.mode === "dark"
+                          ? "rgba(255,255,255,0.04)"
+                          : "rgba(0,0,0,0.02)",
+                      borderColor: (t) =>
+                        t.palette.mode === "dark"
+                          ? "rgba(255,255,255,0.16)"
+                          : "rgba(0,0,0,0.16)",
+                      "& .row-actions": { opacity: 1 },
+                    },
+                    "&:focus-visible": {
+                      outline: (t) => `2px solid ${t.palette.primary.main}`,
+                      outlineOffset: 2,
+                    },
+                    "&:focus-within .row-actions": { opacity: 1 },
                   }}
                 >
-                  <Iconify icon="mdi:delete-outline" width={18} />
-                </IconButton>
-              </Stack>
-            ))}
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    gap={1.5}
+                    sx={{
+                      minWidth: 0,
+                      gridColumn: { xs: "1 / 2", md: "auto" },
+                    }}
+                  >
+                    <Iconify
+                      icon="mdi:view-dashboard-outline"
+                      width={18}
+                      sx={{ color: "primary.main", flexShrink: 0 }}
+                    />
+
+                    <Typography
+                      variant="body2"
+                      fontWeight={600}
+                      noWrap
+                      sx={{ minWidth: 0 }}
+                    >
+                      {db.name}
+                    </Typography>
+                  </Stack>
+
+                  <Stack
+                    direction="row"
+                    alignItems="center"
+                    gap={1.5}
+                    useFlexGap
+                    flexWrap="wrap"
+                    sx={{
+                      minWidth: 0,
+                      gridColumn: { xs: "1 / -1", md: "auto" },
+                      display: { xs: "flex", md: "contents" },
+                    }}
+                  >
+                    <Typography
+                      variant="caption"
+                      color="text.disabled"
+                      sx={{ whiteSpace: "nowrap" }}
+                    >
+                      {db.widget_count || 0} widget
+                      {db.widget_count !== 1 ? "s" : ""}
+                    </Typography>
+
+                    <Tooltip
+                      title={formatDashboardTooltipDate(dashboardDate)}
+                      arrow
+                    >
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        sx={{ whiteSpace: "nowrap" }}
+                      >
+                        {formatDashboardListDate(dashboardDate)}
+                      </Typography>
+                    </Tooltip>
+
+                    <Stack
+                      direction="row"
+                      alignItems="center"
+                      gap={1}
+                      sx={{ minWidth: 0 }}
+                    >
+                      {db.created_by && (
+                        <Avatar
+                          sx={{
+                            width: 26,
+                            height: 26,
+                            fontSize: "11px",
+                            fontWeight: 700,
+                            bgcolor: getAvatarColor(creatorName),
+                            flexShrink: 0,
+                          }}
+                        >
+                          {getInitials(creatorName)}
+                        </Avatar>
+                      )}
+                      <Typography
+                        variant="caption"
+                        color="text.secondary"
+                        noWrap
+                        title={creatorName || undefined}
+                        sx={{ minWidth: 0 }}
+                      >
+                        {creatorName || "—"}
+                      </Typography>
+                    </Stack>
+
+                    <Box sx={{ minWidth: 0 }}>
+                      <ViewerAvatars db={db} />
+                    </Box>
+                  </Stack>
+
+                  <IconButton
+                    className="row-actions"
+                    size="small"
+                    onClick={(e) => handleDelete(e, db)}
+                    aria-label={`Delete ${db.name}`}
+                    sx={{
+                      opacity: { xs: 1, md: 0 },
+                      transition: "opacity 0.15s",
+                      flexShrink: 0,
+                      width: 32,
+                      height: 32,
+                      justifySelf: "end",
+                      gridColumn: { xs: "2 / 3", md: "auto" },
+                      gridRow: { xs: "1 / 2", md: "auto" },
+                    }}
+                  >
+                    <Iconify icon="mdi:delete-outline" width={18} />
+                  </IconButton>
+                </Box>
+              );
+            })}
           </Stack>
         )}
       </Box>
