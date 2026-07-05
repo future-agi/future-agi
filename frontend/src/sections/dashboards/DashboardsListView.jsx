@@ -451,6 +451,22 @@ export default function DashboardsListView() {
     navigate(paths.dashboard.dashboards.detail(dashboardId));
   };
 
+  const handleDashboardLinkClick = (event, dashboardId) => {
+    if (
+      event.defaultPrevented ||
+      event.button !== 0 ||
+      event.metaKey ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.shiftKey
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    openDashboard(dashboardId);
+  };
+
   const confirmDelete = () => {
     if (!deleteTarget) return;
     deleteMutation.mutate(deleteTarget.id, {
@@ -772,10 +788,7 @@ export default function DashboardsListView() {
                     href={paths.dashboard.dashboards.detail(db.id)}
                     aria-labelledby={rowNameId}
                     aria-describedby={rowDescriptionId}
-                    onClick={(event) => {
-                      event.preventDefault();
-                      openDashboard(db.id);
-                    }}
+                    onClick={(event) => handleDashboardLinkClick(event, db.id)}
                     sx={{
                       display: "grid",
                       gridTemplateColumns: {

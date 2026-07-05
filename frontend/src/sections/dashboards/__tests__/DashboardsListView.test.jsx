@@ -220,6 +220,15 @@ describe("DashboardsListView list metadata", () => {
 
     fireEvent.click(latencyRow);
     expect(h.navigate).toHaveBeenCalledWith("/dashboard/dashboards/dash-1");
+
+    // jsdom attempts a real navigation for unhandled modified anchor clicks.
+    // The href is asserted above; remove it here to isolate the SPA handler.
+    latencyRow.removeAttribute("href");
+    h.navigate.mockClear();
+    fireEvent.click(latencyRow, { metaKey: true });
+    fireEvent.click(latencyRow, { ctrlKey: true });
+    fireEvent.click(latencyRow, { shiftKey: true });
+    expect(h.navigate).not.toHaveBeenCalled();
   });
 
   it("makes people metadata available as a focusable row action", () => {
