@@ -405,10 +405,27 @@ export default function DashboardsListView() {
     dashboards.forEach((d) => {
       const u = d.created_by;
       if (u?.email && !map.has(u.email)) {
-        map.set(u.email, u.name || "Unknown creator");
+        const name = typeof u.name === "string" ? u.name.trim() : u.name;
+        map.set(u.email, name || null);
       }
     });
-    return Array.from(map, ([email, name]) => ({ email, name }));
+
+    const entries = Array.from(map, ([email, name]) => ({ email, name }));
+    const unnamedCount = entries.filter((creator) => !creator.name).length;
+    let unnamedIndex = 0;
+
+    return entries.map((creator) => {
+      if (creator.name) return creator;
+
+      unnamedIndex += 1;
+      return {
+        ...creator,
+        name:
+          unnamedCount > 1
+            ? `Unknown creator ${unnamedIndex}`
+            : "Unknown creator",
+      };
+    });
   }, [dashboards]);
 
   const filteredDashboards = useMemo(() => {

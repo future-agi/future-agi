@@ -278,6 +278,50 @@ describe("DashboardsListView list metadata", () => {
     expect(screen.queryByText("owner@example.com")).not.toBeInTheDocument();
   });
 
+  it("disambiguates multiple unnamed creator filters without exposing emails", () => {
+    h.dashboards = [
+      DASHBOARDS[1],
+      {
+        ...DASHBOARDS[1],
+        id: "dash-4",
+        name: "Second Fallback Owner Dashboard",
+        created_by: {
+          email: "second-owner@example.com",
+        },
+      },
+    ];
+
+    render(<DashboardsListView />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Created by anyone/i }));
+
+    expect(
+      screen.getByRole("menuitem", { name: /Unknown creator 1/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /Unknown creator 2/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("owner@example.com")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("second-owner@example.com"),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: /Unknown creator 2/ }),
+    );
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+
+    expect(
+      screen.getByRole("button", { name: "Unknown creator 2" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Second Fallback Owner Dashboard" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Fallback Owner Dashboard" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("keeps delete as a separate action from row navigation", () => {
     render(<DashboardsListView />);
 
