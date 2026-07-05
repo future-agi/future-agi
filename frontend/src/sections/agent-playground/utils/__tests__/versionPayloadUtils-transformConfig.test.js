@@ -74,6 +74,54 @@ describe("buildPromptTemplateForApi – via buildVersionPayload", () => {
     expect(pt.tool_choice).toBe("auto");
   });
 
+  it("preserves imported output and template format in prompt_template", () => {
+    const nodes = [
+      createPromptNode("p1", {
+        config: {
+          prompt_template_id: null,
+          prompt_version_id: null,
+          outputFormat: "json",
+          templateFormat: "jinja",
+          modelConfig: {
+            model: "gpt-4o-mini",
+            modelDetail: { model_name: "gpt-4o-mini", providers: "openai" },
+            responseFormat: "text",
+            toolChoice: "required",
+            tools: [{ name: "lookup" }],
+          },
+          messages: [
+            { role: "user", content: [{ type: "text", text: "Hello" }] },
+          ],
+          payload: {
+            promptConfig: [
+              {
+                configuration: {
+                  maxTokens: 256,
+                  topP: 0.8,
+                  output_format: "json",
+                  template_format: "jinja",
+                },
+              },
+            ],
+            ports: [],
+          },
+        },
+      }),
+    ];
+
+    const result = buildVersionPayload(nodes, []);
+    const pt = result.nodes[0].prompt_template;
+
+    expect(pt.prompt_template_id).toBeNull();
+    expect(pt.prompt_version_id).toBeNull();
+    expect(pt.output_format).toBe("json");
+    expect(pt.template_format).toBe("jinja");
+    expect(pt.max_tokens).toBe(256);
+    expect(pt.top_p).toBe(0.8);
+    expect(pt.tool_choice).toBe("required");
+    expect(pt.tools).toEqual([{ name: "lookup" }]);
+  });
+
   it("includes variable_names indirectly via model and messages", () => {
     const nodes = [
       createPromptNode("p1", {

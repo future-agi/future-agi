@@ -140,7 +140,7 @@ export function buildVersionPayload(nodes = [], edges = [], options = {}) {
  * @param {Object} formConfig - node.data.config from Zustand store
  * @returns {Object|null} PromptTemplateDataSerializer-shaped object
  */
-function buildPromptTemplateForApi(formConfig) {
+export function buildPromptTemplateForApi(formConfig) {
   if (!formConfig || Object.keys(formConfig).length === 0) return null;
 
   const model = formConfig.modelConfig?.model;
@@ -167,22 +167,31 @@ function buildPromptTemplateForApi(formConfig) {
       : configuration?.responseFormat ||
         configuration?.response_format ||
         "text",
-    output_format: "string",
+    output_format:
+      formConfig.outputFormat ||
+      configuration?.outputFormat ||
+      configuration?.output_format ||
+      "string",
     temperature: configuration?.temperature ?? null,
-    max_tokens: configuration?.max_tokens ?? configuration?.max_tokens ?? null,
-    top_p: configuration?.top_p ?? configuration?.top_p ?? null,
+    max_tokens: configuration?.maxTokens ?? configuration?.max_tokens ?? null,
+    top_p: configuration?.topP ?? configuration?.top_p ?? null,
     frequency_penalty:
       configuration?.frequency_penalty ??
       configuration?.frequencyPenalty ??
       null,
     presence_penalty:
       configuration?.presence_penalty ?? configuration?.presencePenalty ?? null,
-    tools: configuration?.tools || formConfig.modelConfig?.tools || [],
+    tools: configuration?.tools ?? formConfig.modelConfig?.tools ?? [],
     tool_choice:
-      configuration?.toolChoice ||
-      configuration?.tool_choice ||
-      formConfig.modelConfig?.toolChoice ||
+      configuration?.toolChoice ??
+      configuration?.tool_choice ??
+      formConfig.modelConfig?.toolChoice ??
       "",
+    template_format:
+      configuration?.templateFormat ??
+      configuration?.template_format ??
+      formConfig.templateFormat ??
+      "mustache",
     save_prompt_version: false,
   };
 }

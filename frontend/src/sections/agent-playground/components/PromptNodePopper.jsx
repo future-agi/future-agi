@@ -30,7 +30,44 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { enqueueSnackbar } from "notistack";
 
 const SUPPORTED_PROMPT_ROLES = new Set(["system", "user", "assistant"]);
-const SUPPORTED_CONTENT_TYPES = new Set(["text"]);
+const SUPPORTED_CONTENT_TYPES = new Set([
+  "text",
+  "image_url",
+  "pdf_url",
+  "audio_url",
+]);
+
+function normalizeTemplateContentBlock(block) {
+  if (typeof block === "string") {
+    return { type: "text", text: block };
+  }
+
+  if (
+    !block ||
+    typeof block !== "object" ||
+    !SUPPORTED_CONTENT_TYPES.has(block.type)
+  ) {
+    return null;
+  }
+
+  if (block.type === "text") {
+    return typeof block.text === "string"
+      ? { ...block, type: "text", text: block.text }
+      : null;
+  }
+
+  const mediaValue = block[block.type];
+  if (
+    mediaValue &&
+    typeof mediaValue === "object" &&
+    typeof mediaValue.url === "string" &&
+    mediaValue.url.trim().length > 0
+  ) {
+    return { ...block, type: block.type, [block.type]: mediaValue };
+  }
+
+  return null;
+}
 
 function normalizeTemplateContent(content) {
   if (typeof content === "string") {
@@ -41,22 +78,7 @@ function normalizeTemplateContent(content) {
     return null;
   }
 
-  const normalizedContent = content.map((block) => {
-    if (typeof block === "string") {
-      return { type: "text", text: block };
-    }
-
-    if (
-      block &&
-      typeof block === "object" &&
-      SUPPORTED_CONTENT_TYPES.has(block.type) &&
-      typeof block.text === "string"
-    ) {
-      return { ...block, type: "text", text: block.text };
-    }
-
-    return null;
-  });
+  const normalizedContent = content.map(normalizeTemplateContentBlock);
 
   if (normalizedContent.some((block) => block === null)) {
     return null;
@@ -262,7 +284,7 @@ export default function PromptNodePopper({
       const promptConfigSnapshot = normalizeTemplateSnapshot(template);
       if (!promptConfigSnapshot) {
         enqueueSnackbar(
-          "This library template is not compatible with agent prompt nodes.",
+          "This library template uses unsupported roles or content for LLM prompt nodes.",
           { variant: "error" },
         );
         return;
@@ -482,7 +504,7 @@ export default function PromptNodePopper({
             {hasQueryError && (
               <ListItem>
                 <Typography variant="body2" color="error.main" sx={{ py: 0.5 }}>
-                  Unable to load prompt templates. Try again.
+                  Unable to load prompt templates.
                 </Typography>
               </ListItem>
             )}

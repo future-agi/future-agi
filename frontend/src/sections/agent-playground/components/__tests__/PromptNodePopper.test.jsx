@@ -94,6 +94,35 @@ const libraryTemplate = {
   },
 };
 
+const multimodalLibraryTemplate = {
+  ...libraryTemplate,
+  id: "library-template-multimodal",
+  name: "Library Multimodal Template",
+  prompt_config_snapshot: {
+    messages: [
+      {
+        role: "user",
+        content: [
+          "Describe the attached context.",
+          {
+            type: "image_url",
+            image_url: { url: "https://example.com/image.png" },
+          },
+          {
+            type: "pdf_url",
+            pdf_url: { url: "https://example.com/doc.pdf" },
+          },
+          {
+            type: "audio_url",
+            audio_url: { url: "https://example.com/audio.mp3" },
+          },
+        ],
+      },
+    ],
+    configuration: null,
+  },
+};
+
 const promptVersion = {
   id: "prompt-version-1",
   is_default: true,
@@ -117,21 +146,21 @@ const promptVersion = {
   },
 };
 
-function infiniteResult(items, overrides = {}) {
+function infiniteResult(items, overrides = {}, shape = "saved") {
+  const pageData =
+    shape === "library"
+      ? {
+          result: {
+            data: items,
+            page_number: 1,
+            total_count: items.length,
+          },
+        }
+      : { results: items };
+
   return {
     data: {
-      pages: [
-        {
-          data: {
-            results: items,
-            result: {
-              data: items,
-              page_number: 1,
-              total_count: items.length,
-            },
-          },
-        },
-      ],
+      pages: [{ data: pageData }],
     },
     isLoading: false,
     fetchNextPage: vi.fn(),
@@ -140,6 +169,14 @@ function infiniteResult(items, overrides = {}) {
     isError: false,
     ...overrides,
   };
+}
+
+function savedPromptsResult(items, overrides = {}) {
+  return infiniteResult(items, overrides, "saved");
+}
+
+function libraryTemplatesResult(items, overrides = {}) {
+  return infiniteResult(items, overrides, "library");
 }
 
 function renderPopper(props = {}) {
@@ -167,17 +204,17 @@ describe("PromptNodePopper", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     useGetNodeTemplates.mockReturnValue({ data: nodeTemplates });
-    useGetPromptTemplatesInfinite.mockReturnValue(infiniteResult([]));
-    useGetLibraryTemplatesInfinite.mockReturnValue(infiniteResult([]));
+    useGetPromptTemplatesInfinite.mockReturnValue(savedPromptsResult([]));
+    useGetLibraryTemplatesInfinite.mockReturnValue(libraryTemplatesResult([]));
     axios.get.mockResolvedValue({ data: { results: [promptVersion] } });
   });
 
   it("renders saved prompts and library templates as separate non-empty sections", () => {
     useGetPromptTemplatesInfinite.mockReturnValue(
-      infiniteResult([savedPrompt]),
+      savedPromptsResult([savedPrompt]),
     );
     useGetLibraryTemplatesInfinite.mockReturnValue(
-      infiniteResult([libraryTemplate]),
+      libraryTemplatesResult([libraryTemplate]),
     );
 
     renderPopper();
@@ -190,7 +227,7 @@ describe("PromptNodePopper", () => {
 
   it("hides the saved section when only library templates are present", () => {
     useGetLibraryTemplatesInfinite.mockReturnValue(
-      infiniteResult([libraryTemplate]),
+      libraryTemplatesResult([libraryTemplate]),
     );
 
     renderPopper();
@@ -202,7 +239,7 @@ describe("PromptNodePopper", () => {
 
   it("hides the library section when only saved prompts are present", () => {
     useGetPromptTemplatesInfinite.mockReturnValue(
-      infiniteResult([savedPrompt]),
+      savedPromptsResult([savedPrompt]),
     );
 
     renderPopper();
@@ -243,7 +280,7 @@ describe("PromptNodePopper", () => {
     const onClose = vi.fn();
     const onNodeSelect = vi.fn();
     useGetLibraryTemplatesInfinite.mockReturnValue(
-      infiniteResult([libraryTemplate]),
+      libraryTemplatesResult([libraryTemplate]),
     );
 
     renderPopper({ onClose, onNodeSelect });
@@ -271,11 +308,55 @@ describe("PromptNodePopper", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it("seeds an LLM prompt from a multimodal library template", () => {
+    const onClose = vi.fn();
+    const onNodeSelect = vi.fn();
+    useGetLibraryTemplatesInfinite.mockReturnValue(
+      libraryTemplatesResult([multimodalLibraryTemplate]),
+    );
+
+    renderPopper({ onClose, onNodeSelect });
+
+    fireEvent.click(screen.getByText(multimodalLibraryTemplate.name));
+
+    expect(onNodeSelect).toHaveBeenCalledWith(
+      "llm_prompt",
+      "node-template-llm-prompt",
+      expect.objectContaining({
+        name: multimodalLibraryTemplate.name,
+        prompt_template_id: null,
+        prompt_version_id: null,
+        modelConfig: expect.objectContaining({ model: "" }),
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: "user",
+            content: [
+              { type: "text", text: "Describe the attached context." },
+              {
+                type: "image_url",
+                image_url: { url: "https://example.com/image.png" },
+              },
+              {
+                type: "pdf_url",
+                pdf_url: { url: "https://example.com/doc.pdf" },
+              },
+              {
+                type: "audio_url",
+                audio_url: { url: "https://example.com/audio.mp3" },
+              },
+            ],
+          }),
+        ]),
+      }),
+    );
+    expect(onClose).toHaveBeenCalled();
+  });
+
   it("rejects incompatible library template snapshots without adding a node", () => {
     const onClose = vi.fn();
     const onNodeSelect = vi.fn();
     useGetLibraryTemplatesInfinite.mockReturnValue(
-      infiniteResult([
+      libraryTemplatesResult([
         {
           id: "bad-library-template",
           name: "Unsupported Library Template",
@@ -297,7 +378,7 @@ describe("PromptNodePopper", () => {
     expect(mockAddNode).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(enqueueSnackbar).toHaveBeenCalledWith(
-      "This library template is not compatible with agent prompt nodes.",
+      "This library template uses unsupported roles or content for LLM prompt nodes.",
       { variant: "error" },
     );
   });
@@ -306,7 +387,7 @@ describe("PromptNodePopper", () => {
     const onClose = vi.fn();
     const onNodeSelect = vi.fn();
     useGetPromptTemplatesInfinite.mockReturnValue(
-      infiniteResult([savedPrompt]),
+      savedPromptsResult([savedPrompt]),
     );
 
     renderPopper({ onClose, onNodeSelect });
@@ -338,13 +419,13 @@ describe("PromptNodePopper", () => {
     const fetchNextSavedPage = vi.fn();
     const fetchNextLibraryPage = vi.fn();
     useGetPromptTemplatesInfinite.mockReturnValue(
-      infiniteResult([savedPrompt], {
+      savedPromptsResult([savedPrompt], {
         fetchNextPage: fetchNextSavedPage,
         hasNextPage: true,
       }),
     );
     useGetLibraryTemplatesInfinite.mockReturnValue(
-      infiniteResult([libraryTemplate], {
+      libraryTemplatesResult([libraryTemplate], {
         fetchNextPage: fetchNextLibraryPage,
         hasNextPage: true,
       }),
@@ -361,13 +442,13 @@ describe("PromptNodePopper", () => {
     const fetchNextSavedPage = vi.fn();
     const fetchNextLibraryPage = vi.fn();
     useGetPromptTemplatesInfinite.mockReturnValue(
-      infiniteResult([savedPrompt], {
+      savedPromptsResult([savedPrompt], {
         fetchNextPage: fetchNextSavedPage,
         hasNextPage: true,
       }),
     );
     useGetLibraryTemplatesInfinite.mockReturnValue(
-      infiniteResult([libraryTemplate], {
+      libraryTemplatesResult([libraryTemplate], {
         fetchNextPage: fetchNextLibraryPage,
         hasNextPage: false,
       }),
@@ -384,13 +465,13 @@ describe("PromptNodePopper", () => {
     const fetchNextSavedPage = vi.fn();
     const fetchNextLibraryPage = vi.fn();
     useGetPromptTemplatesInfinite.mockReturnValue(
-      infiniteResult([savedPrompt], {
+      savedPromptsResult([savedPrompt], {
         fetchNextPage: fetchNextSavedPage,
         hasNextPage: false,
       }),
     );
     useGetLibraryTemplatesInfinite.mockReturnValue(
-      infiniteResult([libraryTemplate], {
+      libraryTemplatesResult([libraryTemplate], {
         fetchNextPage: fetchNextLibraryPage,
         hasNextPage: true,
       }),
@@ -407,13 +488,13 @@ describe("PromptNodePopper", () => {
     const fetchNextSavedPage = vi.fn();
     const fetchNextLibraryPage = vi.fn();
     useGetPromptTemplatesInfinite.mockReturnValue(
-      infiniteResult([savedPrompt], {
+      savedPromptsResult([savedPrompt], {
         fetchNextPage: fetchNextSavedPage,
         hasNextPage: true,
       }),
     );
     useGetLibraryTemplatesInfinite.mockReturnValue(
-      infiniteResult([libraryTemplate], {
+      libraryTemplatesResult([libraryTemplate], {
         fetchNextPage: fetchNextLibraryPage,
         hasNextPage: true,
       }),
@@ -428,13 +509,13 @@ describe("PromptNodePopper", () => {
 
   it("shows an error state when a prompt-template query fails", () => {
     useGetLibraryTemplatesInfinite.mockReturnValue(
-      infiniteResult([], { isError: true }),
+      libraryTemplatesResult([], { isError: true }),
     );
 
     renderPopper();
 
     expect(
-      screen.getByText("Unable to load prompt templates. Try again."),
+      screen.getByText("Unable to load prompt templates."),
     ).toBeInTheDocument();
     expect(screen.queryByText("No prompts found")).not.toBeInTheDocument();
   });

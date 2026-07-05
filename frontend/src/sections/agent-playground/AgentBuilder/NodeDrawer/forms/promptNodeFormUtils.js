@@ -184,6 +184,7 @@ export function buildPatchPayload(nodeUpdate, config) {
         responseFormat ?? resolveResponseFormatForApi(cfg.modelConfig),
       output_format:
         readConfigValue(promptPayloadConfig, "outputFormat", "output_format") ||
+        cfg.outputFormat ||
         "string",
       temperature: readConfigValue(promptPayloadConfig, "temperature") ?? null,
       max_tokens:
