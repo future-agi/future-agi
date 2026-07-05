@@ -3,6 +3,14 @@ import { buildVersionPayload } from "../versionPayloadUtils";
 import { NODE_TYPES } from "../constants";
 import { createPromptNode } from "./fixtures";
 
+const responseSchema = {
+  type: "object",
+  properties: {
+    answer: { type: "string" },
+  },
+  required: ["answer"],
+};
+
 // ---------------------------------------------------------------------------
 // Additional tests for buildPromptTemplateForApi (exercised through buildVersionPayload)
 // The current implementation outputs prompt_template (not config) for atomic nodes.
@@ -75,7 +83,7 @@ describe("buildPromptTemplateForApi – via buildVersionPayload", () => {
     expect(pt.tool_choice).toBe("auto");
   });
 
-  it("preserves imported output and template format in prompt_template", () => {
+  it("preserves imported output, template format, and response schema in prompt_template", () => {
     const nodes = [
       createPromptNode("p1", {
         config: {
@@ -86,7 +94,8 @@ describe("buildPromptTemplateForApi – via buildVersionPayload", () => {
           modelConfig: {
             model: "gpt-4o-mini",
             modelDetail: { model_name: "gpt-4o-mini", providers: "openai" },
-            responseFormat: "text",
+            responseFormat: "json_schema",
+            responseSchema,
             toolChoice: "required",
             tools: [{ name: "lookup" }],
           },
@@ -99,6 +108,7 @@ describe("buildPromptTemplateForApi – via buildVersionPayload", () => {
                 configuration: {
                   maxTokens: 256,
                   topP: 0.8,
+                  response_schema: responseSchema,
                   output_format: "json",
                   template_format: "jinja",
                 },
@@ -115,6 +125,8 @@ describe("buildPromptTemplateForApi – via buildVersionPayload", () => {
 
     expect(pt.prompt_template_id).toBeNull();
     expect(pt.prompt_version_id).toBeNull();
+    expect(pt.response_format).toBe("json_schema");
+    expect(pt.response_schema).toEqual(responseSchema);
     expect(pt.output_format).toBe("json");
     expect(pt.template_format).toBe("jinja");
     expect(pt.max_tokens).toBe(256);
@@ -148,6 +160,7 @@ describe("buildPromptTemplateForApi – via buildVersionPayload", () => {
                 providers: "openai",
               },
               responseFormat: "text",
+              responseSchema: null,
               toolChoice: "auto",
               tools: [],
             },

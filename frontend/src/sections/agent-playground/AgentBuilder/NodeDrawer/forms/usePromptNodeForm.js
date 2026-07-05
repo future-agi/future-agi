@@ -5,6 +5,8 @@ import { usePromptNodeQueries } from "./usePromptNodeQueries";
 import { useModelParameters } from "./useModelParameters";
 import { savePromptNode } from "./promptNodeFormUtils";
 
+const SUPPORTED_AGENT_BUILDER_OUTPUT_FORMATS = new Set(["string", "json"]);
+
 /**
  * Main custom hook for PromptNodeForm component
  * Manages all form state, effects, and handlers
@@ -29,7 +31,8 @@ export function usePromptNodeForm() {
   const watchedMessages = watch("messages");
   const watchedOutputFormat = watch("outputFormat");
   const isUnsupportedOutputFormat = Boolean(
-    watchedOutputFormat && watchedOutputFormat !== "string",
+    watchedOutputFormat &&
+      !SUPPORTED_AGENT_BUILDER_OUTPUT_FORMATS.has(watchedOutputFormat),
   );
 
   const modelConfig = useMemo(

@@ -29,6 +29,13 @@ const apiVersion = {
     },
   },
 };
+const responseSchema = {
+  type: "object",
+  properties: {
+    answer: { type: "string" },
+  },
+  required: ["answer"],
+};
 
 describe("mapVersionToFormConfig", () => {
   it("reads snake_case configuration fields from prompt_config_snapshot", () => {
@@ -58,6 +65,26 @@ describe("mapVersionToFormConfig", () => {
     expect(config.topP).toBe(0.9);
     expect(config.frequencyPenalty).toBe(0.3);
     expect(config.presencePenalty).toBe(0.1);
+  });
+
+  it("preserves separate response_schema from schema-backed snapshots", () => {
+    const cfg = mapVersionToFormConfig({
+      ...apiVersion,
+      prompt_config_snapshot: {
+        ...apiVersion.prompt_config_snapshot,
+        configuration: {
+          ...apiVersion.prompt_config_snapshot.configuration,
+          response_format: "json_schema",
+          response_schema: responseSchema,
+        },
+      },
+    });
+
+    expect(cfg.modelConfig.responseFormat).toBe("json_schema");
+    expect(cfg.modelConfig.responseSchema).toEqual(responseSchema);
+    expect(cfg.payload.promptConfig[0].configuration.response_schema).toEqual(
+      responseSchema,
+    );
   });
 
   it("preserves snapshot messages by role and content", () => {

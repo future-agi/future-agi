@@ -73,10 +73,11 @@ vi.mock("src/sections/agent-playground/utils/constants", async () => {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function setupWatch(modelConfig = null, messages = null) {
+function setupWatch(modelConfig = null, messages = null, outputFormat) {
   mockWatch.mockImplementation((key) => {
     if (key === "modelConfig") return modelConfig;
     if (key === "messages") return messages;
+    if (key === "outputFormat") return outputFormat;
     return undefined;
   });
 }
@@ -128,6 +129,20 @@ describe("usePromptNodeForm", () => {
     setupWatch({ model: null });
     const { result } = renderHook(() => usePromptNodeForm());
     expect(result.current.isModelSelected).toBe(false);
+  });
+
+  it("allows JSON output format in the prompt drawer", () => {
+    setupWatch({ model: "gpt-4", maxTokens: 1000 }, [], "json");
+    const { result } = renderHook(() => usePromptNodeForm());
+
+    expect(result.current.isUnsupportedOutputFormat).toBe(false);
+  });
+
+  it("marks non-textual output formats as unsupported", () => {
+    setupWatch({ model: "gpt-4", maxTokens: 1000 }, [], "image");
+    const { result } = renderHook(() => usePromptNodeForm());
+
+    expect(result.current.isUnsupportedOutputFormat).toBe(true);
   });
 
   // ---- handleModelChange ----

@@ -6,6 +6,14 @@ vi.mock("src/utils/utils", () => ({
   getRandomId: vi.fn(() => "random-id"),
 }));
 
+const responseSchema = {
+  type: "object",
+  properties: {
+    answer: { type: "string" },
+  },
+  required: ["answer"],
+};
+
 describe("mapNodeDetailToNodeData", () => {
   it("maps snake_case prompt_template node detail into prompt form store data", () => {
     const mapped = mapNodeDetailToNodeData(
@@ -126,6 +134,44 @@ describe("mapNodeDetailToNodeData", () => {
       toolChoice: "required",
       template_format: "jinja",
     });
+  });
+
+  it("maps separate response_schema from prompt_template node detail", () => {
+    const mapped = mapNodeDetailToNodeData(
+      {
+        name: "api_prompt",
+        prompt_template: {
+          prompt_template_id: "prompt-template-id",
+          prompt_version_id: "prompt-version-id",
+          output_format: "json",
+          template_format: "jinja",
+          model: "gpt-4o-mini",
+          model_detail: { modelName: "GPT-4o mini" },
+          response_format: "json_schema",
+          response_schema: responseSchema,
+          messages: [
+            {
+              role: "user",
+              content: [{ type: "text", text: "Return an answer." }],
+            },
+          ],
+        },
+        ports: [],
+      },
+      {
+        id: "node-id",
+        type: NODE_TYPES.LLM_PROMPT,
+        data: { label: "old_prompt", config: {} },
+      },
+    );
+
+    expect(mapped.data.config.modelConfig).toMatchObject({
+      responseFormat: "json_schema",
+      responseSchema,
+    });
+    expect(
+      mapped.data.config.payload.promptConfig[0].configuration.response_schema,
+    ).toEqual(responseSchema);
   });
 
   it("maps snake_case agent node detail fields into agent form store data", () => {

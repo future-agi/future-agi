@@ -1,7 +1,7 @@
 import { NODE_TYPES, API_NODE_TYPES, VERSION_STATUS } from "./constants";
 import {
   normalizeResponseFormat,
-  extractResponseSchema,
+  resolveResponseSchema,
   resolveResponseFormatForApi,
 } from "../AgentBuilder/NodeDrawer/nodeFormUtils";
 
@@ -26,7 +26,10 @@ function transformConfigFromApi(apiConfig) {
         isAvailable: false,
       },
       responseFormat: normalizeResponseFormat(apiConfig.response_format),
-      responseSchema: extractResponseSchema(apiConfig.response_format),
+      responseSchema: resolveResponseSchema(
+        apiConfig.response_format,
+        apiConfig.response_schema,
+      ),
       toolChoice: apiConfig.tool_choice || "auto",
       tools: apiConfig.tools || [],
     },
@@ -156,6 +159,14 @@ function buildPromptTemplateForApi(formConfig) {
   }));
 
   const configuration = formConfig.payload?.promptConfig?.[0]?.configuration;
+  const responseSchema = resolveResponseSchema(
+    formConfig.modelConfig?.responseFormat ??
+      configuration?.responseFormat ??
+      configuration?.response_format,
+    formConfig.modelConfig?.responseSchema ??
+      configuration?.responseSchema ??
+      configuration?.response_schema,
+  );
 
   if (!model && messages.length === 0) return null;
 
@@ -170,6 +181,7 @@ function buildPromptTemplateForApi(formConfig) {
       : configuration?.responseFormat ||
         configuration?.response_format ||
         "text",
+    response_schema: responseSchema ?? null,
     output_format:
       formConfig.outputFormat ||
       configuration?.outputFormat ||

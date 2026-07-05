@@ -30,10 +30,12 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { enqueueSnackbar } from "notistack";
 
 const SUPPORTED_PROMPT_ROLES = new Set(["system", "user", "assistant"]);
-// Library templates are shared content; do not import remote media URL blocks
-// or active tool capabilities into runnable agent nodes until those trust
-// boundaries have explicit server-side approval/re-resolution.
+// Library templates are shared content; import only text chat messages and do
+// not carry active tool capabilities into runnable agent nodes until those
+// trust boundaries have explicit server-side approval/re-resolution.
 const SUPPORTED_CONTENT_TYPES = new Set(["text"]);
+const INCOMPATIBLE_LIBRARY_TEMPLATE_MESSAGE =
+  "This library template can't be added because Agent Builder currently supports text-only library prompt templates.";
 const CONFIGURATION_KEYS_TO_LIFT = [
   "model",
   "model_detail",
@@ -321,10 +323,9 @@ export default function PromptNodePopper({
     (template) => {
       const promptConfigSnapshot = normalizeTemplateSnapshot(template);
       if (!promptConfigSnapshot) {
-        enqueueSnackbar(
-          "This library template can't be added because its prompt configuration isn't compatible with LLM prompt nodes.",
-          { variant: "error" },
-        );
+        enqueueSnackbar(INCOMPATIBLE_LIBRARY_TEMPLATE_MESSAGE, {
+          variant: "error",
+        });
         return;
       }
 

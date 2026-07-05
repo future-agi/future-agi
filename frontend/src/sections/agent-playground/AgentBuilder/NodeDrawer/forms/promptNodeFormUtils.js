@@ -1,6 +1,6 @@
 import {
   normalizeResponseFormat,
-  extractResponseSchema,
+  resolveResponseSchema,
   resolveResponseFormatForApi,
   KNOWN_FORMAT_VALUES,
 } from "../nodeFormUtils";
@@ -96,17 +96,25 @@ export function buildPromptNodePayload(
     isCustomFormat && responseSchemaList
       ? responseSchemaList.find((s) => s.id === rawFormat) || rawFormat
       : rawFormat;
+  const resolvedSchema = resolveResponseSchema(
+    resolvedFormat,
+    formData.modelConfig.responseSchema,
+  );
 
   // Build configuration object matching workbench format
   const configuration = {
     model: formData.modelConfig.model,
     modelDetail: formData.modelConfig.modelDetail,
-    outputFormat: "string",
+    outputFormat: formData.outputFormat || "string",
     toolChoice: formData.modelConfig.toolChoice || "",
     tools: formData.modelConfig.tools || [],
     modelType: "llm",
     ...sliderValues,
     responseFormat: resolvedFormat,
+    ...(resolvedSchema && {
+      responseSchema: resolvedSchema,
+      response_schema: resolvedSchema,
+    }),
     reasoning,
     template_format: formData.templateFormat || "mustache",
   };
@@ -167,6 +175,14 @@ export function buildPatchPayload(nodeUpdate, config) {
       "responseFormat",
       "response_format",
     );
+    const responseSchema = resolveResponseSchema(
+      responseFormat ?? cfg.modelConfig?.responseFormat,
+      readConfigValue(
+        promptPayloadConfig,
+        "responseSchema",
+        "response_schema",
+      ) ?? cfg.modelConfig?.responseSchema,
+    );
 
     patch.prompt_template = {
       prompt_template_id: config?.prompt_template_id,
@@ -182,6 +198,7 @@ export function buildPatchPayload(nodeUpdate, config) {
       model_detail: cfg.modelConfig?.modelDetail || null,
       response_format:
         responseFormat ?? resolveResponseFormatForApi(cfg.modelConfig),
+      response_schema: responseSchema ?? null,
       output_format:
         readConfigValue(promptPayloadConfig, "outputFormat", "output_format") ||
         cfg.outputFormat ||
@@ -255,7 +272,10 @@ export function mapPatchResponseToStoreData(response) {
         model: pt.model || "",
         modelDetail: pt.model_detail || {},
         responseFormat: normalizeResponseFormat(pt.response_format),
-        responseSchema: extractResponseSchema(pt.response_format),
+        responseSchema: resolveResponseSchema(
+          pt.response_format,
+          pt.response_schema,
+        ),
         toolChoice: pt.tool_choice || "auto",
         tools: pt.tools || [],
       },
@@ -278,6 +298,9 @@ export function mapPatchResponseToStoreData(response) {
               presencePenalty: pt.presence_penalty,
               tools: pt.tools || [],
               toolChoice: pt.tool_choice || "auto",
+              ...(pt.response_schema && {
+                response_schema: pt.response_schema,
+              }),
               // Intentionally snake_case — mirrors API contract shape;
               // read by buildPatchPayload and getDefaultValues via configuration.template_format
               template_format: pt.template_format || "mustache",

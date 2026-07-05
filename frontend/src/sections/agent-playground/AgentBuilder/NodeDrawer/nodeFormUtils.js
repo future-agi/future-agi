@@ -23,7 +23,19 @@ export function extractResponseSchema(rf) {
   return null;
 }
 
-export const KNOWN_FORMAT_VALUES = ["text", "json", "none", ""];
+export function resolveResponseSchema(responseFormat, responseSchema) {
+  return responseSchema ?? extractResponseSchema(responseFormat);
+}
+
+export const KNOWN_FORMAT_VALUES = [
+  "text",
+  "json",
+  "json_schema",
+  "json_object",
+  "string",
+  "none",
+  "",
+];
 
 /**
  * Resolve responseFormat for API payloads.
@@ -229,7 +241,10 @@ export function mapNodeDetailToNodeData(apiNode, existingNode) {
             existingConfig?.modelConfig?.modelDetail ||
             {},
           responseFormat: normalizeResponseFormat(responseFormat),
-          responseSchema: extractResponseSchema(responseFormat),
+          responseSchema: resolveResponseSchema(
+            responseFormat,
+            firstDefined(pt.responseSchema, pt.response_schema),
+          ),
           toolChoice:
             firstDefined(pt.toolChoice, pt.tool_choice) ??
             existingConfig?.modelConfig?.toolChoice ??
@@ -281,6 +296,10 @@ export function mapNodeDetailToNodeData(apiNode, existingNode) {
                 ),
                 tools: pt.tools || [],
                 toolChoice: firstDefined(pt.toolChoice, pt.tool_choice),
+                response_schema: firstDefined(
+                  pt.responseSchema,
+                  pt.response_schema,
+                ),
                 template_format:
                   firstDefined(pt.templateFormat, pt.template_format) ||
                   "mustache",

@@ -1,7 +1,7 @@
 import { getRandomId } from "src/utils/utils";
 import {
   normalizeResponseFormat,
-  extractResponseSchema,
+  resolveResponseSchema,
 } from "../AgentBuilder/NodeDrawer/nodeFormUtils";
 
 /**
@@ -27,7 +27,10 @@ export function mapVersionToFormConfig(version) {
       toolChoice: cfg.tool_choice || "auto",
       tools: cfg.tools || [],
       responseFormat: normalizeResponseFormat(cfg.response_format),
-      responseSchema: extractResponseSchema(cfg.response_format),
+      responseSchema: resolveResponseSchema(
+        cfg.response_format,
+        cfg.response_schema,
+      ),
     },
     messages: (() => {
       const msgs = (snapshot?.messages || []).map((m) => ({
@@ -60,6 +63,9 @@ export function mapVersionToFormConfig(version) {
             topP: cfg.top_p,
             frequencyPenalty: cfg.frequency_penalty,
             presencePenalty: cfg.presence_penalty,
+            ...(cfg.response_schema && {
+              response_schema: cfg.response_schema,
+            }),
             template_format: templateFormat,
             ...(cfg.reasoning && { reasoning: cfg.reasoning }),
           },

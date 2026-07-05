@@ -64,6 +64,13 @@ const nodeTemplates = [
     node_template_id: "node-template-llm-prompt",
   },
 ];
+const responseSchema = {
+  type: "object",
+  properties: {
+    answer: { type: "string" },
+  },
+  required: ["answer"],
+};
 
 const savedPrompt = {
   id: "saved-template-1",
@@ -364,7 +371,7 @@ describe("PromptNodePopper", () => {
     expect(mockAddNode).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(enqueueSnackbar).toHaveBeenCalledWith(
-      "This library template can't be added because its prompt configuration isn't compatible with LLM prompt nodes.",
+      "This library template can't be added because Agent Builder currently supports text-only library prompt templates.",
       { variant: "error" },
     );
   });
@@ -395,7 +402,7 @@ describe("PromptNodePopper", () => {
     expect(mockAddNode).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(enqueueSnackbar).toHaveBeenCalledWith(
-      "This library template can't be added because its prompt configuration isn't compatible with LLM prompt nodes.",
+      "This library template can't be added because Agent Builder currently supports text-only library prompt templates.",
       { variant: "error" },
     );
   });
@@ -413,6 +420,8 @@ describe("PromptNodePopper", () => {
             ...libraryTemplate.prompt_config_snapshot,
             configuration: {
               ...libraryTemplate.prompt_config_snapshot.configuration,
+              response_format: "json_schema",
+              response_schema: responseSchema,
               output_format: "json",
             },
           },
@@ -430,6 +439,19 @@ describe("PromptNodePopper", () => {
       expect.objectContaining({
         outputFormat: "json",
         name: "JSON Output Library Template",
+        modelConfig: expect.objectContaining({
+          responseFormat: "json_schema",
+          responseSchema,
+        }),
+        payload: expect.objectContaining({
+          promptConfig: [
+            expect.objectContaining({
+              configuration: expect.objectContaining({
+                response_schema: responseSchema,
+              }),
+            }),
+          ],
+        }),
       }),
     );
     expect(onClose).toHaveBeenCalled();
