@@ -99,11 +99,11 @@ export const useGetPromptTemplatesInfinite = (search, options = {}) =>
 const LIBRARY_TEMPLATE_PAGE_SIZE = 10;
 
 function getLibraryTemplateItems(data) {
-  return data?.results ?? data?.result?.results ?? data?.result?.data ?? [];
+  return data?.result?.data ?? data?.result?.results ?? data?.results ?? [];
 }
 
 function getLibraryTemplateTotalCount(data) {
-  return data?.count ?? data?.result?.count ?? data?.result?.total_count ?? 0;
+  return data?.result?.total_count ?? data?.result?.count ?? data?.count ?? 0;
 }
 
 /**
@@ -120,14 +120,14 @@ export const useGetLibraryTemplatesInfinite = (search, options = {}) =>
       axios.get(endpoints.develop.runPrompt.promptTemplate, {
         params: {
           ...(search && { name: search }),
-          limit: LIBRARY_TEMPLATE_PAGE_SIZE,
-          page: pageParam,
+          page_size: LIBRARY_TEMPLATE_PAGE_SIZE,
+          page_number: pageParam,
         },
         signal,
       }),
     getNextPageParam: (lastPage, allPages) => {
       if (lastPage.data?.next || lastPage.data?.result?.next) {
-        return allPages.length + 1;
+        return allPages.length;
       }
 
       const totalCount = getLibraryTemplateTotalCount(lastPage.data);
@@ -136,10 +136,10 @@ export const useGetLibraryTemplatesInfinite = (search, options = {}) =>
         0,
       );
 
-      if (fetchedCount < totalCount) return allPages.length + 1;
+      if (fetchedCount < totalCount) return allPages.length;
       return undefined;
     },
-    initialPageParam: 1,
+    initialPageParam: 0,
     staleTime: 30 * 1000,
     ...options,
   });

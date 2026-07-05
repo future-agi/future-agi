@@ -31,8 +31,26 @@ import { enqueueSnackbar } from "notistack";
 
 const SUPPORTED_PROMPT_ROLES = new Set(["system", "user", "assistant"]);
 // Library templates are shared content; do not import remote media URL blocks
-// into runnable agent nodes until server-side URL validation/proxying exists.
+// or active tool capabilities into runnable agent nodes until those trust
+// boundaries have explicit server-side approval/re-resolution.
 const SUPPORTED_CONTENT_TYPES = new Set(["text"]);
+const CONFIGURATION_KEYS_TO_LIFT = [
+  "model",
+  "model_detail",
+  "response_format",
+  "response_schema",
+  "output_format",
+  "temperature",
+  "max_tokens",
+  "top_p",
+  "frequency_penalty",
+  "presence_penalty",
+  "template_format",
+  "reasoning",
+  "tools",
+  "tool_choice",
+];
+const STRIPPED_LIBRARY_CONFIGURATION_KEYS = ["tools", "tool_choice"];
 
 function normalizeTemplateContentBlock(block) {
   if (typeof block === "string") {
@@ -74,13 +92,7 @@ function normalizeTemplateContent(content) {
   return normalizedContent;
 }
 
-function normalizeTemplateSnapshot(template) {
-  const snapshot = template?.prompt_config_snapshot;
-
-  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
-    return null;
-  }
-
+function normalizeTemplateConfiguration(snapshot) {
   if (
     snapshot.configuration !== undefined &&
     snapshot.configuration !== null &&
@@ -90,9 +102,38 @@ function normalizeTemplateSnapshot(template) {
     return null;
   }
 
-  const outputFormat =
-    snapshot.configuration?.output_format ?? snapshot.output_format ?? "string";
-  if (outputFormat !== "string") {
+  const liftedConfiguration = CONFIGURATION_KEYS_TO_LIFT.reduce(
+    (config, key) => {
+      if (snapshot[key] !== undefined) {
+        return { ...config, [key]: snapshot[key] };
+      }
+      return config;
+    },
+    {},
+  );
+
+  const configuration = {
+    ...liftedConfiguration,
+    ...(snapshot.configuration || {}),
+  };
+
+  STRIPPED_LIBRARY_CONFIGURATION_KEYS.forEach((key) => {
+    delete configuration[key];
+  });
+
+  return configuration;
+}
+
+function normalizeTemplateSnapshot(template) {
+  const rawSnapshot = template?.prompt_config_snapshot;
+  const snapshot = Array.isArray(rawSnapshot) ? rawSnapshot[0] : rawSnapshot;
+
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
+    return null;
+  }
+
+  const configuration = normalizeTemplateConfiguration(snapshot);
+  if (!configuration) {
     return null;
   }
 
@@ -125,7 +166,7 @@ function normalizeTemplateSnapshot(template) {
 
   return {
     ...snapshot,
-    configuration: snapshot.configuration || {},
+    configuration,
     messages: normalizedMessages,
   };
 }

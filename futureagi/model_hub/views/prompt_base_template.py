@@ -6,7 +6,6 @@ from django.utils import timezone
 from rest_framework import viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
-from rest_framework.response import Response
 
 from model_hub.models.prompt_base_template import PromptBaseTemplate
 from model_hub.serializers.prompt_base_template import PromptBaseTemplateSerializer
@@ -104,28 +103,8 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         try:
             name = request.query_params.get("name")
             category = request.query_params.get("category")
-            try:
-                page_size = int(
-                    request.query_params.get(
-                        "limit", request.query_params.get("page_size", 10)
-                    )
-                )
-                if page_size < 1:
-                    raise ValueError
-                if "page" in request.query_params:
-                    generated_page = int(request.query_params.get("page", 1))
-                    if generated_page < 1:
-                        raise ValueError
-                    page_number = generated_page - 1
-                else:
-                    page_number = int(request.query_params.get("page_number", 0))
-                    if page_number < 0:
-                        raise ValueError
-            except (TypeError, ValueError):
-                return self._gm.bad_request(
-                    "Invalid pagination parameters. Use positive integer limit/page values."
-                )
-            page_size = min(page_size, 100)
+            page_size = int(request.query_params.get("page_size", 10))
+            page_number = int(request.query_params.get("page_number", 0))
             start = page_number * page_size
             end = start + page_size
             sort_by = request.query_params.get("sort_by", "created_at")
@@ -161,45 +140,11 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             ).data
 
             total_pages = math.ceil(total_count / page_size)
-            current_generated_page = page_number + 1
-
-            def page_url(page):
-                query_params = request.query_params.copy()
-                query_params["page"] = page
-                query_params["limit"] = page_size
-                query_params.pop("page_size", None)
-                query_params.pop("page_number", None)
-                return request.build_absolute_uri(
-                    f"{request.path}?{query_params.urlencode()}"
-                )
-
-            next_url = (
-                page_url(current_generated_page + 1)
-                if current_generated_page < total_pages
-                else None
-            )
-            previous_url = (
-                page_url(current_generated_page - 1)
-                if current_generated_page > 1
-                else None
-            )
-            generated_payload = {
-                "count": total_count,
-                "next": next_url,
-                "previous": previous_url,
-                "results": response,
-            }
-            legacy_payload = {
-                **generated_payload,
-                "data": response,
-                "total_count": total_count,
-                "total_pages": total_pages,
-            }
-            return Response(
+            return self._gm.success_response(
                 {
-                    **generated_payload,
-                    "status": True,
-                    "result": legacy_payload,
+                    "data": response,
+                    "total_count": total_count,
+                    "total_pages": total_pages,
                 }
             )
         except Exception as e:

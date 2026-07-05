@@ -58,17 +58,13 @@ describe("useGetLibraryTemplatesInfinite", () => {
     vi.clearAllMocks();
   });
 
-  it("requests library templates with search and page/limit pagination", async () => {
+  it("requests library templates with search and legacy page_size/page_number pagination", async () => {
     axios.get
       .mockResolvedValueOnce({
-        data: {
-          count: 12,
-          next: "/model-hub/prompt-base-templates/?page=2&limit=10",
-          results: templates(10),
-        },
+        data: { result: { data: templates(10), total_count: 12 } },
       })
       .mockResolvedValueOnce({
-        data: { count: 12, next: null, results: templates(2, "next") },
+        data: { result: { data: templates(2, "next"), total_count: 12 } },
       });
 
     const { result } = renderHook(
@@ -83,8 +79,8 @@ describe("useGetLibraryTemplatesInfinite", () => {
       expect.objectContaining({
         params: {
           name: "research",
-          limit: 10,
-          page: 1,
+          page_size: 10,
+          page_number: 0,
         },
         signal: expect.any(AbortSignal),
       }),
@@ -99,15 +95,15 @@ describe("useGetLibraryTemplatesInfinite", () => {
       expect.objectContaining({
         params: {
           name: "research",
-          limit: 10,
-          page: 2,
+          page_size: 10,
+          page_number: 1,
         },
         signal: expect.any(AbortSignal),
       }),
     );
   });
 
-  it("reads legacy library template result envelopes while using the generated query contract", async () => {
+  it("reads legacy library template result envelopes", async () => {
     axios.get
       .mockResolvedValueOnce({
         data: { result: { data: templates(10), total_count: 11 } },
@@ -134,15 +130,15 @@ describe("useGetLibraryTemplatesInfinite", () => {
       expect.objectContaining({
         params: {
           name: "legacy",
-          limit: 10,
-          page: 2,
+          page_size: 10,
+          page_number: 1,
         },
         signal: expect.any(AbortSignal),
       }),
     );
   });
 
-  it("reads wrapped generated library template result envelopes", async () => {
+  it("continues to read wrapped generated-style library template result envelopes", async () => {
     axios.get
       .mockResolvedValueOnce({
         data: {
@@ -181,8 +177,8 @@ describe("useGetLibraryTemplatesInfinite", () => {
       expect.objectContaining({
         params: {
           name: "wrapped",
-          limit: 10,
-          page: 2,
+          page_size: 10,
+          page_number: 1,
         },
         signal: expect.any(AbortSignal),
       }),

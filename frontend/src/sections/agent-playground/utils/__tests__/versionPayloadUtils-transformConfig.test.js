@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildVersionPayload } from "../versionPayloadUtils";
+import { NODE_TYPES } from "../constants";
 import { createPromptNode } from "./fixtures";
 
 // ---------------------------------------------------------------------------
@@ -120,6 +121,78 @@ describe("buildPromptTemplateForApi – via buildVersionPayload", () => {
     expect(pt.top_p).toBe(0.8);
     expect(pt.tool_choice).toBe("required");
     expect(pt.tools).toEqual([{ name: "lookup" }]);
+  });
+
+  it("preserves detached imported prompt config from _initialConfig during draft creation", () => {
+    const nodes = [
+      {
+        id: "p1",
+        type: NODE_TYPES.LLM_PROMPT,
+        position: { x: 0, y: 0 },
+        data: {
+          label: "Imported Library Prompt",
+          node_template_id: "tpl-prompt",
+          config: {
+            prompt_template_id: null,
+            prompt_version_id: null,
+          },
+          _initialConfig: {
+            prompt_template_id: null,
+            prompt_version_id: null,
+            outputFormat: "string",
+            templateFormat: "jinja",
+            modelConfig: {
+              model: "gpt-4o-mini",
+              modelDetail: {
+                modelName: "gpt-4o-mini",
+                providers: "openai",
+              },
+              responseFormat: "text",
+              toolChoice: "auto",
+              tools: [],
+            },
+            messages: [
+              {
+                role: "user",
+                content: [{ type: "text", text: "Hello {{topic}}" }],
+              },
+            ],
+            payload: {
+              promptConfig: [
+                {
+                  configuration: {
+                    output_format: "string",
+                    template_format: "jinja",
+                    temperature: 0.1,
+                  },
+                },
+              ],
+              ports: [],
+            },
+          },
+        },
+      },
+    ];
+
+    const result = buildVersionPayload(nodes, []);
+    const pt = result.nodes[0].prompt_template;
+
+    expect(pt).toMatchObject({
+      prompt_template_id: null,
+      prompt_version_id: null,
+      model: "gpt-4o-mini",
+      output_format: "string",
+      template_format: "jinja",
+      temperature: 0.1,
+      save_prompt_version: false,
+    });
+    expect(pt.messages).toEqual([
+      {
+        id: undefined,
+        role: "user",
+        content: [{ type: "text", text: "Hello {{topic}}" }],
+      },
+    ]);
   });
 
   it("serializes model-less imported templates with messages instead of dropping them", () => {

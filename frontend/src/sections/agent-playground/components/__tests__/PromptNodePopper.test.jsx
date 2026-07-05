@@ -124,6 +124,36 @@ const remoteMediaLibraryTemplate = {
   },
 };
 
+const legacyListLibraryTemplate = {
+  id: "library-template-legacy-list",
+  name: "Legacy List Library Template",
+  prompt_config_snapshot: [
+    {
+      messages: [{ role: "user", content: "Hello {{name}}" }],
+      model: "gpt-4o",
+      model_detail: { model_name: "gpt-4o", providers: "openai" },
+      response_format: "json_object",
+      output_format: "json",
+      template_format: "mustache",
+      temperature: 0.4,
+    },
+  ],
+};
+
+const toolConfiguredLibraryTemplate = {
+  ...libraryTemplate,
+  id: "library-template-tools",
+  name: "Library Template With Tools",
+  prompt_config_snapshot: {
+    ...libraryTemplate.prompt_config_snapshot,
+    configuration: {
+      ...libraryTemplate.prompt_config_snapshot.configuration,
+      tools: [{ name: "external_lookup" }],
+      tool_choice: "required",
+    },
+  },
+};
+
 const promptVersion = {
   id: "prompt-version-1",
   is_default: true,
@@ -370,7 +400,7 @@ describe("PromptNodePopper", () => {
     );
   });
 
-  it("rejects library templates with unsupported output formats", () => {
+  it("seeds library templates with structured output formats", () => {
     const onClose = vi.fn();
     const onNodeSelect = vi.fn();
     useGetLibraryTemplatesInfinite.mockReturnValue(
@@ -394,13 +424,73 @@ describe("PromptNodePopper", () => {
 
     fireEvent.click(screen.getByText("JSON Output Library Template"));
 
-    expect(onNodeSelect).not.toHaveBeenCalled();
-    expect(mockAddNode).not.toHaveBeenCalled();
-    expect(onClose).not.toHaveBeenCalled();
-    expect(enqueueSnackbar).toHaveBeenCalledWith(
-      "This library template can't be added because its prompt configuration isn't compatible with LLM prompt nodes.",
-      { variant: "error" },
+    expect(onNodeSelect).toHaveBeenCalledWith(
+      "llm_prompt",
+      "node-template-llm-prompt",
+      expect.objectContaining({
+        outputFormat: "json",
+        name: "JSON Output Library Template",
+      }),
     );
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("normalizes legacy list-shaped library snapshots before inserting", () => {
+    const onClose = vi.fn();
+    const onNodeSelect = vi.fn();
+    useGetLibraryTemplatesInfinite.mockReturnValue(
+      libraryTemplatesResult([legacyListLibraryTemplate]),
+    );
+
+    renderPopper({ onClose, onNodeSelect });
+
+    fireEvent.click(screen.getByText(legacyListLibraryTemplate.name));
+
+    expect(onNodeSelect).toHaveBeenCalledWith(
+      "llm_prompt",
+      "node-template-llm-prompt",
+      expect.objectContaining({
+        name: legacyListLibraryTemplate.name,
+        outputFormat: "json",
+        templateFormat: "mustache",
+        modelConfig: expect.objectContaining({
+          model: "gpt-4o",
+          responseFormat: "json_object",
+        }),
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: "user",
+            content: [{ type: "text", text: "Hello {{name}}" }],
+          }),
+        ]),
+      }),
+    );
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("strips active tool configuration from shared library templates", () => {
+    const onClose = vi.fn();
+    const onNodeSelect = vi.fn();
+    useGetLibraryTemplatesInfinite.mockReturnValue(
+      libraryTemplatesResult([toolConfiguredLibraryTemplate]),
+    );
+
+    renderPopper({ onClose, onNodeSelect });
+
+    fireEvent.click(screen.getByText(toolConfiguredLibraryTemplate.name));
+
+    expect(onNodeSelect).toHaveBeenCalledWith(
+      "llm_prompt",
+      "node-template-llm-prompt",
+      expect.objectContaining({
+        name: toolConfiguredLibraryTemplate.name,
+        modelConfig: expect.objectContaining({
+          tools: [],
+          toolChoice: "auto",
+        }),
+      }),
+    );
+    expect(onClose).toHaveBeenCalled();
   });
 
   it("keeps saved prompt selection on the version-fetch path", async () => {
@@ -537,6 +627,43 @@ describe("PromptNodePopper", () => {
     expect(
       screen.getByText(
         "Unable to load library templates. Your prompts may still be available.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No prompts found")).not.toBeInTheDocument();
+  });
+
+  it("shows a saved-prompt error while library templates remain available", () => {
+    useGetPromptTemplatesInfinite.mockReturnValue(
+      savedPromptsResult([], { isError: true }),
+    );
+    useGetLibraryTemplatesInfinite.mockReturnValue(
+      libraryTemplatesResult([libraryTemplate]),
+    );
+
+    renderPopper();
+
+    expect(screen.getByText(libraryTemplate.name)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Unable to load your prompts. Library templates may still be available.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No prompts found")).not.toBeInTheDocument();
+  });
+
+  it("shows a combined error when saved prompts and library templates both fail", () => {
+    useGetPromptTemplatesInfinite.mockReturnValue(
+      savedPromptsResult([], { isError: true }),
+    );
+    useGetLibraryTemplatesInfinite.mockReturnValue(
+      libraryTemplatesResult([], { isError: true }),
+    );
+
+    renderPopper();
+
+    expect(
+      screen.getByText(
+        "Unable to load prompt templates. Check your connection and try again.",
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText("No prompts found")).not.toBeInTheDocument();
