@@ -6,6 +6,7 @@ import {
 } from "../nodeFormUtils";
 
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
+import { normalizePromptOutputPorts } from "../../../utils/promptPortUtils";
 
 /**
  * Extract variables from content blocks
@@ -251,16 +252,17 @@ export function mapPatchResponseToStoreData(response) {
   if (!response) return {};
 
   const pt = response.prompt_template;
+  const ports = (response.ports || []).map((p) => ({
+    id: p.id,
+    key: p.key,
+    display_name: p.display_name,
+    direction: p.direction,
+    data_schema: p.dataSchema || p.data_schema || {},
+    required: p.required,
+  }));
   const storeData = {
     label: response.name,
-    ports: (response.ports || []).map((p) => ({
-      id: p.id,
-      key: p.key,
-      display_name: p.display_name,
-      direction: p.direction,
-      data_schema: p.dataSchema || p.data_schema || {},
-      required: p.required,
-    })),
+    ports,
   };
 
   if (pt) {
@@ -313,6 +315,8 @@ export function mapPatchResponseToStoreData(response) {
         ],
       },
     };
+
+    storeData.ports = normalizePromptOutputPorts(ports, storeData.config);
   }
 
   return storeData;

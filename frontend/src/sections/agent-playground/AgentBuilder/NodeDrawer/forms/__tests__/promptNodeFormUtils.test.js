@@ -374,7 +374,16 @@ describe("mapPatchResponseToStoreData", () => {
   it("maps separate response_schema from PATCH responses into form config", () => {
     const mapped = mapPatchResponseToStoreData({
       name: "schema_prompt",
-      ports: [],
+      ports: [
+        {
+          id: "port-response",
+          key: "response",
+          display_name: "response",
+          direction: "output",
+          data_schema: { type: "string" },
+          required: true,
+        },
+      ],
       prompt_template: {
         prompt_template_id: "prompt-template-id",
         prompt_version_id: "prompt-version-id",
@@ -406,5 +415,6 @@ describe("mapPatchResponseToStoreData", () => {
     expect(
       mapped.config.payload.promptConfig[0].configuration.response_schema,
     ).toEqual(responseSchema);
+    expect(mapped.ports[0].data_schema).toEqual(responseSchema);
   });
 });

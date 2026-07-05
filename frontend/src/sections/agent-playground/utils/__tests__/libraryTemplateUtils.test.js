@@ -111,6 +111,27 @@ describe("libraryTemplateUtils", () => {
     });
   });
 
+  it("drops response schemas for non-schema response formats", () => {
+    ["text", "json_object", "string"].forEach((responseFormat) => {
+      const config = toDetachedLibraryTemplateConfig({
+        ...baseTemplate,
+        prompt_config_snapshot: {
+          ...baseTemplate.prompt_config_snapshot,
+          configuration: {
+            response_format: responseFormat,
+            response_schema: responseSchema,
+            output_format: "json",
+          },
+        },
+      });
+
+      expect(config.modelConfig.responseSchema).toBeNull();
+      expect(config.payload.promptConfig[0].configuration).not.toHaveProperty(
+        "response_schema",
+      );
+    });
+  });
+
   it("rejects unsupported execution-affecting response and template settings", () => {
     expect(
       toDetachedLibraryTemplateConfig({
@@ -164,6 +185,23 @@ describe("libraryTemplateUtils", () => {
             response_schema: {
               type: "object",
               description: "x".repeat(50_001),
+            },
+            output_format: "json",
+          },
+        },
+      }),
+    ).toBeNull();
+
+    expect(
+      toDetachedLibraryTemplateConfig({
+        ...baseTemplate,
+        prompt_config_snapshot: {
+          ...baseTemplate.prompt_config_snapshot,
+          configuration: {
+            response_format: "json_schema",
+            response_schema: {
+              type: "object",
+              description: "é".repeat(25_000),
             },
             output_format: "json",
           },

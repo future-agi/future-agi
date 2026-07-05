@@ -68,7 +68,10 @@ function hasSafeResponseSchemaShape(schema) {
     return false;
   }
 
-  if (serialized.length > MAX_LIBRARY_RESPONSE_SCHEMA_BYTES) {
+  if (
+    new TextEncoder().encode(serialized).length >
+    MAX_LIBRARY_RESPONSE_SCHEMA_BYTES
+  ) {
     return false;
   }
 
@@ -197,11 +200,15 @@ function normalizeTemplateConfiguration(snapshot) {
 
   const responseSchema =
     configuration.response_schema ?? configuration.responseSchema ?? null;
-  if (!hasSafeResponseSchemaShape(responseSchema)) {
-    return null;
-  }
-  if (responseSchema !== null) {
-    configuration.response_schema = responseSchema;
+  if (responseFormat === "json_schema") {
+    if (!hasSafeResponseSchemaShape(responseSchema)) {
+      return null;
+    }
+    if (responseSchema !== null) {
+      configuration.response_schema = responseSchema;
+    }
+  } else {
+    delete configuration.response_schema;
   }
   delete configuration.responseSchema;
 
