@@ -14,7 +14,9 @@ function transformConfigFromApi(apiConfig) {
   if (!apiConfig || Object.keys(apiConfig).length === 0) return {};
 
   return {
-    outputFormat: apiConfig.outputFormat || "string",
+    outputFormat: apiConfig.outputFormat || apiConfig.output_format || "string",
+    templateFormat:
+      apiConfig.templateFormat || apiConfig.template_format || "mustache",
     modelConfig: {
       model: apiConfig.model || "",
       modelDetail: apiConfig.modelDetail || {
@@ -140,11 +142,10 @@ export function buildVersionPayload(nodes = [], edges = [], options = {}) {
  * @param {Object} formConfig - node.data.config from Zustand store
  * @returns {Object|null} PromptTemplateDataSerializer-shaped object
  */
-export function buildPromptTemplateForApi(formConfig) {
+function buildPromptTemplateForApi(formConfig) {
   if (!formConfig || Object.keys(formConfig).length === 0) return null;
 
-  const model = formConfig.modelConfig?.model;
-  if (!model) return null;
+  const model = formConfig.modelConfig?.model || null;
 
   const messages = (formConfig.messages || []).map((m) => ({
     id: m.id,
@@ -155,6 +156,8 @@ export function buildPromptTemplateForApi(formConfig) {
   }));
 
   const configuration = formConfig.payload?.promptConfig?.[0]?.configuration;
+
+  if (!model && messages.length === 0) return null;
 
   return {
     prompt_template_id: formConfig.prompt_template_id || null,

@@ -98,6 +98,14 @@ export const useGetPromptTemplatesInfinite = (search, options = {}) =>
 
 const LIBRARY_TEMPLATE_PAGE_SIZE = 10;
 
+function getLibraryTemplateItems(data) {
+  return data?.results ?? data?.result?.data ?? [];
+}
+
+function getLibraryTemplateTotalCount(data) {
+  return data?.count ?? data?.result?.total_count ?? 0;
+}
+
 /**
  * Infinite-scroll hook for the prompt library/base templates.
  * Used by PromptNodePopper to show reusable library templates alongside
@@ -112,23 +120,24 @@ export const useGetLibraryTemplatesInfinite = (search, options = {}) =>
       axios.get(endpoints.develop.runPrompt.promptTemplate, {
         params: {
           ...(search && { name: search }),
-          page_size: LIBRARY_TEMPLATE_PAGE_SIZE,
-          page_number: pageParam,
+          limit: LIBRARY_TEMPLATE_PAGE_SIZE,
+          page: pageParam,
         },
         signal,
       }),
     getNextPageParam: (lastPage, allPages) => {
-      const totalCount =
-        lastPage.data?.result?.total_count ?? lastPage.data?.count ?? 0;
-      const fetchedCount = allPages.reduce((count, page) => {
-        const items = page.data?.result?.data ?? page.data?.results ?? [];
-        return count + items.length;
-      }, 0);
+      if (lastPage.data?.next) return allPages.length + 1;
 
-      if (fetchedCount < totalCount) return allPages.length;
+      const totalCount = getLibraryTemplateTotalCount(lastPage.data);
+      const fetchedCount = allPages.reduce(
+        (count, page) => count + getLibraryTemplateItems(page.data).length,
+        0,
+      );
+
+      if (fetchedCount < totalCount) return allPages.length + 1;
       return undefined;
     },
-    initialPageParam: 0,
+    initialPageParam: 1,
     staleTime: 30 * 1000,
     ...options,
   });

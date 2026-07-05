@@ -57,6 +57,14 @@ function normalizeTemplateContentBlock(block) {
   }
 
   const mediaValue = block[block.type];
+  if (typeof mediaValue === "string" && mediaValue.trim().length > 0) {
+    return {
+      ...block,
+      type: block.type,
+      [block.type]: { url: mediaValue },
+    };
+  }
+
   if (
     mediaValue &&
     typeof mediaValue === "object" &&
@@ -100,6 +108,12 @@ function normalizeTemplateSnapshot(template) {
     (typeof snapshot.configuration !== "object" ||
       Array.isArray(snapshot.configuration))
   ) {
+    return null;
+  }
+
+  const outputFormat =
+    snapshot.configuration?.output_format ?? snapshot.output_format ?? "string";
+  if (outputFormat !== "string") {
     return null;
   }
 
@@ -284,7 +298,7 @@ export default function PromptNodePopper({
       const promptConfigSnapshot = normalizeTemplateSnapshot(template);
       if (!promptConfigSnapshot) {
         enqueueSnackbar(
-          "This library template uses unsupported roles or content for LLM prompt nodes.",
+          "This library template can't be added because its prompt configuration isn't compatible with LLM prompt nodes.",
           { variant: "error" },
         );
         return;
@@ -320,6 +334,11 @@ export default function PromptNodePopper({
   const hasPrompts = prompts.length > 0;
   const hasLibraryTemplates = libraryTemplates.length > 0;
   const hasQueryError = isPromptsError || isLibraryError;
+  const queryErrorMessage = isPromptsError
+    ? isLibraryError
+      ? "Unable to load prompt templates. Check your connection and try again."
+      : "Unable to load your prompts. Library templates may still be available."
+    : "Unable to load library templates. Your prompts may still be available.";
   const shouldShowEmptyState =
     !isLoading &&
     !isLibraryLoading &&
@@ -504,7 +523,7 @@ export default function PromptNodePopper({
             {hasQueryError && (
               <ListItem>
                 <Typography variant="body2" color="error.main" sx={{ py: 0.5 }}>
-                  Unable to load prompt templates.
+                  {queryErrorMessage}
                 </Typography>
               </ListItem>
             )}

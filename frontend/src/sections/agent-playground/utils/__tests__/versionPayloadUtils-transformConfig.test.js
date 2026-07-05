@@ -122,6 +122,61 @@ describe("buildPromptTemplateForApi – via buildVersionPayload", () => {
     expect(pt.tools).toEqual([{ name: "lookup" }]);
   });
 
+  it("serializes model-less imported templates with messages instead of dropping them", () => {
+    const nodes = [
+      createPromptNode("p1", {
+        config: {
+          prompt_template_id: null,
+          prompt_version_id: null,
+          outputFormat: "string",
+          templateFormat: "jinja",
+          modelConfig: {
+            model: "",
+            modelDetail: {},
+            responseFormat: "text",
+            toolChoice: "auto",
+            tools: [],
+          },
+          messages: [
+            { role: "user", content: [{ type: "text", text: "Choose model" }] },
+          ],
+          payload: {
+            promptConfig: [
+              {
+                configuration: {
+                  template_format: "jinja",
+                  output_format: "string",
+                },
+              },
+            ],
+            ports: [],
+          },
+        },
+      }),
+    ];
+
+    const result = buildVersionPayload(nodes, []);
+    const pt = result.nodes[0].prompt_template;
+
+    expect(pt).toMatchObject({
+      prompt_template_id: null,
+      prompt_version_id: null,
+      model: null,
+      model_detail: {},
+      response_format: "text",
+      output_format: "string",
+      template_format: "jinja",
+      save_prompt_version: false,
+    });
+    expect(pt.messages).toEqual([
+      {
+        id: undefined,
+        role: "user",
+        content: [{ type: "text", text: "Choose model" }],
+      },
+    ]);
+  });
+
   it("includes variable_names indirectly via model and messages", () => {
     const nodes = [
       createPromptNode("p1", {

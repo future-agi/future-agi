@@ -15,8 +15,12 @@ export function mapVersionToFormConfig(version) {
   const snapshot = version?.prompt_config_snapshot;
   const cfg = snapshot?.configuration || {};
 
+  const templateFormat =
+    cfg.template_format || snapshot?.template_format || "mustache";
+
   return {
     outputFormat: cfg.output_format || snapshot?.output_format || "string",
+    templateFormat,
     modelConfig: {
       model: cfg.model || "",
       modelDetail: cfg.model_detail || {},
@@ -56,6 +60,7 @@ export function mapVersionToFormConfig(version) {
             topP: cfg.top_p,
             frequencyPenalty: cfg.frequency_penalty,
             presencePenalty: cfg.presence_penalty,
+            template_format: templateFormat,
             ...(cfg.reasoning && { reasoning: cfg.reasoning }),
           },
         },

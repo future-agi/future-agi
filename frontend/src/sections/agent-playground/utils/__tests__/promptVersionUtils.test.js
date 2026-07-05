@@ -25,6 +25,7 @@ const apiVersion = {
       presence_penalty: 0.1,
       response_format: "text",
       output_format: "json",
+      template_format: "jinja",
     },
   },
 };
@@ -42,6 +43,10 @@ describe("mapVersionToFormConfig", () => {
     expect(cfg.modelConfig.tools).toEqual([{ name: "search" }]);
     expect(cfg.modelConfig.responseFormat).toBe("text");
     expect(cfg.outputFormat).toBe("json");
+    expect(cfg.templateFormat).toBe("jinja");
+    expect(cfg.payload.promptConfig[0].configuration.template_format).toBe(
+      "jinja",
+    );
   });
 
   it("maps snake_case penalty/token params into the payload config", () => {
@@ -83,6 +88,7 @@ describe("mapVersionToFormConfig", () => {
     expect(cfg.modelConfig.model).toBe("");
     expect(cfg.modelConfig.modelDetail).toEqual({});
     expect(cfg.outputFormat).toBe("string");
+    expect(cfg.templateFormat).toBe("mustache");
     // A system and a user message are always injected.
     expect(cfg.messages.map((m) => m.role)).toEqual(["system", "user"]);
   });

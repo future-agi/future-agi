@@ -88,7 +88,8 @@ const libraryTemplate = {
       model: "gpt-4o-mini",
       model_detail: { model_name: "gpt-4o-mini", providers: "openai" },
       response_format: "text",
-      output_format: "json",
+      output_format: "string",
+      template_format: "jinja",
       temperature: 0.2,
     },
   },
@@ -106,15 +107,15 @@ const multimodalLibraryTemplate = {
           "Describe the attached context.",
           {
             type: "image_url",
-            image_url: { url: "https://example.com/image.png" },
+            image_url: "https://example.com/image.png",
           },
           {
             type: "pdf_url",
-            pdf_url: { url: "https://example.com/doc.pdf" },
+            pdf_url: "https://example.com/doc.pdf",
           },
           {
             type: "audio_url",
-            audio_url: { url: "https://example.com/audio.mp3" },
+            audio_url: "https://example.com/audio.mp3",
           },
         ],
       },
@@ -295,8 +296,18 @@ describe("PromptNodePopper", () => {
         name: libraryTemplate.name,
         prompt_template_id: null,
         prompt_version_id: null,
-        outputFormat: "json",
+        outputFormat: "string",
+        templateFormat: "jinja",
         modelConfig: expect.objectContaining({ model: "gpt-4o-mini" }),
+        payload: expect.objectContaining({
+          promptConfig: [
+            expect.objectContaining({
+              configuration: expect.objectContaining({
+                template_format: "jinja",
+              }),
+            }),
+          ],
+        }),
         messages: expect.arrayContaining([
           expect.objectContaining({
             role: "user",
@@ -378,7 +389,40 @@ describe("PromptNodePopper", () => {
     expect(mockAddNode).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
     expect(enqueueSnackbar).toHaveBeenCalledWith(
-      "This library template uses unsupported roles or content for LLM prompt nodes.",
+      "This library template can't be added because its prompt configuration isn't compatible with LLM prompt nodes.",
+      { variant: "error" },
+    );
+  });
+
+  it("rejects library templates with unsupported output formats", () => {
+    const onClose = vi.fn();
+    const onNodeSelect = vi.fn();
+    useGetLibraryTemplatesInfinite.mockReturnValue(
+      libraryTemplatesResult([
+        {
+          ...libraryTemplate,
+          id: "json-library-template",
+          name: "JSON Output Library Template",
+          prompt_config_snapshot: {
+            ...libraryTemplate.prompt_config_snapshot,
+            configuration: {
+              ...libraryTemplate.prompt_config_snapshot.configuration,
+              output_format: "json",
+            },
+          },
+        },
+      ]),
+    );
+
+    renderPopper({ onClose, onNodeSelect });
+
+    fireEvent.click(screen.getByText("JSON Output Library Template"));
+
+    expect(onNodeSelect).not.toHaveBeenCalled();
+    expect(mockAddNode).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "This library template can't be added because its prompt configuration isn't compatible with LLM prompt nodes.",
       { variant: "error" },
     );
   });
@@ -515,7 +559,9 @@ describe("PromptNodePopper", () => {
     renderPopper();
 
     expect(
-      screen.getByText("Unable to load prompt templates."),
+      screen.getByText(
+        "Unable to load library templates. Your prompts may still be available.",
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText("No prompts found")).not.toBeInTheDocument();
   });

@@ -58,13 +58,17 @@ describe("useGetLibraryTemplatesInfinite", () => {
     vi.clearAllMocks();
   });
 
-  it("requests library templates with search and page_number pagination", async () => {
+  it("requests library templates with search and page/limit pagination", async () => {
     axios.get
       .mockResolvedValueOnce({
-        data: { result: { data: templates(10), total_count: 12 } },
+        data: {
+          count: 12,
+          next: "/model-hub/prompt-base-templates/?page=2&limit=10",
+          results: templates(10),
+        },
       })
       .mockResolvedValueOnce({
-        data: { result: { data: templates(2, "next"), total_count: 12 } },
+        data: { count: 12, next: null, results: templates(2, "next") },
       });
 
     const { result } = renderHook(
@@ -79,8 +83,8 @@ describe("useGetLibraryTemplatesInfinite", () => {
       expect.objectContaining({
         params: {
           name: "research",
-          page_size: 10,
-          page_number: 0,
+          limit: 10,
+          page: 1,
         },
         signal: expect.any(AbortSignal),
       }),
@@ -95,8 +99,43 @@ describe("useGetLibraryTemplatesInfinite", () => {
       expect.objectContaining({
         params: {
           name: "research",
-          page_size: 10,
-          page_number: 1,
+          limit: 10,
+          page: 2,
+        },
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("reads legacy library template result envelopes while using the generated query contract", async () => {
+    axios.get
+      .mockResolvedValueOnce({
+        data: { result: { data: templates(10), total_count: 11 } },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          result: { data: templates(1, "legacy-next"), total_count: 11 },
+        },
+      });
+
+    const { result } = renderHook(
+      () => useGetLibraryTemplatesInfinite("legacy"),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    result.current.fetchNextPage();
+
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
+
+    expect(axios.get).toHaveBeenLastCalledWith(
+      "/model-hub/prompt-base-templates/",
+      expect.objectContaining({
+        params: {
+          name: "legacy",
+          limit: 10,
+          page: 2,
         },
         signal: expect.any(AbortSignal),
       }),
