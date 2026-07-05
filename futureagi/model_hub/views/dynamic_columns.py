@@ -59,7 +59,11 @@ from model_hub.utils.utils import (
     contains_sql,
     remove_empty_text_from_messages,
 )
-from model_hub.views.run_prompt import populate_placeholders
+from model_hub.views.run_prompt import (
+    PromptTemplateSyntaxError,
+    UnresolvedPromptPlaceholdersError,
+    populate_placeholders,
+)
 
 # Define a Celery task for running the evaluation
 # Define a Celery task for running the evaluation
@@ -1582,16 +1586,26 @@ class ConditionalColumnView(APIView):
                 )
 
             elif output_type == "run_prompt":
-                messages = populate_placeholders(
-                    config.get("messages"),
-                    dataset_id=row.dataset.id,
-                    row_id=row.id,
-                    col_id=None,
-                    model_name=config.get("model"),
-                    template_format=config.get("configuration", {}).get(
+                try:
+                    run_prompt_config = config.get("run_prompt_config", {}) or {}
+                    configuration = config.get("configuration", {}) or {}
+                    template_format = run_prompt_config.get(
                         "template_format"
-                    ),
-                )
+                    ) or configuration.get("template_format")
+                    messages = populate_placeholders(
+                        config.get("messages"),
+                        dataset_id=row.dataset.id,
+                        row_id=row.id,
+                        col_id=None,
+                        model_name=config.get("model"),
+                        template_format=template_format,
+                    )
+                except (
+                    UnresolvedPromptPlaceholdersError,
+                    PromptTemplateSyntaxError,
+                    ValueError,
+                ) as e:
+                    return None, {"reason": str(e)}
                 messages = remove_empty_text_from_messages(messages)
                 executor = RunPrompt(
                     model=config.get("model"),
@@ -1673,6 +1687,10 @@ class ConditionalColumnView(APIView):
                     )
                     if value is not None:
                         final_value = value
+                        final_value_infos = value_infos
+                        break  # Exit after first matching condition
+                    if value_infos and value_infos.get("reason"):
+                        final_value = None
                         final_value_infos = value_infos
                         break  # Exit after first matching condition
 

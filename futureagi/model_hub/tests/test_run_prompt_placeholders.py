@@ -1,10 +1,10 @@
+import json
 import sys
 import uuid
 from collections.abc import Mapping
 from types import ModuleType, SimpleNamespace
 
 import pytest
-from jinja2 import TemplateSyntaxError
 
 from accounts.models import Organization, User
 from accounts.models.workspace import Workspace
@@ -15,9 +15,11 @@ from model_hub.models.choices import (
     SourceChoices,
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.views import dynamic_columns as dynamic_columns_module
 from model_hub.views import run_prompt as run_prompt_module
 from model_hub.views.run_prompt import (
     JsonStr,
+    PromptTemplateSyntaxError,
     RunPrompts,
     UnresolvedPromptPlaceholdersError,
     populate_placeholders,
@@ -150,6 +152,57 @@ def test_render_template_strict_preserves_known_jinja_default_filter_root():
     )
 
 
+def test_extract_jinja_variable_expressions_returns_empty_tuple_for_empty_input():
+    assert run_prompt_module._extract_jinja_variable_expressions("") == ()
+
+
+@pytest.mark.parametrize("test_name", ["defined", "undefined"])
+def test_render_template_jinja_defined_tests_raise_for_missing_root(test_name):
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        render_template(
+            f"{{% if missing_column is {test_name} %}}masked{{% endif %}}",
+            {},
+            strict=True,
+        )
+
+    assert "missing_column" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("test_name", ["defined", "undefined"])
+def test_render_template_jinja_defined_tests_raise_for_unresolved_root(test_name):
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        render_template(
+            f"{{% if missing_column is {test_name} %}}masked{{% endif %}}",
+            {"missing_column": ""},
+            strict=True,
+            unresolved_placeholders={"missing_column"},
+        )
+
+    assert "missing_column" in str(exc_info.value)
+
+
+def test_render_template_jinja_truthiness_raises_for_missing_root():
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        render_template(
+            "{% if missing_column %}masked{% endif %}",
+            {},
+            strict=True,
+        )
+
+    assert "missing_column" in str(exc_info.value)
+
+
+def test_render_template_jinja_iteration_raises_for_missing_root():
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        render_template(
+            "{% for x in missing_items %}{{ x }}{% endfor %}",
+            {},
+            strict=True,
+        )
+
+    assert "missing_items" in str(exc_info.value)
+
+
 def test_render_template_mustache_strict_preserves_valid_substitution():
     assert (
         render_template(
@@ -278,6 +331,40 @@ def test_render_template_mustache_strict_raises_for_missing_uuid():
 
     assert str(missing_uuid) in str(exc_info.value)
 
+
+
+def test_render_template_mustache_strict_preserves_raw_uuid_section_tags():
+    raw_uuid = str(uuid.uuid4())
+    sanitized_uuid = sanitize_uuid_for_jinja(raw_uuid)
+
+    assert (
+        render_template(
+            f"{{{{#{raw_uuid}}}}}Resolved{{{{/{raw_uuid}}}}}",
+            {sanitized_uuid: True},
+            template_format="mustache",
+            strict=True,
+        )
+        == "Resolved"
+    )
+
+
+def test_render_template_mustache_strict_missing_raw_uuid_section_uses_display_uuid():
+    raw_uuid = str(uuid.uuid4())
+
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        render_template(
+            f"{{{{#{raw_uuid}}}}}Resolved{{{{/{raw_uuid}}}}}",
+            {},
+            template_format="mustache",
+            strict=True,
+        )
+
+    assert raw_uuid in str(exc_info.value)
+
+
+def test_render_template_jinja_runtime_division_by_zero_is_not_unresolved_placeholder():
+    with pytest.raises(ZeroDivisionError):
+        render_template("{{ 1 / 0 }}", {}, strict=True)
 
 @pytest.mark.parametrize("placeholder", ["items", "keys", "values"])
 def test_render_template_mustache_strict_raises_for_missing_dict_attribute_collisions(
@@ -679,7 +766,7 @@ def test_process_text_with_media_preserves_expression_generated_literal_braces()
 
 
 def test_process_text_with_media_malformed_jinja_filter_raises_template_syntax_error():
-    with pytest.raises(TemplateSyntaxError):
+    with pytest.raises(PromptTemplateSyntaxError):
         process_text_with_media(
             "Hello {{ foo | }}",
             {},
@@ -693,7 +780,7 @@ def test_process_text_with_media_malformed_jinja_filter_raises_template_syntax_e
 def test_process_text_with_media_broken_jinja_raises_instead_of_returning_original_text(
     template,
 ):
-    with pytest.raises(TemplateSyntaxError):
+    with pytest.raises(PromptTemplateSyntaxError):
         process_text_with_media(
             template,
             {},
@@ -703,14 +790,14 @@ def test_process_text_with_media_broken_jinja_raises_instead_of_returning_origin
         )
 
 
-def test_populate_placeholders_reraises_template_syntax_error_without_db(monkeypatch):
+def test_populate_placeholders_normalizes_template_syntax_error_without_db(monkeypatch):
     monkeypatch.setattr(
         Dataset.objects,
         "get",
         lambda **kwargs: SimpleNamespace(column_order=[]),
     )
 
-    with pytest.raises(TemplateSyntaxError):
+    with pytest.raises(PromptTemplateSyntaxError):
         populate_placeholders(
             _message("Hello {{ foo | }}"),
             uuid.uuid4(),
@@ -1153,7 +1240,77 @@ def test_run_prompts_process_row_cell_create_failure_marks_api_call_error_and_sk
     assert api_call_log_row.status == APICallStatusChoices.ERROR.value
 
 
-def test_run_prompts_process_row_unresolved_placeholders_skip_provider_and_create_error_cell(
+def test_run_prompts_process_row_validates_without_media_before_accounting_then_processes_media_before_provider(
+    monkeypatch,
+):
+    order = []
+    api_call_log_row = SimpleNamespace(
+        id=uuid.uuid4(),
+        status=APICallStatusChoices.PROCESSING.value,
+    )
+
+    def save_api_call_log_row():
+        order.append(("api_status", api_call_log_row.status))
+
+    api_call_log_row.save = save_api_call_log_row
+
+    def fake_log_and_deduct(*args, **kwargs):
+        order.append(("accounting", None))
+        return api_call_log_row
+
+    def fake_populate(*args, **kwargs):
+        process_media = kwargs.get("process_media", True)
+        order.append(("populate", process_media))
+        if process_media is False:
+            assert ("accounting", None) not in order
+            return [{"role": "user", "content": "validation only"}]
+        assert ("accounting", None) in order
+        return [{"role": "user", "content": "provider ready"}]
+
+    monkeypatch.setattr(
+        run_prompt_module,
+        "log_and_deduct_cost_for_api_request",
+        fake_log_and_deduct,
+    )
+    monkeypatch.setattr(run_prompt_module, "populate_placeholders", fake_populate)
+
+    class SuccessfulRunPrompt:
+        def __init__(self, *args, **kwargs):
+            order.append(("provider_init", kwargs["messages"]))
+            assert kwargs["messages"] == [
+                {"role": "user", "content": "provider ready"}
+            ]
+
+        def litellm_response(self):
+            order.append(("provider_call", None))
+            return "provider response", {"data": {"response": "provider response"}}
+
+    monkeypatch.setattr(run_prompt_module, "RunPrompt", SuccessfulRunPrompt)
+    monkeypatch.setattr(
+        run_prompt_module.Cell.objects,
+        "create",
+        lambda **kwargs: SimpleNamespace(id=uuid.uuid4(), **kwargs),
+    )
+
+    dataset = SimpleNamespace(id=uuid.uuid4(), workspace=SimpleNamespace(id=uuid.uuid4()))
+    runner = _build_process_row_runner(dataset)
+
+    runner.process_row(
+        SimpleNamespace(id=uuid.uuid4(), dataset=dataset),
+        SimpleNamespace(id=uuid.uuid4()),
+    )
+
+    assert order[:4] == [
+        ("populate", False),
+        ("accounting", None),
+        ("populate", True),
+        ("provider_init", [{"role": "user", "content": "provider ready"}]),
+    ]
+    assert ("provider_call", None) in order
+    assert order[-1] == ("api_status", APICallStatusChoices.SUCCESS.value)
+
+
+def test_run_prompts_process_row_edit_existing_cell_save_failure_marks_api_call_error_and_skips_usage(
     monkeypatch,
 ):
     emitted_events = []
@@ -1174,6 +1331,170 @@ def test_run_prompts_process_row_unresolved_placeholders_skip_provider_and_creat
         run_prompt_module,
         "log_and_deduct_cost_for_api_request",
         lambda *args, **kwargs: api_call_log_row,
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "populate_placeholders",
+        lambda *args, **kwargs: [{"role": "user", "content": "hi"}],
+    )
+
+    class SuccessfulRunPrompt:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def litellm_response(self):
+            return "provider response", {"data": {"response": "provider response"}}
+
+    monkeypatch.setattr(run_prompt_module, "RunPrompt", SuccessfulRunPrompt)
+
+    fake_cell = SimpleNamespace(
+        id=uuid.uuid4(),
+        value=None,
+        value_infos=None,
+        status=None,
+        prompt_tokens=None,
+        completion_tokens=None,
+        response_time=None,
+    )
+
+    def fail_save_cell():
+        raise RuntimeError("cell save failed")
+
+    fake_cell.save = fail_save_cell
+    monkeypatch.setattr(run_prompt_module.Cell.objects, "get", lambda **kwargs: fake_cell)
+    monkeypatch.setattr(
+        run_prompt_module.Cell.objects,
+        "create",
+        lambda **kwargs: pytest.fail("Cell.objects.create should not be called"),
+    )
+
+    dataset = SimpleNamespace(id=uuid.uuid4(), workspace=SimpleNamespace(id=uuid.uuid4()))
+    runner = _build_process_row_runner(dataset)
+
+    with pytest.raises(RuntimeError, match="cell save failed"):
+        runner.process_row(
+            SimpleNamespace(id=uuid.uuid4(), dataset=dataset),
+            SimpleNamespace(id=uuid.uuid4()),
+            edit_mode=True,
+        )
+
+    assert emitted_events == []
+    assert attempted_statuses == [APICallStatusChoices.ERROR.value]
+    assert APICallStatusChoices.SUCCESS.value not in attempted_statuses
+    assert api_call_log_row.status == APICallStatusChoices.ERROR.value
+
+
+def test_run_prompts_process_row_edit_existing_cell_success_persists_api_success_then_emits_usage(
+    monkeypatch,
+):
+    emitted_events = []
+    _install_usage_emit_modules(monkeypatch, emitted_events)
+
+    order = []
+    attempted_statuses = []
+    api_call_log_row = SimpleNamespace(
+        id=uuid.uuid4(),
+        status=APICallStatusChoices.PROCESSING.value,
+    )
+
+    def save_api_call_log_row():
+        attempted_statuses.append(api_call_log_row.status)
+        if api_call_log_row.status == APICallStatusChoices.SUCCESS.value:
+            assert "cell_save" in order
+            order.append("api_success_save")
+
+    api_call_log_row.save = save_api_call_log_row
+
+    monkeypatch.setattr(
+        run_prompt_module,
+        "log_and_deduct_cost_for_api_request",
+        lambda *args, **kwargs: api_call_log_row,
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "populate_placeholders",
+        lambda *args, **kwargs: [{"role": "user", "content": "hi"}],
+    )
+
+    class SuccessfulRunPrompt:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def litellm_response(self):
+            return "provider response", {
+                "data": {"response": "provider response"},
+                "metadata": {
+                    "usage": {"prompt_tokens": 3, "completion_tokens": 5},
+                    "response_time": 1.25,
+                },
+            }
+
+    monkeypatch.setattr(run_prompt_module, "RunPrompt", SuccessfulRunPrompt)
+
+    fake_cell = SimpleNamespace(
+        id=uuid.uuid4(),
+        value=None,
+        value_infos=None,
+        status=None,
+        prompt_tokens=None,
+        completion_tokens=None,
+        response_time=None,
+    )
+
+    def save_cell():
+        order.append("cell_save")
+
+    fake_cell.save = save_cell
+    monkeypatch.setattr(run_prompt_module.Cell.objects, "get", lambda **kwargs: fake_cell)
+    monkeypatch.setattr(
+        run_prompt_module.Cell.objects,
+        "create",
+        lambda **kwargs: pytest.fail("Cell.objects.create should not be called"),
+    )
+
+    def emit_usage(event):
+        assert order[-1] == "api_success_save"
+        order.append("usage_emit")
+        emitted_events.append(event)
+
+    monkeypatch.setattr(sys.modules["ee.usage.services.emitter"], "emit", emit_usage)
+
+    dataset = SimpleNamespace(id=uuid.uuid4(), workspace=SimpleNamespace(id=uuid.uuid4()))
+    runner = _build_process_row_runner(dataset)
+
+    runner.process_row(
+        SimpleNamespace(id=uuid.uuid4(), dataset=dataset),
+        SimpleNamespace(id=uuid.uuid4()),
+        edit_mode=True,
+    )
+
+    assert fake_cell.value == "provider response"
+    assert fake_cell.status == CellStatus.PASS.value
+    assert fake_cell.prompt_tokens == 3
+    assert fake_cell.completion_tokens == 5
+    assert fake_cell.response_time == 1.25
+    value_infos = json.loads(fake_cell.value_infos)
+    assert value_infos["data"]["response"] == "provider response"
+    assert value_infos["reason"] == "provider response"
+    assert attempted_statuses == [APICallStatusChoices.SUCCESS.value]
+    assert api_call_log_row.status == APICallStatusChoices.SUCCESS.value
+    assert len(emitted_events) == 1
+    assert order == ["cell_save", "api_success_save", "usage_emit"]
+
+
+def test_run_prompts_process_row_unresolved_placeholders_skip_provider_and_create_error_cell(
+    monkeypatch,
+):
+    emitted_events = []
+    _install_usage_emit_modules(monkeypatch, emitted_events)
+
+    def fail_log_and_deduct(*args, **kwargs):
+        raise AssertionError("API accounting should not run for local placeholder errors")
+
+    monkeypatch.setattr(
+        run_prompt_module,
+        "log_and_deduct_cost_for_api_request",
+        fail_log_and_deduct,
     )
 
     def fail_populate(*args, **kwargs):
@@ -1209,14 +1530,12 @@ def test_run_prompts_process_row_unresolved_placeholders_skip_provider_and_creat
     )
 
     assert emitted_events == []
-    assert attempted_statuses == [APICallStatusChoices.ERROR.value]
-    assert api_call_log_row.status == APICallStatusChoices.ERROR.value
     assert len(created_cells) == 1
     assert created_cells[0]["status"] == CellStatus.ERROR.value
     assert "Missing Column" in created_cells[0]["value"]
 
 
-def test_run_prompts_process_row_error_save_failure_raises_without_error_cell(
+def test_run_prompts_process_row_error_save_failure_raises_after_error_cell(
     monkeypatch,
 ):
     attempted_statuses = []
@@ -1271,4 +1590,261 @@ def test_run_prompts_process_row_error_save_failure_raises_without_error_cell(
 
     assert api_call_log_row.status == APICallStatusChoices.PROCESSING.value
     assert attempted_statuses == [APICallStatusChoices.ERROR.value]
-    assert created_cells == []
+    assert len(created_cells) == 1
+    assert created_cells[0]["status"] == CellStatus.ERROR.value
+    assert "provider dispatch failed" in created_cells[0]["value"]
+
+
+def test_render_template_jinja_missing_root_in_false_branch_does_not_fail_source_wide():
+    assert render_template(
+        "{% if false %}{{ missing_column }}{% endif %}Rendered",
+        {},
+        strict=True,
+    ) == "Rendered"
+
+
+def test_conditional_run_prompt_placeholder_error_returns_error_metadata(monkeypatch):
+    def fail_populate(*args, **kwargs):
+        raise UnresolvedPromptPlaceholdersError("Missing Column")
+
+    monkeypatch.setattr(dynamic_columns_module, "populate_placeholders", fail_populate)
+    monkeypatch.setattr(
+        dynamic_columns_module,
+        "RunPrompt",
+        lambda *args, **kwargs: pytest.fail("RunPrompt should not be instantiated"),
+    )
+
+    row = SimpleNamespace(
+        id=uuid.uuid4(),
+        dataset=SimpleNamespace(id=uuid.uuid4(), workspace=None),
+    )
+    value, value_infos = dynamic_columns_module.ConditionalColumnView()._process_branch(
+        row,
+        {
+            "branch_node_config": {
+                "type": "run_prompt",
+                "config": {
+                    "messages": [{"role": "user", "content": "{{Missing Column}}"}],
+                    "model": "gpt-4o-mini",
+                    "configuration": {"template_format": "jinja2"},
+                },
+            }
+        },
+        org_id=uuid.uuid4(),
+    )
+
+    assert value is None
+    assert value_infos == {"reason": "Unresolved prompt placeholders: Missing Column"}
+
+
+def test_conditional_process_row_propagates_run_prompt_placeholder_error_with_template_precedence(
+    monkeypatch,
+):
+    populate_calls = []
+    dataset_id = uuid.uuid4()
+    row_id = uuid.uuid4()
+    org_id = uuid.uuid4()
+    messages = [{"role": "user", "content": "Hello {{Missing Column}}"}]
+
+    def fail_populate(*args, **kwargs):
+        populate_calls.append({"args": args, "kwargs": kwargs})
+        raise UnresolvedPromptPlaceholdersError("Missing Column")
+
+    monkeypatch.setattr(dynamic_columns_module, "populate_placeholders", fail_populate)
+    monkeypatch.setattr(
+        dynamic_columns_module,
+        "RunPrompt",
+        lambda *args, **kwargs: pytest.fail("RunPrompt should not be instantiated"),
+    )
+
+    view = dynamic_columns_module.ConditionalColumnView()
+    monkeypatch.setattr(view, "_evaluate_condition", lambda *args, **kwargs: True)
+
+    row = SimpleNamespace(
+        id=row_id,
+        dataset=SimpleNamespace(
+            id=dataset_id,
+            workspace=SimpleNamespace(id=uuid.uuid4()),
+        ),
+    )
+    value, value_infos = view._process_row(
+        row,
+        [
+            {
+                "branch_type": "if",
+                "condition": "always true",
+                "branch_node_config": {
+                    "type": "run_prompt",
+                    "config": {
+                        "messages": messages,
+                        "model": "gpt-4o-mini",
+                        "run_prompt_config": {"template_format": "mustache"},
+                        "configuration": {"template_format": "jinja2"},
+                    },
+                },
+            },
+            {
+                "branch_type": "else",
+                "branch_node_config": {
+                    "type": "static_value",
+                    "config": {"value": "should not be used"},
+                },
+            },
+        ],
+        org_id=org_id,
+    )
+
+    assert value is None
+    assert value_infos == {"reason": "Unresolved prompt placeholders: Missing Column"}
+    assert populate_calls == [
+        {
+            "args": (messages,),
+            "kwargs": {
+                "dataset_id": dataset_id,
+                "row_id": row_id,
+                "col_id": None,
+                "model_name": "gpt-4o-mini",
+                "template_format": "mustache",
+            },
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("run_prompt_config", "configuration", "expected_template_format"),
+    [
+        (
+            {"template_format": "mustache"},
+            {"template_format": "jinja2"},
+            "mustache",
+        ),
+        (
+            {},
+            {"template_format": "jinja2"},
+            "jinja2",
+        ),
+    ],
+)
+def test_preview_run_prompt_column_view_passes_effective_template_format_to_populate_placeholders(
+    monkeypatch,
+    run_prompt_config,
+    configuration,
+    expected_template_format,
+):
+    dataset_id = uuid.uuid4()
+    row_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
+    workspace_id = uuid.uuid4()
+    messages = [{"role": "user", "content": "Hello {{Input Column}}"}]
+    populate_calls = []
+
+    class OrderQuerySet:
+        def order_by(self, *args):
+            assert args == ("order",)
+            return self
+
+        def values_list(self, *args, **kwargs):
+            assert args == ("order",)
+            assert kwargs == {"flat": True}
+            return [0]
+
+    class DatasetQuerySet:
+        def first(self):
+            return SimpleNamespace(
+                id=dataset_id,
+                organization_id=organization_id,
+                workspace=SimpleNamespace(id=workspace_id),
+            )
+
+    class RowQuerySet:
+        def __bool__(self):
+            return True
+
+        def __iter__(self):
+            return iter([SimpleNamespace(id=row_id)])
+
+    def fake_row_filter(**kwargs):
+        if "order__in" in kwargs:
+            assert kwargs == {
+                "dataset_id": dataset_id,
+                "order__in": [0],
+                "deleted": False,
+            }
+            return RowQuerySet()
+        assert kwargs == {"dataset_id": dataset_id, "deleted": False}
+        return OrderQuerySet()
+
+    def fake_populate_placeholders(*args, **kwargs):
+        populate_calls.append({"args": args, "kwargs": kwargs})
+        return [{"role": "user", "content": "Hello Resolved"}]
+
+    class FakeRunPrompt:
+        def __init__(self, **kwargs):
+            assert kwargs["messages"] == [{"role": "user", "content": "Hello Resolved"}]
+
+        def litellm_response(self):
+            return "preview response", {
+                "metadata": {
+                    "usage": {"prompt_tokens": 1},
+                    "cost": {"total_cost": 0},
+                }
+            }
+
+    monkeypatch.setattr(run_prompt_module.Row.objects, "filter", fake_row_filter)
+    monkeypatch.setattr(
+        run_prompt_module.Dataset.objects,
+        "filter",
+        lambda **kwargs: DatasetQuerySet(),
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "populate_placeholders",
+        fake_populate_placeholders,
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "remove_empty_text_from_messages",
+        lambda received_messages: received_messages,
+    )
+    monkeypatch.setattr(run_prompt_module, "RunPrompt", FakeRunPrompt)
+
+    view = run_prompt_module.PreviewRunPromptColumnView()
+    view._gm = SimpleNamespace(
+        success_response=lambda payload: payload,
+        not_found=lambda message: pytest.fail(f"unexpected not_found: {message}"),
+        bad_request=lambda message: pytest.fail(f"unexpected bad_request: {message}"),
+        internal_server_error_response=lambda message: pytest.fail(
+            f"unexpected internal_server_error_response: {message}"
+        ),
+    )
+    request = SimpleNamespace(
+        validated_data={
+            "dataset_id": dataset_id,
+            "config": {
+                "messages": messages,
+                "model": "gpt-4o-mini",
+                "run_prompt_config": run_prompt_config,
+                "configuration": configuration,
+            },
+            "first_n_rows": 1,
+        },
+        user=SimpleNamespace(organization=SimpleNamespace(id=organization_id)),
+    )
+
+    response = run_prompt_module.PreviewRunPromptColumnView.post.__wrapped__(
+        view,
+        request,
+    )
+
+    assert response["responses"] == ["preview response"]
+    assert len(populate_calls) == 1
+    assert populate_calls[0] == {
+        "args": (messages,),
+        "kwargs": {
+            "dataset_id": dataset_id,
+            "row_id": row_id,
+            "col_id": None,
+            "model_name": "gpt-4o-mini",
+            "template_format": expected_template_format,
+        },
+    }
