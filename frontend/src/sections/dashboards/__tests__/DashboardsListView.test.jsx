@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen } from "src/utils/test-utils";
+import {
+  fireEvent,
+  render,
+  screen,
+  userEvent,
+  within,
+} from "src/utils/test-utils";
 import DashboardsListView from "../DashboardsListView";
 
 const h = vi.hoisted(() => ({
@@ -143,9 +149,34 @@ describe("DashboardsListView list metadata", () => {
     render(<DashboardsListView />);
 
     expect(screen.getByText("1 widget")).toBeInTheDocument();
+    expect(screen.getByText("0 widgets")).toBeInTheDocument();
     expect(screen.getByText("2 widgets")).toBeInTheDocument();
-    expect(screen.getByText("No Metadata Dashboard")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "No Metadata Dashboard" }),
+    ).toHaveAccessibleDescription(
+      /2 widgets\. Last updated —\. Created by Unknown creator\. No people\./,
+    );
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("falls back safely for invalid widget counts", () => {
+    h.dashboards = [
+      {
+        ...DASHBOARDS[2],
+        id: "dash-invalid",
+        name: "Invalid Count Dashboard",
+        widget_count: "not-a-number",
+      },
+    ];
+
+    render(<DashboardsListView />);
+
+    expect(screen.getByText("0 widgets")).toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Invalid Count Dashboard" }),
+    ).toHaveAccessibleDescription(
+      /0 widgets\. Last updated —\. Created by Unknown creator\. No people\./,
+    );
   });
 
   it("does not render list column headers for the empty state", () => {
@@ -175,26 +206,19 @@ describe("DashboardsListView list metadata", () => {
     expect(screen.queryByText("Latency Overview")).not.toBeInTheDocument();
   });
 
-  it("keeps row navigation on click and keyboard activation", () => {
+  it("keeps row navigation on a semantic link with accessible metadata", () => {
     render(<DashboardsListView />);
 
     const latencyRow = screen.getByRole("link", {
       name: "Latency Overview",
     });
 
+    expect(latencyRow).toHaveAttribute("href", "/dashboard/dashboards/dash-1");
     expect(latencyRow).toHaveAccessibleDescription(
       /1 widget\. Last updated 15 Jun 2026\. Created by Alice Creator\. 2 people\./,
     );
 
     fireEvent.click(latencyRow);
-    expect(h.navigate).toHaveBeenCalledWith("/dashboard/dashboards/dash-1");
-
-    h.navigate.mockClear();
-    fireEvent.keyDown(latencyRow, { key: "Enter" });
-    expect(h.navigate).toHaveBeenCalledWith("/dashboard/dashboards/dash-1");
-
-    h.navigate.mockClear();
-    fireEvent.keyDown(latencyRow, { key: " " });
     expect(h.navigate).toHaveBeenCalledWith("/dashboard/dashboards/dash-1");
   });
 
@@ -206,6 +230,43 @@ describe("DashboardsListView list metadata", () => {
         name: "People for Latency Overview: 2 people",
       }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps people tooltip fallbacks private when names are missing", async () => {
+    const user = userEvent.setup();
+    render(<DashboardsListView />);
+
+    await user.hover(
+      screen.getByRole("button", {
+        name: "People for Fallback Owner Dashboard: 1 person",
+      }),
+    );
+
+    expect(
+      await screen.findByText("Created by Unknown creator"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Unknown user")).toBeInTheDocument();
+    expect(screen.queryByText("owner@example.com")).not.toBeInTheDocument();
+  });
+
+  it("keeps selected creator filter private after dashboard data changes", () => {
+    const { rerender } = render(<DashboardsListView />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Created by anyone/i }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /Unknown creator/ }));
+    fireEvent.keyDown(screen.getByRole("menu"), { key: "Escape" });
+
+    expect(
+      screen.getByRole("button", { name: "Unknown creator" }),
+    ).toBeInTheDocument();
+
+    h.dashboards = [DASHBOARDS[0]];
+    rerender(<DashboardsListView />);
+
+    expect(
+      screen.getByRole("button", { name: "Unknown creator" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("owner@example.com")).not.toBeInTheDocument();
   });
 
   it("keeps delete as a separate action from row navigation", () => {
@@ -222,5 +283,25 @@ describe("DashboardsListView list metadata", () => {
         'Are you sure you want to delete "Latency Overview"? This action cannot be undone.',
       ),
     ).toBeInTheDocument();
+  });
+
+  it("confirms deletion for the selected dashboard without navigating", () => {
+    render(<DashboardsListView />);
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Delete Fallback Owner Dashboard",
+      }),
+    );
+
+    const dialog = screen.getByRole("dialog", { name: "Delete Dashboard" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+
+    expect(h.navigate).not.toHaveBeenCalled();
+    expect(h.deleteDashboard.mutate).toHaveBeenCalledTimes(1);
+    expect(h.deleteDashboard.mutate).toHaveBeenCalledWith(
+      "dash-2",
+      expect.any(Object),
+    );
   });
 });

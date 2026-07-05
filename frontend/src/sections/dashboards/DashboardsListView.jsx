@@ -451,13 +451,6 @@ export default function DashboardsListView() {
     navigate(paths.dashboard.dashboards.detail(dashboardId));
   };
 
-  const handleDashboardRowKeyDown = (event, dashboardId) => {
-    if (event.target !== event.currentTarget) return;
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    openDashboard(dashboardId);
-  };
-
   const confirmDelete = () => {
     if (!deleteTarget) return;
     deleteMutation.mutate(deleteTarget.id, {
@@ -560,7 +553,7 @@ export default function DashboardsListView() {
               ? "Created by anyone"
               : creatorFilter.length === 1
                 ? creators.find((c) => c.email === creatorFilter[0])?.name ||
-                  creatorFilter[0]
+                  "Unknown creator"
                 : `${creatorFilter.length} creators`}
           </Button>
           <Menu
@@ -783,9 +776,6 @@ export default function DashboardsListView() {
                       event.preventDefault();
                       openDashboard(db.id);
                     }}
-                    onKeyDown={(event) =>
-                      handleDashboardRowKeyDown(event, db.id)
-                    }
                     sx={{
                       display: "grid",
                       gridTemplateColumns: {
