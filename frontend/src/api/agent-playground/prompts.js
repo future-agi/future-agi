@@ -96,6 +96,43 @@ export const useGetPromptTemplatesInfinite = (search, options = {}) =>
     ...options,
   });
 
+const LIBRARY_TEMPLATE_PAGE_SIZE = 10;
+
+/**
+ * Infinite-scroll hook for the prompt library/base templates.
+ * Used by PromptNodePopper to show reusable library templates alongside
+ * user-saved prompt templates.
+ * @param {string} search - Search query to filter by name
+ * @param {object} options - Additional react-query options
+ */
+export const useGetLibraryTemplatesInfinite = (search, options = {}) =>
+  useInfiniteQuery({
+    queryKey: ["library-templates-infinite", search],
+    queryFn: ({ pageParam, signal }) =>
+      axios.get(endpoints.develop.runPrompt.promptTemplate, {
+        params: {
+          ...(search && { name: search }),
+          page_size: LIBRARY_TEMPLATE_PAGE_SIZE,
+          page_number: pageParam,
+        },
+        signal,
+      }),
+    getNextPageParam: (lastPage, allPages) => {
+      const totalCount =
+        lastPage.data?.result?.total_count ?? lastPage.data?.count ?? 0;
+      const fetchedCount = allPages.reduce((count, page) => {
+        const items = page.data?.result?.data ?? page.data?.results ?? [];
+        return count + items.length;
+      }, 0);
+
+      if (fetchedCount < totalCount) return allPages.length;
+      return undefined;
+    },
+    initialPageParam: 0,
+    staleTime: 30 * 1000,
+    ...options,
+  });
+
 /**
  * Infinite-scroll variant of useGetPromptVersions.
  * Used by PromptNameRow version dropdown (paginated, 10 per page).
