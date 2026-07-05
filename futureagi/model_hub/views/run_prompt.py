@@ -4,6 +4,7 @@ import os
 import re
 import traceback
 import uuid
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
@@ -17,7 +18,7 @@ from django.db import close_old_connections
 from django.db.models import Q
 from django.http import Http404
 from drf_yasg.utils import swagger_auto_schema
-from jinja2 import StrictUndefined, TemplateSyntaxError, UndefinedError, nodes
+from jinja2 import StrictUndefined, TemplateSyntaxError, UndefinedError, meta, nodes
 from jinja2.sandbox import SandboxedEnvironment
 from rest_framework import viewsets
 from rest_framework.generics import CreateAPIView
@@ -424,10 +425,50 @@ DEFAULT_TEMPLATE_FORMAT = TEMPLATE_FORMAT_JINJA2
 
 # Jinja2 environment (reusable, sandboxed for security)
 _jinja2_env = SandboxedEnvironment()
+_jinja2_strict_env = SandboxedEnvironment(undefined=StrictUndefined)
 
 
 class UnresolvedPromptPlaceholdersError(ValueError):
-    """Raised when strict prompt rendering leaves unresolved placeholders."""
+    """Raised when strict prompt rendering encounters unresolved placeholders."""
+
+    def __init__(self, placeholders):
+        if isinstance(placeholders, str):
+            placeholders = [placeholders]
+        self.placeholders = [placeholder for placeholder in placeholders if placeholder]
+        joined_placeholders = ", ".join(self.placeholders) or "unknown placeholder"
+        super().__init__(f"Unresolved prompt placeholders: {joined_placeholders}")
+
+
+def _build_placeholder_display_map(template_str: str) -> dict[str, str]:
+    """Map render-time variable names back to the original placeholder text."""
+    if not template_str:
+        return {}
+
+    placeholder_display_map: dict[str, str] = {}
+    for match in re.finditer(r"\{\{\s*([^{}]+?)\s*\}\}", template_str):
+        expression = match.group(1).strip()
+        if not expression:
+            continue
+        root_name = re.split(r"[.[]", expression, maxsplit=1)[0].strip()
+        if not root_name:
+            continue
+        placeholder_display_map.setdefault(root_name, match.group(0))
+        placeholder_display_map.setdefault(
+            sanitize_uuid_for_jinja(root_name), match.group(0)
+        )
+    return placeholder_display_map
+
+
+def _resolve_missing_placeholder_reference(
+    error_message: str, placeholder_display_map: dict[str, str] | None = None
+) -> str:
+    """Prefer the original placeholder text when Jinja reports an undefined variable."""
+    placeholder_display_map = placeholder_display_map or {}
+    undefined_match = re.search(r"'([^']+)' is undefined", error_message)
+    if undefined_match:
+        missing_name = undefined_match.group(1)
+        return placeholder_display_map.get(missing_name, missing_name)
+    return error_message
 
 
 _JINJA_PLACEHOLDER_PATTERN = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
@@ -461,28 +502,187 @@ def _format_unresolved_placeholder_error(
             continue
         seen.add(display_placeholder)
         display_placeholders.append(display_placeholder)
-    return UnresolvedPromptPlaceholdersError(
-        "Unresolved prompt placeholders: " + ", ".join(display_placeholders)
-    )
+    return UnresolvedPromptPlaceholdersError(display_placeholders)
 
 
-def _extract_unrenderable_named_placeholders(template_str: str) -> list[str]:
+def _extract_jinja_variable_expressions(template_str: str) -> list[str]:
+    """Return actual Jinja print-expression text, excluding raw/data literals.
+
+    Regex scans over the raw template confuse literal text (for example raw
+    blocks or string constants that contain ``{{...}}``) with placeholders. The
+    Jinja lexer distinguishes real variable blocks from raw/data content, while
+    still letting us inspect human column-name placeholders that the parser
+    cannot represent as a normal AST reference.
+    """
+    if not template_str:
+        return []
+
+    expressions: list[str] = []
+    current_tokens: list[str] | None = None
+    for _, token_type, value in _jinja2_env.lex(template_str):
+        if token_type == "variable_begin":
+            current_tokens = []
+            continue
+        if token_type == "variable_end":
+            if current_tokens is not None:
+                expression = "".join(current_tokens).strip()
+                if expression:
+                    expressions.append(expression)
+            current_tokens = None
+            continue
+        if current_tokens is not None:
+            current_tokens.append(value)
+
+    return expressions
+
+
+_HUMAN_PLACEHOLDER_NAME_PATTERN = re.compile(r"^[\w][\w -]*$")
+_OPERATOR_WITH_WHITESPACE_PATTERN = re.compile(r"\s[-+*/%]\s*|[-+*/%]\s")
+_NUMERIC_DASH_EXPRESSION_PATTERN = re.compile(r"^[\d\s-]+$")
+
+
+def _human_named_placeholder_subject(
+    expression: str, context: dict | None = None
+) -> str | None:
+    """Return a single human-named placeholder subject, if expression is one.
+
+    Human dataset columns may be written as Jinja print expressions even when the
+    name is not a valid Jinja identifier, for example ``{{Input Column}}`` or
+    ``{{customer-name}}``. Those should be treated as one placeholder name, while
+    valid operator expressions like ``{{ foo - bar }}`` and literals like
+    ``{{ -1 }}`` must remain normal Jinja expressions.
+    """
+    filter_subject = expression.split("|", maxsplit=1)[0].strip()
+    if not filter_subject:
+        return None
+
+    has_human_name_syntax = " " in filter_subject or "-" in filter_subject
+    if not has_human_name_syntax:
+        return None
+
+    # A spaced arithmetic operator is an expression, not a column name. This
+    # deliberately rejects dotted arithmetic such as ``account.total - reserve``
+    # while preserving compact hyphenated human names like ``customer-name``.
+    if _OPERATOR_WITH_WHITESPACE_PATTERN.search(filter_subject):
+        return None
+
+    # Hyphens with dotted references are Jinja subtraction-shaped, e.g.
+    # ``account.total-reserve``; dotted human names are handled by normal Jinja
+    # references, not this unrenderable-name path.
+    if "." in filter_subject and "-" in filter_subject:
+        return None
+
+    # Negative numeric literals (and numeric subtraction written without spaces)
+    # are valid Jinja expressions, not human placeholders.
+    if filter_subject.startswith("-") or _NUMERIC_DASH_EXPRESSION_PATTERN.fullmatch(
+        filter_subject
+    ):
+        return None
+
+    if not _HUMAN_PLACEHOLDER_NAME_PATTERN.fullmatch(filter_subject):
+        return None
+
+    if "-" in filter_subject and context is not None and filter_subject not in context:
+        try:
+            ast = _jinja2_env.parse("{{ " + expression + " }}")
+        except TemplateSyntaxError:
+            pass
+        else:
+            external_roots = meta.find_undeclared_variables(ast)
+            if external_roots and all(root in context for root in external_roots):
+                return None
+
+    return filter_subject
+
+
+def _extract_unrenderable_named_placeholders(
+    template_str: str, context: dict | None = None
+) -> list[str]:
     if not template_str:
         return []
 
     placeholders = []
-    for raw_placeholder in _JINJA_PLACEHOLDER_PATTERN.findall(template_str):
-        placeholder = raw_placeholder.strip()
-        if not placeholder:
-            continue
-        # Column names can contain spaces, but bare Jinja identifiers cannot.
-        # Detect likely human column-name placeholders before Jinja raises a
-        # syntax error that would otherwise be swallowed by legacy fallback code.
-        # Expressions/filters such as {{ missing | default('x') }} are left for
-        # Jinja's normal StrictUndefined/default-filter semantics.
-        if " " in placeholder and re.match(r"^[\w -]+$", placeholder):
+    for expression in _extract_jinja_variable_expressions(template_str):
+        # Column names can contain spaces/hyphens, but bare Jinja identifiers
+        # cannot contain spaces and hyphenated names parse as subtraction. Detect
+        # only actual single human placeholder subjects so raw blocks, string
+        # constants, and arithmetic expressions remain valid Jinja.
+        placeholder = _human_named_placeholder_subject(expression, context)
+        if placeholder:
             placeholders.append(placeholder)
     return placeholders
+
+
+def _safe_identifier_for_human_placeholder(name: str, index: int) -> str:
+    safe_name = re.sub(r"\W+", "_", name).strip("_") or "placeholder"
+    return f"__prompt_placeholder_{index}_{safe_name}"
+
+
+def _rewrite_unrenderable_jinja_placeholders(
+    template_str: str, context: dict
+) -> tuple[str, dict, set[str]]:
+    """Rewrite human-named Jinja variables to safe identifiers token-wise.
+
+    Jinja cannot parse bare variable names containing spaces, and treats hyphens
+    as subtraction. Replacing the whole ``{{...}}`` text with the cell value is
+    unsafe because a value like ``{{secret}}`` becomes new template source. This
+    function rewrites only real Jinja variable blocks (not raw/data text or
+    string literals) so the cell value is passed through the render context and
+    emitted literally.
+    """
+    if not template_str:
+        return template_str or "", dict(context), set()
+
+    safe_ctx = dict(context)
+    synthetic_by_name: dict[str, str] = {}
+    rewritten_names: set[str] = set()
+    output: list[str] = []
+    current_tokens: list[str] | None = None
+
+    def rewrite_expression(expression: str) -> str:
+        filter_subject = expression.split("|", maxsplit=1)[0]
+        stripped = _human_named_placeholder_subject(expression, context)
+        if not (stripped and stripped in safe_ctx):
+            return expression
+
+        synthetic = synthetic_by_name.get(stripped)
+        if synthetic is None:
+            synthetic = _safe_identifier_for_human_placeholder(
+                stripped, len(synthetic_by_name)
+            )
+            while synthetic in safe_ctx:
+                synthetic = f"{synthetic}_{len(synthetic_by_name)}"
+            synthetic_by_name[stripped] = synthetic
+            safe_ctx[synthetic] = safe_ctx[stripped]
+        rewritten_names.add(stripped)
+
+        prefix_length = len(filter_subject) - len(filter_subject.lstrip())
+        suffix_length = len(filter_subject) - len(filter_subject.rstrip())
+        prefix = filter_subject[:prefix_length]
+        suffix = (
+            filter_subject[len(filter_subject) - suffix_length :]
+            if suffix_length
+            else ""
+        )
+        return f"{prefix}{synthetic}{suffix}{expression[len(filter_subject):]}"
+
+    for _, token_type, value in _jinja2_env.lex(template_str):
+        if token_type == "variable_begin":
+            output.append(value)
+            current_tokens = []
+            continue
+        if token_type == "variable_end":
+            if current_tokens is not None:
+                output.append(rewrite_expression("".join(current_tokens)))
+            output.append(value)
+            current_tokens = None
+            continue
+        if current_tokens is not None:
+            current_tokens.append(value)
+        else:
+            output.append(value)
+
+    return "".join(output), safe_ctx, rewritten_names
 
 
 def _sanitize_uuid_placeholders_for_template(text: str) -> str:
@@ -495,22 +695,6 @@ def _sanitize_uuid_placeholders_for_template(text: str) -> str:
         return "{{" + sanitize_uuid_for_jinja(uuid_str) + suffix + "}}"
 
     return _UUID_PLACEHOLDER_WITH_WHITESPACE_PATTERN.sub(replace_match, text)
-
-
-def _extract_simple_placeholder_references(template_str: str) -> list[str]:
-    if not template_str:
-        return []
-
-    references = []
-    for raw_placeholder in _JINJA_PLACEHOLDER_PATTERN.findall(template_str):
-        placeholder = raw_placeholder.strip()
-        if not placeholder:
-            continue
-        if placeholder[0] in ("#", "^", "/", "!", ">", "=", "&"):
-            placeholder = placeholder[1:].strip()
-        if re.match(r"^[\w .-]+$", placeholder):
-            references.append(placeholder)
-    return references
 
 
 def _jinja_reference_from_node(node: nodes.Node) -> str | None:
@@ -530,24 +714,32 @@ def _jinja_reference_from_node(node: nodes.Node) -> str | None:
 
 
 def _extract_jinja_ast_references(template_str: str) -> list[str]:
-    """Return root and dotted references used by Jinja expressions.
+    """Return external root and dotted references used by Jinja expressions.
 
     This catches unresolved null-backed placeholders even when Jinja filters (for
     example ``default``) would otherwise render a fallback and hide the missing
-    cell.
+    cell. Jinja ASTs also contain local binding names (loop targets, ``set``
+    assignments, macro parameters); ``meta.find_undeclared_variables`` is the
+    Jinja-supported way to identify variables that must come from the render
+    context, so only references rooted at those external names are returned.
     """
     try:
         ast = _jinja2_env.parse(template_str)
     except TemplateSyntaxError:
         return []
 
+    external_roots = meta.find_undeclared_variables(ast)
     references: list[str] = []
     seen = set()
     for node in ast.find_all((nodes.Name, nodes.Getattr, nodes.Getitem)):
         reference = _jinja_reference_from_node(node)
-        if reference and reference not in seen:
-            seen.add(reference)
-            references.append(reference)
+        if not reference:
+            continue
+        root = reference.split('.', maxsplit=1)[0]
+        if root not in external_roots or reference in seen:
+            continue
+        seen.add(reference)
+        references.append(reference)
     return references
 
 
@@ -567,13 +759,14 @@ def _raise_for_strict_unresolved_references(
     template_str: str,
     unresolved_placeholders: set[str] | None,
     placeholder_display_map: dict[str, str] | None = None,
+    context: dict | None = None,
 ) -> None:
     if not unresolved_placeholders:
         return
 
     candidate_references = [
-        *_extract_simple_placeholder_references(template_str),
         *_extract_jinja_ast_references(template_str),
+        *_extract_unrenderable_named_placeholders(template_str, context),
     ]
     referenced_unresolved = []
     seen = set()
@@ -590,6 +783,46 @@ def _raise_for_strict_unresolved_references(
         )
 
 
+
+
+def _extract_unknown_jinja_external_roots(template_str: str, context: dict) -> list[str]:
+    """Return undeclared Jinja roots that are absent from the render context.
+
+    StrictUndefined catches ordinary missing names at render time, but filters such
+    as ``default`` can intentionally mask an undefined value. Strict prompt
+    rendering must still fail closed for unknown external variables while leaving
+    loop/set locals and human-named placeholders to their dedicated handling.
+    """
+    try:
+        ast = _jinja2_env.parse(template_str)
+    except TemplateSyntaxError:
+        return []
+
+    unknown_roots = [
+        root for root in meta.find_undeclared_variables(ast) if root not in context
+    ]
+    if not unknown_roots:
+        return []
+
+    human_expression_roots = set()
+    for expression in _extract_jinja_variable_expressions(template_str):
+        if not _human_named_placeholder_subject(expression, context):
+            continue
+        try:
+            expression_ast = _jinja2_env.parse("{{ " + expression + " }}")
+        except TemplateSyntaxError:
+            continue
+        human_expression_roots.update(meta.find_undeclared_variables(expression_ast))
+
+    unknown = []
+    seen = set()
+    for root in unknown_roots:
+        if root in human_expression_roots or root in seen:
+            continue
+        seen.add(root)
+        unknown.append(root)
+    return unknown
+
 def _get_mustache_key_from_scopes(key: str, scopes: list[Any]) -> tuple[bool, Any]:
     if key == ".":
         return True, scopes[0] if scopes else None
@@ -598,10 +831,13 @@ def _get_mustache_key_from_scopes(key: str, scopes: list[Any]) -> tuple[bool, An
         current = scope
         try:
             for child in key.split("."):
-                try:
+                if isinstance(current, Mapping):
                     current = current[child]
-                except (TypeError, AttributeError, KeyError):
-                    current = getattr(current, child)
+                else:
+                    try:
+                        current = current[child]
+                    except (TypeError, AttributeError, KeyError):
+                        current = getattr(current, child)
             return True, current
         except (AttributeError, KeyError, IndexError, TypeError, ValueError):
             continue
@@ -654,7 +890,9 @@ def _validate_mustache_token_range(
                 index = section_end + 1
                 continue
             exists, value = _get_mustache_key_from_scopes(key, scopes)
-            if exists and _is_mustache_truthy(value):
+            if not exists:
+                missing_placeholders.append(key)
+            elif _is_mustache_truthy(value):
                 if isinstance(value, list):
                     for item in value:
                         _validate_mustache_token_range(
@@ -693,7 +931,9 @@ def _validate_mustache_token_range(
                 index = section_end + 1
                 continue
             exists, value = _get_mustache_key_from_scopes(key, scopes)
-            if not exists or not _is_mustache_truthy(value):
+            if not exists:
+                missing_placeholders.append(key)
+            elif not _is_mustache_truthy(value):
                 _validate_mustache_token_range(
                     tokens,
                     scopes,
@@ -731,24 +971,6 @@ def _validate_mustache_placeholders(
         raise _format_unresolved_placeholder_error(
             missing_placeholders, placeholder_display_map
         )
-
-
-def _extract_undefined_placeholder_names(error_message: str) -> list[str]:
-    if not error_message:
-        return []
-
-    names = []
-    undefined_match = re.findall(r"'([^']+)' is undefined", error_message)
-    if undefined_match:
-        names.extend(undefined_match)
-
-    attribute_match = re.findall(r"has no attribute '([^']+)'", error_message)
-    if attribute_match:
-        names.extend(attribute_match)
-
-    if not names:
-        names.append(error_message)
-    return names
 
 
 def render_template(
@@ -794,49 +1016,53 @@ def render_template(
                 placeholder_display_map=placeholder_display_map,
                 unresolved_placeholders=unresolved_placeholders,
             )
-        return chevron.render(template_str, context)
+        render_context = {
+            key: _wrap_mapping_attribute_values(value) for key, value in context.items()
+        }
+        return chevron.render(template_str, render_context)
 
     elif template_format == TEMPLATE_FORMAT_JINJA2:
-        # Pre-process: handle variable names with spaces (Jinja2 doesn't allow them)
-        import re
-
-        processed = template_str
-        safe_ctx = dict(context)
-        raw_vars = re.findall(r"\{\{\s*([^{}]+?)\s*\}\}", processed)
+        processed, safe_ctx, rewritten_human_placeholders = (
+            _rewrite_unrenderable_jinja_placeholders(template_str, context)
+        )
+        safe_ctx = {
+            key: _wrap_mapping_attribute_values(value) for key, value in safe_ctx.items()
+        }
         if strict:
             _raise_for_strict_unresolved_references(
-                processed, unresolved_placeholders, placeholder_display_map
+                template_str,
+                unresolved_placeholders,
+                placeholder_display_map,
+                context,
             )
-        for var_name in raw_vars:
-            stripped = var_name.strip()
-            if " " in stripped and stripped in safe_ctx:
-                processed = processed.replace(
-                    "{{" + var_name + "}}", str(safe_ctx.pop(stripped))
+            unknown_external_roots = _extract_unknown_jinja_external_roots(
+                template_str, context
+            )
+            if unknown_external_roots:
+                raise _format_unresolved_placeholder_error(
+                    unknown_external_roots, placeholder_display_map
                 )
-                processed = processed.replace(
-                    "{{ " + stripped + " }}", str(context.get(stripped, ""))
-                )
-        if strict:
-            unrenderable_placeholders = [
-                placeholder
-                for placeholder in _extract_unrenderable_named_placeholders(processed)
-                if placeholder not in safe_ctx
-            ]
+            unrenderable_placeholders = []
+            for filter_subject in _extract_unrenderable_named_placeholders(
+                template_str, context
+            ):
+                if (
+                    filter_subject not in context
+                    and filter_subject not in rewritten_human_placeholders
+                ):
+                    unrenderable_placeholders.append(filter_subject)
             if unrenderable_placeholders:
                 raise _format_unresolved_placeholder_error(
                     unrenderable_placeholders, placeholder_display_map
                 )
-
-            strict_env = _jinja2_env.overlay(undefined=StrictUndefined)
-            try:
-                return strict_env.from_string(processed).render(**safe_ctx)
-            except UndefinedError as exc:
-                raise _format_unresolved_placeholder_error(
-                    _extract_undefined_placeholder_names(str(exc)),
-                    placeholder_display_map,
-                ) from exc
-
-        return _jinja2_env.from_string(processed).render(**safe_ctx)
+        jinja_env = _jinja2_strict_env if strict else _jinja2_env
+        try:
+            return jinja_env.from_string(processed).render(**safe_ctx)
+        except UndefinedError as exc:
+            unresolved_placeholder = _resolve_missing_placeholder_reference(
+                str(exc), placeholder_display_map=placeholder_display_map
+            )
+            raise UnresolvedPromptPlaceholdersError(unresolved_placeholder) from exc
 
     else:
         raise ValueError(
@@ -845,12 +1071,47 @@ def render_template(
         )
 
 
-class JsonStr(dict):
+class KeyPriorityDict(dict):
+    """Dict whose dot access prefers explicit keys over dict methods.
+
+    Jinja resolves ``account.items`` with attribute lookup before item lookup for
+    dict-like objects, so method-like keys (``items``, ``keys``, ``values``)
+    otherwise render as bound methods. Only non-private names are key-prioritized
+    so Python internals and private state keep normal attribute behavior.
+    """
+
+    def __getattribute__(self, name):
+        if not name.startswith("_"):
+            try:
+                return dict.__getitem__(self, name)
+            except KeyError:
+                pass
+        return super().__getattribute__(name)
+
+
+def _wrap_mapping_attribute_values(value):
+    """Recursively wrap mappings so template dot access sees keys first."""
+    if isinstance(value, JsonStr):
+        return value
+    if isinstance(value, Mapping):
+        return KeyPriorityDict(
+            {key: _wrap_mapping_attribute_values(child) for key, child in value.items()}
+        )
+    if isinstance(value, list):
+        return [_wrap_mapping_attribute_values(child) for child in value]
+    if isinstance(value, tuple):
+        return tuple(_wrap_mapping_attribute_values(child) for child in value)
+    return value
+
+
+class JsonStr(KeyPriorityDict):
     """Dict subclass that renders as its original JSON string via str()/Jinja.
     Allows {{col.key}} via dict attribute access while {{col}} outputs the raw JSON."""
 
     def __init__(self, data, raw):
-        super().__init__(data)
+        super().__init__(
+            {key: _wrap_mapping_attribute_values(value) for key, value in data.items()}
+        )
         self._raw = raw
 
     def __str__(self):
@@ -883,7 +1144,9 @@ def populate_placeholders(
                         dataset=dataset, column=column, row__id=row_id
                     ).first()
 
+                    sanitized_col_id = sanitize_uuid_for_jinja(column_id)
                     if not cell:
+                        unresolved_placeholders.update({column.name, sanitized_col_id})
                         continue
 
                     # Store raw values for debugging
@@ -891,7 +1154,6 @@ def populate_placeholders(
                         cell.value if cell.value is not None else ""
                     )
 
-                    sanitized_col_id = sanitize_uuid_for_jinja(column_id)
                     if cell.value is None:
                         unresolved_placeholders.update({column.name, sanitized_col_id})
 
@@ -1001,13 +1263,14 @@ def populate_placeholders(
 
             return processed_messages
 
-        except UnresolvedPromptPlaceholdersError:
+        except (UnresolvedPromptPlaceholdersError, TemplateSyntaxError):
+            media_error = True
             raise
         except ValueError:
             media_error = True
             raise
 
-    except UnresolvedPromptPlaceholdersError:
+    except (UnresolvedPromptPlaceholdersError, TemplateSyntaxError):
         raise
     except Exception as e:
         if media_error:
@@ -1188,21 +1451,11 @@ def process_text_with_media(
             if isinstance(value, dict):
                 logger.debug(f"Context[{key}] is dict with keys: {list(value.keys())}")
 
-        placeholder_display_map = {}
-        for match in _UUID_PLACEHOLDER_WITH_WHITESPACE_PATTERN.finditer(text):
-            uuid_str = match.group(1)
-            suffix = match.group(2) or ""
-            sanitized_uuid = sanitize_uuid_for_jinja(uuid_str)
-            placeholder_display_map[sanitized_uuid] = uuid_str
-            if suffix:
-                placeholder_display_map[f"{sanitized_uuid}{suffix}"] = (
-                    f"{uuid_str}{suffix}"
-                )
-
         # IMPORTANT: Sanitize UUID placeholders BEFORE Jinja2 rendering
         # UUIDs contain hyphens which Jinja2 interprets as subtraction operators
         # e.g., {{a1b2c3d4-e5f6-...}} is parsed as "a1b2c3d4 - e5f6 - ..." (subtraction)
         # We replace hyphens with underscores to make valid Jinja2 identifiers
+        placeholder_display_map = _build_placeholder_display_map(text)
         text = _sanitize_uuid_placeholders_for_template(text)
         logger.debug(f"Template after UUID sanitization: {text[:500]}")
 
@@ -1224,22 +1477,14 @@ def process_text_with_media(
                 placeholder_display_map=placeholder_display_map,
                 unresolved_placeholders=unresolved_placeholders,
             )
+        except (UnresolvedPromptPlaceholdersError, TemplateSyntaxError):
+            raise
         except Exception as render_error:
             logger.exception(
                 f"Template rendering failed: {render_error}. Template: {text[:200]}..."
             )
             # Re-raise to see full error - template syntax issue
             raise
-        if strict_render:
-            remaining_placeholders = [
-                placeholder.strip()
-                for placeholder in _JINJA_PLACEHOLDER_PATTERN.findall(processed_text)
-                if placeholder.strip()
-            ]
-            if remaining_placeholders:
-                raise _format_unresolved_placeholder_error(
-                    remaining_placeholders, placeholder_display_map
-                )
         # Process media markers and create segments
         if image_markers:
             return process_media_markers(processed_text, image_markers, model_name)
@@ -1268,9 +1513,8 @@ def process_text_with_media(
 
             return response
     except UnresolvedPromptPlaceholdersError:
-        logger.exception(
-            "Unresolved prompt placeholder while processing text with media"
-        )
+        raise
+    except TemplateSyntaxError:
         raise
     except ValueError as e:
         logger.exception(f"Error VALUEERROR text with media: {e}")
@@ -1746,7 +1990,31 @@ class RunPrompts:
                 self.is_editing = True
             status = CellStatus.PASS.value
             is_llm_error = False
-            # api_call_log_row = None
+            api_call_log_row = None
+
+            def persist_api_call_terminal_status(target_status):
+                if (
+                    not api_call_log_row
+                    or api_call_log_row.status
+                    != APICallStatusChoices.PROCESSING.value
+                ):
+                    return False
+
+                previous_status = api_call_log_row.status
+                api_call_log_row.status = target_status
+                try:
+                    api_call_log_row.save()
+                except Exception:
+                    api_call_log_row.status = previous_status
+                    logger.exception(
+                        "RunPrompts_process_row_api_call_terminal_status_save_failed",
+                        run_prompt_id=str(self.run_prompt_id),
+                        row_id=row_id,
+                        target_status=target_status,
+                    )
+                    raise
+                return True
+
             try:
                 logger.info(
                     "RunPrompts_process_row_validating_api_call",
@@ -1802,38 +2070,11 @@ class RunPrompts:
                     elif (
                         api_call_log_row.status == APICallStatusChoices.PROCESSING.value
                     ):
-                        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-                        api_call_log_row.save()
                         logger.info(
-                            "RunPrompts_process_row_api_call_status_set_success",
+                            "RunPrompts_process_row_api_call_status_processing",
                             run_prompt_id=str(self.run_prompt_id),
                             row_id=row_id,
                         )
-
-                # Dual-write: emit usage event for new billing system
-                try:
-                    try:
-                        from ee.usage.schemas.events import UsageEvent
-                    except ImportError:
-                        UsageEvent = None
-                    try:
-                        from ee.usage.services.emitter import emit
-                    except ImportError:
-                        emit = None
-
-                    if emit is not None and UsageEvent is not None:
-                        emit(
-                            UsageEvent(
-                                org_id=str(self.run_prompt_model.organization.id),
-                                event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
-                                properties={
-                                    "source": "dataset_run_prompt",
-                                    "source_id": str(self.run_prompt_id),
-                                },
-                            )
-                        )
-                except Exception:
-                    pass  # Metering failure must not break the action
 
                 logger.info(
                     "RunPrompts_process_row_populating_placeholders",
@@ -1893,6 +2134,40 @@ class RunPrompts:
                     row_id=row_id,
                 )
                 response, value_info = run_prompt.litellm_response()
+                if persist_api_call_terminal_status(
+                    APICallStatusChoices.SUCCESS.value
+                ):
+                    logger.info(
+                        "RunPrompts_process_row_api_call_status_set_success",
+                        run_prompt_id=str(self.run_prompt_id),
+                        row_id=row_id,
+                    )
+
+                # Dual-write: emit usage event for new billing system only after
+                # placeholder validation and provider dispatch both succeed.
+                try:
+                    try:
+                        from ee.usage.schemas.events import UsageEvent
+                    except ImportError:
+                        UsageEvent = None
+                    try:
+                        from ee.usage.services.emitter import emit
+                    except ImportError:
+                        emit = None
+
+                    if emit is not None and UsageEvent is not None:
+                        emit(
+                            UsageEvent(
+                                org_id=str(self.run_prompt_model.organization.id),
+                                event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
+                                properties={
+                                    "source": "dataset_run_prompt",
+                                    "source_id": str(self.run_prompt_id),
+                                },
+                            )
+                        )
+                except Exception:
+                    pass  # Metering failure must not break the action
                 logger.info(
                     "RunPrompts_process_row_litellm_response_received",
                     run_prompt_id=str(self.run_prompt_id),
@@ -1909,6 +2184,12 @@ class RunPrompts:
                     error=str(e),
                     is_llm_error=is_llm_error,
                 )
+                if persist_api_call_terminal_status(APICallStatusChoices.ERROR.value):
+                    logger.info(
+                        "RunPrompts_process_row_api_call_status_set_error",
+                        run_prompt_id=str(self.run_prompt_id),
+                        row_id=row_id,
+                    )
                 error_message = get_specific_error_message(e, is_llm_error)
                 logger.error(
                     "RunPrompts_process_row_error_message",
