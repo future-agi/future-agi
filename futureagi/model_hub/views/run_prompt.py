@@ -764,7 +764,15 @@ def _raise_for_strict_unresolved_references(
     if not unresolved_placeholders:
         return
 
+    raw_unresolved_references = [
+        expression
+        for expression in _extract_jinja_variable_expressions(template_str)
+        if expression in unresolved_placeholders
+        and (" " in expression or "-" in expression)
+        and _HUMAN_PLACEHOLDER_NAME_PATTERN.fullmatch(expression)
+    ]
     candidate_references = [
+        *raw_unresolved_references,
         *_extract_jinja_ast_references(template_str),
         *_extract_unrenderable_named_placeholders(template_str, context),
     ]
@@ -822,6 +830,42 @@ def _extract_unknown_jinja_external_roots(template_str: str, context: dict) -> l
         seen.add(root)
         unknown.append(root)
     return unknown
+
+
+def _extract_jinja_referenced_roots(template_str: str) -> set[str]:
+    """Return top-level context roots referenced by a parsed Jinja template."""
+    try:
+        ast = _jinja2_env.parse(template_str)
+    except TemplateSyntaxError:
+        return set()
+    return set(meta.find_undeclared_variables(ast))
+
+
+def _extract_mustache_referenced_roots(template_str: str) -> set[str]:
+    """Return top-level context roots referenced by Mustache tokens."""
+    from chevron.tokenizer import tokenize as tokenize_mustache
+
+    referenced_roots: set[str] = set()
+    for tag, key in tokenize_mustache(template_str):
+        if tag not in ("variable", "no escape", "section", "inverted section"):
+            continue
+        key = key.strip()
+        if not key or key == ".":
+            continue
+        referenced_roots.add(key.split(".", maxsplit=1)[0])
+    return referenced_roots
+
+
+def _wrap_referenced_context_roots(
+    context: dict, referenced_roots: set[str]
+) -> dict:
+    """Shallow-copy context and recursively wrap only referenced root values."""
+    render_context = dict(context)
+    for root in referenced_roots:
+        if root in render_context:
+            render_context[root] = _wrap_mapping_attribute_values(render_context[root])
+    return render_context
+
 
 def _get_mustache_key_from_scopes(key: str, scopes: list[Any]) -> tuple[bool, Any]:
     if key == ".":
@@ -1016,18 +1060,16 @@ def render_template(
                 placeholder_display_map=placeholder_display_map,
                 unresolved_placeholders=unresolved_placeholders,
             )
-        render_context = {
-            key: _wrap_mapping_attribute_values(value) for key, value in context.items()
-        }
+        referenced_roots = _extract_mustache_referenced_roots(template_str)
+        render_context = _wrap_referenced_context_roots(context, referenced_roots)
         return chevron.render(template_str, render_context)
 
     elif template_format == TEMPLATE_FORMAT_JINJA2:
         processed, safe_ctx, rewritten_human_placeholders = (
             _rewrite_unrenderable_jinja_placeholders(template_str, context)
         )
-        safe_ctx = {
-            key: _wrap_mapping_attribute_values(value) for key, value in safe_ctx.items()
-        }
+        referenced_roots = _extract_jinja_referenced_roots(processed)
+        safe_ctx = _wrap_referenced_context_roots(safe_ctx, referenced_roots)
         if strict:
             _raise_for_strict_unresolved_references(
                 template_str,
@@ -1991,8 +2033,10 @@ class RunPrompts:
             status = CellStatus.PASS.value
             is_llm_error = False
             api_call_log_row = None
+            api_call_error_status_attempted = False
 
             def persist_api_call_terminal_status(target_status):
+                nonlocal api_call_error_status_attempted
                 if (
                     not api_call_log_row
                     or api_call_log_row.status
@@ -2002,6 +2046,8 @@ class RunPrompts:
 
                 previous_status = api_call_log_row.status
                 api_call_log_row.status = target_status
+                if target_status == APICallStatusChoices.ERROR.value:
+                    api_call_error_status_attempted = True
                 try:
                     api_call_log_row.save()
                 except Exception:
@@ -2014,6 +2060,34 @@ class RunPrompts:
                     )
                     raise
                 return True
+
+            def emit_usage_event():
+                # Dual-write: emit usage event for new billing system only after
+                # placeholder validation, provider dispatch, cell persistence, and
+                # SUCCESS api-call status persistence all succeed.
+                try:
+                    try:
+                        from ee.usage.schemas.events import UsageEvent
+                    except ImportError:
+                        UsageEvent = None
+                    try:
+                        from ee.usage.services.emitter import emit
+                    except ImportError:
+                        emit = None
+
+                    if emit is not None and UsageEvent is not None:
+                        emit(
+                            UsageEvent(
+                                org_id=str(self.run_prompt_model.organization.id),
+                                event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
+                                properties={
+                                    "source": "dataset_run_prompt",
+                                    "source_id": str(self.run_prompt_id),
+                                },
+                            )
+                        )
+                except Exception:
+                    pass  # Metering failure must not break the action
 
             try:
                 logger.info(
@@ -2134,40 +2208,6 @@ class RunPrompts:
                     row_id=row_id,
                 )
                 response, value_info = run_prompt.litellm_response()
-                if persist_api_call_terminal_status(
-                    APICallStatusChoices.SUCCESS.value
-                ):
-                    logger.info(
-                        "RunPrompts_process_row_api_call_status_set_success",
-                        run_prompt_id=str(self.run_prompt_id),
-                        row_id=row_id,
-                    )
-
-                # Dual-write: emit usage event for new billing system only after
-                # placeholder validation and provider dispatch both succeed.
-                try:
-                    try:
-                        from ee.usage.schemas.events import UsageEvent
-                    except ImportError:
-                        UsageEvent = None
-                    try:
-                        from ee.usage.services.emitter import emit
-                    except ImportError:
-                        emit = None
-
-                    if emit is not None and UsageEvent is not None:
-                        emit(
-                            UsageEvent(
-                                org_id=str(self.run_prompt_model.organization.id),
-                                event_type=APICallTypeChoices.DATASET_RUN_PROMPT.value,
-                                properties={
-                                    "source": "dataset_run_prompt",
-                                    "source_id": str(self.run_prompt_id),
-                                },
-                            )
-                        )
-                except Exception:
-                    pass  # Metering failure must not break the action
                 logger.info(
                     "RunPrompts_process_row_litellm_response_received",
                     run_prompt_id=str(self.run_prompt_id),
@@ -2363,6 +2403,17 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     status=status,
                 )
+            if status == CellStatus.PASS.value:
+                if persist_api_call_terminal_status(
+                    APICallStatusChoices.SUCCESS.value
+                ):
+                    logger.info(
+                        "RunPrompts_process_row_api_call_status_set_success",
+                        run_prompt_id=str(self.run_prompt_id),
+                        row_id=row_id,
+                    )
+                    emit_usage_event()
+
             logger.info(
                 "RunPrompts_process_row_completed",
                 run_prompt_id=str(self.run_prompt_id),
@@ -2376,6 +2427,25 @@ class RunPrompts:
                 row_id=row_id,
                 error=str(e),
             )
+            if (
+                "persist_api_call_terminal_status" in locals()
+                and not api_call_error_status_attempted
+            ):
+                try:
+                    if persist_api_call_terminal_status(
+                        APICallStatusChoices.ERROR.value
+                    ):
+                        logger.info(
+                            "RunPrompts_process_row_api_call_status_set_error",
+                            run_prompt_id=str(self.run_prompt_id),
+                            row_id=row_id,
+                        )
+                except Exception:
+                    logger.exception(
+                        "RunPrompts_process_row_api_call_error_status_after_fatal_failed",
+                        run_prompt_id=str(self.run_prompt_id),
+                        row_id=row_id,
+                    )
             raise
         finally:
             logger.info(

@@ -1,5 +1,6 @@
 import sys
 import uuid
+from collections.abc import Mapping
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -104,6 +105,23 @@ def cell(dataset, input_column, row):
 
 def _message(content: str) -> list[dict]:
     return [{"role": "user", "content": content}]
+
+
+class ExplodingItemsMapping(Mapping):
+    def __init__(self, data):
+        self._data = data
+
+    def __getitem__(self, key):
+        return self._data[key]
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __len__(self):
+        return len(self._data)
+
+    def items(self):
+        raise AssertionError("unused mapping should not be recursively wrapped")
 
 
 def test_render_template_default_non_strict_keeps_blank_missing_placeholder():
@@ -328,6 +346,35 @@ def test_render_template_jinja_strict_prefers_mapping_keys_in_loop_items():
     )
 
 
+def test_render_template_jinja_strict_does_not_wrap_unreferenced_mapping_roots():
+    assert (
+        render_template(
+            "{{ used.items }}",
+            {
+                "used": {"items": "Resolved"},
+                "unused": ExplodingItemsMapping({"items": "Do not touch"}),
+            },
+            strict=True,
+        )
+        == "Resolved"
+    )
+
+
+def test_render_template_mustache_strict_does_not_wrap_unreferenced_mapping_roots():
+    assert (
+        render_template(
+            "{{ used.items }}",
+            {
+                "used": {"items": "Resolved"},
+                "unused": ExplodingItemsMapping({"items": "Do not touch"}),
+            },
+            template_format="mustache",
+            strict=True,
+        )
+        == "Resolved"
+    )
+
+
 def test_render_template_jinja_strict_preserves_jsonstr_raw_and_key_access():
     raw_json = '{"items":"Resolved","nested":{"keys":"Nested"}}'
 
@@ -422,6 +469,18 @@ def test_render_template_strict_preserves_spaced_arithmetic_expression():
 
 def test_render_template_strict_preserves_compact_subtraction_expression():
     assert render_template("{{ foo-bar }}", {"foo": 10, "bar": 3}, strict=True) == "7"
+
+
+def test_render_template_strict_unresolved_hyphen_placeholder_fails_before_arithmetic():
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        render_template(
+            "{{customer-name}}",
+            {"customer": 10, "name": 3},
+            strict=True,
+            unresolved_placeholders={"customer-name"},
+        )
+
+    assert "customer-name" in str(exc_info.value)
 
 
 def test_render_template_strict_preserves_compact_numeric_subtraction_expression():
@@ -968,7 +1027,7 @@ def _build_process_row_runner(dataset):
     return runner
 
 
-def test_run_prompts_process_row_success_save_failure_skips_usage_and_creates_error_cell(
+def test_run_prompts_process_row_success_save_failure_skips_usage_after_cell_save(
     monkeypatch,
 ):
     emitted_events = []
@@ -1023,10 +1082,11 @@ def test_run_prompts_process_row_success_save_failure_skips_usage_and_creates_er
     dataset = SimpleNamespace(id=uuid.uuid4(), workspace=SimpleNamespace(id=uuid.uuid4()))
     runner = _build_process_row_runner(dataset)
 
-    runner.process_row(
-        SimpleNamespace(id=uuid.uuid4(), dataset=dataset),
-        SimpleNamespace(id=uuid.uuid4()),
-    )
+    with pytest.raises(RuntimeError, match="success save failed"):
+        runner.process_row(
+            SimpleNamespace(id=uuid.uuid4(), dataset=dataset),
+            SimpleNamespace(id=uuid.uuid4()),
+        )
 
     assert emitted_events == []
     assert attempted_statuses == [
@@ -1034,7 +1094,126 @@ def test_run_prompts_process_row_success_save_failure_skips_usage_and_creates_er
         APICallStatusChoices.ERROR.value,
     ]
     assert api_call_log_row.status == APICallStatusChoices.ERROR.value
+    assert created_cells[0]["status"] == CellStatus.PASS.value
+
+
+def test_run_prompts_process_row_cell_create_failure_marks_api_call_error_and_skips_usage(
+    monkeypatch,
+):
+    emitted_events = []
+    _install_usage_emit_modules(monkeypatch, emitted_events)
+
+    attempted_statuses = []
+    api_call_log_row = SimpleNamespace(
+        id=uuid.uuid4(),
+        status=APICallStatusChoices.PROCESSING.value,
+    )
+
+    def save_api_call_log_row():
+        attempted_statuses.append(api_call_log_row.status)
+
+    api_call_log_row.save = save_api_call_log_row
+
+    monkeypatch.setattr(
+        run_prompt_module,
+        "log_and_deduct_cost_for_api_request",
+        lambda *args, **kwargs: api_call_log_row,
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "populate_placeholders",
+        lambda *args, **kwargs: [{"role": "user", "content": "hi"}],
+    )
+
+    class SuccessfulRunPrompt:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def litellm_response(self):
+            return "provider response", {"data": {"response": "provider response"}}
+
+    monkeypatch.setattr(run_prompt_module, "RunPrompt", SuccessfulRunPrompt)
+
+    def fake_create(**kwargs):
+        raise RuntimeError("cell create failed")
+
+    monkeypatch.setattr(run_prompt_module.Cell.objects, "create", fake_create)
+
+    dataset = SimpleNamespace(id=uuid.uuid4(), workspace=SimpleNamespace(id=uuid.uuid4()))
+    runner = _build_process_row_runner(dataset)
+
+    with pytest.raises(RuntimeError, match="cell create failed"):
+        runner.process_row(
+            SimpleNamespace(id=uuid.uuid4(), dataset=dataset),
+            SimpleNamespace(id=uuid.uuid4()),
+        )
+
+    assert emitted_events == []
+    assert attempted_statuses == [APICallStatusChoices.ERROR.value]
+    assert api_call_log_row.status == APICallStatusChoices.ERROR.value
+
+
+def test_run_prompts_process_row_unresolved_placeholders_skip_provider_and_create_error_cell(
+    monkeypatch,
+):
+    emitted_events = []
+    _install_usage_emit_modules(monkeypatch, emitted_events)
+
+    attempted_statuses = []
+    api_call_log_row = SimpleNamespace(
+        id=uuid.uuid4(),
+        status=APICallStatusChoices.PROCESSING.value,
+    )
+
+    def save_api_call_log_row():
+        attempted_statuses.append(api_call_log_row.status)
+
+    api_call_log_row.save = save_api_call_log_row
+
+    monkeypatch.setattr(
+        run_prompt_module,
+        "log_and_deduct_cost_for_api_request",
+        lambda *args, **kwargs: api_call_log_row,
+    )
+
+    def fail_populate(*args, **kwargs):
+        raise UnresolvedPromptPlaceholdersError("Missing Column")
+
+    monkeypatch.setattr(run_prompt_module, "populate_placeholders", fail_populate)
+    monkeypatch.setattr(
+        run_prompt_module,
+        "get_specific_error_message",
+        lambda exc, is_llm_error=False: str(exc),
+    )
+
+    class ProviderShouldNotBeCalled:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("RunPrompt should not be instantiated")
+
+    monkeypatch.setattr(run_prompt_module, "RunPrompt", ProviderShouldNotBeCalled)
+
+    created_cells = []
+
+    def fake_create(**kwargs):
+        created_cells.append(kwargs)
+        return SimpleNamespace(id=uuid.uuid4(), **kwargs)
+
+    monkeypatch.setattr(run_prompt_module.Cell.objects, "create", fake_create)
+
+    dataset = SimpleNamespace(id=uuid.uuid4(), workspace=SimpleNamespace(id=uuid.uuid4()))
+    runner = _build_process_row_runner(dataset)
+
+    runner.process_row(
+        SimpleNamespace(id=uuid.uuid4(), dataset=dataset),
+        SimpleNamespace(id=uuid.uuid4()),
+    )
+
+    assert emitted_events == []
+    assert attempted_statuses == [APICallStatusChoices.ERROR.value]
+    assert api_call_log_row.status == APICallStatusChoices.ERROR.value
+    assert len(created_cells) == 1
     assert created_cells[0]["status"] == CellStatus.ERROR.value
+    assert "Missing Column" in created_cells[0]["value"]
 
 
 def test_run_prompts_process_row_error_save_failure_raises_without_error_cell(
