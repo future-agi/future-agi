@@ -68,6 +68,27 @@ func TestPreset_Groq(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// 3b. applyProviderPreset — known type "MiniMax" fills BaseURL and APIFormat
+// ---------------------------------------------------------------------------
+
+func TestPreset_MiniMax(t *testing.T) {
+	cfg := &config.ProviderConfig{
+		Type: "MiniMax",
+	}
+	applyProviderPreset(cfg)
+
+	wantURL := "https://api.minimax.io"
+	wantFmt := "openai"
+
+	if cfg.BaseURL != wantURL {
+		t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, wantURL)
+	}
+	if cfg.APIFormat != wantFmt {
+		t.Errorf("APIFormat = %q, want %q", cfg.APIFormat, wantFmt)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // 4. applyProviderPreset — "azure" fills only APIFormat (no BaseURL in preset)
 // ---------------------------------------------------------------------------
 
@@ -146,6 +167,7 @@ func TestPreset_KnownProvidersComplete(t *testing.T) {
 		"anyscale":    {BaseURL: "https://api.endpoints.anyscale.com", APIFormat: "openai"},
 		"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai"},
 		"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai"},
+		"MiniMax":     {BaseURL: "https://api.minimax.io", APIFormat: "openai"},
 		"azure":       {BaseURL: "", APIFormat: "azure"},
 	}
 
