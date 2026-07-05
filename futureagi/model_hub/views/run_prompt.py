@@ -17,6 +17,7 @@ from django.db import close_old_connections
 from django.db.models import Q
 from django.http import Http404
 from drf_yasg.utils import swagger_auto_schema
+from jinja2 import StrictUndefined, TemplateSyntaxError, UndefinedError, nodes
 from jinja2.sandbox import SandboxedEnvironment
 from rest_framework import viewsets
 from rest_framework.generics import CreateAPIView
@@ -85,10 +86,7 @@ from model_hub.utils.utils import (
     remove_empty_text_from_messages,
 )
 from model_hub.views.prompt_template import handle_media
-from model_hub.views.utils.utils import (
-    sanitize_uuid_for_jinja,
-    sanitize_uuids_in_template,
-)
+from model_hub.views.utils.utils import sanitize_uuid_for_jinja
 from tfc.telemetry import wrap_for_thread
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import (
@@ -428,8 +426,338 @@ DEFAULT_TEMPLATE_FORMAT = TEMPLATE_FORMAT_JINJA2
 _jinja2_env = SandboxedEnvironment()
 
 
+class UnresolvedPromptPlaceholdersError(ValueError):
+    """Raised when strict prompt rendering leaves unresolved placeholders."""
+
+
+_JINJA_PLACEHOLDER_PATTERN = re.compile(r"\{\{\s*([^{}]+?)\s*\}\}")
+_UUID_PLACEHOLDER_WITH_WHITESPACE_PATTERN = re.compile(
+    r"\{\{\s*"
+    r"([a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-"
+    r"[a-fA-F0-9]{4}-[a-fA-F0-9]{12})"
+    r"(\.[\w.]+)?\s*\}\}",
+    re.IGNORECASE,
+)
+
+
+def _placeholder_display_name(
+    placeholder: str, placeholder_display_map: dict[str, str] | None = None
+) -> str:
+    if placeholder_display_map and placeholder in placeholder_display_map:
+        return placeholder_display_map[placeholder]
+    return placeholder
+
+
+def _format_unresolved_placeholder_error(
+    placeholders: list[str], placeholder_display_map: dict[str, str] | None = None
+) -> UnresolvedPromptPlaceholdersError:
+    display_placeholders = []
+    seen = set()
+    for placeholder in placeholders:
+        display_placeholder = _placeholder_display_name(
+            placeholder, placeholder_display_map
+        )
+        if display_placeholder in seen:
+            continue
+        seen.add(display_placeholder)
+        display_placeholders.append(display_placeholder)
+    return UnresolvedPromptPlaceholdersError(
+        "Unresolved prompt placeholders: " + ", ".join(display_placeholders)
+    )
+
+
+def _extract_unrenderable_named_placeholders(template_str: str) -> list[str]:
+    if not template_str:
+        return []
+
+    placeholders = []
+    for raw_placeholder in _JINJA_PLACEHOLDER_PATTERN.findall(template_str):
+        placeholder = raw_placeholder.strip()
+        if not placeholder:
+            continue
+        # Column names can contain spaces, but bare Jinja identifiers cannot.
+        # Detect likely human column-name placeholders before Jinja raises a
+        # syntax error that would otherwise be swallowed by legacy fallback code.
+        # Expressions/filters such as {{ missing | default('x') }} are left for
+        # Jinja's normal StrictUndefined/default-filter semantics.
+        if " " in placeholder and re.match(r"^[\w -]+$", placeholder):
+            placeholders.append(placeholder)
+    return placeholders
+
+
+def _sanitize_uuid_placeholders_for_template(text: str) -> str:
+    if not text:
+        return text or ""
+
+    def replace_match(match):
+        uuid_str = match.group(1)
+        suffix = match.group(2) or ""
+        return "{{" + sanitize_uuid_for_jinja(uuid_str) + suffix + "}}"
+
+    return _UUID_PLACEHOLDER_WITH_WHITESPACE_PATTERN.sub(replace_match, text)
+
+
+def _extract_simple_placeholder_references(template_str: str) -> list[str]:
+    if not template_str:
+        return []
+
+    references = []
+    for raw_placeholder in _JINJA_PLACEHOLDER_PATTERN.findall(template_str):
+        placeholder = raw_placeholder.strip()
+        if not placeholder:
+            continue
+        if placeholder[0] in ("#", "^", "/", "!", ">", "=", "&"):
+            placeholder = placeholder[1:].strip()
+        if re.match(r"^[\w .-]+$", placeholder):
+            references.append(placeholder)
+    return references
+
+
+def _jinja_reference_from_node(node: nodes.Node) -> str | None:
+    if isinstance(node, nodes.Name):
+        return node.name
+    if isinstance(node, nodes.Getattr):
+        base = _jinja_reference_from_node(node.node)
+        return f"{base}.{node.attr}" if base else None
+    if isinstance(node, nodes.Getitem):
+        base = _jinja_reference_from_node(node.node)
+        if not base:
+            return None
+        if isinstance(node.arg, nodes.Const) and isinstance(node.arg.value, str):
+            return f"{base}.{node.arg.value}"
+        return base
+    return None
+
+
+def _extract_jinja_ast_references(template_str: str) -> list[str]:
+    """Return root and dotted references used by Jinja expressions.
+
+    This catches unresolved null-backed placeholders even when Jinja filters (for
+    example ``default``) would otherwise render a fallback and hide the missing
+    cell.
+    """
+    try:
+        ast = _jinja2_env.parse(template_str)
+    except TemplateSyntaxError:
+        return []
+
+    references: list[str] = []
+    seen = set()
+    for node in ast.find_all((nodes.Name, nodes.Getattr, nodes.Getitem)):
+        reference = _jinja_reference_from_node(node)
+        if reference and reference not in seen:
+            seen.add(reference)
+            references.append(reference)
+    return references
+
+
+def _is_unresolved_placeholder_reference(
+    placeholder: str, unresolved_placeholders: set[str] | None
+) -> bool:
+    if not unresolved_placeholders:
+        return False
+    return any(
+        placeholder == unresolved
+        or placeholder.startswith(f"{unresolved}.")
+        for unresolved in unresolved_placeholders
+    )
+
+
+def _raise_for_strict_unresolved_references(
+    template_str: str,
+    unresolved_placeholders: set[str] | None,
+    placeholder_display_map: dict[str, str] | None = None,
+) -> None:
+    if not unresolved_placeholders:
+        return
+
+    candidate_references = [
+        *_extract_simple_placeholder_references(template_str),
+        *_extract_jinja_ast_references(template_str),
+    ]
+    referenced_unresolved = []
+    seen = set()
+    for placeholder in candidate_references:
+        if placeholder in seen:
+            continue
+        seen.add(placeholder)
+        if _is_unresolved_placeholder_reference(placeholder, unresolved_placeholders):
+            referenced_unresolved.append(placeholder)
+
+    if referenced_unresolved:
+        raise _format_unresolved_placeholder_error(
+            referenced_unresolved, placeholder_display_map
+        )
+
+
+def _get_mustache_key_from_scopes(key: str, scopes: list[Any]) -> tuple[bool, Any]:
+    if key == ".":
+        return True, scopes[0] if scopes else None
+
+    for scope in scopes:
+        current = scope
+        try:
+            for child in key.split("."):
+                try:
+                    current = current[child]
+                except (TypeError, AttributeError, KeyError):
+                    current = getattr(current, child)
+            return True, current
+        except (AttributeError, KeyError, IndexError, TypeError, ValueError):
+            continue
+    return False, None
+
+
+def _find_mustache_section_end(tokens: list[tuple[str, str]], start_index: int) -> int:
+    section_name = tokens[start_index][1]
+    depth = 0
+    for index in range(start_index + 1, len(tokens)):
+        tag, key = tokens[index]
+        if tag in ("section", "inverted section") and key == section_name:
+            depth += 1
+        elif tag == "end" and key == section_name:
+            if depth == 0:
+                return index
+            depth -= 1
+    return len(tokens)
+
+
+def _is_mustache_truthy(value: Any) -> bool:
+    return bool(value)
+
+
+def _validate_mustache_token_range(
+    tokens: list[tuple[str, str]],
+    scopes: list[Any],
+    start_index: int,
+    end_index: int,
+    missing_placeholders: list[str],
+    unresolved_placeholders: set[str] | None = None,
+) -> None:
+    index = start_index
+    while index < end_index:
+        tag, key = tokens[index]
+        if tag in ("variable", "no escape"):
+            if _is_unresolved_placeholder_reference(key, unresolved_placeholders):
+                missing_placeholders.append(key)
+            else:
+                exists, value = _get_mustache_key_from_scopes(key, scopes)
+                if not exists or value is None:
+                    missing_placeholders.append(key)
+            index += 1
+            continue
+
+        if tag == "section":
+            section_end = _find_mustache_section_end(tokens, index)
+            if _is_unresolved_placeholder_reference(key, unresolved_placeholders):
+                missing_placeholders.append(key)
+                index = section_end + 1
+                continue
+            exists, value = _get_mustache_key_from_scopes(key, scopes)
+            if exists and _is_mustache_truthy(value):
+                if isinstance(value, list):
+                    for item in value:
+                        _validate_mustache_token_range(
+                            tokens,
+                            [item, *scopes],
+                            index + 1,
+                            section_end,
+                            missing_placeholders,
+                            unresolved_placeholders,
+                        )
+                elif isinstance(value, dict):
+                    _validate_mustache_token_range(
+                        tokens,
+                        [value, *scopes],
+                        index + 1,
+                        section_end,
+                        missing_placeholders,
+                        unresolved_placeholders,
+                    )
+                else:
+                    _validate_mustache_token_range(
+                        tokens,
+                        scopes,
+                        index + 1,
+                        section_end,
+                        missing_placeholders,
+                        unresolved_placeholders,
+                    )
+            index = section_end + 1
+            continue
+
+        if tag == "inverted section":
+            section_end = _find_mustache_section_end(tokens, index)
+            if _is_unresolved_placeholder_reference(key, unresolved_placeholders):
+                missing_placeholders.append(key)
+                index = section_end + 1
+                continue
+            exists, value = _get_mustache_key_from_scopes(key, scopes)
+            if not exists or not _is_mustache_truthy(value):
+                _validate_mustache_token_range(
+                    tokens,
+                    scopes,
+                    index + 1,
+                    section_end,
+                    missing_placeholders,
+                    unresolved_placeholders,
+                )
+            index = section_end + 1
+            continue
+
+        index += 1
+
+
+def _validate_mustache_placeholders(
+    template_str: str,
+    context: dict,
+    placeholder_display_map: dict[str, str] | None = None,
+    unresolved_placeholders: set[str] | None = None,
+) -> None:
+    from chevron.tokenizer import tokenize as tokenize_mustache
+
+    missing_placeholders = []
+    tokens = list(tokenize_mustache(template_str))
+    _validate_mustache_token_range(
+        tokens,
+        [context],
+        0,
+        len(tokens),
+        missing_placeholders,
+        unresolved_placeholders,
+    )
+
+    if missing_placeholders:
+        raise _format_unresolved_placeholder_error(
+            missing_placeholders, placeholder_display_map
+        )
+
+
+def _extract_undefined_placeholder_names(error_message: str) -> list[str]:
+    if not error_message:
+        return []
+
+    names = []
+    undefined_match = re.findall(r"'([^']+)' is undefined", error_message)
+    if undefined_match:
+        names.extend(undefined_match)
+
+    attribute_match = re.findall(r"has no attribute '([^']+)'", error_message)
+    if attribute_match:
+        names.extend(attribute_match)
+
+    if not names:
+        names.append(error_message)
+    return names
+
+
 def render_template(
-    template_str: str, context: dict, template_format: str = None
+    template_str: str,
+    context: dict,
+    template_format: str = None,
+    strict: bool = False,
+    placeholder_display_map: dict[str, str] | None = None,
+    unresolved_placeholders: set[str] | None = None,
 ) -> str:
     """
     Render a template string with the given context.
@@ -439,6 +767,12 @@ def render_template(
         template_str: The template string
         context: Dictionary of variables to substitute
         template_format: One of 'f-string', 'mustache', 'jinja2' (default: jinja2)
+        strict: When True, unresolved placeholders raise ValueError instead of
+            rendering as blank output.
+        placeholder_display_map: Optional mapping from sanitized placeholder
+            names back to their original display form for clearer errors.
+        unresolved_placeholders: Optional names that exist in the backing row but
+            are unresolved for strict rendering, such as null cell values.
 
     Returns:
         Rendered string
@@ -453,6 +787,13 @@ def render_template(
         return template_str.format(**context)
 
     elif template_format == TEMPLATE_FORMAT_MUSTACHE:
+        if strict:
+            _validate_mustache_placeholders(
+                template_str,
+                context,
+                placeholder_display_map=placeholder_display_map,
+                unresolved_placeholders=unresolved_placeholders,
+            )
         return chevron.render(template_str, context)
 
     elif template_format == TEMPLATE_FORMAT_JINJA2:
@@ -462,6 +803,10 @@ def render_template(
         processed = template_str
         safe_ctx = dict(context)
         raw_vars = re.findall(r"\{\{\s*([^{}]+?)\s*\}\}", processed)
+        if strict:
+            _raise_for_strict_unresolved_references(
+                processed, unresolved_placeholders, placeholder_display_map
+            )
         for var_name in raw_vars:
             stripped = var_name.strip()
             if " " in stripped and stripped in safe_ctx:
@@ -471,6 +816,26 @@ def render_template(
                 processed = processed.replace(
                     "{{ " + stripped + " }}", str(context.get(stripped, ""))
                 )
+        if strict:
+            unrenderable_placeholders = [
+                placeholder
+                for placeholder in _extract_unrenderable_named_placeholders(processed)
+                if placeholder not in safe_ctx
+            ]
+            if unrenderable_placeholders:
+                raise _format_unresolved_placeholder_error(
+                    unrenderable_placeholders, placeholder_display_map
+                )
+
+            strict_env = _jinja2_env.overlay(undefined=StrictUndefined)
+            try:
+                return strict_env.from_string(processed).render(**safe_ctx)
+            except UndefinedError as exc:
+                raise _format_unresolved_placeholder_error(
+                    _extract_undefined_placeholder_names(str(exc)),
+                    placeholder_display_map,
+                ) from exc
+
         return _jinja2_env.from_string(processed).render(**safe_ctx)
 
     else:
@@ -495,8 +860,8 @@ class JsonStr(dict):
 def populate_placeholders(
     messages: list[dict], dataset_id, row_id, col_id, model_name, template_format=None
 ):
+    media_error = False
     try:
-        media_error = None
         # Debug: Log input messages to see what template we're processing
         logger.info(f"populate_placeholders called with messages: {messages}")
 
@@ -507,6 +872,7 @@ def populate_placeholders(
         context: dict[str, Any] = {}
         column_info = {}  # For image handling
         raw_values = {}  # For debugging
+        unresolved_placeholders: set[str] = set()
 
         # Collect column values
         for column_id in column_ids:
@@ -524,6 +890,10 @@ def populate_placeholders(
                     raw_values[column.name] = (
                         cell.value if cell.value is not None else ""
                     )
+
+                    sanitized_col_id = sanitize_uuid_for_jinja(column_id)
+                    if cell.value is None:
+                        unresolved_placeholders.update({column.name, sanitized_col_id})
 
                     # Store column info for image handling
                     column_info[column_id] = {
@@ -568,7 +938,6 @@ def populate_placeholders(
                             current = current[part]
 
                     # Store at sanitized column_id level (hyphens -> underscores for Jinja2)
-                    sanitized_col_id = sanitize_uuid_for_jinja(column_id)
                     context[sanitized_col_id] = cell_value
 
                     # Debug: Log what we're adding to context
@@ -607,6 +976,7 @@ def populate_placeholders(
                         image_counter,
                         model_name,
                         template_format=template_format,
+                        unresolved_placeholders=unresolved_placeholders,
                     )
                 elif isinstance(content, str):
                     processed_content = process_string_content(
@@ -616,6 +986,7 @@ def populate_placeholders(
                         image_counter,
                         model_name,
                         template_format=template_format,
+                        unresolved_placeholders=unresolved_placeholders,
                     )
 
                 # If no content was processed, keep original
@@ -630,22 +1001,31 @@ def populate_placeholders(
 
             return processed_messages
 
-        except ValueError as e:
+        except UnresolvedPromptPlaceholdersError:
+            raise
+        except ValueError:
             media_error = True
-            raise e
+            raise
 
+    except UnresolvedPromptPlaceholdersError:
+        raise
     except Exception as e:
         if media_error:
-            raise e
-        else:
-            traceback.print_exc()
-            logger.exception(f"Fatal error processing messages: {e}")
-            # Return original messages as fallback
-            return messages
+            raise
+        traceback.print_exc()
+        logger.exception(f"Fatal error processing messages: {e}")
+        # Return original messages as fallback
+        return messages
 
 
 def process_list_content(
-    content, column_info, context, image_counter, model_name, template_format=None
+    content,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    unresolved_placeholders=None,
 ):
     """Process list-type content with proper media handling"""
     processed_content = []
@@ -660,6 +1040,7 @@ def process_list_content(
                 image_counter,
                 model_name,
                 template_format=template_format,
+                unresolved_placeholders=unresolved_placeholders,
             )
             processed_content.extend(text_segments)
         else:
@@ -675,7 +1056,13 @@ def process_list_content(
 
 
 def process_string_content(
-    content, column_info, context, image_counter, model_name, template_format=None
+    content,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    unresolved_placeholders=None,
 ):
     """Process string-type content with proper media handling"""
     return process_text_with_media(
@@ -685,13 +1072,21 @@ def process_string_content(
         image_counter,
         model_name,
         template_format=template_format,
+        unresolved_placeholders=unresolved_placeholders,
     )
 
 
 def process_text_with_media(
-    text, column_info, context, image_counter, model_name, template_format=None
+    text,
+    column_info,
+    context,
+    image_counter,
+    model_name,
+    template_format=None,
+    unresolved_placeholders=None,
 ):
     """Process text content, handling both templates and media placeholders"""
+    strict_render = False
     try:
         # Get the text and fix doubled-up quotes
         text = fix_double_quotes(text)
@@ -793,21 +1188,41 @@ def process_text_with_media(
             if isinstance(value, dict):
                 logger.debug(f"Context[{key}] is dict with keys: {list(value.keys())}")
 
+        placeholder_display_map = {}
+        for match in _UUID_PLACEHOLDER_WITH_WHITESPACE_PATTERN.finditer(text):
+            uuid_str = match.group(1)
+            suffix = match.group(2) or ""
+            sanitized_uuid = sanitize_uuid_for_jinja(uuid_str)
+            placeholder_display_map[sanitized_uuid] = uuid_str
+            if suffix:
+                placeholder_display_map[f"{sanitized_uuid}{suffix}"] = (
+                    f"{uuid_str}{suffix}"
+                )
+
         # IMPORTANT: Sanitize UUID placeholders BEFORE Jinja2 rendering
         # UUIDs contain hyphens which Jinja2 interprets as subtraction operators
         # e.g., {{a1b2c3d4-e5f6-...}} is parsed as "a1b2c3d4 - e5f6 - ..." (subtraction)
         # We replace hyphens with underscores to make valid Jinja2 identifiers
-        text = sanitize_uuids_in_template(text)
+        text = _sanitize_uuid_placeholders_for_template(text)
         logger.debug(f"Template after UUID sanitization: {text[:500]}")
 
         # Render template using multi-format renderer
         # Map frontend format names to backend constants
-        effective_format = template_format
+        effective_format = template_format or DEFAULT_TEMPLATE_FORMAT
         if effective_format == "jinja":
             effective_format = TEMPLATE_FORMAT_JINJA2
+        strict_render = effective_format in (
+            TEMPLATE_FORMAT_JINJA2,
+            TEMPLATE_FORMAT_MUSTACHE,
+        )
         try:
             processed_text = render_template(
-                text, context, template_format=effective_format
+                text,
+                context,
+                template_format=effective_format,
+                strict=strict_render,
+                placeholder_display_map=placeholder_display_map,
+                unresolved_placeholders=unresolved_placeholders,
             )
         except Exception as render_error:
             logger.exception(
@@ -815,14 +1230,16 @@ def process_text_with_media(
             )
             # Re-raise to see full error - template syntax issue
             raise
-        uuid_pattern = r"\{\{[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}\}\}"
-        if re.search(uuid_pattern, processed_text, re.IGNORECASE):
-            logger.warning(
-                f"Found unreplaced UUID placeholders in processed text: {processed_text}"
-            )
-            processed_text = re.sub(
-                uuid_pattern, "", processed_text, flags=re.IGNORECASE
-            )
+        if strict_render:
+            remaining_placeholders = [
+                placeholder.strip()
+                for placeholder in _JINJA_PLACEHOLDER_PATTERN.findall(processed_text)
+                if placeholder.strip()
+            ]
+            if remaining_placeholders:
+                raise _format_unresolved_placeholder_error(
+                    remaining_placeholders, placeholder_display_map
+                )
         # Process media markers and create segments
         if image_markers:
             return process_media_markers(processed_text, image_markers, model_name)
@@ -850,13 +1267,28 @@ def process_text_with_media(
                 )
 
             return response
+    except UnresolvedPromptPlaceholdersError:
+        logger.exception(
+            "Unresolved prompt placeholder while processing text with media"
+        )
+        raise
     except ValueError as e:
         logger.exception(f"Error VALUEERROR text with media: {e}")
-        raise e
+        raise
     except Exception as e:
         logger.exception(f"Error processing text with media: {e}")
         logger.exception(f"Template text: {text[:200]}...")
         logger.exception(f"Context keys: {list(context.keys())}")
+        if strict_render:
+            remaining_placeholders = [
+                placeholder.strip()
+                for placeholder in _JINJA_PLACEHOLDER_PATTERN.findall(text)
+                if placeholder.strip()
+            ]
+            if remaining_placeholders:
+                raise _format_unresolved_placeholder_error(
+                    remaining_placeholders, locals().get("placeholder_display_map")
+                ) from e
         # Fallback to original text
         response = [{"type": "text", "text": text}]
         if is_pdf:
