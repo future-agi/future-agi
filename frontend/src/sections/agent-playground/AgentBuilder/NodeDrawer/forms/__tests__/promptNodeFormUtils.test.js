@@ -248,4 +248,43 @@ describe("buildPatchPayload", () => {
     expect(patch.prompt_template.tools).toEqual(formData.modelConfig.tools);
     expect(patch.prompt_template.messages).toEqual(formData.messages);
   });
+
+  it("uses config outputFormat when payload configuration omits output_format", () => {
+    const patch = buildPatchPayload(
+      {
+        label: "imported_prompt",
+        config: {
+          outputFormat: "json",
+          templateFormat: "jinja",
+          modelConfig: {
+            model: "gpt-4o-mini",
+            responseFormat: "json",
+          },
+          messages: [
+            {
+              id: "msg-0",
+              role: "user",
+              content: [{ type: "text", text: "Return JSON for {{topic}}" }],
+            },
+          ],
+          payload: {
+            promptConfig: [
+              {
+                configuration: {
+                  template_format: "jinja",
+                },
+              },
+            ],
+          },
+        },
+      },
+      {
+        prompt_template_id: null,
+        prompt_version_id: null,
+      },
+    );
+
+    expect(patch.prompt_template.output_format).toBe("json");
+    expect(patch.prompt_template.template_format).toBe("jinja");
+  });
 });

@@ -30,12 +30,9 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { enqueueSnackbar } from "notistack";
 
 const SUPPORTED_PROMPT_ROLES = new Set(["system", "user", "assistant"]);
-const SUPPORTED_CONTENT_TYPES = new Set([
-  "text",
-  "image_url",
-  "pdf_url",
-  "audio_url",
-]);
+// Library templates are shared content; do not import remote media URL blocks
+// into runnable agent nodes until server-side URL validation/proxying exists.
+const SUPPORTED_CONTENT_TYPES = new Set(["text"]);
 
 function normalizeTemplateContentBlock(block) {
   if (typeof block === "string") {
@@ -54,24 +51,6 @@ function normalizeTemplateContentBlock(block) {
     return typeof block.text === "string"
       ? { ...block, type: "text", text: block.text }
       : null;
-  }
-
-  const mediaValue = block[block.type];
-  if (typeof mediaValue === "string" && mediaValue.trim().length > 0) {
-    return {
-      ...block,
-      type: block.type,
-      [block.type]: { url: mediaValue },
-    };
-  }
-
-  if (
-    mediaValue &&
-    typeof mediaValue === "object" &&
-    typeof mediaValue.url === "string" &&
-    mediaValue.url.trim().length > 0
-  ) {
-    return { ...block, type: block.type, [block.type]: mediaValue };
   }
 
   return null;

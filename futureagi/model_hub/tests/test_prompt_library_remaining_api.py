@@ -219,7 +219,23 @@ def test_prompt_base_template_list_accepts_generated_and_legacy_pagination(
     )
 
     assert generated_response.status_code == http_status.HTTP_200_OK
-    generated_payload = generated_response.json()["result"]
+    generated_response_body = generated_response.json()
+    assert [row["name"] for row in generated_response_body["results"]] == [
+        "Pagination base template 05",
+        "Pagination base template 06",
+        "Pagination base template 07",
+        "Pagination base template 08",
+        "Pagination base template 09",
+    ]
+    assert generated_response_body["count"] == 12
+    assert generated_response_body["next"] is not None
+    assert "page=3" in generated_response_body["next"]
+    assert "limit=5" in generated_response_body["next"]
+    assert generated_response_body["previous"] is not None
+    assert "page=1" in generated_response_body["previous"]
+    assert "limit=5" in generated_response_body["previous"]
+
+    generated_payload = generated_response_body["result"]
     assert [row["name"] for row in generated_payload["results"]] == [
         "Pagination base template 05",
         "Pagination base template 06",
@@ -231,8 +247,8 @@ def test_prompt_base_template_list_accepts_generated_and_legacy_pagination(
     assert generated_payload["count"] == 12
     assert generated_payload["total_count"] == 12
     assert generated_payload["total_pages"] == 3
-    assert generated_payload["next"] == 3
-    assert generated_payload["previous"] == 1
+    assert generated_payload["next"] == generated_response_body["next"]
+    assert generated_payload["previous"] == generated_response_body["previous"]
 
     legacy_response = auth_client.get(
         "/model-hub/prompt-base-templates/",
@@ -246,7 +262,18 @@ def test_prompt_base_template_list_accepts_generated_and_legacy_pagination(
     )
 
     assert legacy_response.status_code == http_status.HTTP_200_OK
-    legacy_payload = legacy_response.json()["result"]
+    legacy_response_body = legacy_response.json()
+    assert [row["name"] for row in legacy_response_body["results"]] == [
+        "Pagination base template 10",
+        "Pagination base template 11",
+    ]
+    assert legacy_response_body["count"] == 12
+    assert legacy_response_body["next"] is None
+    assert legacy_response_body["previous"] is not None
+    assert "page=2" in legacy_response_body["previous"]
+    assert "limit=5" in legacy_response_body["previous"]
+
+    legacy_payload = legacy_response_body["result"]
     assert [row["name"] for row in legacy_payload["data"]] == [
         "Pagination base template 10",
         "Pagination base template 11",
@@ -255,7 +282,19 @@ def test_prompt_base_template_list_accepts_generated_and_legacy_pagination(
     assert legacy_payload["count"] == 12
     assert legacy_payload["total_count"] == 12
     assert legacy_payload["next"] is None
-    assert legacy_payload["previous"] == 2
+    assert legacy_payload["previous"] == legacy_response_body["previous"]
+
+    invalid_response = auth_client.get(
+        "/model-hub/prompt-base-templates/",
+        {"limit": "not-a-number", "page": 1},
+    )
+    assert invalid_response.status_code == http_status.HTTP_400_BAD_REQUEST
+
+    zero_limit_response = auth_client.get(
+        "/model-hub/prompt-base-templates/",
+        {"limit": 0, "page": 1},
+    )
+    assert zero_limit_response.status_code == http_status.HTTP_400_BAD_REQUEST
 
 
 @pytest.mark.django_db

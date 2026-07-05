@@ -95,10 +95,10 @@ const libraryTemplate = {
   },
 };
 
-const multimodalLibraryTemplate = {
+const remoteMediaLibraryTemplate = {
   ...libraryTemplate,
-  id: "library-template-multimodal",
-  name: "Library Multimodal Template",
+  id: "library-template-remote-media",
+  name: "Library Remote Media Template",
   prompt_config_snapshot: {
     messages: [
       {
@@ -319,48 +319,24 @@ describe("PromptNodePopper", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("seeds an LLM prompt from a multimodal library template", () => {
+  it("rejects library templates with remote media URL blocks", () => {
     const onClose = vi.fn();
     const onNodeSelect = vi.fn();
     useGetLibraryTemplatesInfinite.mockReturnValue(
-      libraryTemplatesResult([multimodalLibraryTemplate]),
+      libraryTemplatesResult([remoteMediaLibraryTemplate]),
     );
 
     renderPopper({ onClose, onNodeSelect });
 
-    fireEvent.click(screen.getByText(multimodalLibraryTemplate.name));
+    fireEvent.click(screen.getByText(remoteMediaLibraryTemplate.name));
 
-    expect(onNodeSelect).toHaveBeenCalledWith(
-      "llm_prompt",
-      "node-template-llm-prompt",
-      expect.objectContaining({
-        name: multimodalLibraryTemplate.name,
-        prompt_template_id: null,
-        prompt_version_id: null,
-        modelConfig: expect.objectContaining({ model: "" }),
-        messages: expect.arrayContaining([
-          expect.objectContaining({
-            role: "user",
-            content: [
-              { type: "text", text: "Describe the attached context." },
-              {
-                type: "image_url",
-                image_url: { url: "https://example.com/image.png" },
-              },
-              {
-                type: "pdf_url",
-                pdf_url: { url: "https://example.com/doc.pdf" },
-              },
-              {
-                type: "audio_url",
-                audio_url: { url: "https://example.com/audio.mp3" },
-              },
-            ],
-          }),
-        ]),
-      }),
+    expect(onNodeSelect).not.toHaveBeenCalled();
+    expect(mockAddNode).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(enqueueSnackbar).toHaveBeenCalledWith(
+      "This library template can't be added because its prompt configuration isn't compatible with LLM prompt nodes.",
+      { variant: "error" },
     );
-    expect(onClose).toHaveBeenCalled();
   });
 
   it("rejects incompatible library template snapshots without adding a node", () => {
