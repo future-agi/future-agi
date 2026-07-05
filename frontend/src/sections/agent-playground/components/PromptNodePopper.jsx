@@ -207,7 +207,11 @@ export default function PromptNodePopper({
   const libraryTemplates = useMemo(
     () =>
       libraryTemplatesData?.pages?.flatMap(
-        (p) => p.data?.result?.data ?? p.data?.results ?? [],
+        (p) =>
+          p.data?.result?.data ??
+          p.data?.result?.results ??
+          p.data?.results ??
+          [],
       ) ?? [],
     [libraryTemplatesData],
   );

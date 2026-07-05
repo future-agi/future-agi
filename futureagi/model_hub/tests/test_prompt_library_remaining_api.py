@@ -2,6 +2,7 @@ import pytest
 from rest_framework import status as http_status
 
 from accounts.models.workspace import Workspace
+from model_hub.models.prompt_base_template import PromptBaseTemplate
 from model_hub.models.prompt_folders import PromptFolder
 from model_hub.models.run_prompt import PromptTemplate, PromptVersion
 from tfc.middleware.workspace_context import clear_workspace_context
@@ -188,6 +189,73 @@ def test_prompt_execution_list_tolerates_empty_prompt_config_snapshot(
     created_row = next(row for row in rows if row["id"] == str(template.id))
     assert created_row["model"] is None
     assert created_row["model_detail"] is None
+
+
+@pytest.mark.django_db
+def test_prompt_base_template_list_accepts_generated_and_legacy_pagination(
+    auth_client, organization, workspace, user
+):
+    for index in range(12):
+        PromptBaseTemplate.no_workspace_objects.create(
+            name=f"Pagination base template {index:02d}",
+            organization=organization,
+            workspace=workspace,
+            created_by=user,
+            category="pagination",
+            prompt_config_snapshot=_prompt_config(
+                f"Pagination template {index:02d} {{{{name}}}}"
+            ),
+        )
+
+    generated_response = auth_client.get(
+        "/model-hub/prompt-base-templates/",
+        {
+            "category": "pagination",
+            "sort_by": "name",
+            "sort_order": "asc",
+            "limit": 5,
+            "page": 2,
+        },
+    )
+
+    assert generated_response.status_code == http_status.HTTP_200_OK
+    generated_payload = generated_response.json()["result"]
+    assert [row["name"] for row in generated_payload["results"]] == [
+        "Pagination base template 05",
+        "Pagination base template 06",
+        "Pagination base template 07",
+        "Pagination base template 08",
+        "Pagination base template 09",
+    ]
+    assert generated_payload["data"] == generated_payload["results"]
+    assert generated_payload["count"] == 12
+    assert generated_payload["total_count"] == 12
+    assert generated_payload["total_pages"] == 3
+    assert generated_payload["next"] == 3
+    assert generated_payload["previous"] == 1
+
+    legacy_response = auth_client.get(
+        "/model-hub/prompt-base-templates/",
+        {
+            "category": "pagination",
+            "sort_by": "name",
+            "sort_order": "asc",
+            "page_size": 5,
+            "page_number": 2,
+        },
+    )
+
+    assert legacy_response.status_code == http_status.HTTP_200_OK
+    legacy_payload = legacy_response.json()["result"]
+    assert [row["name"] for row in legacy_payload["data"]] == [
+        "Pagination base template 10",
+        "Pagination base template 11",
+    ]
+    assert legacy_payload["results"] == legacy_payload["data"]
+    assert legacy_payload["count"] == 12
+    assert legacy_payload["total_count"] == 12
+    assert legacy_payload["next"] is None
+    assert legacy_payload["previous"] == 2
 
 
 @pytest.mark.django_db

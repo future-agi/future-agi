@@ -103,8 +103,18 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         try:
             name = request.query_params.get("name")
             category = request.query_params.get("category")
-            page_size = int(request.query_params.get("page_size", 10))
-            page_number = int(request.query_params.get("page_number", 0))
+            page_size = max(
+                int(
+                    request.query_params.get(
+                        "limit", request.query_params.get("page_size", 10)
+                    )
+                ),
+                1,
+            )
+            if "page" in request.query_params:
+                page_number = max(int(request.query_params.get("page", 1)) - 1, 0)
+            else:
+                page_number = int(request.query_params.get("page_number", 0))
             start = page_number * page_size
             end = start + page_size
             sort_by = request.query_params.get("sort_by", "created_at")
@@ -140,11 +150,17 @@ class PromptBaseTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             ).data
 
             total_pages = math.ceil(total_count / page_size)
+            next_page = page_number + 2 if page_number + 1 < total_pages else None
+            previous_page = page_number if page_number > 0 else None
             return self._gm.success_response(
                 {
                     "data": response,
+                    "results": response,
                     "total_count": total_count,
+                    "count": total_count,
                     "total_pages": total_pages,
+                    "next": next_page,
+                    "previous": previous_page,
                 }
             )
         except Exception as e:

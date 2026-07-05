@@ -99,11 +99,11 @@ export const useGetPromptTemplatesInfinite = (search, options = {}) =>
 const LIBRARY_TEMPLATE_PAGE_SIZE = 10;
 
 function getLibraryTemplateItems(data) {
-  return data?.results ?? data?.result?.data ?? [];
+  return data?.results ?? data?.result?.results ?? data?.result?.data ?? [];
 }
 
 function getLibraryTemplateTotalCount(data) {
-  return data?.count ?? data?.result?.total_count ?? 0;
+  return data?.count ?? data?.result?.count ?? data?.result?.total_count ?? 0;
 }
 
 /**
@@ -126,7 +126,9 @@ export const useGetLibraryTemplatesInfinite = (search, options = {}) =>
         signal,
       }),
     getNextPageParam: (lastPage, allPages) => {
-      if (lastPage.data?.next) return allPages.length + 1;
+      if (lastPage.data?.next || lastPage.data?.result?.next) {
+        return allPages.length + 1;
+      }
 
       const totalCount = getLibraryTemplateTotalCount(lastPage.data);
       const fetchedCount = allPages.reduce(

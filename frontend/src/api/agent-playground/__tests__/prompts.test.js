@@ -142,6 +142,53 @@ describe("useGetLibraryTemplatesInfinite", () => {
     );
   });
 
+  it("reads wrapped generated library template result envelopes", async () => {
+    axios.get
+      .mockResolvedValueOnce({
+        data: {
+          result: {
+            count: 11,
+            next: 2,
+            previous: null,
+            results: templates(10),
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          result: {
+            count: 11,
+            next: null,
+            previous: 1,
+            results: templates(1, "wrapped-next"),
+          },
+        },
+      });
+
+    const { result } = renderHook(
+      () => useGetLibraryTemplatesInfinite("wrapped"),
+      { wrapper: createQueryWrapper() },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+
+    result.current.fetchNextPage();
+
+    await waitFor(() => expect(axios.get).toHaveBeenCalledTimes(2));
+
+    expect(axios.get).toHaveBeenLastCalledWith(
+      "/model-hub/prompt-base-templates/",
+      expect.objectContaining({
+        params: {
+          name: "wrapped",
+          limit: 10,
+          page: 2,
+        },
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
   it("keeps library templates on a separate endpoint and pagination contract from saved prompts", async () => {
     axios.get.mockResolvedValueOnce({
       data: { results: [], current_page: 1, total_pages: 1 },
