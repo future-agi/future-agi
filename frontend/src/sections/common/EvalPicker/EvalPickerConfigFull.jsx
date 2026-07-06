@@ -146,6 +146,18 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [selectedVersionId, setSelectedVersionId] = useState(
     evalData?.pinned_version_id ?? null,
   );
+  // `useState` only reads the initializer on mount; if `evalData` hasn't
+  // arrived from the parent query by then, `selectedVersionId` stays `null`
+  // even after the pin id materialises — the dropdown then shows the
+  // "Default version" placeholder forever. Sync once the pin id becomes
+  // available. Guarded on both "no selection yet" AND "user hasn't started
+  // editing" so we never clobber a mid-edit switch.
+  useEffect(() => {
+    const pinned = evalData?.pinned_version_id ?? evalData?.pinnedVersionId ?? null;
+    if (pinned && !selectedVersionId && !isDirty) {
+      setSelectedVersionId(pinned);
+    }
+  }, [evalData?.pinned_version_id, evalData?.pinnedVersionId, selectedVersionId, isDirty]);
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState("");
   const [codeLanguage, setCodeLanguage] = useState("python");
