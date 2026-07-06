@@ -8824,6 +8824,7 @@ export interface UserEvalUpdateRequestApi {
   save_as_template?: boolean;
   experiment_id?: string;
   composite_weight_overrides?: UserEvalUpdateRequestApiCompositeWeightOverrides;
+  pinned_version_id?: string;
 }
 
 export type DatasetBehaviorRequestApiColumnConfig = { [key: string]: unknown };

@@ -3104,6 +3104,17 @@ class UserEvalUpdateRequestSerializer(serializers.Serializer):
         allow_null=True,
         default=None,
     )
+    # When set, the FE is asking to switch the UEM's pinned version to this
+    # specific EvalTemplateVersion. Without this field the view can't tell
+    # a "user opened dropdown and picked v16" request apart from a "user
+    # edited config" request — both look identical to `maybe_pin_new_version`,
+    # which then either dedups the switch away or creates a duplicate version
+    # instead of honoring the pick.
+    pinned_version_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        default=None,
+    )
 
 
 class StartEvalsProcessRequestSerializer(serializers.Serializer):
