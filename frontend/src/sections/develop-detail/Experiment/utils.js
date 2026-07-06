@@ -181,46 +181,62 @@ const _replaceIdWithColumnName = (content, allColumns = []) => {
   return content;
 };
 
+const asArray = (value) => (Array.isArray(value) ? value : []);
+const normalizePromptConfigItem = (item = {}) => ({
+  ...item,
+  id: item.id,
+  promptId: item.prompt_id ?? null,
+  promptVersion: item.prompt_version ?? null,
+  promptName: item.prompt_name ?? null,
+  agentId: item.agent_id ?? null,
+  agentVersion: item.agent_version ?? null,
+  model: item.model,
+  modelParams: item.model_params ?? {},
+  modelConfig: item.model_config,
+  messages: item.messages,
+  configuration: item.configuration,
+  outputFormat: item.output_format,
+  voiceInputColumnId: item.voice_input_column_id ?? "",
+});
+
+
 export const getExperimentDefaultValue = (
   editConfigData = {},
   _allColumns = [],
 ) => {
-  const columnId = editConfigData?.columnId || null;
+  const columnId = editConfigData?.column_id ?? null;
   const name = editConfigData?.name || "";
-  const rawPromptConfigs = Array.isArray(editConfigData?.promptConfigs)
-    ? editConfigData.promptConfigs
-    : Array.isArray(editConfigData?.promptConfig)
-      ? editConfigData.promptConfig
-      : [];
+  const normalizedPromptConfigs = asArray(editConfigData?.prompt_configs).map(
+    normalizePromptConfigItem,
+  );
+  const experimentType = editConfigData?.experiment_type || "llm";
   const outputFormat =
-    editConfigData?.outputFormat ||
-    rawPromptConfigs?.[0]?.outputFormat ||
+    editConfigData?.output_format ||
+    normalizedPromptConfigs?.[0]?.outputFormat ||
     "string";
-  const experimentType = editConfigData?.experimentType || "llm";
-  const userEvalMetrics =
-    editConfigData?.userEvalMetrics?.map((item) => ({
+  const userEvalMetrics = asArray(editConfigData?.user_eval_metrics).map(
+    (item) => ({
       ...item,
       actualEvalCreatedId: item.id,
-      evalId: item.evalId || item.id,
-    })) || [];
+      evalId: item.id,
+    }),
+  );
   // Transform prompt configs using existing function
   const promptConfigTransformed = reversePromptConfigTransform(
-    rawPromptConfigs,
+    normalizedPromptConfigs,
     experimentType,
   );
 
   // Transform agent configs to form format
-  const agentConfigs = Array.isArray(editConfigData?.agentConfigs)
-    ? editConfigData.agentConfigs.map((agent) => ({
-        _itemId: agent.id,
-        agentId: agent.agentId,
-        agentVersion: agent.agentVersion,
-        name: agent.agentName,
-        experimentType: "llm",
-        outputFormat: outputFormat || "string",
-        promptConfigId: agent?.id,
-      }))
-    : [];
+  const agentConfigs = asArray(editConfigData?.agent_configs).map((agent) => ({
+    _itemId: agent.id,
+    agentId: agent.agent_id,
+    agentVersion: agent.agent_version,
+    name: agent.agent_name ?? agent.name,
+    experimentType: "llm",
+    outputFormat: outputFormat || "string",
+    promptConfigId: agent?.id,
+  }));
 
   const promptConfig = [...(promptConfigTransformed || []), ...agentConfigs];
 
