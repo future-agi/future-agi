@@ -39,4 +39,22 @@ describe("add_run_prompt_column request contract", () => {
     const result = validateContractedRequestConfig(runRequest);
     expect(result.ok).toBe(true);
   });
+
+  it("accepts legacy configuration.template_format as a scalar string", () => {
+    const result = validateContractedRequestConfig({
+      ...runRequest,
+      data: {
+        ...runRequest.data,
+        config: {
+          ...runRequest.data.config,
+          run_prompt_config: {},
+          configuration: {
+            template_format: "jinja",
+          },
+        },
+      },
+    });
+
+    expect(result.ok).toBe(true);
+  });
 });

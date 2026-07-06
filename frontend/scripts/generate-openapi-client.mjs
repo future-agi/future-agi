@@ -275,6 +275,23 @@ async function runGeneration(schemaPath) {
       "x-string-or-object TS aliases → string | object",
     );
 
+    for (const alias of [
+      "PromptConfigApiRunPromptConfig",
+      "PromptConfigApiConfiguration",
+      "PromptConfigApiMessagesItem",
+      "PromptConfigApiToolsItem",
+    ]) {
+      schemas = assertReplaceRegex(
+        schemas,
+        new RegExp(
+          `export type ${alias} = \\{\\[key: string\\]: \\{ \\[key: string\\]: unknown \\}\\};`,
+          "g",
+        ),
+        `export type ${alias} = {[key: string]: unknown};`,
+        `${alias} JsonValueField record values → unknown`,
+      );
+    }
+
     fs.writeFileSync(schemasOutputPath, schemas);
   }
 
@@ -305,6 +322,19 @@ async function runGeneration(schemaPath) {
     zod = zod.replaceAll(
       `zod.object({\n\n}).passthrough().describe('String or JSON object.')`,
       `zod.union([zod.string(), zod.object({}).passthrough()]).describe('String or JSON object.')`,
+    );
+
+    zod = assertReplaceRegex(
+      zod,
+      /"(run_prompt_config|configuration)": zod\.record\(zod\.string\(\), zod\.object\(\{\n\n\}\)\.passthrough\(\)\.describe\('Any valid JSON value\.'\)\)/g,
+      `"$1": zod.record(zod.string(), zod.unknown())`,
+      "PromptConfig JsonValueField record values → unknown",
+    );
+    zod = assertReplaceRegex(
+      zod,
+      /"(messages|tools)": zod\.array\(zod\.record\(zod\.string\(\), zod\.object\(\{\n\n\}\)\.passthrough\(\)\.describe\('Any valid JSON value\.'\)\)\)/g,
+      `"$1": zod.array(zod.record(zod.string(), zod.unknown()))`,
+      "PromptConfig JsonValueField array record values → unknown",
     );
 
     // additionalProperties:true on PromptModelParams / PromptConfiguration:

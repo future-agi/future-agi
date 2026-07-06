@@ -2465,7 +2465,11 @@ def test_run_prompts_process_row_unresolved_placeholders_skip_provider_and_creat
     assert len(populate_calls) == 1
     assert len(created_cells) == 1
     assert created_cells[0]["status"] == CellStatus.ERROR.value
-    assert "Missing Column" in created_cells[0]["value"]
+    assert created_cells[0]["value"] == run_prompt_module.RUN_PROMPT_LOCAL_VALIDATION_ERROR
+    assert "Missing Column" not in created_cells[0]["value"]
+    assert json.loads(created_cells[0]["value_infos"]) == {
+        "reason": run_prompt_module.RUN_PROMPT_LOCAL_VALIDATION_ERROR
+    }
 
 
 def test_run_prompts_process_row_fstring_validation_failure_skips_accounting_and_provider(
@@ -2522,7 +2526,11 @@ def test_run_prompts_process_row_fstring_validation_failure_skips_accounting_and
     assert len(populate_calls) == 1
     assert len(created_cells) == 1
     assert created_cells[0]["status"] == CellStatus.ERROR.value
-    assert "missing_column" in created_cells[0]["value"]
+    assert created_cells[0]["value"] == run_prompt_module.RUN_PROMPT_LOCAL_VALIDATION_ERROR
+    assert "missing_column" not in created_cells[0]["value"]
+    assert json.loads(created_cells[0]["value_infos"]) == {
+        "reason": run_prompt_module.RUN_PROMPT_LOCAL_VALIDATION_ERROR
+    }
 
 
 def test_run_prompts_process_row_error_save_failure_raises_after_error_cell_without_usage(
@@ -2578,7 +2586,7 @@ def test_run_prompts_process_row_error_save_failure_raises_after_error_cell_with
             SimpleNamespace(id=uuid.uuid4()),
         )
 
-    assert api_call_log_row.status == APICallStatusChoices.PROCESSING.value
+    assert api_call_log_row.status == APICallStatusChoices.ERROR.value
     assert attempted_statuses == [
         APICallStatusChoices.ERROR.value,
         APICallStatusChoices.ERROR.value,
@@ -3079,6 +3087,95 @@ def test_preview_run_prompt_column_view_passes_effective_template_format_to_popu
     }
 
 
+def test_preview_run_prompt_column_view_sanitizes_local_placeholder_errors(monkeypatch):
+    dataset_id = uuid.uuid4()
+    row_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
+    workspace_id = uuid.uuid4()
+    raw_error = "Missing Column from https://signed.example.test/secret-token"
+
+    class OrderQuerySet:
+        def order_by(self, *args):
+            return self
+
+        def values_list(self, *args, **kwargs):
+            return [0]
+
+    class DatasetQuerySet:
+        def first(self):
+            return SimpleNamespace(
+                id=dataset_id,
+                organization_id=organization_id,
+                workspace=SimpleNamespace(id=workspace_id),
+            )
+
+    class RowQuerySet:
+        def __bool__(self):
+            return True
+
+        def __iter__(self):
+            return iter([SimpleNamespace(id=row_id)])
+
+    def fake_row_filter(**kwargs):
+        if "order__in" in kwargs:
+            return RowQuerySet()
+        return OrderQuerySet()
+
+    def fail_populate_placeholders(*args, **kwargs):
+        assert kwargs["process_media"] is False
+        assert kwargs["fail_closed"] is True
+        raise UnresolvedPromptPlaceholdersError(raw_error)
+
+    class ProviderShouldNotBeCalled:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("RunPrompt should not be instantiated")
+
+    monkeypatch.setattr(run_prompt_module.Row.objects, "filter", fake_row_filter)
+    monkeypatch.setattr(
+        run_prompt_module.Dataset.objects,
+        "filter",
+        lambda **kwargs: DatasetQuerySet(),
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "populate_placeholders",
+        fail_populate_placeholders,
+    )
+    monkeypatch.setattr(run_prompt_module, "RunPrompt", ProviderShouldNotBeCalled)
+
+    view = run_prompt_module.PreviewRunPromptColumnView()
+    view._gm = SimpleNamespace(
+        success_response=lambda payload: payload,
+        not_found=lambda message: pytest.fail(f"unexpected not_found: {message}"),
+        bad_request=lambda message: pytest.fail(f"unexpected bad_request: {message}"),
+        internal_server_error_response=lambda message: pytest.fail(
+            f"unexpected internal_server_error_response: {message}"
+        ),
+    )
+    request = SimpleNamespace(
+        validated_data={
+            "dataset_id": dataset_id,
+            "config": {
+                "messages": [{"role": "user", "content": "Hello {{Missing Column}}"}],
+                "model": "gpt-4o-mini",
+            },
+            "first_n_rows": 1,
+        },
+        user=SimpleNamespace(organization=SimpleNamespace(id=organization_id)),
+    )
+
+    response = run_prompt_module.PreviewRunPromptColumnView.post.__wrapped__(
+        view,
+        request,
+    )
+
+    assert response["responses"] == [
+        run_prompt_module.RUN_PROMPT_LOCAL_VALIDATION_ERROR
+    ]
+    assert "Missing Column" not in response["responses"][0]
+    assert "signed.example.test" not in response["responses"][0]
+
+
 def test_preview_run_prompt_column_view_materializes_document_media_after_validation(
     monkeypatch,
 ):
@@ -3337,6 +3434,61 @@ def test_populate_placeholders_fail_closed_reraises_per_column_errors(monkeypatc
             "gpt-4o",
             fail_closed=True,
         )
+
+
+def test_populate_placeholders_fail_closed_ignores_unreferenced_stale_column_order(
+    monkeypatch,
+):
+    messages = _message("Hello")
+    missing_column_id = uuid.uuid4()
+    monkeypatch.setattr(
+        Dataset.objects,
+        "get",
+        lambda **kwargs: SimpleNamespace(column_order=[str(missing_column_id)]),
+    )
+    monkeypatch.setattr(
+        Column.objects,
+        "get",
+        lambda **kwargs: (_ for _ in ()).throw(Column.DoesNotExist()),
+    )
+
+    assert populate_placeholders(
+        messages,
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+        "gpt-4o",
+        fail_closed=True,
+    ) == [{"role": "user", "content": [{"type": "text", "text": "Hello"}]}]
+
+
+def test_populate_placeholders_fail_closed_reports_referenced_stale_column_order(
+    monkeypatch,
+):
+    missing_column_id = uuid.uuid4()
+    messages = _message(f"Hello {{{{{missing_column_id}}}}}")
+    monkeypatch.setattr(
+        Dataset.objects,
+        "get",
+        lambda **kwargs: SimpleNamespace(column_order=[str(missing_column_id)]),
+    )
+    monkeypatch.setattr(
+        Column.objects,
+        "get",
+        lambda **kwargs: (_ for _ in ()).throw(Column.DoesNotExist()),
+    )
+
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        populate_placeholders(
+            messages,
+            uuid.uuid4(),
+            uuid.uuid4(),
+            uuid.uuid4(),
+            "gpt-4o",
+            fail_closed=True,
+        )
+
+    assert str(missing_column_id) in str(exc_info.value)
 
 
 def test_conditional_column_async_rerun_missing_cell_error_creates_error_cell(monkeypatch):

@@ -17033,15 +17033,9 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
   "name": zod.string().min(1),
   "config": zod.object({
   "model": zod.string().max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigModelMax).optional(),
-  "run_prompt_config": zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.')).optional(),
-  "configuration": zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.')).optional().describe('Compatibility shim for legacy template_format only. Use run_prompt_config for canonical run-prompt settings; other configuration keys are ignored unless explicitly migrated. If template_format is provided here and omitted from run_prompt_config, it is normalized into run_prompt_config.template_format so preview and execution match.'),
-  "messages": zod.array(zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
+  "run_prompt_config": zod.record(zod.string(), zod.unknown()).optional(),
+  "configuration": zod.record(zod.string(), zod.unknown()).optional().describe('Compatibility shim for legacy template_format only. Use run_prompt_config for canonical run-prompt settings; other configuration keys are ignored unless explicitly migrated. If template_format is provided here and run_prompt_config.template_format is missing, null, or blank, it is normalized into run_prompt_config.template_format so preview and execution match.'),
+  "messages": zod.array(zod.record(zod.string(), zod.unknown())).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
   "temperature": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTemperatureMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTemperatureMax).optional().describe('Controls the randomness. Value between 0 and 2.'),
   "frequency_penalty": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigFrequencyPenaltyMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigFrequencyPenaltyMax).optional().describe('Penalty for word repetition. Value between -2 and 2.'),
   "presence_penalty": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
@@ -17051,9 +17045,7 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
 
 }).passthrough().optional().describe('Any valid JSON value.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
-  "tools": zod.array(zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of tools with tool properties if available.'),
+  "tools": zod.array(zod.record(zod.string(), zod.unknown())).optional().describe('List of tools with tool properties if available.'),
   "output_format": zod.enum(['array', 'string', 'number', 'object', 'audio', 'image']).optional().describe('Output format type.'),
   "concurrency": zod.number().min(1).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigConcurrencyMax).optional().describe('Number of concurrent operations allowed. Maximum 10.')
 }).default(modelHubDevelopsAddRunPromptColumnCreateBodyConfigDefault)
@@ -17292,15 +17284,9 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
   "name": zod.string().min(1).optional(),
   "config": zod.object({
   "model": zod.string().max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigModelMax).optional(),
-  "run_prompt_config": zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.')).optional(),
-  "configuration": zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.')).optional().describe('Compatibility shim for legacy template_format only. Use run_prompt_config for canonical run-prompt settings; other configuration keys are ignored unless explicitly migrated. If template_format is provided here and omitted from run_prompt_config, it is normalized into run_prompt_config.template_format so preview and execution match.'),
-  "messages": zod.array(zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
+  "run_prompt_config": zod.record(zod.string(), zod.unknown()).optional(),
+  "configuration": zod.record(zod.string(), zod.unknown()).optional().describe('Compatibility shim for legacy template_format only. Use run_prompt_config for canonical run-prompt settings; other configuration keys are ignored unless explicitly migrated. If template_format is provided here and run_prompt_config.template_format is missing, null, or blank, it is normalized into run_prompt_config.template_format so preview and execution match.'),
+  "messages": zod.array(zod.record(zod.string(), zod.unknown())).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
   "temperature": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTemperatureMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTemperatureMax).optional().describe('Controls the randomness. Value between 0 and 2.'),
   "frequency_penalty": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigFrequencyPenaltyMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigFrequencyPenaltyMax).optional().describe('Penalty for word repetition. Value between -2 and 2.'),
   "presence_penalty": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
@@ -17310,9 +17296,7 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
 
 }).passthrough().optional().describe('Any valid JSON value.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
-  "tools": zod.array(zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of tools with tool properties if available.'),
+  "tools": zod.array(zod.record(zod.string(), zod.unknown())).optional().describe('List of tools with tool properties if available.'),
   "output_format": zod.enum(['array', 'string', 'number', 'object', 'audio', 'image']).optional().describe('Output format type.'),
   "concurrency": zod.number().min(1).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigConcurrencyMax).optional().describe('Number of concurrent operations allowed. Maximum 10.')
 }).default(modelHubDevelopsEditRunPromptColumnCreateBodyConfigDefault)
@@ -17542,15 +17526,9 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
   "name": zod.string().min(1),
   "config": zod.object({
   "model": zod.string().max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigModelMax).optional(),
-  "run_prompt_config": zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.')).optional(),
-  "configuration": zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.')).optional().describe('Compatibility shim for legacy template_format only. Use run_prompt_config for canonical run-prompt settings; other configuration keys are ignored unless explicitly migrated. If template_format is provided here and omitted from run_prompt_config, it is normalized into run_prompt_config.template_format so preview and execution match.'),
-  "messages": zod.array(zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
+  "run_prompt_config": zod.record(zod.string(), zod.unknown()).optional(),
+  "configuration": zod.record(zod.string(), zod.unknown()).optional().describe('Compatibility shim for legacy template_format only. Use run_prompt_config for canonical run-prompt settings; other configuration keys are ignored unless explicitly migrated. If template_format is provided here and run_prompt_config.template_format is missing, null, or blank, it is normalized into run_prompt_config.template_format so preview and execution match.'),
+  "messages": zod.array(zod.record(zod.string(), zod.unknown())).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
   "temperature": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTemperatureMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTemperatureMax).optional().describe('Controls the randomness. Value between 0 and 2.'),
   "frequency_penalty": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigFrequencyPenaltyMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigFrequencyPenaltyMax).optional().describe('Penalty for word repetition. Value between -2 and 2.'),
   "presence_penalty": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
@@ -17560,9 +17538,7 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
 
 }).passthrough().optional().describe('Any valid JSON value.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
-  "tools": zod.array(zod.record(zod.string(), zod.object({
-
-}).passthrough().describe('Any valid JSON value.'))).optional().describe('List of tools with tool properties if available.'),
+  "tools": zod.array(zod.record(zod.string(), zod.unknown())).optional().describe('List of tools with tool properties if available.'),
   "output_format": zod.enum(['array', 'string', 'number', 'object', 'audio', 'image']).optional().describe('Output format type.'),
   "concurrency": zod.number().min(1).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigConcurrencyMax).optional().describe('Number of concurrent operations allowed. Maximum 10.')
 }).default(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigDefault),

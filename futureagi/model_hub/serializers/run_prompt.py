@@ -178,9 +178,9 @@ class PromptConfigSerializer(serializers.Serializer):
             "Compatibility shim for legacy template_format only. Use "
             "run_prompt_config for canonical run-prompt settings; other "
             "configuration keys are ignored unless explicitly migrated. If "
-            "template_format is provided here and omitted from run_prompt_config, "
-            "it is normalized into run_prompt_config.template_format so preview "
-            "and execution match."
+            "template_format is provided here and run_prompt_config.template_format "
+            "is missing, null, or blank, it is normalized into "
+            "run_prompt_config.template_format so preview and execution match."
         ),
     )
     messages = serializers.ListField(

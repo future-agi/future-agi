@@ -569,6 +569,44 @@ class UnresolvedPromptPlaceholdersError(ValueError):
         super().__init__(f"Unresolved prompt placeholders: {joined_placeholders}")
 
 
+RUN_PROMPT_LOCAL_VALIDATION_ERROR = (
+    "Run prompt failed before provider dispatch. Check prompt placeholders, "
+    "template syntax, and media support."
+)
+
+
+def _safe_run_prompt_error_message(
+    error: Exception,
+    *,
+    is_llm_error: bool = False,
+    phase: str | None = None,
+) -> str:
+    """Return a user-safe message for local run-prompt validation failures.
+
+    Strict placeholder/template/media validation runs before provider dispatch
+    and may include column names, raw template expressions, or media URLs in the
+    exception detail. Keep those details in logs only; persisted cells and
+    preview responses get a small actionable allowlisted message.
+    """
+
+    local_validation_phases = {
+        "placeholder_validation",
+        "media_validation",
+    }
+    if phase in local_validation_phases or (
+        not is_llm_error
+        and isinstance(
+            error,
+            (
+                UnresolvedPromptPlaceholdersError,
+                PromptTemplateSyntaxError,
+            ),
+        )
+    ):
+        return RUN_PROMPT_LOCAL_VALIDATION_ERROR
+    return get_specific_error_message(error, is_llm_error)
+
+
 def _build_placeholder_display_map(template_str: str) -> dict[str, str]:
     """Map render-time variable names back to the original placeholder text."""
     if not template_str:
@@ -927,37 +965,6 @@ def _jinja_reference_from_node(node: nodes.Node) -> str | None:
             return f"{base}.{node.arg.value}"
         return base
     return None
-
-
-@lru_cache(maxsize=512)
-def _extract_jinja_ast_references(template_str: str) -> tuple[str, ...]:
-    """Return external root and dotted references used by Jinja expressions.
-
-    This catches unresolved null-backed placeholders even when Jinja filters (for
-    example ``default``) would otherwise render a fallback and hide the missing
-    cell. Jinja ASTs also contain local binding names (loop targets, ``set``
-    assignments, macro parameters); ``meta.find_undeclared_variables`` is the
-    Jinja-supported way to identify variables that must come from the render
-    context, so only references rooted at those external names are returned.
-    """
-    try:
-        ast = _jinja2_env.parse(template_str)
-    except TemplateSyntaxError:
-        return ()
-
-    external_roots = meta.find_undeclared_variables(ast)
-    references: list[str] = []
-    seen = set()
-    for node in ast.find_all((nodes.Name, nodes.Getattr, nodes.Getitem)):
-        reference = _jinja_reference_from_node(node)
-        if not reference:
-            continue
-        root = reference.split('.', maxsplit=1)[0]
-        if root not in external_roots or reference in seen:
-            continue
-        seen.add(reference)
-        references.append(reference)
-    return tuple(references)
 
 
 def _is_unresolved_placeholder_reference(
@@ -1702,12 +1709,22 @@ def populate_placeholders(
         for column_id in column_ids:
             try:
                 if column_id != str(col_id):
-                    column = Column.objects.get(id=column_id)
+                    sanitized_col_id = sanitize_uuid_for_jinja(column_id)
+                    try:
+                        column = Column.objects.get(id=column_id)
+                    except ObjectDoesNotExist:
+                        unresolved_placeholders.add(sanitized_col_id)
+                        logger.warning(
+                            "Prompt placeholder column missing from column_order",
+                            dataset_id=str(dataset_id),
+                            column_id=str(column_id),
+                            row_id=str(row_id),
+                        )
+                        continue
                     cell = Cell.objects.filter(
                         dataset=dataset, column=column, row__id=row_id
                     ).first()
 
-                    sanitized_col_id = sanitize_uuid_for_jinja(column_id)
                     if not cell:
                         unresolved_placeholders.update({column.name, sanitized_col_id})
                         continue
@@ -2747,17 +2764,21 @@ class RunPrompts:
             api_call_error_status_attempted = False
             cell_persisted = False
             cell = None
+            error_phase = None
 
             def persist_api_call_terminal_status(target_status):
                 nonlocal api_call_error_status_attempted
-                if (
-                    not api_call_log_row
-                    or api_call_log_row.status
-                    != APICallStatusChoices.PROCESSING.value
+                if not api_call_log_row:
+                    return False
+
+                current_status = api_call_log_row.status
+                if current_status != APICallStatusChoices.PROCESSING.value and not (
+                    target_status == APICallStatusChoices.ERROR.value
+                    and current_status == APICallStatusChoices.ERROR.value
                 ):
                     return False
 
-                previous_status = api_call_log_row.status
+                previous_status = current_status
                 api_call_log_row.status = target_status
 
                 for attempt in range(2):
@@ -2796,7 +2817,6 @@ class RunPrompts:
                         target_status=target_status,
                     )
 
-                api_call_log_row.status = previous_status
                 if target_status == APICallStatusChoices.ERROR.value:
                     logger.error(
                         "RunPrompts_process_row_api_call_error_status_persist_failed",
@@ -2805,6 +2825,7 @@ class RunPrompts:
                     )
                     raise RuntimeError("Failed to persist API call error status")
 
+                api_call_log_row.status = previous_status
                 logger.error(
                     "RunPrompts_process_row_api_call_success_status_persist_failed",
                     run_prompt_id=str(self.run_prompt_id),
@@ -2860,6 +2881,7 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
+                error_phase = "placeholder_validation"
                 validated_messages = populate_placeholders(
                     self.run_prompt_model.messages,
                     dataset_id=self.run_prompt_model.dataset.id,
@@ -2885,6 +2907,7 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
+                error_phase = "api_validation"
                 if log_and_deduct_cost_for_api_request is not None:
                     try:
                         api_call_config = {"reference_id": str(self.run_prompt_id)}
@@ -2941,6 +2964,7 @@ class RunPrompts:
                         )
 
                 if _messages_require_media_processing(validated_messages):
+                    error_phase = "media_validation"
                     messages = populate_placeholders(
                         self.run_prompt_model.messages,
                         dataset_id=self.run_prompt_model.dataset.id,
@@ -2964,6 +2988,7 @@ class RunPrompts:
                     row_id=row_id,
                     model=self.run_prompt_model.model,
                 )
+                error_phase = "provider_dispatch"
 
                 run_prompt = RunPrompt(
                     model=self.run_prompt_model.model,
@@ -3009,14 +3034,18 @@ class RunPrompts:
                     error=str(e),
                     is_llm_error=is_llm_error,
                 )
-                error_message = get_specific_error_message(e, is_llm_error)
+                error_message = _safe_run_prompt_error_message(
+                    e,
+                    is_llm_error=is_llm_error,
+                    phase=error_phase,
+                )
                 logger.error(
                     "RunPrompts_process_row_error_message",
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                     error_message=error_message,
                 )
-                response = str(e)
+                response = error_message
                 value_info = {"reason": error_message}
                 status = CellStatus.ERROR.value
 
@@ -3480,11 +3509,14 @@ class PreviewRunPromptColumnView(APIView):
             run_prompt_config = normalize_run_prompt_config(config)
             responses = []
             for row in rows:
+                row_error_phase = None
+                is_llm_error = False
                 try:
                     output_format = config.get("output_format", "string")
                     template_format = get_run_prompt_template_format(
                         {"run_prompt_config": run_prompt_config}
                     )
+                    row_error_phase = "placeholder_validation"
                     validated_messages = populate_placeholders(
                         config.get("messages", []),
                         dataset_id=dataset_id,
@@ -3496,6 +3528,7 @@ class PreviewRunPromptColumnView(APIView):
                         fail_closed=True,
                     )
                     if _messages_require_media_processing(validated_messages):
+                        row_error_phase = "media_validation"
                         messages = populate_placeholders(
                             config.get("messages", []),
                             dataset_id=dataset_id,
@@ -3531,6 +3564,8 @@ class PreviewRunPromptColumnView(APIView):
                             else None
                         ),
                     )
+                    row_error_phase = "provider_dispatch"
+                    is_llm_error = True
                     response, value_infos = run_prompt.litellm_response()
 
                     # Check if showReasoningProcess is enabled to include thinking content
@@ -3549,7 +3584,13 @@ class PreviewRunPromptColumnView(APIView):
                         responses.append(response)
 
                 except Exception as e:
-                    responses.append(str(e))
+                    responses.append(
+                        _safe_run_prompt_error_message(
+                            e,
+                            is_llm_error=is_llm_error,
+                            phase=row_error_phase,
+                        )
+                    )
                     value_infos = {"metadata": {"usage": {}, "cost": {}}}
             return self._gm.success_response(
                 {

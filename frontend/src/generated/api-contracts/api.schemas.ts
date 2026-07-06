@@ -8150,27 +8150,27 @@ export const PromptConfigApiOutputFormat = {
   image: 'image',
 } as const;
 
-export type PromptConfigApiRunPromptConfig = {[key: string]: { [key: string]: unknown }};
+export type PromptConfigApiRunPromptConfig = {[key: string]: unknown};
 
 /**
- * Compatibility shim for legacy template_format only. Use run_prompt_config for canonical run-prompt settings; other configuration keys are ignored unless explicitly migrated. If template_format is provided here and omitted from run_prompt_config, it is normalized into run_prompt_config.template_format so preview and execution match.
+ * Compatibility shim for legacy template_format only. Use run_prompt_config for canonical run-prompt settings; other configuration keys are ignored unless explicitly migrated. If template_format is provided here and run_prompt_config.template_format is missing, null, or blank, it is normalized into run_prompt_config.template_format so preview and execution match.
  */
-export type PromptConfigApiConfiguration = {[key: string]: { [key: string]: unknown }};
+export type PromptConfigApiConfiguration = {[key: string]: unknown};
 
-export type PromptConfigApiMessagesItem = {[key: string]: { [key: string]: unknown }};
+export type PromptConfigApiMessagesItem = {[key: string]: unknown};
 
 /**
  * Any valid JSON value.
  */
 export type PromptConfigApiResponseFormat = { [key: string]: unknown };
 
-export type PromptConfigApiToolsItem = {[key: string]: { [key: string]: unknown }};
+export type PromptConfigApiToolsItem = {[key: string]: unknown};
 
 export interface PromptConfigApi {
   /** @maxLength 255 */
   model?: string;
   run_prompt_config?: PromptConfigApiRunPromptConfig;
-  /** Compatibility shim for legacy template_format only. Use run_prompt_config for canonical run-prompt settings; other configuration keys are ignored unless explicitly migrated. If template_format is provided here and omitted from run_prompt_config, it is normalized into run_prompt_config.template_format so preview and execution match. */
+  /** Compatibility shim for legacy template_format only. Use run_prompt_config for canonical run-prompt settings; other configuration keys are ignored unless explicitly migrated. If template_format is provided here and run_prompt_config.template_format is missing, null, or blank, it is normalized into run_prompt_config.template_format so preview and execution match. */
   configuration?: PromptConfigApiConfiguration;
   /** List of messages with format [{'role': 'user/assistant', 'content': 'text'}] */
   messages?: PromptConfigApiMessagesItem[];
