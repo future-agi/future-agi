@@ -1,5 +1,5 @@
 """
-Tests for PR #747 — eval usage version tracking.
+Regression tests for eval-usage version tracking.
 
 Two independent concerns:
 
@@ -471,23 +471,27 @@ class TestPinnedChildVersionTracking:
 # ── Eval usage response shape contract ───────────────────────────────────────
 
 class TestEvalUsageResponseContract:
-    """Verify the EvalUsageStatsView response validates against its serializer.
+    """Verify the EvalUsageStatsView response shape.
 
-    The table rows have dynamic input_var_X columns plus known scalar fields
-    (row_id: string, composite: bool). The contract must accept scalars — not
-    only objects — in cell values. This test drives a real response through the
-    serializer and asserts it validates without error.
+    Each row is a typed cell-wrapped object: ``row_id`` is a plain string,
+    known columns (``score``, ``result``, ``input`` …) are ``{cell_value:
+    <typed>}`` wrappers, and dynamic per-eval ``input_var_<name>`` columns
+    pass through via ``_ExtraFieldsMixin`` + ``additionalProperties: True``.
+
+    Two directions to test:
+
+    * **Deserialization** (``is_valid``): the response shape parses cleanly
+      when the FE (or a test client) sends it back.
+    * **Serialization** (``.data``): building a response from a raw dict and
+      running it through the serializer preserves dynamic ``input_var_<name>``
+      keys — the very thing that broke when we first switched from
+      ``AnyValueDictField`` to a typed row without the mixin.
     """
 
-    def test_eval_usage_table_accepts_scalar_cell_values(self):
+    def test_eval_usage_table_accepts_typed_row_shape(self):
         from model_hub.serializers.contracts import EvalUsageStatsResponseSerializer
         import uuid
 
-        # Minimal response matching the real EvalUsageStatsView shape.
-        # table cells include strings (row_id), booleans (composite), floats (score),
-        # and strings in dynamic input_var_X columns.
-        # DictField(child=JSONField()) (additionalProperties: {type: object}) would
-        # reject these scalars — DictField(child=JsonValueField()) must accept them.
         payload = {
             "status": True,
             "result": {
@@ -503,10 +507,12 @@ class TestEvalUsageResponseContract:
                 "chart": [],
                 "table": [
                     {
-                        "row_id": "abc-123",           # string scalar
-                        "composite": False,             # bool scalar
-                        "score": 0.9,                  # float scalar
-                        "input_var_0": "hello world",  # dynamic column, string
+                        "row_id": "abc-123",
+                        "score": {"cell_value": 0.9},
+                        "result": {"cell_value": "Passed"},
+                        "input": {"cell_value": "hello world"},
+                        # Dynamic per-eval column — user-controlled key.
+                        "input_var_response": {"cell_value": "my response"},
                     }
                 ],
                 "logs": {
@@ -519,9 +525,35 @@ class TestEvalUsageResponseContract:
 
         serializer = EvalUsageStatsResponseSerializer(data=payload)
         assert serializer.is_valid(), (
-            f"EvalUsageStatsResponse serializer rejected valid payload: "
-            f"{serializer.errors}"
+            f"EvalUsageStatsResponse rejected valid payload: {serializer.errors}"
         )
+
+    def test_eval_usage_table_row_preserves_dynamic_keys_on_output(self):
+        """_ExtraFieldsMixin.to_representation must copy dynamic ``input_var_<name>``
+        cells through ``.data`` — without it DRF strips undeclared keys at
+        serialize time and the FE grid renders empty rows even though the
+        swagger contract says extras are allowed. This test locks the mixin's
+        output-side behavior so a future refactor of the mixin can't silently
+        strip cells again."""
+        from model_hub.serializers.contracts import EvalUsageTableRowSerializer
+
+        row = {
+            "row_id": "abc-123",
+            "score": {"cell_value": 0.9},
+            "result": {"cell_value": "Passed"},
+            "input_var_response": {"cell_value": "my response"},
+            "input_var_prompt": {"cell_value": "my prompt"},
+        }
+
+        out = EvalUsageTableRowSerializer(instance=row).data
+
+        assert out["row_id"] == "abc-123"
+        assert out["score"] == {"cell_value": 0.9}
+        assert out["result"] == {"cell_value": "Passed"}
+        # The mixin-provided output-side passthrough — this is the behavior
+        # that broke and produced empty rows on the live endpoint.
+        assert out["input_var_response"] == {"cell_value": "my response"}
+        assert out["input_var_prompt"] == {"cell_value": "my prompt"}
 
 
 # ── Direct unit tests for _resolve_uem_version ───────────────────────────────
