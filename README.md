@@ -186,6 +186,11 @@ const response = await openai.chat.completions.create({
 
 <sub> [Full docs →](https://docs.futureagi.com)  ·  [Cookbooks →](https://docs.futureagi.com/docs/cookbook)  ·  [API reference →](https://docs.futureagi.com/docs/api)</sub>
 
+### Cookbook drafts in this repo
+
+- [Memory governance evals for personalized agents](docs/cookbooks/memory-governance-evals.md)
+- [MCP schema-handler contract for the Python ai_tools bridge](docs/mcp-schema-handler-contract.md)
+
 ---
 
 ## Core features
