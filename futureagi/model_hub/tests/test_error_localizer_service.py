@@ -158,13 +158,12 @@ class TestEarlyExits:
 
 
 # =========================================================================
-# Runtime threshold override — TH-6469
+# Runtime threshold override
 # =========================================================================
 
 
 class TestRuntimeThresholdOverride:
     def test_runtime_threshold_takes_precedence_over_template(self):
-        # Template default 0.5; user override 0.8; score 0.6 → EL must fire.
         template = _template(
             output_type_normalized="percentage", pass_threshold=0.5
         )
@@ -175,7 +174,6 @@ class TestRuntimeThresholdOverride:
         assert "0.80" in reason
 
     def test_runtime_threshold_flips_high_score_to_pass(self):
-        # Template default 0.5 would fire on 0.4; runtime 0.3 must skip.
         template = _template(
             output_type_normalized="percentage", pass_threshold=0.5
         )

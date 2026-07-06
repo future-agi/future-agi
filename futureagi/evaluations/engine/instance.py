@@ -147,20 +147,7 @@ def resolve_pass_threshold(
     runtime_config: dict | None = None,
     resolved_version=None,
 ) -> float:
-    """Resolve pass_threshold using the engine's layered semantics.
-
-    Priority (highest to lowest):
-      1. runtime_config["run_config"]["pass_threshold"]  - per-binding picker override
-      2. runtime_config["pass_threshold"]                 - flat top-level (tracing / composite / SDK)
-      3. resolved_version.pass_threshold                  - pinned-version snapshot
-      4. eval_template.pass_threshold                     - template default
-      5. 0.5                                              - hard fallback
-
-    Single source of truth for pass_threshold resolution. Callers that
-    need the runtime-effective threshold (engine evaluators, error-
-    localizer triggers) all route through this function so semantics
-    stay identical across surfaces.
-    """
+    """Priority: runtime_config[run_config][pass_threshold] > runtime_config[pass_threshold] > resolved_version.pass_threshold > eval_template.pass_threshold > 0.5."""
     if isinstance(runtime_config, dict):
         run_config = runtime_config.get("run_config") or {}
         if isinstance(run_config, dict) and run_config.get("pass_threshold") is not None:
@@ -466,10 +453,6 @@ def create_eval_instance(
     # Apply version overrides
     config, criteria = apply_version_overrides(config, resolved_version, criteria)
 
-    # Single source of truth for pass_threshold — collapses template default,
-    # version snapshot, and runtime_config picker override into one value.
-    # The `_RUNTIME_ALLOWED_KEYS` merge below re-applies the run_config picker
-    # override; identical value, no-op for pass_threshold specifically.
     config["pass_threshold"] = resolve_pass_threshold(
         eval_template, runtime_config, resolved_version
     )
