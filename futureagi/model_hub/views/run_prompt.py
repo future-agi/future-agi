@@ -1868,8 +1868,6 @@ def populate_placeholders(
             raise
         traceback.print_exc()
         logger.exception(f"Fatal error processing messages: {e}")
-        if fail_closed:
-            raise
         # Return original messages as fallback
         return messages
 
@@ -2430,7 +2428,10 @@ class LitellmAPIView(CreateAPIView):
     def process_row(self, row, validated_data, dataset, column, request):
         # Call litellm with the validated data
         status = CellStatus.PASS.value
+        error_phase = None
+        is_llm_error = False
         try:
+            error_phase = "media_validation"
             messages = populate_placeholders(
                 validated_data.get("messages"),
                 dataset_id=dataset.id,
@@ -2442,6 +2443,7 @@ class LitellmAPIView(CreateAPIView):
             )
             messages = remove_empty_text_from_messages(messages)
 
+            error_phase = "provider_dispatch"
             run_prompt = RunPrompt(
                 model=validated_data.get("model"),
                 organization_id=getattr(request, "organization", None)
@@ -2460,12 +2462,17 @@ class LitellmAPIView(CreateAPIView):
                 workspace_id=dataset.workspace.id if dataset.workspace else None,
             )
 
+            is_llm_error = True
             response, value_info = run_prompt.litellm_response()
             value_info["reason"] = value_info.get("data", {}).get("response")
 
         except Exception as e:
             logger.exception(f"Error in processing the row: {str(e)}")
-            error_message = get_specific_error_message(e)
+            error_message = _safe_run_prompt_error_message(
+                e,
+                is_llm_error=is_llm_error,
+                phase=error_phase,
+            )
             response = error_message
             value_info = {"reason": error_message}
             status = CellStatus.ERROR.value
@@ -3625,8 +3632,12 @@ class EditRunPromptColumnView(APIView):
             validated_data = request.validated_data
             dataset_id = validated_data["dataset_id"]
             column_id = validated_data["column_id"]
+            config_provided = (
+                "config" in validated_data and validated_data["config"] is not None
+            )
             config = validated_data.get("config") or {}
             name = validated_data.get("name")
+            should_rerun = config_provided and bool(config)
 
             dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
             if not dataset:
@@ -3656,6 +3667,22 @@ class EditRunPromptColumnView(APIView):
                 if not run_prompter:
                     return self._gm.not_found(
                         "Column or run prompt configuration not found"
+                    )
+
+                if not should_rerun:
+                    if name is not None and name != run_prompter.name:
+                        run_prompter.name = name
+                        run_prompter.save(update_fields=["name"])
+                        update_column_for_rerun(
+                            column=column,
+                            output_format=run_prompter.output_format,
+                            response_format=run_prompter.response_format,
+                            name=name,
+                            status=None,
+                            extract_derived_vars=False,
+                        )
+                    return self._gm.success_response(
+                        "Run prompt column updated successfully"
                     )
 
                 # Check if currently running - warn but allow edit
@@ -3717,16 +3744,13 @@ class EditRunPromptColumnView(APIView):
 
                 run_prompter.run_prompt_config = run_prompt_config
 
-                # Handle tools update - first clear existing tools
-                run_prompter.tools.clear()
-
-                # Handle tools update if provided
-                tools = config.get("tools")
-                if tools:
+                # Replace tools only when the edit payload explicitly includes
+                # tools. Omitted config fields preserve the existing prompt.
+                if "tools" in config:
+                    tools = config.get("tools") or []
                     tool_ids = [tool.get("id") for tool in tools if "id" in tool]
-                    if tool_ids:
-                        tools_queryset = Tools.objects.filter(id__in=tool_ids)
-                        run_prompter.tools.set(tools_queryset)
+                    tools_queryset = Tools.objects.filter(id__in=tool_ids)
+                    run_prompter.tools.set(tools_queryset)
 
                 run_prompter.save()
 

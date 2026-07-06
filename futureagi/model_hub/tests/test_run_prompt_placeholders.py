@@ -1,7 +1,9 @@
+import ast
 import json
 import sys
 import uuid
 from collections.abc import Mapping
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 
 import pytest
@@ -36,6 +38,25 @@ from model_hub.views.run_prompt import (
 )
 from model_hub.views.utils.utils import sanitize_uuid_for_jinja
 from tfc.constants.api_calls import APICallStatusChoices
+
+
+def test_experiment_run_prompt_placeholder_calls_are_fail_closed():
+    source = (
+        Path(__file__).resolve().parents[1] / "views" / "experiment_runner.py"
+    ).read_text()
+    tree = ast.parse(source)
+    calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) == "populate_placeholders"
+    ]
+
+    assert calls, "experiment runner should render run-prompt placeholders"
+    for call in calls:
+        fail_closed = {kw.arg: kw.value for kw in call.keywords}.get("fail_closed")
+        assert isinstance(fail_closed, ast.Constant)
+        assert fail_closed.value is True
 
 
 @pytest.fixture
@@ -336,6 +357,59 @@ def test_add_run_prompt_view_persists_legacy_template_format_public_alias(monkey
     assert created_kwargs["run_prompt_config"]["template_format"] == "jinja"
 
 
+def test_litellm_api_process_row_sanitizes_local_validation_errors(monkeypatch):
+    raw_error = "Missing Column from https://signed.example.test/file?token=secret"
+    persisted = {}
+
+    def fail_populate(*args, **kwargs):
+        assert kwargs["fail_closed"] is True
+        raise UnresolvedPromptPlaceholdersError(raw_error)
+
+    class ProviderShouldNotBeCalled:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("RunPrompt should not be instantiated")
+
+    monkeypatch.setattr(
+        run_prompt_module,
+        "populate_placeholders",
+        fail_populate,
+    )
+    monkeypatch.setattr(run_prompt_module, "RunPrompt", ProviderShouldNotBeCalled)
+    monkeypatch.setattr(
+        run_prompt_module.Cell.objects,
+        "update_or_create",
+        lambda **kwargs: persisted.update(kwargs),
+    )
+
+    dataset = SimpleNamespace(
+        id=uuid.uuid4(),
+        workspace=SimpleNamespace(id=uuid.uuid4()),
+    )
+
+    view = run_prompt_module.LitellmAPIView()
+    view.process_row(
+        SimpleNamespace(id=uuid.uuid4()),
+        {
+            "messages": [{"role": "user", "content": "Hello {{Missing Column}}"}],
+            "model": "gpt-4o-mini",
+        },
+        dataset,
+        SimpleNamespace(id=uuid.uuid4()),
+        SimpleNamespace(
+            user=SimpleNamespace(organization=SimpleNamespace(id=uuid.uuid4()))
+        ),
+    )
+
+    defaults = persisted["defaults"]
+    assert defaults["status"] == CellStatus.ERROR.value
+    assert defaults["value"] == run_prompt_module.RUN_PROMPT_LOCAL_VALIDATION_ERROR
+    assert "Missing Column" not in defaults["value"]
+    assert "signed.example.test" not in defaults["value"]
+    assert json.loads(defaults["value_infos"]) == {
+        "reason": run_prompt_module.RUN_PROMPT_LOCAL_VALIDATION_ERROR
+    }
+
+
 def test_edit_run_prompt_view_preserves_config_and_terminalizes_enqueue_failure(
     monkeypatch,
 ):
@@ -347,6 +421,7 @@ def test_edit_run_prompt_view_preserves_config_and_terminalizes_enqueue_failure(
     organization_id = uuid.uuid4()
     cell_updates = []
     run_prompter_updates = []
+    tool_sets = []
 
     class NullAtomic:
         def __enter__(self):
@@ -407,7 +482,10 @@ def test_edit_run_prompt_view_preserves_config_and_terminalizes_enqueue_failure(
         tool_choice=None,
         output_format="string",
         concurrency=5,
-        tools=SimpleNamespace(clear=lambda: None, set=lambda tools: None),
+        tools=SimpleNamespace(
+            clear=lambda: pytest.fail("tools.clear should not be called"),
+            set=lambda tools: tool_sets.append(tools),
+        ),
         save=lambda: None,
     )
 
@@ -481,7 +559,10 @@ def test_edit_run_prompt_view_preserves_config_and_terminalizes_enqueue_failure(
         "template_format": "jinja",
         "reasoning": {"effort": "medium"},
     }
-    assert run_prompter_updates == [{"status": run_prompt_module.StatusType.FAILED.value}]
+    assert tool_sets == []
+    assert run_prompter_updates == [
+        {"status": run_prompt_module.StatusType.FAILED.value}
+    ]
     assert cell_updates == [
         {
             "value": "",
@@ -496,6 +577,264 @@ def test_edit_run_prompt_view_preserves_config_and_terminalizes_enqueue_failure(
             "status": CellStatus.ERROR.value,
         },
     ]
+
+
+def test_edit_run_prompt_view_name_only_edit_does_not_rerun_or_clear_tools(monkeypatch):
+    import django.db
+
+    dataset_id = uuid.uuid4()
+    column_id = uuid.uuid4()
+    run_prompter_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
+    saved_update_fields = []
+    column_updates = []
+
+    class NullAtomic:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class SingleObjectQuerySet:
+        def __init__(self, value):
+            self.value = value
+
+        def filter(self, **kwargs):
+            return self
+
+        def first(self):
+            return self.value
+
+        def select_for_update(self, *args, **kwargs):
+            return self
+
+    dataset = SimpleNamespace(id=dataset_id, organization_id=organization_id)
+    column = SimpleNamespace(
+        id=column_id,
+        dataset=dataset,
+        source=SourceChoices.RUN_PROMPT.value,
+        source_id=run_prompter_id,
+    )
+    run_prompter = SimpleNamespace(
+        id=run_prompter_id,
+        dataset=dataset,
+        status="completed",
+        run_prompt_config={"template_format": "mustache"},
+        messages=[{"role": "user", "content": "Old"}],
+        name="Old Prompt",
+        model="old-model",
+        output_format="string",
+        response_format=None,
+        tools=SimpleNamespace(
+            clear=lambda: pytest.fail("name-only edit should preserve tools"),
+            set=lambda tools: pytest.fail("name-only edit should preserve tools"),
+        ),
+        save=lambda **kwargs: saved_update_fields.append(kwargs.get("update_fields")),
+    )
+
+    monkeypatch.setattr(django.db.transaction, "atomic", lambda: NullAtomic())
+    monkeypatch.setattr(
+        run_prompt_module,
+        "_request_dataset_queryset",
+        lambda request: SingleObjectQuerySet(dataset),
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "_request_column_queryset",
+        lambda request: SingleObjectQuerySet(column),
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "_request_run_prompter_queryset",
+        lambda request: SingleObjectQuerySet(run_prompter),
+    )
+    monkeypatch.setattr(
+        run_prompt_module.Cell.objects,
+        "filter",
+        lambda **kwargs: pytest.fail("name-only edit should not requeue cells"),
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "update_column_for_rerun",
+        lambda **kwargs: column_updates.append(kwargs),
+    )
+
+    task_module = ModuleType("model_hub.tasks.run_prompt")
+    task_module.process_prompts_single = SimpleNamespace(
+        apply_async=lambda **kwargs: pytest.fail("name-only edit should not rerun")
+    )
+    monkeypatch.setitem(sys.modules, "model_hub.tasks.run_prompt", task_module)
+
+    view = run_prompt_module.EditRunPromptColumnView()
+    view._gm = SimpleNamespace(
+        success_response=lambda payload: payload,
+        not_found=lambda message: pytest.fail(f"unexpected not_found: {message}"),
+        bad_request=lambda message: pytest.fail(f"unexpected bad_request: {message}"),
+        internal_server_error_response=lambda message: pytest.fail(
+            f"unexpected internal_server_error_response: {message}"
+        ),
+    )
+
+    response = run_prompt_module.EditRunPromptColumnView.post.__wrapped__(
+        view,
+        SimpleNamespace(
+            validated_data={
+                "dataset_id": dataset_id,
+                "column_id": column_id,
+                "name": "Renamed Prompt",
+            },
+            user=SimpleNamespace(organization=SimpleNamespace(id=organization_id)),
+        ),
+    )
+
+    assert response == "Run prompt column updated successfully"
+    assert run_prompter.name == "Renamed Prompt"
+    assert saved_update_fields == [["name"]]
+    assert column_updates == [
+        {
+            "column": column,
+            "output_format": "string",
+            "response_format": None,
+            "name": "Renamed Prompt",
+            "status": None,
+            "extract_derived_vars": False,
+        }
+    ]
+
+
+def test_edit_run_prompt_view_explicit_empty_tools_replaces_existing_tools(monkeypatch):
+    import django.db
+
+    dataset_id = uuid.uuid4()
+    column_id = uuid.uuid4()
+    run_prompter_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
+    tool_filters = []
+    tool_sets = []
+
+    class NullAtomic:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class SingleObjectQuerySet:
+        def __init__(self, value):
+            self.value = value
+
+        def filter(self, **kwargs):
+            return self
+
+        def first(self):
+            return self.value
+
+        def select_for_update(self, *args, **kwargs):
+            return self
+
+    class CellQuerySet:
+        def update(self, **kwargs):
+            return 1
+
+    class ToolManager:
+        def filter(self, **kwargs):
+            tool_filters.append(kwargs)
+            return []
+
+    dataset = SimpleNamespace(id=dataset_id, organization_id=organization_id)
+    column = SimpleNamespace(
+        id=column_id,
+        dataset=dataset,
+        source=SourceChoices.RUN_PROMPT.value,
+        source_id=run_prompter_id,
+    )
+    run_prompter = SimpleNamespace(
+        id=run_prompter_id,
+        dataset=dataset,
+        status="completed",
+        run_prompt_config={"template_format": "mustache"},
+        messages=[{"role": "user", "content": "Old"}],
+        name="Old Prompt",
+        model="old-model",
+        temperature=None,
+        frequency_penalty=None,
+        presence_penalty=None,
+        max_tokens=None,
+        top_p=None,
+        response_format=None,
+        tool_choice=None,
+        output_format="string",
+        concurrency=5,
+        tools=SimpleNamespace(
+            clear=lambda: pytest.fail("tools.set([]) replaces without clear"),
+            set=lambda tools: tool_sets.append(tools),
+        ),
+        save=lambda: None,
+    )
+
+    monkeypatch.setattr(django.db.transaction, "atomic", lambda: NullAtomic())
+    monkeypatch.setattr(
+        run_prompt_module,
+        "_request_dataset_queryset",
+        lambda request: SingleObjectQuerySet(dataset),
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "_request_column_queryset",
+        lambda request: SingleObjectQuerySet(column),
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "_request_run_prompter_queryset",
+        lambda request: SingleObjectQuerySet(run_prompter),
+    )
+    monkeypatch.setattr(
+        run_prompt_module.Cell.objects,
+        "filter",
+        lambda **kwargs: CellQuerySet(),
+    )
+    monkeypatch.setattr(run_prompt_module.Tools, "objects", ToolManager())
+    monkeypatch.setattr(
+        run_prompt_module,
+        "update_column_for_rerun",
+        lambda **kwargs: None,
+    )
+
+    task_module = ModuleType("model_hub.tasks.run_prompt")
+    task_module.process_prompts_single = SimpleNamespace(
+        apply_async=lambda **kwargs: SimpleNamespace(id=uuid.uuid4())
+    )
+    monkeypatch.setitem(sys.modules, "model_hub.tasks.run_prompt", task_module)
+
+    view = run_prompt_module.EditRunPromptColumnView()
+    view._gm = SimpleNamespace(
+        success_response=lambda payload: payload,
+        not_found=lambda message: pytest.fail(f"unexpected not_found: {message}"),
+        bad_request=lambda message: pytest.fail(f"unexpected bad_request: {message}"),
+        internal_server_error_response=lambda message: pytest.fail(
+            f"unexpected internal_server_error_response: {message}"
+        ),
+    )
+
+    response = run_prompt_module.EditRunPromptColumnView.post.__wrapped__(
+        view,
+        SimpleNamespace(
+            validated_data={
+                "dataset_id": dataset_id,
+                "column_id": column_id,
+                "config": {
+                    "messages": [{"role": "user", "content": "New"}],
+                    "tools": [],
+                },
+            },
+            user=SimpleNamespace(organization=SimpleNamespace(id=organization_id)),
+        ),
+    )
+
+    assert response == "Run prompt column updated successfully"
+    assert tool_filters == [{"id__in": []}]
+    assert tool_sets == [[]]
 
 
 def test_retrieve_run_prompt_view_returns_public_template_format_alias(monkeypatch):

@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { validateContractedRequestConfig } from "../openapi-contract";
+import { ModelHubDevelopsAddRunPromptColumnCreateBody } from "src/generated/api-contracts/api.zod";
 
 // Round-trip guard (TH-6280): a representative run payload must pass the
 // add_run_prompt_column request contract. The PromptConfig serializer used
@@ -38,6 +39,12 @@ describe("add_run_prompt_column request contract", () => {
   it("accepts a real run payload (mixed run_prompt_config, array message content, string response_format)", () => {
     const result = validateContractedRequestConfig(runRequest);
     expect(result.ok).toBe(true);
+  });
+
+  it("accepts the payload in the generated zod request schema", () => {
+    expect(() =>
+      ModelHubDevelopsAddRunPromptColumnCreateBody.parse(runRequest.data),
+    ).not.toThrow();
   });
 
   it("accepts legacy configuration.template_format as a scalar string", () => {

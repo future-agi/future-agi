@@ -8162,7 +8162,7 @@ export type PromptConfigApiMessagesItem = {[key: string]: unknown};
 /**
  * Any valid JSON value.
  */
-export type PromptConfigApiResponseFormat = { [key: string]: unknown };
+export type PromptConfigApiResponseFormat = unknown;
 
 export type PromptConfigApiToolsItem = {[key: string]: unknown};
 

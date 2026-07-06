@@ -292,6 +292,13 @@ async function runGeneration(schemaPath) {
       );
     }
 
+    schemas = assertReplaceRegex(
+      schemas,
+      /\/\*\*\n \* Any valid JSON value\.\n \*\/\nexport type PromptConfigApiResponseFormat = \{ \[key: string\]: unknown \};/g,
+      "/**\n * Any valid JSON value.\n */\nexport type PromptConfigApiResponseFormat = unknown;",
+      "PromptConfig response_format JsonValueField → unknown",
+    );
+
     fs.writeFileSync(schemasOutputPath, schemas);
   }
 
@@ -335,6 +342,12 @@ async function runGeneration(schemaPath) {
       /"(messages|tools)": zod\.array\(zod\.record\(zod\.string\(\), zod\.object\(\{\n\n\}\)\.passthrough\(\)\.describe\('Any valid JSON value\.'\)\)\)/g,
       `"$1": zod.array(zod.record(zod.string(), zod.unknown()))`,
       "PromptConfig JsonValueField array record values → unknown",
+    );
+    zod = assertReplaceRegex(
+      zod,
+      /"response_format": zod\.object\(\{\n\n\}\)\.passthrough\(\)\.optional\(\)\.describe\('Any valid JSON value\.'\)/g,
+      `"response_format": zod.unknown().optional().describe('Any valid JSON value.')`,
+      "PromptConfig response_format zod → unknown",
     );
 
     // additionalProperties:true on PromptModelParams / PromptConfiguration:

@@ -147,6 +147,7 @@ jobs:
           src/api/contracts/__tests__/openapi-contract.test.js
           src/api/contracts/__tests__/filter-contract.test.js
           src/api/contracts/__tests__/api-surface.test.js
+          src/api/contracts/__tests__/run-prompt-contract.test.js
           src/utils/__tests__/axios.test.js
           src/api/annotation-queues/__tests__/annotation-queues.test.js
           src/api/scores/__tests__/scores.test.js
