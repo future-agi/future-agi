@@ -99,6 +99,37 @@ class AnyValueDictField(serializers.DictField):
         }
 
 
+class StringOrArrayField(serializers.JSONField):
+    """Field that accepts either a plain string or a JSON array.
+
+    Use this for ``messages[].content`` which is either a plain text string
+    or an array of content-part objects (OpenAI multi-part format).
+
+    Emits ``x-string-or-array: true`` detected by ``openapi-contract.js``
+    which maps it to ``z.union([z.string(), z.array(z.unknown())])``.
+    """
+
+    def to_internal_value(self, data):
+        # Runtime guard — parallel to ``StringOrObjectField`` above. The
+        # generated contract describes string-or-array but the field
+        # inherits from ``JSONField`` whose base ``to_internal_value`` would
+        # otherwise accept dicts, numbers, booleans and ``null``. Without
+        # this override an SDK / curl / internal caller that bypasses the
+        # FE contract validator would persist ``messages[].content: 42``
+        # or ``content: {}`` happily.
+        if isinstance(data, (str, list)):
+            return data
+        raise serializers.ValidationError(
+            "Expected a string or a JSON array."
+        )
+
+    class Meta:
+        swagger_schema_fields = {
+            "x-string-or-array": True,
+            "description": "Plain text string or array of content-part objects.",
+        }
+
+
 class StrictAwareDateTimeField(serializers.DateTimeField):
     """DateTimeField that rejects naive datetimes before DRF localizes them."""
 

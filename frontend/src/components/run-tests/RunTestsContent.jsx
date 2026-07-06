@@ -511,8 +511,8 @@ const RunTestsContent = ({
         header: "Last Run",
         size: 150,
         enableSorting: false,
-        cell: ({ getValue }) => {
-          const v = getValue();
+        cell: ({ row }) => {
+          const v = row.original.last_run_at;
           return (
             <Typography
               variant="body2"

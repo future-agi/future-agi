@@ -307,9 +307,7 @@ def allowed_root_spans_for_request(
     # Root spans only (CH stores parent_span_id as a non-nullable String; root
     # spans carry ""). Collect the candidate project_ids to verify against PG.
     root_spans = [s for s in ch_spans if not s.parent_span_id]
-    candidate_project_ids = {
-        str(s.project_id) for s in root_spans if s.project_id
-    }
+    candidate_project_ids = {str(s.project_id) for s in root_spans if s.project_id}
     if not candidate_project_ids:
         return {}
 
@@ -694,6 +692,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     config_name_map[str(c.id)] = c.name
                     config_output_type_map[str(c.id)] = _get_configured_output_type(c)
 
+            # Keys with a completed score or an error — a terminal result always
+            # wins over a non-terminal/skipped marker regardless of CH row order.
+            terminal_keys: set[str] = set()
+            # Precedence among non-terminal/skipped rows for the same key.
+            _status_rank = {"pending": 1, "running": 2, "skipped": 3}
+
             for eval_row in eval_rows:
                 config_id = eval_row.get("config_id")
                 span_id = eval_row.get("span_id")
@@ -711,28 +715,65 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
                 key = f"{config_id}**{span_id}"
 
-                if eval_row.get("error") or eval_row.get("output_str") == "ERROR":
+                _row_status = (eval_row.get("status") or "").lower()
+                if (
+                    eval_row.get("error")
+                    or eval_row.get("output_str") == "ERROR"
+                    or _row_status == "errored"
+                ):
                     evals_metrics[key] = {
                         "score": None,
                         "name": f"{config_name}{name_suffix}",
                         "explanation": eval_row.get("error_message"),
                         "error": True,
                     }
-                else:
-                    configured_output_type = config_output_type_map.get(config_id)
-                    score, output_type = _build_eval_metric_entry(
-                        eval_row.get("output_float"),
-                        eval_row.get("output_bool"),
-                        eval_row.get("output_str_list"),
-                        configured_output_type,
-                    )
-                    if score is not None or output_type is not None:
-                        evals_metrics[key] = {
-                            "score": score,
-                            "name": f"{config_name}{name_suffix}",
-                            "explanation": eval_row.get("eval_explanation"),
-                            "output_type": output_type,
-                        }
+                    terminal_keys.add(key)
+                    continue
+
+                # A non-terminal lifecycle status wins over the output columns:
+                # the CH mirror stores 0 for a NULL bool, so a queued/running/
+                # skipped row can carry stale output that would otherwise be
+                # rendered as a real score. Surface the status marker instead
+                # (a completed row for the same key still overrides it below).
+                status = (eval_row.get("status") or "").lower()
+                if status in _status_rank:
+                    if key not in terminal_keys:
+                        existing = evals_metrics.get(key)
+                        if not (
+                            existing
+                            and _status_rank.get(existing.get("status"), 0)
+                            >= _status_rank[status]
+                        ):
+                            entry = {
+                                "score": None,
+                                "name": f"{config_name}{name_suffix}",
+                                "explanation": eval_row.get("eval_explanation"),
+                                "status": status,
+                            }
+                            if status == "skipped" and eval_row.get("skipped_reason"):
+                                entry["skipped_reason"] = eval_row.get("skipped_reason")
+                                if not entry["explanation"]:
+                                    entry["explanation"] = eval_row.get(
+                                        "skipped_reason"
+                                    )
+                            evals_metrics[key] = entry
+                    continue
+
+                configured_output_type = config_output_type_map.get(config_id)
+                score, output_type = _build_eval_metric_entry(
+                    eval_row.get("output_float"),
+                    eval_row.get("output_bool"),
+                    eval_row.get("output_str_list"),
+                    configured_output_type,
+                )
+                if score is not None or output_type is not None:
+                    evals_metrics[key] = {
+                        "score": score,
+                        "name": f"{config_name}{name_suffix}",
+                        "explanation": eval_row.get("eval_explanation"),
+                        "output_type": output_type,
+                    }
+                    terminal_keys.add(key)
 
         return self._gm.success_response(
             {"observation_span": observation_span, "evals_metrics": evals_metrics}
@@ -1657,11 +1698,19 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 if config_id not in span_evals:
                     continue
                 val = span_evals[config_id]
+                # Lifecycle marker — ``{"status": ...}`` (pending/running/skipped)
+                # or ``{"error": True}`` (errored): pass the whole marker through
+                # on the ``config_id`` column so the cell renders the
+                # loading / pending / skipped / error state instead of a blank.
+                if isinstance(val, dict) and (
+                    isinstance(val.get("status"), str) or val.get("error")
+                ):
+                    entry[config_id] = val
                 # CHOICES eval: spread per-choice percentages into separate
                 # columns keyed ``{config_id}**{choice}`` to match the
                 # column config produced by
                 # ``update_column_config_based_on_eval_config``.
-                if isinstance(val, dict) and not val.get("error") and val:
+                elif isinstance(val, dict) and not val.get("error") and val:
                     for choice, pct in val.items():
                         entry[f"{config_id}**{choice}"] = pct
                 else:
@@ -1842,7 +1891,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 if config_id not in span_evals:
                     continue
                 val = span_evals[config_id]
-                if (
+                if isinstance(val, dict) and (
+                    isinstance(val.get("status"), str) or val.get("error")
+                ):
+                    # Lifecycle marker — loading/pending/skipped or errored.
+                    entry[config_id] = val
+                elif (
                     isinstance(val, dict)
                     and not val.get("error")
                     and not val.get("score")

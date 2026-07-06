@@ -234,10 +234,12 @@ class ObservabilityProviderViewSet(BaseModelViewSetMixinWithUserOrg, ModelViewSe
             assistant_id = request.data.get("assistant_id")
             api_key = request.data.get("api_key")
             provider = request.data.get("provider")
+            agent_id = request.data.get("agent_id")
             if is_masked(api_key):
                 api_key = resolve_stored_api_key(
                     organization=get_request_organization(request),
                     workspace=getattr(request, "workspace", None),
+                    agent_id=agent_id,
                     assistant_id=assistant_id,
                 )
                 if not api_key:

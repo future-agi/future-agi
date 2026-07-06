@@ -1104,7 +1104,7 @@ const TestPlayground = React.forwardRef(
             }}
           >
             <Iconify
-              icon="solar:play-bold"
+              icon="lucide:play"
               width={14}
               sx={{
                 color:

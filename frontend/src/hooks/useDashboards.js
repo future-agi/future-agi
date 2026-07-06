@@ -165,6 +165,7 @@ export function useCreateWidget() {
       queryClient.invalidateQueries({
         queryKey: DASHBOARD_KEYS.detail(dashboardId),
       });
+      queryClient.invalidateQueries({ queryKey: DASHBOARD_KEYS.list() });
     },
   });
 }
@@ -181,6 +182,7 @@ export function useUpdateWidget() {
       queryClient.invalidateQueries({
         queryKey: DASHBOARD_KEYS.detail(dashboardId),
       });
+      queryClient.invalidateQueries({ queryKey: DASHBOARD_KEYS.list() });
     },
   });
 }
@@ -194,6 +196,7 @@ export function useDeleteWidget() {
       queryClient.invalidateQueries({
         queryKey: DASHBOARD_KEYS.detail(dashboardId),
       });
+      queryClient.invalidateQueries({ queryKey: DASHBOARD_KEYS.list() });
     },
   });
 }
@@ -207,6 +210,7 @@ export function useReorderWidgets() {
       queryClient.invalidateQueries({
         queryKey: DASHBOARD_KEYS.detail(dashboardId),
       });
+      queryClient.invalidateQueries({ queryKey: DASHBOARD_KEYS.list() });
     },
   });
 }
@@ -220,6 +224,7 @@ export function useDuplicateWidget() {
       queryClient.invalidateQueries({
         queryKey: DASHBOARD_KEYS.detail(dashboardId),
       });
+      queryClient.invalidateQueries({ queryKey: DASHBOARD_KEYS.list() });
     },
   });
 }

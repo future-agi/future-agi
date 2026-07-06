@@ -178,6 +178,13 @@ function schemaToZod(schema, options = {}) {
     );
   }
 
+  if (schema["x-string-or-array"]) {
+    return nullableIfNeeded(
+      z.union([z.string(), z.array(z.unknown())]),
+      schema,
+    );
+  }
+
   if (schema["x-json-value"]) {
     return nullableIfNeeded(z.any(), schema);
   }

@@ -844,6 +844,564 @@ class TestDeleteEvalsView:
         user_eval_metric.refresh_from_db()
         assert user_eval_metric.deleted is True
 
+    def test_delete_eval_full_behavioral(
+        self, auth_client, dataset, organization, workspace, eval_template
+    ):
+        """Full behavioral test for the optimized delete path.
+
+        Covers:
+        - Cells under eval + reason columns are soft-deleted
+        - column_order is pruned
+        - Other metrics referencing the same column get column_deleted=True
+        - The deleted metric itself does NOT get column_deleted=True
+        - Cells under unrelated columns are untouched
+        """
+        # ── Setup: two eval metrics sharing the same input column ──
+        input_col = Column.objects.create(
+            name="Input",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
+        )
+
+        metric_to_delete = UserEvalMetric.objects.create(
+            name="Eval A",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={"mapping": {"output": str(input_col.id)}},
+        )
+        other_metric = UserEvalMetric.objects.create(
+            name="Eval B",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={"mapping": {"output": str(input_col.id)}},
+        )
+
+        # Eval column + reason column for the metric we'll delete
+        eval_col = Column.objects.create(
+            name="Eval A",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(metric_to_delete.id),
+        )
+        reason_col = Column.objects.create(
+            name="Eval A-reason",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{eval_col.id}-sourceid-{metric_to_delete.id}",
+        )
+
+        # Eval column for the other metric (should NOT be deleted)
+        other_eval_col = Column.objects.create(
+            name="Eval B",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(other_metric.id),
+        )
+
+        dataset.column_order = [
+            str(input_col.id),
+            str(eval_col.id),
+            str(reason_col.id),
+            str(other_eval_col.id),
+        ]
+        dataset.save()
+
+        # Create rows + cells
+        row = Row.objects.create(dataset=dataset, order=0)
+        eval_cell = Cell.objects.create(
+            dataset=dataset, row=row, column=eval_col, value="Pass",
+        )
+        reason_cell = Cell.objects.create(
+            dataset=dataset, row=row, column=reason_col, value="Looks good",
+        )
+        input_cell = Cell.objects.create(
+            dataset=dataset, row=row, column=input_col, value="Hello world",
+        )
+        other_eval_cell = Cell.objects.create(
+            dataset=dataset, row=row, column=other_eval_col, value="Fail",
+        )
+
+        # ── Act ──
+        # The other_metric references the eval_col via its config mapping,
+        # so get_metrics_using_column should find it.
+        # We reference eval_col.id in other_metric's config so it gets flagged.
+        other_metric.config = {"mapping": {"output": str(eval_col.id)}}
+        other_metric.save(update_fields=["config"])
+
+        response = auth_client.delete(
+            f"/model-hub/develops/{dataset.id}/delete_user_eval/{metric_to_delete.id}/",
+            {"delete_column": True},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        # ── Assert: cells under deleted columns are soft-deleted ──
+        eval_cell.refresh_from_db()
+        reason_cell.refresh_from_db()
+        assert eval_cell.deleted is True
+        assert eval_cell.deleted_at is not None
+        assert reason_cell.deleted is True
+        assert reason_cell.deleted_at is not None
+
+        # ── Assert: cells under unrelated columns are untouched ──
+        input_cell.refresh_from_db()
+        other_eval_cell.refresh_from_db()
+        assert input_cell.deleted is False
+        assert other_eval_cell.deleted is False
+
+        # ── Assert: column_order is pruned ──
+        dataset.refresh_from_db()
+        assert str(eval_col.id) not in dataset.column_order
+        assert str(reason_col.id) not in dataset.column_order
+        # Input and other eval columns still in order
+        assert str(input_col.id) in dataset.column_order
+        assert str(other_eval_col.id) in dataset.column_order
+
+        # ── Assert: columns are soft-deleted ──
+        eval_col.refresh_from_db()
+        reason_col.refresh_from_db()
+        assert eval_col.deleted is True
+        assert reason_col.deleted is True
+
+        # ── Assert: other eval column is NOT deleted ──
+        other_eval_col.refresh_from_db()
+        assert other_eval_col.deleted is False
+
+        # ── Assert: other metric gets column_deleted=True ──
+        other_metric.refresh_from_db()
+        assert other_metric.column_deleted is True
+
+        # ── Assert: deleted metric does NOT have column_deleted ──
+        # It gets deleted=True directly; column_deleted is skipped.
+        metric_to_delete.refresh_from_db()
+        assert metric_to_delete.deleted is True
+        assert metric_to_delete.column_deleted is False
+
+    def test_delete_experiment_scoped_eval_marks_metric_deleted(
+        self, auth_client, dataset, organization, workspace, eval_template
+    ):
+        """Experiment-scoped delete (delete_column=True + experiment_id) must
+        also soft-delete eval_metric — not just the per-EDT cells/columns.
+
+        Regression guard: a prior refactor moved eval_metric.deleted into the
+        non-experiment branch only, so experiment-scoped delete left a ghost
+        metric record (still visible in the sidebar, broken on rerun).
+        """
+        from model_hub.models.experiments import (
+            ExperimentDatasetTable,
+            ExperimentsTable,
+        )
+
+        # Two metrics — the view refuses to delete the last one in an experiment
+        metric_to_delete = UserEvalMetric.objects.create(
+            name="Exp Eval A",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={},
+        )
+        keep_metric = UserEvalMetric.objects.create(
+            name="Exp Eval B",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={},
+        )
+
+        experiment = ExperimentsTable.objects.create(
+            name="Test Experiment",
+            dataset=dataset,
+            prompt_config=[],
+        )
+        experiment.user_eval_template_ids.add(metric_to_delete, keep_metric)
+
+        edt = ExperimentDatasetTable.objects.create(
+            name="Test EDT",
+            experiment=experiment,
+        )
+
+        # Scope the eval to the experiment via source_id (mirrors what the
+        # create flow does so the dataset-eval-queryset lookup finds it).
+        metric_to_delete.source_id = str(experiment.id)
+        metric_to_delete.save(update_fields=["source_id"])
+
+        # Per-EDT experiment eval column with the right source_id pattern
+        per_edt_col = Column.objects.create(
+            name="Exp Eval A",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EXPERIMENT_EVALUATION.value,
+            source_id=f"{edt.id}-coleval-sourceid-{metric_to_delete.id}",
+        )
+        row = Row.objects.create(dataset=dataset, order=0)
+        per_edt_cell = Cell.objects.create(
+            dataset=dataset, row=row, column=per_edt_col, value="Pass"
+        )
+
+        # ── Act ──
+        response = auth_client.delete(
+            f"/model-hub/develops/{dataset.id}/delete_user_eval/{metric_to_delete.id}/",
+            {"delete_column": True, "experiment_id": str(experiment.id)},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        # ── Assert: the metric record itself is soft-deleted ──
+        # This is the regression — used to stay deleted=False forever.
+        metric_to_delete.refresh_from_db()
+        assert metric_to_delete.deleted is True
+        assert metric_to_delete.deleted_at is not None
+
+        # ── Assert: per-EDT column + cell got cleaned up ──
+        per_edt_col.refresh_from_db()
+        per_edt_cell.refresh_from_db()
+        assert per_edt_col.deleted is True
+        assert per_edt_cell.deleted is True
+
+        # ── Assert: keep_metric (the other one) is untouched ──
+        keep_metric.refresh_from_db()
+        assert keep_metric.deleted is False
+
+    def test_delete_eval_no_cell_join_on_source_id(
+        self, dataset, organization, workspace, eval_template
+    ):
+        """Query-shape guard: delete_eval_column_and_dependents must never issue
+        a Cell query that JOINs on column__source_id__startswith (full scan).
+        All cell deletes should use column_id IN (...) instead.
+        """
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from model_hub.services.column_service import delete_eval_column_and_dependents
+
+        metric = UserEvalMetric.objects.create(
+            name="Eval Shape",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={},
+        )
+        eval_col = Column.objects.create(
+            name="Eval Shape",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(metric.id),
+        )
+        reason_col = Column.objects.create(
+            name="Eval Shape-reason",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{eval_col.id}-sourceid-{metric.id}",
+        )
+        row = Row.objects.create(dataset=dataset, order=0)
+        Cell.objects.create(dataset=dataset, row=row, column=eval_col, value="x")
+        Cell.objects.create(dataset=dataset, row=row, column=reason_col, value="y")
+        dataset.column_order = [str(eval_col.id), str(reason_col.id)]
+        dataset.save()
+
+        from django.db import transaction
+
+        with CaptureQueriesContext(connection) as ctx:
+            with transaction.atomic():
+                delete_eval_column_and_dependents(eval_col, organization.id)
+
+        # ``Cell._meta.db_table`` is ``model_hub_cell`` (Django default for the
+        # ``model_hub.Cell`` model). Match against the real table name — a
+        # filter against a non-existent table would always yield an empty
+        # list and the loop below would silently pass.
+        cell_sql = [
+            q["sql"] for q in ctx.captured_queries
+            if "model_hub_cell" in q["sql"].lower()
+        ]
+        # Positive assert: the cell delete must have actually run. Absence-only
+        # checks pass when the query disappears entirely (e.g. accidental
+        # early return) — guard against that explicitly.
+        assert cell_sql, (
+            "expected delete_eval_column_and_dependents to issue at least "
+            "one Cell query, captured none"
+        )
+        # The fix: every Cell query must filter on the indexed FK column
+        # (``column_id IN (...)``) and never on ``column__source_id`` which
+        # forces a JOIN + LIKE scan over the whole Cell table.
+        assert any("column_id" in s.lower() for s in cell_sql), (
+            "expected the cell delete to use the indexed column_id IN path; "
+            f"captured Cell queries: {cell_sql}"
+        )
+        assert not any("source_id" in s.lower() for s in cell_sql), (
+            "Cell delete must not use column__source_id JOIN; "
+            f"found full-scan query in: {cell_sql}"
+        )
+
+    def test_delete_eval_service_is_self_atomic(
+        self, dataset, organization, workspace, eval_template
+    ):
+        """The service opens its own ``transaction.atomic()`` so callers
+        can't accidentally run it non-atomically.
+
+        Verifies by spying on ``transaction.atomic`` in the service module
+        and asserting it was called during the delete.
+        """
+        from unittest.mock import patch
+
+        from django.db import transaction as _tx
+
+        from model_hub.services.column_service import delete_eval_column_and_dependents
+
+        metric = UserEvalMetric.objects.create(
+            name="Eval AtomicGuard",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={},
+        )
+        eval_col = Column.objects.create(
+            name="Eval AtomicGuard",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(metric.id),
+        )
+
+        with patch(
+            "model_hub.services.column_service.transaction.atomic",
+            side_effect=_tx.atomic,
+        ) as spy:
+            delete_eval_column_and_dependents(eval_col, organization.id)
+
+        assert spy.call_count >= 1, (
+            "service must open its own transaction.atomic() so callers "
+            "can't accidentally run it non-atomically"
+        )
+
+    def test_delete_eval_prunes_column_config(
+        self, dataset, organization, workspace, eval_template
+    ):
+        """column_config is keyed by column id — leaving stale ids in it
+        breaks dataset round-trip validation. The service must prune both
+        column_order and column_config.
+        """
+        from django.db import transaction
+
+        from model_hub.services.column_service import delete_eval_column_and_dependents
+
+        metric = UserEvalMetric.objects.create(
+            name="Eval CfgPrune",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={},
+        )
+        eval_col = Column.objects.create(
+            name="Eval CfgPrune",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(metric.id),
+        )
+        reason_col = Column.objects.create(
+            name="Eval CfgPrune-reason",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION_REASON.value,
+            source_id=f"{eval_col.id}-sourceid-{metric.id}",
+        )
+        other_col = Column.objects.create(
+            name="Other",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
+        )
+        dataset.column_order = [str(eval_col.id), str(reason_col.id), str(other_col.id)]
+        dataset.column_config = {
+            str(eval_col.id): {"width": 200},
+            str(reason_col.id): {"width": 150},
+            str(other_col.id): {"width": 100},
+        }
+        dataset.save()
+
+        with transaction.atomic():
+            delete_eval_column_and_dependents(eval_col, organization.id)
+
+        dataset.refresh_from_db()
+        assert str(eval_col.id) not in dataset.column_order
+        assert str(reason_col.id) not in dataset.column_order
+        assert str(other_col.id) in dataset.column_order
+        assert str(eval_col.id) not in dataset.column_config
+        assert str(reason_col.id) not in dataset.column_config
+        assert str(other_col.id) in dataset.column_config
+
+    def test_delete_experiment_scoped_eval_prunes_column_config(
+        self, auth_client, dataset, organization, workspace, eval_template
+    ):
+        """Experiment-scoped delete must also prune ``column_config``, not
+        just ``column_order``.
+
+        Regression guard: the experiment-scoped branch can't call the shared
+        service (different ``source_id`` pattern), so it hand-rolls the
+        delete. An earlier version of this PR pruned only ``column_order``
+        and left soft-deleted ids in ``column_config``, recreating the
+        staleness bug the main path fixes. Both delete paths must share the
+        ``prune_dataset_columns`` helper so they can't diverge again.
+        """
+        from model_hub.models.experiments import (
+            ExperimentDatasetTable,
+            ExperimentsTable,
+        )
+
+        metric_to_delete = UserEvalMetric.objects.create(
+            name="Exp Eval Cfg A",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={},
+        )
+        keep_metric = UserEvalMetric.objects.create(
+            name="Exp Eval Cfg B",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={},
+        )
+
+        experiment = ExperimentsTable.objects.create(
+            name="Test Experiment Cfg",
+            dataset=dataset,
+            prompt_config=[],
+        )
+        experiment.user_eval_template_ids.add(metric_to_delete, keep_metric)
+        edt = ExperimentDatasetTable.objects.create(
+            name="Test EDT Cfg",
+            experiment=experiment,
+        )
+
+        metric_to_delete.source_id = str(experiment.id)
+        metric_to_delete.save(update_fields=["source_id"])
+
+        per_edt_col = Column.objects.create(
+            name="Exp Eval Cfg A",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EXPERIMENT_EVALUATION.value,
+            source_id=f"{edt.id}-coleval-sourceid-{metric_to_delete.id}",
+        )
+        other_col = Column.objects.create(
+            name="Untouched",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.OTHERS.value,
+        )
+
+        # Snapshot dataset = the column's dataset (same here as the experiment's
+        # working dataset). Seed both column_order AND column_config with the
+        # column id we expect pruned, and a sibling id that must be preserved.
+        snap = per_edt_col.dataset
+        snap.column_order = [str(per_edt_col.id), str(other_col.id)]
+        snap.column_config = {
+            str(per_edt_col.id): {"width": 200},
+            str(other_col.id): {"width": 100},
+        }
+        snap.save()
+
+        response = auth_client.delete(
+            f"/model-hub/develops/{dataset.id}/delete_user_eval/{metric_to_delete.id}/",
+            {"delete_column": True, "experiment_id": str(experiment.id)},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_200_OK
+
+        snap.refresh_from_db()
+        # column_order pruned (the existing behaviour)…
+        assert str(per_edt_col.id) not in snap.column_order
+        # …AND column_config pruned (the regression this test guards)…
+        assert str(per_edt_col.id) not in snap.column_config
+        # …without touching unrelated entries.
+        assert str(other_col.id) in snap.column_order
+        assert str(other_col.id) in snap.column_config
+
+    def test_delete_eval_atomic_rollback(
+        self, dataset, organization, workspace, eval_template
+    ):
+        """Atomicity guard: if any step inside delete_eval_column_and_dependents
+        raises, no writes should be committed (cells, column_order, columns
+        all stay untouched).
+        """
+        from unittest.mock import patch
+
+        from django.db import transaction
+
+        from model_hub.services.column_service import delete_eval_column_and_dependents
+
+        metric = UserEvalMetric.objects.create(
+            name="Eval Atomic",
+            dataset=dataset,
+            organization=organization,
+            workspace=workspace,
+            template=eval_template,
+            status=StatusType.NOT_STARTED.value,
+            config={},
+        )
+        eval_col = Column.objects.create(
+            name="Eval Atomic",
+            dataset=dataset,
+            data_type=DataTypeChoices.TEXT.value,
+            source=SourceChoices.EVALUATION.value,
+            source_id=str(metric.id),
+        )
+        row = Row.objects.create(dataset=dataset, order=0)
+        cell = Cell.objects.create(
+            dataset=dataset, row=row, column=eval_col, value="before"
+        )
+        original_order = [str(eval_col.id)]
+        dataset.column_order = original_order[:]
+        dataset.save()
+
+        # Blow up after cells are deleted but before columns are deleted
+        with patch(
+            "model_hub.models.evals_metric.UserEvalMetric.get_metrics_using_column",
+            side_effect=RuntimeError("simulated mid-delete failure"),
+        ):
+            with pytest.raises(RuntimeError):
+                with transaction.atomic():
+                    delete_eval_column_and_dependents(eval_col, organization.id)
+
+        # Nothing should have been committed
+        cell.refresh_from_db()
+        assert cell.deleted is False, "Cell must not be soft-deleted after rollback"
+
+        eval_col.refresh_from_db()
+        assert eval_col.deleted is False, "Column must not be soft-deleted after rollback"
+
+        dataset.refresh_from_db()
+        assert str(eval_col.id) in dataset.column_order, (
+            "column_order must be unchanged after rollback"
+        )
+
 
 # ==================== is_user_eval_stopped Tests ====================
 

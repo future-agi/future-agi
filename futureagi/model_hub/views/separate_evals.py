@@ -40,6 +40,7 @@ from model_hub.models.evals_metric import (
 )
 
 from model_hub.models.run_prompt import PromptEvalConfig
+from model_hub.selectors.feedback import resolve_feedback_edit_contexts
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     CellErrorLocalizerResponseSerializer,
@@ -5647,9 +5648,26 @@ class EvalPlayGroundAPIView(APIView):
                         CallExecution,
                         CallTranscript,
                     )
+                    from simulate.utils.speaker_roles import SpeakerRoleResolver
 
                     _ce = CallExecution.objects.filter(id=_call_id).first()
                     if _ce:
+                        # Filter out system prompt and normalise speaker labels via
+                        # the resolver so the simulator persona never reaches the eval.
+                        _ce_provider = SpeakerRoleResolver.detect_provider(
+                            _ce.provider_call_data
+                        )
+                        _ce_is_outbound = SpeakerRoleResolver.detect_is_outbound(_ce)
+                        _conversational_roles = (
+                            SpeakerRoleResolver.get_conversational_roles()
+                        )
+                        _transcript_rows = (
+                            CallTranscript.objects.filter(
+                                call_execution_id=_ce.id,
+                                speaker_role__in=_conversational_roles,
+                            )
+                            .order_by("start_time_ms")[:200]
+                        )
                         call_context = {
                             "id": str(_ce.id),
                             "status": _ce.status,
@@ -5680,13 +5698,15 @@ class EvalPlayGroundAPIView(APIView):
                             "scenario": build_eval_playground_scenario_context(_ce),
                             "transcript": [
                                 {
-                                    "speaker": t.speaker_role,
+                                    "speaker": SpeakerRoleResolver.get_eval_role_label(
+                                        t.speaker_role,
+                                        provider=_ce_provider,
+                                        is_outbound=_ce_is_outbound,
+                                    ),
                                     "content": t.content,
                                     "start_ms": t.start_time_ms,
                                 }
-                                for t in CallTranscript.objects.filter(
-                                    call_execution_id=_ce.id
-                                ).order_by("start_time_ms")[:200]
+                                for t in _transcript_rows
                             ],
                         }
                 except Exception as _e:

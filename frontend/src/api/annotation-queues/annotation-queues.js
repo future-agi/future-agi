@@ -308,7 +308,6 @@ export const useArchiveAnnotationQueue = () => {
 export const useDeleteAnnotationQueue = useArchiveAnnotationQueue;
 
 export const useHardDeleteAnnotationQueue = () => {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, name }) =>
       axios.post(annotationQueueEndpoints.hardDelete(id), {
@@ -317,7 +316,6 @@ export const useHardDeleteAnnotationQueue = () => {
       }),
     onSuccess: () => {
       enqueueSnackbar("Queue permanently deleted.", { variant: "warning" });
-      queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: (error) => {
       enqueueSnackbar(extractErrorMessage(error, "Failed to delete queue"), {
@@ -640,6 +638,8 @@ const patchAssignmentCacheValue = (value, variables) => {
 export const useAssignQueueItems = () => {
   const queryClient = useQueryClient();
   return useMutation({
+    // Own the error toast here so the global handler (app.jsx) doesn't also fire one.
+    meta: { errorHandled: true },
     mutationFn: ({ queueId, itemIds, userIds, action }) => {
       const normalizedUserIds = userIds ?? [];
       return axios.post(annotationQueueEndpoints.assignItems(queueId), {
@@ -706,14 +706,16 @@ export const useAssignQueueItems = () => {
         queryKey: annotationQueueKeys.progress(variables.queueId),
       });
     },
-    onError: (_error, _variables, context) => {
+    onError: (error, _variables, context) => {
       context?.previousQueueItems?.forEach(([queryKey, data]) => {
         queryClient.setQueryData(queryKey, data);
       });
       context?.previousDetails?.forEach(([queryKey, data]) => {
         queryClient.setQueryData(queryKey, data);
       });
-      enqueueSnackbar("Failed to assign items", { variant: "error" });
+      enqueueSnackbar(extractErrorMessage(error, "Failed to assign items"), {
+        variant: "error",
+      });
     },
   });
 };

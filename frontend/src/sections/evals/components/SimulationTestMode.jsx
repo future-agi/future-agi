@@ -603,10 +603,26 @@ const SimulationTestMode = React.forwardRef(
             // `recordings` dict / `audio_url`, with provider_call_data
             // fallback for shapes that don't normalize cleanly.
             const rec = callData.recordings || {};
+            // Voice transcript arrives as an array of turn objects. Mirror
+            // the BE eval-runtime shape (`agent: ...\ncustomer: ...`) so the
+            // preview matches what the eval actually consumes.
             flat.call.transcript =
               typeof callData.transcript === "string"
                 ? callData.transcript
-                : "";
+                : Array.isArray(callData.transcript)
+                  ? callData.transcript
+                      .filter(
+                        (r) =>
+                          r?.content?.trim() &&
+                          (r.speaker_role === "user" ||
+                            r.speaker_role === "assistant"),
+                      )
+                      .map(
+                        (r) =>
+                          `${r.speaker_role === "assistant" ? "agent" : "customer"}: ${r.content}`,
+                      )
+                      .join("\n")
+                  : "";
             flat.call.voice_recording =
               callData.audio_url ||
               rec.combined ||

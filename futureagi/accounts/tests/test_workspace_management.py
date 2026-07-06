@@ -255,7 +255,10 @@ class TestWorkspaceInviteAPIView:
             },
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_invite_user_unauthenticated(self, api_client, workspace):
         """Unauthenticated request fails."""
@@ -312,6 +315,56 @@ class TestWorkspaceInviteAPIView:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_invite_new_user_creates_pending_invite(
+        self, auth_client, api_client, workspace, monkeypatch
+    ):
+        """Inviting a brand-new user must persist a PENDING OrganizationInvite.
+
+        Regression: like the onboarding add-users flow, this endpoint created
+        the user + emailed a token but no invite row, so accept_invitation_mail
+        rejected the link as "expired or invalid".
+        """
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.encoding import force_bytes
+        from django.utils.http import urlsafe_base64_encode
+
+        import accounts.views.workspace_management as wm
+        from accounts.models.organization_invite import (
+            InviteStatus,
+            OrganizationInvite,
+        )
+
+        monkeypatch.setattr(wm, "email_helper", lambda *a, **k: None)
+
+        email = "wsinvite@futureagi.com"
+        response = auth_client.post(
+            "/accounts/workspace/invite/",
+            {
+                "emails": [email],
+                "role": OrganizationRoles.WORKSPACE_MEMBER,
+                "workspace_ids": [str(workspace.id)],
+                "select_all": False,
+            },
+            format="json",
+        )
+        assert response.status_code in (
+            status.HTTP_200_OK,
+            status.HTTP_201_CREATED,
+        )
+
+        new_member = User.objects.get(email=email)
+        invite = OrganizationInvite.objects.get(
+            target_email__iexact=email,
+            organization=new_member.organization,
+            status=InviteStatus.PENDING,
+        )
+        assert invite.workspace_access
+
+        uidb64 = urlsafe_base64_encode(force_bytes(new_member.pk))
+        token = default_token_generator.make_token(new_member)
+        preview = api_client.get(f"/accounts/accept-invitation/{uidb64}/{token}/")
+        assert preview.status_code == status.HTTP_200_OK
 
 
 # =============================================================================
@@ -546,7 +599,10 @@ class TestResendInviteAPIView:
             {"user_id": str(inactive_user.id)},
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_resend_invite_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -620,7 +676,10 @@ class TestDeleteUserAPIView:
             {"user_id": str(admin_user.id)},
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_delete_user_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -705,7 +764,10 @@ class TestDeactivateUserAPIView:
             {"user_id": str(admin_user.id)},
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_deactivate_user_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -792,7 +854,10 @@ class TestSwitchWorkspaceAPIView:
             format="json",
         )
         # Members do NOT have global workspace access — need explicit membership
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_switch_workspace_unauthenticated(self, api_client, workspace):
         """Unauthenticated request fails."""
@@ -846,12 +911,18 @@ class TestManageTeamViewGet:
     def test_list_team_as_admin_forbidden(self, admin_client):
         """Admin cannot list team (owner only)."""
         response = admin_client.get("/accounts/team/users/")
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_list_team_as_member_forbidden(self, member_client):
         """Member cannot list team."""
         response = member_client.get("/accounts/team/users/")
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_list_team_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -961,7 +1032,10 @@ class TestManageTeamViewPost:
             },
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_add_team_member_as_member_forbidden(self, member_client, workspace):
         """Member cannot add team members."""
@@ -978,7 +1052,10 @@ class TestManageTeamViewPost:
             },
             format="json",
         )
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_add_team_member_unauthenticated(self, api_client):
         """Unauthenticated request fails."""
@@ -1017,6 +1094,65 @@ class TestManageTeamViewPost:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_add_team_member_creates_pending_invite(
+        self, auth_client, api_client, workspace, monkeypatch
+    ):
+        """Adding a member must persist a PENDING OrganizationInvite.
+
+        Regression: the onboarding add-users flow created the user but no
+        invite row, so accept_invitation_mail rejected the link and the UI
+        rendered "This invite link has expired or is invalid."
+        """
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.encoding import force_bytes
+        from django.utils.http import urlsafe_base64_encode
+
+        import accounts.views.workspace_management as wm
+        from accounts.models.organization_invite import (
+            InviteStatus,
+            OrganizationInvite,
+        )
+
+        # Avoid real email delivery and ee billing deduction in tests.
+        monkeypatch.setattr(wm, "email_helper", lambda *a, **k: None)
+        monkeypatch.setattr(
+            wm, "log_and_deduct_cost_for_resource_request", None, raising=False
+        )
+
+        email = "pendinginvite@futureagi.com"
+        response = auth_client.post(
+            "/accounts/team/users/",
+            {
+                "members": [
+                    {
+                        "email": email,
+                        "name": "Pending Invite",
+                        "organization_role": OrganizationRoles.MEMBER,
+                    }
+                ]
+            },
+            format="json",
+        )
+        assert response.status_code in (
+            status.HTTP_200_OK,
+            status.HTTP_201_CREATED,
+        )
+
+        new_member = User.objects.get(email=email)
+        invite = OrganizationInvite.objects.get(
+            target_email__iexact=email,
+            organization=new_member.organization,
+            status=InviteStatus.PENDING,
+        )
+        # workspace_access lets invite.accept() materialize memberships.
+        assert invite.workspace_access
+
+        # The invite link the email carries must now validate (GET preview).
+        uidb64 = urlsafe_base64_encode(force_bytes(new_member.pk))
+        token = default_token_generator.make_token(new_member)
+        preview = api_client.get(f"/accounts/accept-invitation/{uidb64}/{token}/")
+        assert preview.status_code == status.HTTP_200_OK
 
     def test_update_org_name(self, auth_client, organization):
         """Owner can update organization display name."""
@@ -1070,12 +1206,18 @@ class TestManageTeamViewDelete:
     def test_delete_team_member_as_admin_forbidden(self, admin_client, member_user):
         """Admin cannot delete team members (owner only)."""
         response = admin_client.delete(f"/accounts/team/users/{member_user.id}/")
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_delete_team_member_as_member_forbidden(self, member_client, admin_user):
         """Member cannot delete team members."""
         response = member_client.delete(f"/accounts/team/users/{admin_user.id}/")
-        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
 
     def test_delete_team_member_unauthenticated(self, api_client, member_user):
         """Unauthenticated request fails."""

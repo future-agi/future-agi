@@ -1,7 +1,9 @@
 import pytest
 
 from accounts.models.user import OrgApiKey
+from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import AgentDefinition, Scenarios
+from simulate.models.eval_config import SimulateEvalConfig
 from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
 from simulate.models.test_execution import (
@@ -9,6 +11,7 @@ from simulate.models.test_execution import (
     CallTranscript,
     TestExecution as SimulationTestExecution,
 )
+from simulate.serializers.test_execution import CallExecutionDetailSerializer
 
 
 @pytest.fixture
@@ -146,3 +149,155 @@ def test_chat_sdk_code_uses_placeholders_without_leaking_org_keys(
     assert "livesecret1234567890" not in sdk_code
     assert 'FI_API_KEY="<YOUR_FI_API_KEY>"' in sdk_code
     assert 'FI_SECRET_KEY="<YOUR_FI_SECRET_KEY>"' in sdk_code
+
+
+@pytest.fixture
+def eval_configs(db, simulation_tree, organization):
+    template = EvalTemplate.objects.create(
+        name="Read Surface Eval Template",
+        config={},
+        organization=organization,
+    )
+    run_test = simulation_tree["run_test"]
+    live = SimulateEvalConfig.objects.create(
+        name="Live Eval",
+        eval_template=template,
+        run_test=run_test,
+    )
+    deleted = SimulateEvalConfig.objects.create(
+        name="Deleted Eval",
+        eval_template=template,
+        run_test=run_test,
+    )
+    deleted.delete()
+    return {"live": live, "deleted": deleted}
+
+
+def _eval_outputs_for(live, deleted):
+    return {
+        str(live.id): {
+            "name": "Live Eval",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "status": "completed",
+        },
+        str(deleted.id): {
+            "name": "Deleted Eval",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+            "status": "completed",
+        },
+    }
+
+
+@pytest.mark.django_db
+def test_get_eval_outputs_skips_missing_config(simulation_tree, eval_configs):
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    call_execution = simulation_tree["call_execution"]
+    call_execution.eval_outputs = _eval_outputs_for(live, deleted)
+    call_execution.save(update_fields=["eval_outputs"])
+
+    serializer = CallExecutionDetailSerializer(
+        context={"eval_configs": {str(live.id): live}}
+    )
+    outputs = serializer.get_eval_outputs(call_execution)
+
+    assert str(live.id) in outputs
+    assert str(deleted.id) not in outputs
+
+
+@pytest.mark.django_db
+def test_get_eval_metrics_skips_missing_config(simulation_tree, eval_configs):
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    call_execution = simulation_tree["call_execution"]
+    call_execution.eval_outputs = _eval_outputs_for(live, deleted)
+    call_execution.save(update_fields=["eval_outputs"])
+
+    serializer = CallExecutionDetailSerializer(
+        context={"eval_configs": {str(live.id): live}}
+    )
+    metrics = serializer.get_eval_metrics(call_execution)
+
+    assert str(live.id) in metrics
+    assert str(deleted.id) not in metrics
+
+
+@pytest.mark.django_db
+def test_get_eval_outputs_surfaces_all_when_context_absent(
+    simulation_tree, eval_configs
+):
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    call_execution = simulation_tree["call_execution"]
+    call_execution.eval_outputs = _eval_outputs_for(live, deleted)
+    call_execution.save(update_fields=["eval_outputs"])
+
+    serializer = CallExecutionDetailSerializer()
+    outputs = serializer.get_eval_outputs(call_execution)
+
+    assert str(live.id) in outputs
+    assert str(deleted.id) in outputs
+
+
+@pytest.mark.django_db
+def test_column_order_drops_deleted_eval_columns(
+    auth_client, simulation_tree, eval_configs
+):
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    test_execution = simulation_tree["test_execution"]
+    test_execution.execution_metadata = {
+        "Provider": True,
+        "column_order": [
+            {
+                "type": "scenario_dataset_column",
+                "id": "scenario_col",
+                "column_name": "Scenario",
+            },
+            {"type": "evaluation", "id": str(live.id), "column_name": "Live Eval"},
+            {
+                "type": "evaluation",
+                "id": str(deleted.id),
+                "column_name": "Deleted Eval",
+            },
+        ],
+    }
+    test_execution.save(update_fields=["execution_metadata"])
+
+    response = auth_client.get(f"/simulate/test-executions/{test_execution.id}/")
+
+    assert response.status_code == 200
+    eval_col_ids = {
+        str(col.get("id"))
+        for col in response.data["column_order"]
+        if col.get("type") == "evaluation"
+    }
+    assert str(live.id) in eval_col_ids
+    assert str(deleted.id) not in eval_col_ids
+
+
+@pytest.mark.django_db
+def test_csv_export_excludes_deleted_evals(auth_client, simulation_tree, eval_configs):
+    live, deleted = eval_configs["live"], eval_configs["deleted"]
+    call_execution = simulation_tree["call_execution"]
+    call_execution.eval_outputs = {
+        str(live.id): {
+            "name": "Live Eval Column",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+        },
+        str(deleted.id): {
+            "name": "Deleted Eval Column",
+            "output": "Passed",
+            "output_type": "Pass/Fail",
+        },
+    }
+    call_execution.save(update_fields=["eval_outputs"])
+    test_execution = simulation_tree["test_execution"]
+
+    response = auth_client.get(
+        f"/simulate/export/{test_execution.id}/?type=testexecution"
+    )
+
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert "Live Eval Column" in body
+    assert "Deleted Eval Column" not in body

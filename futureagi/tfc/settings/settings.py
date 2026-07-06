@@ -11,7 +11,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Structured logging configuration
@@ -815,6 +815,18 @@ CLICKHOUSE_V2 = {
     "QUERY_TYPES_SHADOW":     os.getenv("CH25_QUERY_TYPES_SHADOW", ""),
     "QUERY_TYPES_DISABLED":   os.getenv("CH25_QUERY_TYPES_DISABLED", ""),
 }
+
+# Fail-closed: rollup routing requires both flag=on and window >= coverage date.
+# Set COVERED_SINCE (ISO-8601) after running rebuild_dashboard_attr_rollup.
+DASHBOARD_ATTR_ROLLUP_ENABLED = (
+    os.getenv("DASHBOARD_ATTR_ROLLUP_ENABLED", "false").lower() == "true"
+)
+_dashboard_attr_rollup_covered_since = os.getenv("DASHBOARD_ATTR_ROLLUP_COVERED_SINCE")
+DASHBOARD_ATTR_ROLLUP_COVERED_SINCE = (
+    datetime.fromisoformat(_dashboard_attr_rollup_covered_since)
+    if _dashboard_attr_rollup_covered_since
+    else None
+)
 
 # Eval-logger table read by the trace/voice/user eval-config discovery queries.
 # The CH25 spans cutover intentionally kept the legacy peerdb CDC table
