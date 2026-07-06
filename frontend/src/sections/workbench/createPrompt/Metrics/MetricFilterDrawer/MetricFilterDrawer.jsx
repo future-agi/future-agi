@@ -11,6 +11,24 @@ import { useWorkbenchMetrics } from "../context/WorkbenchMetricsContext";
 import { getRandomId } from "src/utils/utils";
 import { buildFilterDefinitions, defaultFilterBase } from "../common";
 import ComplexFilter from "src/components/ComplexFilter/ComplexFilter";
+import { RANGE_FILTER_OPS } from "src/api/contracts/filter-contract.generated";
+
+const RANGE_OPS = new Set(RANGE_FILTER_OPS);
+const isEmptyValue = (v) => v === "" || v === undefined || v === null;
+
+// A row is applyable only with a complete value: range ops need both bounds;
+// every other op keeps its value at index 0 (NumberValueSelector stores a
+// trailing "" slot), so validate value[0].
+const isFilterComplete = (f) => {
+  if (!f?.column_id) return false;
+  const { filter_op: op, filter_value: value } = f?.filter_config || {};
+  if (Array.isArray(value)) {
+    return RANGE_OPS.has(op)
+      ? value.length >= 2 && !isEmptyValue(value[0]) && !isEmptyValue(value[1])
+      : !isEmptyValue(value[0]);
+  }
+  return !isEmptyValue(value);
+};
 
 const MetricFilterDrawer = React.memo(() => {
   const {
@@ -83,27 +101,15 @@ const MetricFilterDrawer = React.memo(() => {
   }, [setIsFilterDrawerOpen]);
 
   const handleApplyFilters = useCallback(() => {
-    const isEmpty = (v) => v === "" || v === undefined || v === null;
-    const validFilters = tempFilters.filter((f) => {
-      const value = f?.filter_config?.filter_value;
-      return Array.isArray(value)
-        ? f?.column_id && value.length > 0 && !value.some(isEmpty)
-        : f?.column_id && !isEmpty(value);
-    });
-
+    const validFilters = tempFilters.filter(isFilterComplete);
     setFilters(validFilters.length ? validFilters : getDefaultFilter());
     handleClose();
   }, [tempFilters, setFilters, handleClose]);
 
-  const hasValidFilters = useMemo(() => {
-    return tempFilters.some((f) => {
-      const value = f?.filter_config?.filter_value;
-      return (
-        f?.column_id ||
-        (value !== "" && !(Array.isArray(value) && value.length === 0))
-      );
-    });
-  }, [tempFilters]);
+  const hasValidFilters = useMemo(
+    () => tempFilters.some(isFilterComplete),
+    [tempFilters],
+  );
 
   const handleCancel = useCallback(() => {
     handleClose();
