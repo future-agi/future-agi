@@ -425,6 +425,40 @@ TEMPLATE_FORMAT_MUSTACHE = "mustache"
 TEMPLATE_FORMAT_JINJA2 = "jinja2"
 DEFAULT_TEMPLATE_FORMAT = TEMPLATE_FORMAT_JINJA2
 
+
+def normalize_template_format(template_format: str | None) -> str | None:
+    if template_format == "jinja":
+        return TEMPLATE_FORMAT_JINJA2
+    return template_format
+
+
+def get_run_prompt_template_format(config: dict | None) -> str | None:
+    """Return the canonical template format from current or legacy config."""
+    config = config or {}
+    run_prompt_config = config.get("run_prompt_config", {}) or {}
+    legacy_configuration = config.get("configuration", {}) or {}
+    return normalize_template_format(
+        run_prompt_config.get("template_format")
+        or legacy_configuration.get("template_format")
+    )
+
+
+def normalize_run_prompt_config(config: dict | None) -> dict:
+    """Persist legacy template-format aliases into run_prompt_config.
+
+    Preview and persisted execution must render with the same template format.
+    Older clients may still send ``config.configuration.template_format``;
+    normalize that value at the boundary so saved run prompts execute exactly
+    like their preview.
+    """
+    config = config or {}
+    run_prompt_config = dict(config.get("run_prompt_config", {}) or {})
+    template_format = get_run_prompt_template_format(config)
+    if template_format:
+        run_prompt_config["template_format"] = template_format
+    return run_prompt_config
+
+
 # Jinja2 environment (reusable, sandboxed for security)
 _jinja2_env = SandboxedEnvironment()
 _jinja2_strict_env = SandboxedEnvironment(undefined=StrictUndefined)
@@ -918,42 +952,6 @@ def _is_unresolved_placeholder_reference(
     )
 
 
-def _raise_for_strict_unresolved_references(
-    template_str: str,
-    unresolved_placeholders: set[str] | None,
-    placeholder_display_map: dict[str, str] | None = None,
-    context: dict | None = None,
-) -> None:
-    if not unresolved_placeholders:
-        return
-
-    raw_unresolved_references = [
-        expression
-        for expression in _extract_jinja_variable_expressions(template_str)
-        if expression in unresolved_placeholders
-        and (" " in expression or "-" in expression)
-        and _HUMAN_PLACEHOLDER_NAME_PATTERN.fullmatch(expression)
-    ]
-    candidate_references = [
-        *raw_unresolved_references,
-        *_extract_jinja_ast_references(template_str),
-        *_extract_unrenderable_named_placeholders(template_str, context),
-    ]
-    referenced_unresolved = []
-    seen = set()
-    for placeholder in candidate_references:
-        if placeholder in seen:
-            continue
-        seen.add(placeholder)
-        if _is_unresolved_placeholder_reference(placeholder, unresolved_placeholders):
-            referenced_unresolved.append(placeholder)
-
-    if referenced_unresolved:
-        raise _format_unresolved_placeholder_error(
-            referenced_unresolved, placeholder_display_map
-        )
-
-
 def _raise_for_undefined_tests_on_unresolved_references(
     template_str: str,
     context: dict,
@@ -973,6 +971,7 @@ def _raise_for_undefined_tests_on_unresolved_references(
     except TemplateSyntaxError:
         return
 
+    external_roots = set(meta.find_undeclared_variables(ast))
     missing_references = []
     seen = set()
     for test_node in ast.find_all(nodes.Test):
@@ -982,6 +981,8 @@ def _raise_for_undefined_tests_on_unresolved_references(
         if not reference:
             continue
         root = reference.split(".", maxsplit=1)[0]
+        if root not in external_roots:
+            continue
         if root in context and not _is_unresolved_placeholder_reference(
             reference, unresolved_placeholders
         ):
@@ -995,6 +996,32 @@ def _raise_for_undefined_tests_on_unresolved_references(
         raise _format_unresolved_placeholder_error(
             missing_references, placeholder_display_map
         )
+
+
+def _iter_jinja_nodes_skipping_static_dead_branches(
+    node: nodes.Node, node_type: type[nodes.Node]
+):
+    """Yield nodes while ignoring branches Jinja can prove unreachable.
+
+    Most strict placeholder failures should happen at render time so dead
+    branches stay dead. The one source-level guard we still need is for
+    comparison/membership expressions that can otherwise convert a missing value
+    into a boolean without touching the missing-value sentinel. Keep that guard
+    narrow by skipping literal-false branches.
+    """
+    if isinstance(node, node_type):
+        yield node
+
+    if isinstance(node, nodes.If) and isinstance(node.test, nodes.Const):
+        selected_children = node.body if node.test.value else node.else_
+        for child in selected_children:
+            yield from _iter_jinja_nodes_skipping_static_dead_branches(
+                child, node_type
+            )
+        return
+
+    for child in node.iter_child_nodes():
+        yield from _iter_jinja_nodes_skipping_static_dead_branches(child, node_type)
 
 
 def _missing_external_reference(
@@ -1042,7 +1069,9 @@ def _raise_for_missing_value_comparisons(
     external_roots = set(meta.find_undeclared_variables(ast))
     missing_references = []
     seen = set()
-    for compare_node in ast.find_all(nodes.Compare):
+    for compare_node in _iter_jinja_nodes_skipping_static_dead_branches(
+        ast, nodes.Compare
+    ):
         candidates = [compare_node.expr, *(operand.expr for operand in compare_node.ops)]
         for candidate in candidates:
             reference = _missing_external_reference(
@@ -1381,6 +1410,49 @@ def _resolve_fstring_missing_placeholder(
     return str(exc)
 
 
+@lru_cache(maxsize=512)
+def _extract_fstring_field_references(template_str: str) -> tuple[str, ...]:
+    formatter = string.Formatter()
+    references: list[str] = []
+    seen = set()
+    for _, field_name, _, _ in formatter.parse(template_str):
+        if field_name is None:
+            continue
+        # Empty positional fields (``{}``) are invalid with keyword-only
+        # formatting below; let ``str.format`` raise the normal IndexError.
+        if field_name == "":
+            continue
+        root = field_name.split(".", maxsplit=1)[0].split("[", maxsplit=1)[0]
+        for candidate in (field_name, root):
+            if candidate and candidate not in seen:
+                seen.add(candidate)
+                references.append(candidate)
+    return tuple(references)
+
+
+def _raise_for_fstring_unresolved_references(
+    template_str: str,
+    unresolved_placeholders: set[str] | None,
+    placeholder_display_map: dict[str, str] | None = None,
+) -> None:
+    if not unresolved_placeholders:
+        return
+
+    referenced_unresolved = []
+    seen = set()
+    for reference in _extract_fstring_field_references(template_str):
+        if reference in seen:
+            continue
+        seen.add(reference)
+        if _is_unresolved_placeholder_reference(reference, unresolved_placeholders):
+            referenced_unresolved.append(reference)
+
+    if referenced_unresolved:
+        raise _format_unresolved_placeholder_error(
+            referenced_unresolved, placeholder_display_map
+        )
+
+
 def render_template(
     template_str: str,
     context: dict,
@@ -1415,7 +1487,15 @@ def render_template(
 
     if template_format == TEMPLATE_FORMAT_FSTRING:
         try:
+            if strict:
+                _raise_for_fstring_unresolved_references(
+                    template_str,
+                    unresolved_placeholders,
+                    placeholder_display_map,
+                )
             return template_str.format(**context)
+        except UnresolvedPromptPlaceholdersError:
+            raise
         except ValueError as exc:
             detail = str(exc).strip() or exc.__class__.__name__
             raise PromptTemplateSyntaxError(
@@ -1792,6 +1872,8 @@ def process_list_content(
                 if process_media:
                     processed_content.append(handle_media(item, model_name))
                 else:
+                    if fail_closed:
+                        _validate_media_item_support(item, model_name)
                     processed_content.append(item)
             except Exception as e:
                 logger.exception(f"Error handling media item: {e}")
@@ -1801,6 +1883,50 @@ def process_list_content(
                 processed_content.append(item)
 
     return processed_content
+
+
+def _validate_media_item_support(item: dict, model_name: str) -> None:
+    item_type = item.get("type")
+    if item_type == "image_url":
+        if not litellm.utils.supports_vision(model=model_name):
+            raise ValueError(f"Model {model_name} does not support image input.")
+    elif item_type == "audio_url":
+        model_mode = get_model_mode(model_name)
+        if model_mode not in (
+            "audio",
+            "stt",
+            "tts",
+        ) and not litellm.utils.supports_audio_input(model=model_name):
+            raise ValueError(f"Model {model_name} does not support audio input.")
+    elif item_type == "pdf_url":
+        if not litellm.utils.supports_pdf_input(model=model_name):
+            raise ValueError(f"Model {model_name} does not support PDF input.")
+
+
+def _validate_media_marker_support(image_markers: dict, model_name: str) -> None:
+    for info in image_markers.values():
+        marker_type = info.get("type")
+        if marker_type == "image":
+            _validate_media_item_support({"type": "image_url"}, model_name)
+        elif marker_type == "audio":
+            _validate_media_item_support({"type": "audio_url"}, model_name)
+
+
+_MEDIA_MARKER_PATTERN = re.compile(r"__(?:IMAGE|AUDIO)_MARKER_[0-9a-f-]+__")
+
+
+def _messages_require_media_processing(messages: list[dict]) -> bool:
+    for message in messages or []:
+        content = message.get("content")
+        if isinstance(content, list):
+            for item in content:
+                if item.get("type") != "text":
+                    return True
+                if _MEDIA_MARKER_PATTERN.search(str(item.get("text", ""))):
+                    return True
+        elif isinstance(content, str) and _MEDIA_MARKER_PATTERN.search(content):
+            return True
+    return False
 
 
 def process_string_content(
@@ -1977,9 +2103,19 @@ def process_text_with_media(
             )
             # Re-raise to see full error - template syntax issue
             raise
+        if fail_closed and not process_media:
+            if image_markers:
+                _validate_media_marker_support(image_markers, model_name)
+            if is_pdf:
+                _validate_media_item_support({"type": "pdf_url"}, model_name)
         # Process media markers and create segments
         if image_markers and process_media:
-            return process_media_markers(processed_text, image_markers, model_name)
+            return process_media_markers(
+                processed_text,
+                image_markers,
+                model_name,
+                fail_closed=fail_closed,
+            )
         else:
             response = []
             # No media, just return processed text
@@ -2046,7 +2182,7 @@ def process_text_with_media(
         return response
 
 
-def process_media_markers(text, image_markers, model_name):
+def process_media_markers(text, image_markers, model_name, fail_closed: bool = False):
     """Process media markers in text and create appropriate segments"""
     segments = []
     current_text = text
@@ -2097,6 +2233,8 @@ def process_media_markers(text, image_markers, model_name):
                 )
             except Exception as e:
                 logger.exception(f"Error converting image to base64: {e}")
+                if fail_closed:
+                    raise
                 segments.append({"type": "image_url", "image_url": info["url"]})
 
         elif info["type"] == "audio":
@@ -2134,6 +2272,8 @@ def process_media_markers(text, image_markers, model_name):
 
             except Exception as e:
                 logger.exception(f"Error processing audio from {info['url']}: {e}")
+                if fail_closed:
+                    raise
                 # segments.append({
                 #     "type": "input_audio",
                 #     "input_audio": f"[Error loading audio from {info['url']}]"
@@ -2163,6 +2303,8 @@ class LitellmAPIView(CreateAPIView):
                 row_id=row.id,
                 col_id=column.id,
                 model_name=validated_data.get("model"),
+                template_format=get_run_prompt_template_format(validated_data),
+                fail_closed=True,
             )
             messages = remove_empty_text_from_messages(messages)
 
@@ -2487,6 +2629,7 @@ class RunPrompts:
             api_call_log_row = None
             api_call_error_status_attempted = False
             cell_persisted = False
+            cell = None
 
             def persist_api_call_terminal_status(target_status):
                 nonlocal api_call_error_status_attempted
@@ -2501,18 +2644,68 @@ class RunPrompts:
                 api_call_log_row.status = target_status
                 if target_status == APICallStatusChoices.ERROR.value:
                     api_call_error_status_attempted = True
+
+                for attempt in range(2):
+                    try:
+                        api_call_log_row.save()
+                        return True
+                    except Exception:
+                        if attempt == 0:
+                            logger.warning(
+                                "RunPrompts_process_row_api_call_terminal_status_save_retry",
+                                run_prompt_id=str(self.run_prompt_id),
+                                row_id=row_id,
+                                target_status=target_status,
+                            )
+                            continue
+                        break
+
                 try:
-                    api_call_log_row.save()
+                    manager = getattr(type(api_call_log_row), "objects", None)
+                    if manager is not None and getattr(api_call_log_row, "id", None):
+                        updated = manager.filter(
+                            id=api_call_log_row.id,
+                            status=APICallStatusChoices.PROCESSING.value,
+                        ).update(status=target_status)
+                        if updated:
+                            return True
                 except Exception:
-                    api_call_log_row.status = previous_status
                     logger.exception(
-                        "RunPrompts_process_row_api_call_terminal_status_save_failed",
+                        "RunPrompts_process_row_api_call_terminal_status_update_failed",
                         run_prompt_id=str(self.run_prompt_id),
                         row_id=row_id,
                         target_status=target_status,
                     )
-                    raise
-                return True
+
+                if target_status == APICallStatusChoices.ERROR.value:
+                    logger.error(
+                        "RunPrompts_process_row_api_call_error_status_persist_failed",
+                        run_prompt_id=str(self.run_prompt_id),
+                        row_id=row_id,
+                    )
+                    return False
+
+                api_call_log_row.status = previous_status
+                logger.error(
+                    "RunPrompts_process_row_api_call_success_status_persist_failed",
+                    run_prompt_id=str(self.run_prompt_id),
+                    row_id=row_id,
+                    target_status=target_status,
+                )
+                raise RuntimeError("Failed to persist API call success status")
+
+            def mark_persisted_cell_error(error_message):
+                nonlocal status, response, value_info
+                if not cell_persisted or cell is None:
+                    raise RuntimeError(error_message)
+                status = CellStatus.ERROR.value
+                response = error_message
+                value_info = {"reason": error_message}
+                cell.value = str(response)
+                cell.value_infos = json.dumps(value_info)
+                cell.status = status
+                if hasattr(cell, "save"):
+                    cell.save()
 
             def emit_usage_event():
                 # Dual-write: emit usage event for new billing system only after
@@ -2548,14 +2741,16 @@ class RunPrompts:
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
                 )
-                populate_placeholders(
+                validated_messages = populate_placeholders(
                     self.run_prompt_model.messages,
                     dataset_id=self.run_prompt_model.dataset.id,
                     row_id=row.id,
                     col_id=column.id,
                     model_name=self.run_prompt_model.model,
-                    template_format=(self.run_prompt_model.run_prompt_config or {}).get(
-                        "template_format"
+                    template_format=normalize_template_format(
+                        (self.run_prompt_model.run_prompt_config or {}).get(
+                            "template_format"
+                        )
                     ),
                     process_media=False,
                     fail_closed=True,
@@ -2626,16 +2821,22 @@ class RunPrompts:
                             row_id=row_id,
                         )
 
-                messages = populate_placeholders(
-                    self.run_prompt_model.messages,
-                    dataset_id=self.run_prompt_model.dataset.id,
-                    row_id=row.id,
-                    col_id=column.id,
-                    model_name=self.run_prompt_model.model,
-                    template_format=(self.run_prompt_model.run_prompt_config or {}).get(
-                        "template_format"
-                    ),
-                )
+                if _messages_require_media_processing(validated_messages):
+                    messages = populate_placeholders(
+                        self.run_prompt_model.messages,
+                        dataset_id=self.run_prompt_model.dataset.id,
+                        row_id=row.id,
+                        col_id=column.id,
+                        model_name=self.run_prompt_model.model,
+                        template_format=normalize_template_format(
+                            (self.run_prompt_model.run_prompt_config or {}).get(
+                                "template_format"
+                            )
+                        ),
+                        fail_closed=True,
+                    )
+                else:
+                    messages = validated_messages
                 messages = remove_empty_text_from_messages(messages)
 
                 logger.info(
@@ -2883,8 +3084,20 @@ class RunPrompts:
                             row_id=row_id,
                         )
                         emit_usage_event()
-                except Exception:
-                    raise
+                except Exception as terminal_status_error:
+                    terminal_error_message = (
+                        "Provider response was saved, but final API call status "
+                        f"could not be persisted: {terminal_status_error}"
+                    )
+                    mark_persisted_cell_error(terminal_error_message)
+                    if persist_api_call_terminal_status(
+                        APICallStatusChoices.ERROR.value
+                    ):
+                        logger.info(
+                            "RunPrompts_process_row_api_call_status_set_error",
+                            run_prompt_id=str(self.run_prompt_id),
+                            row_id=row_id,
+                        )
 
             logger.info(
                 "RunPrompts_process_row_completed",
@@ -2961,7 +3174,7 @@ class AddRunPromptColumnView(APIView):
             config = validated_data[
                 "config"
             ]  # This is now a validated dict from PromptConfigSerializer
-            run_prompt_config = config.get("run_prompt_config", {})
+            run_prompt_config = normalize_run_prompt_config(config)
 
             # Get dataset and enforce organization isolation
             organization = (
@@ -3145,23 +3358,34 @@ class PreviewRunPromptColumnView(APIView):
                 except Exception:
                     pass
 
+            run_prompt_config = normalize_run_prompt_config(config)
             responses = []
             for row in rows:
                 try:
                     output_format = config.get("output_format", "string")
-                    run_prompt_config = config.get("run_prompt_config", {}) or {}
-                    configuration = config.get("configuration", {}) or {}
-                    template_format = run_prompt_config.get(
-                        "template_format"
-                    ) or configuration.get("template_format")
-                    messages = populate_placeholders(
+                    template_format = run_prompt_config.get("template_format")
+                    validated_messages = populate_placeholders(
                         config.get("messages", []),
                         dataset_id=dataset_id,
                         row_id=row.id,
                         col_id=None,
                         model_name=config.get("model", ""),
                         template_format=template_format,
+                        process_media=False,
+                        fail_closed=True,
                     )
+                    if _messages_require_media_processing(validated_messages):
+                        messages = populate_placeholders(
+                            config.get("messages", []),
+                            dataset_id=dataset_id,
+                            row_id=row.id,
+                            col_id=None,
+                            model_name=config.get("model", ""),
+                            template_format=template_format,
+                            fail_closed=True,
+                        )
+                    else:
+                        messages = validated_messages
                     if output_format != "audio":
                         messages = remove_empty_text_from_messages(messages)
 
@@ -3179,7 +3403,7 @@ class PreviewRunPromptColumnView(APIView):
                         tool_choice=config.get("tool_choice"),
                         tools=tools_config,
                         output_format=config.get("output_format", "string"),
-                        run_prompt_config=config.get("run_prompt_config"),
+                        run_prompt_config=run_prompt_config,
                         workspace_id=(
                             dataset.workspace.id
                             if dataset and dataset.workspace
@@ -3241,7 +3465,7 @@ class EditRunPromptColumnView(APIView):
             column_id = validated_data["column_id"]
             config = validated_data["config"]
             name = validated_data["name"]
-            run_prompt_config = config.get("run_prompt_config", {})
+            run_prompt_config = normalize_run_prompt_config(config)
 
             dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
             if not dataset:
@@ -3327,9 +3551,7 @@ class EditRunPromptColumnView(APIView):
                     StatusType.RUNNING.value
                 )  # Set to RUNNING immediately
 
-                run_prompter.run_prompt_config = config.get(
-                    "run_prompt_config", run_prompter.run_prompt_config
-                )
+                run_prompter.run_prompt_config = run_prompt_config
 
                 # Handle tools update - first clear existing tools
                 run_prompter.tools.clear()

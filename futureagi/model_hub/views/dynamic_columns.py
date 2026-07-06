@@ -62,6 +62,7 @@ from model_hub.utils.utils import (
 from model_hub.views.run_prompt import (
     PromptTemplateSyntaxError,
     UnresolvedPromptPlaceholdersError,
+    get_run_prompt_template_format,
     populate_placeholders,
 )
 
@@ -1587,11 +1588,17 @@ class ConditionalColumnView(APIView):
 
             elif output_type == "run_prompt":
                 try:
-                    run_prompt_config = config.get("run_prompt_config", {}) or {}
-                    configuration = config.get("configuration", {}) or {}
-                    template_format = run_prompt_config.get(
-                        "template_format"
-                    ) or configuration.get("template_format")
+                    template_format = get_run_prompt_template_format(config)
+                    populate_placeholders(
+                        config.get("messages"),
+                        dataset_id=row.dataset.id,
+                        row_id=row.id,
+                        col_id=None,
+                        model_name=config.get("model"),
+                        template_format=template_format,
+                        process_media=False,
+                        fail_closed=True,
+                    )
                     messages = populate_placeholders(
                         config.get("messages"),
                         dataset_id=row.dataset.id,
@@ -1645,7 +1652,7 @@ class ConditionalColumnView(APIView):
         except Exception as e:
             traceback.print_exc()
             logger.error(f"Error processing branch: {str(e)}")
-            return None, None
+            return None, {"reason": str(e)}
 
     def _process_row(self, row, config, org_id=None):
         """Process a single row through all conditions"""

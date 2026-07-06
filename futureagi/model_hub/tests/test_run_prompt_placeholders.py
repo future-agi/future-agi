@@ -22,6 +22,7 @@ from model_hub.views.run_prompt import (
     PromptTemplateSyntaxError,
     RunPrompts,
     UnresolvedPromptPlaceholdersError,
+    normalize_run_prompt_config,
     populate_placeholders,
     process_text_with_media,
     render_template,
@@ -156,6 +157,15 @@ def test_extract_jinja_variable_expressions_returns_empty_tuple_for_empty_input(
     assert run_prompt_module._extract_jinja_variable_expressions("") == ()
 
 
+def test_normalize_run_prompt_config_preserves_legacy_template_format():
+    assert normalize_run_prompt_config(
+        {
+            "configuration": {"template_format": "jinja"},
+            "run_prompt_config": {"temperature": 0.1},
+        }
+    ) == {"temperature": 0.1, "template_format": "jinja2"}
+
+
 @pytest.mark.parametrize(
     "template",
     [
@@ -214,6 +224,33 @@ def test_render_template_jinja_defined_tests_raise_for_unresolved_root(test_name
         )
 
     assert "missing_column" in str(exc_info.value)
+
+
+@pytest.mark.parametrize("test_name", ["defined", "undefined"])
+def test_render_template_jinja_defined_tests_preserve_loop_locals(test_name):
+    assert (
+        render_template(
+            "{% for item in items %}"
+            f"{{% if item is {test_name} %}}{{{{ item }}}}{{% endif %}}"
+            "{% endfor %}",
+            {"items": ["kept"]},
+            strict=True,
+        )
+        == ("kept" if test_name == "defined" else "")
+    )
+
+
+@pytest.mark.parametrize("test_name", ["defined", "undefined"])
+def test_render_template_jinja_defined_tests_preserve_set_locals(test_name):
+    assert (
+        render_template(
+            "{% set item = 'kept' %}"
+            f"{{% if item is {test_name} %}}{{{{ item }}}}{{% endif %}}",
+            {},
+            strict=True,
+        )
+        == ("kept" if test_name == "defined" else "")
+    )
 
 
 def test_render_template_jinja_truthiness_raises_for_missing_root():
@@ -311,6 +348,19 @@ def test_render_template_fstring_raises_for_missing_placeholder():
         )
 
     assert "missing_column" in str(exc_info.value)
+
+
+def test_render_template_fstring_raises_for_unresolved_null_backed_placeholder():
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        render_template(
+            "Answer {Input Column}",
+            {"Input Column": ""},
+            template_format="f-string",
+            strict=True,
+            unresolved_placeholders={"Input Column"},
+        )
+
+    assert "Input Column" in str(exc_info.value)
 
 
 def test_render_template_fstring_raises_template_syntax_error_for_bad_format():
@@ -1135,6 +1185,25 @@ def test_run_prompt_raises_for_null_cell_uuid_placeholder(
 
 
 @pytest.mark.django_db
+def test_run_prompt_fstring_raises_for_null_cell_placeholder(
+    dataset, input_column, output_column, row, cell
+):
+    Cell.objects.filter(id=cell.id).update(value=None)
+
+    with pytest.raises(UnresolvedPromptPlaceholdersError) as exc_info:
+        populate_placeholders(
+            _message("Answer {Input Column}"),
+            dataset.id,
+            row.id,
+            output_column.id,
+            "gpt-4o",
+            template_format="f-string",
+        )
+
+    assert "Input Column" in str(exc_info.value)
+
+
+@pytest.mark.django_db
 def test_run_prompt_raises_for_missing_cell_even_with_jinja_default(
     dataset, input_column, output_column, row
 ):
@@ -1226,8 +1295,10 @@ def test_run_prompts_process_row_marks_api_call_error_after_provider_dispatch_ex
     created_cells = []
 
     def fake_create(**kwargs):
-        created_cells.append(kwargs)
-        return SimpleNamespace(id=uuid.uuid4(), **kwargs)
+        cell = SimpleNamespace(id=uuid.uuid4(), **kwargs)
+        cell.save = lambda: None
+        created_cells.append(cell)
+        return cell
 
     monkeypatch.setattr(run_prompt_module.Cell.objects, "create", fake_create)
 
@@ -1257,8 +1328,7 @@ def test_run_prompts_process_row_marks_api_call_error_after_provider_dispatch_ex
 
     assert api_call_log_row.status == APICallStatusChoices.ERROR.value
     assert api_call_log_row.saved_statuses == [APICallStatusChoices.ERROR.value]
-    assert created_cells[0]["status"] == CellStatus.ERROR.value
-
+    assert created_cells[0].status == CellStatus.ERROR.value
 
 
 def _install_usage_emit_modules(monkeypatch, emitted_events):
@@ -1355,27 +1425,30 @@ def test_run_prompts_process_row_success_save_failure_skips_usage_after_cell_sav
     created_cells = []
 
     def fake_create(**kwargs):
-        created_cells.append(kwargs)
-        return SimpleNamespace(id=uuid.uuid4(), **kwargs)
+        cell = SimpleNamespace(id=uuid.uuid4(), **kwargs)
+        cell.save = lambda: None
+        created_cells.append(cell)
+        return cell
 
     monkeypatch.setattr(run_prompt_module.Cell.objects, "create", fake_create)
 
     dataset = SimpleNamespace(id=uuid.uuid4(), workspace=SimpleNamespace(id=uuid.uuid4()))
     runner = _build_process_row_runner(dataset)
 
-    with pytest.raises(RuntimeError, match="success save failed"):
-        runner.process_row(
-            SimpleNamespace(id=uuid.uuid4(), dataset=dataset),
-            SimpleNamespace(id=uuid.uuid4()),
-        )
+    runner.process_row(
+        SimpleNamespace(id=uuid.uuid4(), dataset=dataset),
+        SimpleNamespace(id=uuid.uuid4()),
+    )
 
     assert emitted_events == []
     assert attempted_statuses == [
         APICallStatusChoices.SUCCESS.value,
+        APICallStatusChoices.SUCCESS.value,
         APICallStatusChoices.ERROR.value,
     ]
     assert api_call_log_row.status == APICallStatusChoices.ERROR.value
-    assert created_cells[0]["status"] == CellStatus.PASS.value
+    assert created_cells[0].status == CellStatus.ERROR.value
+    assert "Failed to persist API call success status" in created_cells[0].value
 
 
 def test_run_prompts_process_row_cell_create_failure_marks_api_call_error_and_skips_usage(
@@ -1458,9 +1531,16 @@ def test_run_prompts_process_row_validates_without_media_before_accounting_then_
         if process_media is False:
             assert ("accounting", None) not in order
             assert kwargs.get("fail_closed") is True
-            return [{"role": "user", "content": "validation only"}]
+            return [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "__IMAGE_MARKER_12345678__"}
+                    ],
+                }
+            ]
         assert ("accounting", None) in order
-        assert "fail_closed" not in kwargs
+        assert kwargs.get("fail_closed") is True
         return [{"role": "user", "content": "provider ready"}]
 
     monkeypatch.setattr(
@@ -1504,6 +1584,55 @@ def test_run_prompts_process_row_validates_without_media_before_accounting_then_
     ]
     assert ("provider_call", None) in order
     assert order[-1] == ("api_status", APICallStatusChoices.SUCCESS.value)
+
+
+def test_run_prompts_process_row_reuses_text_only_prevalidation_messages(monkeypatch):
+    populate_calls = []
+    api_call_log_row = SimpleNamespace(
+        id=uuid.uuid4(),
+        status=APICallStatusChoices.PROCESSING.value,
+    )
+    api_call_log_row.save = lambda: None
+
+    monkeypatch.setattr(
+        run_prompt_module,
+        "log_and_deduct_cost_for_api_request",
+        lambda *args, **kwargs: api_call_log_row,
+    )
+
+    def fake_populate(*args, **kwargs):
+        populate_calls.append(kwargs.copy())
+        assert kwargs["process_media"] is False
+        assert kwargs["fail_closed"] is True
+        return [{"role": "user", "content": "provider ready"}]
+
+    monkeypatch.setattr(run_prompt_module, "populate_placeholders", fake_populate)
+
+    class SuccessfulRunPrompt:
+        def __init__(self, *args, **kwargs):
+            assert kwargs["messages"] == [
+                {"role": "user", "content": "provider ready"}
+            ]
+
+        def litellm_response(self):
+            return "provider response", {"data": {"response": "provider response"}}
+
+    monkeypatch.setattr(run_prompt_module, "RunPrompt", SuccessfulRunPrompt)
+    monkeypatch.setattr(
+        run_prompt_module.Cell.objects,
+        "create",
+        lambda **kwargs: SimpleNamespace(id=uuid.uuid4(), **kwargs),
+    )
+
+    dataset = SimpleNamespace(id=uuid.uuid4(), workspace=SimpleNamespace(id=uuid.uuid4()))
+    runner = _build_process_row_runner(dataset)
+
+    runner.process_row(
+        SimpleNamespace(id=uuid.uuid4(), dataset=dataset),
+        SimpleNamespace(id=uuid.uuid4()),
+    )
+
+    assert len(populate_calls) == 1
 
 
 def test_run_prompts_process_row_edit_existing_cell_save_failure_marks_api_call_error_and_skips_usage(
@@ -1794,7 +1923,7 @@ def test_run_prompts_process_row_fstring_validation_failure_skips_accounting_and
     assert "missing_column" in created_cells[0]["value"]
 
 
-def test_run_prompts_process_row_error_save_failure_raises_after_error_cell(
+def test_run_prompts_process_row_error_save_failure_keeps_error_cell_without_usage(
     monkeypatch,
 ):
     attempted_statuses = []
@@ -1841,14 +1970,16 @@ def test_run_prompts_process_row_error_save_failure_raises_after_error_cell(
     dataset = SimpleNamespace(id=uuid.uuid4(), workspace=SimpleNamespace(id=uuid.uuid4()))
     runner = _build_process_row_runner(dataset)
 
-    with pytest.raises(RuntimeError, match="error save failed"):
-        runner.process_row(
-            SimpleNamespace(id=uuid.uuid4(), dataset=dataset),
-            SimpleNamespace(id=uuid.uuid4()),
-        )
+    runner.process_row(
+        SimpleNamespace(id=uuid.uuid4(), dataset=dataset),
+        SimpleNamespace(id=uuid.uuid4()),
+    )
 
-    assert api_call_log_row.status == APICallStatusChoices.PROCESSING.value
-    assert attempted_statuses == [APICallStatusChoices.ERROR.value]
+    assert api_call_log_row.status == APICallStatusChoices.ERROR.value
+    assert attempted_statuses == [
+        APICallStatusChoices.ERROR.value,
+        APICallStatusChoices.ERROR.value,
+    ]
     assert len(created_cells) == 1
     assert created_cells[0]["status"] == CellStatus.ERROR.value
     assert "provider dispatch failed" in created_cells[0]["value"]
@@ -1857,6 +1988,15 @@ def test_run_prompts_process_row_error_save_failure_raises_after_error_cell(
 def test_render_template_jinja_missing_root_in_false_branch_does_not_fail_source_wide():
     assert render_template(
         "{% if false %}{{ missing_column }}{% endif %}Rendered",
+        {},
+        strict=True,
+    ) == "Rendered"
+
+
+def test_render_template_jinja_missing_comparison_in_false_branch_does_not_fail():
+    assert render_template(
+        "{% if false %}{% if missing_column in [] %}hidden{% endif %}{% endif %}"
+        "Rendered",
         {},
         strict=True,
     ) == "Rendered"
@@ -1964,10 +2104,81 @@ def test_conditional_process_row_propagates_run_prompt_placeholder_error_with_te
                 "col_id": None,
                 "model_name": "gpt-4o-mini",
                 "template_format": "mustache",
+                "process_media": False,
                 "fail_closed": True,
             },
         }
     ]
+
+
+def test_conditional_run_prompt_validates_without_media_before_provider(monkeypatch):
+    populate_calls = []
+
+    def fake_populate(*args, **kwargs):
+        populate_calls.append(kwargs.get("process_media", True))
+        if kwargs.get("process_media") is False:
+            assert kwargs["fail_closed"] is True
+            return [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "audio_url",
+                            "audio_url": {"url": "http://example.test/a.wav"},
+                        }
+                    ],
+                }
+            ]
+        assert kwargs["fail_closed"] is True
+        return [{"role": "user", "content": "provider ready"}]
+
+    monkeypatch.setattr(dynamic_columns_module, "populate_placeholders", fake_populate)
+
+    class FakeRunPrompt:
+        def __init__(self, *args, **kwargs):
+            assert kwargs["messages"] == [
+                {"role": "user", "content": "provider ready"}
+            ]
+
+        def litellm_response(self):
+            return "ok", {"reason": "ok"}
+
+    monkeypatch.setattr(dynamic_columns_module, "RunPrompt", FakeRunPrompt)
+
+    row = SimpleNamespace(
+        id=uuid.uuid4(),
+        dataset=SimpleNamespace(id=uuid.uuid4(), workspace=None),
+    )
+    value, value_infos = dynamic_columns_module.ConditionalColumnView()._process_branch(
+        row,
+        {
+            "branch_node_config": {
+                "type": "run_prompt",
+                "config": {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "audio_url",
+                                    "audio_url": {
+                                        "url": "http://example.test/a.wav"
+                                    },
+                                },
+                                {"type": "text", "text": "{{Input Column}}"},
+                            ],
+                        }
+                    ],
+                    "model": "gpt-4o-audio-preview",
+                    "run_prompt_config": {"template_format": "jinja2"},
+                },
+            }
+        },
+        org_id=uuid.uuid4(),
+    )
+
+    assert (value, value_infos) == ("ok", {"reason": "ok"})
+    assert populate_calls == [False, True]
 
 
 def test_conditional_column_async_rerun_missing_cell_persists_placeholder_error(
@@ -2206,6 +2417,8 @@ def test_preview_run_prompt_column_view_passes_effective_template_format_to_popu
             "col_id": None,
             "model_name": "gpt-4o-mini",
             "template_format": expected_template_format,
+            "process_media": False,
+            "fail_closed": True,
         },
     }
 
@@ -2403,3 +2616,36 @@ def test_conditional_column_async_rerun_missing_cell_error_creates_error_cell(mo
     assert saved_cells[0].value is None
     assert json.loads(saved_cells[0].value_infos) == {"reason": "validation failed"}
     assert saved_cells[0].status == CellStatus.ERROR.value
+
+
+def _mark_prompt_placeholder_tests_for_bin_test_workflows():
+    """Keep this focused regression suite visible to documented bin/test modes."""
+
+    def marker_names(test_func):
+        names = set()
+        for mark in getattr(test_func, "pytestmark", []):
+            mark_name = getattr(mark, "name", None)
+            if mark_name is None and hasattr(mark, "mark"):
+                mark_name = mark.mark.name
+            if mark_name:
+                names.add(mark_name)
+        return names
+
+    for name, test_func in list(globals().items()):
+        if not name.startswith("test_") or not callable(test_func):
+            continue
+
+        names = marker_names(test_func)
+        if "django_db" in names:
+            test_func.pytestmark = [
+                *getattr(test_func, "pytestmark", []),
+                pytest.mark.integration,
+            ]
+        else:
+            test_func.pytestmark = [
+                *getattr(test_func, "pytestmark", []),
+                pytest.mark.unit,
+            ]
+
+
+_mark_prompt_placeholder_tests_for_bin_test_workflows()
