@@ -155,8 +155,8 @@ const DatasetOptimizationTrialDetail = ({
 
   // Column definitions for trial items grid - using simulation's pattern
   const trialItemsColumnDefs = useMemo(() => {
-    return getTrialItemsColumnConfig(trialScenarios?.columnConfig);
-  }, [trialScenarios?.columnConfig]);
+    return getTrialItemsColumnConfig(trialScenarios?.column_config);
+  }, [trialScenarios?.column_config]);
 
   const defaultColDef = useMemo(
     () => ({

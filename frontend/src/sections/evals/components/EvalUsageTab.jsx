@@ -1001,7 +1001,7 @@ const DetailPanelContent = ({
                   </>
                 )}
 
-              {row.reason && (
+              {(row.detail?.output?.reason || row.reason) && (
                 <>
                   <Typography
                     variant="caption"
@@ -1019,7 +1019,7 @@ const DetailPanelContent = ({
                       whiteSpace: "pre-wrap",
                     }}
                   >
-                    {row.reason}
+                    {row.detail?.output?.reason || row.reason}
                   </Typography>
                 </>
               )}
@@ -1223,7 +1223,9 @@ const DetailPanelContent = ({
                   if (submitted) onFeedbackSubmitted?.();
                 }}
                 selectedAddFeedback={{ id: row.id }}
-                output={{ reason: row.reason || "" }}
+                output={{
+                  reason: row.detail?.output?.reason || row.reason || "",
+                }}
                 evalsId={templateId}
                 existingFeedback={row.feedback || null}
               />

@@ -6,6 +6,7 @@ import TraceFilterPanel, {
   filterPropertiesForPicker,
   getTraceFilterFields,
   normalizeFilterRowOperator,
+  toStaticFilterProperty,
 } from "../TraceFilterPanel";
 import {
   getPickerOptionSearchText,
@@ -35,7 +36,7 @@ describe("TraceFilterPanel AI apply (#577)", () => {
     parseQueryMock.mockReset();
   });
 
-  it("runs the AI filter when Apply is clicked with an AI query present", async () => {
+  it("runs the AI filter when the AI query is submitted (Enter)", async () => {
     parseQueryMock.mockResolvedValue([
       { field: "status", operator: "equals", value: "ERROR" },
     ]);
@@ -68,10 +69,11 @@ describe("TraceFilterPanel AI apply (#577)", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.change(screen.getByPlaceholderText(/Ask AI/i), {
-      target: { value: "show errors" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    const aiInput = screen.getByPlaceholderText(/Ask AI/i);
+    fireEvent.change(aiInput, { target: { value: "show errors" } });
+    // Auto-apply removed the footer "Apply" button; the AI query is now
+    // submitted via Enter (or the inline send button in the input).
+    fireEvent.keyDown(aiInput, { key: "Enter" });
 
     await waitFor(() => {
       expect(parseQueryMock).toHaveBeenCalledWith("show errors", {
@@ -80,13 +82,15 @@ describe("TraceFilterPanel AI apply (#577)", () => {
         source: "traces",
       });
     });
+    // The AI path now applies computeValidFilters(converted) like every other
+    // path, so the operator is normalized to the canonical string op ("in").
     expect(onApply).toHaveBeenCalledWith([
       {
         field: "status",
         fieldCategory: "system",
         fieldType: "string",
         apiColType: undefined,
-        operator: "equals",
+        operator: "in",
         value: ["ERROR"],
       },
     ]);
@@ -128,6 +132,30 @@ describe("getTraceFilterFields (TH-4571)", () => {
     // are not required; structural equality is what consumers rely on).
     expect(fromNull).toEqual(fromUndefined);
     expect(fromNull).toEqual(fromUnknown);
+  });
+});
+
+describe("toStaticFilterProperty (spans Span Name)", () => {
+  const nameField = { value: "name", label: "Trace Name", type: "string" };
+
+  it("remaps the name field to span_name in spans view", () => {
+    expect(toStaticFilterProperty(nameField, true)).toMatchObject({
+      id: "span_name",
+      name: "Span Name",
+      type: "string",
+    });
+  });
+
+  it("keeps the name field as name outside spans view", () => {
+    expect(toStaticFilterProperty(nameField, false)).toMatchObject({
+      id: "name",
+      name: "Trace Name",
+    });
+  });
+
+  it("does not remap non-name fields in spans view", () => {
+    const field = { value: "status", label: "Status", type: "string" };
+    expect(toStaticFilterProperty(field, true).id).toBe("status");
   });
 });
 

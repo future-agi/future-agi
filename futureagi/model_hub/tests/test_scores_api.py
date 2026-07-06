@@ -863,6 +863,55 @@ class TestForSourceEndpoint:
         assert "sourceType" in str(resp.data)
         assert "sourceId" in str(resp.data)
 
+    def test_span_scope_uses_lean_projection(
+        self, mocker, auth_client, observe_project, observation_span, star_label
+    ):
+        """The span-note org-scope check must read only project_id/trace_id via
+        ``scope_by_ids`` — reading the full span row (``reader.get``) OOMs the
+        shared ClickHouse cluster on fat voice spans (code 241). Guard that the
+        wide read is never used, and scores still return.
+        """
+        from unittest.mock import MagicMock
+
+        from tracer.services.clickhouse.v2.span_reader import SpanScope
+
+        auth_client.post(
+            SCORE_URL,
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+                "label_id": str(star_label.id),
+                "value": {"rating": 4},
+            },
+            format="json",
+        )
+
+        fake_reader = MagicMock()
+        fake_reader.__enter__.return_value = fake_reader
+        fake_reader.__exit__.return_value = False
+        fake_reader.scope_by_ids.return_value = {
+            observation_span.id: SpanScope(
+                project_id=str(observe_project.id), trace_id=None
+            )
+        }
+        fake_reader.get.side_effect = AssertionError(
+            "scores for-source must not read full span rows (OOMs shared ClickHouse)"
+        )
+        mocker.patch(
+            "tracer.services.clickhouse.v2.get_reader", return_value=fake_reader
+        )
+
+        resp = auth_client.get(
+            f"{SCORE_URL}for-source/",
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+            },
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        fake_reader.scope_by_ids.assert_called_once()
+        assert len(resp.data["result"]) == 1
+
 
 @pytest.mark.django_db
 class TestDeleteScore:

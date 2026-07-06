@@ -423,3 +423,4 @@ class DashboardFilterValuesQuerySerializer(serializers.Serializer):
     )
     project_ids = CommaSeparatedListField(required=False, default=list)
     dataset_id = serializers.UUIDField(required=False)
+    search = serializers.CharField(required=False, allow_blank=True, default="")

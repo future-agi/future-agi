@@ -62,6 +62,7 @@ export const buildEvalTemplateConfig = ({
   outputType,
   passThreshold,
   choiceScores,
+  multiChoice,
   templateFormat,
 }) => {
   const nextConfig = {
@@ -91,6 +92,13 @@ export const buildEvalTemplateConfig = ({
     nextConfig.choice_scores = choiceScores;
   } else {
     delete nextConfig.choice_scores;
+  }
+
+  // Persist multi_choice into the runtime config so the dataset eval snapshot
+  // (UserEvalMetric.config) carries it — the feedback get_template endpoint
+  // reads multi_choice from that snapshot, not the template.
+  if (multiChoice !== undefined) {
+    nextConfig.multi_choice = Boolean(multiChoice);
   }
 
   return nextConfig;

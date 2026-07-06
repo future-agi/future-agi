@@ -131,6 +131,8 @@ const WorkbenchProvider = ({ children }) => {
   const stoppedIds = useRef([]);
   const runningVersionIndexMapping = useRef({});
   const activeSocketsRef = useRef({});
+  // Skip the next getPrompt(latest) load when collapsing compare -> single.
+  const skipLatestLoadOnce = useRef(false);
   const promptStreamUrl = usePromptStreamUrl();
 
   // Close all active sockets on unmount to prevent leaks
@@ -175,7 +177,10 @@ const WorkbenchProvider = ({ children }) => {
       const newPre = [...pre];
       const newValue =
         typeof valueOrUpdater === "function"
-          ? { id: pre[index]?.id, prompts: valueOrUpdater(pre[index]?.prompts ?? []) }
+          ? {
+              id: pre[index]?.id,
+              prompts: valueOrUpdater(pre[index]?.prompts ?? []),
+            }
           : valueOrUpdater;
 
       newPre[index] = newValue;
@@ -496,9 +501,6 @@ const WorkbenchProvider = ({ children }) => {
             queryClient.invalidateQueries({
               queryKey: ["prompt-versions", id],
             });
-            queryClient.invalidateQueries({
-              queryKey: ["prompt-latest-version", id],
-            });
             break;
           }
           case "all_completed": {
@@ -507,9 +509,6 @@ const WorkbenchProvider = ({ children }) => {
             runningVersionIndexMapping.current[version] = null;
             queryClient.invalidateQueries({
               queryKey: ["prompt-versions", id],
-            });
-            queryClient.invalidateQueries({
-              queryKey: ["prompt-latest-version", id],
             });
             break;
           }
@@ -551,6 +550,11 @@ const WorkbenchProvider = ({ children }) => {
 
   useEffect(() => {
     if (!data) {
+      return;
+    }
+    // Collapse already selected the remaining version; don't let latest overwrite it.
+    if (skipLatestLoadOnce.current) {
+      skipLatestLoadOnce.current = false;
       return;
     }
     setPromptName(data?.name);
@@ -701,6 +705,7 @@ const WorkbenchProvider = ({ children }) => {
     const newModelConfigs = [];
     const newPlaceholders = [];
     const newPlaceholdersData = {};
+    const newVariableData = {};
 
     compareVersionData.data.forEach((version, _idx) => {
       newVersions.push({
@@ -721,6 +726,15 @@ const WorkbenchProvider = ({ children }) => {
 
       if (version?.placeholders) {
         Object.assign(newPlaceholdersData, version?.placeholders);
+      }
+
+      // Populate the shared variable panel; base (first) version wins on conflicts.
+      if (version?.variable_names) {
+        for (const [key, value] of Object.entries(version.variable_names)) {
+          if (!(key in newVariableData)) {
+            newVariableData[key] = value;
+          }
+        }
       }
 
       newModelConfigs.push({
@@ -759,6 +773,7 @@ const WorkbenchProvider = ({ children }) => {
     setResults(newResults);
     setPlaceholders(newPlaceholders);
     setPlaceholderData(newPlaceholdersData);
+    setVariableData(newVariableData);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [compareVersionData]);
 
@@ -869,7 +884,9 @@ const WorkbenchProvider = ({ children }) => {
           lastPayload?.error_message ||
           lastPayload?.executions_result?.error_message;
 
-        if (outputs.length > 0) {
+        // Return only once the run has completed — the backend streams
+        // partial output while status is still "running".
+        if (status === "completed" && outputs.length > 0) {
           return lastPayload;
         }
 
@@ -897,9 +914,6 @@ const WorkbenchProvider = ({ children }) => {
       setLoadingStatusByIndex(index, false);
       queryClient.invalidateQueries({
         queryKey: ["prompt-versions", id],
-      });
-      queryClient.invalidateQueries({
-        queryKey: ["prompt-latest-version", id],
       });
     },
     [id, queryClient, setLoadingStatusByIndex, setResultsByIndex],
@@ -1389,6 +1403,7 @@ const WorkbenchProvider = ({ children }) => {
         version: eachCompareVersions.template_version,
         lastSaved: eachCompareVersions.updated_at,
         isDefault: eachCompareVersions.is_default,
+        labels: eachCompareVersions.labels || [],
         id: getRandomId(),
       });
 
@@ -1433,6 +1448,10 @@ const WorkbenchProvider = ({ children }) => {
     setSelectedVersions((pre) => {
       const newPre = [...pre];
       newPre.splice(index, 1);
+      // Collapsing to one version re-enables getPrompt(latest); skip that load.
+      if (newPre.length === 1) {
+        skipLatestLoadOnce.current = true;
+      }
       return newPre;
     });
     setPrompts((pre) => {

@@ -7,6 +7,13 @@ import axios, { endpoints } from "src/utils/axios";
 
 const PAGE_SIZE = 10;
 
+export const useDeletePromptTemplate = (options = {}) =>
+  useMutation({
+    mutationFn: (id) =>
+      axios.delete(endpoints.develop.runPrompt.promptTemplateId(id)),
+    ...options,
+  });
+
 export const usePromptExecutions = (open, search = "", modality = "all") => {
   return useInfiniteQuery({
     queryKey: ["prompts", search, modality],

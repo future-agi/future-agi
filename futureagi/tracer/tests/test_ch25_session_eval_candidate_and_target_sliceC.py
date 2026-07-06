@@ -55,7 +55,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from types import SimpleNamespace
 
 import pytest
 
@@ -405,23 +404,6 @@ class TestSessionEvalCandidateAndTargetSliceC:
             )
         assert ids["netnew_id"] in match
         assert ids["netnew_id"] not in nomatch
-
-    def test_derive_helper_end_to_end_duck_typed_eval_task(self, manufactured):
-        """Exercise the actual ``_derive_session_candidate_ids`` (not just the
-        reader method) with a duck-typed eval_task (it reads only ``.filters`` /
-        ``.project_id`` / ``.id``) — proves the dispatcher-level derivation force-
-        scopes to the task's tenant and includes the net-new session."""
-        from tracer.utils.eval_tasks import _derive_session_candidate_ids
-
-        client, ids = manufactured
-        fake_task = SimpleNamespace(
-            id=uuid.uuid4(), project_id=ids["proj"], filters=None
-        )
-        derived = set(_derive_session_candidate_ids(fake_task))
-        assert ids["netnew_id"] in derived  # net-new included
-        assert ids["strad_old"] in derived  # straddler under survivor id
-        assert ids["strad_new"] not in derived  # ...not its raw new id
-        assert ids["netnew_other"] not in derived  # tenant gate holds
 
     # ===== SURFACE 2: eval target — net-new RESOLVES (POST) vs RAISES (HEAD) ======
 

@@ -32,21 +32,20 @@ const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
     { column_config_only: true },
   );
 
-  const allListItem = data?.columnConfig?.filter((item) => {
+  const allListItem = data?.column_config?.filter((item) => {
     if (currentTab === "evals") {
       return (
-        item.originType !== "evaluation" &&
-        item.originType !== "optimisation" &&
-        item.originType !== "optimisation_evaluation" &&
-        item.originType !== "evaluation_reason"
+        item.origin_type !== "evaluation" &&
+        item.origin_type !== "optimisation" &&
+        item.origin_type !== "optimisation_evaluation" &&
+        item.origin_type !== "evaluation_reason"
       );
     } else if (currentTab === "prompt") {
-      return item.originType === "run_prompt";
+      return item.origin_type === "run_prompt";
     } else {
       return false;
     }
   });
-
   const onFilterChange = (item) => {
     setAppliedFilter((pre) => {
       const newData = pre.some((temp) => temp.id === item.id)
@@ -79,8 +78,8 @@ const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
 
   const updatedEvalsSummary = evalsSummary?.map((e) => {
     return {
-      originType: "evaluation",
       ...e,
+      origin_type: "evaluation",
     };
   });
   const columnLists = useMemo(() => {
@@ -159,11 +158,11 @@ const DatasetSummaryTab = ({ setCurrentTabs, datasetId, datasetIndex }) => {
           <EvalCard
             setCurrentTab={setCurrentTabs}
             selectedColumns={appliedFilter
-              ?.filter((e) => e.originType !== "evaluation")
+              ?.filter((e) => e.origin_type !== "evaluation")
               ?.map((item) => item.id)}
             datasetId={datasetId}
             selectedEvals={appliedFilter
-              ?.filter((e) => e.originType === "evaluation")
+              ?.filter((e) => e.origin_type === "evaluation")
               ?.map((e) => e?.id)}
             datasetIndex={datasetIndex}
           />

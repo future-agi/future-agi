@@ -1,5 +1,7 @@
 export const DATE_PRESETS = [
   { label: "Custom", value: "custom" },
+  { label: "30 mins", value: "30m" },
+  { label: "6 hrs", value: "6h" },
   { label: "Today", value: "today" },
   { label: "Yesterday", value: "yesterday" },
   { label: "7D", value: "7D" },

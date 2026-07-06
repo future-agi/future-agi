@@ -39,6 +39,8 @@ import IPOPCell from "./Renderers/IPOPCell";
 import { isCellValueEmpty } from "src/components/table/utils";
 import { APP_CONSTANTS } from "src/utils/constants";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 const ROWS_LIMIT = 100;
 
@@ -51,7 +53,10 @@ const getSpanListColumnDefs = (col) => {
     headerName: col.name,
     ...(isCustomColumn
       ? { colId: col.id, minWidth: 180, flex: 1 }
-      : { field: col.id }),
+      : {
+          field: col.id,
+          ...(colId === "total_tokens" ? { minWidth: 240 } : {}),
+        }),
     hide: !col?.isVisible,
     context: { sourceColumn: col },
     // Custom columns use valueGetter to handle dot-notation attribute keys
@@ -99,12 +104,15 @@ const getSpanListColumnDefs = (col) => {
     },
     cellRendererSelector: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
-        // No renderer for empty values
-        return null;
-      }
       const column = params?.colDef?.context?.sourceColumn;
       const colId = column?.id;
+
+      // The tags column stays interactive even when empty so a first tag can
+      // be added via its "+ Tag" affordance. Other columns render nothing when
+      // empty (valueFormatter shows "-").
+      if (isCellValueEmpty(value) && colId !== "tags") {
+        return null;
+      }
 
       if (RENDERER_CONFIG.nameColumns.includes(colId)) {
         return {
@@ -121,7 +129,10 @@ const getSpanListColumnDefs = (col) => {
     },
     cellStyle: (params) => {
       const value = params.value;
-      if (isCellValueEmpty(value)) {
+      // The tags column keeps its default left alignment so an empty "+ Tag"
+      // sits where the chips will, instead of jumping from center to left.
+      const cellColId = params?.colDef?.context?.sourceColumn?.id;
+      if (isCellValueEmpty(value) && cellColId !== "tags") {
         return {
           display: "flex",
           alignItems: "center",
@@ -175,6 +186,7 @@ const SpanGrid = React.forwardRef(
       cellHeight,
       metricFilters,
       pendingCustomColumnsRef,
+      canonicalOrderRef,
       enabled = true,
     },
     gridRef,
@@ -272,6 +284,18 @@ const SpanGrid = React.forwardRef(
       [setFilterOpen, setExtraFilters],
     );
 
+    const { role } = useAuthContext();
+    // Viewers can browse spans but not edit tags — gate the cell affordance.
+    const canEditTags = Boolean(
+      RolePermission.OBSERVABILITY[PERMISSIONS.CREATE_EDIT_PROJECT]?.[role],
+    );
+    // Tells cell renderers (e.g. TagsCell) they are on the span grid (so tag
+    // edits target the span) and whether the role may edit.
+    const gridContext = useMemo(
+      () => ({ entityType: "span", canEditTags }),
+      [canEditTags],
+    );
+
     const { columnDefs } = useMemo(() => {
       // If no columns yet → return initial columnDefs
       if (!columns || columns.length === 0) {
@@ -286,7 +310,9 @@ const SpanGrid = React.forwardRef(
       const bottomRowObj = {};
 
       for (const eachCol of columns) {
-        if (eachCol?.groupBy) {
+        // Bucket each custom col alone so it stays flat in its store position
+        // (a shared bucket collapsed them together and oscillated the order).
+        if (eachCol?.groupBy && eachCol.groupBy !== "Custom Columns") {
           if (!grouping[eachCol?.groupBy]) {
             grouping[eachCol?.groupBy] = [eachCol];
           } else {
@@ -301,14 +327,28 @@ const SpanGrid = React.forwardRef(
         showMetricsIds,
       );
       delete grouping["Annotation Metrics"];
-      const columnDefsResult = Object.entries(grouping).map(([group, cols]) => {
-        if (!AllowedGroups.includes(group) && cols.length === 1) {
-          const c = cols[0];
-          bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-          return getSpanListColumnDefs(c);
-        } else {
+      const columnDefsResult = Object.entries(grouping).flatMap(
+        ([group, cols]) => {
+          if (!AllowedGroups.includes(group) && cols.length === 1) {
+            const c = cols[0];
+            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+            const colDef = getSpanListColumnDefs(c);
+            // Custom col: flat, but keep its width/style.
+            if (c?.groupBy === "Custom Columns") {
+              return {
+                ...colDef,
+                minWidth: 200,
+                flex: 1,
+                cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
+              };
+            }
+            return colDef;
+          }
+          // marryChildren + groupId keep the group movable across rebuilds.
           return {
             headerName: group,
+            groupId: group,
+            marryChildren: true,
             children: cols.map((c) => {
               bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
               const colDef = getSpanListColumnDefs(c);
@@ -320,8 +360,8 @@ const SpanGrid = React.forwardRef(
               };
             }),
           };
-        }
-      });
+        },
+      );
       if (annotationColumns?.length > 0) {
         for (const group of annotationColumns) {
           if (group.children) {
@@ -387,6 +427,9 @@ const SpanGrid = React.forwardRef(
               // Use ref to get latest columns for comparison without triggering dataSource recreation
               // Compare only non-custom columns to avoid unnecessary re-renders
               if (newCols) {
+                // Canonical order, to restore default when leaving a saved view.
+                if (canonicalOrderRef)
+                  canonicalOrderRef.current = newCols.map((c) => c.id);
                 const currentNonCustom = (columnsRef.current || []).filter(
                   (c) => c.groupBy !== "Custom Columns",
                 );
@@ -487,6 +530,8 @@ const SpanGrid = React.forwardRef(
     const onColumnMoved = useCallback(
       (params) => {
         if (!params.finished) return;
+        // User drags only; programmatic moves would feed back into setColumns.
+        if (params.source !== "uiColumnMoved") return;
         const newOrder = params.api
           .getColumnState()
           .map((s) => s.colId)
@@ -603,6 +648,7 @@ const SpanGrid = React.forwardRef(
           columnDefs={columnDefs}
           onColumnMoved={onColumnMoved}
           defaultColDef={defaultColDef}
+          context={gridContext}
           rowSelection={{ mode: "multiRow", enableClickSelection: false }}
           pagination={false}
           cacheBlockSize={ROWS_LIMIT}

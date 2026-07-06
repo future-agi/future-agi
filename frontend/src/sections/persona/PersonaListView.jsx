@@ -446,6 +446,8 @@ const PersonaListView = ({
         label: "Category",
         type: "enum",
         choices: ["prebuilt", "custom"],
+        operators: ["is"],
+        single: true,
       });
     }
     if (!lockedSimulationType) {
@@ -458,6 +460,8 @@ const PersonaListView = ({
           [AGENT_TYPES.VOICE]: "Voice",
           [AGENT_TYPES.CHAT]: "Chat",
         },
+        operators: ["is"],
+        single: true,
       });
     }
     return fields;

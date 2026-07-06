@@ -29,7 +29,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import {
   useDashboardDetail,
@@ -641,8 +641,12 @@ export default function DashboardDetailView() {
   const duplicateWidget = useDuplicateWidget();
   const createWidget = useCreateWidget();
 
-  // Global date filter
-  const [datePreset, setDatePreset] = useState(null);
+  // Global date filter — restore from URL so returning from widget editor
+  // preserves the previously selected preset.
+  const [searchParams] = useSearchParams();
+  const [datePreset, setDatePreset] = useState(
+    () => searchParams.get("timePreset") || null,
+  );
   const [customDateRange, setCustomDateRange] = useState(null); // [start, end]
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const customDateAnchorRef = useRef(null);

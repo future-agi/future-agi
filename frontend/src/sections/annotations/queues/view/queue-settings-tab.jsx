@@ -291,6 +291,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
               <Stack spacing={2.5}>
                 <LabelPicker
                   selectedIds={labelIds}
+                  lockLastSelected
                   onChange={(ids) =>
                     setValue("label_ids", ids, { shouldDirty: true })
                   }
