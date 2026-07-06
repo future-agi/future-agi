@@ -499,6 +499,14 @@ const CreateRunTestPage = ({ open, onClose }) => {
   // on slow devices don't cause multiple api calls happening
   // on slower devices
   const isMutatingRef = useRef(false);
+  const executeTestMutation = useMutation({
+    mutationFn: (testId) =>
+      axios.post(endpoints.runTests.runTest(testId), {
+        select_all: false,
+        scenario_ids: formData?.selectedScenarios || [],
+      }),
+  });
+
   const createTestMutation = useMutation({
     /**
      *
@@ -514,11 +522,22 @@ const CreateRunTestPage = ({ open, onClose }) => {
     onSettled: () => {
       isMutatingRef.current = false;
     },
-    onSuccess: (data) => {
-      enqueueSnackbar("Test created successfully!", { variant: "success" });
+    onSuccess: async (data) => {
+      if (formData?.agentType === AGENT_TYPES.VOICE) {
+        try {
+          await executeTestMutation.mutateAsync(data.id);
+          enqueueSnackbar("Simulation run started", { variant: "success" });
+        } catch (error) {
+          enqueueSnackbar("Test created, but the run could not be started.", {
+            variant: "error",
+          });
+        }
+      } else {
+        enqueueSnackbar("Test created successfully!", { variant: "success" });
+      }
+
       onClose();
       navigate(`/dashboard/simulate/test/${data.id}/runs`);
-      // Navigate to run tests list page
     },
   });
   const handleSubmit = async () => {
