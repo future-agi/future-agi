@@ -459,6 +459,15 @@ def normalize_run_prompt_config(config: dict | None) -> dict:
     return run_prompt_config
 
 
+def merge_run_prompt_config(existing_config: dict | None, config: dict | None) -> dict:
+    """Merge edit payload config without erasing stored run prompt settings."""
+    merged_config = dict(existing_config or {})
+    normalized_config = normalize_run_prompt_config(config)
+    if normalized_config:
+        merged_config.update(normalized_config)
+    return merged_config
+
+
 # Jinja2 environment (reusable, sandboxed for security)
 _jinja2_env = SandboxedEnvironment()
 _jinja2_strict_env = SandboxedEnvironment(undefined=StrictUndefined)
@@ -1912,7 +1921,7 @@ def _validate_media_marker_support(image_markers: dict, model_name: str) -> None
             _validate_media_item_support({"type": "audio_url"}, model_name)
 
 
-_MEDIA_MARKER_PATTERN = re.compile(r"__(?:IMAGE|AUDIO)_MARKER_[0-9a-f-]+__")
+_MEDIA_MARKER_PATTERN = re.compile(r"__(?:IMAGE|AUDIO|PDF)_MARKER_[0-9a-f-]+__")
 
 
 def _messages_require_media_processing(messages: list[dict]) -> bool:
@@ -2006,11 +2015,19 @@ def process_text_with_media(
                     pdf_url = info["value"]
                     pdf_name = info["name"]
 
-                    # Replace both UUID and column name placeholders
+                    # Replace both UUID and column name placeholders. During the
+                    # no-fetch validation pass, keep a synthetic PDF marker in
+                    # the rendered text so callers know a second post-quota media
+                    # materialization pass is still required.
+                    pdf_replacement = (
+                        f"__PDF_MARKER_{uuid.uuid4()}__"
+                        if not process_media
+                        else info["name"]
+                    )
                     if placeholder in text:
-                        text = text.replace(placeholder, info["name"])
+                        text = text.replace(placeholder, pdf_replacement)
                     if alt_placeholder in text:
-                        text = text.replace(alt_placeholder, info["name"])
+                        text = text.replace(alt_placeholder, pdf_replacement)
 
             # Handle multiple images (images data type)
             if info["data_type"] == "images" and info["value"]:
@@ -2642,12 +2659,12 @@ class RunPrompts:
 
                 previous_status = api_call_log_row.status
                 api_call_log_row.status = target_status
-                if target_status == APICallStatusChoices.ERROR.value:
-                    api_call_error_status_attempted = True
 
                 for attempt in range(2):
                     try:
                         api_call_log_row.save()
+                        if target_status == APICallStatusChoices.ERROR.value:
+                            api_call_error_status_attempted = True
                         return True
                     except Exception:
                         if attempt == 0:
@@ -2668,6 +2685,8 @@ class RunPrompts:
                             status=APICallStatusChoices.PROCESSING.value,
                         ).update(status=target_status)
                         if updated:
+                            if target_status == APICallStatusChoices.ERROR.value:
+                                api_call_error_status_attempted = True
                             return True
                 except Exception:
                     logger.exception(
@@ -2677,15 +2696,15 @@ class RunPrompts:
                         target_status=target_status,
                     )
 
+                api_call_log_row.status = previous_status
                 if target_status == APICallStatusChoices.ERROR.value:
                     logger.error(
                         "RunPrompts_process_row_api_call_error_status_persist_failed",
                         run_prompt_id=str(self.run_prompt_id),
                         row_id=row_id,
                     )
-                    return False
+                    raise RuntimeError("Failed to persist API call error status")
 
-                api_call_log_row.status = previous_status
                 logger.error(
                     "RunPrompts_process_row_api_call_success_status_persist_failed",
                     run_prompt_id=str(self.run_prompt_id),
@@ -3463,9 +3482,8 @@ class EditRunPromptColumnView(APIView):
             validated_data = request.validated_data
             dataset_id = validated_data["dataset_id"]
             column_id = validated_data["column_id"]
-            config = validated_data["config"]
-            name = validated_data["name"]
-            run_prompt_config = normalize_run_prompt_config(config)
+            config = validated_data.get("config") or {}
+            name = validated_data.get("name")
 
             dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
             if not dataset:
@@ -3512,6 +3530,9 @@ class EditRunPromptColumnView(APIView):
                     status=CellStatus.RUNNING.value,
                 )
 
+                run_prompt_config = merge_run_prompt_config(
+                    run_prompter.run_prompt_config, config
+                )
                 messages = config.get("messages", run_prompter.messages)
                 output_format = config.get("output_format", run_prompter.output_format)
 

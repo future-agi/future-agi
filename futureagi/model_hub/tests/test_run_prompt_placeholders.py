@@ -22,6 +22,7 @@ from model_hub.views.run_prompt import (
     PromptTemplateSyntaxError,
     RunPrompts,
     UnresolvedPromptPlaceholdersError,
+    merge_run_prompt_config,
     normalize_run_prompt_config,
     populate_placeholders,
     process_text_with_media,
@@ -164,6 +165,34 @@ def test_normalize_run_prompt_config_preserves_legacy_template_format():
             "run_prompt_config": {"temperature": 0.1},
         }
     ) == {"temperature": 0.1, "template_format": "jinja2"}
+
+
+def test_merge_run_prompt_config_preserves_existing_when_edit_omits_config():
+    existing_config = {
+        "template_format": "mustache",
+        "temperature": 0.2,
+        "reasoning": {"effort": "medium"},
+    }
+
+    assert merge_run_prompt_config(existing_config, {"messages": []}) == existing_config
+
+
+def test_merge_run_prompt_config_overlays_current_and_legacy_edit_config():
+    assert merge_run_prompt_config(
+        {
+            "template_format": "mustache",
+            "temperature": 0.2,
+            "reasoning": {"effort": "medium"},
+        },
+        {
+            "run_prompt_config": {"temperature": 0.4},
+            "configuration": {"template_format": "jinja"},
+        },
+    ) == {
+        "template_format": "jinja2",
+        "temperature": 0.4,
+        "reasoning": {"effort": "medium"},
+    }
 
 
 @pytest.mark.parametrize(
@@ -957,6 +986,40 @@ def test_process_text_with_media_broken_jinja_raises_instead_of_returning_origin
         )
 
 
+def test_process_text_with_media_document_prevalidation_marks_media_required(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        run_prompt_module.litellm.utils,
+        "supports_pdf_input",
+        lambda model: True,
+    )
+
+    content = process_text_with_media(
+        "Summarize {{Doc}}",
+        {
+            "doc-column": {
+                "data_type": "document",
+                "value": "https://example.test/file.pdf",
+                "name": "Doc",
+            }
+        },
+        {},
+        0,
+        "gpt-4o-mini",
+        process_media=False,
+        fail_closed=True,
+    )
+
+    assert any(
+        item["type"] == "text" and "__PDF_MARKER_" in item["text"]
+        for item in content
+    )
+    assert run_prompt_module._messages_require_media_processing(
+        [{"role": "user", "content": content}]
+    )
+
+
 def test_populate_placeholders_normalizes_template_syntax_error_without_db(monkeypatch):
     monkeypatch.setattr(
         Dataset.objects,
@@ -1586,6 +1649,114 @@ def test_run_prompts_process_row_validates_without_media_before_accounting_then_
     assert order[-1] == ("api_status", APICallStatusChoices.SUCCESS.value)
 
 
+def test_run_prompts_process_row_materializes_document_media_after_accounting(
+    monkeypatch,
+):
+    order = []
+    api_call_log_row = SimpleNamespace(
+        id=uuid.uuid4(),
+        status=APICallStatusChoices.PROCESSING.value,
+    )
+
+    def save_api_call_log_row():
+        order.append(("api_status", api_call_log_row.status))
+
+    api_call_log_row.save = save_api_call_log_row
+
+    def fake_log_and_deduct(*args, **kwargs):
+        order.append(("accounting", None))
+        return api_call_log_row
+
+    def fake_populate(*args, **kwargs):
+        process_media = kwargs.get("process_media", True)
+        order.append(("populate", process_media))
+        if process_media is False:
+            assert ("accounting", None) not in order
+            assert kwargs.get("fail_closed") is True
+            return [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "__PDF_MARKER_12345678__"}],
+                }
+            ]
+        assert ("accounting", None) in order
+        assert kwargs.get("fail_closed") is True
+        return [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Summarize Doc"},
+                    {
+                        "type": "pdf_url",
+                        "pdf_url": {
+                            "url": "https://example.test/file.pdf",
+                            "pdf_name": "Doc",
+                            "file_name": "Doc",
+                        },
+                    },
+                ],
+            }
+        ]
+
+    monkeypatch.setattr(
+        run_prompt_module,
+        "log_and_deduct_cost_for_api_request",
+        fake_log_and_deduct,
+    )
+    monkeypatch.setattr(run_prompt_module, "populate_placeholders", fake_populate)
+
+    class SuccessfulRunPrompt:
+        def __init__(self, *args, **kwargs):
+            order.append(("provider_init", kwargs["messages"]))
+            assert kwargs["messages"][0]["content"][1]["type"] == "pdf_url"
+
+        def litellm_response(self):
+            order.append(("provider_call", None))
+            return "provider response", {"data": {"response": "provider response"}}
+
+    monkeypatch.setattr(run_prompt_module, "RunPrompt", SuccessfulRunPrompt)
+    monkeypatch.setattr(
+        run_prompt_module.Cell.objects,
+        "create",
+        lambda **kwargs: SimpleNamespace(id=uuid.uuid4(), **kwargs),
+    )
+
+    dataset = SimpleNamespace(id=uuid.uuid4(), workspace=SimpleNamespace(id=uuid.uuid4()))
+    runner = _build_process_row_runner(dataset)
+
+    runner.process_row(
+        SimpleNamespace(id=uuid.uuid4(), dataset=dataset),
+        SimpleNamespace(id=uuid.uuid4()),
+    )
+
+    assert order[:4] == [
+        ("populate", False),
+        ("accounting", None),
+        ("populate", True),
+        (
+            "provider_init",
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Summarize Doc"},
+                        {
+                            "type": "pdf_url",
+                            "pdf_url": {
+                                "url": "https://example.test/file.pdf",
+                                "pdf_name": "Doc",
+                                "file_name": "Doc",
+                            },
+                        },
+                    ],
+                }
+            ],
+        ),
+    ]
+    assert ("provider_call", None) in order
+    assert order[-1] == ("api_status", APICallStatusChoices.SUCCESS.value)
+
+
 def test_run_prompts_process_row_reuses_text_only_prevalidation_messages(monkeypatch):
     populate_calls = []
     api_call_log_row = SimpleNamespace(
@@ -1923,7 +2094,7 @@ def test_run_prompts_process_row_fstring_validation_failure_skips_accounting_and
     assert "missing_column" in created_cells[0]["value"]
 
 
-def test_run_prompts_process_row_error_save_failure_keeps_error_cell_without_usage(
+def test_run_prompts_process_row_error_save_failure_raises_after_error_cell_without_usage(
     monkeypatch,
 ):
     attempted_statuses = []
@@ -1970,13 +2141,16 @@ def test_run_prompts_process_row_error_save_failure_keeps_error_cell_without_usa
     dataset = SimpleNamespace(id=uuid.uuid4(), workspace=SimpleNamespace(id=uuid.uuid4()))
     runner = _build_process_row_runner(dataset)
 
-    runner.process_row(
-        SimpleNamespace(id=uuid.uuid4(), dataset=dataset),
-        SimpleNamespace(id=uuid.uuid4()),
-    )
+    with pytest.raises(RuntimeError, match="Failed to persist API call error status"):
+        runner.process_row(
+            SimpleNamespace(id=uuid.uuid4(), dataset=dataset),
+            SimpleNamespace(id=uuid.uuid4()),
+        )
 
-    assert api_call_log_row.status == APICallStatusChoices.ERROR.value
+    assert api_call_log_row.status == APICallStatusChoices.PROCESSING.value
     assert attempted_statuses == [
+        APICallStatusChoices.ERROR.value,
+        APICallStatusChoices.ERROR.value,
         APICallStatusChoices.ERROR.value,
         APICallStatusChoices.ERROR.value,
     ]
@@ -2179,6 +2353,50 @@ def test_conditional_run_prompt_validates_without_media_before_provider(monkeypa
 
     assert (value, value_infos) == ("ok", {"reason": "ok"})
     assert populate_calls == [False, True]
+
+
+def test_conditional_run_prompt_reuses_text_only_prevalidation_messages(monkeypatch):
+    populate_calls = []
+
+    def fake_populate(*args, **kwargs):
+        populate_calls.append(kwargs.get("process_media", True))
+        assert kwargs["fail_closed"] is True
+        return [{"role": "user", "content": "provider ready"}]
+
+    monkeypatch.setattr(dynamic_columns_module, "populate_placeholders", fake_populate)
+
+    class FakeRunPrompt:
+        def __init__(self, *args, **kwargs):
+            assert kwargs["messages"] == [
+                {"role": "user", "content": "provider ready"}
+            ]
+
+        def litellm_response(self):
+            return "ok", {"reason": "ok"}
+
+    monkeypatch.setattr(dynamic_columns_module, "RunPrompt", FakeRunPrompt)
+
+    row = SimpleNamespace(
+        id=uuid.uuid4(),
+        dataset=SimpleNamespace(id=uuid.uuid4(), workspace=None),
+    )
+    value, value_infos = dynamic_columns_module.ConditionalColumnView()._process_branch(
+        row,
+        {
+            "branch_node_config": {
+                "type": "run_prompt",
+                "config": {
+                    "messages": [{"role": "user", "content": "{{Input Column}}"}],
+                    "model": "gpt-4o-mini",
+                    "run_prompt_config": {"template_format": "jinja2"},
+                },
+            }
+        },
+        org_id=uuid.uuid4(),
+    )
+
+    assert (value, value_infos) == ("ok", {"reason": "ok"})
+    assert populate_calls == [False]
 
 
 def test_conditional_column_async_rerun_missing_cell_persists_placeholder_error(
@@ -2421,6 +2639,141 @@ def test_preview_run_prompt_column_view_passes_effective_template_format_to_popu
             "fail_closed": True,
         },
     }
+
+
+def test_preview_run_prompt_column_view_materializes_document_media_after_validation(
+    monkeypatch,
+):
+    dataset_id = uuid.uuid4()
+    row_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
+    workspace_id = uuid.uuid4()
+    messages = [{"role": "user", "content": "Summarize {{Doc}}"}]
+    populate_calls = []
+
+    class OrderQuerySet:
+        def order_by(self, *args):
+            assert args == ("order",)
+            return self
+
+        def values_list(self, *args, **kwargs):
+            assert args == ("order",)
+            assert kwargs == {"flat": True}
+            return [0]
+
+    class DatasetQuerySet:
+        def first(self):
+            return SimpleNamespace(
+                id=dataset_id,
+                organization_id=organization_id,
+                workspace=SimpleNamespace(id=workspace_id),
+            )
+
+    class RowQuerySet:
+        def __bool__(self):
+            return True
+
+        def __iter__(self):
+            return iter([SimpleNamespace(id=row_id)])
+
+    def fake_row_filter(**kwargs):
+        if "order__in" in kwargs:
+            assert kwargs == {
+                "dataset_id": dataset_id,
+                "order__in": [0],
+                "deleted": False,
+            }
+            return RowQuerySet()
+        assert kwargs == {"dataset_id": dataset_id, "deleted": False}
+        return OrderQuerySet()
+
+    def fake_populate_placeholders(*args, **kwargs):
+        populate_calls.append(kwargs.get("process_media", True))
+        if kwargs.get("process_media") is False:
+            assert kwargs["fail_closed"] is True
+            return [
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "__PDF_MARKER_12345678__"}],
+                }
+            ]
+        assert kwargs["fail_closed"] is True
+        return [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "Summarize Doc"},
+                    {
+                        "type": "pdf_url",
+                        "pdf_url": {
+                            "url": "https://example.test/file.pdf",
+                            "pdf_name": "Doc",
+                            "file_name": "Doc",
+                        },
+                    },
+                ],
+            }
+        ]
+
+    class FakeRunPrompt:
+        def __init__(self, **kwargs):
+            assert kwargs["messages"][0]["content"][1]["type"] == "pdf_url"
+
+        def litellm_response(self):
+            return "preview response", {
+                "metadata": {
+                    "usage": {"prompt_tokens": 1},
+                    "cost": {"total_cost": 0},
+                }
+            }
+
+    monkeypatch.setattr(run_prompt_module.Row.objects, "filter", fake_row_filter)
+    monkeypatch.setattr(
+        run_prompt_module.Dataset.objects,
+        "filter",
+        lambda **kwargs: DatasetQuerySet(),
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "populate_placeholders",
+        fake_populate_placeholders,
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "remove_empty_text_from_messages",
+        lambda received_messages: received_messages,
+    )
+    monkeypatch.setattr(run_prompt_module, "RunPrompt", FakeRunPrompt)
+
+    view = run_prompt_module.PreviewRunPromptColumnView()
+    view._gm = SimpleNamespace(
+        success_response=lambda payload: payload,
+        not_found=lambda message: pytest.fail(f"unexpected not_found: {message}"),
+        bad_request=lambda message: pytest.fail(f"unexpected bad_request: {message}"),
+        internal_server_error_response=lambda message: pytest.fail(
+            f"unexpected internal_server_error_response: {message}"
+        ),
+    )
+    request = SimpleNamespace(
+        validated_data={
+            "dataset_id": dataset_id,
+            "config": {
+                "messages": messages,
+                "model": "gpt-4o-mini",
+                "run_prompt_config": {"template_format": "jinja2"},
+            },
+            "first_n_rows": 1,
+        },
+        user=SimpleNamespace(organization=SimpleNamespace(id=organization_id)),
+    )
+
+    response = run_prompt_module.PreviewRunPromptColumnView.post.__wrapped__(
+        view,
+        request,
+    )
+
+    assert response["responses"] == ["preview response"]
+    assert populate_calls == [False, True]
 
 
 def test_render_template_strict_unresolved_placeholder_in_false_branch_renders():

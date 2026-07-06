@@ -62,6 +62,7 @@ from model_hub.utils.utils import (
 from model_hub.views.run_prompt import (
     PromptTemplateSyntaxError,
     UnresolvedPromptPlaceholdersError,
+    _messages_require_media_processing,
     get_run_prompt_template_format,
     populate_placeholders,
 )
@@ -1589,7 +1590,7 @@ class ConditionalColumnView(APIView):
             elif output_type == "run_prompt":
                 try:
                     template_format = get_run_prompt_template_format(config)
-                    populate_placeholders(
+                    validated_messages = populate_placeholders(
                         config.get("messages"),
                         dataset_id=row.dataset.id,
                         row_id=row.id,
@@ -1599,15 +1600,18 @@ class ConditionalColumnView(APIView):
                         process_media=False,
                         fail_closed=True,
                     )
-                    messages = populate_placeholders(
-                        config.get("messages"),
-                        dataset_id=row.dataset.id,
-                        row_id=row.id,
-                        col_id=None,
-                        model_name=config.get("model"),
-                        template_format=template_format,
-                        fail_closed=True,
-                    )
+                    if _messages_require_media_processing(validated_messages):
+                        messages = populate_placeholders(
+                            config.get("messages"),
+                            dataset_id=row.dataset.id,
+                            row_id=row.id,
+                            col_id=None,
+                            model_name=config.get("model"),
+                            template_format=template_format,
+                            fail_closed=True,
+                        )
+                    else:
+                        messages = validated_messages
                 except (
                     UnresolvedPromptPlaceholdersError,
                     PromptTemplateSyntaxError,
