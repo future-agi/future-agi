@@ -396,10 +396,18 @@ class EvalMetricEntrySerializer(serializers.Serializer):
 
 
 class _ExtraFieldsMixin:
-    """Pass unknown keys through to_internal_value unchanged.
+    """Pass unknown keys through both directions unchanged.
 
-    Provides the typed-keys-plus-escape-hatch pattern: declared fields are
-    validated; any additional provider-specific key is accepted as-is.
+    Provides the typed-keys-plus-escape-hatch pattern:
+
+    * ``to_internal_value`` (deserialize / request input) — declared fields
+      are validated; any additional provider-specific key is accepted as-is.
+    * ``to_representation`` (serialize / response output) — declared fields
+      render normally; any additional key present on the source dict/object
+      is copied straight through. Without this, `EvalUsageTableRowSerializer`-
+      style responses would silently drop the dynamic ``input_var_<name>``
+      cells at ``.data`` time even though the swagger schema declares
+      ``additionalProperties: True``.
     """
 
     def to_internal_value(self, data):
@@ -408,6 +416,17 @@ class _ExtraFieldsMixin:
             if key not in self.fields:
                 validated[key] = value
         return validated
+
+    def to_representation(self, instance):
+        rep = super().to_representation(instance)
+        # ``instance`` can be a dict (services build responses as raw dicts) or
+        # a model instance. Only dicts carry surprise keys — model instances
+        # already went through ORM field mapping.
+        if isinstance(instance, dict):
+            for key, value in instance.items():
+                if key not in self.fields:
+                    rep[key] = value
+        return rep
 
 
 class MessageItemSerializer(_ExtraFieldsMixin, serializers.Serializer):

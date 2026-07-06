@@ -27,9 +27,10 @@ class JsonValueField(serializers.JSONField):
     JSONField base schema which always includes ``"type": "object"``.  The
     ``x-json-value`` flag is understood by ``openapi-contract.js`` (runtime
     validation), but orval's code-gen sees ``type: object`` and emits
-    ``z.object({}).passthrough()`` — which rejects scalar cell values.
-    When this field is used as the child of a DictField for dynamic-column
-    table rows, use ``AnyValueDictField`` instead.
+    ``z.object({}).passthrough()`` — which rejects scalar cell values. For
+    dynamic-column table rows with mixed-type cells, type the known columns
+    on a serializer and set ``Meta.swagger_schema_fields = {"additionalProperties": True}``
+    instead of using this field as the child of a ``DictField``.
     """
 
     class Meta:
@@ -74,28 +75,6 @@ class StringOrObjectField(serializers.JSONField):
         swagger_schema_fields = {
             "x-string-or-object": True,
             "description": "String or JSON object.",
-        }
-
-
-class AnyValueDictField(serializers.DictField):
-    """DictField whose values are any valid JSON (scalar, object, or array).
-
-    ``DictField(child=JsonValueField())`` emits
-    ``additionalProperties: {type: object, x-json-value: true}`` — orval
-    sees ``type: object`` and narrows the generated TypeScript to
-    ``Record<string, object>``, rejecting string/bool/number cell values.
-
-    This field overrides the items schema to ``additionalProperties: {}``
-    (JSON Schema "any value") so orval correctly emits ``Record<string, any>``.
-    Use this for dynamic-column table rows where cell values are scalars.
-    """
-
-    class Meta:
-        swagger_schema_fields = {
-            "type": "object",
-            "additionalProperties": {},
-            "x-json-value": True,
-            "description": "Row with dynamic columns — cell values are any valid JSON.",
         }
 
 

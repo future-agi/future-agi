@@ -79489,10 +79489,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "table": {
           "type": "array",
           "items": {
-            "type": "object",
-            "additionalProperties": {},
-            "x-json-value": true,
-            "description": "Row with dynamic columns — cell values are any valid JSON."
+            "$ref": "#/definitions/EvalUsageTableRow"
           }
         },
         "column_config": {
@@ -80423,10 +80420,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "table": {
           "type": "array",
           "items": {
-            "type": "object",
-            "additionalProperties": {},
-            "x-json-value": true,
-            "description": "Row with dynamic columns — cell values are any valid JSON."
+            "$ref": "#/definitions/EvalUsageTableRow"
           }
         },
         "logs": {
@@ -85697,10 +85691,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "table": {
           "type": "array",
           "items": {
-            "type": "object",
-            "additionalProperties": {},
-            "x-json-value": true,
-            "description": "Row with dynamic columns — cell values are any valid JSON."
+            "$ref": "#/definitions/PromptMetricsTableRow"
           }
         },
         "config": {
@@ -92733,6 +92724,50 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "EvalUsageTableRow": {
+      "required": [
+        "row_id"
+      ],
+      "type": "object",
+      "properties": {
+        "row_id": {
+          "title": "Row id",
+          "type": "string",
+          "minLength": 1
+        },
+        "score": {
+          "$ref": "#/definitions/EvalUsageNumberCell"
+        },
+        "result": {
+          "$ref": "#/definitions/EvalUsageStringCell"
+        },
+        "input": {
+          "$ref": "#/definitions/EvalUsageStringCell"
+        },
+        "reason": {
+          "$ref": "#/definitions/EvalUsageStringCell"
+        },
+        "source": {
+          "$ref": "#/definitions/EvalUsageStringCell"
+        },
+        "version": {
+          "$ref": "#/definitions/EvalUsageVersionCell"
+        },
+        "feedback": {
+          "$ref": "#/definitions/EvalUsageFeedbackCell"
+        },
+        "created_at": {
+          "$ref": "#/definitions/EvalUsageStringCell"
+        },
+        "status": {
+          "$ref": "#/definitions/EvalUsageStringCell"
+        },
+        "warnings": {
+          "$ref": "#/definitions/EvalUsageWarningsCell"
+        }
+      },
+      "additionalProperties": true
+    },
     "EvalConfigStructure": {
       "required": [
         "required_keys",
@@ -96250,6 +96285,76 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "PromptMetricsTableRow": {
+      "type": "object",
+      "properties": {
+        "prompt_version_id": {
+          "title": "Prompt version id",
+          "type": "string",
+          "minLength": 1
+        },
+        "prompt_template_version": {
+          "title": "Prompt template version",
+          "type": "string",
+          "x-nullable": true
+        },
+        "avg_latency": {
+          "title": "Avg latency",
+          "type": "number",
+          "x-nullable": true
+        },
+        "avg_input_tokens": {
+          "title": "Avg input tokens",
+          "type": "number",
+          "x-nullable": true
+        },
+        "avg_output_tokens": {
+          "title": "Avg output tokens",
+          "type": "number",
+          "x-nullable": true
+        },
+        "total_spans": {
+          "title": "Total spans",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "unique_traces": {
+          "title": "Unique traces",
+          "type": "integer",
+          "x-nullable": true
+        },
+        "avg_cost": {
+          "title": "Avg cost",
+          "type": "number",
+          "x-nullable": true
+        },
+        "first_used": {
+          "title": "First used",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "last_used": {
+          "title": "Last used",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "prompt_label_id": {
+          "title": "Prompt label id",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "prompt_label_name": {
+          "title": "Prompt label name",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        }
+      },
+      "additionalProperties": true
+    },
     "PromptSimulationTemplateSummary": {
       "type": "object",
       "properties": {
@@ -98695,6 +98800,60 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "default": {
           "title": "Default",
           "type": "string"
+        }
+      }
+    },
+    "EvalUsageFeedbackCell": {
+      "type": "object",
+      "properties": {
+        "cell_value": {
+          "title": "Cell value",
+          "type": "object",
+          "x-nullable": true
+        }
+      }
+    },
+    "EvalUsageNumberCell": {
+      "type": "object",
+      "properties": {
+        "cell_value": {
+          "title": "Cell value",
+          "type": "number",
+          "x-nullable": true
+        }
+      }
+    },
+    "EvalUsageStringCell": {
+      "type": "object",
+      "properties": {
+        "cell_value": {
+          "title": "Cell value",
+          "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
+    "EvalUsageVersionCell": {
+      "type": "object",
+      "properties": {
+        "cell_value": {
+          "title": "Cell value",
+          "type": "object",
+          "x-nullable": true,
+          "x-string-or-object": true,
+          "description": "String or JSON object."
+        }
+      }
+    },
+    "EvalUsageWarningsCell": {
+      "type": "object",
+      "properties": {
+        "cell_value": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
+          "x-nullable": true
         }
       }
     },

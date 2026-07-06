@@ -8,10 +8,11 @@ from model_hub.serializers.optimize_dataset import (
     OptimizeDatasetKbSerializer,
     OptimizeDatasetSerializer,
 )
+from model_hub.serializers.experiments import _ExtraFieldsMixin
 from model_hub.serializers.performance_report import PerformanceReportSerializer
 from model_hub.services.ai_eval_writer_service import OUTPUT_FORMAT_PROMPTS
 from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
-from tfc.utils.serializer_fields import AnyValueDictField, StringOrObjectField
+from tfc.utils.serializer_fields import StringOrObjectField
 from tracer.serializers.filters import (
     SortParamField,
     StrictInputSerializer,
@@ -514,13 +515,38 @@ class PromptMetricsMetadataSerializer(serializers.Serializer):
     total_rows = serializers.IntegerField()
 
 
+class PromptMetricsTableRowSerializer(_ExtraFieldsMixin, serializers.Serializer):
+    """One row in the prompt-metrics table.
+
+    Known aggregate columns are typed explicitly; per-eval metric columns land
+    as dynamic ``<eval_config_id>`` keys and pass through via
+    ``additionalProperties: True`` so orval emits an open-shape object.
+    ``_ExtraFieldsMixin`` preserves the dynamic keys on ``.data`` output.
+    """
+
+    prompt_version_id = serializers.CharField(required=False)
+    prompt_template_version = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+    avg_latency = serializers.FloatField(required=False, allow_null=True)
+    avg_input_tokens = serializers.FloatField(required=False, allow_null=True)
+    avg_output_tokens = serializers.FloatField(required=False, allow_null=True)
+    total_spans = serializers.IntegerField(required=False, allow_null=True)
+    unique_traces = serializers.IntegerField(required=False, allow_null=True)
+    avg_cost = serializers.FloatField(required=False, allow_null=True)
+    first_used = serializers.CharField(required=False, allow_null=True)
+    last_used = serializers.CharField(required=False, allow_null=True)
+    prompt_label_id = serializers.CharField(required=False, allow_null=True)
+    prompt_label_name = serializers.CharField(required=False, allow_null=True)
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": True}
+
+
 class PromptMetricsResultSerializer(serializers.Serializer):
     prompt_template_id = serializers.UUIDField(required=False)
     prompt_template_name = serializers.CharField(required=False)
-    # Dynamic per-prompt columns — AnyValueDictField types each row as
-    # record<string, JSON> so orval emits Record<string, unknown> instead
-    # of narrowing scalar cells (row_id string, composite bool) to object.
-    table = serializers.ListField(child=AnyValueDictField())
+    table = serializers.ListField(child=PromptMetricsTableRowSerializer())
     config = serializers.JSONField()
     metadata = PromptMetricsMetadataSerializer()
 
@@ -1817,14 +1843,82 @@ class EvalUsagePaginationSerializer(serializers.Serializer):
     page_size = serializers.IntegerField()
 
 
+class EvalUsageNumberCellSerializer(serializers.Serializer):
+    """`{cell_value: number|null}` — for numeric cells (score)."""
+
+    cell_value = serializers.FloatField(required=False, allow_null=True)
+
+
+class EvalUsageStringCellSerializer(serializers.Serializer):
+    """`{cell_value: string}` — for plain text cells."""
+
+    cell_value = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+
+
+class EvalUsageVersionCellSerializer(serializers.Serializer):
+    """`{cell_value: string|number|null}` — version can be either a version
+    number (int) or blank string for system-owned templates."""
+
+    cell_value = StringOrObjectField(required=False, allow_null=True)
+
+
+class EvalUsageWarningsCellSerializer(serializers.Serializer):
+    """`{cell_value: array}` — list of warning objects."""
+
+    cell_value = serializers.ListField(
+        child=serializers.JSONField(), required=False, allow_null=True
+    )
+
+
+class EvalUsageFeedbackCellSerializer(serializers.Serializer):
+    """`{cell_value: object|null}` — nested feedback record or null."""
+
+    cell_value = serializers.JSONField(required=False, allow_null=True)
+
+
+class EvalUsageTableRowSerializer(_ExtraFieldsMixin, serializers.Serializer):
+    """One row in the eval-usage / eval-api-log table.
+
+    Known columns are typed explicitly as ``{cell_value: <type>}`` wrappers so
+    the contract describes what the FE actually receives. The per-eval
+    ``input_var_<name>`` columns are user-controlled dynamic keys — their
+    exact set depends on the tenant's dataset + eval mapping — so they pass
+    through via ``additionalProperties: True``. ``_ExtraFieldsMixin`` is what
+    actually preserves those dynamic cell keys through ``.data`` — without
+    it DRF strips undeclared fields at serialize time and the FE grid renders
+    empty rows even though the swagger says extras are allowed.
+
+    This matches Nikhil's ask (PR #747 round 3): "type the row with the known
+    scalar fields plus a JSON-value map for the dynamic columns."
+    """
+
+    row_id = serializers.CharField()
+    score = EvalUsageNumberCellSerializer(required=False)
+    result = EvalUsageStringCellSerializer(required=False)
+    input = EvalUsageStringCellSerializer(required=False)
+    reason = EvalUsageStringCellSerializer(required=False)
+    source = EvalUsageStringCellSerializer(required=False)
+    version = EvalUsageVersionCellSerializer(required=False)
+    feedback = EvalUsageFeedbackCellSerializer(required=False)
+    created_at = EvalUsageStringCellSerializer(required=False)
+    status = EvalUsageStringCellSerializer(required=False)
+    warnings = EvalUsageWarningsCellSerializer(required=False)
+
+    class Meta:
+        # Dynamic `input_var_<name>` keys — user-controlled, can't be typed
+        # ahead of time. FE reads column_config separately and renders each
+        # extra cell by key at runtime.
+        swagger_schema_fields = {"additionalProperties": True}
+
+
 class EvalUsageStatsResponseResultSerializer(serializers.Serializer):
     template_id = serializers.UUIDField()
     is_composite = serializers.BooleanField()
     stats = EvalUsageStatsSerializer()
     chart = EvalUsageChartPointSerializer(many=True)
-    # table rows have dynamic input_var_X columns — AnyValueDictField types each
-    # row as record<string, JSON> so Zod gets z.record(z.string(), z.unknown())
-    table = serializers.ListField(child=AnyValueDictField())
+    table = serializers.ListField(child=EvalUsageTableRowSerializer())
     logs = EvalUsagePaginationSerializer()
 
 
@@ -1928,10 +2022,10 @@ class EvalColumnConfigItemSerializer(serializers.Serializer):
 
 
 class EvalApiLogTableResponseResultSerializer(serializers.Serializer):
-    # Same dynamic-columns shape as EvalUsageStatsResponseResultSerializer.table —
-    # cells include strings (log_id), booleans (composite), numbers, and nested
-    # objects per input_var_X column. AnyValueDictField emits Record<string,JSON>.
-    table = serializers.ListField(child=AnyValueDictField())
+    # Same row shape as EvalUsageStatsResponseResultSerializer.table —
+    # known cell-wrapped columns + `additionalProperties: True` for the
+    # per-eval `input_var_<name>` dynamic keys.
+    table = serializers.ListField(child=EvalUsageTableRowSerializer())
     column_config = EvalColumnConfigItemSerializer(many=True)
     metadata = EvalApiLogTableMetadataSerializer(required=False)
 

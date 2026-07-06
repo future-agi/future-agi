@@ -19990,6 +19990,7 @@ export const ModelHubEvalTemplatesUsageListQueryParams = zod.object({
 
 
 
+
 export const ModelHubEvalTemplatesUsageListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
@@ -20010,7 +20011,43 @@ export const ModelHubEvalTemplatesUsageListResponse = zod.object({
   "pass_count": zod.number().optional(),
   "fail_count": zod.number().optional()
 })),
-  "table": zod.array(zod.record(zod.string(), zod.unknown()).describe('Row with dynamic columns — cell values are any valid JSON.')),
+  "table": zod.array(zod.object({
+  "row_id": zod.string().min(1),
+  "score": zod.object({
+  "cell_value": zod.number().optional()
+}).optional(),
+  "result": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "input": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "reason": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "source": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "version": zod.object({
+  "cell_value": zod.union([zod.string(), zod.object({}).passthrough()]).optional().describe('String or JSON object.')
+}).optional(),
+  "feedback": zod.object({
+  "cell_value": zod.object({
+
+}).passthrough().optional()
+}).optional(),
+  "created_at": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "status": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "warnings": zod.object({
+  "cell_value": zod.array(zod.object({
+
+}).passthrough()).optional()
+}).optional()
+})),
   "logs": zod.object({
   "total": zod.number(),
   "page": zod.number(),
@@ -21980,10 +22017,47 @@ export const ModelHubGetEvalLogsDetailsListQueryParams = zod.object({
 
 
 
+
 export const ModelHubGetEvalLogsDetailsListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
-  "table": zod.array(zod.record(zod.string(), zod.unknown()).describe('Row with dynamic columns — cell values are any valid JSON.')),
+  "table": zod.array(zod.object({
+  "row_id": zod.string().min(1),
+  "score": zod.object({
+  "cell_value": zod.number().optional()
+}).optional(),
+  "result": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "input": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "reason": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "source": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "version": zod.object({
+  "cell_value": zod.union([zod.string(), zod.object({}).passthrough()]).optional().describe('String or JSON object.')
+}).optional(),
+  "feedback": zod.object({
+  "cell_value": zod.object({
+
+}).passthrough().optional()
+}).optional(),
+  "created_at": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "status": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "warnings": zod.object({
+  "cell_value": zod.array(zod.object({
+
+}).passthrough()).optional()
+}).optional()
+})),
   "column_config": zod.array(zod.object({
   "id": zod.string().min(1),
   "name": zod.string().min(1),
@@ -25435,12 +25509,30 @@ export const ModelHubPromptMetricsListQueryParams = zod.object({
 
 
 
+
+
+
+
+
 export const ModelHubPromptMetricsListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
   "prompt_template_id": zod.string().uuid().optional(),
   "prompt_template_name": zod.string().min(1).optional(),
-  "table": zod.array(zod.record(zod.string(), zod.unknown()).describe('Row with dynamic columns — cell values are any valid JSON.')),
+  "table": zod.array(zod.object({
+  "prompt_version_id": zod.string().min(1).optional(),
+  "prompt_template_version": zod.string().optional(),
+  "avg_latency": zod.number().optional(),
+  "avg_input_tokens": zod.number().optional(),
+  "avg_output_tokens": zod.number().optional(),
+  "total_spans": zod.number().optional(),
+  "unique_traces": zod.number().optional(),
+  "avg_cost": zod.number().optional(),
+  "first_used": zod.string().min(1).optional(),
+  "last_used": zod.string().min(1).optional(),
+  "prompt_label_id": zod.string().min(1).optional(),
+  "prompt_label_name": zod.string().min(1).optional()
+})),
   "config": zod.object({
 
 }).passthrough(),
@@ -25486,12 +25578,30 @@ export const ModelHubPromptSpanMetricsListQueryParams = zod.object({
 
 
 
+
+
+
+
+
 export const ModelHubPromptSpanMetricsListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
   "prompt_template_id": zod.string().uuid().optional(),
   "prompt_template_name": zod.string().min(1).optional(),
-  "table": zod.array(zod.record(zod.string(), zod.unknown()).describe('Row with dynamic columns — cell values are any valid JSON.')),
+  "table": zod.array(zod.object({
+  "prompt_version_id": zod.string().min(1).optional(),
+  "prompt_template_version": zod.string().optional(),
+  "avg_latency": zod.number().optional(),
+  "avg_input_tokens": zod.number().optional(),
+  "avg_output_tokens": zod.number().optional(),
+  "total_spans": zod.number().optional(),
+  "unique_traces": zod.number().optional(),
+  "avg_cost": zod.number().optional(),
+  "first_used": zod.string().min(1).optional(),
+  "last_used": zod.string().min(1).optional(),
+  "prompt_label_id": zod.string().min(1).optional(),
+  "prompt_label_name": zod.string().min(1).optional()
+})),
   "config": zod.object({
 
 }).passthrough(),

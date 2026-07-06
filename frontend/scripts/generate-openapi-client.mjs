@@ -336,14 +336,6 @@ async function runGeneration(schemaPath) {
       "MessageItem → .passthrough() (additionalProperties: true)",
     );
 
-    // AnyValueDictField (`additionalProperties: {}` + `x-json-value: true`,
-    // used for dynamic-column table rows in eval usage) is now emitted by
-    // orval directly as `zod.record(zod.string(), zod.unknown())` — no
-    // post-processing needed. If orval regresses and emits
-    // `zod.object({}).passthrough()` again for these row schemas, add a
-    // dedicated `assertReplace` here anchored on the description
-    // "Row with dynamic columns — cell values are any valid JSON."
-
     fs.writeFileSync(zodOutputPath, zod);
   }
   normalizeGeneratedFileEndings();

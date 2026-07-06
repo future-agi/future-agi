@@ -10263,23 +10263,64 @@ export interface EvalUsageChartPointApi {
   fail_count?: number;
 }
 
+export interface EvalUsageNumberCellApi {
+  cell_value?: number;
+}
+
+export interface EvalUsageStringCellApi {
+  cell_value?: string;
+}
+
+/**
+ * String or JSON object.
+ */
+export type EvalUsageVersionCellApiCellValue = string | { [key: string]: unknown };
+
+export interface EvalUsageVersionCellApi {
+  /** String or JSON object. */
+  cell_value?: EvalUsageVersionCellApiCellValue;
+}
+
+export type EvalUsageFeedbackCellApiCellValue = { [key: string]: unknown };
+
+export interface EvalUsageFeedbackCellApi {
+  cell_value?: EvalUsageFeedbackCellApiCellValue;
+}
+
+export type EvalUsageWarningsCellApiCellValueItem = { [key: string]: unknown };
+
+export interface EvalUsageWarningsCellApi {
+  cell_value?: EvalUsageWarningsCellApiCellValueItem[];
+}
+
+export interface EvalUsageTableRowApi {
+  /** @minLength 1 */
+  row_id: string;
+  score?: EvalUsageNumberCellApi;
+  result?: EvalUsageStringCellApi;
+  input?: EvalUsageStringCellApi;
+  reason?: EvalUsageStringCellApi;
+  source?: EvalUsageStringCellApi;
+  version?: EvalUsageVersionCellApi;
+  feedback?: EvalUsageFeedbackCellApi;
+  created_at?: EvalUsageStringCellApi;
+  status?: EvalUsageStringCellApi;
+  warnings?: EvalUsageWarningsCellApi;
+  [key: string]: unknown;
+ }
+
 export interface EvalUsagePaginationApi {
   total: number;
   page: number;
   page_size: number;
 }
 
-/**
- * Row with dynamic columns — cell values are any valid JSON.
- */
-export type EvalUsageStatsResponseResultApiTableItem = {[key: string]: unknown};
-
 export interface EvalUsageStatsResponseResultApi {
   template_id: string;
   is_composite: boolean;
   stats: EvalUsageStatsApi;
   chart: EvalUsageChartPointApi[];
-  table: EvalUsageStatsResponseResultApiTableItem[];
+  table: EvalUsageTableRowApi[];
   logs: EvalUsagePaginationApi;
 }
 
@@ -11360,13 +11401,8 @@ export interface EvalApiLogTableMetadataApi {
   total_pages: number;
 }
 
-/**
- * Row with dynamic columns — cell values are any valid JSON.
- */
-export type EvalApiLogTableResponseResultApiTableItem = {[key: string]: unknown};
-
 export interface EvalApiLogTableResponseResultApi {
-  table: EvalApiLogTableResponseResultApiTableItem[];
+  table: EvalUsageTableRowApi[];
   column_config: EvalColumnConfigItemApi[];
   metadata?: EvalApiLogTableMetadataApi;
 }
@@ -12711,14 +12747,30 @@ export interface DerivedVariableExtractRequestApi {
   response_format_type?: string;
 }
 
+export interface PromptMetricsTableRowApi {
+  /** @minLength 1 */
+  prompt_version_id?: string;
+  prompt_template_version?: string;
+  avg_latency?: number;
+  avg_input_tokens?: number;
+  avg_output_tokens?: number;
+  total_spans?: number;
+  unique_traces?: number;
+  avg_cost?: number;
+  /** @minLength 1 */
+  first_used?: string;
+  /** @minLength 1 */
+  last_used?: string;
+  /** @minLength 1 */
+  prompt_label_id?: string;
+  /** @minLength 1 */
+  prompt_label_name?: string;
+  [key: string]: unknown;
+ }
+
 export interface PromptMetricsMetadataApi {
   total_rows: number;
 }
-
-/**
- * Row with dynamic columns — cell values are any valid JSON.
- */
-export type PromptMetricsResultApiTableItem = {[key: string]: unknown};
 
 export type PromptMetricsResultApiConfig = { [key: string]: unknown };
 
@@ -12726,7 +12778,7 @@ export interface PromptMetricsResultApi {
   prompt_template_id?: string;
   /** @minLength 1 */
   prompt_template_name?: string;
-  table: PromptMetricsResultApiTableItem[];
+  table: PromptMetricsTableRowApi[];
   config: PromptMetricsResultApiConfig;
   metadata: PromptMetricsMetadataApi;
 }
