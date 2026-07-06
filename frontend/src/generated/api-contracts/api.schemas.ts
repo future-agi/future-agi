@@ -3883,6 +3883,570 @@ export interface CallWebsocketErrorResponseApi {
   details?: CallWebsocketErrorResponseApiDetails;
 }
 
+export interface FalconConversationListApi {
+  readonly id?: string;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  title?: string;
+  /** @maxLength 500 */
+  context_page?: string;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+  readonly message_count?: number;
+  readonly last_message_at?: string;
+}
+
+export interface ConversationListResponseApi {
+  status: boolean;
+  results: FalconConversationListApi[];
+  total: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+}
+
+export type FalconErrorResponseApiType = typeof FalconErrorResponseApiType[keyof typeof FalconErrorResponseApiType];
+
+
+export const FalconErrorResponseApiType = {
+  validation_error: 'validation_error',
+  authentication_error: 'authentication_error',
+  payment_required: 'payment_required',
+  entitlement_error: 'entitlement_error',
+  permission_error: 'permission_error',
+  not_found: 'not_found',
+  conflict: 'conflict',
+  client_error: 'client_error',
+  rate_limit: 'rate_limit',
+  server_error: 'server_error',
+  service_unavailable: 'service_unavailable',
+  timeout: 'timeout',
+  api_error: 'api_error',
+} as const;
+
+export type FalconErrorResponseApiDetails = {[key: string]: string[]};
+
+export interface FalconErrorResponseApi {
+  status?: boolean;
+  type?: FalconErrorResponseApiType;
+  code?: string;
+  detail?: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: FalconErrorResponseApiDetails;
+}
+
+export interface ConversationCreateRequestApi {
+  /** @maxLength 255 */
+  title?: string;
+  /** @maxLength 500 */
+  context_page?: string;
+  hidden?: boolean;
+}
+
+export type FalconMessageApiRole = typeof FalconMessageApiRole[keyof typeof FalconMessageApiRole];
+
+
+export const FalconMessageApiRole = {
+  user: 'user',
+  assistant: 'assistant',
+  system: 'system',
+} as const;
+
+export type FalconMessageApiThoughts = { [key: string]: unknown };
+
+export type FalconMessageApiToolCalls = { [key: string]: unknown };
+
+export type FalconMessageApiCompletionCard = { [key: string]: unknown };
+
+export type FalconMessageApiFiles = { [key: string]: unknown };
+
+export interface FalconMessageApi {
+  readonly id?: string;
+  conversation: string;
+  role: FalconMessageApiRole;
+  /** @minLength 1 */
+  content?: string;
+  thoughts?: FalconMessageApiThoughts;
+  tool_calls?: FalconMessageApiToolCalls;
+  completion_card?: FalconMessageApiCompletionCard;
+  files?: FalconMessageApiFiles;
+  /** @maxLength 20 */
+  feedback?: string;
+  /**
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  input_tokens?: number;
+  /**
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  output_tokens?: number;
+  /** @maxLength 100 */
+  model_used?: string;
+  /**
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  latency_ms?: number;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+}
+
+export type FalconConversationDetailApiMetadata = { [key: string]: unknown };
+
+export interface FalconConversationDetailApi {
+  readonly id?: string;
+  readonly user?: string;
+  readonly organization?: string;
+  readonly workspace?: string;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  title?: string;
+  /** @maxLength 500 */
+  context_page?: string;
+  metadata?: FalconConversationDetailApiMetadata;
+  readonly messages?: readonly FalconMessageApi[];
+  readonly created_at?: string;
+  readonly updated_at?: string;
+}
+
+export interface ConversationDetailResponseApi {
+  status: boolean;
+  result: FalconConversationDetailApi;
+}
+
+export interface ConversationUpdateRequestApi {
+  /** @maxLength 255 */
+  title?: string;
+}
+
+export interface StreamStatusResultApi {
+  /** @minLength 1 */
+  stream_status: string;
+}
+
+export interface StreamStatusResponseApi {
+  status: boolean;
+  result: StreamStatusResultApi;
+}
+
+export interface FileUploadResultApi {
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  size: number;
+  /** @minLength 1 */
+  content_type: string;
+  /** @minLength 1 */
+  url: string;
+}
+
+export interface FileUploadResponseApi {
+  status: boolean;
+  result: FileUploadResultApi;
+}
+
+export type MCPConnectorListApiTransport = typeof MCPConnectorListApiTransport[keyof typeof MCPConnectorListApiTransport];
+
+
+export const MCPConnectorListApiTransport = {
+  sse: 'sse',
+  streamable_http: 'streamable_http',
+} as const;
+
+export type MCPConnectorListApiAuthType = typeof MCPConnectorListApiAuthType[keyof typeof MCPConnectorListApiAuthType];
+
+
+export const MCPConnectorListApiAuthType = {
+  none: 'none',
+  api_key: 'api_key',
+  bearer: 'bearer',
+  oauth: 'oauth',
+} as const;
+
+export interface MCPConnectorListApi {
+  readonly id?: string;
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name: string;
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  server_url: string;
+  transport?: MCPConnectorListApiTransport;
+  auth_type?: MCPConnectorListApiAuthType;
+  is_active?: boolean;
+  is_verified?: boolean;
+  readonly tool_count?: string;
+  last_discovery_at?: string;
+  last_error?: string;
+  readonly created_at?: string;
+}
+
+export interface MCPConnectorListResponseApi {
+  status: boolean;
+  results: MCPConnectorListApi[];
+}
+
+export type MCPConnectorCreateApiTransport = typeof MCPConnectorCreateApiTransport[keyof typeof MCPConnectorCreateApiTransport];
+
+
+export const MCPConnectorCreateApiTransport = {
+  sse: 'sse',
+  streamable_http: 'streamable_http',
+} as const;
+
+export type MCPConnectorCreateApiAuthType = typeof MCPConnectorCreateApiAuthType[keyof typeof MCPConnectorCreateApiAuthType];
+
+
+export const MCPConnectorCreateApiAuthType = {
+  none: 'none',
+  api_key: 'api_key',
+  bearer: 'bearer',
+  oauth: 'oauth',
+} as const;
+
+export interface MCPConnectorCreateApi {
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name: string;
+  /** @minLength 1 */
+  server_url: string;
+  transport?: MCPConnectorCreateApiTransport;
+  auth_type?: MCPConnectorCreateApiAuthType;
+  /** @maxLength 100 */
+  auth_header_name?: string;
+  auth_header_value?: string;
+}
+
+export type MCPConnectorDetailApiTransport = typeof MCPConnectorDetailApiTransport[keyof typeof MCPConnectorDetailApiTransport];
+
+
+export const MCPConnectorDetailApiTransport = {
+  sse: 'sse',
+  streamable_http: 'streamable_http',
+} as const;
+
+export type MCPConnectorDetailApiAuthType = typeof MCPConnectorDetailApiAuthType[keyof typeof MCPConnectorDetailApiAuthType];
+
+
+export const MCPConnectorDetailApiAuthType = {
+  none: 'none',
+  api_key: 'api_key',
+  bearer: 'bearer',
+  oauth: 'oauth',
+} as const;
+
+export type MCPConnectorDetailApiDiscoveredTools = { [key: string]: unknown };
+
+export type MCPConnectorDetailApiEnabledToolNames = { [key: string]: unknown };
+
+export interface MCPConnectorDetailApi {
+  readonly id?: string;
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name: string;
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  server_url: string;
+  transport?: MCPConnectorDetailApiTransport;
+  auth_type?: MCPConnectorDetailApiAuthType;
+  /** @maxLength 100 */
+  auth_header_name?: string;
+  is_active?: boolean;
+  is_verified?: boolean;
+  discovered_tools?: MCPConnectorDetailApiDiscoveredTools;
+  enabled_tool_names?: MCPConnectorDetailApiEnabledToolNames;
+  last_discovery_at?: string;
+  last_error?: string;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+}
+
+export interface MCPConnectorDetailResponseApi {
+  status: boolean;
+  result: MCPConnectorDetailApi;
+}
+
+export type MCPConnectorUpdateRequestApiTransport = typeof MCPConnectorUpdateRequestApiTransport[keyof typeof MCPConnectorUpdateRequestApiTransport];
+
+
+export const MCPConnectorUpdateRequestApiTransport = {
+  sse: 'sse',
+  streamable_http: 'streamable_http',
+} as const;
+
+export type MCPConnectorUpdateRequestApiAuthType = typeof MCPConnectorUpdateRequestApiAuthType[keyof typeof MCPConnectorUpdateRequestApiAuthType];
+
+
+export const MCPConnectorUpdateRequestApiAuthType = {
+  none: 'none',
+  api_key: 'api_key',
+  bearer: 'bearer',
+  oauth: 'oauth',
+} as const;
+
+export interface MCPConnectorUpdateRequestApi {
+  /** @maxLength 100 */
+  name?: string;
+  /** @minLength 1 */
+  server_url?: string;
+  transport?: MCPConnectorUpdateRequestApiTransport;
+  auth_type?: MCPConnectorUpdateRequestApiAuthType;
+  /** @maxLength 100 */
+  auth_header_name?: string;
+  auth_header_value?: string;
+  is_active?: boolean;
+}
+
+export interface FalconEmptyRequestApi { [key: string]: unknown }
+
+export interface MCPConnectorAuthenticateResponseApi {
+  status: boolean;
+  result?: MCPConnectorDetailApi;
+  auth_type?: string;
+  /** @minLength 1 */
+  authorization_url?: string;
+  message?: string;
+}
+
+export interface MCPConnectorDiscoverResponseApi {
+  status: boolean;
+  result: MCPConnectorDetailApi;
+  discovered_count: number;
+}
+
+export interface MCPConnectorTestResultApi {
+  success: boolean;
+  status_code?: number;
+  error?: string;
+}
+
+export interface MCPConnectorTestResponseApi {
+  status: boolean;
+  result?: MCPConnectorTestResultApi;
+  error?: string;
+}
+
+export interface MCPConnectorToolsApi {
+  enabled_tool_names: string[];
+}
+
+export type FalconMemoryApiSource = typeof FalconMemoryApiSource[keyof typeof FalconMemoryApiSource];
+
+
+export const FalconMemoryApiSource = {
+  user: 'user',
+  agent: 'agent',
+  init: 'init',
+} as const;
+
+export interface FalconMemoryApi {
+  readonly id?: string;
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  key: string;
+  /** @minLength 1 */
+  value: string;
+  source?: FalconMemoryApiSource;
+  readonly created_at?: string;
+}
+
+export interface FalconMemoryListResponseApi {
+  status: boolean;
+  results: FalconMemoryApi[];
+}
+
+export interface FalconMemoryCreateApi {
+  /**
+     * @minLength 1
+     * @maxLength 200
+     */
+  key: string;
+  /** @minLength 1 */
+  value: string;
+}
+
+export interface FalconMemoryDetailResponseApi {
+  status: boolean;
+  result: FalconMemoryApi;
+}
+
+export type MessageFeedbackApiFeedback = typeof MessageFeedbackApiFeedback[keyof typeof MessageFeedbackApiFeedback];
+
+
+export const MessageFeedbackApiFeedback = {
+  thumbs_up: 'thumbs_up',
+  thumbs_down: 'thumbs_down',
+  '': '',
+} as const;
+
+export interface MessageFeedbackApi {
+  feedback: MessageFeedbackApiFeedback;
+}
+
+export interface MessageFeedbackResultApi {
+  feedback: string;
+}
+
+export interface MessageFeedbackResponseApi {
+  status: boolean;
+  result: MessageFeedbackResultApi;
+}
+
+export interface QuickAnalysisApi {
+  /**
+     * @minLength 1
+     * @maxLength 8000
+     */
+  prompt: string;
+}
+
+export interface QuickAnalysisResponseApi {
+  status: boolean;
+  /** @minLength 1 */
+  result: string;
+}
+
+export type SkillListApiToolNames = { [key: string]: unknown };
+
+export type SkillListApiTriggerPhrases = { [key: string]: unknown };
+
+export interface SkillListApi {
+  readonly id?: string;
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name: string;
+  /**
+     * @minLength 1
+     * @maxLength 100
+     * @pattern ^[-a-zA-Z0-9_]+$
+     */
+  slug: string;
+  /** @minLength 1 */
+  description?: string;
+  /**
+     * @minLength 1
+     * @maxLength 50
+     */
+  icon?: string;
+  is_builtin?: boolean;
+  is_active?: boolean;
+  tool_names?: SkillListApiToolNames;
+  trigger_phrases?: SkillListApiTriggerPhrases;
+  readonly created_at?: string;
+  readonly created_by_display?: string;
+}
+
+export interface SkillListResponseApi {
+  status: boolean;
+  results: SkillListApi[];
+}
+
+export interface SkillCreateApi {
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name: string;
+  description?: string;
+  /**
+     * @minLength 1
+     * @maxLength 50
+     */
+  icon?: string;
+  /** @minLength 1 */
+  instructions: string;
+  tool_names?: string[];
+  /** @minItems 1 */
+  trigger_phrases: string[];
+}
+
+export type SkillDetailApiToolNames = { [key: string]: unknown };
+
+export type SkillDetailApiExampleTrajectories = { [key: string]: unknown };
+
+export type SkillDetailApiTriggerPhrases = { [key: string]: unknown };
+
+export interface SkillDetailApi {
+  readonly id?: string;
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name: string;
+  /**
+     * @minLength 1
+     * @maxLength 100
+     * @pattern ^[-a-zA-Z0-9_]+$
+     */
+  slug: string;
+  /** @minLength 1 */
+  description?: string;
+  /**
+     * @minLength 1
+     * @maxLength 50
+     */
+  icon?: string;
+  is_builtin?: boolean;
+  is_active?: boolean;
+  /** @minLength 1 */
+  instructions?: string;
+  tool_names?: SkillDetailApiToolNames;
+  example_trajectories?: SkillDetailApiExampleTrajectories;
+  trigger_phrases?: SkillDetailApiTriggerPhrases;
+  readonly created_at?: string;
+  readonly updated_at?: string;
+  readonly created_by_display?: string;
+}
+
+export interface SkillDetailResponseApi {
+  status: boolean;
+  result: SkillDetailApi;
+}
+
+export interface SkillUpdateRequestApi {
+  /**
+     * @minLength 1
+     * @maxLength 100
+     */
+  name?: string;
+  description?: string;
+  /**
+     * @minLength 1
+     * @maxLength 50
+     */
+  icon?: string;
+  /** @minLength 1 */
+  instructions?: string;
+  tool_names?: string[];
+  trigger_phrases?: string[];
+  is_active?: boolean;
+}
+
 export interface HealthCheckResponseApi {
   status?: boolean;
   /** @minLength 1 */
@@ -16566,29 +17130,6 @@ export type EvalConfigUpdateRequestApiConfig = { [key: string]: unknown };
  */
 export type EvalConfigUpdateRequestApiMapping = { [key: string]: unknown };
 
-export type EvalConfigUpdateRequestApiFiltersItemFilterConfig = {
-  /** Canonical field type, for example text, number, boolean, datetime, categorical, thumbs, annotator, or array. */
-  filter_type: string;
-  /** Canonical operator from api_contracts/filter_contract.json, for example equals, not_equals, in, not_in, between, not_between, is_null, or is_not_null. */
-  filter_op: string;
-  /** Scalar, list, range tuple, boolean, or null depending on filter_op and filter_type. */
-  filter_value?: unknown;
-  /** Column family such as SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC, ANNOTATION, or NORMAL. */
-  col_type?: string;
-};
-
-export type EvalConfigUpdateRequestApiFiltersItem = {
-  /** Column or attribute id to filter on. */
-  column_id: string;
-  /** Optional UI label for chips and saved views. */
-  display_name?: string;
-  /** Optional source surface for mixed-source filters, for example traces, datasets, or simulation. */
-  source?: string;
-  /** Optional metric output type metadata used by eval and annotation filters. */
-  output_type?: string;
-  filter_config: EvalConfigUpdateRequestApiFiltersItemFilterConfig;
-};
-
 export interface EvalConfigUpdateRequestApi {
   /** Updated evaluation configuration parameters. */
   config?: EvalConfigUpdateRequestApiConfig;
@@ -16603,10 +17144,6 @@ export interface EvalConfigUpdateRequestApi {
   error_localizer?: boolean;
   /** UUID of a knowledge base to use for grounding. Pass null to clear. */
   kb_id?: string;
-  /** UUID of the evaluation template to switch to. */
-  template_id?: string;
-  /** Updated canonical filter list to restrict which test results are evaluated. */
-  filters?: EvalConfigUpdateRequestApiFiltersItem[];
   /**
      * Updated name for the evaluation configuration.
      * @minLength 1
@@ -20816,6 +21353,1431 @@ export interface WebhookResponseApi {
   result: string;
 }
 
+export type AdminCustomPlanResponseApiResult = {[key: string]: string};
+
+export interface AdminCustomPlanResponseApi {
+  status: boolean;
+  result: AdminCustomPlanResponseApiResult;
+}
+
+export type UsageErrorResponseApiDetails = {[key: string]: string[]};
+
+export interface UsageErrorResponseApi {
+  status: boolean;
+  result?: string;
+  message?: string;
+  error?: string;
+  detail?: string;
+  details?: UsageErrorResponseApiDetails;
+}
+
+export type AdminCustomPlanRequestApiEntitlements = {[key: string]: { [key: string]: unknown }};
+
+export interface AdminCustomPricingTierApi {
+  tier_start: string;
+  tier_end?: string;
+  price_per_unit: string;
+  display_unit?: string;
+}
+
+export type AdminCustomPlanRequestApiPricing = {[key: string]: AdminCustomPricingTierApi[]};
+
+export interface AdminCustomPlanRequestApi {
+  organization_id: string;
+  platform_fee?: string;
+  /** @minimum 1 */
+  platform_fee_billing_cycle?: number;
+  contract_end_date?: string;
+  start_date?: string;
+  entitlements?: AdminCustomPlanRequestApiEntitlements;
+  pricing?: AdminCustomPlanRequestApiPricing;
+  create_stripe_subscription?: boolean;
+}
+
+export type AdminEntitlementsResponseApiResult = {[key: string]: string};
+
+export interface AdminEntitlementsResponseApi {
+  status: boolean;
+  result: AdminEntitlementsResponseApiResult;
+}
+
+export interface AdminEntitlementMutationRequestApi {
+  organization_id: string;
+  /** @minLength 1 */
+  feature: string;
+  value_int?: number;
+  value_bool?: boolean;
+}
+
+export interface AdminEntitlementMutationResultApi {
+  id: number;
+  /** @minLength 1 */
+  feature: string;
+  created: boolean;
+  value_int?: number;
+  value_bool?: boolean;
+}
+
+export interface AdminEntitlementMutationResponseApi {
+  status: boolean;
+  result: AdminEntitlementMutationResultApi;
+}
+
+export interface AdminInvoiceRequestApi {
+  organization_id: string;
+  /**
+     * @minLength 1
+     * @pattern ^\d{4}-\d{2}$
+     */
+  period: string;
+}
+
+export interface AdminInvoiceGenerateResultApi {
+  created: number;
+  skipped: number;
+  errors: number;
+  invoice_id?: string;
+  /** @minLength 1 */
+  total?: string;
+  /** @minLength 1 */
+  status?: string;
+  period_start?: string;
+  period_end?: string;
+  line_items_count?: number;
+}
+
+export interface AdminInvoiceGenerateResponseApi {
+  status: boolean;
+  result: AdminInvoiceGenerateResultApi;
+}
+
+export type AdminInvoiceLineItemApiTierBreakdown = { [key: string]: unknown };
+
+export interface AdminInvoiceLineItemApi {
+  /** @minLength 1 */
+  line_type: string;
+  dimension?: string;
+  /** @minLength 1 */
+  description: string;
+  /** @minLength 1 */
+  quantity: string;
+  unit?: string;
+  /** @minLength 1 */
+  unit_price: string;
+  /** @minLength 1 */
+  amount: string;
+  tier_breakdown?: AdminInvoiceLineItemApiTierBreakdown;
+}
+
+export interface AdminInvoicePreviewResultApi {
+  org_id: string;
+  /** @minLength 1 */
+  period: string;
+  /** @minLength 1 */
+  plan: string;
+  backfill_ran: boolean;
+  usage_summary_count: number;
+  invoice_exists: boolean;
+  /** @minLength 1 */
+  platform_fee: string;
+  /** @minLength 1 */
+  usage_total: string;
+  /** @minLength 1 */
+  credits_applied: string;
+  /** @minLength 1 */
+  subtotal: string;
+  /** @minLength 1 */
+  tax: string;
+  /** @minLength 1 */
+  total: string;
+  line_items: AdminInvoiceLineItemApi[];
+}
+
+export interface AdminInvoicePreviewResponseApi {
+  status: boolean;
+  result: AdminInvoicePreviewResultApi;
+}
+
+export interface AdminPricingTierApi {
+  id?: number;
+  /** @minLength 1 */
+  dimension: string;
+  tier_start: string;
+  tier_end?: string;
+  price_per_unit: string;
+  display_unit?: string;
+}
+
+export interface AdminPricingListResultApi {
+  pricing: AdminPricingTierApi[];
+}
+
+export interface AdminPricingListResponseApi {
+  status: boolean;
+  result: AdminPricingListResultApi;
+}
+
+export interface AdminPricingMutationRequestApi {
+  organization_id: string;
+  /** @minLength 1 */
+  dimension: string;
+  tier_start: string;
+  tier_end?: string;
+  price_per_unit: string;
+  display_unit?: string;
+}
+
+export interface AdminPricingMutationResultApi {
+  id: number;
+  /** @minLength 1 */
+  dimension: string;
+  created: boolean;
+}
+
+export interface AdminPricingMutationResponseApi {
+  status: boolean;
+  result: AdminPricingMutationResultApi;
+}
+
+export type APICallCountResultApiData = {[key: string]: number};
+
+export interface APICallCountResultApi {
+  data: APICallCountResultApiData;
+}
+
+export interface APICallCountResponseApi {
+  status: boolean;
+  result: APICallCountResultApi;
+}
+
+export type UsageAPICallTypeApiName = typeof UsageAPICallTypeApiName[keyof typeof UsageAPICallTypeApiName];
+
+
+export const UsageAPICallTypeApiName = {
+  prompt_bench: 'prompt_bench',
+  dataset_protect: 'dataset_protect',
+  dataset_protect_flash: 'dataset_protect_flash',
+  turing_large_evaluator: 'turing_large_evaluator',
+  turing_small_evaluator: 'turing_small_evaluator',
+  turing_flash_evaluator: 'turing_flash_evaluator',
+  protect_evaluator: 'protect_evaluator',
+  protect_flash_evaluator: 'protect_flash_evaluator',
+  code_evaluator: 'code_evaluator',
+  user_add: 'user_add',
+  observe_add: 'observe_add',
+  prototype_add: 'prototype_add',
+  dataset_add: 'dataset_add',
+  row_add: 'row_add',
+  knowledge_base: 'knowledge_base',
+  synthetic_data_generation: 'synthetic_data_generation',
+  error_localizer: 'error_localizer',
+  auto_annotation: 'auto_annotation',
+  dataset_evaluation: 'dataset_evaluation',
+  experiment_evaluation: 'experiment_evaluation',
+  optimisation_evaluation: 'optimisation_evaluation',
+  eval_explanation: 'eval_explanation',
+  dataset_run_prompt: 'dataset_run_prompt',
+  dataset_optimization: 'dataset_optimization',
+  dataset_experiment: 'dataset_experiment',
+  voice_call: 'voice_call',
+  text_call: 'text_call',
+  wallet_refund: 'wallet_refund',
+  wallet_refill: 'wallet_refill',
+  wallet_auto_recharge: 'wallet_auto_recharge',
+  wallet_add_funds: 'wallet_add_funds',
+  trace_error_analysis: 'trace_error_analysis',
+} as const;
+
+export interface UsageAPICallTypeApi {
+  readonly id?: number;
+  name: UsageAPICallTypeApiName;
+  description?: string;
+}
+
+export interface APICallTypeListResponseApi {
+  status: boolean;
+  result: UsageAPICallTypeApi[];
+}
+
+export interface UsageEmptyRequestApi { [key: string]: unknown }
+
+export interface UsageMessageResultApi {
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface UsageMessageResponseApi {
+  status: boolean;
+  result: UsageMessageResultApi;
+}
+
+export interface CheckoutSessionResultApi {
+  /** @minLength 1 */
+  session_id?: string;
+  /** @minLength 1 */
+  url?: string;
+  /** @minLength 1 */
+  status?: string;
+  /** @minLength 1 */
+  message?: string;
+}
+
+export interface CheckoutSessionResponseApi {
+  status?: boolean;
+  result?: CheckoutSessionResultApi;
+  /** @minLength 1 */
+  session_id?: string;
+  /** @minLength 1 */
+  url?: string;
+}
+
+export interface BillingPortalResponseApi {
+  /** @minLength 1 */
+  url: string;
+}
+
+export interface CheckoutSessionRequestApi {
+  /** @minLength 1 */
+  subscription_type?: string;
+}
+
+export interface CustomPaymentCheckoutRequestApi {
+  amount: string;
+}
+
+export interface DownloadInvoiceRequestApi {
+  /** @minLength 1 */
+  invoice_id: string;
+}
+
+export interface DownloadInvoiceResultApi {
+  /** @minLength 1 */
+  invoice_pdf_url: string;
+}
+
+export interface DownloadInvoiceResponseApi {
+  status: boolean;
+  result: DownloadInvoiceResultApi;
+}
+
+export type EELicenseGrantApiBand = typeof EELicenseGrantApiBand[keyof typeof EELicenseGrantApiBand];
+
+
+export const EELicenseGrantApiBand = {
+  team: 'team',
+  business: 'business',
+  enterprise: 'enterprise',
+  enterprise_plus: 'enterprise_plus',
+} as const;
+
+export interface EELicenseGrantApi {
+  id: string;
+  /** @minLength 1 */
+  customer_name: string;
+  band: EELicenseGrantApiBand;
+  /** @minLength 1 */
+  billing_interval: string;
+  features: string[];
+  max_traces_monthly?: number;
+  max_gateway_monthly?: number;
+  issued_at: string;
+  expires_at: string;
+  /** @minLength 1 */
+  status: string;
+}
+
+export interface EELicenseListResultApi {
+  licenses: EELicenseGrantApi[];
+}
+
+export interface EELicenseListResponseApi {
+  status: boolean;
+  result: EELicenseListResultApi;
+}
+
+export type EELicenseCreateRequestApiBand = typeof EELicenseCreateRequestApiBand[keyof typeof EELicenseCreateRequestApiBand];
+
+
+export const EELicenseCreateRequestApiBand = {
+  team: 'team',
+  business: 'business',
+  enterprise: 'enterprise',
+  enterprise_plus: 'enterprise_plus',
+} as const;
+
+export type EELicenseCreateRequestApiBillingInterval = typeof EELicenseCreateRequestApiBillingInterval[keyof typeof EELicenseCreateRequestApiBillingInterval];
+
+
+export const EELicenseCreateRequestApiBillingInterval = {
+  monthly: 'monthly',
+  yearly: 'yearly',
+} as const;
+
+export interface EELicenseCreateRequestApi {
+  band: EELicenseCreateRequestApiBand;
+  customer_name?: string;
+  billing_interval?: EELicenseCreateRequestApiBillingInterval;
+}
+
+export interface EELicenseCreateResultApi {
+  grant_id: string;
+  /** @minLength 1 */
+  jwt_key: string;
+  /** @minLength 1 */
+  key_hash: string;
+  /** @minLength 1 */
+  band: string;
+  expires_at: string;
+  features: string[];
+}
+
+export interface EELicenseCreateResponseApi {
+  status: boolean;
+  result: EELicenseCreateResultApi;
+}
+
+export interface EELicenseRevokeRequestApi {
+  reason?: string;
+}
+
+export interface EELicenseRevokeResultApi {
+  revoked: boolean;
+  grant_id: string;
+}
+
+export interface EELicenseRevokeResponseApi {
+  status: boolean;
+  result: EELicenseRevokeResultApi;
+}
+
+export interface AutoReloadSettingsDataApi {
+  autoreload_enabled: boolean;
+  autoreload_wallet_amount: string;
+  autoreload_wallet_threshold: string;
+}
+
+export interface AutoReloadSettingsResponseApi {
+  /** @minLength 1 */
+  status: string;
+  data: AutoReloadSettingsDataApi;
+}
+
+export interface BillingInfoApi {
+  name?: string;
+  email?: string;
+  company?: string;
+  billing_address1?: string;
+  billing_address2?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  postal_code?: string;
+  tax_id?: string;
+}
+
+export interface OrganizationBillingLegacyResponseApi {
+  /** @minLength 1 */
+  status: string;
+  billing_info: BillingInfoApi;
+}
+
+export interface CustomerInvoiceApi {
+  /** @minLength 1 */
+  date: string;
+  /** @minLength 1 */
+  id: string;
+  is_invoice_available: boolean;
+  /** @minLength 1 */
+  amount: string;
+  receipt_url?: string;
+  /** @minLength 1 */
+  payment_type: string;
+}
+
+export interface CustomerInvoicesResultApi {
+  invoices: CustomerInvoiceApi[];
+  total: number;
+}
+
+export interface CustomerInvoicesResponseApi {
+  status: boolean;
+  result: CustomerInvoicesResultApi;
+}
+
+export interface LastFourDigitsResultApi {
+  last4: string;
+}
+
+export interface LastFourDigitsResponseApi {
+  status: boolean;
+  result: LastFourDigitsResultApi;
+}
+
+export interface WalletBalanceResponseApi {
+  wallet_balance: string;
+}
+
+export type PricingCalculationResponseApiResult = {[key: string]: number};
+
+export interface PricingCalculationResponseApi {
+  status: boolean;
+  result: PricingCalculationResponseApiResult;
+}
+
+export interface UsageOrganizationBillingApi {
+  readonly id?: number;
+  readonly organization?: string;
+  /** @maxLength 100 */
+  billing_contact_name?: string;
+  /** @maxLength 254 */
+  billing_contact_email?: string;
+  /** @maxLength 100 */
+  company?: string;
+  /** @maxLength 255 */
+  billing_address1?: string;
+  /** @maxLength 255 */
+  billing_address2?: string;
+  /** @maxLength 100 */
+  city?: string;
+  /** @maxLength 100 */
+  state?: string;
+  /** @maxLength 100 */
+  country?: string;
+  /** @maxLength 20 */
+  postal_code?: string;
+  /** @maxLength 50 */
+  tax_id?: string;
+}
+
+export interface OrganizationBillingListResponseApi {
+  status: boolean;
+  result: UsageOrganizationBillingApi[];
+}
+
+export interface OrganizationBillingDetailResponseApi {
+  status: boolean;
+  result: UsageOrganizationBillingApi;
+}
+
+export interface UsageOrganizationApi {
+  readonly id?: string;
+  /**
+     * @minLength 1
+     * @maxLength 255
+     */
+  name: string;
+}
+
+export interface OrganizationListResponseApi {
+  status: boolean;
+  result: UsageOrganizationApi[];
+}
+
+export type UsageOrganizationSubscriptionApiStatus = typeof UsageOrganizationSubscriptionApiStatus[keyof typeof UsageOrganizationSubscriptionApiStatus];
+
+
+export const UsageOrganizationSubscriptionApiStatus = {
+  active: 'active',
+  past_due: 'past_due',
+  canceled: 'canceled',
+  inactive: 'inactive',
+} as const;
+
+export type UsageOrganizationSubscriptionApiSubscriptionFutureTier = typeof UsageOrganizationSubscriptionApiSubscriptionFutureTier[keyof typeof UsageOrganizationSubscriptionApiSubscriptionFutureTier];
+
+
+export const UsageOrganizationSubscriptionApiSubscriptionFutureTier = {
+  free: 'free',
+  basic: 'basic',
+  basic_yearly: 'basic_yearly',
+  custom: 'custom',
+} as const;
+
+export interface UsageOrganizationSubscriptionApi {
+  readonly id?: number;
+  organization: string;
+  readonly subscription_tier?: string;
+  /** @maxLength 100 */
+  custom_subscription_id?: string;
+  status?: UsageOrganizationSubscriptionApiStatus;
+  /** Price of the subscription. */
+  subscription_price?: string;
+  wallet_balance?: string;
+  /** Amount to refill the wallet every month. */
+  wallet_refill_amount?: string;
+  /** Next due date for renewal. */
+  next_renewal_date?: string;
+  subscription_future_tier?: UsageOrganizationSubscriptionApiSubscriptionFutureTier;
+  /** Next due date for renewal. */
+  subscription_future_start_date?: string;
+  /** Price of the future subscription. */
+  subscription_future_price?: string;
+  /**
+     * Stripe customer ID for test mode. NULL values are allowed.
+     * @maxLength 100
+     */
+  stripe_customer_id_test?: string;
+  /**
+     * Stripe customer ID for live mode. NULL values are allowed.
+     * @maxLength 100
+     */
+  stripe_customer_id_live?: string;
+  auto_recharge_enabled?: boolean;
+  /** Amount to refill the wallet every month. */
+  auto_recharge_amount?: string;
+  /** Threshold to trigger auto recharge. */
+  auto_recharge_threshold?: string;
+  /** @maxLength 100 */
+  payment_method_id?: string;
+  last_refill_date?: string;
+  /** Amount of the last refill. */
+  last_refill_amount?: string;
+}
+
+export interface OrganizationSubscriptionListResponseApi {
+  status: boolean;
+  result: UsageOrganizationSubscriptionApi[];
+}
+
+export type UsageOrganizationSubscriptionCreateApiSubscriptionFutureTier = typeof UsageOrganizationSubscriptionCreateApiSubscriptionFutureTier[keyof typeof UsageOrganizationSubscriptionCreateApiSubscriptionFutureTier];
+
+
+export const UsageOrganizationSubscriptionCreateApiSubscriptionFutureTier = {
+  free: 'free',
+  basic: 'basic',
+  basic_yearly: 'basic_yearly',
+  custom: 'custom',
+} as const;
+
+export type UsageOrganizationSubscriptionCreateApiStatus = typeof UsageOrganizationSubscriptionCreateApiStatus[keyof typeof UsageOrganizationSubscriptionCreateApiStatus];
+
+
+export const UsageOrganizationSubscriptionCreateApiStatus = {
+  active: 'active',
+  past_due: 'past_due',
+  canceled: 'canceled',
+  inactive: 'inactive',
+} as const;
+
+export interface UsageOrganizationSubscriptionCreateApi {
+  /** Next due date for renewal. */
+  next_renewal_date?: string;
+  /** Price of the subscription. */
+  subscription_price?: string;
+  subscription_future_tier?: UsageOrganizationSubscriptionCreateApiSubscriptionFutureTier;
+  /** Next due date for renewal. */
+  subscription_future_start_date?: string;
+  /** Price of the future subscription. */
+  subscription_future_price?: string;
+  status?: UsageOrganizationSubscriptionCreateApiStatus;
+  /** Amount to refill the wallet every month. */
+  wallet_refill_amount?: string;
+  wallet_balance?: string;
+  /**
+     * Stripe customer ID for test mode. NULL values are allowed.
+     * @maxLength 100
+     */
+  stripe_customer_id_test?: string;
+  /**
+     * Stripe customer ID for live mode. NULL values are allowed.
+     * @maxLength 100
+     */
+  stripe_customer_id_live?: string;
+  auto_recharge_enabled?: boolean;
+  /** Amount to refill the wallet every month. */
+  auto_recharge_amount?: string;
+  /** Threshold to trigger auto recharge. */
+  auto_recharge_threshold?: string;
+  /** @maxLength 100 */
+  payment_method_id?: string;
+  /** @maxLength 100 */
+  custom_subscription_id?: string;
+  organization: string;
+  subscription_tier: number;
+}
+
+export interface OrganizationSubscriptionMutationResponseApi {
+  status: boolean;
+  result: UsageOrganizationSubscriptionCreateApi;
+}
+
+export interface UsageStringResponseApi {
+  status: boolean;
+  /** @minLength 1 */
+  result: string;
+}
+
+export interface PricingCardDetailsResultApi {
+  business_monthly_price: number;
+  business_yearly_price: number;
+  discount_percentage: number;
+  custom_price?: number;
+}
+
+export interface PricingCardDetailsResponseApi {
+  status: boolean;
+  result: PricingCardDetailsResultApi;
+}
+
+export interface UsagePricingCreateApi {
+  readonly id?: number;
+  api_call_type: number;
+  price_per_call: string;
+  organization?: string;
+}
+
+export interface PricingListResponseApi {
+  status: boolean;
+  result: UsagePricingCreateApi[];
+}
+
+export interface PricingDetailResponseApi {
+  status: boolean;
+  result: UsagePricingCreateApi;
+}
+
+export interface UsagePricingApi {
+  readonly id?: number;
+  readonly api_call_type?: string;
+  price_per_call: string;
+  organization?: string;
+}
+
+export interface PricingReadResponseApi {
+  status: boolean;
+  result: UsagePricingApi;
+}
+
+export interface UsageRateLimitApi {
+  readonly id?: number;
+  readonly api_call_type?: string;
+  organization?: string;
+  /**
+     * Max calls per minute
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  minute_limit?: number;
+  /**
+     * Max calls per hour
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  hour_limit?: number;
+  /**
+     * Max calls per day
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  day_limit?: number;
+  /**
+     * Max calls per month
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  month_limit?: number;
+  readonly subscription_tier?: string;
+}
+
+export interface RateLimitListResponseApi {
+  status: boolean;
+  result: UsageRateLimitApi[];
+}
+
+export interface UsageRateLimitCreateApi {
+  readonly id?: number;
+  api_call_type: number;
+  organization?: string;
+  /**
+     * Max calls per minute
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  minute_limit?: number;
+  /**
+     * Max calls per hour
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  hour_limit?: number;
+  /**
+     * Max calls per day
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  day_limit?: number;
+  /**
+     * Max calls per month
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  month_limit?: number;
+  subscription_tier: number;
+}
+
+export interface RateLimitMutationResponseApi {
+  status: boolean;
+  result: UsageRateLimitCreateApi;
+}
+
+export interface RateLimitDetailResponseApi {
+  status: boolean;
+  result: UsageRateLimitApi;
+}
+
+export interface UsageResourceLimitApi {
+  readonly id?: number;
+  readonly resource_type?: string;
+  readonly subscription_tier?: string;
+  /**
+     * Limit for the resource
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  limit: number;
+  organization?: string;
+}
+
+export interface ResourceLimitListResponseApi {
+  status: boolean;
+  result: UsageResourceLimitApi[];
+}
+
+export interface UsageResourceLimitCreateApi {
+  readonly id?: number;
+  resource_type: number;
+  subscription_tier: number;
+  /**
+     * Limit for the resource
+     * @minimum 0
+     * @maximum 2147483647
+     */
+  limit: number;
+  organization?: string;
+}
+
+export interface ResourceLimitMutationResponseApi {
+  status: boolean;
+  result: UsageResourceLimitCreateApi;
+}
+
+export interface ResourceLimitDetailResponseApi {
+  status: boolean;
+  result: UsageResourceLimitApi;
+}
+
+export type UsageResourceTypeApiName = typeof UsageResourceTypeApiName[keyof typeof UsageResourceTypeApiName];
+
+
+export const UsageResourceTypeApiName = {
+  project: 'project',
+  dataset: 'dataset',
+  logs: 'logs',
+  rows: 'rows',
+  columns: 'columns',
+  users: 'users',
+  traces: 'traces',
+  observe: 'observe',
+  prototypes: 'prototypes',
+  knowledge_base: 'knowledge_base',
+} as const;
+
+export interface UsageResourceTypeApi {
+  readonly id?: number;
+  name: UsageResourceTypeApiName;
+  description?: string;
+}
+
+export interface ResourceTypeListResponseApi {
+  status: boolean;
+  result: UsageResourceTypeApi[];
+}
+
+export type SubscriptionPlansResultApiStatus = typeof SubscriptionPlansResultApiStatus[keyof typeof SubscriptionPlansResultApiStatus];
+
+
+export const SubscriptionPlansResultApiStatus = {
+  success: 'success',
+  error: 'error',
+} as const;
+
+export type SubscriptionPlansResultApiData = { [key: string]: unknown };
+
+export interface SubscriptionPlansResultApi {
+  status: SubscriptionPlansResultApiStatus;
+  data?: SubscriptionPlansResultApiData;
+  /** @minLength 1 */
+  current_subscription?: string;
+  message?: string;
+}
+
+export interface SubscriptionPlansResponseApi {
+  status: boolean;
+  result: SubscriptionPlansResultApi;
+}
+
+export interface SubscriptionStatusResultApi {
+  next_renewal_date?: string;
+  /** @minLength 1 */
+  subscription_status?: string;
+  /** @minLength 1 */
+  tier?: string;
+  subscription_price?: string;
+  /** @minLength 1 */
+  subscription_future_tier?: string;
+  subscription_future_start_date?: string;
+  subscription_future_price?: string;
+}
+
+export interface SubscriptionStatusResponseApi {
+  status: boolean;
+  result: SubscriptionStatusResultApi;
+}
+
+export type UsageSubscriptionTierApiName = typeof UsageSubscriptionTierApiName[keyof typeof UsageSubscriptionTierApiName];
+
+
+export const UsageSubscriptionTierApiName = {
+  free: 'free',
+  basic: 'basic',
+  basic_yearly: 'basic_yearly',
+  custom: 'custom',
+} as const;
+
+export interface UsageSubscriptionTierApi {
+  readonly id?: number;
+  readonly name?: UsageSubscriptionTierApiName;
+  description: string;
+  /** @maxLength 100 */
+  stripe_price_id?: string;
+  /** Amount to refill the wallet every month. */
+  wallet_refill_amount?: string;
+}
+
+export interface SubscriptionTierListResponseApi {
+  status: boolean;
+  result: UsageSubscriptionTierApi[];
+}
+
+export interface SubscriptionTierDetailResponseApi {
+  status: boolean;
+  result: UsageSubscriptionTierApi;
+}
+
+export interface AutoReloadSettingsRequestApi {
+  autoreload_enabled: boolean;
+  autoreload_walletamount: string;
+  autoreload_walletthreshold: string;
+}
+
+export type AutoReloadUpdateResponseApiStatus = typeof AutoReloadUpdateResponseApiStatus[keyof typeof AutoReloadUpdateResponseApiStatus];
+
+
+export const AutoReloadUpdateResponseApiStatus = {
+  success: 'success',
+} as const;
+
+export interface AutoReloadUpdateResponseApi {
+  status: AutoReloadUpdateResponseApiStatus;
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface UpdateOrganizationBillingRequestApi {
+  name?: string;
+  email?: string;
+  company?: string;
+  billing_address1?: string;
+  billing_address2?: string;
+  city?: string;
+  state?: string;
+  country?: string;
+  postal_code?: string;
+  tax_id?: string;
+}
+
+export interface UpdateBillingDetailsResultApi {
+  /** @minLength 1 */
+  message: string;
+}
+
+export interface UpdateBillingDetailsResponseApi {
+  status: boolean;
+  result: UpdateBillingDetailsResultApi;
+}
+
+export type UsageSummaryResponseApiResult = {[key: string]: string};
+
+export interface UsageSummaryResponseApi {
+  status: boolean;
+  result: UsageSummaryResponseApiResult;
+}
+
+export type AddonRequestApiPlan = typeof AddonRequestApiPlan[keyof typeof AddonRequestApiPlan];
+
+
+export const AddonRequestApiPlan = {
+  boost: 'boost',
+  scale: 'scale',
+  enterprise: 'enterprise',
+} as const;
+
+export interface AddonRequestApi {
+  plan?: AddonRequestApiPlan;
+}
+
+export interface AddonPostResultApi {
+  /** @minLength 1 */
+  subscription_id: string;
+  /** @minLength 1 */
+  plan: string;
+}
+
+export interface AddonPostResponseApi {
+  status: boolean;
+  result: AddonPostResultApi;
+}
+
+export type UsageInvoiceLineItemApiTierBreakdown = { [key: string]: unknown };
+
+export interface UsageInvoiceLineItemApi {
+  /** @minLength 1 */
+  line_type: string;
+  /** @minLength 1 */
+  dimension?: string;
+  /** @minLength 1 */
+  description: string;
+  quantity: string;
+  unit?: string;
+  unit_price: string;
+  amount: string;
+  tier_breakdown?: UsageInvoiceLineItemApiTierBreakdown;
+  credit_id?: number;
+}
+
+export interface UsageBillingOverviewResultApi {
+  org_id?: string;
+  /** @minLength 1 */
+  period?: string;
+  /** @minLength 1 */
+  plan?: string;
+  platform_fee?: string;
+  usage_total?: string;
+  credits_applied?: string;
+  subtotal?: string;
+  tax?: string;
+  total?: string;
+  line_items?: UsageInvoiceLineItemApi[];
+  /** @minLength 1 */
+  error?: string;
+  pending_cancel?: boolean;
+  /** @minLength 1 */
+  cancel_at?: string;
+}
+
+export interface UsageBillingOverviewResponseApi {
+  status: boolean;
+  result: UsageBillingOverviewResultApi;
+}
+
+export interface UsageBudgetApi {
+  id: number;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  scope?: string;
+  threshold_value: string;
+  /** @minLength 1 */
+  action: string;
+  notify_emails?: string[];
+  is_active?: boolean;
+  /** @minLength 1 */
+  last_triggered_period?: string;
+  last_triggered_at?: string;
+  created_at?: string;
+}
+
+export interface UsageBudgetListResultApi {
+  budgets: UsageBudgetApi[];
+}
+
+export interface UsageBudgetListResponseApi {
+  status: boolean;
+  result: UsageBudgetListResultApi;
+}
+
+export type UsageBudgetMutationRequestApiAction = typeof UsageBudgetMutationRequestApiAction[keyof typeof UsageBudgetMutationRequestApiAction];
+
+
+export const UsageBudgetMutationRequestApiAction = {
+  notify: 'notify',
+  warn: 'warn',
+  pause: 'pause',
+} as const;
+
+export interface UsageBudgetMutationRequestApi {
+  /** @minLength 1 */
+  name?: string;
+  /** @minLength 1 */
+  scope?: string;
+  threshold_value?: string;
+  action?: UsageBudgetMutationRequestApiAction;
+  notify_emails?: string[];
+  notify_slack_webhook?: string;
+  is_active?: boolean;
+}
+
+export interface UsageBudgetMutationResultApi {
+  id: number;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  scope?: string;
+  /** @minLength 1 */
+  threshold_value: string;
+  /** @minLength 1 */
+  action: string;
+  is_active?: boolean;
+}
+
+export interface UsageBudgetMutationResponseApi {
+  status: boolean;
+  result: UsageBudgetMutationResultApi;
+}
+
+export interface UsageBudgetDeleteResultApi {
+  deleted: boolean;
+}
+
+export interface UsageBudgetDeleteResponseApi {
+  status: boolean;
+  result: UsageBudgetDeleteResultApi;
+}
+
+export interface PlanResultApi {
+  /** @minLength 1 */
+  plan: string;
+}
+
+export interface PlanResponseApi {
+  status: boolean;
+  result: PlanResultApi;
+}
+
+export interface UsageInvoiceSummaryApi {
+  id: string;
+  period_start: string;
+  period_end: string;
+  /** @minLength 1 */
+  plan: string;
+  platform_fee: string;
+  usage_total: string;
+  credits_applied: string;
+  subtotal: string;
+  tax: string;
+  total: string;
+  /** @minLength 1 */
+  status: string;
+  stripe_invoice_url?: string;
+  stripe_pdf_url?: string;
+  created_at: string;
+}
+
+export interface UsageInvoiceListResultApi {
+  invoices: UsageInvoiceSummaryApi[];
+}
+
+export interface UsageInvoiceListResponseApi {
+  status: boolean;
+  result: UsageInvoiceListResultApi;
+}
+
+export interface UsageInvoiceDetailApi {
+  id: string;
+  period_start: string;
+  period_end: string;
+  /** @minLength 1 */
+  plan: string;
+  platform_fee: number;
+  usage_total: number;
+  credits_applied: number;
+  subtotal: number;
+  tax: number;
+  total: number;
+  /** @minLength 1 */
+  status: string;
+  stripe_pdf_url?: string;
+}
+
+export interface UsageInvoiceDetailResultApi {
+  invoice: UsageInvoiceDetailApi;
+  line_items: UsageInvoiceLineItemApi[];
+}
+
+export interface UsageInvoiceDetailResponseApi {
+  status: boolean;
+  result: UsageInvoiceDetailResultApi;
+}
+
+export interface UsageNotificationActionApi {
+  /** @minLength 1 */
+  label: string;
+  /** @minLength 1 */
+  url: string;
+}
+
+export interface UsageNotificationBannerApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  type: string;
+  /** @minLength 1 */
+  message: string;
+  action?: UsageNotificationActionApi;
+  dismissible?: boolean;
+}
+
+export interface UsageNotificationsResultApi {
+  banners: UsageNotificationBannerApi[];
+}
+
+export interface UsageNotificationsResponseApi {
+  status: boolean;
+  result: UsageNotificationsResultApi;
+}
+
+export interface PaymentMethodApi {
+  /** @minLength 1 */
+  id: string;
+  brand?: string;
+  last4?: string;
+  exp_month?: number;
+  exp_year?: number;
+  is_default?: boolean;
+}
+
+export interface PaymentMethodsResponseApi {
+  status: boolean;
+  result: PaymentMethodApi[];
+}
+
+export interface UpgradeToPaygPostResultApi {
+  /** @minLength 1 */
+  checkout_url: string;
+}
+
+export interface PaymentMethodCheckoutResponseApi {
+  status: boolean;
+  result: UpgradeToPaygPostResultApi;
+}
+
+export interface SetupIntentConfirmRequestApi {
+  /** @minLength 1 */
+  session_id: string;
+}
+
+export interface PaymentMethodConfirmResultApi {
+  /** @minLength 1 */
+  payment_method_id: string;
+  set_as_default: boolean;
+}
+
+export interface PaymentMethodConfirmResponseApi {
+  status: boolean;
+  result: PaymentMethodConfirmResultApi;
+}
+
+export type UsagePlanOptionApiFeatures = {[key: string]: { [key: string]: unknown }};
+
+export interface UsagePlanOptionApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  display_name: string;
+  platform_fee_monthly: number;
+  is_current: boolean;
+  features: UsagePlanOptionApiFeatures;
+}
+
+export interface UsagePricingTierApi {
+  up_to?: number;
+  price_per_unit: number;
+}
+
+export interface UsagePricingDimensionApi {
+  /** @minLength 1 */
+  display_name: string;
+  /** @minLength 1 */
+  display_unit: string;
+  tiers: UsagePricingTierApi[];
+}
+
+export type UsageCustomPlanDetailsApiFeatures = {[key: string]: { [key: string]: unknown }};
+
+export type UsageCustomPlanDetailsApiPricing = {[key: string]: { [key: string]: unknown }};
+
+export interface UsageCustomPlanDetailsApi {
+  platform_fee: number;
+  platform_fee_billing_cycle: number;
+  per_charge_amount: number;
+  /** @minLength 1 */
+  contract_end_date?: string;
+  features: UsageCustomPlanDetailsApiFeatures;
+  pricing: UsageCustomPlanDetailsApiPricing;
+}
+
+export type UsagePlansAndAddonsResultApiPricing = {[key: string]: UsagePricingDimensionApi};
+
+export interface UsagePlansAndAddonsResultApi {
+  /** @minLength 1 */
+  current_plan: string;
+  /** @minLength 1 */
+  billing_interval: string;
+  tiers: UsagePlanOptionApi[];
+  addons: UsagePlanOptionApi[];
+  pricing: UsagePlansAndAddonsResultApiPricing;
+  isCustomPricing: boolean;
+  customDetails?: UsageCustomPlanDetailsApi;
+  pending_cancel: boolean;
+  /** @minLength 1 */
+  cancel_at?: string;
+}
+
+export interface UsagePlansAndAddonsResponseApi {
+  status: boolean;
+  result: UsagePlansAndAddonsResultApi;
+}
+
+export type StripeWebhookRequestApiData = {[key: string]: string};
+
+export interface StripeWebhookRequestApi {
+  /** @minLength 1 */
+  id?: string;
+  /** @minLength 1 */
+  type?: string;
+  data?: StripeWebhookRequestApiData;
+}
+
+export interface StripeWebhookResultApi {
+  event_type?: string;
+  action?: string;
+  status?: string;
+  message?: string;
+}
+
+export interface StripeWebhookResponseApi {
+  /** @minLength 1 */
+  status: string;
+  result?: StripeWebhookResultApi;
+}
+
+export interface UpgradeToPaygPostResponseApi {
+  status: boolean;
+  result: UpgradeToPaygPostResultApi;
+}
+
+export interface UpgradeToPaygConfirmRequestApi {
+  /** @minLength 1 */
+  session_id: string;
+}
+
+export interface UsageTierBreakdownApi {
+  tier_start?: number;
+  tier_end?: number;
+  quantity?: number;
+  rate?: number;
+  cost?: number;
+}
+
+export interface UsageOverviewDimensionApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  display_name: string;
+  /** @minLength 1 */
+  display_unit: string;
+  current_usage: number;
+  current_usage_raw: number;
+  free_allowance: number;
+  projected_usage: number;
+  estimated_cost: number;
+  tier_breakdown?: UsageTierBreakdownApi[];
+  usage_pct: number;
+}
+
+export interface UsageOverviewResultApi {
+  /** @minLength 1 */
+  plan: string;
+  /** @minLength 1 */
+  plan_display_name: string;
+  platform_fee: number;
+  /** @minLength 1 */
+  period: string;
+  /** @minLength 1 */
+  billing_period_start: string;
+  /** @minLength 1 */
+  billing_period_end: string;
+  total_estimated_cost: number;
+  total_with_platform: number;
+  dimensions: UsageOverviewDimensionApi[];
+  pending_cancel: boolean;
+  /** @minLength 1 */
+  cancel_at?: string;
+}
+
+export interface UsageOverviewResponseApi {
+  status: boolean;
+  result: UsageOverviewResultApi;
+}
+
+export interface UsageTimeSeriesPointApi {
+  /** @minLength 1 */
+  date: string;
+  usage: number;
+}
+
+export interface UsageTimeSeriesResultApi {
+  /** @minLength 1 */
+  dimension: string;
+  /** @minLength 1 */
+  period: string;
+  /** @minLength 1 */
+  period_end: string;
+  series: UsageTimeSeriesPointApi[];
+}
+
+export interface UsageTimeSeriesResponseApi {
+  status: boolean;
+  result: UsageTimeSeriesResultApi;
+}
+
+export interface UsageWorkspaceBreakdownItemApi {
+  workspace_id?: string;
+  /** @minLength 1 */
+  workspace_name: string;
+  usage: number;
+}
+
+export interface UsageWorkspaceBreakdownResultApi {
+  /** @minLength 1 */
+  dimension: string;
+  /** @minLength 1 */
+  period: string;
+  /** @minLength 1 */
+  period_end: string;
+  workspaces: UsageWorkspaceBreakdownItemApi[];
+}
+
+export interface UsageWorkspaceBreakdownResponseApi {
+  status: boolean;
+  result: UsageWorkspaceBreakdownResultApi;
+}
+
+export interface StripeWebhookLegacyResponseApi {
+  status: boolean;
+  result?: StripeWebhookResultApi;
+}
+
 export type AccountsAwsMarketplaceLaunchSoftwareCreateBody = {
   'x-amzn-marketplace-token': string;
   'x-amzn-marketplace-product-id'?: string;
@@ -21677,6 +23639,18 @@ q?: string;
  * @maximum 500
  */
 limit?: number;
+};
+
+export type FalconAiFilesUploadCreateBody = {
+  /** File to upload into the Falcon conversation context. */
+  file: Blob;
+};
+
+export type FalconAiMcpConnectorsOauthCallbackListParams = {
+code?: string;
+state?: string;
+error?: string;
+error_description?: string;
 };
 
 export type IntegrationsConnectionsListParams = {
@@ -24682,4 +26656,133 @@ sort_params?: string;
  */
 filters?: string;
 export?: boolean;
+};
+
+export type UsageAdminCustomPlanListParams = {
+organization_id: string;
+/**
+ * @minLength 1
+ */
+dimension?: string;
+};
+
+export type UsageAdminEntitlementsListParams = {
+organization_id: string;
+/**
+ * @minLength 1
+ */
+feature?: string;
+};
+
+export type UsageAdminEntitlementsDeleteParams = {
+organization_id: string;
+/**
+ * @minLength 1
+ */
+feature?: string;
+};
+
+export type UsageAdminPricingListParams = {
+organization_id: string;
+/**
+ * @minLength 1
+ */
+dimension?: string;
+};
+
+export type UsageAdminPricingDeleteParams = {
+organization_id: string;
+/**
+ * @minLength 1
+ */
+dimension?: string;
+};
+
+export type UsageApiCallCountListParams = {
+year?: number;
+/**
+ * @minimum 1
+ * @maximum 12
+ */
+month?: number;
+/**
+ * @minLength 1
+ */
+api_call_type?: string;
+};
+
+export type UsageUsageSummaryListParams = {
+/**
+ * @minimum 1
+ * @maximum 12
+ */
+month?: number;
+year?: number;
+};
+
+export type UsageV2UsageOverviewListParams = {
+/**
+ * @minLength 1
+ * @pattern ^\d{4}-\d{2}$
+ */
+period?: string;
+/**
+ * @minLength 1
+ * @pattern ^\d{4}-\d{2}$
+ */
+period_end?: string;
+workspace_id?: string;
+};
+
+export type UsageV2UsageTimeSeriesListParams = {
+/**
+ * @minLength 1
+ */
+dimension: string;
+/**
+ * @minLength 1
+ * @pattern ^\d{4}-\d{2}$
+ */
+period?: string;
+/**
+ * @minLength 1
+ * @pattern ^\d{4}-\d{2}$
+ */
+period_end?: string;
+};
+
+export type UsageV2UsageWorkspaceBreakdownListParams = {
+/**
+ * @minLength 1
+ */
+dimension: string;
+/**
+ * @minLength 1
+ * @pattern ^\d{4}-\d{2}$
+ */
+period?: string;
+/**
+ * @minLength 1
+ * @pattern ^\d{4}-\d{2}$
+ */
+period_end?: string;
+};
+
+export type UsageWorkspaceEvalSummaryListParams = {
+/**
+ * @minimum 1
+ * @maximum 12
+ */
+month?: number;
+year?: number;
+workspace_id: string;
+};
+
+export type UsageWorkspaceUsageSummaryListParams = {
+/**
+ * @minimum 1
+ * @maximum 12
+ */
+month?: number;
+year?: number;
 };

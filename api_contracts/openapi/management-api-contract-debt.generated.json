@@ -1,9 +1,9 @@
 {
   "generated_from": "api_contracts/openapi/swagger.json",
   "summary": {
-    "paths": 886,
-    "operations": 1170,
-    "mutation_endpoints_without_body_schema": 3,
+    "paths": 968,
+    "operations": 1314,
+    "mutation_endpoints_without_body_schema": 0,
     "operations_without_response_schema": 0,
     "broad_success_response_schemas": 0,
     "operations_without_error_response_schema": 0,
@@ -65,9 +65,9 @@
       "broad_error_response_schemas": 0
     },
     "falcon-ai": {
-      "paths": 1,
-      "operations": 5,
-      "mutation_endpoints_without_body_schema": 3,
+      "paths": 17,
+      "operations": 27,
+      "mutation_endpoints_without_body_schema": 0,
       "operations_without_response_schema": 0,
       "broad_success_response_schemas": 0,
       "operations_without_error_response_schema": 0,
@@ -145,6 +145,15 @@
       "operations_without_error_response_schema": 0,
       "broad_error_response_schemas": 0
     },
+    "usage": {
+      "paths": 66,
+      "operations": 122,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
     "v1": {
       "paths": 1,
       "operations": 1,
@@ -155,35 +164,7 @@
       "broad_error_response_schemas": 0
     }
   },
-  "mutation_endpoints_without_body_schema": [
-    {
-      "group": "falcon-ai",
-      "method": "POST",
-      "path": "/falcon-ai/.",
-      "operation_id": "falcon-ai_._create",
-      "tags": [
-        "falcon-ai"
-      ]
-    },
-    {
-      "group": "falcon-ai",
-      "method": "PUT",
-      "path": "/falcon-ai/.",
-      "operation_id": "falcon-ai_._update",
-      "tags": [
-        "falcon-ai"
-      ]
-    },
-    {
-      "group": "falcon-ai",
-      "method": "PATCH",
-      "path": "/falcon-ai/.",
-      "operation_id": "falcon-ai_._partial_update",
-      "tags": [
-        "falcon-ai"
-      ]
-    }
-  ],
+  "mutation_endpoints_without_body_schema": [],
   "operations_without_response_schema": [],
   "broad_success_response_schemas": []
 }

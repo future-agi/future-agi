@@ -5,7 +5,7 @@
 export const API_SURFACE_CONTRACT = Object.freeze({
   "generatedFrom": "api_contracts/openapi/swagger.json",
   "swaggerVersion": "2.0",
-  "endpointCount": 886,
+  "endpointCount": 968,
   "groups": {
     "accounts": {
       "/accounts/2fa/recovery-codes/": [
@@ -744,12 +744,66 @@ export const API_SURFACE_CONTRACT = Object.freeze({
       ]
     },
     "falcon-ai": {
-      "/falcon-ai/.": [
+      "/falcon-ai/conversations/": [
+        "get",
+        "post"
+      ],
+      "/falcon-ai/conversations/{conversation_id}/": [
         "delete",
         "get",
-        "patch",
-        "post",
-        "put"
+        "patch"
+      ],
+      "/falcon-ai/conversations/{conversation_id}/stream-status/": [
+        "get"
+      ],
+      "/falcon-ai/files/upload/": [
+        "post"
+      ],
+      "/falcon-ai/mcp-connectors/": [
+        "get",
+        "post"
+      ],
+      "/falcon-ai/mcp-connectors/{connector_id}/": [
+        "delete",
+        "get",
+        "patch"
+      ],
+      "/falcon-ai/mcp-connectors/{connector_id}/authenticate/": [
+        "post"
+      ],
+      "/falcon-ai/mcp-connectors/{connector_id}/discover/": [
+        "post"
+      ],
+      "/falcon-ai/mcp-connectors/{connector_id}/oauth/callback/": [
+        "get"
+      ],
+      "/falcon-ai/mcp-connectors/{connector_id}/test/": [
+        "post"
+      ],
+      "/falcon-ai/mcp-connectors/{connector_id}/tools/": [
+        "patch"
+      ],
+      "/falcon-ai/memory/": [
+        "get",
+        "post"
+      ],
+      "/falcon-ai/memory/{memory_id}/": [
+        "delete"
+      ],
+      "/falcon-ai/messages/{message_id}/feedback/": [
+        "post"
+      ],
+      "/falcon-ai/quick-analysis/": [
+        "post"
+      ],
+      "/falcon-ai/skills/": [
+        "get",
+        "post"
+      ],
+      "/falcon-ai/skills/{skill_id}/": [
+        "delete",
+        "get",
+        "patch"
       ]
     },
     "health": {
@@ -2976,6 +3030,262 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "post"
       ]
     },
+    "usage": {
+      "/usage/admin/custom-plan/": [
+        "get",
+        "post",
+        "put"
+      ],
+      "/usage/admin/entitlements/": [
+        "delete",
+        "get",
+        "post"
+      ],
+      "/usage/admin/invoice/generate/": [
+        "post"
+      ],
+      "/usage/admin/invoice/preview/": [
+        "post"
+      ],
+      "/usage/admin/pricing/": [
+        "delete",
+        "get",
+        "post"
+      ],
+      "/usage/api-call-count/": [
+        "get"
+      ],
+      "/usage/api-call-type/": [
+        "get"
+      ],
+      "/usage/cancel-subscription/": [
+        "post"
+      ],
+      "/usage/create-auto-recharge-session/": [
+        "post"
+      ],
+      "/usage/create-billing-portal-session/": [
+        "post"
+      ],
+      "/usage/create-checkout-session/": [
+        "post"
+      ],
+      "/usage/create-custom-payment-checkout-session/": [
+        "post"
+      ],
+      "/usage/download-invoice/": [
+        "post"
+      ],
+      "/usage/ee/licenses/": [
+        "get",
+        "post"
+      ],
+      "/usage/ee/licenses/{grant_id}/revoke/": [
+        "post"
+      ],
+      "/usage/get-auto-reload-settings/": [
+        "get"
+      ],
+      "/usage/get-billing-details/": [
+        "get"
+      ],
+      "/usage/get-customer-invoices/": [
+        "get"
+      ],
+      "/usage/get-last-four-digits/": [
+        "get"
+      ],
+      "/usage/get-wallet-balance/": [
+        "get"
+      ],
+      "/usage/get_latest_prices/": [
+        "get"
+      ],
+      "/usage/organization-billing/": [
+        "get",
+        "patch"
+      ],
+      "/usage/organization-billing/{billing_id}/": [
+        "get",
+        "patch"
+      ],
+      "/usage/organization-filter/": [
+        "get"
+      ],
+      "/usage/organization-subscription/": [
+        "delete",
+        "get",
+        "patch",
+        "post"
+      ],
+      "/usage/organization-subscription/{organization_subscription_id}/": [
+        "delete",
+        "get",
+        "patch",
+        "post"
+      ],
+      "/usage/organizations/": [
+        "get"
+      ],
+      "/usage/pricing-card-details/": [
+        "post"
+      ],
+      "/usage/pricing/": [
+        "delete",
+        "get",
+        "patch",
+        "post"
+      ],
+      "/usage/pricing/{pricing_id}/": [
+        "delete",
+        "get",
+        "patch",
+        "post"
+      ],
+      "/usage/rate-limits/": [
+        "delete",
+        "get",
+        "patch",
+        "post"
+      ],
+      "/usage/rate-limits/{rate_limit_id}/": [
+        "delete",
+        "get",
+        "patch",
+        "post"
+      ],
+      "/usage/resource-limits/": [
+        "delete",
+        "get",
+        "patch",
+        "post"
+      ],
+      "/usage/resource-limits/{resource_limit_id}/": [
+        "delete",
+        "get",
+        "patch",
+        "post"
+      ],
+      "/usage/resource-type/": [
+        "get"
+      ],
+      "/usage/subscription-plans/": [
+        "get"
+      ],
+      "/usage/subscription-status/": [
+        "get"
+      ],
+      "/usage/subscription-tier/": [
+        "delete",
+        "get",
+        "patch",
+        "post"
+      ],
+      "/usage/subscription-tier/{subscription_id}/": [
+        "delete",
+        "get",
+        "patch",
+        "post"
+      ],
+      "/usage/update-auto-reload-settings/": [
+        "post"
+      ],
+      "/usage/update-billing-details/": [
+        "post"
+      ],
+      "/usage/usage-summary/": [
+        "get"
+      ],
+      "/usage/v2/add-addon/": [
+        "delete",
+        "post",
+        "put"
+      ],
+      "/usage/v2/addon/": [
+        "delete",
+        "post",
+        "put"
+      ],
+      "/usage/v2/billing-overview/": [
+        "get"
+      ],
+      "/usage/v2/budgets/": [
+        "get",
+        "post"
+      ],
+      "/usage/v2/budgets/{budget_id}/": [
+        "delete",
+        "put"
+      ],
+      "/usage/v2/downgrade-to-free/": [
+        "post"
+      ],
+      "/usage/v2/invoices/": [
+        "get"
+      ],
+      "/usage/v2/invoices/{invoice_id}/": [
+        "get"
+      ],
+      "/usage/v2/notifications/": [
+        "get"
+      ],
+      "/usage/v2/payment-methods/": [
+        "get",
+        "post",
+        "put"
+      ],
+      "/usage/v2/payment-methods/setup-intent/": [
+        "get",
+        "post",
+        "put"
+      ],
+      "/usage/v2/payment-methods/{pm_id}/": [
+        "delete",
+        "post"
+      ],
+      "/usage/v2/payment-methods/{pm_id}/default/": [
+        "delete",
+        "post"
+      ],
+      "/usage/v2/plans-and-addons/": [
+        "get"
+      ],
+      "/usage/v2/reinstate-addon/": [
+        "delete",
+        "post",
+        "put"
+      ],
+      "/usage/v2/remove-addon/": [
+        "delete",
+        "post",
+        "put"
+      ],
+      "/usage/v2/stripe-webhook/": [
+        "post"
+      ],
+      "/usage/v2/upgrade-to-payg/": [
+        "post",
+        "put"
+      ],
+      "/usage/v2/usage-overview/": [
+        "get"
+      ],
+      "/usage/v2/usage-time-series/": [
+        "get"
+      ],
+      "/usage/v2/usage-workspace-breakdown/": [
+        "get"
+      ],
+      "/usage/webhook/": [
+        "post"
+      ],
+      "/usage/workspace-eval-summary/": [
+        "get"
+      ],
+      "/usage/workspace-usage-summary/": [
+        "get"
+      ]
+    },
     "v1": {
       "/v1/health": [
         "get"
@@ -3709,12 +4019,66 @@ export const API_SURFACE_PATHS = Object.freeze({
   "/call-websocket/": [
     "post"
   ],
-  "/falcon-ai/.": [
+  "/falcon-ai/conversations/": [
+    "get",
+    "post"
+  ],
+  "/falcon-ai/conversations/{conversation_id}/": [
     "delete",
     "get",
-    "patch",
-    "post",
-    "put"
+    "patch"
+  ],
+  "/falcon-ai/conversations/{conversation_id}/stream-status/": [
+    "get"
+  ],
+  "/falcon-ai/files/upload/": [
+    "post"
+  ],
+  "/falcon-ai/mcp-connectors/": [
+    "get",
+    "post"
+  ],
+  "/falcon-ai/mcp-connectors/{connector_id}/": [
+    "delete",
+    "get",
+    "patch"
+  ],
+  "/falcon-ai/mcp-connectors/{connector_id}/authenticate/": [
+    "post"
+  ],
+  "/falcon-ai/mcp-connectors/{connector_id}/discover/": [
+    "post"
+  ],
+  "/falcon-ai/mcp-connectors/{connector_id}/oauth/callback/": [
+    "get"
+  ],
+  "/falcon-ai/mcp-connectors/{connector_id}/test/": [
+    "post"
+  ],
+  "/falcon-ai/mcp-connectors/{connector_id}/tools/": [
+    "patch"
+  ],
+  "/falcon-ai/memory/": [
+    "get",
+    "post"
+  ],
+  "/falcon-ai/memory/{memory_id}/": [
+    "delete"
+  ],
+  "/falcon-ai/messages/{message_id}/feedback/": [
+    "post"
+  ],
+  "/falcon-ai/quick-analysis/": [
+    "post"
+  ],
+  "/falcon-ai/skills/": [
+    "get",
+    "post"
+  ],
+  "/falcon-ai/skills/{skill_id}/": [
+    "delete",
+    "get",
+    "patch"
   ],
   "/health/": [
     "get"
@@ -5923,6 +6287,260 @@ export const API_SURFACE_PATHS = Object.freeze({
   ],
   "/tracer/webhook/": [
     "post"
+  ],
+  "/usage/admin/custom-plan/": [
+    "get",
+    "post",
+    "put"
+  ],
+  "/usage/admin/entitlements/": [
+    "delete",
+    "get",
+    "post"
+  ],
+  "/usage/admin/invoice/generate/": [
+    "post"
+  ],
+  "/usage/admin/invoice/preview/": [
+    "post"
+  ],
+  "/usage/admin/pricing/": [
+    "delete",
+    "get",
+    "post"
+  ],
+  "/usage/api-call-count/": [
+    "get"
+  ],
+  "/usage/api-call-type/": [
+    "get"
+  ],
+  "/usage/cancel-subscription/": [
+    "post"
+  ],
+  "/usage/create-auto-recharge-session/": [
+    "post"
+  ],
+  "/usage/create-billing-portal-session/": [
+    "post"
+  ],
+  "/usage/create-checkout-session/": [
+    "post"
+  ],
+  "/usage/create-custom-payment-checkout-session/": [
+    "post"
+  ],
+  "/usage/download-invoice/": [
+    "post"
+  ],
+  "/usage/ee/licenses/": [
+    "get",
+    "post"
+  ],
+  "/usage/ee/licenses/{grant_id}/revoke/": [
+    "post"
+  ],
+  "/usage/get-auto-reload-settings/": [
+    "get"
+  ],
+  "/usage/get-billing-details/": [
+    "get"
+  ],
+  "/usage/get-customer-invoices/": [
+    "get"
+  ],
+  "/usage/get-last-four-digits/": [
+    "get"
+  ],
+  "/usage/get-wallet-balance/": [
+    "get"
+  ],
+  "/usage/get_latest_prices/": [
+    "get"
+  ],
+  "/usage/organization-billing/": [
+    "get",
+    "patch"
+  ],
+  "/usage/organization-billing/{billing_id}/": [
+    "get",
+    "patch"
+  ],
+  "/usage/organization-filter/": [
+    "get"
+  ],
+  "/usage/organization-subscription/": [
+    "delete",
+    "get",
+    "patch",
+    "post"
+  ],
+  "/usage/organization-subscription/{organization_subscription_id}/": [
+    "delete",
+    "get",
+    "patch",
+    "post"
+  ],
+  "/usage/organizations/": [
+    "get"
+  ],
+  "/usage/pricing-card-details/": [
+    "post"
+  ],
+  "/usage/pricing/": [
+    "delete",
+    "get",
+    "patch",
+    "post"
+  ],
+  "/usage/pricing/{pricing_id}/": [
+    "delete",
+    "get",
+    "patch",
+    "post"
+  ],
+  "/usage/rate-limits/": [
+    "delete",
+    "get",
+    "patch",
+    "post"
+  ],
+  "/usage/rate-limits/{rate_limit_id}/": [
+    "delete",
+    "get",
+    "patch",
+    "post"
+  ],
+  "/usage/resource-limits/": [
+    "delete",
+    "get",
+    "patch",
+    "post"
+  ],
+  "/usage/resource-limits/{resource_limit_id}/": [
+    "delete",
+    "get",
+    "patch",
+    "post"
+  ],
+  "/usage/resource-type/": [
+    "get"
+  ],
+  "/usage/subscription-plans/": [
+    "get"
+  ],
+  "/usage/subscription-status/": [
+    "get"
+  ],
+  "/usage/subscription-tier/": [
+    "delete",
+    "get",
+    "patch",
+    "post"
+  ],
+  "/usage/subscription-tier/{subscription_id}/": [
+    "delete",
+    "get",
+    "patch",
+    "post"
+  ],
+  "/usage/update-auto-reload-settings/": [
+    "post"
+  ],
+  "/usage/update-billing-details/": [
+    "post"
+  ],
+  "/usage/usage-summary/": [
+    "get"
+  ],
+  "/usage/v2/add-addon/": [
+    "delete",
+    "post",
+    "put"
+  ],
+  "/usage/v2/addon/": [
+    "delete",
+    "post",
+    "put"
+  ],
+  "/usage/v2/billing-overview/": [
+    "get"
+  ],
+  "/usage/v2/budgets/": [
+    "get",
+    "post"
+  ],
+  "/usage/v2/budgets/{budget_id}/": [
+    "delete",
+    "put"
+  ],
+  "/usage/v2/downgrade-to-free/": [
+    "post"
+  ],
+  "/usage/v2/invoices/": [
+    "get"
+  ],
+  "/usage/v2/invoices/{invoice_id}/": [
+    "get"
+  ],
+  "/usage/v2/notifications/": [
+    "get"
+  ],
+  "/usage/v2/payment-methods/": [
+    "get",
+    "post",
+    "put"
+  ],
+  "/usage/v2/payment-methods/setup-intent/": [
+    "get",
+    "post",
+    "put"
+  ],
+  "/usage/v2/payment-methods/{pm_id}/": [
+    "delete",
+    "post"
+  ],
+  "/usage/v2/payment-methods/{pm_id}/default/": [
+    "delete",
+    "post"
+  ],
+  "/usage/v2/plans-and-addons/": [
+    "get"
+  ],
+  "/usage/v2/reinstate-addon/": [
+    "delete",
+    "post",
+    "put"
+  ],
+  "/usage/v2/remove-addon/": [
+    "delete",
+    "post",
+    "put"
+  ],
+  "/usage/v2/stripe-webhook/": [
+    "post"
+  ],
+  "/usage/v2/upgrade-to-payg/": [
+    "post",
+    "put"
+  ],
+  "/usage/v2/usage-overview/": [
+    "get"
+  ],
+  "/usage/v2/usage-time-series/": [
+    "get"
+  ],
+  "/usage/v2/usage-workspace-breakdown/": [
+    "get"
+  ],
+  "/usage/webhook/": [
+    "post"
+  ],
+  "/usage/workspace-eval-summary/": [
+    "get"
+  ],
+  "/usage/workspace-usage-summary/": [
+    "get"
   ],
   "/v1/health": [
     "get"

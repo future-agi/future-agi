@@ -11,6 +11,8 @@ import type {
   AIEvalWriterResponseApi,
   AIFilterRequestApi,
   AIFilterResponseApi,
+  APICallCountResponseApi,
+  APICallTypeListResponseApi,
   APIKeyBulkResponseApi,
   AWSMarketplaceSignupRequestApi,
   AWSMarketplaceSignupResponseApi,
@@ -44,6 +46,19 @@ import type {
   AddRowsFromFileRequestApi,
   AddRunPromptApi,
   AdditionalOrganizationCreateResponseApi,
+  AddonPostResponseApi,
+  AddonRequestApi,
+  AdminCustomPlanRequestApi,
+  AdminCustomPlanResponseApi,
+  AdminEntitlementMutationRequestApi,
+  AdminEntitlementMutationResponseApi,
+  AdminEntitlementsResponseApi,
+  AdminInvoiceGenerateResponseApi,
+  AdminInvoicePreviewResponseApi,
+  AdminInvoiceRequestApi,
+  AdminPricingListResponseApi,
+  AdminPricingMutationRequestApi,
+  AdminPricingMutationResponseApi,
   AgentDefinitionApi,
   AgentDefinitionBulkDeleteRequestApi,
   AgentDefinitionBulkDeleteResponseApi,
@@ -185,10 +200,14 @@ import type {
   AppsmithPasswordUpdateResponseApi,
   AppsmithUserCreateResponseApi,
   AssignItemsApi,
+  AutoReloadSettingsRequestApi,
+  AutoReloadSettingsResponseApi,
+  AutoReloadUpdateResponseApi,
   AutomationRuleApi,
   AutomationRuleEvaluateAcceptedResponseApi,
   AutomationRuleEvaluateResponseApi,
   BaseColumnsResponseApi,
+  BillingPortalResponseApi,
   BulkAnnotationRequestApi,
   BulkAnnotationResponseApi,
   BulkCreateScoresApi,
@@ -217,6 +236,8 @@ import type {
   CellUpdateApi,
   ChatSDKCodeResponseApi,
   ChatSendMessageResponseApi,
+  CheckoutSessionRequestApi,
+  CheckoutSessionResponseApi,
   ClassifyColumnRequestApi,
   ClickHouseHealthErrorResponseApi,
   ClickHouseHealthResponseApi,
@@ -244,6 +265,10 @@ import type {
   CompositeEvalExecuteResponseApi,
   CompositeEvalUpdateRequestApi,
   ConditionalColumnRequestApi,
+  ConversationCreateRequestApi,
+  ConversationDetailResponseApi,
+  ConversationListResponseApi,
+  ConversationUpdateRequestApi,
   CreateDatasetFromExperimentRequestApi,
   CreateDatasetFromLocalFileRequestApi,
   CreateEmptyDatasetRequestApi,
@@ -273,6 +298,8 @@ import type {
   CustomMetricMutationRequestApi,
   CustomMetricTestRequestApi,
   CustomMetricTestResponseApi,
+  CustomPaymentCheckoutRequestApi,
+  CustomerInvoicesResponseApi,
   DashboardCreateUpdateApi,
   DashboardDetailApi,
   DashboardMetricsCatalogResponseApi,
@@ -334,6 +361,8 @@ import type {
   DiscussionCommentRequestApi,
   DiscussionReactionRequestApi,
   DiscussionThreadStatusRequestApi,
+  DownloadInvoiceRequestApi,
+  DownloadInvoiceResponseApi,
   DuplicateDatasetRequestApi,
   DuplicateDatasetResponseApi,
   DuplicateEvalTemplateApi,
@@ -342,6 +371,11 @@ import type {
   DuplicateRowsResponseApi,
   DynamicColumnCreateResponseApi,
   DynamicColumnMessageResponseApi,
+  EELicenseCreateRequestApi,
+  EELicenseCreateResponseApi,
+  EELicenseListResponseApi,
+  EELicenseRevokeRequestApi,
+  EELicenseRevokeResponseApi,
   EditRunPromptColumnApi,
   EmbeddingsResponseApi,
   EmptyRequestApi,
@@ -435,6 +469,13 @@ import type {
   ExperimentsTableUpdateApi,
   ExtractEntitiesRequestApi,
   ExtractJsonColumnRequestApi,
+  FalconAiFilesUploadCreateBody,
+  FalconAiMcpConnectorsOauthCallbackListParams,
+  FalconEmptyRequestApi,
+  FalconErrorResponseApi,
+  FalconMemoryCreateApi,
+  FalconMemoryDetailResponseApi,
+  FalconMemoryListResponseApi,
   FeedDetailApiResponseApi,
   FeedListApiResponseApi,
   FeedSidebarApiResponseApi,
@@ -444,6 +485,7 @@ import type {
   FeedbackDetailsResponseApi,
   FetchAssistantRequestApi,
   FetchAssistantResponseApi,
+  FileUploadResponseApi,
   GatewayBatchCancelResponseApi,
   GatewayBatchDetailResponseApi,
   GatewayBatchRequestApi,
@@ -523,6 +565,7 @@ import type {
   LangfuseIngestionRequestApi,
   LangfuseIngestionResponseApi,
   LangfuseTracesResponseApi,
+  LastFourDigitsResponseApi,
   LegacyEvalTemplateUpdateResponseApi,
   LegacyEvalTemplatesRequestApi,
   LegacyEvalTemplatesResponseApi,
@@ -554,6 +597,14 @@ import type {
   MCPAnalyticsToolsResponseApi,
   MCPConnectionResponseApi,
   MCPConnectionUpdateApi,
+  MCPConnectorAuthenticateResponseApi,
+  MCPConnectorCreateApi,
+  MCPConnectorDetailResponseApi,
+  MCPConnectorDiscoverResponseApi,
+  MCPConnectorListResponseApi,
+  MCPConnectorTestResponseApi,
+  MCPConnectorToolsApi,
+  MCPConnectorUpdateRequestApi,
   MCPErrorResponseApi,
   MCPHealthResponseApi,
   MCPOAuthApproveInfoResponseApi,
@@ -581,6 +632,8 @@ import type {
   MemberUserMutationResponseApi,
   MergeDatasetRequestApi,
   MergeDatasetResponseApi,
+  MessageFeedbackApi,
+  MessageFeedbackResponseApi,
   MetricTagOptionApi,
   MetricsByColumnResponseApi,
   ModelHubAnnotationQueuesAutomationRulesList200,
@@ -711,11 +764,17 @@ import type {
   OrgConfigBulkResponseApi,
   OrgTwoFactorPolicyApi,
   OrgTwoFactorPolicyResponseApi,
+  OrganizationBillingDetailResponseApi,
+  OrganizationBillingLegacyResponseApi,
+  OrganizationBillingListResponseApi,
   OrganizationCreateRequestApi,
   OrganizationCreateResponseApi,
+  OrganizationListResponseApi,
   OrganizationNameRequestApi,
   OrganizationSelectResponseApi,
   OrganizationSelectionListResponseApi,
+  OrganizationSubscriptionListResponseApi,
+  OrganizationSubscriptionMutationResponseApi,
   OrganizationSwitchRequestApi,
   OrganizationSwitchResponseApi,
   OrganizationUpdateRequestApi,
@@ -731,6 +790,9 @@ import type {
   PasswordResetConfirmRequestApi,
   PasswordResetInitiateRequestApi,
   PasswordValidationApi,
+  PaymentMethodCheckoutResponseApi,
+  PaymentMethodConfirmResponseApi,
+  PaymentMethodsResponseApi,
   PerformanceDetailsRequestApi,
   PerformanceDetailsResponseApi,
   PerformanceExportRequestApi,
@@ -745,12 +807,18 @@ import type {
   PersonaCreateApi,
   PersonaDuplicateRequestApi,
   PersonaDuplicateResponseApi,
+  PlanResponseApi,
   PreviewAnnotationsRequestApi,
   PreviewAnnotationsResponseApi,
   PreviewDatasetOperationRequestApi,
   PreviewDatasetOperationResponseApi,
   PreviewRunEvalRequestApi,
   PreviewRunPromptApi,
+  PricingCalculationResponseApi,
+  PricingCardDetailsResponseApi,
+  PricingDetailResponseApi,
+  PricingListResponseApi,
+  PricingReadResponseApi,
   ProjectApi,
   ProjectDetailResponseApi,
   ProjectIdListResponseApi,
@@ -805,7 +873,12 @@ import type {
   QueueStatusRequestApi,
   QueueStatusResponseApi,
   QueueSubmitAnnotationsResponseApi,
+  QuickAnalysisApi,
+  QuickAnalysisResponseApi,
   RBACMessageResponseApi,
+  RateLimitDetailResponseApi,
+  RateLimitListResponseApi,
+  RateLimitMutationResponseApi,
   RecoveryCodesRegenerateApi,
   RecoveryCodesRegenerateResponseApi,
   RecoveryCodesRemainingResponseApi,
@@ -818,6 +891,10 @@ import type {
   ResendInviteApi,
   ResendInviteResponseApi,
   ResetAnnotationsRequestApi,
+  ResourceLimitDetailResponseApi,
+  ResourceLimitListResponseApi,
+  ResourceLimitMutationResponseApi,
+  ResourceTypeListResponseApi,
   ReviewItemRequestApi,
   RunNewEvalsOnTestExecutionApi,
   RunNewEvalsResponseApi,
@@ -905,6 +982,7 @@ import type {
   SecretKeysResponseApi,
   SendChatRequestApi,
   SessionComparisonResponseApi,
+  SetupIntentConfirmRequestApi,
   ShadowResultsWebhookRequestApi,
   SharedLinkCreateApi,
   SharedLinkDetailApi,
@@ -941,13 +1019,25 @@ import type {
   SimulatorAgentValidationErrorResponseApi,
   SingleRowEvaluationRequestApi,
   SingleRowEvaluationResponseApi,
+  SkillCreateApi,
+  SkillDetailResponseApi,
+  SkillListResponseApi,
+  SkillUpdateRequestApi,
   SpanAttributeDetailResponseApi,
   SpanAttributeKeysResponseApi,
   SpanAttributeValuesResponseApi,
   SpendSummaryResponseApi,
   StartEvalsProcessRequestApi,
   StopUserEvalRequestApi,
+  StreamStatusResponseApi,
+  StripeWebhookLegacyResponseApi,
+  StripeWebhookRequestApi,
+  StripeWebhookResponseApi,
   SubmitAnnotationsApi,
+  SubscriptionPlansResponseApi,
+  SubscriptionStatusResponseApi,
+  SubscriptionTierDetailResponseApi,
+  SubscriptionTierListResponseApi,
   SwitchWorkspaceApi,
   SwitchWorkspaceResponseApi,
   SyncLogApi,
@@ -1134,15 +1224,54 @@ import type {
   TwoFactorStatusApi,
   TwoFactorVerifyApi,
   UpdateAnnotationCellsRequestApi,
+  UpdateBillingDetailsResponseApi,
   UpdateColumnConfigApi,
   UpdateEvalTemplateApi,
   UpdateNodeApi,
+  UpdateOrganizationBillingRequestApi,
   UpdatePortApi,
   UpdateRunTestApi,
   UpdateScoreApi,
   UpdateUserApi,
+  UpgradeToPaygConfirmRequestApi,
+  UpgradeToPaygPostResponseApi,
   UploadFileApi,
   UploadFileResponseApi,
+  UsageAdminCustomPlanListParams,
+  UsageAdminEntitlementsDeleteParams,
+  UsageAdminEntitlementsListParams,
+  UsageAdminPricingDeleteParams,
+  UsageAdminPricingListParams,
+  UsageApiCallCountListParams,
+  UsageBillingOverviewResponseApi,
+  UsageBudgetDeleteResponseApi,
+  UsageBudgetListResponseApi,
+  UsageBudgetMutationRequestApi,
+  UsageBudgetMutationResponseApi,
+  UsageEmptyRequestApi,
+  UsageErrorResponseApi,
+  UsageInvoiceDetailResponseApi,
+  UsageInvoiceListResponseApi,
+  UsageMessageResponseApi,
+  UsageNotificationsResponseApi,
+  UsageOrganizationBillingApi,
+  UsageOrganizationSubscriptionCreateApi,
+  UsageOverviewResponseApi,
+  UsagePlansAndAddonsResponseApi,
+  UsagePricingCreateApi,
+  UsageRateLimitCreateApi,
+  UsageResourceLimitCreateApi,
+  UsageStringResponseApi,
+  UsageSubscriptionTierApi,
+  UsageSummaryResponseApi,
+  UsageTimeSeriesResponseApi,
+  UsageUsageSummaryListParams,
+  UsageV2UsageOverviewListParams,
+  UsageV2UsageTimeSeriesListParams,
+  UsageV2UsageWorkspaceBreakdownListParams,
+  UsageWorkspaceBreakdownResponseApi,
+  UsageWorkspaceEvalSummaryListParams,
+  UsageWorkspaceUsageSummaryListParams,
   UserAlertMonitorApi,
   UserAlertMonitorBulkMuteRequestApi,
   UserAlertMonitorDuplicateApi,
@@ -1180,6 +1309,7 @@ import type {
   VerifyApiKeyRequestApi,
   VerifyAssistantIdRequestApi,
   VerifyResponseApi,
+  WalletBalanceResponseApi,
   WebAuthnCredentialApi,
   WebhookIngestResponseApi,
   WebhookLogsRequestApi,
@@ -17477,36 +17607,44 @@ export const callWebsocketCreate = async (callWebsocketRequestApi: CallWebsocket
 
 
 
-export type falconAiListResponse200 = {
-  data: void
+export type falconAiConversationsListResponse200 = {
+  data: ConversationListResponseApi
   status: 200
 }
 
-export type falconAiListResponseDefault = {
+export type falconAiConversationsListResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiConversationsListResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 403>
 }
 
-export type falconAiListResponseSuccess = (falconAiListResponse200) & {
+export type falconAiConversationsListResponseSuccess = (falconAiConversationsListResponse200) & {
   headers: Headers;
 };
-export type falconAiListResponseError = (falconAiListResponseDefault) & {
+export type falconAiConversationsListResponseError = (falconAiConversationsListResponse403 | falconAiConversationsListResponseDefault) & {
   headers: Headers;
 };
 
-export type falconAiListResponse = (falconAiListResponseSuccess | falconAiListResponseError)
+export type falconAiConversationsListResponse = (falconAiConversationsListResponseSuccess | falconAiConversationsListResponseError)
 
-export const getFalconAiListUrl = () => {
-
-
+export const getFalconAiConversationsListUrl = () => {
 
 
-  return `/falcon-ai/.`
+
+
+  return `/falcon-ai/conversations/`
 }
 
-export const falconAiList = async ( options?: RequestInit): Promise<falconAiListResponse> => {
+/**
+ * List and create conversations.
+ */
+export const falconAiConversationsList = async ( options?: RequestInit): Promise<falconAiConversationsListResponse> => {
 
-  return apiMutator<falconAiListResponse>(getFalconAiListUrl(),
+  return apiMutator<falconAiConversationsListResponse>(getFalconAiConversationsListUrl(),
   {
     ...options,
     method: 'GET'
@@ -17517,79 +17655,101 @@ export const falconAiList = async ( options?: RequestInit): Promise<falconAiList
 
 
 
-export type falconAiCreateResponse201 = {
-  data: void
+export type falconAiConversationsCreateResponse201 = {
+  data: ConversationDetailResponseApi
   status: 201
 }
 
-export type falconAiCreateResponseDefault = {
+export type falconAiConversationsCreateResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiConversationsCreateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 201 | 403>
 }
 
-export type falconAiCreateResponseSuccess = (falconAiCreateResponse201) & {
+export type falconAiConversationsCreateResponseSuccess = (falconAiConversationsCreateResponse201) & {
   headers: Headers;
 };
-export type falconAiCreateResponseError = (falconAiCreateResponseDefault) & {
+export type falconAiConversationsCreateResponseError = (falconAiConversationsCreateResponse403 | falconAiConversationsCreateResponseDefault) & {
   headers: Headers;
 };
 
-export type falconAiCreateResponse = (falconAiCreateResponseSuccess | falconAiCreateResponseError)
+export type falconAiConversationsCreateResponse = (falconAiConversationsCreateResponseSuccess | falconAiConversationsCreateResponseError)
 
-export const getFalconAiCreateUrl = () => {
-
-
+export const getFalconAiConversationsCreateUrl = () => {
 
 
-  return `/falcon-ai/.`
+
+
+  return `/falcon-ai/conversations/`
 }
 
-export const falconAiCreate = async ( options?: RequestInit): Promise<falconAiCreateResponse> => {
+/**
+ * List and create conversations.
+ */
+export const falconAiConversationsCreate = async (conversationCreateRequestApi: ConversationCreateRequestApi, options?: RequestInit): Promise<falconAiConversationsCreateResponse> => {
 
-  return apiMutator<falconAiCreateResponse>(getFalconAiCreateUrl(),
+  return apiMutator<falconAiConversationsCreateResponse>(getFalconAiConversationsCreateUrl(),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      conversationCreateRequestApi,)
   }
 );}
 
 
 
-export type falconAiUpdateResponse200 = {
-  data: void
+export type falconAiConversationsReadResponse200 = {
+  data: ConversationDetailResponseApi
   status: 200
 }
 
-export type falconAiUpdateResponseDefault = {
+export type falconAiConversationsReadResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiConversationsReadResponse404 = {
+  data: FalconErrorResponseApi
+  status: 404
+}
+
+export type falconAiConversationsReadResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404>
 }
 
-export type falconAiUpdateResponseSuccess = (falconAiUpdateResponse200) & {
+export type falconAiConversationsReadResponseSuccess = (falconAiConversationsReadResponse200) & {
   headers: Headers;
 };
-export type falconAiUpdateResponseError = (falconAiUpdateResponseDefault) & {
+export type falconAiConversationsReadResponseError = (falconAiConversationsReadResponse403 | falconAiConversationsReadResponse404 | falconAiConversationsReadResponseDefault) & {
   headers: Headers;
 };
 
-export type falconAiUpdateResponse = (falconAiUpdateResponseSuccess | falconAiUpdateResponseError)
+export type falconAiConversationsReadResponse = (falconAiConversationsReadResponseSuccess | falconAiConversationsReadResponseError)
 
-export const getFalconAiUpdateUrl = () => {
-
-
+export const getFalconAiConversationsReadUrl = (conversationId: string,) => {
 
 
-  return `/falcon-ai/.`
+
+
+  return `/falcon-ai/conversations/${conversationId}/`
 }
 
-export const falconAiUpdate = async ( options?: RequestInit): Promise<falconAiUpdateResponse> => {
+/**
+ * Get, update, or delete a conversation.
+ */
+export const falconAiConversationsRead = async (conversationId: string, options?: RequestInit): Promise<falconAiConversationsReadResponse> => {
 
-  return apiMutator<falconAiUpdateResponse>(getFalconAiUpdateUrl(),
+  return apiMutator<falconAiConversationsReadResponse>(getFalconAiConversationsReadUrl(conversationId),
   {
     ...options,
-    method: 'PUT'
+    method: 'GET'
 
 
   }
@@ -17597,76 +17757,1321 @@ export const falconAiUpdate = async ( options?: RequestInit): Promise<falconAiUp
 
 
 
-export type falconAiPartialUpdateResponse200 = {
-  data: void
+export type falconAiConversationsPartialUpdateResponse200 = {
+  data: ConversationDetailResponseApi
   status: 200
 }
 
-export type falconAiPartialUpdateResponseDefault = {
+export type falconAiConversationsPartialUpdateResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiConversationsPartialUpdateResponse404 = {
+  data: FalconErrorResponseApi
+  status: 404
+}
+
+export type falconAiConversationsPartialUpdateResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404>
 }
 
-export type falconAiPartialUpdateResponseSuccess = (falconAiPartialUpdateResponse200) & {
+export type falconAiConversationsPartialUpdateResponseSuccess = (falconAiConversationsPartialUpdateResponse200) & {
   headers: Headers;
 };
-export type falconAiPartialUpdateResponseError = (falconAiPartialUpdateResponseDefault) & {
+export type falconAiConversationsPartialUpdateResponseError = (falconAiConversationsPartialUpdateResponse403 | falconAiConversationsPartialUpdateResponse404 | falconAiConversationsPartialUpdateResponseDefault) & {
   headers: Headers;
 };
 
-export type falconAiPartialUpdateResponse = (falconAiPartialUpdateResponseSuccess | falconAiPartialUpdateResponseError)
+export type falconAiConversationsPartialUpdateResponse = (falconAiConversationsPartialUpdateResponseSuccess | falconAiConversationsPartialUpdateResponseError)
 
-export const getFalconAiPartialUpdateUrl = () => {
-
-
+export const getFalconAiConversationsPartialUpdateUrl = (conversationId: string,) => {
 
 
-  return `/falcon-ai/.`
+
+
+  return `/falcon-ai/conversations/${conversationId}/`
 }
 
-export const falconAiPartialUpdate = async ( options?: RequestInit): Promise<falconAiPartialUpdateResponse> => {
+/**
+ * Get, update, or delete a conversation.
+ */
+export const falconAiConversationsPartialUpdate = async (conversationId: string,
+    conversationUpdateRequestApi: ConversationUpdateRequestApi, options?: RequestInit): Promise<falconAiConversationsPartialUpdateResponse> => {
 
-  return apiMutator<falconAiPartialUpdateResponse>(getFalconAiPartialUpdateUrl(),
+  return apiMutator<falconAiConversationsPartialUpdateResponse>(getFalconAiConversationsPartialUpdateUrl(conversationId),
   {
     ...options,
-    method: 'PATCH'
-
-
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      conversationUpdateRequestApi,)
   }
 );}
 
 
 
-export type falconAiDeleteResponse204 = {
+export type falconAiConversationsDeleteResponse204 = {
   data: void
   status: 204
 }
 
-export type falconAiDeleteResponseDefault = {
+export type falconAiConversationsDeleteResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiConversationsDeleteResponse404 = {
+  data: FalconErrorResponseApi
+  status: 404
+}
+
+export type falconAiConversationsDeleteResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 204>
+  status: Exclude<HTTPStatusCodes, 204 | 403 | 404>
 }
 
-export type falconAiDeleteResponseSuccess = (falconAiDeleteResponse204) & {
+export type falconAiConversationsDeleteResponseSuccess = (falconAiConversationsDeleteResponse204) & {
   headers: Headers;
 };
-export type falconAiDeleteResponseError = (falconAiDeleteResponseDefault) & {
+export type falconAiConversationsDeleteResponseError = (falconAiConversationsDeleteResponse403 | falconAiConversationsDeleteResponse404 | falconAiConversationsDeleteResponseDefault) & {
   headers: Headers;
 };
 
-export type falconAiDeleteResponse = (falconAiDeleteResponseSuccess | falconAiDeleteResponseError)
+export type falconAiConversationsDeleteResponse = (falconAiConversationsDeleteResponseSuccess | falconAiConversationsDeleteResponseError)
 
-export const getFalconAiDeleteUrl = () => {
-
-
+export const getFalconAiConversationsDeleteUrl = (conversationId: string,) => {
 
 
-  return `/falcon-ai/.`
+
+
+  return `/falcon-ai/conversations/${conversationId}/`
 }
 
-export const falconAiDelete = async ( options?: RequestInit): Promise<falconAiDeleteResponse> => {
+/**
+ * Get, update, or delete a conversation.
+ */
+export const falconAiConversationsDelete = async (conversationId: string, options?: RequestInit): Promise<falconAiConversationsDeleteResponse> => {
 
-  return apiMutator<falconAiDeleteResponse>(getFalconAiDeleteUrl(),
+  return apiMutator<falconAiConversationsDeleteResponse>(getFalconAiConversationsDeleteUrl(conversationId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type falconAiConversationsStreamStatusListResponse200 = {
+  data: StreamStatusResponseApi
+  status: 200
+}
+
+export type falconAiConversationsStreamStatusListResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiConversationsStreamStatusListResponse404 = {
+  data: FalconErrorResponseApi
+  status: 404
+}
+
+export type falconAiConversationsStreamStatusListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404>
+}
+
+export type falconAiConversationsStreamStatusListResponseSuccess = (falconAiConversationsStreamStatusListResponse200) & {
+  headers: Headers;
+};
+export type falconAiConversationsStreamStatusListResponseError = (falconAiConversationsStreamStatusListResponse403 | falconAiConversationsStreamStatusListResponse404 | falconAiConversationsStreamStatusListResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiConversationsStreamStatusListResponse = (falconAiConversationsStreamStatusListResponseSuccess | falconAiConversationsStreamStatusListResponseError)
+
+export const getFalconAiConversationsStreamStatusListUrl = (conversationId: string,) => {
+
+
+
+
+  return `/falcon-ai/conversations/${conversationId}/stream-status/`
+}
+
+/**
+ * Check if there is an active or recent agent stream for a conversation.
+ */
+export const falconAiConversationsStreamStatusList = async (conversationId: string, options?: RequestInit): Promise<falconAiConversationsStreamStatusListResponse> => {
+
+  return apiMutator<falconAiConversationsStreamStatusListResponse>(getFalconAiConversationsStreamStatusListUrl(conversationId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type falconAiFilesUploadCreateResponse201 = {
+  data: FileUploadResponseApi
+  status: 201
+}
+
+export type falconAiFilesUploadCreateResponse400 = {
+  data: FalconErrorResponseApi
+  status: 400
+}
+
+export type falconAiFilesUploadCreateResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiFilesUploadCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 201 | 400 | 403>
+}
+
+export type falconAiFilesUploadCreateResponseSuccess = (falconAiFilesUploadCreateResponse201) & {
+  headers: Headers;
+};
+export type falconAiFilesUploadCreateResponseError = (falconAiFilesUploadCreateResponse400 | falconAiFilesUploadCreateResponse403 | falconAiFilesUploadCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiFilesUploadCreateResponse = (falconAiFilesUploadCreateResponseSuccess | falconAiFilesUploadCreateResponseError)
+
+export const getFalconAiFilesUploadCreateUrl = () => {
+
+
+
+
+  return `/falcon-ai/files/upload/`
+}
+
+/**
+ * Upload a file for use in Falcon AI conversations.
+ */
+export const falconAiFilesUploadCreate = async (falconAiFilesUploadCreateBody?: FalconAiFilesUploadCreateBody, options?: RequestInit): Promise<falconAiFilesUploadCreateResponse> => {
+    const formData = new FormData();
+if(falconAiFilesUploadCreateBody?.file !== undefined) {
+ formData.append(`file`, falconAiFilesUploadCreateBody.file);
+ }
+
+  return apiMutator<falconAiFilesUploadCreateResponse>(getFalconAiFilesUploadCreateUrl(),
+  {
+    ...options,
+    method: 'POST'
+    ,
+    body:
+      formData,
+  }
+);}
+
+
+
+export type falconAiMcpConnectorsListResponse200 = {
+  data: MCPConnectorListResponseApi
+  status: 200
+}
+
+export type falconAiMcpConnectorsListResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiMcpConnectorsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 403>
+}
+
+export type falconAiMcpConnectorsListResponseSuccess = (falconAiMcpConnectorsListResponse200) & {
+  headers: Headers;
+};
+export type falconAiMcpConnectorsListResponseError = (falconAiMcpConnectorsListResponse403 | falconAiMcpConnectorsListResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiMcpConnectorsListResponse = (falconAiMcpConnectorsListResponseSuccess | falconAiMcpConnectorsListResponseError)
+
+export const getFalconAiMcpConnectorsListUrl = () => {
+
+
+
+
+  return `/falcon-ai/mcp-connectors/`
+}
+
+/**
+ * List and create MCP connectors.
+ */
+export const falconAiMcpConnectorsList = async ( options?: RequestInit): Promise<falconAiMcpConnectorsListResponse> => {
+
+  return apiMutator<falconAiMcpConnectorsListResponse>(getFalconAiMcpConnectorsListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type falconAiMcpConnectorsCreateResponse201 = {
+  data: MCPConnectorDetailResponseApi
+  status: 201
+}
+
+export type falconAiMcpConnectorsCreateResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiMcpConnectorsCreateResponse409 = {
+  data: FalconErrorResponseApi
+  status: 409
+}
+
+export type falconAiMcpConnectorsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 201 | 403 | 409>
+}
+
+export type falconAiMcpConnectorsCreateResponseSuccess = (falconAiMcpConnectorsCreateResponse201) & {
+  headers: Headers;
+};
+export type falconAiMcpConnectorsCreateResponseError = (falconAiMcpConnectorsCreateResponse403 | falconAiMcpConnectorsCreateResponse409 | falconAiMcpConnectorsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiMcpConnectorsCreateResponse = (falconAiMcpConnectorsCreateResponseSuccess | falconAiMcpConnectorsCreateResponseError)
+
+export const getFalconAiMcpConnectorsCreateUrl = () => {
+
+
+
+
+  return `/falcon-ai/mcp-connectors/`
+}
+
+/**
+ * List and create MCP connectors.
+ */
+export const falconAiMcpConnectorsCreate = async (mCPConnectorCreateApi: MCPConnectorCreateApi, options?: RequestInit): Promise<falconAiMcpConnectorsCreateResponse> => {
+
+  return apiMutator<falconAiMcpConnectorsCreateResponse>(getFalconAiMcpConnectorsCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      mCPConnectorCreateApi,)
+  }
+);}
+
+
+
+export type falconAiMcpConnectorsReadResponse200 = {
+  data: MCPConnectorDetailResponseApi
+  status: 200
+}
+
+export type falconAiMcpConnectorsReadResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiMcpConnectorsReadResponse404 = {
+  data: FalconErrorResponseApi
+  status: 404
+}
+
+export type falconAiMcpConnectorsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404>
+}
+
+export type falconAiMcpConnectorsReadResponseSuccess = (falconAiMcpConnectorsReadResponse200) & {
+  headers: Headers;
+};
+export type falconAiMcpConnectorsReadResponseError = (falconAiMcpConnectorsReadResponse403 | falconAiMcpConnectorsReadResponse404 | falconAiMcpConnectorsReadResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiMcpConnectorsReadResponse = (falconAiMcpConnectorsReadResponseSuccess | falconAiMcpConnectorsReadResponseError)
+
+export const getFalconAiMcpConnectorsReadUrl = (connectorId: string,) => {
+
+
+
+
+  return `/falcon-ai/mcp-connectors/${connectorId}/`
+}
+
+/**
+ * Get, update, or delete an MCP connector.
+ */
+export const falconAiMcpConnectorsRead = async (connectorId: string, options?: RequestInit): Promise<falconAiMcpConnectorsReadResponse> => {
+
+  return apiMutator<falconAiMcpConnectorsReadResponse>(getFalconAiMcpConnectorsReadUrl(connectorId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type falconAiMcpConnectorsPartialUpdateResponse200 = {
+  data: MCPConnectorDetailResponseApi
+  status: 200
+}
+
+export type falconAiMcpConnectorsPartialUpdateResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiMcpConnectorsPartialUpdateResponse404 = {
+  data: FalconErrorResponseApi
+  status: 404
+}
+
+export type falconAiMcpConnectorsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404>
+}
+
+export type falconAiMcpConnectorsPartialUpdateResponseSuccess = (falconAiMcpConnectorsPartialUpdateResponse200) & {
+  headers: Headers;
+};
+export type falconAiMcpConnectorsPartialUpdateResponseError = (falconAiMcpConnectorsPartialUpdateResponse403 | falconAiMcpConnectorsPartialUpdateResponse404 | falconAiMcpConnectorsPartialUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiMcpConnectorsPartialUpdateResponse = (falconAiMcpConnectorsPartialUpdateResponseSuccess | falconAiMcpConnectorsPartialUpdateResponseError)
+
+export const getFalconAiMcpConnectorsPartialUpdateUrl = (connectorId: string,) => {
+
+
+
+
+  return `/falcon-ai/mcp-connectors/${connectorId}/`
+}
+
+/**
+ * Get, update, or delete an MCP connector.
+ */
+export const falconAiMcpConnectorsPartialUpdate = async (connectorId: string,
+    mCPConnectorUpdateRequestApi: MCPConnectorUpdateRequestApi, options?: RequestInit): Promise<falconAiMcpConnectorsPartialUpdateResponse> => {
+
+  return apiMutator<falconAiMcpConnectorsPartialUpdateResponse>(getFalconAiMcpConnectorsPartialUpdateUrl(connectorId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      mCPConnectorUpdateRequestApi,)
+  }
+);}
+
+
+
+export type falconAiMcpConnectorsDeleteResponse204 = {
+  data: void
+  status: 204
+}
+
+export type falconAiMcpConnectorsDeleteResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiMcpConnectorsDeleteResponse404 = {
+  data: FalconErrorResponseApi
+  status: 404
+}
+
+export type falconAiMcpConnectorsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 204 | 403 | 404>
+}
+
+export type falconAiMcpConnectorsDeleteResponseSuccess = (falconAiMcpConnectorsDeleteResponse204) & {
+  headers: Headers;
+};
+export type falconAiMcpConnectorsDeleteResponseError = (falconAiMcpConnectorsDeleteResponse403 | falconAiMcpConnectorsDeleteResponse404 | falconAiMcpConnectorsDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiMcpConnectorsDeleteResponse = (falconAiMcpConnectorsDeleteResponseSuccess | falconAiMcpConnectorsDeleteResponseError)
+
+export const getFalconAiMcpConnectorsDeleteUrl = (connectorId: string,) => {
+
+
+
+
+  return `/falcon-ai/mcp-connectors/${connectorId}/`
+}
+
+/**
+ * Get, update, or delete an MCP connector.
+ */
+export const falconAiMcpConnectorsDelete = async (connectorId: string, options?: RequestInit): Promise<falconAiMcpConnectorsDeleteResponse> => {
+
+  return apiMutator<falconAiMcpConnectorsDeleteResponse>(getFalconAiMcpConnectorsDeleteUrl(connectorId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type falconAiMcpConnectorsAuthenticateCreateResponse200 = {
+  data: MCPConnectorAuthenticateResponseApi
+  status: 200
+}
+
+export type falconAiMcpConnectorsAuthenticateCreateResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiMcpConnectorsAuthenticateCreateResponse404 = {
+  data: FalconErrorResponseApi
+  status: 404
+}
+
+export type falconAiMcpConnectorsAuthenticateCreateResponse502 = {
+  data: FalconErrorResponseApi
+  status: 502
+}
+
+export type falconAiMcpConnectorsAuthenticateCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404 | 502>
+}
+
+export type falconAiMcpConnectorsAuthenticateCreateResponseSuccess = (falconAiMcpConnectorsAuthenticateCreateResponse200) & {
+  headers: Headers;
+};
+export type falconAiMcpConnectorsAuthenticateCreateResponseError = (falconAiMcpConnectorsAuthenticateCreateResponse403 | falconAiMcpConnectorsAuthenticateCreateResponse404 | falconAiMcpConnectorsAuthenticateCreateResponse502 | falconAiMcpConnectorsAuthenticateCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiMcpConnectorsAuthenticateCreateResponse = (falconAiMcpConnectorsAuthenticateCreateResponseSuccess | falconAiMcpConnectorsAuthenticateCreateResponseError)
+
+export const getFalconAiMcpConnectorsAuthenticateCreateUrl = (connectorId: string,) => {
+
+
+
+
+  return `/falcon-ai/mcp-connectors/${connectorId}/authenticate/`
+}
+
+/**
+ * For OAuth connectors, returns the authorization URL to open in a browser.
+For API key connectors, tests the connection and returns status.
+ * @summary Initiate or re-initiate authentication for a connector.
+ */
+export const falconAiMcpConnectorsAuthenticateCreate = async (connectorId: string,
+    falconEmptyRequestApi: FalconEmptyRequestApi, options?: RequestInit): Promise<falconAiMcpConnectorsAuthenticateCreateResponse> => {
+
+  return apiMutator<falconAiMcpConnectorsAuthenticateCreateResponse>(getFalconAiMcpConnectorsAuthenticateCreateUrl(connectorId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      falconEmptyRequestApi,)
+  }
+);}
+
+
+
+export type falconAiMcpConnectorsDiscoverCreateResponse200 = {
+  data: MCPConnectorDiscoverResponseApi
+  status: 200
+}
+
+export type falconAiMcpConnectorsDiscoverCreateResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiMcpConnectorsDiscoverCreateResponse404 = {
+  data: FalconErrorResponseApi
+  status: 404
+}
+
+export type falconAiMcpConnectorsDiscoverCreateResponse502 = {
+  data: FalconErrorResponseApi
+  status: 502
+}
+
+export type falconAiMcpConnectorsDiscoverCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404 | 502>
+}
+
+export type falconAiMcpConnectorsDiscoverCreateResponseSuccess = (falconAiMcpConnectorsDiscoverCreateResponse200) & {
+  headers: Headers;
+};
+export type falconAiMcpConnectorsDiscoverCreateResponseError = (falconAiMcpConnectorsDiscoverCreateResponse403 | falconAiMcpConnectorsDiscoverCreateResponse404 | falconAiMcpConnectorsDiscoverCreateResponse502 | falconAiMcpConnectorsDiscoverCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiMcpConnectorsDiscoverCreateResponse = (falconAiMcpConnectorsDiscoverCreateResponseSuccess | falconAiMcpConnectorsDiscoverCreateResponseError)
+
+export const getFalconAiMcpConnectorsDiscoverCreateUrl = (connectorId: string,) => {
+
+
+
+
+  return `/falcon-ai/mcp-connectors/${connectorId}/discover/`
+}
+
+/**
+ * Discover tools from an external MCP server.
+ */
+export const falconAiMcpConnectorsDiscoverCreate = async (connectorId: string,
+    falconEmptyRequestApi: FalconEmptyRequestApi, options?: RequestInit): Promise<falconAiMcpConnectorsDiscoverCreateResponse> => {
+
+  return apiMutator<falconAiMcpConnectorsDiscoverCreateResponse>(getFalconAiMcpConnectorsDiscoverCreateUrl(connectorId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      falconEmptyRequestApi,)
+  }
+);}
+
+
+
+export type falconAiMcpConnectorsOauthCallbackListResponse200 = {
+  data: string
+  status: 200
+}
+
+export type falconAiMcpConnectorsOauthCallbackListResponse400 = {
+  data: string
+  status: 400
+}
+
+export type falconAiMcpConnectorsOauthCallbackListResponse502 = {
+  data: string
+  status: 502
+}
+
+export type falconAiMcpConnectorsOauthCallbackListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 502>
+}
+
+export type falconAiMcpConnectorsOauthCallbackListResponseSuccess = (falconAiMcpConnectorsOauthCallbackListResponse200) & {
+  headers: Headers;
+};
+export type falconAiMcpConnectorsOauthCallbackListResponseError = (falconAiMcpConnectorsOauthCallbackListResponse400 | falconAiMcpConnectorsOauthCallbackListResponse502 | falconAiMcpConnectorsOauthCallbackListResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiMcpConnectorsOauthCallbackListResponse = (falconAiMcpConnectorsOauthCallbackListResponseSuccess | falconAiMcpConnectorsOauthCallbackListResponseError)
+
+export const getFalconAiMcpConnectorsOauthCallbackListUrl = (connectorId: string,
+    params?: FalconAiMcpConnectorsOauthCallbackListParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/falcon-ai/mcp-connectors/${connectorId}/oauth/callback/?${stringifiedParams}` : `/falcon-ai/mcp-connectors/${connectorId}/oauth/callback/`
+}
+
+/**
+ * This is a GET endpoint that the browser is redirected to after the user
+approves the OAuth consent. It exchanges the authorization code for
+tokens, then returns an HTML page that posts a message to the opener
+window and closes itself.
+
+Uses AllowAny because this is a browser redirect with state validation.
+ * @summary Handle the OAuth 2.1 redirect callback from an authorization server.
+ */
+export const falconAiMcpConnectorsOauthCallbackList = async (connectorId: string,
+    params?: FalconAiMcpConnectorsOauthCallbackListParams, options?: RequestInit): Promise<falconAiMcpConnectorsOauthCallbackListResponse> => {
+
+  return apiMutator<falconAiMcpConnectorsOauthCallbackListResponse>(getFalconAiMcpConnectorsOauthCallbackListUrl(connectorId,params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type falconAiMcpConnectorsTestCreateResponse200 = {
+  data: MCPConnectorTestResponseApi
+  status: 200
+}
+
+export type falconAiMcpConnectorsTestCreateResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiMcpConnectorsTestCreateResponse404 = {
+  data: FalconErrorResponseApi
+  status: 404
+}
+
+export type falconAiMcpConnectorsTestCreateResponse502 = {
+  data: FalconErrorResponseApi
+  status: 502
+}
+
+export type falconAiMcpConnectorsTestCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404 | 502>
+}
+
+export type falconAiMcpConnectorsTestCreateResponseSuccess = (falconAiMcpConnectorsTestCreateResponse200) & {
+  headers: Headers;
+};
+export type falconAiMcpConnectorsTestCreateResponseError = (falconAiMcpConnectorsTestCreateResponse403 | falconAiMcpConnectorsTestCreateResponse404 | falconAiMcpConnectorsTestCreateResponse502 | falconAiMcpConnectorsTestCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiMcpConnectorsTestCreateResponse = (falconAiMcpConnectorsTestCreateResponseSuccess | falconAiMcpConnectorsTestCreateResponseError)
+
+export const getFalconAiMcpConnectorsTestCreateUrl = (connectorId: string,) => {
+
+
+
+
+  return `/falcon-ai/mcp-connectors/${connectorId}/test/`
+}
+
+/**
+ * Test connection to an external MCP server.
+ */
+export const falconAiMcpConnectorsTestCreate = async (connectorId: string,
+    falconEmptyRequestApi: FalconEmptyRequestApi, options?: RequestInit): Promise<falconAiMcpConnectorsTestCreateResponse> => {
+
+  return apiMutator<falconAiMcpConnectorsTestCreateResponse>(getFalconAiMcpConnectorsTestCreateUrl(connectorId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      falconEmptyRequestApi,)
+  }
+);}
+
+
+
+export type falconAiMcpConnectorsToolsPartialUpdateResponse200 = {
+  data: MCPConnectorDetailResponseApi
+  status: 200
+}
+
+export type falconAiMcpConnectorsToolsPartialUpdateResponse400 = {
+  data: FalconErrorResponseApi
+  status: 400
+}
+
+export type falconAiMcpConnectorsToolsPartialUpdateResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiMcpConnectorsToolsPartialUpdateResponse404 = {
+  data: FalconErrorResponseApi
+  status: 404
+}
+
+export type falconAiMcpConnectorsToolsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404>
+}
+
+export type falconAiMcpConnectorsToolsPartialUpdateResponseSuccess = (falconAiMcpConnectorsToolsPartialUpdateResponse200) & {
+  headers: Headers;
+};
+export type falconAiMcpConnectorsToolsPartialUpdateResponseError = (falconAiMcpConnectorsToolsPartialUpdateResponse400 | falconAiMcpConnectorsToolsPartialUpdateResponse403 | falconAiMcpConnectorsToolsPartialUpdateResponse404 | falconAiMcpConnectorsToolsPartialUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiMcpConnectorsToolsPartialUpdateResponse = (falconAiMcpConnectorsToolsPartialUpdateResponseSuccess | falconAiMcpConnectorsToolsPartialUpdateResponseError)
+
+export const getFalconAiMcpConnectorsToolsPartialUpdateUrl = (connectorId: string,) => {
+
+
+
+
+  return `/falcon-ai/mcp-connectors/${connectorId}/tools/`
+}
+
+/**
+ * Enable or disable specific tools on a connector.
+ */
+export const falconAiMcpConnectorsToolsPartialUpdate = async (connectorId: string,
+    mCPConnectorToolsApi: MCPConnectorToolsApi, options?: RequestInit): Promise<falconAiMcpConnectorsToolsPartialUpdateResponse> => {
+
+  return apiMutator<falconAiMcpConnectorsToolsPartialUpdateResponse>(getFalconAiMcpConnectorsToolsPartialUpdateUrl(connectorId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      mCPConnectorToolsApi,)
+  }
+);}
+
+
+
+export type falconAiMemoryListResponse200 = {
+  data: FalconMemoryListResponseApi
+  status: 200
+}
+
+export type falconAiMemoryListResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiMemoryListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 403>
+}
+
+export type falconAiMemoryListResponseSuccess = (falconAiMemoryListResponse200) & {
+  headers: Headers;
+};
+export type falconAiMemoryListResponseError = (falconAiMemoryListResponse403 | falconAiMemoryListResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiMemoryListResponse = (falconAiMemoryListResponseSuccess | falconAiMemoryListResponseError)
+
+export const getFalconAiMemoryListUrl = () => {
+
+
+
+
+  return `/falcon-ai/memory/`
+}
+
+/**
+ * List and create workspace memories.
+ */
+export const falconAiMemoryList = async ( options?: RequestInit): Promise<falconAiMemoryListResponse> => {
+
+  return apiMutator<falconAiMemoryListResponse>(getFalconAiMemoryListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type falconAiMemoryCreateResponse200 = {
+  data: FalconMemoryDetailResponseApi
+  status: 200
+}
+
+export type falconAiMemoryCreateResponse201 = {
+  data: FalconMemoryDetailResponseApi
+  status: 201
+}
+
+export type falconAiMemoryCreateResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiMemoryCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 201 | 403>
+}
+
+export type falconAiMemoryCreateResponseSuccess = (falconAiMemoryCreateResponse200 | falconAiMemoryCreateResponse201) & {
+  headers: Headers;
+};
+export type falconAiMemoryCreateResponseError = (falconAiMemoryCreateResponse403 | falconAiMemoryCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiMemoryCreateResponse = (falconAiMemoryCreateResponseSuccess | falconAiMemoryCreateResponseError)
+
+export const getFalconAiMemoryCreateUrl = () => {
+
+
+
+
+  return `/falcon-ai/memory/`
+}
+
+/**
+ * List and create workspace memories.
+ */
+export const falconAiMemoryCreate = async (falconMemoryCreateApi: FalconMemoryCreateApi, options?: RequestInit): Promise<falconAiMemoryCreateResponse> => {
+
+  return apiMutator<falconAiMemoryCreateResponse>(getFalconAiMemoryCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      falconMemoryCreateApi,)
+  }
+);}
+
+
+
+export type falconAiMemoryDeleteResponse204 = {
+  data: void
+  status: 204
+}
+
+export type falconAiMemoryDeleteResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiMemoryDeleteResponse404 = {
+  data: FalconErrorResponseApi
+  status: 404
+}
+
+export type falconAiMemoryDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 204 | 403 | 404>
+}
+
+export type falconAiMemoryDeleteResponseSuccess = (falconAiMemoryDeleteResponse204) & {
+  headers: Headers;
+};
+export type falconAiMemoryDeleteResponseError = (falconAiMemoryDeleteResponse403 | falconAiMemoryDeleteResponse404 | falconAiMemoryDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiMemoryDeleteResponse = (falconAiMemoryDeleteResponseSuccess | falconAiMemoryDeleteResponseError)
+
+export const getFalconAiMemoryDeleteUrl = (memoryId: string,) => {
+
+
+
+
+  return `/falcon-ai/memory/${memoryId}/`
+}
+
+/**
+ * Delete a workspace memory.
+ */
+export const falconAiMemoryDelete = async (memoryId: string, options?: RequestInit): Promise<falconAiMemoryDeleteResponse> => {
+
+  return apiMutator<falconAiMemoryDeleteResponse>(getFalconAiMemoryDeleteUrl(memoryId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type falconAiMessagesFeedbackCreateResponse200 = {
+  data: MessageFeedbackResponseApi
+  status: 200
+}
+
+export type falconAiMessagesFeedbackCreateResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiMessagesFeedbackCreateResponse404 = {
+  data: FalconErrorResponseApi
+  status: 404
+}
+
+export type falconAiMessagesFeedbackCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404>
+}
+
+export type falconAiMessagesFeedbackCreateResponseSuccess = (falconAiMessagesFeedbackCreateResponse200) & {
+  headers: Headers;
+};
+export type falconAiMessagesFeedbackCreateResponseError = (falconAiMessagesFeedbackCreateResponse403 | falconAiMessagesFeedbackCreateResponse404 | falconAiMessagesFeedbackCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiMessagesFeedbackCreateResponse = (falconAiMessagesFeedbackCreateResponseSuccess | falconAiMessagesFeedbackCreateResponseError)
+
+export const getFalconAiMessagesFeedbackCreateUrl = (messageId: string,) => {
+
+
+
+
+  return `/falcon-ai/messages/${messageId}/feedback/`
+}
+
+/**
+ * Update feedback on a message.
+ */
+export const falconAiMessagesFeedbackCreate = async (messageId: string,
+    messageFeedbackApi: MessageFeedbackApi, options?: RequestInit): Promise<falconAiMessagesFeedbackCreateResponse> => {
+
+  return apiMutator<falconAiMessagesFeedbackCreateResponse>(getFalconAiMessagesFeedbackCreateUrl(messageId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      messageFeedbackApi,)
+  }
+);}
+
+
+
+export type falconAiQuickAnalysisCreateResponse200 = {
+  data: QuickAnalysisResponseApi
+  status: 200
+}
+
+export type falconAiQuickAnalysisCreateResponse429 = {
+  data: FalconErrorResponseApi
+  status: 429
+}
+
+export type falconAiQuickAnalysisCreateResponse502 = {
+  data: FalconErrorResponseApi
+  status: 502
+}
+
+export type falconAiQuickAnalysisCreateResponse504 = {
+  data: FalconErrorResponseApi
+  status: 504
+}
+
+export type falconAiQuickAnalysisCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 429 | 502 | 504>
+}
+
+export type falconAiQuickAnalysisCreateResponseSuccess = (falconAiQuickAnalysisCreateResponse200) & {
+  headers: Headers;
+};
+export type falconAiQuickAnalysisCreateResponseError = (falconAiQuickAnalysisCreateResponse429 | falconAiQuickAnalysisCreateResponse502 | falconAiQuickAnalysisCreateResponse504 | falconAiQuickAnalysisCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiQuickAnalysisCreateResponse = (falconAiQuickAnalysisCreateResponseSuccess | falconAiQuickAnalysisCreateResponseError)
+
+export const getFalconAiQuickAnalysisCreateUrl = () => {
+
+
+
+
+  return `/falcon-ai/quick-analysis/`
+}
+
+export const falconAiQuickAnalysisCreate = async (quickAnalysisApi: QuickAnalysisApi, options?: RequestInit): Promise<falconAiQuickAnalysisCreateResponse> => {
+
+  return apiMutator<falconAiQuickAnalysisCreateResponse>(getFalconAiQuickAnalysisCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      quickAnalysisApi,)
+  }
+);}
+
+
+
+export type falconAiSkillsListResponse200 = {
+  data: SkillListResponseApi
+  status: 200
+}
+
+export type falconAiSkillsListResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiSkillsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 403>
+}
+
+export type falconAiSkillsListResponseSuccess = (falconAiSkillsListResponse200) & {
+  headers: Headers;
+};
+export type falconAiSkillsListResponseError = (falconAiSkillsListResponse403 | falconAiSkillsListResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiSkillsListResponse = (falconAiSkillsListResponseSuccess | falconAiSkillsListResponseError)
+
+export const getFalconAiSkillsListUrl = () => {
+
+
+
+
+  return `/falcon-ai/skills/`
+}
+
+/**
+ * List and create skills.
+ */
+export const falconAiSkillsList = async ( options?: RequestInit): Promise<falconAiSkillsListResponse> => {
+
+  return apiMutator<falconAiSkillsListResponse>(getFalconAiSkillsListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type falconAiSkillsCreateResponse201 = {
+  data: SkillDetailResponseApi
+  status: 201
+}
+
+export type falconAiSkillsCreateResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiSkillsCreateResponse409 = {
+  data: FalconErrorResponseApi
+  status: 409
+}
+
+export type falconAiSkillsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 201 | 403 | 409>
+}
+
+export type falconAiSkillsCreateResponseSuccess = (falconAiSkillsCreateResponse201) & {
+  headers: Headers;
+};
+export type falconAiSkillsCreateResponseError = (falconAiSkillsCreateResponse403 | falconAiSkillsCreateResponse409 | falconAiSkillsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiSkillsCreateResponse = (falconAiSkillsCreateResponseSuccess | falconAiSkillsCreateResponseError)
+
+export const getFalconAiSkillsCreateUrl = () => {
+
+
+
+
+  return `/falcon-ai/skills/`
+}
+
+/**
+ * List and create skills.
+ */
+export const falconAiSkillsCreate = async (skillCreateApi: SkillCreateApi, options?: RequestInit): Promise<falconAiSkillsCreateResponse> => {
+
+  return apiMutator<falconAiSkillsCreateResponse>(getFalconAiSkillsCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      skillCreateApi,)
+  }
+);}
+
+
+
+export type falconAiSkillsReadResponse200 = {
+  data: SkillDetailResponseApi
+  status: 200
+}
+
+export type falconAiSkillsReadResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiSkillsReadResponse404 = {
+  data: FalconErrorResponseApi
+  status: 404
+}
+
+export type falconAiSkillsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404>
+}
+
+export type falconAiSkillsReadResponseSuccess = (falconAiSkillsReadResponse200) & {
+  headers: Headers;
+};
+export type falconAiSkillsReadResponseError = (falconAiSkillsReadResponse403 | falconAiSkillsReadResponse404 | falconAiSkillsReadResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiSkillsReadResponse = (falconAiSkillsReadResponseSuccess | falconAiSkillsReadResponseError)
+
+export const getFalconAiSkillsReadUrl = (skillId: string,) => {
+
+
+
+
+  return `/falcon-ai/skills/${skillId}/`
+}
+
+/**
+ * Get, update, or delete a skill.
+ */
+export const falconAiSkillsRead = async (skillId: string, options?: RequestInit): Promise<falconAiSkillsReadResponse> => {
+
+  return apiMutator<falconAiSkillsReadResponse>(getFalconAiSkillsReadUrl(skillId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type falconAiSkillsPartialUpdateResponse200 = {
+  data: SkillDetailResponseApi
+  status: 200
+}
+
+export type falconAiSkillsPartialUpdateResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiSkillsPartialUpdateResponse404 = {
+  data: FalconErrorResponseApi
+  status: 404
+}
+
+export type falconAiSkillsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 403 | 404>
+}
+
+export type falconAiSkillsPartialUpdateResponseSuccess = (falconAiSkillsPartialUpdateResponse200) & {
+  headers: Headers;
+};
+export type falconAiSkillsPartialUpdateResponseError = (falconAiSkillsPartialUpdateResponse403 | falconAiSkillsPartialUpdateResponse404 | falconAiSkillsPartialUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiSkillsPartialUpdateResponse = (falconAiSkillsPartialUpdateResponseSuccess | falconAiSkillsPartialUpdateResponseError)
+
+export const getFalconAiSkillsPartialUpdateUrl = (skillId: string,) => {
+
+
+
+
+  return `/falcon-ai/skills/${skillId}/`
+}
+
+/**
+ * Get, update, or delete a skill.
+ */
+export const falconAiSkillsPartialUpdate = async (skillId: string,
+    skillUpdateRequestApi: SkillUpdateRequestApi, options?: RequestInit): Promise<falconAiSkillsPartialUpdateResponse> => {
+
+  return apiMutator<falconAiSkillsPartialUpdateResponse>(getFalconAiSkillsPartialUpdateUrl(skillId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      skillUpdateRequestApi,)
+  }
+);}
+
+
+
+export type falconAiSkillsDeleteResponse204 = {
+  data: void
+  status: 204
+}
+
+export type falconAiSkillsDeleteResponse403 = {
+  data: FalconErrorResponseApi
+  status: 403
+}
+
+export type falconAiSkillsDeleteResponse404 = {
+  data: FalconErrorResponseApi
+  status: 404
+}
+
+export type falconAiSkillsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 204 | 403 | 404>
+}
+
+export type falconAiSkillsDeleteResponseSuccess = (falconAiSkillsDeleteResponse204) & {
+  headers: Headers;
+};
+export type falconAiSkillsDeleteResponseError = (falconAiSkillsDeleteResponse403 | falconAiSkillsDeleteResponse404 | falconAiSkillsDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type falconAiSkillsDeleteResponse = (falconAiSkillsDeleteResponseSuccess | falconAiSkillsDeleteResponseError)
+
+export const getFalconAiSkillsDeleteUrl = (skillId: string,) => {
+
+
+
+
+  return `/falcon-ai/skills/${skillId}/`
+}
+
+/**
+ * Get, update, or delete a skill.
+ */
+export const falconAiSkillsDelete = async (skillId: string, options?: RequestInit): Promise<falconAiSkillsDeleteResponse> => {
+
+  return apiMutator<falconAiSkillsDeleteResponse>(getFalconAiSkillsDeleteUrl(skillId),
   {
     ...options,
     method: 'DELETE'
@@ -66876,6 +68281,7657 @@ export const tracerWebhookCreate = async (webhookRequestApi: WebhookRequestApi, 
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
       webhookRequestApi,)
+  }
+);}
+
+
+
+export type usageAdminCustomPlanListResponse200 = {
+  data: AdminCustomPlanResponseApi
+  status: 200
+}
+
+export type usageAdminCustomPlanListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageAdminCustomPlanListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageAdminCustomPlanListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageAdminCustomPlanListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageAdminCustomPlanListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageAdminCustomPlanListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageAdminCustomPlanListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageAdminCustomPlanListResponseSuccess = (usageAdminCustomPlanListResponse200) & {
+  headers: Headers;
+};
+export type usageAdminCustomPlanListResponseError = (usageAdminCustomPlanListResponse400 | usageAdminCustomPlanListResponse401 | usageAdminCustomPlanListResponse402 | usageAdminCustomPlanListResponse403 | usageAdminCustomPlanListResponse404 | usageAdminCustomPlanListResponse500 | usageAdminCustomPlanListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageAdminCustomPlanListResponse = (usageAdminCustomPlanListResponseSuccess | usageAdminCustomPlanListResponseError)
+
+export const getUsageAdminCustomPlanListUrl = (params: UsageAdminCustomPlanListParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/usage/admin/custom-plan/?${stringifiedParams}` : `/usage/admin/custom-plan/`
+}
+
+/**
+ * Get custom plan summary for an org.
+ */
+export const usageAdminCustomPlanList = async (params: UsageAdminCustomPlanListParams, options?: RequestInit): Promise<usageAdminCustomPlanListResponse> => {
+
+  return apiMutator<usageAdminCustomPlanListResponse>(getUsageAdminCustomPlanListUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageAdminCustomPlanCreateResponse200 = {
+  data: AdminCustomPlanResponseApi
+  status: 200
+}
+
+export type usageAdminCustomPlanCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageAdminCustomPlanCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageAdminCustomPlanCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageAdminCustomPlanCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageAdminCustomPlanCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageAdminCustomPlanCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageAdminCustomPlanCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageAdminCustomPlanCreateResponseSuccess = (usageAdminCustomPlanCreateResponse200) & {
+  headers: Headers;
+};
+export type usageAdminCustomPlanCreateResponseError = (usageAdminCustomPlanCreateResponse400 | usageAdminCustomPlanCreateResponse401 | usageAdminCustomPlanCreateResponse402 | usageAdminCustomPlanCreateResponse403 | usageAdminCustomPlanCreateResponse404 | usageAdminCustomPlanCreateResponse500 | usageAdminCustomPlanCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageAdminCustomPlanCreateResponse = (usageAdminCustomPlanCreateResponseSuccess | usageAdminCustomPlanCreateResponseError)
+
+export const getUsageAdminCustomPlanCreateUrl = () => {
+
+
+
+
+  return `/usage/admin/custom-plan/`
+}
+
+/**
+ * Request body:
+{
+    "organization_id": "uuid",
+    "platform_fee": 1500.00,
+    "entitlements": {"monitors": -1, "has_knowledge_base": true, ...},
+    "pricing": {
+        "ai_credits": [
+            {"tier_start": 0, "tier_end": 10000, "price_per_unit": 0.005},
+            {"tier_start": 10000, "tier_end": null, "price_per_unit": 0.003}
+        ], ...
+    }
+}
+ * @summary Create full custom plan.
+ */
+export const usageAdminCustomPlanCreate = async (adminCustomPlanRequestApi: AdminCustomPlanRequestApi, options?: RequestInit): Promise<usageAdminCustomPlanCreateResponse> => {
+
+  return apiMutator<usageAdminCustomPlanCreateResponse>(getUsageAdminCustomPlanCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      adminCustomPlanRequestApi,)
+  }
+);}
+
+
+
+export type usageAdminCustomPlanUpdateResponse200 = {
+  data: AdminCustomPlanResponseApi
+  status: 200
+}
+
+export type usageAdminCustomPlanUpdateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageAdminCustomPlanUpdateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageAdminCustomPlanUpdateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageAdminCustomPlanUpdateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageAdminCustomPlanUpdateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageAdminCustomPlanUpdateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageAdminCustomPlanUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageAdminCustomPlanUpdateResponseSuccess = (usageAdminCustomPlanUpdateResponse200) & {
+  headers: Headers;
+};
+export type usageAdminCustomPlanUpdateResponseError = (usageAdminCustomPlanUpdateResponse400 | usageAdminCustomPlanUpdateResponse401 | usageAdminCustomPlanUpdateResponse402 | usageAdminCustomPlanUpdateResponse403 | usageAdminCustomPlanUpdateResponse404 | usageAdminCustomPlanUpdateResponse500 | usageAdminCustomPlanUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageAdminCustomPlanUpdateResponse = (usageAdminCustomPlanUpdateResponseSuccess | usageAdminCustomPlanUpdateResponseError)
+
+export const getUsageAdminCustomPlanUpdateUrl = () => {
+
+
+
+
+  return `/usage/admin/custom-plan/`
+}
+
+/**
+ * Update existing custom plan (entitlements/pricing/fee).
+ */
+export const usageAdminCustomPlanUpdate = async (adminCustomPlanRequestApi: AdminCustomPlanRequestApi, options?: RequestInit): Promise<usageAdminCustomPlanUpdateResponse> => {
+
+  return apiMutator<usageAdminCustomPlanUpdateResponse>(getUsageAdminCustomPlanUpdateUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      adminCustomPlanRequestApi,)
+  }
+);}
+
+
+
+export type usageAdminEntitlementsListResponse200 = {
+  data: AdminEntitlementsResponseApi
+  status: 200
+}
+
+export type usageAdminEntitlementsListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageAdminEntitlementsListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageAdminEntitlementsListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageAdminEntitlementsListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageAdminEntitlementsListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageAdminEntitlementsListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageAdminEntitlementsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageAdminEntitlementsListResponseSuccess = (usageAdminEntitlementsListResponse200) & {
+  headers: Headers;
+};
+export type usageAdminEntitlementsListResponseError = (usageAdminEntitlementsListResponse400 | usageAdminEntitlementsListResponse401 | usageAdminEntitlementsListResponse402 | usageAdminEntitlementsListResponse403 | usageAdminEntitlementsListResponse404 | usageAdminEntitlementsListResponse500 | usageAdminEntitlementsListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageAdminEntitlementsListResponse = (usageAdminEntitlementsListResponseSuccess | usageAdminEntitlementsListResponseError)
+
+export const getUsageAdminEntitlementsListUrl = (params: UsageAdminEntitlementsListParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/usage/admin/entitlements/?${stringifiedParams}` : `/usage/admin/entitlements/`
+}
+
+/**
+ * List entitlement overrides for an org.
+ */
+export const usageAdminEntitlementsList = async (params: UsageAdminEntitlementsListParams, options?: RequestInit): Promise<usageAdminEntitlementsListResponse> => {
+
+  return apiMutator<usageAdminEntitlementsListResponse>(getUsageAdminEntitlementsListUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageAdminEntitlementsCreateResponse200 = {
+  data: AdminEntitlementMutationResponseApi
+  status: 200
+}
+
+export type usageAdminEntitlementsCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageAdminEntitlementsCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageAdminEntitlementsCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageAdminEntitlementsCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageAdminEntitlementsCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageAdminEntitlementsCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageAdminEntitlementsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageAdminEntitlementsCreateResponseSuccess = (usageAdminEntitlementsCreateResponse200) & {
+  headers: Headers;
+};
+export type usageAdminEntitlementsCreateResponseError = (usageAdminEntitlementsCreateResponse400 | usageAdminEntitlementsCreateResponse401 | usageAdminEntitlementsCreateResponse402 | usageAdminEntitlementsCreateResponse403 | usageAdminEntitlementsCreateResponse404 | usageAdminEntitlementsCreateResponse500 | usageAdminEntitlementsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageAdminEntitlementsCreateResponse = (usageAdminEntitlementsCreateResponseSuccess | usageAdminEntitlementsCreateResponseError)
+
+export const getUsageAdminEntitlementsCreateUrl = () => {
+
+
+
+
+  return `/usage/admin/entitlements/`
+}
+
+/**
+ * Create or update an entitlement override.
+ */
+export const usageAdminEntitlementsCreate = async (adminEntitlementMutationRequestApi: AdminEntitlementMutationRequestApi, options?: RequestInit): Promise<usageAdminEntitlementsCreateResponse> => {
+
+  return apiMutator<usageAdminEntitlementsCreateResponse>(getUsageAdminEntitlementsCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      adminEntitlementMutationRequestApi,)
+  }
+);}
+
+
+
+export type usageAdminEntitlementsDeleteResponse200 = {
+  data: AdminEntitlementsResponseApi
+  status: 200
+}
+
+export type usageAdminEntitlementsDeleteResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageAdminEntitlementsDeleteResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageAdminEntitlementsDeleteResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageAdminEntitlementsDeleteResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageAdminEntitlementsDeleteResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageAdminEntitlementsDeleteResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageAdminEntitlementsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageAdminEntitlementsDeleteResponseSuccess = (usageAdminEntitlementsDeleteResponse200) & {
+  headers: Headers;
+};
+export type usageAdminEntitlementsDeleteResponseError = (usageAdminEntitlementsDeleteResponse400 | usageAdminEntitlementsDeleteResponse401 | usageAdminEntitlementsDeleteResponse402 | usageAdminEntitlementsDeleteResponse403 | usageAdminEntitlementsDeleteResponse404 | usageAdminEntitlementsDeleteResponse500 | usageAdminEntitlementsDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageAdminEntitlementsDeleteResponse = (usageAdminEntitlementsDeleteResponseSuccess | usageAdminEntitlementsDeleteResponseError)
+
+export const getUsageAdminEntitlementsDeleteUrl = (params: UsageAdminEntitlementsDeleteParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/usage/admin/entitlements/?${stringifiedParams}` : `/usage/admin/entitlements/`
+}
+
+/**
+ * Remove an entitlement override (falls back to plan default).
+ */
+export const usageAdminEntitlementsDelete = async (params: UsageAdminEntitlementsDeleteParams, options?: RequestInit): Promise<usageAdminEntitlementsDeleteResponse> => {
+
+  return apiMutator<usageAdminEntitlementsDeleteResponse>(getUsageAdminEntitlementsDeleteUrl(params),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type usageAdminInvoiceGenerateCreateResponse200 = {
+  data: AdminInvoiceGenerateResponseApi
+  status: 200
+}
+
+export type usageAdminInvoiceGenerateCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageAdminInvoiceGenerateCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageAdminInvoiceGenerateCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageAdminInvoiceGenerateCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageAdminInvoiceGenerateCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageAdminInvoiceGenerateCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageAdminInvoiceGenerateCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageAdminInvoiceGenerateCreateResponseSuccess = (usageAdminInvoiceGenerateCreateResponse200) & {
+  headers: Headers;
+};
+export type usageAdminInvoiceGenerateCreateResponseError = (usageAdminInvoiceGenerateCreateResponse400 | usageAdminInvoiceGenerateCreateResponse401 | usageAdminInvoiceGenerateCreateResponse402 | usageAdminInvoiceGenerateCreateResponse403 | usageAdminInvoiceGenerateCreateResponse404 | usageAdminInvoiceGenerateCreateResponse500 | usageAdminInvoiceGenerateCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageAdminInvoiceGenerateCreateResponse = (usageAdminInvoiceGenerateCreateResponseSuccess | usageAdminInvoiceGenerateCreateResponseError)
+
+export const getUsageAdminInvoiceGenerateCreateUrl = () => {
+
+
+
+
+  return `/usage/admin/invoice/generate/`
+}
+
+/**
+ * Generate invoice for an org+period.
+ */
+export const usageAdminInvoiceGenerateCreate = async (adminInvoiceRequestApi: AdminInvoiceRequestApi, options?: RequestInit): Promise<usageAdminInvoiceGenerateCreateResponse> => {
+
+  return apiMutator<usageAdminInvoiceGenerateCreateResponse>(getUsageAdminInvoiceGenerateCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      adminInvoiceRequestApi,)
+  }
+);}
+
+
+
+export type usageAdminInvoicePreviewCreateResponse200 = {
+  data: AdminInvoicePreviewResponseApi
+  status: 200
+}
+
+export type usageAdminInvoicePreviewCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageAdminInvoicePreviewCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageAdminInvoicePreviewCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageAdminInvoicePreviewCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageAdminInvoicePreviewCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageAdminInvoicePreviewCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageAdminInvoicePreviewCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageAdminInvoicePreviewCreateResponseSuccess = (usageAdminInvoicePreviewCreateResponse200) & {
+  headers: Headers;
+};
+export type usageAdminInvoicePreviewCreateResponseError = (usageAdminInvoicePreviewCreateResponse400 | usageAdminInvoicePreviewCreateResponse401 | usageAdminInvoicePreviewCreateResponse402 | usageAdminInvoicePreviewCreateResponse403 | usageAdminInvoicePreviewCreateResponse404 | usageAdminInvoicePreviewCreateResponse500 | usageAdminInvoicePreviewCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageAdminInvoicePreviewCreateResponse = (usageAdminInvoicePreviewCreateResponseSuccess | usageAdminInvoicePreviewCreateResponseError)
+
+export const getUsageAdminInvoicePreviewCreateUrl = () => {
+
+
+
+
+  return `/usage/admin/invoice/preview/`
+}
+
+/**
+ * Preview invoice for an org+period (no side effects).
+ */
+export const usageAdminInvoicePreviewCreate = async (adminInvoiceRequestApi: AdminInvoiceRequestApi, options?: RequestInit): Promise<usageAdminInvoicePreviewCreateResponse> => {
+
+  return apiMutator<usageAdminInvoicePreviewCreateResponse>(getUsageAdminInvoicePreviewCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      adminInvoiceRequestApi,)
+  }
+);}
+
+
+
+export type usageAdminPricingListResponse200 = {
+  data: AdminPricingListResponseApi
+  status: 200
+}
+
+export type usageAdminPricingListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageAdminPricingListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageAdminPricingListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageAdminPricingListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageAdminPricingListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageAdminPricingListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageAdminPricingListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageAdminPricingListResponseSuccess = (usageAdminPricingListResponse200) & {
+  headers: Headers;
+};
+export type usageAdminPricingListResponseError = (usageAdminPricingListResponse400 | usageAdminPricingListResponse401 | usageAdminPricingListResponse402 | usageAdminPricingListResponse403 | usageAdminPricingListResponse404 | usageAdminPricingListResponse500 | usageAdminPricingListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageAdminPricingListResponse = (usageAdminPricingListResponseSuccess | usageAdminPricingListResponseError)
+
+export const getUsageAdminPricingListUrl = (params: UsageAdminPricingListParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/usage/admin/pricing/?${stringifiedParams}` : `/usage/admin/pricing/`
+}
+
+/**
+ * List custom pricing tiers for an org.
+ */
+export const usageAdminPricingList = async (params: UsageAdminPricingListParams, options?: RequestInit): Promise<usageAdminPricingListResponse> => {
+
+  return apiMutator<usageAdminPricingListResponse>(getUsageAdminPricingListUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageAdminPricingCreateResponse200 = {
+  data: AdminPricingMutationResponseApi
+  status: 200
+}
+
+export type usageAdminPricingCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageAdminPricingCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageAdminPricingCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageAdminPricingCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageAdminPricingCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageAdminPricingCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageAdminPricingCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageAdminPricingCreateResponseSuccess = (usageAdminPricingCreateResponse200) & {
+  headers: Headers;
+};
+export type usageAdminPricingCreateResponseError = (usageAdminPricingCreateResponse400 | usageAdminPricingCreateResponse401 | usageAdminPricingCreateResponse402 | usageAdminPricingCreateResponse403 | usageAdminPricingCreateResponse404 | usageAdminPricingCreateResponse500 | usageAdminPricingCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageAdminPricingCreateResponse = (usageAdminPricingCreateResponseSuccess | usageAdminPricingCreateResponseError)
+
+export const getUsageAdminPricingCreateUrl = () => {
+
+
+
+
+  return `/usage/admin/pricing/`
+}
+
+/**
+ * Create or update a pricing tier.
+ */
+export const usageAdminPricingCreate = async (adminPricingMutationRequestApi: AdminPricingMutationRequestApi, options?: RequestInit): Promise<usageAdminPricingCreateResponse> => {
+
+  return apiMutator<usageAdminPricingCreateResponse>(getUsageAdminPricingCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      adminPricingMutationRequestApi,)
+  }
+);}
+
+
+
+export type usageAdminPricingDeleteResponse200 = {
+  data: AdminEntitlementsResponseApi
+  status: 200
+}
+
+export type usageAdminPricingDeleteResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageAdminPricingDeleteResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageAdminPricingDeleteResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageAdminPricingDeleteResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageAdminPricingDeleteResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageAdminPricingDeleteResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageAdminPricingDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageAdminPricingDeleteResponseSuccess = (usageAdminPricingDeleteResponse200) & {
+  headers: Headers;
+};
+export type usageAdminPricingDeleteResponseError = (usageAdminPricingDeleteResponse400 | usageAdminPricingDeleteResponse401 | usageAdminPricingDeleteResponse402 | usageAdminPricingDeleteResponse403 | usageAdminPricingDeleteResponse404 | usageAdminPricingDeleteResponse500 | usageAdminPricingDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageAdminPricingDeleteResponse = (usageAdminPricingDeleteResponseSuccess | usageAdminPricingDeleteResponseError)
+
+export const getUsageAdminPricingDeleteUrl = (params: UsageAdminPricingDeleteParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/usage/admin/pricing/?${stringifiedParams}` : `/usage/admin/pricing/`
+}
+
+/**
+ * Remove all custom pricing tiers for a dimension.
+ */
+export const usageAdminPricingDelete = async (params: UsageAdminPricingDeleteParams, options?: RequestInit): Promise<usageAdminPricingDeleteResponse> => {
+
+  return apiMutator<usageAdminPricingDeleteResponse>(getUsageAdminPricingDeleteUrl(params),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type usageApiCallCountListResponse200 = {
+  data: APICallCountResponseApi
+  status: 200
+}
+
+export type usageApiCallCountListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageApiCallCountListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageApiCallCountListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageApiCallCountListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageApiCallCountListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageApiCallCountListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageApiCallCountListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageApiCallCountListResponseSuccess = (usageApiCallCountListResponse200) & {
+  headers: Headers;
+};
+export type usageApiCallCountListResponseError = (usageApiCallCountListResponse400 | usageApiCallCountListResponse401 | usageApiCallCountListResponse402 | usageApiCallCountListResponse403 | usageApiCallCountListResponse404 | usageApiCallCountListResponse500 | usageApiCallCountListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageApiCallCountListResponse = (usageApiCallCountListResponseSuccess | usageApiCallCountListResponseError)
+
+export const getUsageApiCallCountListUrl = (params?: UsageApiCallCountListParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/usage/api-call-count/?${stringifiedParams}` : `/usage/api-call-count/`
+}
+
+export const usageApiCallCountList = async (params?: UsageApiCallCountListParams, options?: RequestInit): Promise<usageApiCallCountListResponse> => {
+
+  return apiMutator<usageApiCallCountListResponse>(getUsageApiCallCountListUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageApiCallTypeListResponse200 = {
+  data: APICallTypeListResponseApi
+  status: 200
+}
+
+export type usageApiCallTypeListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageApiCallTypeListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageApiCallTypeListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageApiCallTypeListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageApiCallTypeListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageApiCallTypeListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageApiCallTypeListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageApiCallTypeListResponseSuccess = (usageApiCallTypeListResponse200) & {
+  headers: Headers;
+};
+export type usageApiCallTypeListResponseError = (usageApiCallTypeListResponse400 | usageApiCallTypeListResponse401 | usageApiCallTypeListResponse402 | usageApiCallTypeListResponse403 | usageApiCallTypeListResponse404 | usageApiCallTypeListResponse500 | usageApiCallTypeListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageApiCallTypeListResponse = (usageApiCallTypeListResponseSuccess | usageApiCallTypeListResponseError)
+
+export const getUsageApiCallTypeListUrl = () => {
+
+
+
+
+  return `/usage/api-call-type/`
+}
+
+export const usageApiCallTypeList = async ( options?: RequestInit): Promise<usageApiCallTypeListResponse> => {
+
+  return apiMutator<usageApiCallTypeListResponse>(getUsageApiCallTypeListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageCancelSubscriptionCreateResponse200 = {
+  data: UsageMessageResponseApi
+  status: 200
+}
+
+export type usageCancelSubscriptionCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageCancelSubscriptionCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageCancelSubscriptionCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageCancelSubscriptionCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageCancelSubscriptionCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageCancelSubscriptionCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageCancelSubscriptionCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageCancelSubscriptionCreateResponseSuccess = (usageCancelSubscriptionCreateResponse200) & {
+  headers: Headers;
+};
+export type usageCancelSubscriptionCreateResponseError = (usageCancelSubscriptionCreateResponse400 | usageCancelSubscriptionCreateResponse401 | usageCancelSubscriptionCreateResponse402 | usageCancelSubscriptionCreateResponse403 | usageCancelSubscriptionCreateResponse404 | usageCancelSubscriptionCreateResponse500 | usageCancelSubscriptionCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageCancelSubscriptionCreateResponse = (usageCancelSubscriptionCreateResponseSuccess | usageCancelSubscriptionCreateResponseError)
+
+export const getUsageCancelSubscriptionCreateUrl = () => {
+
+
+
+
+  return `/usage/cancel-subscription/`
+}
+
+export const usageCancelSubscriptionCreate = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageCancelSubscriptionCreateResponse> => {
+
+  return apiMutator<usageCancelSubscriptionCreateResponse>(getUsageCancelSubscriptionCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
+  }
+);}
+
+
+
+export type usageCreateAutoRechargeSessionCreateResponse200 = {
+  data: CheckoutSessionResponseApi
+  status: 200
+}
+
+export type usageCreateAutoRechargeSessionCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageCreateAutoRechargeSessionCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageCreateAutoRechargeSessionCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageCreateAutoRechargeSessionCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageCreateAutoRechargeSessionCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageCreateAutoRechargeSessionCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageCreateAutoRechargeSessionCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageCreateAutoRechargeSessionCreateResponseSuccess = (usageCreateAutoRechargeSessionCreateResponse200) & {
+  headers: Headers;
+};
+export type usageCreateAutoRechargeSessionCreateResponseError = (usageCreateAutoRechargeSessionCreateResponse400 | usageCreateAutoRechargeSessionCreateResponse401 | usageCreateAutoRechargeSessionCreateResponse402 | usageCreateAutoRechargeSessionCreateResponse403 | usageCreateAutoRechargeSessionCreateResponse404 | usageCreateAutoRechargeSessionCreateResponse500 | usageCreateAutoRechargeSessionCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageCreateAutoRechargeSessionCreateResponse = (usageCreateAutoRechargeSessionCreateResponseSuccess | usageCreateAutoRechargeSessionCreateResponseError)
+
+export const getUsageCreateAutoRechargeSessionCreateUrl = () => {
+
+
+
+
+  return `/usage/create-auto-recharge-session/`
+}
+
+export const usageCreateAutoRechargeSessionCreate = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageCreateAutoRechargeSessionCreateResponse> => {
+
+  return apiMutator<usageCreateAutoRechargeSessionCreateResponse>(getUsageCreateAutoRechargeSessionCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
+  }
+);}
+
+
+
+export type usageCreateBillingPortalSessionCreateResponse200 = {
+  data: BillingPortalResponseApi
+  status: 200
+}
+
+export type usageCreateBillingPortalSessionCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageCreateBillingPortalSessionCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageCreateBillingPortalSessionCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageCreateBillingPortalSessionCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageCreateBillingPortalSessionCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageCreateBillingPortalSessionCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageCreateBillingPortalSessionCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageCreateBillingPortalSessionCreateResponseSuccess = (usageCreateBillingPortalSessionCreateResponse200) & {
+  headers: Headers;
+};
+export type usageCreateBillingPortalSessionCreateResponseError = (usageCreateBillingPortalSessionCreateResponse400 | usageCreateBillingPortalSessionCreateResponse401 | usageCreateBillingPortalSessionCreateResponse402 | usageCreateBillingPortalSessionCreateResponse403 | usageCreateBillingPortalSessionCreateResponse404 | usageCreateBillingPortalSessionCreateResponse500 | usageCreateBillingPortalSessionCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageCreateBillingPortalSessionCreateResponse = (usageCreateBillingPortalSessionCreateResponseSuccess | usageCreateBillingPortalSessionCreateResponseError)
+
+export const getUsageCreateBillingPortalSessionCreateUrl = () => {
+
+
+
+
+  return `/usage/create-billing-portal-session/`
+}
+
+export const usageCreateBillingPortalSessionCreate = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageCreateBillingPortalSessionCreateResponse> => {
+
+  return apiMutator<usageCreateBillingPortalSessionCreateResponse>(getUsageCreateBillingPortalSessionCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
+  }
+);}
+
+
+
+export type usageCreateCheckoutSessionCreateResponse200 = {
+  data: CheckoutSessionResponseApi
+  status: 200
+}
+
+export type usageCreateCheckoutSessionCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageCreateCheckoutSessionCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageCreateCheckoutSessionCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageCreateCheckoutSessionCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageCreateCheckoutSessionCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageCreateCheckoutSessionCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageCreateCheckoutSessionCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageCreateCheckoutSessionCreateResponseSuccess = (usageCreateCheckoutSessionCreateResponse200) & {
+  headers: Headers;
+};
+export type usageCreateCheckoutSessionCreateResponseError = (usageCreateCheckoutSessionCreateResponse400 | usageCreateCheckoutSessionCreateResponse401 | usageCreateCheckoutSessionCreateResponse402 | usageCreateCheckoutSessionCreateResponse403 | usageCreateCheckoutSessionCreateResponse404 | usageCreateCheckoutSessionCreateResponse500 | usageCreateCheckoutSessionCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageCreateCheckoutSessionCreateResponse = (usageCreateCheckoutSessionCreateResponseSuccess | usageCreateCheckoutSessionCreateResponseError)
+
+export const getUsageCreateCheckoutSessionCreateUrl = () => {
+
+
+
+
+  return `/usage/create-checkout-session/`
+}
+
+export const usageCreateCheckoutSessionCreate = async (checkoutSessionRequestApi: CheckoutSessionRequestApi, options?: RequestInit): Promise<usageCreateCheckoutSessionCreateResponse> => {
+
+  return apiMutator<usageCreateCheckoutSessionCreateResponse>(getUsageCreateCheckoutSessionCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      checkoutSessionRequestApi,)
+  }
+);}
+
+
+
+export type usageCreateCustomPaymentCheckoutSessionCreateResponse200 = {
+  data: CheckoutSessionResponseApi
+  status: 200
+}
+
+export type usageCreateCustomPaymentCheckoutSessionCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageCreateCustomPaymentCheckoutSessionCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageCreateCustomPaymentCheckoutSessionCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageCreateCustomPaymentCheckoutSessionCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageCreateCustomPaymentCheckoutSessionCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageCreateCustomPaymentCheckoutSessionCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageCreateCustomPaymentCheckoutSessionCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageCreateCustomPaymentCheckoutSessionCreateResponseSuccess = (usageCreateCustomPaymentCheckoutSessionCreateResponse200) & {
+  headers: Headers;
+};
+export type usageCreateCustomPaymentCheckoutSessionCreateResponseError = (usageCreateCustomPaymentCheckoutSessionCreateResponse400 | usageCreateCustomPaymentCheckoutSessionCreateResponse401 | usageCreateCustomPaymentCheckoutSessionCreateResponse402 | usageCreateCustomPaymentCheckoutSessionCreateResponse403 | usageCreateCustomPaymentCheckoutSessionCreateResponse404 | usageCreateCustomPaymentCheckoutSessionCreateResponse500 | usageCreateCustomPaymentCheckoutSessionCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageCreateCustomPaymentCheckoutSessionCreateResponse = (usageCreateCustomPaymentCheckoutSessionCreateResponseSuccess | usageCreateCustomPaymentCheckoutSessionCreateResponseError)
+
+export const getUsageCreateCustomPaymentCheckoutSessionCreateUrl = () => {
+
+
+
+
+  return `/usage/create-custom-payment-checkout-session/`
+}
+
+export const usageCreateCustomPaymentCheckoutSessionCreate = async (customPaymentCheckoutRequestApi: CustomPaymentCheckoutRequestApi, options?: RequestInit): Promise<usageCreateCustomPaymentCheckoutSessionCreateResponse> => {
+
+  return apiMutator<usageCreateCustomPaymentCheckoutSessionCreateResponse>(getUsageCreateCustomPaymentCheckoutSessionCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      customPaymentCheckoutRequestApi,)
+  }
+);}
+
+
+
+export type usageDownloadInvoiceCreateResponse200 = {
+  data: DownloadInvoiceResponseApi
+  status: 200
+}
+
+export type usageDownloadInvoiceCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageDownloadInvoiceCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageDownloadInvoiceCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageDownloadInvoiceCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageDownloadInvoiceCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageDownloadInvoiceCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageDownloadInvoiceCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageDownloadInvoiceCreateResponseSuccess = (usageDownloadInvoiceCreateResponse200) & {
+  headers: Headers;
+};
+export type usageDownloadInvoiceCreateResponseError = (usageDownloadInvoiceCreateResponse400 | usageDownloadInvoiceCreateResponse401 | usageDownloadInvoiceCreateResponse402 | usageDownloadInvoiceCreateResponse403 | usageDownloadInvoiceCreateResponse404 | usageDownloadInvoiceCreateResponse500 | usageDownloadInvoiceCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageDownloadInvoiceCreateResponse = (usageDownloadInvoiceCreateResponseSuccess | usageDownloadInvoiceCreateResponseError)
+
+export const getUsageDownloadInvoiceCreateUrl = () => {
+
+
+
+
+  return `/usage/download-invoice/`
+}
+
+export const usageDownloadInvoiceCreate = async (downloadInvoiceRequestApi: DownloadInvoiceRequestApi, options?: RequestInit): Promise<usageDownloadInvoiceCreateResponse> => {
+
+  return apiMutator<usageDownloadInvoiceCreateResponse>(getUsageDownloadInvoiceCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      downloadInvoiceRequestApi,)
+  }
+);}
+
+
+
+export type usageEeLicensesListResponse200 = {
+  data: EELicenseListResponseApi
+  status: 200
+}
+
+export type usageEeLicensesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type usageEeLicensesListResponseSuccess = (usageEeLicensesListResponse200) & {
+  headers: Headers;
+};
+export type usageEeLicensesListResponseError = (usageEeLicensesListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageEeLicensesListResponse = (usageEeLicensesListResponseSuccess | usageEeLicensesListResponseError)
+
+export const getUsageEeLicensesListUrl = () => {
+
+
+
+
+  return `/usage/ee/licenses/`
+}
+
+/**
+ * List or create EE licenses.
+ */
+export const usageEeLicensesList = async ( options?: RequestInit): Promise<usageEeLicensesListResponse> => {
+
+  return apiMutator<usageEeLicensesListResponse>(getUsageEeLicensesListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageEeLicensesCreateResponse200 = {
+  data: EELicenseCreateResponseApi
+  status: 200
+}
+
+export type usageEeLicensesCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type usageEeLicensesCreateResponseSuccess = (usageEeLicensesCreateResponse200) & {
+  headers: Headers;
+};
+export type usageEeLicensesCreateResponseError = (usageEeLicensesCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageEeLicensesCreateResponse = (usageEeLicensesCreateResponseSuccess | usageEeLicensesCreateResponseError)
+
+export const getUsageEeLicensesCreateUrl = () => {
+
+
+
+
+  return `/usage/ee/licenses/`
+}
+
+/**
+ * List or create EE licenses.
+ */
+export const usageEeLicensesCreate = async (eELicenseCreateRequestApi: EELicenseCreateRequestApi, options?: RequestInit): Promise<usageEeLicensesCreateResponse> => {
+
+  return apiMutator<usageEeLicensesCreateResponse>(getUsageEeLicensesCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      eELicenseCreateRequestApi,)
+  }
+);}
+
+
+
+export type usageEeLicensesRevokeCreateResponse200 = {
+  data: EELicenseRevokeResponseApi
+  status: 200
+}
+
+export type usageEeLicensesRevokeCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200>
+}
+
+export type usageEeLicensesRevokeCreateResponseSuccess = (usageEeLicensesRevokeCreateResponse200) & {
+  headers: Headers;
+};
+export type usageEeLicensesRevokeCreateResponseError = (usageEeLicensesRevokeCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageEeLicensesRevokeCreateResponse = (usageEeLicensesRevokeCreateResponseSuccess | usageEeLicensesRevokeCreateResponseError)
+
+export const getUsageEeLicensesRevokeCreateUrl = (grantId: string,) => {
+
+
+
+
+  return `/usage/ee/licenses/${grantId}/revoke/`
+}
+
+/**
+ * Revoke an EE license.
+ */
+export const usageEeLicensesRevokeCreate = async (grantId: string,
+    eELicenseRevokeRequestApi: EELicenseRevokeRequestApi, options?: RequestInit): Promise<usageEeLicensesRevokeCreateResponse> => {
+
+  return apiMutator<usageEeLicensesRevokeCreateResponse>(getUsageEeLicensesRevokeCreateUrl(grantId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      eELicenseRevokeRequestApi,)
+  }
+);}
+
+
+
+export type usageGetAutoReloadSettingsListResponse200 = {
+  data: AutoReloadSettingsResponseApi
+  status: 200
+}
+
+export type usageGetAutoReloadSettingsListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageGetAutoReloadSettingsListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageGetAutoReloadSettingsListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageGetAutoReloadSettingsListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageGetAutoReloadSettingsListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageGetAutoReloadSettingsListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageGetAutoReloadSettingsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageGetAutoReloadSettingsListResponseSuccess = (usageGetAutoReloadSettingsListResponse200) & {
+  headers: Headers;
+};
+export type usageGetAutoReloadSettingsListResponseError = (usageGetAutoReloadSettingsListResponse400 | usageGetAutoReloadSettingsListResponse401 | usageGetAutoReloadSettingsListResponse402 | usageGetAutoReloadSettingsListResponse403 | usageGetAutoReloadSettingsListResponse404 | usageGetAutoReloadSettingsListResponse500 | usageGetAutoReloadSettingsListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageGetAutoReloadSettingsListResponse = (usageGetAutoReloadSettingsListResponseSuccess | usageGetAutoReloadSettingsListResponseError)
+
+export const getUsageGetAutoReloadSettingsListUrl = () => {
+
+
+
+
+  return `/usage/get-auto-reload-settings/`
+}
+
+export const usageGetAutoReloadSettingsList = async ( options?: RequestInit): Promise<usageGetAutoReloadSettingsListResponse> => {
+
+  return apiMutator<usageGetAutoReloadSettingsListResponse>(getUsageGetAutoReloadSettingsListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageGetBillingDetailsListResponse200 = {
+  data: OrganizationBillingLegacyResponseApi
+  status: 200
+}
+
+export type usageGetBillingDetailsListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageGetBillingDetailsListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageGetBillingDetailsListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageGetBillingDetailsListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageGetBillingDetailsListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageGetBillingDetailsListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageGetBillingDetailsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageGetBillingDetailsListResponseSuccess = (usageGetBillingDetailsListResponse200) & {
+  headers: Headers;
+};
+export type usageGetBillingDetailsListResponseError = (usageGetBillingDetailsListResponse400 | usageGetBillingDetailsListResponse401 | usageGetBillingDetailsListResponse402 | usageGetBillingDetailsListResponse403 | usageGetBillingDetailsListResponse404 | usageGetBillingDetailsListResponse500 | usageGetBillingDetailsListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageGetBillingDetailsListResponse = (usageGetBillingDetailsListResponseSuccess | usageGetBillingDetailsListResponseError)
+
+export const getUsageGetBillingDetailsListUrl = () => {
+
+
+
+
+  return `/usage/get-billing-details/`
+}
+
+export const usageGetBillingDetailsList = async ( options?: RequestInit): Promise<usageGetBillingDetailsListResponse> => {
+
+  return apiMutator<usageGetBillingDetailsListResponse>(getUsageGetBillingDetailsListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageGetCustomerInvoicesListResponse200 = {
+  data: CustomerInvoicesResponseApi
+  status: 200
+}
+
+export type usageGetCustomerInvoicesListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageGetCustomerInvoicesListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageGetCustomerInvoicesListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageGetCustomerInvoicesListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageGetCustomerInvoicesListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageGetCustomerInvoicesListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageGetCustomerInvoicesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageGetCustomerInvoicesListResponseSuccess = (usageGetCustomerInvoicesListResponse200) & {
+  headers: Headers;
+};
+export type usageGetCustomerInvoicesListResponseError = (usageGetCustomerInvoicesListResponse400 | usageGetCustomerInvoicesListResponse401 | usageGetCustomerInvoicesListResponse402 | usageGetCustomerInvoicesListResponse403 | usageGetCustomerInvoicesListResponse404 | usageGetCustomerInvoicesListResponse500 | usageGetCustomerInvoicesListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageGetCustomerInvoicesListResponse = (usageGetCustomerInvoicesListResponseSuccess | usageGetCustomerInvoicesListResponseError)
+
+export const getUsageGetCustomerInvoicesListUrl = () => {
+
+
+
+
+  return `/usage/get-customer-invoices/`
+}
+
+export const usageGetCustomerInvoicesList = async ( options?: RequestInit): Promise<usageGetCustomerInvoicesListResponse> => {
+
+  return apiMutator<usageGetCustomerInvoicesListResponse>(getUsageGetCustomerInvoicesListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageGetLastFourDigitsListResponse200 = {
+  data: LastFourDigitsResponseApi
+  status: 200
+}
+
+export type usageGetLastFourDigitsListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageGetLastFourDigitsListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageGetLastFourDigitsListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageGetLastFourDigitsListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageGetLastFourDigitsListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageGetLastFourDigitsListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageGetLastFourDigitsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageGetLastFourDigitsListResponseSuccess = (usageGetLastFourDigitsListResponse200) & {
+  headers: Headers;
+};
+export type usageGetLastFourDigitsListResponseError = (usageGetLastFourDigitsListResponse400 | usageGetLastFourDigitsListResponse401 | usageGetLastFourDigitsListResponse402 | usageGetLastFourDigitsListResponse403 | usageGetLastFourDigitsListResponse404 | usageGetLastFourDigitsListResponse500 | usageGetLastFourDigitsListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageGetLastFourDigitsListResponse = (usageGetLastFourDigitsListResponseSuccess | usageGetLastFourDigitsListResponseError)
+
+export const getUsageGetLastFourDigitsListUrl = () => {
+
+
+
+
+  return `/usage/get-last-four-digits/`
+}
+
+export const usageGetLastFourDigitsList = async ( options?: RequestInit): Promise<usageGetLastFourDigitsListResponse> => {
+
+  return apiMutator<usageGetLastFourDigitsListResponse>(getUsageGetLastFourDigitsListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageGetWalletBalanceListResponse200 = {
+  data: WalletBalanceResponseApi
+  status: 200
+}
+
+export type usageGetWalletBalanceListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageGetWalletBalanceListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageGetWalletBalanceListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageGetWalletBalanceListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageGetWalletBalanceListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageGetWalletBalanceListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageGetWalletBalanceListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageGetWalletBalanceListResponseSuccess = (usageGetWalletBalanceListResponse200) & {
+  headers: Headers;
+};
+export type usageGetWalletBalanceListResponseError = (usageGetWalletBalanceListResponse400 | usageGetWalletBalanceListResponse401 | usageGetWalletBalanceListResponse402 | usageGetWalletBalanceListResponse403 | usageGetWalletBalanceListResponse404 | usageGetWalletBalanceListResponse500 | usageGetWalletBalanceListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageGetWalletBalanceListResponse = (usageGetWalletBalanceListResponseSuccess | usageGetWalletBalanceListResponseError)
+
+export const getUsageGetWalletBalanceListUrl = () => {
+
+
+
+
+  return `/usage/get-wallet-balance/`
+}
+
+export const usageGetWalletBalanceList = async ( options?: RequestInit): Promise<usageGetWalletBalanceListResponse> => {
+
+  return apiMutator<usageGetWalletBalanceListResponse>(getUsageGetWalletBalanceListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageGetLatestPricesListResponse200 = {
+  data: PricingCalculationResponseApi
+  status: 200
+}
+
+export type usageGetLatestPricesListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageGetLatestPricesListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageGetLatestPricesListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageGetLatestPricesListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageGetLatestPricesListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageGetLatestPricesListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageGetLatestPricesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageGetLatestPricesListResponseSuccess = (usageGetLatestPricesListResponse200) & {
+  headers: Headers;
+};
+export type usageGetLatestPricesListResponseError = (usageGetLatestPricesListResponse400 | usageGetLatestPricesListResponse401 | usageGetLatestPricesListResponse402 | usageGetLatestPricesListResponse403 | usageGetLatestPricesListResponse404 | usageGetLatestPricesListResponse500 | usageGetLatestPricesListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageGetLatestPricesListResponse = (usageGetLatestPricesListResponseSuccess | usageGetLatestPricesListResponseError)
+
+export const getUsageGetLatestPricesListUrl = () => {
+
+
+
+
+  return `/usage/get_latest_prices/`
+}
+
+export const usageGetLatestPricesList = async ( options?: RequestInit): Promise<usageGetLatestPricesListResponse> => {
+
+  return apiMutator<usageGetLatestPricesListResponse>(getUsageGetLatestPricesListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageOrganizationBillingListResponse200 = {
+  data: OrganizationBillingListResponseApi
+  status: 200
+}
+
+export type usageOrganizationBillingListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageOrganizationBillingListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageOrganizationBillingListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageOrganizationBillingListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageOrganizationBillingListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageOrganizationBillingListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageOrganizationBillingListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageOrganizationBillingListResponseSuccess = (usageOrganizationBillingListResponse200) & {
+  headers: Headers;
+};
+export type usageOrganizationBillingListResponseError = (usageOrganizationBillingListResponse400 | usageOrganizationBillingListResponse401 | usageOrganizationBillingListResponse402 | usageOrganizationBillingListResponse403 | usageOrganizationBillingListResponse404 | usageOrganizationBillingListResponse500 | usageOrganizationBillingListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageOrganizationBillingListResponse = (usageOrganizationBillingListResponseSuccess | usageOrganizationBillingListResponseError)
+
+export const getUsageOrganizationBillingListUrl = () => {
+
+
+
+
+  return `/usage/organization-billing/`
+}
+
+export const usageOrganizationBillingList = async ( options?: RequestInit): Promise<usageOrganizationBillingListResponse> => {
+
+  return apiMutator<usageOrganizationBillingListResponse>(getUsageOrganizationBillingListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageOrganizationBillingPartialUpdateResponse200 = {
+  data: OrganizationBillingDetailResponseApi
+  status: 200
+}
+
+export type usageOrganizationBillingPartialUpdateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageOrganizationBillingPartialUpdateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageOrganizationBillingPartialUpdateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageOrganizationBillingPartialUpdateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageOrganizationBillingPartialUpdateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageOrganizationBillingPartialUpdateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageOrganizationBillingPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageOrganizationBillingPartialUpdateResponseSuccess = (usageOrganizationBillingPartialUpdateResponse200) & {
+  headers: Headers;
+};
+export type usageOrganizationBillingPartialUpdateResponseError = (usageOrganizationBillingPartialUpdateResponse400 | usageOrganizationBillingPartialUpdateResponse401 | usageOrganizationBillingPartialUpdateResponse402 | usageOrganizationBillingPartialUpdateResponse403 | usageOrganizationBillingPartialUpdateResponse404 | usageOrganizationBillingPartialUpdateResponse500 | usageOrganizationBillingPartialUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageOrganizationBillingPartialUpdateResponse = (usageOrganizationBillingPartialUpdateResponseSuccess | usageOrganizationBillingPartialUpdateResponseError)
+
+export const getUsageOrganizationBillingPartialUpdateUrl = (billingId: string,) => {
+
+
+
+
+  return `/usage/organization-billing/${billingId}/`
+}
+
+export const usageOrganizationBillingPartialUpdate = async (billingId: string,
+    usageOrganizationBillingApi: NonReadonly<UsageOrganizationBillingApi>, options?: RequestInit): Promise<usageOrganizationBillingPartialUpdateResponse> => {
+
+  return apiMutator<usageOrganizationBillingPartialUpdateResponse>(getUsageOrganizationBillingPartialUpdateUrl(billingId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageOrganizationBillingApi,)
+  }
+);}
+
+
+
+export type usageOrganizationBillingReadResponse200 = {
+  data: OrganizationBillingListResponseApi
+  status: 200
+}
+
+export type usageOrganizationBillingReadResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageOrganizationBillingReadResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageOrganizationBillingReadResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageOrganizationBillingReadResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageOrganizationBillingReadResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageOrganizationBillingReadResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageOrganizationBillingReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageOrganizationBillingReadResponseSuccess = (usageOrganizationBillingReadResponse200) & {
+  headers: Headers;
+};
+export type usageOrganizationBillingReadResponseError = (usageOrganizationBillingReadResponse400 | usageOrganizationBillingReadResponse401 | usageOrganizationBillingReadResponse402 | usageOrganizationBillingReadResponse403 | usageOrganizationBillingReadResponse404 | usageOrganizationBillingReadResponse500 | usageOrganizationBillingReadResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageOrganizationBillingReadResponse = (usageOrganizationBillingReadResponseSuccess | usageOrganizationBillingReadResponseError)
+
+export const getUsageOrganizationBillingReadUrl = (billingId: string,) => {
+
+
+
+
+  return `/usage/organization-billing/${billingId}/`
+}
+
+export const usageOrganizationBillingRead = async (billingId: string, options?: RequestInit): Promise<usageOrganizationBillingReadResponse> => {
+
+  return apiMutator<usageOrganizationBillingReadResponse>(getUsageOrganizationBillingReadUrl(billingId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageOrganizationFilterListResponse200 = {
+  data: OrganizationListResponseApi
+  status: 200
+}
+
+export type usageOrganizationFilterListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageOrganizationFilterListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageOrganizationFilterListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageOrganizationFilterListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageOrganizationFilterListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageOrganizationFilterListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageOrganizationFilterListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageOrganizationFilterListResponseSuccess = (usageOrganizationFilterListResponse200) & {
+  headers: Headers;
+};
+export type usageOrganizationFilterListResponseError = (usageOrganizationFilterListResponse400 | usageOrganizationFilterListResponse401 | usageOrganizationFilterListResponse402 | usageOrganizationFilterListResponse403 | usageOrganizationFilterListResponse404 | usageOrganizationFilterListResponse500 | usageOrganizationFilterListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageOrganizationFilterListResponse = (usageOrganizationFilterListResponseSuccess | usageOrganizationFilterListResponseError)
+
+export const getUsageOrganizationFilterListUrl = () => {
+
+
+
+
+  return `/usage/organization-filter/`
+}
+
+export const usageOrganizationFilterList = async ( options?: RequestInit): Promise<usageOrganizationFilterListResponse> => {
+
+  return apiMutator<usageOrganizationFilterListResponse>(getUsageOrganizationFilterListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageOrganizationSubscriptionListResponse200 = {
+  data: OrganizationSubscriptionListResponseApi
+  status: 200
+}
+
+export type usageOrganizationSubscriptionListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageOrganizationSubscriptionListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageOrganizationSubscriptionListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageOrganizationSubscriptionListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageOrganizationSubscriptionListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageOrganizationSubscriptionListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageOrganizationSubscriptionListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageOrganizationSubscriptionListResponseSuccess = (usageOrganizationSubscriptionListResponse200) & {
+  headers: Headers;
+};
+export type usageOrganizationSubscriptionListResponseError = (usageOrganizationSubscriptionListResponse400 | usageOrganizationSubscriptionListResponse401 | usageOrganizationSubscriptionListResponse402 | usageOrganizationSubscriptionListResponse403 | usageOrganizationSubscriptionListResponse404 | usageOrganizationSubscriptionListResponse500 | usageOrganizationSubscriptionListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageOrganizationSubscriptionListResponse = (usageOrganizationSubscriptionListResponseSuccess | usageOrganizationSubscriptionListResponseError)
+
+export const getUsageOrganizationSubscriptionListUrl = () => {
+
+
+
+
+  return `/usage/organization-subscription/`
+}
+
+export const usageOrganizationSubscriptionList = async ( options?: RequestInit): Promise<usageOrganizationSubscriptionListResponse> => {
+
+  return apiMutator<usageOrganizationSubscriptionListResponse>(getUsageOrganizationSubscriptionListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageOrganizationSubscriptionCreateResponse200 = {
+  data: OrganizationSubscriptionMutationResponseApi
+  status: 200
+}
+
+export type usageOrganizationSubscriptionCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageOrganizationSubscriptionCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageOrganizationSubscriptionCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageOrganizationSubscriptionCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageOrganizationSubscriptionCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageOrganizationSubscriptionCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageOrganizationSubscriptionCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageOrganizationSubscriptionCreateResponseSuccess = (usageOrganizationSubscriptionCreateResponse200) & {
+  headers: Headers;
+};
+export type usageOrganizationSubscriptionCreateResponseError = (usageOrganizationSubscriptionCreateResponse400 | usageOrganizationSubscriptionCreateResponse401 | usageOrganizationSubscriptionCreateResponse402 | usageOrganizationSubscriptionCreateResponse403 | usageOrganizationSubscriptionCreateResponse404 | usageOrganizationSubscriptionCreateResponse500 | usageOrganizationSubscriptionCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageOrganizationSubscriptionCreateResponse = (usageOrganizationSubscriptionCreateResponseSuccess | usageOrganizationSubscriptionCreateResponseError)
+
+export const getUsageOrganizationSubscriptionCreateUrl = (organizationSubscriptionId: string,) => {
+
+
+
+
+  return `/usage/organization-subscription/${organizationSubscriptionId}/`
+}
+
+export const usageOrganizationSubscriptionCreate = async (organizationSubscriptionId: string,
+    usageOrganizationSubscriptionCreateApi: UsageOrganizationSubscriptionCreateApi, options?: RequestInit): Promise<usageOrganizationSubscriptionCreateResponse> => {
+
+  return apiMutator<usageOrganizationSubscriptionCreateResponse>(getUsageOrganizationSubscriptionCreateUrl(organizationSubscriptionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageOrganizationSubscriptionCreateApi,)
+  }
+);}
+
+
+
+export type usageOrganizationSubscriptionPartialUpdateResponse200 = {
+  data: OrganizationSubscriptionMutationResponseApi
+  status: 200
+}
+
+export type usageOrganizationSubscriptionPartialUpdateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageOrganizationSubscriptionPartialUpdateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageOrganizationSubscriptionPartialUpdateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageOrganizationSubscriptionPartialUpdateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageOrganizationSubscriptionPartialUpdateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageOrganizationSubscriptionPartialUpdateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageOrganizationSubscriptionPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageOrganizationSubscriptionPartialUpdateResponseSuccess = (usageOrganizationSubscriptionPartialUpdateResponse200) & {
+  headers: Headers;
+};
+export type usageOrganizationSubscriptionPartialUpdateResponseError = (usageOrganizationSubscriptionPartialUpdateResponse400 | usageOrganizationSubscriptionPartialUpdateResponse401 | usageOrganizationSubscriptionPartialUpdateResponse402 | usageOrganizationSubscriptionPartialUpdateResponse403 | usageOrganizationSubscriptionPartialUpdateResponse404 | usageOrganizationSubscriptionPartialUpdateResponse500 | usageOrganizationSubscriptionPartialUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageOrganizationSubscriptionPartialUpdateResponse = (usageOrganizationSubscriptionPartialUpdateResponseSuccess | usageOrganizationSubscriptionPartialUpdateResponseError)
+
+export const getUsageOrganizationSubscriptionPartialUpdateUrl = (organizationSubscriptionId: string,) => {
+
+
+
+
+  return `/usage/organization-subscription/${organizationSubscriptionId}/`
+}
+
+export const usageOrganizationSubscriptionPartialUpdate = async (organizationSubscriptionId: string,
+    usageOrganizationSubscriptionCreateApi: UsageOrganizationSubscriptionCreateApi, options?: RequestInit): Promise<usageOrganizationSubscriptionPartialUpdateResponse> => {
+
+  return apiMutator<usageOrganizationSubscriptionPartialUpdateResponse>(getUsageOrganizationSubscriptionPartialUpdateUrl(organizationSubscriptionId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageOrganizationSubscriptionCreateApi,)
+  }
+);}
+
+
+
+export type usageOrganizationSubscriptionDeleteResponse200 = {
+  data: UsageStringResponseApi
+  status: 200
+}
+
+export type usageOrganizationSubscriptionDeleteResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageOrganizationSubscriptionDeleteResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageOrganizationSubscriptionDeleteResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageOrganizationSubscriptionDeleteResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageOrganizationSubscriptionDeleteResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageOrganizationSubscriptionDeleteResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageOrganizationSubscriptionDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageOrganizationSubscriptionDeleteResponseSuccess = (usageOrganizationSubscriptionDeleteResponse200) & {
+  headers: Headers;
+};
+export type usageOrganizationSubscriptionDeleteResponseError = (usageOrganizationSubscriptionDeleteResponse400 | usageOrganizationSubscriptionDeleteResponse401 | usageOrganizationSubscriptionDeleteResponse402 | usageOrganizationSubscriptionDeleteResponse403 | usageOrganizationSubscriptionDeleteResponse404 | usageOrganizationSubscriptionDeleteResponse500 | usageOrganizationSubscriptionDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageOrganizationSubscriptionDeleteResponse = (usageOrganizationSubscriptionDeleteResponseSuccess | usageOrganizationSubscriptionDeleteResponseError)
+
+export const getUsageOrganizationSubscriptionDeleteUrl = (organizationSubscriptionId: string,) => {
+
+
+
+
+  return `/usage/organization-subscription/${organizationSubscriptionId}/`
+}
+
+export const usageOrganizationSubscriptionDelete = async (organizationSubscriptionId: string, options?: RequestInit): Promise<usageOrganizationSubscriptionDeleteResponse> => {
+
+  return apiMutator<usageOrganizationSubscriptionDeleteResponse>(getUsageOrganizationSubscriptionDeleteUrl(organizationSubscriptionId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type usageOrganizationSubscriptionReadResponse200 = {
+  data: OrganizationSubscriptionListResponseApi
+  status: 200
+}
+
+export type usageOrganizationSubscriptionReadResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageOrganizationSubscriptionReadResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageOrganizationSubscriptionReadResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageOrganizationSubscriptionReadResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageOrganizationSubscriptionReadResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageOrganizationSubscriptionReadResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageOrganizationSubscriptionReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageOrganizationSubscriptionReadResponseSuccess = (usageOrganizationSubscriptionReadResponse200) & {
+  headers: Headers;
+};
+export type usageOrganizationSubscriptionReadResponseError = (usageOrganizationSubscriptionReadResponse400 | usageOrganizationSubscriptionReadResponse401 | usageOrganizationSubscriptionReadResponse402 | usageOrganizationSubscriptionReadResponse403 | usageOrganizationSubscriptionReadResponse404 | usageOrganizationSubscriptionReadResponse500 | usageOrganizationSubscriptionReadResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageOrganizationSubscriptionReadResponse = (usageOrganizationSubscriptionReadResponseSuccess | usageOrganizationSubscriptionReadResponseError)
+
+export const getUsageOrganizationSubscriptionReadUrl = (organizationSubscriptionId: string,) => {
+
+
+
+
+  return `/usage/organization-subscription/${organizationSubscriptionId}/`
+}
+
+export const usageOrganizationSubscriptionRead = async (organizationSubscriptionId: string, options?: RequestInit): Promise<usageOrganizationSubscriptionReadResponse> => {
+
+  return apiMutator<usageOrganizationSubscriptionReadResponse>(getUsageOrganizationSubscriptionReadUrl(organizationSubscriptionId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageOrganizationsListResponse200 = {
+  data: OrganizationListResponseApi
+  status: 200
+}
+
+export type usageOrganizationsListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageOrganizationsListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageOrganizationsListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageOrganizationsListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageOrganizationsListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageOrganizationsListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageOrganizationsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageOrganizationsListResponseSuccess = (usageOrganizationsListResponse200) & {
+  headers: Headers;
+};
+export type usageOrganizationsListResponseError = (usageOrganizationsListResponse400 | usageOrganizationsListResponse401 | usageOrganizationsListResponse402 | usageOrganizationsListResponse403 | usageOrganizationsListResponse404 | usageOrganizationsListResponse500 | usageOrganizationsListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageOrganizationsListResponse = (usageOrganizationsListResponseSuccess | usageOrganizationsListResponseError)
+
+export const getUsageOrganizationsListUrl = () => {
+
+
+
+
+  return `/usage/organizations/`
+}
+
+export const usageOrganizationsList = async ( options?: RequestInit): Promise<usageOrganizationsListResponse> => {
+
+  return apiMutator<usageOrganizationsListResponse>(getUsageOrganizationsListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usagePricingCardDetailsCreateResponse200 = {
+  data: PricingCardDetailsResponseApi
+  status: 200
+}
+
+export type usagePricingCardDetailsCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usagePricingCardDetailsCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usagePricingCardDetailsCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usagePricingCardDetailsCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usagePricingCardDetailsCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usagePricingCardDetailsCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usagePricingCardDetailsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usagePricingCardDetailsCreateResponseSuccess = (usagePricingCardDetailsCreateResponse200) & {
+  headers: Headers;
+};
+export type usagePricingCardDetailsCreateResponseError = (usagePricingCardDetailsCreateResponse400 | usagePricingCardDetailsCreateResponse401 | usagePricingCardDetailsCreateResponse402 | usagePricingCardDetailsCreateResponse403 | usagePricingCardDetailsCreateResponse404 | usagePricingCardDetailsCreateResponse500 | usagePricingCardDetailsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usagePricingCardDetailsCreateResponse = (usagePricingCardDetailsCreateResponseSuccess | usagePricingCardDetailsCreateResponseError)
+
+export const getUsagePricingCardDetailsCreateUrl = () => {
+
+
+
+
+  return `/usage/pricing-card-details/`
+}
+
+export const usagePricingCardDetailsCreate = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usagePricingCardDetailsCreateResponse> => {
+
+  return apiMutator<usagePricingCardDetailsCreateResponse>(getUsagePricingCardDetailsCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
+  }
+);}
+
+
+
+export type usagePricingListResponse200 = {
+  data: PricingListResponseApi
+  status: 200
+}
+
+export type usagePricingListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usagePricingListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usagePricingListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usagePricingListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usagePricingListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usagePricingListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usagePricingListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usagePricingListResponseSuccess = (usagePricingListResponse200) & {
+  headers: Headers;
+};
+export type usagePricingListResponseError = (usagePricingListResponse400 | usagePricingListResponse401 | usagePricingListResponse402 | usagePricingListResponse403 | usagePricingListResponse404 | usagePricingListResponse500 | usagePricingListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usagePricingListResponse = (usagePricingListResponseSuccess | usagePricingListResponseError)
+
+export const getUsagePricingListUrl = () => {
+
+
+
+
+  return `/usage/pricing/`
+}
+
+export const usagePricingList = async ( options?: RequestInit): Promise<usagePricingListResponse> => {
+
+  return apiMutator<usagePricingListResponse>(getUsagePricingListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usagePricingCreateResponse200 = {
+  data: PricingDetailResponseApi
+  status: 200
+}
+
+export type usagePricingCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usagePricingCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usagePricingCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usagePricingCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usagePricingCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usagePricingCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usagePricingCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usagePricingCreateResponseSuccess = (usagePricingCreateResponse200) & {
+  headers: Headers;
+};
+export type usagePricingCreateResponseError = (usagePricingCreateResponse400 | usagePricingCreateResponse401 | usagePricingCreateResponse402 | usagePricingCreateResponse403 | usagePricingCreateResponse404 | usagePricingCreateResponse500 | usagePricingCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usagePricingCreateResponse = (usagePricingCreateResponseSuccess | usagePricingCreateResponseError)
+
+export const getUsagePricingCreateUrl = (pricingId: string,) => {
+
+
+
+
+  return `/usage/pricing/${pricingId}/`
+}
+
+export const usagePricingCreate = async (pricingId: string,
+    usagePricingCreateApi: NonReadonly<UsagePricingCreateApi>, options?: RequestInit): Promise<usagePricingCreateResponse> => {
+
+  return apiMutator<usagePricingCreateResponse>(getUsagePricingCreateUrl(pricingId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usagePricingCreateApi,)
+  }
+);}
+
+
+
+export type usagePricingPartialUpdateResponse200 = {
+  data: PricingReadResponseApi
+  status: 200
+}
+
+export type usagePricingPartialUpdateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usagePricingPartialUpdateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usagePricingPartialUpdateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usagePricingPartialUpdateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usagePricingPartialUpdateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usagePricingPartialUpdateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usagePricingPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usagePricingPartialUpdateResponseSuccess = (usagePricingPartialUpdateResponse200) & {
+  headers: Headers;
+};
+export type usagePricingPartialUpdateResponseError = (usagePricingPartialUpdateResponse400 | usagePricingPartialUpdateResponse401 | usagePricingPartialUpdateResponse402 | usagePricingPartialUpdateResponse403 | usagePricingPartialUpdateResponse404 | usagePricingPartialUpdateResponse500 | usagePricingPartialUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usagePricingPartialUpdateResponse = (usagePricingPartialUpdateResponseSuccess | usagePricingPartialUpdateResponseError)
+
+export const getUsagePricingPartialUpdateUrl = (pricingId: string,) => {
+
+
+
+
+  return `/usage/pricing/${pricingId}/`
+}
+
+export const usagePricingPartialUpdate = async (pricingId: string,
+    usagePricingCreateApi: NonReadonly<UsagePricingCreateApi>, options?: RequestInit): Promise<usagePricingPartialUpdateResponse> => {
+
+  return apiMutator<usagePricingPartialUpdateResponse>(getUsagePricingPartialUpdateUrl(pricingId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usagePricingCreateApi,)
+  }
+);}
+
+
+
+export type usagePricingDeleteResponse200 = {
+  data: UsageStringResponseApi
+  status: 200
+}
+
+export type usagePricingDeleteResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usagePricingDeleteResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usagePricingDeleteResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usagePricingDeleteResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usagePricingDeleteResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usagePricingDeleteResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usagePricingDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usagePricingDeleteResponseSuccess = (usagePricingDeleteResponse200) & {
+  headers: Headers;
+};
+export type usagePricingDeleteResponseError = (usagePricingDeleteResponse400 | usagePricingDeleteResponse401 | usagePricingDeleteResponse402 | usagePricingDeleteResponse403 | usagePricingDeleteResponse404 | usagePricingDeleteResponse500 | usagePricingDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type usagePricingDeleteResponse = (usagePricingDeleteResponseSuccess | usagePricingDeleteResponseError)
+
+export const getUsagePricingDeleteUrl = (pricingId: string,) => {
+
+
+
+
+  return `/usage/pricing/${pricingId}/`
+}
+
+export const usagePricingDelete = async (pricingId: string, options?: RequestInit): Promise<usagePricingDeleteResponse> => {
+
+  return apiMutator<usagePricingDeleteResponse>(getUsagePricingDeleteUrl(pricingId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type usagePricingReadResponse200 = {
+  data: PricingListResponseApi
+  status: 200
+}
+
+export type usagePricingReadResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usagePricingReadResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usagePricingReadResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usagePricingReadResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usagePricingReadResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usagePricingReadResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usagePricingReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usagePricingReadResponseSuccess = (usagePricingReadResponse200) & {
+  headers: Headers;
+};
+export type usagePricingReadResponseError = (usagePricingReadResponse400 | usagePricingReadResponse401 | usagePricingReadResponse402 | usagePricingReadResponse403 | usagePricingReadResponse404 | usagePricingReadResponse500 | usagePricingReadResponseDefault) & {
+  headers: Headers;
+};
+
+export type usagePricingReadResponse = (usagePricingReadResponseSuccess | usagePricingReadResponseError)
+
+export const getUsagePricingReadUrl = (pricingId: string,) => {
+
+
+
+
+  return `/usage/pricing/${pricingId}/`
+}
+
+export const usagePricingRead = async (pricingId: string, options?: RequestInit): Promise<usagePricingReadResponse> => {
+
+  return apiMutator<usagePricingReadResponse>(getUsagePricingReadUrl(pricingId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageRateLimitsListResponse200 = {
+  data: RateLimitListResponseApi
+  status: 200
+}
+
+export type usageRateLimitsListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageRateLimitsListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageRateLimitsListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageRateLimitsListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageRateLimitsListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageRateLimitsListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageRateLimitsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageRateLimitsListResponseSuccess = (usageRateLimitsListResponse200) & {
+  headers: Headers;
+};
+export type usageRateLimitsListResponseError = (usageRateLimitsListResponse400 | usageRateLimitsListResponse401 | usageRateLimitsListResponse402 | usageRateLimitsListResponse403 | usageRateLimitsListResponse404 | usageRateLimitsListResponse500 | usageRateLimitsListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageRateLimitsListResponse = (usageRateLimitsListResponseSuccess | usageRateLimitsListResponseError)
+
+export const getUsageRateLimitsListUrl = () => {
+
+
+
+
+  return `/usage/rate-limits/`
+}
+
+export const usageRateLimitsList = async ( options?: RequestInit): Promise<usageRateLimitsListResponse> => {
+
+  return apiMutator<usageRateLimitsListResponse>(getUsageRateLimitsListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageRateLimitsCreateResponse200 = {
+  data: RateLimitMutationResponseApi
+  status: 200
+}
+
+export type usageRateLimitsCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageRateLimitsCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageRateLimitsCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageRateLimitsCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageRateLimitsCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageRateLimitsCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageRateLimitsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageRateLimitsCreateResponseSuccess = (usageRateLimitsCreateResponse200) & {
+  headers: Headers;
+};
+export type usageRateLimitsCreateResponseError = (usageRateLimitsCreateResponse400 | usageRateLimitsCreateResponse401 | usageRateLimitsCreateResponse402 | usageRateLimitsCreateResponse403 | usageRateLimitsCreateResponse404 | usageRateLimitsCreateResponse500 | usageRateLimitsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageRateLimitsCreateResponse = (usageRateLimitsCreateResponseSuccess | usageRateLimitsCreateResponseError)
+
+export const getUsageRateLimitsCreateUrl = (rateLimitId: string,) => {
+
+
+
+
+  return `/usage/rate-limits/${rateLimitId}/`
+}
+
+export const usageRateLimitsCreate = async (rateLimitId: string,
+    usageRateLimitCreateApi: NonReadonly<UsageRateLimitCreateApi>, options?: RequestInit): Promise<usageRateLimitsCreateResponse> => {
+
+  return apiMutator<usageRateLimitsCreateResponse>(getUsageRateLimitsCreateUrl(rateLimitId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageRateLimitCreateApi,)
+  }
+);}
+
+
+
+export type usageRateLimitsPartialUpdateResponse200 = {
+  data: RateLimitDetailResponseApi
+  status: 200
+}
+
+export type usageRateLimitsPartialUpdateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageRateLimitsPartialUpdateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageRateLimitsPartialUpdateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageRateLimitsPartialUpdateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageRateLimitsPartialUpdateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageRateLimitsPartialUpdateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageRateLimitsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageRateLimitsPartialUpdateResponseSuccess = (usageRateLimitsPartialUpdateResponse200) & {
+  headers: Headers;
+};
+export type usageRateLimitsPartialUpdateResponseError = (usageRateLimitsPartialUpdateResponse400 | usageRateLimitsPartialUpdateResponse401 | usageRateLimitsPartialUpdateResponse402 | usageRateLimitsPartialUpdateResponse403 | usageRateLimitsPartialUpdateResponse404 | usageRateLimitsPartialUpdateResponse500 | usageRateLimitsPartialUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageRateLimitsPartialUpdateResponse = (usageRateLimitsPartialUpdateResponseSuccess | usageRateLimitsPartialUpdateResponseError)
+
+export const getUsageRateLimitsPartialUpdateUrl = (rateLimitId: string,) => {
+
+
+
+
+  return `/usage/rate-limits/${rateLimitId}/`
+}
+
+export const usageRateLimitsPartialUpdate = async (rateLimitId: string,
+    usageRateLimitCreateApi: NonReadonly<UsageRateLimitCreateApi>, options?: RequestInit): Promise<usageRateLimitsPartialUpdateResponse> => {
+
+  return apiMutator<usageRateLimitsPartialUpdateResponse>(getUsageRateLimitsPartialUpdateUrl(rateLimitId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageRateLimitCreateApi,)
+  }
+);}
+
+
+
+export type usageRateLimitsDeleteResponse200 = {
+  data: UsageStringResponseApi
+  status: 200
+}
+
+export type usageRateLimitsDeleteResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageRateLimitsDeleteResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageRateLimitsDeleteResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageRateLimitsDeleteResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageRateLimitsDeleteResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageRateLimitsDeleteResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageRateLimitsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageRateLimitsDeleteResponseSuccess = (usageRateLimitsDeleteResponse200) & {
+  headers: Headers;
+};
+export type usageRateLimitsDeleteResponseError = (usageRateLimitsDeleteResponse400 | usageRateLimitsDeleteResponse401 | usageRateLimitsDeleteResponse402 | usageRateLimitsDeleteResponse403 | usageRateLimitsDeleteResponse404 | usageRateLimitsDeleteResponse500 | usageRateLimitsDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageRateLimitsDeleteResponse = (usageRateLimitsDeleteResponseSuccess | usageRateLimitsDeleteResponseError)
+
+export const getUsageRateLimitsDeleteUrl = (rateLimitId: string,) => {
+
+
+
+
+  return `/usage/rate-limits/${rateLimitId}/`
+}
+
+export const usageRateLimitsDelete = async (rateLimitId: string, options?: RequestInit): Promise<usageRateLimitsDeleteResponse> => {
+
+  return apiMutator<usageRateLimitsDeleteResponse>(getUsageRateLimitsDeleteUrl(rateLimitId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type usageRateLimitsReadResponse200 = {
+  data: RateLimitListResponseApi
+  status: 200
+}
+
+export type usageRateLimitsReadResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageRateLimitsReadResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageRateLimitsReadResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageRateLimitsReadResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageRateLimitsReadResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageRateLimitsReadResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageRateLimitsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageRateLimitsReadResponseSuccess = (usageRateLimitsReadResponse200) & {
+  headers: Headers;
+};
+export type usageRateLimitsReadResponseError = (usageRateLimitsReadResponse400 | usageRateLimitsReadResponse401 | usageRateLimitsReadResponse402 | usageRateLimitsReadResponse403 | usageRateLimitsReadResponse404 | usageRateLimitsReadResponse500 | usageRateLimitsReadResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageRateLimitsReadResponse = (usageRateLimitsReadResponseSuccess | usageRateLimitsReadResponseError)
+
+export const getUsageRateLimitsReadUrl = (rateLimitId: string,) => {
+
+
+
+
+  return `/usage/rate-limits/${rateLimitId}/`
+}
+
+export const usageRateLimitsRead = async (rateLimitId: string, options?: RequestInit): Promise<usageRateLimitsReadResponse> => {
+
+  return apiMutator<usageRateLimitsReadResponse>(getUsageRateLimitsReadUrl(rateLimitId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageResourceLimitsListResponse200 = {
+  data: ResourceLimitListResponseApi
+  status: 200
+}
+
+export type usageResourceLimitsListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageResourceLimitsListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageResourceLimitsListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageResourceLimitsListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageResourceLimitsListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageResourceLimitsListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageResourceLimitsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageResourceLimitsListResponseSuccess = (usageResourceLimitsListResponse200) & {
+  headers: Headers;
+};
+export type usageResourceLimitsListResponseError = (usageResourceLimitsListResponse400 | usageResourceLimitsListResponse401 | usageResourceLimitsListResponse402 | usageResourceLimitsListResponse403 | usageResourceLimitsListResponse404 | usageResourceLimitsListResponse500 | usageResourceLimitsListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageResourceLimitsListResponse = (usageResourceLimitsListResponseSuccess | usageResourceLimitsListResponseError)
+
+export const getUsageResourceLimitsListUrl = () => {
+
+
+
+
+  return `/usage/resource-limits/`
+}
+
+export const usageResourceLimitsList = async ( options?: RequestInit): Promise<usageResourceLimitsListResponse> => {
+
+  return apiMutator<usageResourceLimitsListResponse>(getUsageResourceLimitsListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageResourceLimitsCreateResponse200 = {
+  data: ResourceLimitMutationResponseApi
+  status: 200
+}
+
+export type usageResourceLimitsCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageResourceLimitsCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageResourceLimitsCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageResourceLimitsCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageResourceLimitsCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageResourceLimitsCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageResourceLimitsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageResourceLimitsCreateResponseSuccess = (usageResourceLimitsCreateResponse200) & {
+  headers: Headers;
+};
+export type usageResourceLimitsCreateResponseError = (usageResourceLimitsCreateResponse400 | usageResourceLimitsCreateResponse401 | usageResourceLimitsCreateResponse402 | usageResourceLimitsCreateResponse403 | usageResourceLimitsCreateResponse404 | usageResourceLimitsCreateResponse500 | usageResourceLimitsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageResourceLimitsCreateResponse = (usageResourceLimitsCreateResponseSuccess | usageResourceLimitsCreateResponseError)
+
+export const getUsageResourceLimitsCreateUrl = (resourceLimitId: string,) => {
+
+
+
+
+  return `/usage/resource-limits/${resourceLimitId}/`
+}
+
+export const usageResourceLimitsCreate = async (resourceLimitId: string,
+    usageResourceLimitCreateApi: NonReadonly<UsageResourceLimitCreateApi>, options?: RequestInit): Promise<usageResourceLimitsCreateResponse> => {
+
+  return apiMutator<usageResourceLimitsCreateResponse>(getUsageResourceLimitsCreateUrl(resourceLimitId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageResourceLimitCreateApi,)
+  }
+);}
+
+
+
+export type usageResourceLimitsPartialUpdateResponse200 = {
+  data: ResourceLimitDetailResponseApi
+  status: 200
+}
+
+export type usageResourceLimitsPartialUpdateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageResourceLimitsPartialUpdateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageResourceLimitsPartialUpdateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageResourceLimitsPartialUpdateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageResourceLimitsPartialUpdateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageResourceLimitsPartialUpdateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageResourceLimitsPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageResourceLimitsPartialUpdateResponseSuccess = (usageResourceLimitsPartialUpdateResponse200) & {
+  headers: Headers;
+};
+export type usageResourceLimitsPartialUpdateResponseError = (usageResourceLimitsPartialUpdateResponse400 | usageResourceLimitsPartialUpdateResponse401 | usageResourceLimitsPartialUpdateResponse402 | usageResourceLimitsPartialUpdateResponse403 | usageResourceLimitsPartialUpdateResponse404 | usageResourceLimitsPartialUpdateResponse500 | usageResourceLimitsPartialUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageResourceLimitsPartialUpdateResponse = (usageResourceLimitsPartialUpdateResponseSuccess | usageResourceLimitsPartialUpdateResponseError)
+
+export const getUsageResourceLimitsPartialUpdateUrl = (resourceLimitId: string,) => {
+
+
+
+
+  return `/usage/resource-limits/${resourceLimitId}/`
+}
+
+export const usageResourceLimitsPartialUpdate = async (resourceLimitId: string,
+    usageResourceLimitCreateApi: NonReadonly<UsageResourceLimitCreateApi>, options?: RequestInit): Promise<usageResourceLimitsPartialUpdateResponse> => {
+
+  return apiMutator<usageResourceLimitsPartialUpdateResponse>(getUsageResourceLimitsPartialUpdateUrl(resourceLimitId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageResourceLimitCreateApi,)
+  }
+);}
+
+
+
+export type usageResourceLimitsDeleteResponse200 = {
+  data: UsageStringResponseApi
+  status: 200
+}
+
+export type usageResourceLimitsDeleteResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageResourceLimitsDeleteResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageResourceLimitsDeleteResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageResourceLimitsDeleteResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageResourceLimitsDeleteResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageResourceLimitsDeleteResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageResourceLimitsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageResourceLimitsDeleteResponseSuccess = (usageResourceLimitsDeleteResponse200) & {
+  headers: Headers;
+};
+export type usageResourceLimitsDeleteResponseError = (usageResourceLimitsDeleteResponse400 | usageResourceLimitsDeleteResponse401 | usageResourceLimitsDeleteResponse402 | usageResourceLimitsDeleteResponse403 | usageResourceLimitsDeleteResponse404 | usageResourceLimitsDeleteResponse500 | usageResourceLimitsDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageResourceLimitsDeleteResponse = (usageResourceLimitsDeleteResponseSuccess | usageResourceLimitsDeleteResponseError)
+
+export const getUsageResourceLimitsDeleteUrl = (resourceLimitId: string,) => {
+
+
+
+
+  return `/usage/resource-limits/${resourceLimitId}/`
+}
+
+export const usageResourceLimitsDelete = async (resourceLimitId: string, options?: RequestInit): Promise<usageResourceLimitsDeleteResponse> => {
+
+  return apiMutator<usageResourceLimitsDeleteResponse>(getUsageResourceLimitsDeleteUrl(resourceLimitId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type usageResourceLimitsReadResponse200 = {
+  data: ResourceLimitListResponseApi
+  status: 200
+}
+
+export type usageResourceLimitsReadResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageResourceLimitsReadResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageResourceLimitsReadResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageResourceLimitsReadResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageResourceLimitsReadResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageResourceLimitsReadResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageResourceLimitsReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageResourceLimitsReadResponseSuccess = (usageResourceLimitsReadResponse200) & {
+  headers: Headers;
+};
+export type usageResourceLimitsReadResponseError = (usageResourceLimitsReadResponse400 | usageResourceLimitsReadResponse401 | usageResourceLimitsReadResponse402 | usageResourceLimitsReadResponse403 | usageResourceLimitsReadResponse404 | usageResourceLimitsReadResponse500 | usageResourceLimitsReadResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageResourceLimitsReadResponse = (usageResourceLimitsReadResponseSuccess | usageResourceLimitsReadResponseError)
+
+export const getUsageResourceLimitsReadUrl = (resourceLimitId: string,) => {
+
+
+
+
+  return `/usage/resource-limits/${resourceLimitId}/`
+}
+
+export const usageResourceLimitsRead = async (resourceLimitId: string, options?: RequestInit): Promise<usageResourceLimitsReadResponse> => {
+
+  return apiMutator<usageResourceLimitsReadResponse>(getUsageResourceLimitsReadUrl(resourceLimitId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageResourceTypeListResponse200 = {
+  data: ResourceTypeListResponseApi
+  status: 200
+}
+
+export type usageResourceTypeListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageResourceTypeListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageResourceTypeListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageResourceTypeListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageResourceTypeListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageResourceTypeListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageResourceTypeListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageResourceTypeListResponseSuccess = (usageResourceTypeListResponse200) & {
+  headers: Headers;
+};
+export type usageResourceTypeListResponseError = (usageResourceTypeListResponse400 | usageResourceTypeListResponse401 | usageResourceTypeListResponse402 | usageResourceTypeListResponse403 | usageResourceTypeListResponse404 | usageResourceTypeListResponse500 | usageResourceTypeListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageResourceTypeListResponse = (usageResourceTypeListResponseSuccess | usageResourceTypeListResponseError)
+
+export const getUsageResourceTypeListUrl = () => {
+
+
+
+
+  return `/usage/resource-type/`
+}
+
+export const usageResourceTypeList = async ( options?: RequestInit): Promise<usageResourceTypeListResponse> => {
+
+  return apiMutator<usageResourceTypeListResponse>(getUsageResourceTypeListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageSubscriptionPlansListResponse200 = {
+  data: SubscriptionPlansResponseApi
+  status: 200
+}
+
+export type usageSubscriptionPlansListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageSubscriptionPlansListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageSubscriptionPlansListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageSubscriptionPlansListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageSubscriptionPlansListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageSubscriptionPlansListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageSubscriptionPlansListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageSubscriptionPlansListResponseSuccess = (usageSubscriptionPlansListResponse200) & {
+  headers: Headers;
+};
+export type usageSubscriptionPlansListResponseError = (usageSubscriptionPlansListResponse400 | usageSubscriptionPlansListResponse401 | usageSubscriptionPlansListResponse402 | usageSubscriptionPlansListResponse403 | usageSubscriptionPlansListResponse404 | usageSubscriptionPlansListResponse500 | usageSubscriptionPlansListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageSubscriptionPlansListResponse = (usageSubscriptionPlansListResponseSuccess | usageSubscriptionPlansListResponseError)
+
+export const getUsageSubscriptionPlansListUrl = () => {
+
+
+
+
+  return `/usage/subscription-plans/`
+}
+
+export const usageSubscriptionPlansList = async ( options?: RequestInit): Promise<usageSubscriptionPlansListResponse> => {
+
+  return apiMutator<usageSubscriptionPlansListResponse>(getUsageSubscriptionPlansListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageSubscriptionStatusListResponse200 = {
+  data: SubscriptionStatusResponseApi
+  status: 200
+}
+
+export type usageSubscriptionStatusListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageSubscriptionStatusListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageSubscriptionStatusListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageSubscriptionStatusListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageSubscriptionStatusListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageSubscriptionStatusListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageSubscriptionStatusListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageSubscriptionStatusListResponseSuccess = (usageSubscriptionStatusListResponse200) & {
+  headers: Headers;
+};
+export type usageSubscriptionStatusListResponseError = (usageSubscriptionStatusListResponse400 | usageSubscriptionStatusListResponse401 | usageSubscriptionStatusListResponse402 | usageSubscriptionStatusListResponse403 | usageSubscriptionStatusListResponse404 | usageSubscriptionStatusListResponse500 | usageSubscriptionStatusListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageSubscriptionStatusListResponse = (usageSubscriptionStatusListResponseSuccess | usageSubscriptionStatusListResponseError)
+
+export const getUsageSubscriptionStatusListUrl = () => {
+
+
+
+
+  return `/usage/subscription-status/`
+}
+
+export const usageSubscriptionStatusList = async ( options?: RequestInit): Promise<usageSubscriptionStatusListResponse> => {
+
+  return apiMutator<usageSubscriptionStatusListResponse>(getUsageSubscriptionStatusListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageSubscriptionTierListResponse200 = {
+  data: SubscriptionTierListResponseApi
+  status: 200
+}
+
+export type usageSubscriptionTierListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageSubscriptionTierListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageSubscriptionTierListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageSubscriptionTierListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageSubscriptionTierListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageSubscriptionTierListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageSubscriptionTierListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageSubscriptionTierListResponseSuccess = (usageSubscriptionTierListResponse200) & {
+  headers: Headers;
+};
+export type usageSubscriptionTierListResponseError = (usageSubscriptionTierListResponse400 | usageSubscriptionTierListResponse401 | usageSubscriptionTierListResponse402 | usageSubscriptionTierListResponse403 | usageSubscriptionTierListResponse404 | usageSubscriptionTierListResponse500 | usageSubscriptionTierListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageSubscriptionTierListResponse = (usageSubscriptionTierListResponseSuccess | usageSubscriptionTierListResponseError)
+
+export const getUsageSubscriptionTierListUrl = () => {
+
+
+
+
+  return `/usage/subscription-tier/`
+}
+
+export const usageSubscriptionTierList = async ( options?: RequestInit): Promise<usageSubscriptionTierListResponse> => {
+
+  return apiMutator<usageSubscriptionTierListResponse>(getUsageSubscriptionTierListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageSubscriptionTierCreateResponse200 = {
+  data: SubscriptionTierDetailResponseApi
+  status: 200
+}
+
+export type usageSubscriptionTierCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageSubscriptionTierCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageSubscriptionTierCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageSubscriptionTierCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageSubscriptionTierCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageSubscriptionTierCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageSubscriptionTierCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageSubscriptionTierCreateResponseSuccess = (usageSubscriptionTierCreateResponse200) & {
+  headers: Headers;
+};
+export type usageSubscriptionTierCreateResponseError = (usageSubscriptionTierCreateResponse400 | usageSubscriptionTierCreateResponse401 | usageSubscriptionTierCreateResponse402 | usageSubscriptionTierCreateResponse403 | usageSubscriptionTierCreateResponse404 | usageSubscriptionTierCreateResponse500 | usageSubscriptionTierCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageSubscriptionTierCreateResponse = (usageSubscriptionTierCreateResponseSuccess | usageSubscriptionTierCreateResponseError)
+
+export const getUsageSubscriptionTierCreateUrl = (subscriptionId: string,) => {
+
+
+
+
+  return `/usage/subscription-tier/${subscriptionId}/`
+}
+
+export const usageSubscriptionTierCreate = async (subscriptionId: string,
+    usageSubscriptionTierApi: NonReadonly<UsageSubscriptionTierApi>, options?: RequestInit): Promise<usageSubscriptionTierCreateResponse> => {
+
+  return apiMutator<usageSubscriptionTierCreateResponse>(getUsageSubscriptionTierCreateUrl(subscriptionId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageSubscriptionTierApi,)
+  }
+);}
+
+
+
+export type usageSubscriptionTierPartialUpdateResponse200 = {
+  data: SubscriptionTierDetailResponseApi
+  status: 200
+}
+
+export type usageSubscriptionTierPartialUpdateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageSubscriptionTierPartialUpdateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageSubscriptionTierPartialUpdateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageSubscriptionTierPartialUpdateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageSubscriptionTierPartialUpdateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageSubscriptionTierPartialUpdateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageSubscriptionTierPartialUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageSubscriptionTierPartialUpdateResponseSuccess = (usageSubscriptionTierPartialUpdateResponse200) & {
+  headers: Headers;
+};
+export type usageSubscriptionTierPartialUpdateResponseError = (usageSubscriptionTierPartialUpdateResponse400 | usageSubscriptionTierPartialUpdateResponse401 | usageSubscriptionTierPartialUpdateResponse402 | usageSubscriptionTierPartialUpdateResponse403 | usageSubscriptionTierPartialUpdateResponse404 | usageSubscriptionTierPartialUpdateResponse500 | usageSubscriptionTierPartialUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageSubscriptionTierPartialUpdateResponse = (usageSubscriptionTierPartialUpdateResponseSuccess | usageSubscriptionTierPartialUpdateResponseError)
+
+export const getUsageSubscriptionTierPartialUpdateUrl = (subscriptionId: string,) => {
+
+
+
+
+  return `/usage/subscription-tier/${subscriptionId}/`
+}
+
+export const usageSubscriptionTierPartialUpdate = async (subscriptionId: string,
+    usageSubscriptionTierApi: NonReadonly<UsageSubscriptionTierApi>, options?: RequestInit): Promise<usageSubscriptionTierPartialUpdateResponse> => {
+
+  return apiMutator<usageSubscriptionTierPartialUpdateResponse>(getUsageSubscriptionTierPartialUpdateUrl(subscriptionId),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageSubscriptionTierApi,)
+  }
+);}
+
+
+
+export type usageSubscriptionTierDeleteResponse200 = {
+  data: UsageStringResponseApi
+  status: 200
+}
+
+export type usageSubscriptionTierDeleteResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageSubscriptionTierDeleteResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageSubscriptionTierDeleteResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageSubscriptionTierDeleteResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageSubscriptionTierDeleteResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageSubscriptionTierDeleteResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageSubscriptionTierDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageSubscriptionTierDeleteResponseSuccess = (usageSubscriptionTierDeleteResponse200) & {
+  headers: Headers;
+};
+export type usageSubscriptionTierDeleteResponseError = (usageSubscriptionTierDeleteResponse400 | usageSubscriptionTierDeleteResponse401 | usageSubscriptionTierDeleteResponse402 | usageSubscriptionTierDeleteResponse403 | usageSubscriptionTierDeleteResponse404 | usageSubscriptionTierDeleteResponse500 | usageSubscriptionTierDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageSubscriptionTierDeleteResponse = (usageSubscriptionTierDeleteResponseSuccess | usageSubscriptionTierDeleteResponseError)
+
+export const getUsageSubscriptionTierDeleteUrl = (subscriptionId: string,) => {
+
+
+
+
+  return `/usage/subscription-tier/${subscriptionId}/`
+}
+
+export const usageSubscriptionTierDelete = async (subscriptionId: string, options?: RequestInit): Promise<usageSubscriptionTierDeleteResponse> => {
+
+  return apiMutator<usageSubscriptionTierDeleteResponse>(getUsageSubscriptionTierDeleteUrl(subscriptionId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type usageSubscriptionTierReadResponse200 = {
+  data: SubscriptionTierListResponseApi
+  status: 200
+}
+
+export type usageSubscriptionTierReadResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageSubscriptionTierReadResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageSubscriptionTierReadResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageSubscriptionTierReadResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageSubscriptionTierReadResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageSubscriptionTierReadResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageSubscriptionTierReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageSubscriptionTierReadResponseSuccess = (usageSubscriptionTierReadResponse200) & {
+  headers: Headers;
+};
+export type usageSubscriptionTierReadResponseError = (usageSubscriptionTierReadResponse400 | usageSubscriptionTierReadResponse401 | usageSubscriptionTierReadResponse402 | usageSubscriptionTierReadResponse403 | usageSubscriptionTierReadResponse404 | usageSubscriptionTierReadResponse500 | usageSubscriptionTierReadResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageSubscriptionTierReadResponse = (usageSubscriptionTierReadResponseSuccess | usageSubscriptionTierReadResponseError)
+
+export const getUsageSubscriptionTierReadUrl = (subscriptionId: string,) => {
+
+
+
+
+  return `/usage/subscription-tier/${subscriptionId}/`
+}
+
+export const usageSubscriptionTierRead = async (subscriptionId: string, options?: RequestInit): Promise<usageSubscriptionTierReadResponse> => {
+
+  return apiMutator<usageSubscriptionTierReadResponse>(getUsageSubscriptionTierReadUrl(subscriptionId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageUpdateAutoReloadSettingsCreateResponse200 = {
+  data: AutoReloadUpdateResponseApi
+  status: 200
+}
+
+export type usageUpdateAutoReloadSettingsCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageUpdateAutoReloadSettingsCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageUpdateAutoReloadSettingsCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageUpdateAutoReloadSettingsCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageUpdateAutoReloadSettingsCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageUpdateAutoReloadSettingsCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageUpdateAutoReloadSettingsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageUpdateAutoReloadSettingsCreateResponseSuccess = (usageUpdateAutoReloadSettingsCreateResponse200) & {
+  headers: Headers;
+};
+export type usageUpdateAutoReloadSettingsCreateResponseError = (usageUpdateAutoReloadSettingsCreateResponse400 | usageUpdateAutoReloadSettingsCreateResponse401 | usageUpdateAutoReloadSettingsCreateResponse402 | usageUpdateAutoReloadSettingsCreateResponse403 | usageUpdateAutoReloadSettingsCreateResponse404 | usageUpdateAutoReloadSettingsCreateResponse500 | usageUpdateAutoReloadSettingsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageUpdateAutoReloadSettingsCreateResponse = (usageUpdateAutoReloadSettingsCreateResponseSuccess | usageUpdateAutoReloadSettingsCreateResponseError)
+
+export const getUsageUpdateAutoReloadSettingsCreateUrl = () => {
+
+
+
+
+  return `/usage/update-auto-reload-settings/`
+}
+
+export const usageUpdateAutoReloadSettingsCreate = async (autoReloadSettingsRequestApi: AutoReloadSettingsRequestApi, options?: RequestInit): Promise<usageUpdateAutoReloadSettingsCreateResponse> => {
+
+  return apiMutator<usageUpdateAutoReloadSettingsCreateResponse>(getUsageUpdateAutoReloadSettingsCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      autoReloadSettingsRequestApi,)
+  }
+);}
+
+
+
+export type usageUpdateBillingDetailsCreateResponse200 = {
+  data: UpdateBillingDetailsResponseApi
+  status: 200
+}
+
+export type usageUpdateBillingDetailsCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageUpdateBillingDetailsCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageUpdateBillingDetailsCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageUpdateBillingDetailsCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageUpdateBillingDetailsCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageUpdateBillingDetailsCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageUpdateBillingDetailsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageUpdateBillingDetailsCreateResponseSuccess = (usageUpdateBillingDetailsCreateResponse200) & {
+  headers: Headers;
+};
+export type usageUpdateBillingDetailsCreateResponseError = (usageUpdateBillingDetailsCreateResponse400 | usageUpdateBillingDetailsCreateResponse401 | usageUpdateBillingDetailsCreateResponse402 | usageUpdateBillingDetailsCreateResponse403 | usageUpdateBillingDetailsCreateResponse404 | usageUpdateBillingDetailsCreateResponse500 | usageUpdateBillingDetailsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageUpdateBillingDetailsCreateResponse = (usageUpdateBillingDetailsCreateResponseSuccess | usageUpdateBillingDetailsCreateResponseError)
+
+export const getUsageUpdateBillingDetailsCreateUrl = () => {
+
+
+
+
+  return `/usage/update-billing-details/`
+}
+
+export const usageUpdateBillingDetailsCreate = async (updateOrganizationBillingRequestApi: UpdateOrganizationBillingRequestApi, options?: RequestInit): Promise<usageUpdateBillingDetailsCreateResponse> => {
+
+  return apiMutator<usageUpdateBillingDetailsCreateResponse>(getUsageUpdateBillingDetailsCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      updateOrganizationBillingRequestApi,)
+  }
+);}
+
+
+
+export type usageUsageSummaryListResponse200 = {
+  data: UsageSummaryResponseApi
+  status: 200
+}
+
+export type usageUsageSummaryListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageUsageSummaryListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageUsageSummaryListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageUsageSummaryListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageUsageSummaryListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageUsageSummaryListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageUsageSummaryListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageUsageSummaryListResponseSuccess = (usageUsageSummaryListResponse200) & {
+  headers: Headers;
+};
+export type usageUsageSummaryListResponseError = (usageUsageSummaryListResponse400 | usageUsageSummaryListResponse401 | usageUsageSummaryListResponse402 | usageUsageSummaryListResponse403 | usageUsageSummaryListResponse404 | usageUsageSummaryListResponse500 | usageUsageSummaryListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageUsageSummaryListResponse = (usageUsageSummaryListResponseSuccess | usageUsageSummaryListResponseError)
+
+export const getUsageUsageSummaryListUrl = (params?: UsageUsageSummaryListParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/usage/usage-summary/?${stringifiedParams}` : `/usage/usage-summary/`
+}
+
+export const usageUsageSummaryList = async (params?: UsageUsageSummaryListParams, options?: RequestInit): Promise<usageUsageSummaryListResponse> => {
+
+  return apiMutator<usageUsageSummaryListResponse>(getUsageUsageSummaryListUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2AddAddonCreateResponse200 = {
+  data: AddonPostResponseApi
+  status: 200
+}
+
+export type usageV2AddAddonCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2AddAddonCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2AddAddonCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2AddAddonCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2AddAddonCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2AddAddonCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2AddAddonCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2AddAddonCreateResponseSuccess = (usageV2AddAddonCreateResponse200) & {
+  headers: Headers;
+};
+export type usageV2AddAddonCreateResponseError = (usageV2AddAddonCreateResponse400 | usageV2AddAddonCreateResponse401 | usageV2AddAddonCreateResponse402 | usageV2AddAddonCreateResponse403 | usageV2AddAddonCreateResponse404 | usageV2AddAddonCreateResponse500 | usageV2AddAddonCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2AddAddonCreateResponse = (usageV2AddAddonCreateResponseSuccess | usageV2AddAddonCreateResponseError)
+
+export const getUsageV2AddAddonCreateUrl = () => {
+
+
+
+
+  return `/usage/v2/add-addon/`
+}
+
+/**
+ * Add or remove an add-on subscription.
+ */
+export const usageV2AddAddonCreate = async (addonRequestApi: AddonRequestApi, options?: RequestInit): Promise<usageV2AddAddonCreateResponse> => {
+
+  return apiMutator<usageV2AddAddonCreateResponse>(getUsageV2AddAddonCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      addonRequestApi,)
+  }
+);}
+
+
+
+export type usageV2AddAddonUpdateResponse200 = {
+  data: UsageMessageResponseApi
+  status: 200
+}
+
+export type usageV2AddAddonUpdateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2AddAddonUpdateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2AddAddonUpdateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2AddAddonUpdateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2AddAddonUpdateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2AddAddonUpdateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2AddAddonUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2AddAddonUpdateResponseSuccess = (usageV2AddAddonUpdateResponse200) & {
+  headers: Headers;
+};
+export type usageV2AddAddonUpdateResponseError = (usageV2AddAddonUpdateResponse400 | usageV2AddAddonUpdateResponse401 | usageV2AddAddonUpdateResponse402 | usageV2AddAddonUpdateResponse403 | usageV2AddAddonUpdateResponse404 | usageV2AddAddonUpdateResponse500 | usageV2AddAddonUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2AddAddonUpdateResponse = (usageV2AddAddonUpdateResponseSuccess | usageV2AddAddonUpdateResponseError)
+
+export const getUsageV2AddAddonUpdateUrl = () => {
+
+
+
+
+  return `/usage/v2/add-addon/`
+}
+
+/**
+ * Reinstate a previously-scheduled add-on cancellation.
+ */
+export const usageV2AddAddonUpdate = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2AddAddonUpdateResponse> => {
+
+  return apiMutator<usageV2AddAddonUpdateResponse>(getUsageV2AddAddonUpdateUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
+  }
+);}
+
+
+
+export type usageV2AddAddonDeleteResponse200 = {
+  data: UsageMessageResponseApi
+  status: 200
+}
+
+export type usageV2AddAddonDeleteResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2AddAddonDeleteResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2AddAddonDeleteResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2AddAddonDeleteResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2AddAddonDeleteResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2AddAddonDeleteResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2AddAddonDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2AddAddonDeleteResponseSuccess = (usageV2AddAddonDeleteResponse200) & {
+  headers: Headers;
+};
+export type usageV2AddAddonDeleteResponseError = (usageV2AddAddonDeleteResponse400 | usageV2AddAddonDeleteResponse401 | usageV2AddAddonDeleteResponse402 | usageV2AddAddonDeleteResponse403 | usageV2AddAddonDeleteResponse404 | usageV2AddAddonDeleteResponse500 | usageV2AddAddonDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2AddAddonDeleteResponse = (usageV2AddAddonDeleteResponseSuccess | usageV2AddAddonDeleteResponseError)
+
+export const getUsageV2AddAddonDeleteUrl = () => {
+
+
+
+
+  return `/usage/v2/add-addon/`
+}
+
+/**
+ * Add or remove an add-on subscription.
+ */
+export const usageV2AddAddonDelete = async ( options?: RequestInit): Promise<usageV2AddAddonDeleteResponse> => {
+
+  return apiMutator<usageV2AddAddonDeleteResponse>(getUsageV2AddAddonDeleteUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type usageV2AddonCreateResponse200 = {
+  data: AddonPostResponseApi
+  status: 200
+}
+
+export type usageV2AddonCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2AddonCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2AddonCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2AddonCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2AddonCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2AddonCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2AddonCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2AddonCreateResponseSuccess = (usageV2AddonCreateResponse200) & {
+  headers: Headers;
+};
+export type usageV2AddonCreateResponseError = (usageV2AddonCreateResponse400 | usageV2AddonCreateResponse401 | usageV2AddonCreateResponse402 | usageV2AddonCreateResponse403 | usageV2AddonCreateResponse404 | usageV2AddonCreateResponse500 | usageV2AddonCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2AddonCreateResponse = (usageV2AddonCreateResponseSuccess | usageV2AddonCreateResponseError)
+
+export const getUsageV2AddonCreateUrl = () => {
+
+
+
+
+  return `/usage/v2/addon/`
+}
+
+/**
+ * Add or remove an add-on subscription.
+ */
+export const usageV2AddonCreate = async (addonRequestApi: AddonRequestApi, options?: RequestInit): Promise<usageV2AddonCreateResponse> => {
+
+  return apiMutator<usageV2AddonCreateResponse>(getUsageV2AddonCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      addonRequestApi,)
+  }
+);}
+
+
+
+export type usageV2AddonUpdateResponse200 = {
+  data: UsageMessageResponseApi
+  status: 200
+}
+
+export type usageV2AddonUpdateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2AddonUpdateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2AddonUpdateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2AddonUpdateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2AddonUpdateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2AddonUpdateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2AddonUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2AddonUpdateResponseSuccess = (usageV2AddonUpdateResponse200) & {
+  headers: Headers;
+};
+export type usageV2AddonUpdateResponseError = (usageV2AddonUpdateResponse400 | usageV2AddonUpdateResponse401 | usageV2AddonUpdateResponse402 | usageV2AddonUpdateResponse403 | usageV2AddonUpdateResponse404 | usageV2AddonUpdateResponse500 | usageV2AddonUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2AddonUpdateResponse = (usageV2AddonUpdateResponseSuccess | usageV2AddonUpdateResponseError)
+
+export const getUsageV2AddonUpdateUrl = () => {
+
+
+
+
+  return `/usage/v2/addon/`
+}
+
+/**
+ * Reinstate a previously-scheduled add-on cancellation.
+ */
+export const usageV2AddonUpdate = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2AddonUpdateResponse> => {
+
+  return apiMutator<usageV2AddonUpdateResponse>(getUsageV2AddonUpdateUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
+  }
+);}
+
+
+
+export type usageV2AddonDeleteResponse200 = {
+  data: UsageMessageResponseApi
+  status: 200
+}
+
+export type usageV2AddonDeleteResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2AddonDeleteResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2AddonDeleteResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2AddonDeleteResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2AddonDeleteResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2AddonDeleteResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2AddonDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2AddonDeleteResponseSuccess = (usageV2AddonDeleteResponse200) & {
+  headers: Headers;
+};
+export type usageV2AddonDeleteResponseError = (usageV2AddonDeleteResponse400 | usageV2AddonDeleteResponse401 | usageV2AddonDeleteResponse402 | usageV2AddonDeleteResponse403 | usageV2AddonDeleteResponse404 | usageV2AddonDeleteResponse500 | usageV2AddonDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2AddonDeleteResponse = (usageV2AddonDeleteResponseSuccess | usageV2AddonDeleteResponseError)
+
+export const getUsageV2AddonDeleteUrl = () => {
+
+
+
+
+  return `/usage/v2/addon/`
+}
+
+/**
+ * Add or remove an add-on subscription.
+ */
+export const usageV2AddonDelete = async ( options?: RequestInit): Promise<usageV2AddonDeleteResponse> => {
+
+  return apiMutator<usageV2AddonDeleteResponse>(getUsageV2AddonDeleteUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type usageV2BillingOverviewListResponse200 = {
+  data: UsageBillingOverviewResponseApi
+  status: 200
+}
+
+export type usageV2BillingOverviewListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2BillingOverviewListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2BillingOverviewListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2BillingOverviewListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2BillingOverviewListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2BillingOverviewListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2BillingOverviewListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2BillingOverviewListResponseSuccess = (usageV2BillingOverviewListResponse200) & {
+  headers: Headers;
+};
+export type usageV2BillingOverviewListResponseError = (usageV2BillingOverviewListResponse400 | usageV2BillingOverviewListResponse401 | usageV2BillingOverviewListResponse402 | usageV2BillingOverviewListResponse403 | usageV2BillingOverviewListResponse404 | usageV2BillingOverviewListResponse500 | usageV2BillingOverviewListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2BillingOverviewListResponse = (usageV2BillingOverviewListResponseSuccess | usageV2BillingOverviewListResponseError)
+
+export const getUsageV2BillingOverviewListUrl = () => {
+
+
+
+
+  return `/usage/v2/billing-overview/`
+}
+
+/**
+ * Returns platform fee + per-dimension costs + credits + total.
+ * @summary Get current billing period cost breakdown for the billing page.
+ */
+export const usageV2BillingOverviewList = async ( options?: RequestInit): Promise<usageV2BillingOverviewListResponse> => {
+
+  return apiMutator<usageV2BillingOverviewListResponse>(getUsageV2BillingOverviewListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2BudgetsListResponse200 = {
+  data: UsageBudgetListResponseApi
+  status: 200
+}
+
+export type usageV2BudgetsListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2BudgetsListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2BudgetsListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2BudgetsListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2BudgetsListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2BudgetsListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2BudgetsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2BudgetsListResponseSuccess = (usageV2BudgetsListResponse200) & {
+  headers: Headers;
+};
+export type usageV2BudgetsListResponseError = (usageV2BudgetsListResponse400 | usageV2BudgetsListResponse401 | usageV2BudgetsListResponse402 | usageV2BudgetsListResponse403 | usageV2BudgetsListResponse404 | usageV2BudgetsListResponse500 | usageV2BudgetsListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2BudgetsListResponse = (usageV2BudgetsListResponseSuccess | usageV2BudgetsListResponseError)
+
+export const getUsageV2BudgetsListUrl = () => {
+
+
+
+
+  return `/usage/v2/budgets/`
+}
+
+/**
+ * List or create usage budgets.
+ */
+export const usageV2BudgetsList = async ( options?: RequestInit): Promise<usageV2BudgetsListResponse> => {
+
+  return apiMutator<usageV2BudgetsListResponse>(getUsageV2BudgetsListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2BudgetsCreateResponse200 = {
+  data: UsageBudgetMutationResponseApi
+  status: 200
+}
+
+export type usageV2BudgetsCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2BudgetsCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2BudgetsCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2BudgetsCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2BudgetsCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2BudgetsCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2BudgetsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2BudgetsCreateResponseSuccess = (usageV2BudgetsCreateResponse200) & {
+  headers: Headers;
+};
+export type usageV2BudgetsCreateResponseError = (usageV2BudgetsCreateResponse400 | usageV2BudgetsCreateResponse401 | usageV2BudgetsCreateResponse402 | usageV2BudgetsCreateResponse403 | usageV2BudgetsCreateResponse404 | usageV2BudgetsCreateResponse500 | usageV2BudgetsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2BudgetsCreateResponse = (usageV2BudgetsCreateResponseSuccess | usageV2BudgetsCreateResponseError)
+
+export const getUsageV2BudgetsCreateUrl = () => {
+
+
+
+
+  return `/usage/v2/budgets/`
+}
+
+/**
+ * List or create usage budgets.
+ */
+export const usageV2BudgetsCreate = async (usageBudgetMutationRequestApi: UsageBudgetMutationRequestApi, options?: RequestInit): Promise<usageV2BudgetsCreateResponse> => {
+
+  return apiMutator<usageV2BudgetsCreateResponse>(getUsageV2BudgetsCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageBudgetMutationRequestApi,)
+  }
+);}
+
+
+
+export type usageV2BudgetsUpdateResponse200 = {
+  data: UsageBudgetMutationResponseApi
+  status: 200
+}
+
+export type usageV2BudgetsUpdateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2BudgetsUpdateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2BudgetsUpdateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2BudgetsUpdateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2BudgetsUpdateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2BudgetsUpdateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2BudgetsUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2BudgetsUpdateResponseSuccess = (usageV2BudgetsUpdateResponse200) & {
+  headers: Headers;
+};
+export type usageV2BudgetsUpdateResponseError = (usageV2BudgetsUpdateResponse400 | usageV2BudgetsUpdateResponse401 | usageV2BudgetsUpdateResponse402 | usageV2BudgetsUpdateResponse403 | usageV2BudgetsUpdateResponse404 | usageV2BudgetsUpdateResponse500 | usageV2BudgetsUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2BudgetsUpdateResponse = (usageV2BudgetsUpdateResponseSuccess | usageV2BudgetsUpdateResponseError)
+
+export const getUsageV2BudgetsUpdateUrl = (budgetId: string,) => {
+
+
+
+
+  return `/usage/v2/budgets/${budgetId}/`
+}
+
+/**
+ * Update or delete a budget.
+ */
+export const usageV2BudgetsUpdate = async (budgetId: string,
+    usageBudgetMutationRequestApi: UsageBudgetMutationRequestApi, options?: RequestInit): Promise<usageV2BudgetsUpdateResponse> => {
+
+  return apiMutator<usageV2BudgetsUpdateResponse>(getUsageV2BudgetsUpdateUrl(budgetId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageBudgetMutationRequestApi,)
+  }
+);}
+
+
+
+export type usageV2BudgetsDeleteResponse200 = {
+  data: UsageBudgetDeleteResponseApi
+  status: 200
+}
+
+export type usageV2BudgetsDeleteResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2BudgetsDeleteResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2BudgetsDeleteResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2BudgetsDeleteResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2BudgetsDeleteResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2BudgetsDeleteResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2BudgetsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2BudgetsDeleteResponseSuccess = (usageV2BudgetsDeleteResponse200) & {
+  headers: Headers;
+};
+export type usageV2BudgetsDeleteResponseError = (usageV2BudgetsDeleteResponse400 | usageV2BudgetsDeleteResponse401 | usageV2BudgetsDeleteResponse402 | usageV2BudgetsDeleteResponse403 | usageV2BudgetsDeleteResponse404 | usageV2BudgetsDeleteResponse500 | usageV2BudgetsDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2BudgetsDeleteResponse = (usageV2BudgetsDeleteResponseSuccess | usageV2BudgetsDeleteResponseError)
+
+export const getUsageV2BudgetsDeleteUrl = (budgetId: string,) => {
+
+
+
+
+  return `/usage/v2/budgets/${budgetId}/`
+}
+
+/**
+ * Update or delete a budget.
+ */
+export const usageV2BudgetsDelete = async (budgetId: string,
+    usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2BudgetsDeleteResponse> => {
+
+  return apiMutator<usageV2BudgetsDeleteResponse>(getUsageV2BudgetsDeleteUrl(budgetId),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
+  }
+);}
+
+
+
+export type usageV2DowngradeToFreeCreateResponse200 = {
+  data: PlanResponseApi
+  status: 200
+}
+
+export type usageV2DowngradeToFreeCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2DowngradeToFreeCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2DowngradeToFreeCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2DowngradeToFreeCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2DowngradeToFreeCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2DowngradeToFreeCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2DowngradeToFreeCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2DowngradeToFreeCreateResponseSuccess = (usageV2DowngradeToFreeCreateResponse200) & {
+  headers: Headers;
+};
+export type usageV2DowngradeToFreeCreateResponseError = (usageV2DowngradeToFreeCreateResponse400 | usageV2DowngradeToFreeCreateResponse401 | usageV2DowngradeToFreeCreateResponse402 | usageV2DowngradeToFreeCreateResponse403 | usageV2DowngradeToFreeCreateResponse404 | usageV2DowngradeToFreeCreateResponse500 | usageV2DowngradeToFreeCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2DowngradeToFreeCreateResponse = (usageV2DowngradeToFreeCreateResponseSuccess | usageV2DowngradeToFreeCreateResponseError)
+
+export const getUsageV2DowngradeToFreeCreateUrl = () => {
+
+
+
+
+  return `/usage/v2/downgrade-to-free/`
+}
+
+/**
+ * Cancels any active Stripe subscription and resets plan to free.
+If user has an add-on, it must be removed first.
+ * @summary Downgrade from PAYG to Free.
+ */
+export const usageV2DowngradeToFreeCreate = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2DowngradeToFreeCreateResponse> => {
+
+  return apiMutator<usageV2DowngradeToFreeCreateResponse>(getUsageV2DowngradeToFreeCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
+  }
+);}
+
+
+
+export type usageV2InvoicesListResponse200 = {
+  data: UsageInvoiceListResponseApi
+  status: 200
+}
+
+export type usageV2InvoicesListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2InvoicesListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2InvoicesListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2InvoicesListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2InvoicesListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2InvoicesListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2InvoicesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2InvoicesListResponseSuccess = (usageV2InvoicesListResponse200) & {
+  headers: Headers;
+};
+export type usageV2InvoicesListResponseError = (usageV2InvoicesListResponse400 | usageV2InvoicesListResponse401 | usageV2InvoicesListResponse402 | usageV2InvoicesListResponse403 | usageV2InvoicesListResponse404 | usageV2InvoicesListResponse500 | usageV2InvoicesListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2InvoicesListResponse = (usageV2InvoicesListResponseSuccess | usageV2InvoicesListResponseError)
+
+export const getUsageV2InvoicesListUrl = () => {
+
+
+
+
+  return `/usage/v2/invoices/`
+}
+
+/**
+ * Get invoice history for the billing page.
+ */
+export const usageV2InvoicesList = async ( options?: RequestInit): Promise<usageV2InvoicesListResponse> => {
+
+  return apiMutator<usageV2InvoicesListResponse>(getUsageV2InvoicesListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2InvoicesReadResponse200 = {
+  data: UsageInvoiceDetailResponseApi
+  status: 200
+}
+
+export type usageV2InvoicesReadResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2InvoicesReadResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2InvoicesReadResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2InvoicesReadResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2InvoicesReadResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2InvoicesReadResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2InvoicesReadResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2InvoicesReadResponseSuccess = (usageV2InvoicesReadResponse200) & {
+  headers: Headers;
+};
+export type usageV2InvoicesReadResponseError = (usageV2InvoicesReadResponse400 | usageV2InvoicesReadResponse401 | usageV2InvoicesReadResponse402 | usageV2InvoicesReadResponse403 | usageV2InvoicesReadResponse404 | usageV2InvoicesReadResponse500 | usageV2InvoicesReadResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2InvoicesReadResponse = (usageV2InvoicesReadResponseSuccess | usageV2InvoicesReadResponseError)
+
+export const getUsageV2InvoicesReadUrl = (invoiceId: string,) => {
+
+
+
+
+  return `/usage/v2/invoices/${invoiceId}/`
+}
+
+/**
+ * Get invoice detail with line items.
+ */
+export const usageV2InvoicesRead = async (invoiceId: string, options?: RequestInit): Promise<usageV2InvoicesReadResponse> => {
+
+  return apiMutator<usageV2InvoicesReadResponse>(getUsageV2InvoicesReadUrl(invoiceId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2NotificationsListResponse200 = {
+  data: UsageNotificationsResponseApi
+  status: 200
+}
+
+export type usageV2NotificationsListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2NotificationsListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2NotificationsListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2NotificationsListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2NotificationsListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2NotificationsListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2NotificationsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2NotificationsListResponseSuccess = (usageV2NotificationsListResponse200) & {
+  headers: Headers;
+};
+export type usageV2NotificationsListResponseError = (usageV2NotificationsListResponse400 | usageV2NotificationsListResponse401 | usageV2NotificationsListResponse402 | usageV2NotificationsListResponse403 | usageV2NotificationsListResponse404 | usageV2NotificationsListResponse500 | usageV2NotificationsListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2NotificationsListResponse = (usageV2NotificationsListResponseSuccess | usageV2NotificationsListResponseError)
+
+export const getUsageV2NotificationsListUrl = () => {
+
+
+
+
+  return `/usage/v2/notifications/`
+}
+
+/**
+ * Used by the frontend to show billing warnings/alerts.
+ * @summary Get active notification banners for the org.
+ */
+export const usageV2NotificationsList = async ( options?: RequestInit): Promise<usageV2NotificationsListResponse> => {
+
+  return apiMutator<usageV2NotificationsListResponse>(getUsageV2NotificationsListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2PaymentMethodsListResponse200 = {
+  data: PaymentMethodsResponseApi
+  status: 200
+}
+
+export type usageV2PaymentMethodsListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2PaymentMethodsListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2PaymentMethodsListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2PaymentMethodsListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2PaymentMethodsListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2PaymentMethodsListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2PaymentMethodsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2PaymentMethodsListResponseSuccess = (usageV2PaymentMethodsListResponse200) & {
+  headers: Headers;
+};
+export type usageV2PaymentMethodsListResponseError = (usageV2PaymentMethodsListResponse400 | usageV2PaymentMethodsListResponse401 | usageV2PaymentMethodsListResponse402 | usageV2PaymentMethodsListResponse403 | usageV2PaymentMethodsListResponse404 | usageV2PaymentMethodsListResponse500 | usageV2PaymentMethodsListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2PaymentMethodsListResponse = (usageV2PaymentMethodsListResponseSuccess | usageV2PaymentMethodsListResponseError)
+
+export const getUsageV2PaymentMethodsListUrl = () => {
+
+
+
+
+  return `/usage/v2/payment-methods/`
+}
+
+/**
+ * List payment methods or create a Stripe Checkout session for adding a card.
+ */
+export const usageV2PaymentMethodsList = async ( options?: RequestInit): Promise<usageV2PaymentMethodsListResponse> => {
+
+  return apiMutator<usageV2PaymentMethodsListResponse>(getUsageV2PaymentMethodsListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2PaymentMethodsCreateResponse200 = {
+  data: UsageMessageResponseApi
+  status: 200
+}
+
+export type usageV2PaymentMethodsCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2PaymentMethodsCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2PaymentMethodsCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2PaymentMethodsCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2PaymentMethodsCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2PaymentMethodsCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2PaymentMethodsCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2PaymentMethodsCreateResponseSuccess = (usageV2PaymentMethodsCreateResponse200) & {
+  headers: Headers;
+};
+export type usageV2PaymentMethodsCreateResponseError = (usageV2PaymentMethodsCreateResponse400 | usageV2PaymentMethodsCreateResponse401 | usageV2PaymentMethodsCreateResponse402 | usageV2PaymentMethodsCreateResponse403 | usageV2PaymentMethodsCreateResponse404 | usageV2PaymentMethodsCreateResponse500 | usageV2PaymentMethodsCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2PaymentMethodsCreateResponse = (usageV2PaymentMethodsCreateResponseSuccess | usageV2PaymentMethodsCreateResponseError)
+
+export const getUsageV2PaymentMethodsCreateUrl = (pmId: string,) => {
+
+
+
+
+  return `/usage/v2/payment-methods/${pmId}/`
+}
+
+/**
+ * Manage a specific payment method.
+ */
+export const usageV2PaymentMethodsCreate = async (pmId: string,
+    usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2PaymentMethodsCreateResponse> => {
+
+  return apiMutator<usageV2PaymentMethodsCreateResponse>(getUsageV2PaymentMethodsCreateUrl(pmId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
+  }
+);}
+
+
+
+export type usageV2PaymentMethodsUpdateResponse200 = {
+  data: PaymentMethodConfirmResponseApi
+  status: 200
+}
+
+export type usageV2PaymentMethodsUpdateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2PaymentMethodsUpdateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2PaymentMethodsUpdateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2PaymentMethodsUpdateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2PaymentMethodsUpdateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2PaymentMethodsUpdateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2PaymentMethodsUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2PaymentMethodsUpdateResponseSuccess = (usageV2PaymentMethodsUpdateResponse200) & {
+  headers: Headers;
+};
+export type usageV2PaymentMethodsUpdateResponseError = (usageV2PaymentMethodsUpdateResponse400 | usageV2PaymentMethodsUpdateResponse401 | usageV2PaymentMethodsUpdateResponse402 | usageV2PaymentMethodsUpdateResponse403 | usageV2PaymentMethodsUpdateResponse404 | usageV2PaymentMethodsUpdateResponse500 | usageV2PaymentMethodsUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2PaymentMethodsUpdateResponse = (usageV2PaymentMethodsUpdateResponseSuccess | usageV2PaymentMethodsUpdateResponseError)
+
+export const getUsageV2PaymentMethodsUpdateUrl = () => {
+
+
+
+
+  return `/usage/v2/payment-methods/`
+}
+
+/**
+ * Verifies the session, and if the customer has no default payment
+method yet, sets the newly-attached card as the default. Parity
+with UpgradeToPaygView.put so both card-collection flows produce
+the same end state.
+ * @summary Confirm a completed Checkout setup session.
+ */
+export const usageV2PaymentMethodsUpdate = async (setupIntentConfirmRequestApi: SetupIntentConfirmRequestApi, options?: RequestInit): Promise<usageV2PaymentMethodsUpdateResponse> => {
+
+  return apiMutator<usageV2PaymentMethodsUpdateResponse>(getUsageV2PaymentMethodsUpdateUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      setupIntentConfirmRequestApi,)
+  }
+);}
+
+
+
+export type usageV2PaymentMethodsSetupIntentListResponse200 = {
+  data: PaymentMethodsResponseApi
+  status: 200
+}
+
+export type usageV2PaymentMethodsSetupIntentListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2PaymentMethodsSetupIntentListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2PaymentMethodsSetupIntentListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2PaymentMethodsSetupIntentListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2PaymentMethodsSetupIntentListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2PaymentMethodsSetupIntentListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2PaymentMethodsSetupIntentListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2PaymentMethodsSetupIntentListResponseSuccess = (usageV2PaymentMethodsSetupIntentListResponse200) & {
+  headers: Headers;
+};
+export type usageV2PaymentMethodsSetupIntentListResponseError = (usageV2PaymentMethodsSetupIntentListResponse400 | usageV2PaymentMethodsSetupIntentListResponse401 | usageV2PaymentMethodsSetupIntentListResponse402 | usageV2PaymentMethodsSetupIntentListResponse403 | usageV2PaymentMethodsSetupIntentListResponse404 | usageV2PaymentMethodsSetupIntentListResponse500 | usageV2PaymentMethodsSetupIntentListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2PaymentMethodsSetupIntentListResponse = (usageV2PaymentMethodsSetupIntentListResponseSuccess | usageV2PaymentMethodsSetupIntentListResponseError)
+
+export const getUsageV2PaymentMethodsSetupIntentListUrl = () => {
+
+
+
+
+  return `/usage/v2/payment-methods/setup-intent/`
+}
+
+/**
+ * List payment methods or create a Stripe Checkout session for adding a card.
+ */
+export const usageV2PaymentMethodsSetupIntentList = async ( options?: RequestInit): Promise<usageV2PaymentMethodsSetupIntentListResponse> => {
+
+  return apiMutator<usageV2PaymentMethodsSetupIntentListResponse>(getUsageV2PaymentMethodsSetupIntentListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2PaymentMethodsSetupIntentCreateResponse200 = {
+  data: PaymentMethodCheckoutResponseApi
+  status: 200
+}
+
+export type usageV2PaymentMethodsSetupIntentCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2PaymentMethodsSetupIntentCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2PaymentMethodsSetupIntentCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2PaymentMethodsSetupIntentCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2PaymentMethodsSetupIntentCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2PaymentMethodsSetupIntentCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2PaymentMethodsSetupIntentCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2PaymentMethodsSetupIntentCreateResponseSuccess = (usageV2PaymentMethodsSetupIntentCreateResponse200) & {
+  headers: Headers;
+};
+export type usageV2PaymentMethodsSetupIntentCreateResponseError = (usageV2PaymentMethodsSetupIntentCreateResponse400 | usageV2PaymentMethodsSetupIntentCreateResponse401 | usageV2PaymentMethodsSetupIntentCreateResponse402 | usageV2PaymentMethodsSetupIntentCreateResponse403 | usageV2PaymentMethodsSetupIntentCreateResponse404 | usageV2PaymentMethodsSetupIntentCreateResponse500 | usageV2PaymentMethodsSetupIntentCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2PaymentMethodsSetupIntentCreateResponse = (usageV2PaymentMethodsSetupIntentCreateResponseSuccess | usageV2PaymentMethodsSetupIntentCreateResponseError)
+
+export const getUsageV2PaymentMethodsSetupIntentCreateUrl = () => {
+
+
+
+
+  return `/usage/v2/payment-methods/setup-intent/`
+}
+
+/**
+ * List payment methods or create a Stripe Checkout session for adding a card.
+ */
+export const usageV2PaymentMethodsSetupIntentCreate = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2PaymentMethodsSetupIntentCreateResponse> => {
+
+  return apiMutator<usageV2PaymentMethodsSetupIntentCreateResponse>(getUsageV2PaymentMethodsSetupIntentCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
+  }
+);}
+
+
+
+export type usageV2PaymentMethodsSetupIntentUpdateResponse200 = {
+  data: PaymentMethodConfirmResponseApi
+  status: 200
+}
+
+export type usageV2PaymentMethodsSetupIntentUpdateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2PaymentMethodsSetupIntentUpdateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2PaymentMethodsSetupIntentUpdateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2PaymentMethodsSetupIntentUpdateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2PaymentMethodsSetupIntentUpdateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2PaymentMethodsSetupIntentUpdateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2PaymentMethodsSetupIntentUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2PaymentMethodsSetupIntentUpdateResponseSuccess = (usageV2PaymentMethodsSetupIntentUpdateResponse200) & {
+  headers: Headers;
+};
+export type usageV2PaymentMethodsSetupIntentUpdateResponseError = (usageV2PaymentMethodsSetupIntentUpdateResponse400 | usageV2PaymentMethodsSetupIntentUpdateResponse401 | usageV2PaymentMethodsSetupIntentUpdateResponse402 | usageV2PaymentMethodsSetupIntentUpdateResponse403 | usageV2PaymentMethodsSetupIntentUpdateResponse404 | usageV2PaymentMethodsSetupIntentUpdateResponse500 | usageV2PaymentMethodsSetupIntentUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2PaymentMethodsSetupIntentUpdateResponse = (usageV2PaymentMethodsSetupIntentUpdateResponseSuccess | usageV2PaymentMethodsSetupIntentUpdateResponseError)
+
+export const getUsageV2PaymentMethodsSetupIntentUpdateUrl = () => {
+
+
+
+
+  return `/usage/v2/payment-methods/setup-intent/`
+}
+
+/**
+ * Verifies the session, and if the customer has no default payment
+method yet, sets the newly-attached card as the default. Parity
+with UpgradeToPaygView.put so both card-collection flows produce
+the same end state.
+ * @summary Confirm a completed Checkout setup session.
+ */
+export const usageV2PaymentMethodsSetupIntentUpdate = async (setupIntentConfirmRequestApi: SetupIntentConfirmRequestApi, options?: RequestInit): Promise<usageV2PaymentMethodsSetupIntentUpdateResponse> => {
+
+  return apiMutator<usageV2PaymentMethodsSetupIntentUpdateResponse>(getUsageV2PaymentMethodsSetupIntentUpdateUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      setupIntentConfirmRequestApi,)
+  }
+);}
+
+
+
+export type usageV2PaymentMethodsDeleteResponse200 = {
+  data: UsageMessageResponseApi
+  status: 200
+}
+
+export type usageV2PaymentMethodsDeleteResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2PaymentMethodsDeleteResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2PaymentMethodsDeleteResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2PaymentMethodsDeleteResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2PaymentMethodsDeleteResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2PaymentMethodsDeleteResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2PaymentMethodsDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2PaymentMethodsDeleteResponseSuccess = (usageV2PaymentMethodsDeleteResponse200) & {
+  headers: Headers;
+};
+export type usageV2PaymentMethodsDeleteResponseError = (usageV2PaymentMethodsDeleteResponse400 | usageV2PaymentMethodsDeleteResponse401 | usageV2PaymentMethodsDeleteResponse402 | usageV2PaymentMethodsDeleteResponse403 | usageV2PaymentMethodsDeleteResponse404 | usageV2PaymentMethodsDeleteResponse500 | usageV2PaymentMethodsDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2PaymentMethodsDeleteResponse = (usageV2PaymentMethodsDeleteResponseSuccess | usageV2PaymentMethodsDeleteResponseError)
+
+export const getUsageV2PaymentMethodsDeleteUrl = (pmId: string,) => {
+
+
+
+
+  return `/usage/v2/payment-methods/${pmId}/`
+}
+
+/**
+ * Manage a specific payment method.
+ */
+export const usageV2PaymentMethodsDelete = async (pmId: string, options?: RequestInit): Promise<usageV2PaymentMethodsDeleteResponse> => {
+
+  return apiMutator<usageV2PaymentMethodsDeleteResponse>(getUsageV2PaymentMethodsDeleteUrl(pmId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type usageV2PaymentMethodsDefaultCreateResponse200 = {
+  data: UsageMessageResponseApi
+  status: 200
+}
+
+export type usageV2PaymentMethodsDefaultCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2PaymentMethodsDefaultCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2PaymentMethodsDefaultCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2PaymentMethodsDefaultCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2PaymentMethodsDefaultCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2PaymentMethodsDefaultCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2PaymentMethodsDefaultCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2PaymentMethodsDefaultCreateResponseSuccess = (usageV2PaymentMethodsDefaultCreateResponse200) & {
+  headers: Headers;
+};
+export type usageV2PaymentMethodsDefaultCreateResponseError = (usageV2PaymentMethodsDefaultCreateResponse400 | usageV2PaymentMethodsDefaultCreateResponse401 | usageV2PaymentMethodsDefaultCreateResponse402 | usageV2PaymentMethodsDefaultCreateResponse403 | usageV2PaymentMethodsDefaultCreateResponse404 | usageV2PaymentMethodsDefaultCreateResponse500 | usageV2PaymentMethodsDefaultCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2PaymentMethodsDefaultCreateResponse = (usageV2PaymentMethodsDefaultCreateResponseSuccess | usageV2PaymentMethodsDefaultCreateResponseError)
+
+export const getUsageV2PaymentMethodsDefaultCreateUrl = (pmId: string,) => {
+
+
+
+
+  return `/usage/v2/payment-methods/${pmId}/default/`
+}
+
+/**
+ * Manage a specific payment method.
+ */
+export const usageV2PaymentMethodsDefaultCreate = async (pmId: string,
+    usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2PaymentMethodsDefaultCreateResponse> => {
+
+  return apiMutator<usageV2PaymentMethodsDefaultCreateResponse>(getUsageV2PaymentMethodsDefaultCreateUrl(pmId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
+  }
+);}
+
+
+
+export type usageV2PaymentMethodsDefaultDeleteResponse200 = {
+  data: UsageMessageResponseApi
+  status: 200
+}
+
+export type usageV2PaymentMethodsDefaultDeleteResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2PaymentMethodsDefaultDeleteResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2PaymentMethodsDefaultDeleteResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2PaymentMethodsDefaultDeleteResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2PaymentMethodsDefaultDeleteResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2PaymentMethodsDefaultDeleteResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2PaymentMethodsDefaultDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2PaymentMethodsDefaultDeleteResponseSuccess = (usageV2PaymentMethodsDefaultDeleteResponse200) & {
+  headers: Headers;
+};
+export type usageV2PaymentMethodsDefaultDeleteResponseError = (usageV2PaymentMethodsDefaultDeleteResponse400 | usageV2PaymentMethodsDefaultDeleteResponse401 | usageV2PaymentMethodsDefaultDeleteResponse402 | usageV2PaymentMethodsDefaultDeleteResponse403 | usageV2PaymentMethodsDefaultDeleteResponse404 | usageV2PaymentMethodsDefaultDeleteResponse500 | usageV2PaymentMethodsDefaultDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2PaymentMethodsDefaultDeleteResponse = (usageV2PaymentMethodsDefaultDeleteResponseSuccess | usageV2PaymentMethodsDefaultDeleteResponseError)
+
+export const getUsageV2PaymentMethodsDefaultDeleteUrl = (pmId: string,) => {
+
+
+
+
+  return `/usage/v2/payment-methods/${pmId}/default/`
+}
+
+/**
+ * Manage a specific payment method.
+ */
+export const usageV2PaymentMethodsDefaultDelete = async (pmId: string, options?: RequestInit): Promise<usageV2PaymentMethodsDefaultDeleteResponse> => {
+
+  return apiMutator<usageV2PaymentMethodsDefaultDeleteResponse>(getUsageV2PaymentMethodsDefaultDeleteUrl(pmId),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type usageV2PlansAndAddonsListResponse200 = {
+  data: UsagePlansAndAddonsResponseApi
+  status: 200
+}
+
+export type usageV2PlansAndAddonsListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2PlansAndAddonsListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2PlansAndAddonsListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2PlansAndAddonsListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2PlansAndAddonsListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2PlansAndAddonsListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2PlansAndAddonsListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2PlansAndAddonsListResponseSuccess = (usageV2PlansAndAddonsListResponse200) & {
+  headers: Headers;
+};
+export type usageV2PlansAndAddonsListResponseError = (usageV2PlansAndAddonsListResponse400 | usageV2PlansAndAddonsListResponse401 | usageV2PlansAndAddonsListResponse402 | usageV2PlansAndAddonsListResponse403 | usageV2PlansAndAddonsListResponse404 | usageV2PlansAndAddonsListResponse500 | usageV2PlansAndAddonsListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2PlansAndAddonsListResponse = (usageV2PlansAndAddonsListResponseSuccess | usageV2PlansAndAddonsListResponseError)
+
+export const getUsageV2PlansAndAddonsListUrl = () => {
+
+
+
+
+  return `/usage/v2/plans-and-addons/`
+}
+
+/**
+ * Returns 2 tiers + 3 add-ons with features, limits, pricing.
+ * @summary Get plan comparison data for the pricing page.
+ */
+export const usageV2PlansAndAddonsList = async ( options?: RequestInit): Promise<usageV2PlansAndAddonsListResponse> => {
+
+  return apiMutator<usageV2PlansAndAddonsListResponse>(getUsageV2PlansAndAddonsListUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2ReinstateAddonCreateResponse200 = {
+  data: AddonPostResponseApi
+  status: 200
+}
+
+export type usageV2ReinstateAddonCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2ReinstateAddonCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2ReinstateAddonCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2ReinstateAddonCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2ReinstateAddonCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2ReinstateAddonCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2ReinstateAddonCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2ReinstateAddonCreateResponseSuccess = (usageV2ReinstateAddonCreateResponse200) & {
+  headers: Headers;
+};
+export type usageV2ReinstateAddonCreateResponseError = (usageV2ReinstateAddonCreateResponse400 | usageV2ReinstateAddonCreateResponse401 | usageV2ReinstateAddonCreateResponse402 | usageV2ReinstateAddonCreateResponse403 | usageV2ReinstateAddonCreateResponse404 | usageV2ReinstateAddonCreateResponse500 | usageV2ReinstateAddonCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2ReinstateAddonCreateResponse = (usageV2ReinstateAddonCreateResponseSuccess | usageV2ReinstateAddonCreateResponseError)
+
+export const getUsageV2ReinstateAddonCreateUrl = () => {
+
+
+
+
+  return `/usage/v2/reinstate-addon/`
+}
+
+/**
+ * Add or remove an add-on subscription.
+ */
+export const usageV2ReinstateAddonCreate = async (addonRequestApi: AddonRequestApi, options?: RequestInit): Promise<usageV2ReinstateAddonCreateResponse> => {
+
+  return apiMutator<usageV2ReinstateAddonCreateResponse>(getUsageV2ReinstateAddonCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      addonRequestApi,)
+  }
+);}
+
+
+
+export type usageV2ReinstateAddonUpdateResponse200 = {
+  data: UsageMessageResponseApi
+  status: 200
+}
+
+export type usageV2ReinstateAddonUpdateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2ReinstateAddonUpdateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2ReinstateAddonUpdateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2ReinstateAddonUpdateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2ReinstateAddonUpdateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2ReinstateAddonUpdateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2ReinstateAddonUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2ReinstateAddonUpdateResponseSuccess = (usageV2ReinstateAddonUpdateResponse200) & {
+  headers: Headers;
+};
+export type usageV2ReinstateAddonUpdateResponseError = (usageV2ReinstateAddonUpdateResponse400 | usageV2ReinstateAddonUpdateResponse401 | usageV2ReinstateAddonUpdateResponse402 | usageV2ReinstateAddonUpdateResponse403 | usageV2ReinstateAddonUpdateResponse404 | usageV2ReinstateAddonUpdateResponse500 | usageV2ReinstateAddonUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2ReinstateAddonUpdateResponse = (usageV2ReinstateAddonUpdateResponseSuccess | usageV2ReinstateAddonUpdateResponseError)
+
+export const getUsageV2ReinstateAddonUpdateUrl = () => {
+
+
+
+
+  return `/usage/v2/reinstate-addon/`
+}
+
+/**
+ * Reinstate a previously-scheduled add-on cancellation.
+ */
+export const usageV2ReinstateAddonUpdate = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2ReinstateAddonUpdateResponse> => {
+
+  return apiMutator<usageV2ReinstateAddonUpdateResponse>(getUsageV2ReinstateAddonUpdateUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
+  }
+);}
+
+
+
+export type usageV2ReinstateAddonDeleteResponse200 = {
+  data: UsageMessageResponseApi
+  status: 200
+}
+
+export type usageV2ReinstateAddonDeleteResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2ReinstateAddonDeleteResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2ReinstateAddonDeleteResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2ReinstateAddonDeleteResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2ReinstateAddonDeleteResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2ReinstateAddonDeleteResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2ReinstateAddonDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2ReinstateAddonDeleteResponseSuccess = (usageV2ReinstateAddonDeleteResponse200) & {
+  headers: Headers;
+};
+export type usageV2ReinstateAddonDeleteResponseError = (usageV2ReinstateAddonDeleteResponse400 | usageV2ReinstateAddonDeleteResponse401 | usageV2ReinstateAddonDeleteResponse402 | usageV2ReinstateAddonDeleteResponse403 | usageV2ReinstateAddonDeleteResponse404 | usageV2ReinstateAddonDeleteResponse500 | usageV2ReinstateAddonDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2ReinstateAddonDeleteResponse = (usageV2ReinstateAddonDeleteResponseSuccess | usageV2ReinstateAddonDeleteResponseError)
+
+export const getUsageV2ReinstateAddonDeleteUrl = () => {
+
+
+
+
+  return `/usage/v2/reinstate-addon/`
+}
+
+/**
+ * Add or remove an add-on subscription.
+ */
+export const usageV2ReinstateAddonDelete = async ( options?: RequestInit): Promise<usageV2ReinstateAddonDeleteResponse> => {
+
+  return apiMutator<usageV2ReinstateAddonDeleteResponse>(getUsageV2ReinstateAddonDeleteUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type usageV2RemoveAddonCreateResponse200 = {
+  data: AddonPostResponseApi
+  status: 200
+}
+
+export type usageV2RemoveAddonCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2RemoveAddonCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2RemoveAddonCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2RemoveAddonCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2RemoveAddonCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2RemoveAddonCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2RemoveAddonCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2RemoveAddonCreateResponseSuccess = (usageV2RemoveAddonCreateResponse200) & {
+  headers: Headers;
+};
+export type usageV2RemoveAddonCreateResponseError = (usageV2RemoveAddonCreateResponse400 | usageV2RemoveAddonCreateResponse401 | usageV2RemoveAddonCreateResponse402 | usageV2RemoveAddonCreateResponse403 | usageV2RemoveAddonCreateResponse404 | usageV2RemoveAddonCreateResponse500 | usageV2RemoveAddonCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2RemoveAddonCreateResponse = (usageV2RemoveAddonCreateResponseSuccess | usageV2RemoveAddonCreateResponseError)
+
+export const getUsageV2RemoveAddonCreateUrl = () => {
+
+
+
+
+  return `/usage/v2/remove-addon/`
+}
+
+/**
+ * Add or remove an add-on subscription.
+ */
+export const usageV2RemoveAddonCreate = async (addonRequestApi: AddonRequestApi, options?: RequestInit): Promise<usageV2RemoveAddonCreateResponse> => {
+
+  return apiMutator<usageV2RemoveAddonCreateResponse>(getUsageV2RemoveAddonCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      addonRequestApi,)
+  }
+);}
+
+
+
+export type usageV2RemoveAddonUpdateResponse200 = {
+  data: UsageMessageResponseApi
+  status: 200
+}
+
+export type usageV2RemoveAddonUpdateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2RemoveAddonUpdateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2RemoveAddonUpdateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2RemoveAddonUpdateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2RemoveAddonUpdateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2RemoveAddonUpdateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2RemoveAddonUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2RemoveAddonUpdateResponseSuccess = (usageV2RemoveAddonUpdateResponse200) & {
+  headers: Headers;
+};
+export type usageV2RemoveAddonUpdateResponseError = (usageV2RemoveAddonUpdateResponse400 | usageV2RemoveAddonUpdateResponse401 | usageV2RemoveAddonUpdateResponse402 | usageV2RemoveAddonUpdateResponse403 | usageV2RemoveAddonUpdateResponse404 | usageV2RemoveAddonUpdateResponse500 | usageV2RemoveAddonUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2RemoveAddonUpdateResponse = (usageV2RemoveAddonUpdateResponseSuccess | usageV2RemoveAddonUpdateResponseError)
+
+export const getUsageV2RemoveAddonUpdateUrl = () => {
+
+
+
+
+  return `/usage/v2/remove-addon/`
+}
+
+/**
+ * Reinstate a previously-scheduled add-on cancellation.
+ */
+export const usageV2RemoveAddonUpdate = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2RemoveAddonUpdateResponse> => {
+
+  return apiMutator<usageV2RemoveAddonUpdateResponse>(getUsageV2RemoveAddonUpdateUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
+  }
+);}
+
+
+
+export type usageV2RemoveAddonDeleteResponse200 = {
+  data: UsageMessageResponseApi
+  status: 200
+}
+
+export type usageV2RemoveAddonDeleteResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2RemoveAddonDeleteResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2RemoveAddonDeleteResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2RemoveAddonDeleteResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2RemoveAddonDeleteResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2RemoveAddonDeleteResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2RemoveAddonDeleteResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2RemoveAddonDeleteResponseSuccess = (usageV2RemoveAddonDeleteResponse200) & {
+  headers: Headers;
+};
+export type usageV2RemoveAddonDeleteResponseError = (usageV2RemoveAddonDeleteResponse400 | usageV2RemoveAddonDeleteResponse401 | usageV2RemoveAddonDeleteResponse402 | usageV2RemoveAddonDeleteResponse403 | usageV2RemoveAddonDeleteResponse404 | usageV2RemoveAddonDeleteResponse500 | usageV2RemoveAddonDeleteResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2RemoveAddonDeleteResponse = (usageV2RemoveAddonDeleteResponseSuccess | usageV2RemoveAddonDeleteResponseError)
+
+export const getUsageV2RemoveAddonDeleteUrl = () => {
+
+
+
+
+  return `/usage/v2/remove-addon/`
+}
+
+/**
+ * Add or remove an add-on subscription.
+ */
+export const usageV2RemoveAddonDelete = async ( options?: RequestInit): Promise<usageV2RemoveAddonDeleteResponse> => {
+
+  return apiMutator<usageV2RemoveAddonDeleteResponse>(getUsageV2RemoveAddonDeleteUrl(),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+export type usageV2StripeWebhookCreateResponse200 = {
+  data: StripeWebhookResponseApi
+  status: 200
+}
+
+export type usageV2StripeWebhookCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2StripeWebhookCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2StripeWebhookCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2StripeWebhookCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2StripeWebhookCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2StripeWebhookCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2StripeWebhookCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2StripeWebhookCreateResponseSuccess = (usageV2StripeWebhookCreateResponse200) & {
+  headers: Headers;
+};
+export type usageV2StripeWebhookCreateResponseError = (usageV2StripeWebhookCreateResponse400 | usageV2StripeWebhookCreateResponse401 | usageV2StripeWebhookCreateResponse402 | usageV2StripeWebhookCreateResponse403 | usageV2StripeWebhookCreateResponse404 | usageV2StripeWebhookCreateResponse500 | usageV2StripeWebhookCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2StripeWebhookCreateResponse = (usageV2StripeWebhookCreateResponseSuccess | usageV2StripeWebhookCreateResponseError)
+
+export const getUsageV2StripeWebhookCreateUrl = () => {
+
+
+
+
+  return `/usage/v2/stripe-webhook/`
+}
+
+/**
+ * No auth — Stripe authenticates via signature header.
+APIView.as_view() auto-applies csrf_exempt.
+ * @summary Handle Stripe webhook events.
+ */
+export const usageV2StripeWebhookCreate = async (stripeWebhookRequestApi: StripeWebhookRequestApi, options?: RequestInit): Promise<usageV2StripeWebhookCreateResponse> => {
+
+  return apiMutator<usageV2StripeWebhookCreateResponse>(getUsageV2StripeWebhookCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      stripeWebhookRequestApi,)
+  }
+);}
+
+
+
+export type usageV2UpgradeToPaygCreateResponse200 = {
+  data: UpgradeToPaygPostResponseApi
+  status: 200
+}
+
+export type usageV2UpgradeToPaygCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2UpgradeToPaygCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2UpgradeToPaygCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2UpgradeToPaygCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2UpgradeToPaygCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2UpgradeToPaygCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2UpgradeToPaygCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2UpgradeToPaygCreateResponseSuccess = (usageV2UpgradeToPaygCreateResponse200) & {
+  headers: Headers;
+};
+export type usageV2UpgradeToPaygCreateResponseError = (usageV2UpgradeToPaygCreateResponse400 | usageV2UpgradeToPaygCreateResponse401 | usageV2UpgradeToPaygCreateResponse402 | usageV2UpgradeToPaygCreateResponse403 | usageV2UpgradeToPaygCreateResponse404 | usageV2UpgradeToPaygCreateResponse500 | usageV2UpgradeToPaygCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2UpgradeToPaygCreateResponse = (usageV2UpgradeToPaygCreateResponseSuccess | usageV2UpgradeToPaygCreateResponseError)
+
+export const getUsageV2UpgradeToPaygCreateUrl = () => {
+
+
+
+
+  return `/usage/v2/upgrade-to-payg/`
+}
+
+/**
+ * Create a Stripe Checkout session in setup mode for card collection.
+ */
+export const usageV2UpgradeToPaygCreate = async (usageEmptyRequestApi: UsageEmptyRequestApi, options?: RequestInit): Promise<usageV2UpgradeToPaygCreateResponse> => {
+
+  return apiMutator<usageV2UpgradeToPaygCreateResponse>(getUsageV2UpgradeToPaygCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      usageEmptyRequestApi,)
+  }
+);}
+
+
+
+export type usageV2UpgradeToPaygUpdateResponse200 = {
+  data: PlanResponseApi
+  status: 200
+}
+
+export type usageV2UpgradeToPaygUpdateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2UpgradeToPaygUpdateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2UpgradeToPaygUpdateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2UpgradeToPaygUpdateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2UpgradeToPaygUpdateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2UpgradeToPaygUpdateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2UpgradeToPaygUpdateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2UpgradeToPaygUpdateResponseSuccess = (usageV2UpgradeToPaygUpdateResponse200) & {
+  headers: Headers;
+};
+export type usageV2UpgradeToPaygUpdateResponseError = (usageV2UpgradeToPaygUpdateResponse400 | usageV2UpgradeToPaygUpdateResponse401 | usageV2UpgradeToPaygUpdateResponse402 | usageV2UpgradeToPaygUpdateResponse403 | usageV2UpgradeToPaygUpdateResponse404 | usageV2UpgradeToPaygUpdateResponse500 | usageV2UpgradeToPaygUpdateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2UpgradeToPaygUpdateResponse = (usageV2UpgradeToPaygUpdateResponseSuccess | usageV2UpgradeToPaygUpdateResponseError)
+
+export const getUsageV2UpgradeToPaygUpdateUrl = () => {
+
+
+
+
+  return `/usage/v2/upgrade-to-payg/`
+}
+
+/**
+ * Confirm upgrade after Stripe Checkout succeeds.
+ */
+export const usageV2UpgradeToPaygUpdate = async (upgradeToPaygConfirmRequestApi: UpgradeToPaygConfirmRequestApi, options?: RequestInit): Promise<usageV2UpgradeToPaygUpdateResponse> => {
+
+  return apiMutator<usageV2UpgradeToPaygUpdateResponse>(getUsageV2UpgradeToPaygUpdateUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      upgradeToPaygConfirmRequestApi,)
+  }
+);}
+
+
+
+export type usageV2UsageOverviewListResponse200 = {
+  data: UsageOverviewResponseApi
+  status: 200
+}
+
+export type usageV2UsageOverviewListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2UsageOverviewListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2UsageOverviewListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2UsageOverviewListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2UsageOverviewListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2UsageOverviewListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2UsageOverviewListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2UsageOverviewListResponseSuccess = (usageV2UsageOverviewListResponse200) & {
+  headers: Headers;
+};
+export type usageV2UsageOverviewListResponseError = (usageV2UsageOverviewListResponse400 | usageV2UsageOverviewListResponse401 | usageV2UsageOverviewListResponse402 | usageV2UsageOverviewListResponse403 | usageV2UsageOverviewListResponse404 | usageV2UsageOverviewListResponse500 | usageV2UsageOverviewListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2UsageOverviewListResponse = (usageV2UsageOverviewListResponseSuccess | usageV2UsageOverviewListResponseError)
+
+export const getUsageV2UsageOverviewListUrl = (params?: UsageV2UsageOverviewListParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/usage/v2/usage-overview/?${stringifiedParams}` : `/usage/v2/usage-overview/`
+}
+
+/**
+ * Returns per-dimension totals, free allowances, estimated costs,
+and projected month-end usage.
+
+Query params:
+    period: YYYY-MM (default: current month)
+    workspace_id: optional (filter by workspace)
+ * @summary Get usage overview for the current billing period.
+ */
+export const usageV2UsageOverviewList = async (params?: UsageV2UsageOverviewListParams, options?: RequestInit): Promise<usageV2UsageOverviewListResponse> => {
+
+  return apiMutator<usageV2UsageOverviewListResponse>(getUsageV2UsageOverviewListUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2UsageTimeSeriesListResponse200 = {
+  data: UsageTimeSeriesResponseApi
+  status: 200
+}
+
+export type usageV2UsageTimeSeriesListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2UsageTimeSeriesListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2UsageTimeSeriesListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2UsageTimeSeriesListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2UsageTimeSeriesListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2UsageTimeSeriesListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2UsageTimeSeriesListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2UsageTimeSeriesListResponseSuccess = (usageV2UsageTimeSeriesListResponse200) & {
+  headers: Headers;
+};
+export type usageV2UsageTimeSeriesListResponseError = (usageV2UsageTimeSeriesListResponse400 | usageV2UsageTimeSeriesListResponse401 | usageV2UsageTimeSeriesListResponse402 | usageV2UsageTimeSeriesListResponse403 | usageV2UsageTimeSeriesListResponse404 | usageV2UsageTimeSeriesListResponse500 | usageV2UsageTimeSeriesListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2UsageTimeSeriesListResponse = (usageV2UsageTimeSeriesListResponseSuccess | usageV2UsageTimeSeriesListResponseError)
+
+export const getUsageV2UsageTimeSeriesListUrl = (params: UsageV2UsageTimeSeriesListParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/usage/v2/usage-time-series/?${stringifiedParams}` : `/usage/v2/usage-time-series/`
+}
+
+/**
+ * Query params:
+    dimension: required (e.g., "storage", "ai_credits")
+    period: YYYY-MM (default: current month)
+    period_end: YYYY-MM (optional; defaults to period for a single month)
+ * @summary Get daily usage time-series for a dimension.
+ */
+export const usageV2UsageTimeSeriesList = async (params: UsageV2UsageTimeSeriesListParams, options?: RequestInit): Promise<usageV2UsageTimeSeriesListResponse> => {
+
+  return apiMutator<usageV2UsageTimeSeriesListResponse>(getUsageV2UsageTimeSeriesListUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageV2UsageWorkspaceBreakdownListResponse200 = {
+  data: UsageWorkspaceBreakdownResponseApi
+  status: 200
+}
+
+export type usageV2UsageWorkspaceBreakdownListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageV2UsageWorkspaceBreakdownListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageV2UsageWorkspaceBreakdownListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageV2UsageWorkspaceBreakdownListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageV2UsageWorkspaceBreakdownListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageV2UsageWorkspaceBreakdownListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageV2UsageWorkspaceBreakdownListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageV2UsageWorkspaceBreakdownListResponseSuccess = (usageV2UsageWorkspaceBreakdownListResponse200) & {
+  headers: Headers;
+};
+export type usageV2UsageWorkspaceBreakdownListResponseError = (usageV2UsageWorkspaceBreakdownListResponse400 | usageV2UsageWorkspaceBreakdownListResponse401 | usageV2UsageWorkspaceBreakdownListResponse402 | usageV2UsageWorkspaceBreakdownListResponse403 | usageV2UsageWorkspaceBreakdownListResponse404 | usageV2UsageWorkspaceBreakdownListResponse500 | usageV2UsageWorkspaceBreakdownListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageV2UsageWorkspaceBreakdownListResponse = (usageV2UsageWorkspaceBreakdownListResponseSuccess | usageV2UsageWorkspaceBreakdownListResponseError)
+
+export const getUsageV2UsageWorkspaceBreakdownListUrl = (params: UsageV2UsageWorkspaceBreakdownListParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/usage/v2/usage-workspace-breakdown/?${stringifiedParams}` : `/usage/v2/usage-workspace-breakdown/`
+}
+
+/**
+ * Query params:
+    dimension: required
+    period: YYYY-MM (default: current month)
+    period_end: YYYY-MM (optional; defaults to period for a single month)
+ * @summary Get per-workspace usage breakdown for a dimension.
+ */
+export const usageV2UsageWorkspaceBreakdownList = async (params: UsageV2UsageWorkspaceBreakdownListParams, options?: RequestInit): Promise<usageV2UsageWorkspaceBreakdownListResponse> => {
+
+  return apiMutator<usageV2UsageWorkspaceBreakdownListResponse>(getUsageV2UsageWorkspaceBreakdownListUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageWebhookCreateResponse200 = {
+  data: StripeWebhookLegacyResponseApi
+  status: 200
+}
+
+export type usageWebhookCreateResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageWebhookCreateResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageWebhookCreateResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageWebhookCreateResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageWebhookCreateResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageWebhookCreateResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageWebhookCreateResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageWebhookCreateResponseSuccess = (usageWebhookCreateResponse200) & {
+  headers: Headers;
+};
+export type usageWebhookCreateResponseError = (usageWebhookCreateResponse400 | usageWebhookCreateResponse401 | usageWebhookCreateResponse402 | usageWebhookCreateResponse403 | usageWebhookCreateResponse404 | usageWebhookCreateResponse500 | usageWebhookCreateResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageWebhookCreateResponse = (usageWebhookCreateResponseSuccess | usageWebhookCreateResponseError)
+
+export const getUsageWebhookCreateUrl = () => {
+
+
+
+
+  return `/usage/webhook/`
+}
+
+export const usageWebhookCreate = async (stripeWebhookRequestApi: StripeWebhookRequestApi, options?: RequestInit): Promise<usageWebhookCreateResponse> => {
+
+  return apiMutator<usageWebhookCreateResponse>(getUsageWebhookCreateUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(
+      stripeWebhookRequestApi,)
+  }
+);}
+
+
+
+export type usageWorkspaceEvalSummaryListResponse200 = {
+  data: UsageSummaryResponseApi
+  status: 200
+}
+
+export type usageWorkspaceEvalSummaryListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageWorkspaceEvalSummaryListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageWorkspaceEvalSummaryListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageWorkspaceEvalSummaryListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageWorkspaceEvalSummaryListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageWorkspaceEvalSummaryListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageWorkspaceEvalSummaryListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageWorkspaceEvalSummaryListResponseSuccess = (usageWorkspaceEvalSummaryListResponse200) & {
+  headers: Headers;
+};
+export type usageWorkspaceEvalSummaryListResponseError = (usageWorkspaceEvalSummaryListResponse400 | usageWorkspaceEvalSummaryListResponse401 | usageWorkspaceEvalSummaryListResponse402 | usageWorkspaceEvalSummaryListResponse403 | usageWorkspaceEvalSummaryListResponse404 | usageWorkspaceEvalSummaryListResponse500 | usageWorkspaceEvalSummaryListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageWorkspaceEvalSummaryListResponse = (usageWorkspaceEvalSummaryListResponseSuccess | usageWorkspaceEvalSummaryListResponseError)
+
+export const getUsageWorkspaceEvalSummaryListUrl = (params: UsageWorkspaceEvalSummaryListParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/usage/workspace-eval-summary/?${stringifiedParams}` : `/usage/workspace-eval-summary/`
+}
+
+export const usageWorkspaceEvalSummaryList = async (params: UsageWorkspaceEvalSummaryListParams, options?: RequestInit): Promise<usageWorkspaceEvalSummaryListResponse> => {
+
+  return apiMutator<usageWorkspaceEvalSummaryListResponse>(getUsageWorkspaceEvalSummaryListUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+export type usageWorkspaceUsageSummaryListResponse200 = {
+  data: UsageSummaryResponseApi
+  status: 200
+}
+
+export type usageWorkspaceUsageSummaryListResponse400 = {
+  data: UsageErrorResponseApi
+  status: 400
+}
+
+export type usageWorkspaceUsageSummaryListResponse401 = {
+  data: UsageErrorResponseApi
+  status: 401
+}
+
+export type usageWorkspaceUsageSummaryListResponse402 = {
+  data: UsageErrorResponseApi
+  status: 402
+}
+
+export type usageWorkspaceUsageSummaryListResponse403 = {
+  data: UsageErrorResponseApi
+  status: 403
+}
+
+export type usageWorkspaceUsageSummaryListResponse404 = {
+  data: UsageErrorResponseApi
+  status: 404
+}
+
+export type usageWorkspaceUsageSummaryListResponse500 = {
+  data: UsageErrorResponseApi
+  status: 500
+}
+
+export type usageWorkspaceUsageSummaryListResponseDefault = {
+  data: ManagementAPIErrorResponseApi
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 401 | 402 | 403 | 404 | 500>
+}
+
+export type usageWorkspaceUsageSummaryListResponseSuccess = (usageWorkspaceUsageSummaryListResponse200) & {
+  headers: Headers;
+};
+export type usageWorkspaceUsageSummaryListResponseError = (usageWorkspaceUsageSummaryListResponse400 | usageWorkspaceUsageSummaryListResponse401 | usageWorkspaceUsageSummaryListResponse402 | usageWorkspaceUsageSummaryListResponse403 | usageWorkspaceUsageSummaryListResponse404 | usageWorkspaceUsageSummaryListResponse500 | usageWorkspaceUsageSummaryListResponseDefault) & {
+  headers: Headers;
+};
+
+export type usageWorkspaceUsageSummaryListResponse = (usageWorkspaceUsageSummaryListResponseSuccess | usageWorkspaceUsageSummaryListResponseError)
+
+export const getUsageWorkspaceUsageSummaryListUrl = (params?: UsageWorkspaceUsageSummaryListParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/usage/workspace-usage-summary/?${stringifiedParams}` : `/usage/workspace-usage-summary/`
+}
+
+export const usageWorkspaceUsageSummaryList = async (params?: UsageWorkspaceUsageSummaryListParams, options?: RequestInit): Promise<usageWorkspaceUsageSummaryListResponse> => {
+
+  return apiMutator<usageWorkspaceUsageSummaryListResponse>(getUsageWorkspaceUsageSummaryListUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
   }
 );}
 
