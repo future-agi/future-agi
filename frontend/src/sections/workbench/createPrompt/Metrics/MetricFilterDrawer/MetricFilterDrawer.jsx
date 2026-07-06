@@ -10,7 +10,7 @@ import Iconify from "src/components/iconify";
 import { useWorkbenchMetrics } from "../context/WorkbenchMetricsContext";
 import { getRandomId } from "src/utils/utils";
 import { buildFilterDefinitions, defaultFilterBase } from "../common";
-import LLMFilterBox from "src/sections/projects/LLMTracing/LLMFilterBox";
+import ComplexFilter from "src/components/ComplexFilter/ComplexFilter";
 
 const MetricFilterDrawer = React.memo(() => {
   const {
@@ -47,42 +47,35 @@ const MetricFilterDrawer = React.memo(() => {
   }, [activeTab, setFilters]);
 
   useEffect(() => {
-    if (isFilterDrawerOpen) {
-      const normalizedFilters = filters.map((f) => {
-        const newFilter = { ...f };
+    if (!isFilterDrawerOpen) return;
 
-        // ✅ Normalize number filters into string arrays
-        if (newFilter.filterConfig?.filterType === "number") {
-          const value = newFilter.filterConfig.filterValue;
-
-          if (typeof value === "number") {
-            newFilter.filterConfig.filterValue = [String(value), ""];
-          } else if (Array.isArray(value)) {
-            newFilter.filterConfig.filterValue = value.map((v) =>
-              v === "" ? "" : String(v),
-            );
-          }
-        }
-
-        // ✅ Normalize date filters into array form for the drawer
-        if (newFilter.filterConfig?.filterType === "date") {
-          const value = newFilter.filterConfig.filterValue;
-
-          if (typeof value === "string") {
-            // single-value ops → wrap into array
-            newFilter.filterConfig.filterValue = [value, "0"];
-          } else if (Array.isArray(value)) {
-            // already array, just keep as is
-            newFilter.filterConfig.filterValue = value;
-          }
-        }
-
-        return newFilter;
+    // Quick filters are appended API-shaped (no `_meta.parentProperty`/`id`) and
+    // sit alongside the empty default draft. Drop empty drafts and rebuild the
+    // property link from `column_id` so each applied filter shows as a real,
+    // editable row instead of a blank "Select Option".
+    const hydrated = (filters || [])
+      .filter((f) => f?.column_id)
+      .map((f) => {
+        if (f._meta?.parentProperty && f.id) return f;
+        const def = filterDefs.find(
+          (d) => d.propertyId === f.column_id || d.propertyName === f.column_id,
+        );
+        return {
+          ...f,
+          id: f.id || getRandomId(),
+          _meta: {
+            ...f._meta,
+            parentProperty:
+              f._meta?.parentProperty ||
+              def?.propertyId ||
+              def?.propertyName ||
+              f.column_id,
+          },
+        };
       });
 
-      setTempFilters(normalizedFilters);
-      setTempFilterDefs(filterDefs);
-    }
+    setTempFilters(hydrated.length ? hydrated : getDefaultFilter());
+    setTempFilterDefs(filterDefs);
   }, [isFilterDrawerOpen, filters, filterDefs]);
 
   const handleClose = useCallback(() => {
@@ -90,74 +83,26 @@ const MetricFilterDrawer = React.memo(() => {
   }, [setIsFilterDrawerOpen]);
 
   const handleApplyFilters = useCallback(() => {
-    const validFilters = tempFilters
-      .filter(
-        (f) =>
-          f?.columnId ||
-          (f?.filterConfig?.filterValue !== "" &&
-            !(
-              Array.isArray(f.filterConfig.filterValue) &&
-              f.filterConfig.filterValue.length === 0
-            )),
-      )
-      .map((f) => {
-        const newFilter = { ...f };
-
-        const def =
-          filterDefs.find((d) => d.propertyId === f.columnId) ||
-          filterDefs
-            .find((d) => d.propertyName === "Evaluation Metrics")
-            ?.dependents.find((d) => d.propertyId === f.columnId);
-
-        if (def?.filterType?.type) {
-          if (def.filterType.type === "option") {
-            newFilter.filterConfig.filterType = "array";
-          } else if (
-            newFilter.filterConfig.filterType !== "array" &&
-            newFilter.filterConfig.filterType !== "option"
-          ) {
-            newFilter.filterConfig.filterType = def.filterType.type;
-          }
-        }
-
-        // 🔹 Normalize number filter values
-        if (newFilter.filterConfig.filterType === "number") {
-          const values = newFilter.filterConfig.filterValue;
-
-          if (Array.isArray(values)) {
-            const numericValues = values.filter((v) => v !== "").map(Number);
-
-            if (numericValues.length === 1) {
-              newFilter.filterConfig.filterValue = numericValues[0];
-            } else {
-              newFilter.filterConfig.filterValue = numericValues;
-            }
-          } else if (typeof values === "string" && values.trim() !== "") {
-            newFilter.filterConfig.filterValue = Number(values);
-          }
-        }
-
-        if (newFilter._meta?.parentProperty === "Evaluation Metrics") {
-          newFilter.col_type = "PROMPT_METRIC";
-        }
-
-        return newFilter;
-      });
+    const isEmpty = (v) => v === "" || v === undefined || v === null;
+    const validFilters = tempFilters.filter((f) => {
+      const value = f?.filter_config?.filter_value;
+      return Array.isArray(value)
+        ? f?.column_id && value.length > 0 && !value.some(isEmpty)
+        : f?.column_id && !isEmpty(value);
+    });
 
     setFilters(validFilters.length ? validFilters : getDefaultFilter());
     handleClose();
-  }, [tempFilters, setFilters, handleClose, filterDefs]);
+  }, [tempFilters, setFilters, handleClose]);
 
   const hasValidFilters = useMemo(() => {
-    return tempFilters.some(
-      (f) =>
-        f?.columnId ||
-        (f?.filterConfig?.filterValue !== "" &&
-          !(
-            Array.isArray(f.filterConfig.filterValue) &&
-            f.filterConfig.filterValue.length === 0
-          )),
-    );
+    return tempFilters.some((f) => {
+      const value = f?.filter_config?.filter_value;
+      return (
+        f?.column_id ||
+        (value !== "" && !(Array.isArray(value) && value.length === 0))
+      );
+    });
   }, [tempFilters]);
 
   const handleCancel = useCallback(() => {
@@ -169,13 +114,20 @@ const MetricFilterDrawer = React.memo(() => {
     handleClose();
   };
 
+  const handleAddFilter = useCallback(() => {
+    setTempFilters((prev) => [
+      ...(prev?.length ? prev : []),
+      { ...defaultFilterBase, id: getRandomId() },
+    ]);
+  }, []);
+
   const drawerStyles = useMemo(
     () => ({
       height: "100vh",
       position: "fixed",
       borderRadius: "0px !important",
       backgroundColor: "background.paper",
-      width: "36vw",
+      width: "clamp(560px, 46vw, 720px)",
       display: "flex",
       flexDirection: "column",
     }),
@@ -224,6 +176,47 @@ const MetricFilterDrawer = React.memo(() => {
       pr: 1, // Padding for scrollbar
       display: "flex",
       flexDirection: "column",
+      // Restyle ComplexFilter into stacked cards via its stable class hooks
+      // (className="cf-cards") rather than positional selectors.
+      "& .cf-cards .cf-rows": {
+        border: "none",
+        p: 0,
+        gap: 3,
+      },
+      "& .cf-cards .cf-row": {
+        position: "relative",
+        border: "1px solid",
+        borderColor: "divider",
+        borderRadius: "10px",
+        px: 1.5,
+        pt: 2,
+        pb: 1.25,
+        flexWrap: "wrap",
+        rowGap: 1,
+      },
+      "& .cf-cards .cf-row:not(:first-of-type)::before": {
+        content: '"AND"',
+        position: "absolute",
+        top: "-18px",
+        left: "2px",
+        fontSize: "11px",
+        fontWeight: 600,
+        letterSpacing: "0.5px",
+        color: "text.disabled",
+      },
+      "& .cf-cards .cf-row__controls": {
+        flexWrap: "nowrap",
+        alignItems: "center",
+        gap: 1,
+        minWidth: 0,
+        "& > *": { minWidth: 0 },
+        "& > .MuiTypography-root": { flexShrink: 0, minWidth: "max-content" },
+        "& > :first-child": { flex: "1 1 auto", maxWidth: "240px" },
+        "& > :last-child": { flexShrink: 0 },
+      },
+      "& .cf-cards .cf-row__add": {
+        display: "none", // FilterRow's inline add — replaced by the button below
+      },
     }),
     [],
   );
@@ -253,14 +246,35 @@ const MetricFilterDrawer = React.memo(() => {
           <Typography variant="h6">Filters</Typography>
         </Box>
         <Box sx={scrollableContentStyles}>
-          <LLMFilterBox
+          <ComplexFilter
+            className="cf-cards"
             filters={tempFilters}
             setFilters={setTempFilters}
             filterDefinition={tempFilterDefs}
-            setFilterDefinition={setTempFilterDefs}
             defaultFilter={defaultFilterBase}
-            resetFiltersAndClose={resetFiltersAndClose}
+            onClose={resetFiltersAndClose}
           />
+          <Button
+            fullWidth
+            variant="outlined"
+            startIcon={<Iconify icon="ic:round-plus" />}
+            onClick={handleAddFilter}
+            sx={{
+              mt: 3,
+              py: 1,
+              borderStyle: "dashed",
+              borderColor: "divider",
+              color: "text.secondary",
+              textTransform: "none",
+              "&:hover": {
+                borderStyle: "dashed",
+                borderColor: "text.disabled",
+                backgroundColor: "action.hover",
+              },
+            }}
+          >
+            Add Filter
+          </Button>
         </Box>
         <Box sx={actionButtonStyles}>
           <Button
