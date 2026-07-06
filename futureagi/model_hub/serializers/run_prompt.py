@@ -175,9 +175,12 @@ class PromptConfigSerializer(serializers.Serializer):
         child=JsonValueField(allow_null=True),
         required=False,
         help_text=(
-            "Legacy run prompt configuration. If template_format is provided here "
-            "and omitted from run_prompt_config, it is normalized into "
-            "run_prompt_config.template_format so preview and execution match."
+            "Compatibility shim for legacy template_format only. Use "
+            "run_prompt_config for canonical run-prompt settings; other "
+            "configuration keys are ignored unless explicitly migrated. If "
+            "template_format is provided here and omitted from run_prompt_config, "
+            "it is normalized into run_prompt_config.template_format so preview "
+            "and execution match."
         ),
     )
     messages = serializers.ListField(

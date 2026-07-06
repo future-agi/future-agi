@@ -15,6 +15,11 @@ from model_hub.models.choices import (
     SourceChoices,
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.serializers.run_prompt import (
+    AddRunPromptSerializer,
+    EditRunPromptColumnSerializer,
+    PreviewRunPromptSerializer,
+)
 from model_hub.views import dynamic_columns as dynamic_columns_module
 from model_hub.views import run_prompt as run_prompt_module
 from model_hub.views.run_prompt import (
@@ -23,6 +28,7 @@ from model_hub.views.run_prompt import (
     RunPrompts,
     UnresolvedPromptPlaceholdersError,
     merge_run_prompt_config,
+    normalize_public_template_format,
     normalize_run_prompt_config,
     populate_placeholders,
     process_text_with_media,
@@ -164,7 +170,12 @@ def test_normalize_run_prompt_config_preserves_legacy_template_format():
             "configuration": {"template_format": "jinja"},
             "run_prompt_config": {"temperature": 0.1},
         }
-    ) == {"temperature": 0.1, "template_format": "jinja2"}
+    ) == {"temperature": 0.1, "template_format": "jinja"}
+
+
+def test_normalize_public_template_format_keeps_frontend_contract_alias():
+    assert normalize_public_template_format("jinja2") == "jinja"
+    assert normalize_public_template_format("mustache") == "mustache"
 
 
 def test_merge_run_prompt_config_preserves_existing_when_edit_omits_config():
@@ -189,10 +200,375 @@ def test_merge_run_prompt_config_overlays_current_and_legacy_edit_config():
             "configuration": {"template_format": "jinja"},
         },
     ) == {
-        "template_format": "jinja2",
+        "template_format": "jinja",
         "temperature": 0.4,
         "reasoning": {"effort": "medium"},
     }
+
+
+@pytest.mark.parametrize(
+    "serializer_cls",
+    [AddRunPromptSerializer, PreviewRunPromptSerializer, EditRunPromptColumnSerializer],
+)
+def test_run_prompt_boundary_serializers_accept_legacy_template_format(serializer_cls):
+    payload = {
+        "dataset_id": str(uuid.uuid4()),
+        "config": {
+            "configuration": {"template_format": "jinja", "ignored": "legacy"},
+            "messages": [{"role": "user", "content": "Hello {{Input Column}}"}],
+            "model": "gpt-4o-mini",
+        },
+    }
+    if serializer_cls is AddRunPromptSerializer:
+        payload["name"] = "Run Prompt"
+    elif serializer_cls is PreviewRunPromptSerializer:
+        payload.update({"name": "Run Prompt", "first_n_rows": 1})
+    else:
+        payload["column_id"] = str(uuid.uuid4())
+
+    serializer = serializer_cls(data=payload)
+
+    assert serializer.is_valid(), serializer.errors
+    assert serializer.validated_data["config"]["configuration"]["template_format"] == (
+        "jinja"
+    )
+
+
+def test_add_run_prompt_view_persists_legacy_template_format_public_alias(monkeypatch):
+    import django.db
+
+    dataset_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
+    run_prompter_id = uuid.uuid4()
+    column_id = uuid.uuid4()
+    created_kwargs = {}
+
+    class NullAtomic:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class NoExistingColumnQuerySet:
+        def exists(self):
+            return False
+
+    class RunPrompterManager:
+        def create(self, **kwargs):
+            created_kwargs.update(kwargs)
+            return SimpleNamespace(
+                id=run_prompter_id,
+                name=kwargs["name"],
+                output_format=kwargs["output_format"],
+                response_format=kwargs["response_format"],
+                tools=SimpleNamespace(set=lambda tools: None),
+            )
+
+        def filter(self, **kwargs):
+            assert kwargs == {"id": str(run_prompter_id)}
+            return SimpleNamespace(update=lambda **updates: None)
+
+    monkeypatch.setattr(
+        django.db.transaction,
+        "atomic",
+        lambda: NullAtomic(),
+    )
+    monkeypatch.setattr(
+        run_prompt_module.Dataset.objects,
+        "get",
+        lambda **kwargs: SimpleNamespace(
+            id=dataset_id,
+            organization_id=organization_id,
+            column_order=[],
+            save=lambda: None,
+        ),
+    )
+    monkeypatch.setattr(
+        run_prompt_module.Column.objects,
+        "filter",
+        lambda **kwargs: NoExistingColumnQuerySet(),
+    )
+    monkeypatch.setattr(run_prompt_module.RunPrompter, "objects", RunPrompterManager())
+    monkeypatch.setattr(
+        run_prompt_module,
+        "create_run_prompt_column",
+        lambda **kwargs: (
+            SimpleNamespace(id=column_id),
+            True,
+        ),
+    )
+
+    task_module = ModuleType("model_hub.tasks.run_prompt")
+    task_module.process_prompts_single = SimpleNamespace(
+        apply_async=lambda **kwargs: SimpleNamespace(id=uuid.uuid4())
+    )
+    monkeypatch.setitem(sys.modules, "model_hub.tasks.run_prompt", task_module)
+
+    view = run_prompt_module.AddRunPromptColumnView()
+    view._gm = SimpleNamespace(
+        success_response=lambda payload: payload,
+        not_found=lambda message: pytest.fail(f"unexpected not_found: {message}"),
+        bad_request=lambda message: pytest.fail(f"unexpected bad_request: {message}"),
+        internal_server_error_response=lambda message: pytest.fail(
+            f"unexpected internal_server_error_response: {message}"
+        ),
+    )
+
+    response = run_prompt_module.AddRunPromptColumnView.post.__wrapped__(
+        view,
+        SimpleNamespace(
+            validated_data={
+                "dataset_id": dataset_id,
+                "name": "Prompt",
+                "config": {
+                    "configuration": {"template_format": "jinja"},
+                    "messages": [{"role": "user", "content": "Hello"}],
+                    "model": "gpt-4o-mini",
+                    "output_format": "string",
+                },
+            },
+            user=SimpleNamespace(organization=SimpleNamespace(id=organization_id)),
+        ),
+    )
+
+    assert response == "Run prompt column added successfully"
+    assert created_kwargs["run_prompt_config"]["template_format"] == "jinja"
+
+
+def test_edit_run_prompt_view_preserves_config_and_terminalizes_enqueue_failure(
+    monkeypatch,
+):
+    import django.db
+
+    dataset_id = uuid.uuid4()
+    column_id = uuid.uuid4()
+    run_prompter_id = uuid.uuid4()
+    organization_id = uuid.uuid4()
+    cell_updates = []
+    run_prompter_updates = []
+
+    class NullAtomic:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class SingleObjectQuerySet:
+        def __init__(self, value):
+            self.value = value
+
+        def filter(self, **kwargs):
+            return self
+
+        def first(self):
+            return self.value
+
+        def select_for_update(self, *args, **kwargs):
+            return self
+
+    class CellQuerySet:
+        def update(self, **kwargs):
+            cell_updates.append(kwargs)
+            return 1
+
+    class RunPrompterManager:
+        def filter(self, **kwargs):
+            assert kwargs == {"id": str(run_prompter_id)}
+            return SimpleNamespace(
+                update=lambda **updates: run_prompter_updates.append(updates)
+            )
+
+    dataset = SimpleNamespace(id=dataset_id, organization_id=organization_id)
+    column = SimpleNamespace(
+        id=column_id,
+        dataset=dataset,
+        source=SourceChoices.RUN_PROMPT.value,
+        source_id=run_prompter_id,
+    )
+    run_prompter = SimpleNamespace(
+        id=run_prompter_id,
+        dataset=dataset,
+        status="completed",
+        run_prompt_config={
+            "template_format": "mustache",
+            "reasoning": {"effort": "medium"},
+        },
+        messages=[{"role": "user", "content": "Old"}],
+        name="Old Prompt",
+        model="old-model",
+        temperature=None,
+        frequency_penalty=None,
+        presence_penalty=None,
+        max_tokens=None,
+        top_p=None,
+        response_format=None,
+        tool_choice=None,
+        output_format="string",
+        concurrency=5,
+        tools=SimpleNamespace(clear=lambda: None, set=lambda tools: None),
+        save=lambda: None,
+    )
+
+    monkeypatch.setattr(
+        django.db.transaction,
+        "atomic",
+        lambda: NullAtomic(),
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "_request_dataset_queryset",
+        lambda request: SingleObjectQuerySet(dataset),
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "_request_column_queryset",
+        lambda request: SingleObjectQuerySet(column),
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "_request_run_prompter_queryset",
+        lambda request: SingleObjectQuerySet(run_prompter),
+    )
+    monkeypatch.setattr(
+        run_prompt_module.Cell.objects,
+        "filter",
+        lambda **kwargs: CellQuerySet(),
+    )
+    monkeypatch.setattr(run_prompt_module.RunPrompter, "objects", RunPrompterManager())
+    monkeypatch.setattr(
+        run_prompt_module,
+        "update_column_for_rerun",
+        lambda **kwargs: None,
+    )
+
+    task_module = ModuleType("model_hub.tasks.run_prompt")
+
+    def fail_apply_async(**kwargs):
+        raise RuntimeError("broker contains https://signed.example/file?token=secret")
+
+    task_module.process_prompts_single = SimpleNamespace(apply_async=fail_apply_async)
+    monkeypatch.setitem(sys.modules, "model_hub.tasks.run_prompt", task_module)
+
+    view = run_prompt_module.EditRunPromptColumnView()
+    view._gm = SimpleNamespace(
+        success_response=lambda payload: payload,
+        not_found=lambda message: pytest.fail(f"unexpected not_found: {message}"),
+        bad_request=lambda message: pytest.fail(f"unexpected bad_request: {message}"),
+        internal_server_error_response=lambda message: {
+            "error": message,
+        },
+    )
+
+    response = run_prompt_module.EditRunPromptColumnView.post.__wrapped__(
+        view,
+        SimpleNamespace(
+            validated_data={
+                "dataset_id": dataset_id,
+                "column_id": column_id,
+                "config": {
+                    "configuration": {"template_format": "jinja"},
+                    "messages": [{"role": "user", "content": "New"}],
+                },
+            },
+            user=SimpleNamespace(organization=SimpleNamespace(id=organization_id)),
+        ),
+    )
+
+    assert response == {"error": "Failed to start run prompt workflow"}
+    assert run_prompter.run_prompt_config == {
+        "template_format": "jinja",
+        "reasoning": {"effort": "medium"},
+    }
+    assert run_prompter_updates == [{"status": run_prompt_module.StatusType.FAILED.value}]
+    assert cell_updates == [
+        {
+            "value": "",
+            "value_infos": json.dumps({}),
+            "status": CellStatus.RUNNING.value,
+        },
+        {
+            "value": None,
+            "value_infos": json.dumps(
+                {"reason": "Failed to start run prompt workflow"}
+            ),
+            "status": CellStatus.ERROR.value,
+        },
+    ]
+
+
+def test_retrieve_run_prompt_view_returns_public_template_format_alias(monkeypatch):
+    dataset_id = uuid.uuid4()
+    column_id = uuid.uuid4()
+    run_prompter_id = uuid.uuid4()
+    dataset = SimpleNamespace(id=dataset_id)
+    column = SimpleNamespace(
+        id=column_id,
+        dataset=dataset,
+        source=SourceChoices.RUN_PROMPT.value,
+        source_id=run_prompter_id,
+    )
+    run_prompter = SimpleNamespace(
+        id=run_prompter_id,
+        dataset=dataset,
+        name="Prompt",
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": "Hello"}],
+        temperature=None,
+        frequency_penalty=None,
+        presence_penalty=None,
+        max_tokens=None,
+        top_p=None,
+        response_format=None,
+        tool_choice=None,
+        output_format="string",
+        concurrency=5,
+        run_prompt_config={"template_format": "jinja2"},
+        tools=SimpleNamespace(all=lambda: []),
+    )
+
+    class SingleObjectQuerySet:
+        def __init__(self, value):
+            self.value = value
+
+        def filter(self, **kwargs):
+            return self
+
+        def first(self):
+            return self.value
+
+    monkeypatch.setattr(
+        run_prompt_module,
+        "_request_column_queryset",
+        lambda request: SingleObjectQuerySet(column),
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "_request_run_prompter_queryset",
+        lambda request: SingleObjectQuerySet(run_prompter),
+    )
+    monkeypatch.setattr(
+        run_prompt_module,
+        "convert_uuids_to_column_names",
+        lambda messages, dataset_id: messages,
+    )
+
+    view = run_prompt_module.RetrieveRunPromptColumnConfigView()
+    view._gm = SimpleNamespace(
+        success_response=lambda payload: payload,
+        not_found=lambda message: pytest.fail(f"unexpected not_found: {message}"),
+        bad_request=lambda message: pytest.fail(f"unexpected bad_request: {message}"),
+        internal_server_error_response=lambda message: pytest.fail(
+            f"unexpected internal_server_error_response: {message}"
+        ),
+    )
+
+    response = view.get(
+        SimpleNamespace(query_params={"column_id": str(column_id)}),
+    )
+
+    assert response["config"]["run_prompt_config"]["template_format"] == "jinja"
 
 
 @pytest.mark.parametrize(
@@ -862,9 +1238,20 @@ def test_process_text_with_media_reraises_unresolved_placeholders():
             {},
             0,
             "gpt-4o",
+            fail_closed=True,
         )
 
     assert "Missing Column" in str(exc_info.value)
+
+
+def test_process_text_with_media_non_fail_closed_preserves_legacy_blank_fallback():
+    assert process_text_with_media(
+        "Answer {{missing_column}}",
+        {},
+        {},
+        0,
+        "gpt-4o",
+    ) == [{"type": "text", "text": "Answer "}]
 
 
 def test_process_text_with_media_strict_fallback_raises_for_syntax_unresolved_placeholder():
@@ -875,6 +1262,7 @@ def test_process_text_with_media_strict_fallback_raises_for_syntax_unresolved_pl
             {},
             0,
             "gpt-4o",
+            fail_closed=True,
         )
 
     assert "Missing Column" in str(exc_info.value)
@@ -889,6 +1277,7 @@ def test_process_text_with_media_mustache_reraises_unresolved_placeholders():
             0,
             "gpt-4o",
             template_format="mustache",
+            fail_closed=True,
         )
 
     assert "Missing Column" in str(exc_info.value)
@@ -903,6 +1292,7 @@ def test_process_text_with_media_fstring_reraises_unresolved_placeholders():
             0,
             "gpt-4o",
             template_format="f-string",
+            fail_closed=True,
         )
 
     assert "missing_column" in str(exc_info.value)
@@ -932,6 +1322,7 @@ def test_process_text_with_media_missing_uuid_error_uses_original_uuid():
             {},
             0,
             "gpt-4o",
+            fail_closed=True,
         )
 
     assert str(missing_uuid) in str(exc_info.value)
@@ -969,6 +1360,7 @@ def test_process_text_with_media_malformed_jinja_filter_raises_template_syntax_e
             {},
             0,
             "gpt-4o",
+            fail_closed=True,
         )
 
 
@@ -986,8 +1378,21 @@ def test_process_text_with_media_broken_jinja_raises_instead_of_returning_origin
         )
 
 
+@pytest.mark.parametrize(
+    ("template", "column_id"),
+    [
+        ("Summarize {{Doc}}", "doc-column"),
+        ("Summarize {{ Doc }}", "doc-column"),
+        (
+            "Summarize {{ 550e8400-e29b-41d4-a716-446655440000 }}",
+            "550e8400-e29b-41d4-a716-446655440000",
+        ),
+    ],
+)
 def test_process_text_with_media_document_prevalidation_marks_media_required(
     monkeypatch,
+    template,
+    column_id,
 ):
     monkeypatch.setattr(
         run_prompt_module.litellm.utils,
@@ -996,9 +1401,9 @@ def test_process_text_with_media_document_prevalidation_marks_media_required(
     )
 
     content = process_text_with_media(
-        "Summarize {{Doc}}",
+        template,
         {
-            "doc-column": {
+            column_id: {
                 "data_type": "document",
                 "value": "https://example.test/file.pdf",
                 "name": "Doc",
@@ -1052,6 +1457,7 @@ def test_populate_placeholders_fstring_missing_value_raises_without_db(monkeypat
             uuid.uuid4(),
             "gpt-4o",
             template_format="f-string",
+            fail_closed=True,
         )
 
     assert "missing_column" in str(exc_info.value)
@@ -1097,6 +1503,7 @@ def test_process_text_with_media_hyphenated_column_error_uses_full_placeholder()
             {},
             0,
             "gpt-4o",
+            fail_closed=True,
         )
 
     assert "customer-name" in str(exc_info.value)
@@ -1169,9 +1576,25 @@ def test_run_prompt_raises_for_missing_column_name_placeholder(
             row.id,
             output_column.id,
             "gpt-4o",
+            fail_closed=True,
         )
 
     assert "Missing Column" in str(exc_info.value)
+
+
+@pytest.mark.django_db
+def test_run_prompt_non_fail_closed_keeps_legacy_blank_missing_placeholder(
+    dataset, input_column, output_column, row, cell
+):
+    result = populate_placeholders(
+        _message("Answer {{Missing Column}}"),
+        dataset.id,
+        row.id,
+        output_column.id,
+        "gpt-4o",
+    )
+
+    assert result[0]["content"][0]["text"] == "Answer "
 
 
 @pytest.mark.django_db
@@ -1187,6 +1610,7 @@ def test_run_prompt_raises_for_missing_uuid_placeholder(
             row.id,
             output_column.id,
             "gpt-4o",
+            fail_closed=True,
         )
 
     assert str(missing_uuid) in str(exc_info.value)
@@ -1206,6 +1630,7 @@ def test_run_prompt_raises_for_column_order_uuid_without_column_record(
             row.id,
             output_column.id,
             "gpt-4o",
+            fail_closed=True,
         )
 
     assert str(missing_uuid) in str(exc_info.value)
@@ -1224,6 +1649,7 @@ def test_run_prompt_raises_for_null_cell_column_name_placeholder(
             row.id,
             output_column.id,
             "gpt-4o",
+            fail_closed=True,
         )
 
     assert "Input Column" in str(exc_info.value)
@@ -1242,6 +1668,7 @@ def test_run_prompt_raises_for_null_cell_uuid_placeholder(
             row.id,
             output_column.id,
             "gpt-4o",
+            fail_closed=True,
         )
 
     assert str(input_column.id) in str(exc_info.value)
@@ -1261,6 +1688,7 @@ def test_run_prompt_fstring_raises_for_null_cell_placeholder(
             output_column.id,
             "gpt-4o",
             template_format="f-string",
+            fail_closed=True,
         )
 
     assert "Input Column" in str(exc_info.value)
@@ -1277,6 +1705,7 @@ def test_run_prompt_raises_for_missing_cell_even_with_jinja_default(
             row.id,
             output_column.id,
             "gpt-4o",
+            fail_closed=True,
         )
 
     assert "Input Column" in str(exc_info.value)
@@ -1294,6 +1723,7 @@ def test_run_prompt_raises_for_missing_cell_mustache_section_guard(
             output_column.id,
             "gpt-4o",
             template_format="mustache",
+            fail_closed=True,
         )
 
     assert "Input Column" in str(exc_info.value)
@@ -1311,6 +1741,7 @@ def test_run_prompt_raises_for_missing_cell_mustache_inverted_guard(
             output_column.id,
             "gpt-4o",
             template_format="mustache",
+            fail_closed=True,
         )
 
     assert "Input Column" in str(exc_info.value)
@@ -2178,7 +2609,9 @@ def test_render_template_jinja_missing_comparison_in_false_branch_does_not_fail(
 
 def test_conditional_run_prompt_placeholder_error_returns_error_metadata(monkeypatch):
     def fail_populate(*args, **kwargs):
-        raise UnresolvedPromptPlaceholdersError("Missing Column")
+        raise UnresolvedPromptPlaceholdersError(
+            "Missing Column from https://signed.example/file.pdf?token=secret"
+        )
 
     monkeypatch.setattr(dynamic_columns_module, "populate_placeholders", fail_populate)
     monkeypatch.setattr(
@@ -2207,7 +2640,10 @@ def test_conditional_run_prompt_placeholder_error_returns_error_metadata(monkeyp
     )
 
     assert value is None
-    assert value_infos == {"reason": "Unresolved prompt placeholders: Missing Column"}
+    assert value_infos == {
+        "reason": dynamic_columns_module.RUN_PROMPT_BRANCH_VALIDATION_ERROR
+    }
+    assert "signed.example" not in value_infos["reason"]
 
 
 def test_conditional_process_row_propagates_run_prompt_placeholder_error_with_template_precedence(
@@ -2268,7 +2704,9 @@ def test_conditional_process_row_propagates_run_prompt_placeholder_error_with_te
     )
 
     assert value is None
-    assert value_infos == {"reason": "Unresolved prompt placeholders: Missing Column"}
+    assert value_infos == {
+        "reason": dynamic_columns_module.RUN_PROMPT_BRANCH_VALIDATION_ERROR
+    }
     assert populate_calls == [
         {
             "args": (messages,),

@@ -427,8 +427,16 @@ DEFAULT_TEMPLATE_FORMAT = TEMPLATE_FORMAT_JINJA2
 
 
 def normalize_template_format(template_format: str | None) -> str | None:
+    """Normalize accepted aliases for internal rendering."""
     if template_format == "jinja":
         return TEMPLATE_FORMAT_JINJA2
+    return template_format
+
+
+def normalize_public_template_format(template_format: str | None) -> str | None:
+    """Normalize accepted aliases for the public run_prompt_config contract."""
+    if template_format == TEMPLATE_FORMAT_JINJA2:
+        return "jinja"
     return template_format
 
 
@@ -453,7 +461,10 @@ def normalize_run_prompt_config(config: dict | None) -> dict:
     """
     config = config or {}
     run_prompt_config = dict(config.get("run_prompt_config", {}) or {})
-    template_format = get_run_prompt_template_format(config)
+    template_format = normalize_public_template_format(
+        run_prompt_config.get("template_format")
+        or (config.get("configuration", {}) or {}).get("template_format")
+    )
     if template_format:
         run_prompt_config["template_format"] = template_format
     return run_prompt_config
@@ -1938,6 +1949,89 @@ def _messages_require_media_processing(messages: list[dict]) -> bool:
     return False
 
 
+def _replace_template_variable_placeholders(text, variable_names, replacement_factory):
+    """Replace standalone ``{{ variable }}`` blocks without touching literals.
+
+    Media placeholders are not rendered through the normal template context; they
+    are converted into synthetic markers before rendering. Plain string
+    replacement only handled ``{{Column}}`` and missed the common
+    ``{{ Column }}`` form. Tokenizing through Jinja keeps raw blocks and
+    expression-generated literal braces intact while still matching exact
+    variable blocks by their original name/UUID.
+    """
+    variable_names = {str(name) for name in variable_names if name is not None}
+    if not text or "{{" not in text or not variable_names:
+        return text, set()
+
+    escaped_names = "|".join(
+        re.escape(name) for name in sorted(variable_names, key=len, reverse=True)
+    )
+    exact_variable_pattern = re.compile(r"\{\{\s*(" + escaped_names + r")\s*\}\}")
+    replaced_names = set()
+
+    def replacement_for(expression):
+        if expression not in variable_names:
+            return None
+        replaced_names.add(expression)
+        return replacement_factory(expression)
+
+    def replacement_from_raw(raw_block):
+        match = exact_variable_pattern.fullmatch(raw_block)
+        if not match:
+            return None
+        return replacement_for(match.group(1))
+
+    try:
+        tokens = list(_jinja2_env.lex(text))
+    except TemplateSyntaxError:
+        return (
+            exact_variable_pattern.sub(
+                lambda match: replacement_for(match.group(1)) or match.group(0),
+                text,
+            ),
+            replaced_names,
+        )
+
+    output = []
+    current_tokens = None
+    current_source = None
+
+    for _, token_type, value in tokens:
+        if token_type == "variable_begin":
+            current_tokens = []
+            current_source = [value]
+            continue
+
+        if token_type == "variable_end" and current_tokens is not None:
+            raw_block = "".join(current_source) + value
+            expression = "".join(current_tokens).strip()
+            replacement = replacement_for(expression)
+            if replacement is None:
+                replacement = replacement_from_raw(raw_block)
+
+            if replacement is None:
+                output.append(raw_block)
+            else:
+                output.append(replacement)
+
+            current_tokens = None
+            current_source = None
+            continue
+
+        if current_tokens is not None:
+            current_tokens.append(value)
+            current_source.append(value)
+        else:
+            output.append(value)
+
+    if current_tokens is not None:
+        # Malformed variable block: leave the source untouched so the normal
+        # template-syntax path reports the failure consistently.
+        return text, set()
+
+    return "".join(output), replaced_names
+
+
 def process_string_content(
     content,
     column_info,
@@ -1988,46 +2082,45 @@ def process_text_with_media(
         # Replace image/audio placeholders with unique markers
         for col_id, info in column_info.items():
             if info["data_type"] in ["image", "audio"] and info["value"]:
-                # Check for original UUID placeholder and column name placeholder
-                placeholder = create_placeholder(col_id)
-                alt_placeholder = create_placeholder(info["name"])
+                def make_media_marker(_placeholder_name):
+                    nonlocal image_counter
 
-                for ph in [placeholder, alt_placeholder]:
-                    if ph in text:
-                        marker = (
-                            f"__{info['data_type'].upper()}_MARKER_{uuid.uuid4()}__"
-                        )
-                        image_markers[marker] = {
-                            "url": info["value"],
-                            "counter": image_counter,
-                            "type": info["data_type"],
-                        }
-                        text = text.replace(ph, marker)
-                        image_counter += 1
+                    marker = f"__{info['data_type'].upper()}_MARKER_{uuid.uuid4()}__"
+                    image_markers[marker] = {
+                        "url": info["value"],
+                        "counter": image_counter,
+                        "type": info["data_type"],
+                    }
+                    image_counter += 1
+                    return marker
+
+                text, _ = _replace_template_variable_placeholders(
+                    text,
+                    {col_id, info["name"]},
+                    make_media_marker,
+                )
 
             if info["data_type"] == "document" and info["value"]:
-                # Check for original UUID placeholder and column name placeholder
-                placeholder = create_placeholder(col_id)
-                alt_placeholder = create_placeholder(info["name"])
+                def make_pdf_replacement(_placeholder_name):
+                    # During the no-fetch validation pass, keep a synthetic PDF
+                    # marker in the rendered text so callers know a second
+                    # post-quota media materialization pass is still required.
+                    if not process_media:
+                        return f"__PDF_MARKER_{uuid.uuid4()}__"
+                    return info["name"]
 
-                if placeholder in text or alt_placeholder in text:
+                text, replaced_document_placeholders = (
+                    _replace_template_variable_placeholders(
+                        text,
+                        {col_id, info["name"]},
+                        make_pdf_replacement,
+                    )
+                )
+
+                if replaced_document_placeholders:
                     is_pdf = True
                     pdf_url = info["value"]
                     pdf_name = info["name"]
-
-                    # Replace both UUID and column name placeholders. During the
-                    # no-fetch validation pass, keep a synthetic PDF marker in
-                    # the rendered text so callers know a second post-quota media
-                    # materialization pass is still required.
-                    pdf_replacement = (
-                        f"__PDF_MARKER_{uuid.uuid4()}__"
-                        if not process_media
-                        else info["name"]
-                    )
-                    if placeholder in text:
-                        text = text.replace(placeholder, pdf_replacement)
-                    if alt_placeholder in text:
-                        text = text.replace(alt_placeholder, pdf_replacement)
 
             # Handle multiple images (images data type)
             if info["data_type"] == "images" and info["value"]:
@@ -2059,22 +2152,26 @@ def process_text_with_media(
                                 image_counter += 1
 
                     # Handle full array syntax: {{column}} - include ALL images
-                    placeholder = create_placeholder(col_id)
-                    alt_placeholder = create_placeholder(info["name"])
-                    for ph in [placeholder, alt_placeholder]:
-                        if ph in text:
-                            # Create markers for ALL images in array
-                            all_markers = ""
-                            for img_url in images_list:
-                                marker = f"__IMAGE_MARKER_{uuid.uuid4()}__"
-                                image_markers[marker] = {
-                                    "url": img_url,
-                                    "counter": image_counter,
-                                    "type": "image",
-                                }
-                                all_markers += marker
-                                image_counter += 1
-                            text = text.replace(ph, all_markers)
+                    def make_all_image_markers(_placeholder_name):
+                        nonlocal image_counter
+
+                        all_markers = ""
+                        for img_url in images_list:
+                            marker = f"__IMAGE_MARKER_{uuid.uuid4()}__"
+                            image_markers[marker] = {
+                                "url": img_url,
+                                "counter": image_counter,
+                                "type": "image",
+                            }
+                            all_markers += marker
+                            image_counter += 1
+                        return all_markers
+
+                    text, _ = _replace_template_variable_placeholders(
+                        text,
+                        {col_id, info["name"]},
+                        make_all_image_markers,
+                    )
                 except json.JSONDecodeError:
                     logger.warning(f"Failed to parse images array for column {col_id}")
 
@@ -2098,10 +2195,13 @@ def process_text_with_media(
         effective_format = template_format or DEFAULT_TEMPLATE_FORMAT
         if effective_format == "jinja":
             effective_format = TEMPLATE_FORMAT_JINJA2
-        strict_render = effective_format in (
+        strict_render = fail_closed and effective_format in (
             TEMPLATE_FORMAT_FSTRING,
             TEMPLATE_FORMAT_JINJA2,
             TEMPLATE_FORMAT_MUSTACHE,
+        )
+        render_unresolved_placeholders = (
+            unresolved_placeholders if strict_render else None
         )
         try:
             processed_text = render_template(
@@ -2110,7 +2210,7 @@ def process_text_with_media(
                 template_format=effective_format,
                 strict=strict_render,
                 placeholder_display_map=placeholder_display_map,
-                unresolved_placeholders=unresolved_placeholders,
+                unresolved_placeholders=render_unresolved_placeholders,
             )
         except (UnresolvedPromptPlaceholdersError, PromptTemplateSyntaxError):
             raise
@@ -3382,7 +3482,9 @@ class PreviewRunPromptColumnView(APIView):
             for row in rows:
                 try:
                     output_format = config.get("output_format", "string")
-                    template_format = run_prompt_config.get("template_format")
+                    template_format = get_run_prompt_template_format(
+                        {"run_prompt_config": run_prompt_config}
+                    )
                     validated_messages = populate_placeholders(
                         config.get("messages", []),
                         dataset_id=dataset_id,
@@ -3617,9 +3719,17 @@ class EditRunPromptColumnView(APIView):
                     run_prompt_id=run_prompter_id,
                     error=str(e),
                 )
-                # Set status to FAILED if workflow couldn't start
+                # Set status to FAILED if workflow couldn't start and terminalize
+                # cells that were already blanked/requeued in the edit transaction.
                 RunPrompter.objects.filter(id=run_prompter_id).update(
                     status=StatusType.FAILED.value
+                )
+                Cell.objects.filter(column=column).update(
+                    value=None,
+                    value_infos=json.dumps(
+                        {"reason": "Failed to start run prompt workflow"}
+                    ),
+                    status=CellStatus.ERROR.value,
                 )
                 return self._gm.internal_server_error_response(
                     "Failed to start run prompt workflow"
@@ -3675,7 +3785,13 @@ class RetrieveRunPromptColumnConfigView(APIView):
                 tools.append(
                     {"id": str(tool.id), "name": tool.name, "config": tool.config}
                 )
-            base_run_prompt_config = run_prompter.run_prompt_config or {}
+            base_run_prompt_config = dict(run_prompter.run_prompt_config or {})
+            if base_run_prompt_config.get("template_format"):
+                base_run_prompt_config["template_format"] = (
+                    normalize_public_template_format(
+                        base_run_prompt_config["template_format"]
+                    )
+                )
 
             if not base_run_prompt_config.get("model_type"):
                 # Determine model_type based on output_format

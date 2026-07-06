@@ -295,6 +295,7 @@ jobs:
           tracer/tests/test_filter_engine_parity.py
           model_hub/tests/test_annotation_api_contract.py
           model_hub/tests/test_annotation_workflow_api.py
+          model_hub/tests/test_run_prompt_placeholders.py
           tfc/tests/test_falcon_api_contract_debt.py
           tfc/tests/test_usage_api_contract_debt.py
           ee/usage/tests/test_events_schema.py
