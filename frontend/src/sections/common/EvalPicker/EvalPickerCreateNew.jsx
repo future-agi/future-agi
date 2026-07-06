@@ -1168,7 +1168,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 {(source === "dataset" ||
                   source === "workbench" ||
                   source === "custom" ||
-                  source === "run-experiment" ||
+                  source === "experiment" ||
                   source === "run-optimization") && (
                   <DatasetTestMode
                     ref={sourceRef}

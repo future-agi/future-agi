@@ -80,6 +80,9 @@ from tracer.services.clickhouse.query_builders import (
 )
 from tracer.services.clickhouse.query_builders.base import NIL_UUID
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.v2.query_builders.user_list import (
+    UserListQueryBuilderV2,
+)
 from tracer.services.observability_providers import ObservabilityService
 from tracer.services.users_list_manager import UsersListManager
 from tracer.utils.annotations import (
@@ -101,6 +104,7 @@ ERROR_RESPONSES = {
     400: ApiErrorResponseSerializer,
     500: ApiErrorResponseSerializer,
 }
+
 
 
 class TraceTagsUpdateSerializer(serializers.Serializer):
@@ -2810,34 +2814,26 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         eval_outputs = {}
         trace_evals: dict[str, Any] = {}
         if eval_config_ids:
-            eval_table, eval_nd = eval_logger_source()
-            eval_query = f"""
-            SELECT
-                trace_id,
-                toString(custom_eval_config_id) AS eval_config_id,
-                avg(output_float) AS avg_score,
-                avg(CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END) AS pass_rate,
-                count() AS eval_count,
-                any(output_str_list) AS output_str_list
-            FROM {eval_table} FINAL
-            WHERE {eval_nd}
-              AND trace_id = %(trace_id)s
-              AND custom_eval_config_id IN %(eval_config_ids)s
-            GROUP BY trace_id, custom_eval_config_id
-            """
-            eval_result = analytics.execute_ch_query(
-                eval_query,
-                {
-                    "trace_id": str(trace_id),
-                    "eval_config_ids": tuple(eval_config_ids),
-                },
-                timeout_ms=30000,
+            # Reuse the list builder's eval query so the detail view stays in
+            # parity with the voice-call list (same completed-only aggregation
+            # + per-status counts) instead of a drifting parallel query. The
+            # builder gates aggregates on ``status = 'completed'`` so pending /
+            # running / skipped rows no longer contaminate the average, and the
+            # shared pivot emits a ``{"status": ...}`` marker for them.
+            eval_builder = TraceListQueryBuilder(
+                project_id=str(project_id),
+                eval_config_ids=eval_config_ids,
             )
-            eval_map = TraceListQueryBuilder.pivot_eval_results(
-                [(list(r.values())) for r in eval_result.data],
-                list(eval_result.data[0].keys()) if eval_result.data else [],
-            )
-            trace_evals = eval_map.get(str(trace_id), {}) or {}
+            eval_query, eval_params = eval_builder.build_eval_query([str(trace_id)])
+            if eval_query:
+                eval_result = analytics.execute_ch_query(
+                    eval_query, eval_params, timeout_ms=30000
+                )
+                eval_map = TraceListQueryBuilder.pivot_eval_results(
+                    [list(r.values()) for r in eval_result.data],
+                    list(eval_result.data[0].keys()) if eval_result.data else [],
+                )
+                trace_evals = eval_map.get(str(trace_id), {}) or {}
 
         for config in eval_configs:
             config_id = str(config.id)
@@ -2865,6 +2861,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
             scores = trace_evals[config_id]
             metric_entry = {"name": metric_name, "output_type": output_type}
+            # All rows errored — surface the error state to the frontend.
+            if isinstance(scores, dict) and scores.get("error"):
+                metric_entry["error"] = True
+                eval_outputs[config_id] = metric_entry
+                continue
+            # Non-terminal / skipped eval — surface the lifecycle status so the
+            # detail drawer renders a loading / pending / skipped state.
+            if isinstance(scores, dict) and isinstance(scores.get("status"), str):
+                metric_entry["status"] = scores["status"]
+                if scores.get("skipped_reason"):
+                    metric_entry["skipped_reason"] = scores["skipped_reason"]
+                eval_outputs[config_id] = metric_entry
+                continue
             if isinstance(scores, dict):
                 if scores.get("per_choice"):
                     metric_entry["output"] = [
@@ -3954,6 +3963,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             metric_entry["error"] = True
                             metrics[config_id] = metric_entry
                             continue
+                        # Non-terminal / skipped eval — surface the lifecycle
+                        # status so the FE renders a loading/pending/skipped
+                        # cell instead of a blank/0.
+                        if isinstance(scores, dict) and isinstance(
+                            scores.get("status"), str
+                        ):
+                            metric_entry["status"] = scores["status"]
+                            if scores.get("skipped_reason"):
+                                metric_entry["skipped_reason"] = scores[
+                                    "skipped_reason"
+                                ]
+                            metrics[config_id] = metric_entry
+                            continue
                         if isinstance(scores, dict):
                             if scores.get("per_choice"):
                                 metric_entry["output"] = [
@@ -4297,17 +4319,10 @@ class UsersView(APIView):
             )
 
             if export:
-                # iter_export_csv() pulls rows lazily inside the generator and
-                # yields the header first, so the slow CH fetch happens while the
-                # socket is already streaming — not eagerly before the response.
                 response = StreamingHttpResponse(
                     manager.iter_export_csv(),
                     content_type="text/csv",
                 )
-                # Mark it a download but DON'T name it: the frontend owns the
-                # filename (UsersView grid label + suffix). Keeping a server-side
-                # name here would be dead weight cross-origin anyway — the browser
-                # can't read Content-Disposition without CORS_EXPOSE_HEADERS.
                 response["Content-Disposition"] = "attachment"
                 return response
 

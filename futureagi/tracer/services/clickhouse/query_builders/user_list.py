@@ -5,10 +5,6 @@ from typing import Any
 from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
-from tracer.services.clickhouse.v2.id_remap_sql import (
-    remap_left_join,
-    resolved_id_expr,
-)
 
 
 class UserListQueryBuilder(BaseQueryBuilder):
@@ -175,22 +171,6 @@ class UserListQueryBuilder(BaseQueryBuilder):
             "count() OVER() AS total_count" if paginated else "0 AS total_count"
         )
 
-        # P3b step1.5 id-remap resolution (see id_remap_sql / DESIGN §3): map a
-        # NEW-id span back to its OLD curated id so a straddler reads as ONE user.
-        # DUAL remap: `end_user_id` (the per-user grouping key) AND `trace_session_id`
-        # (the per-user `num_sessions` distinct-session count + `avg_session_duration`
-        # in the `session_durations`/`session_aggregates` CTEs below) — a straddler
-        # splits on BOTH, so resolve both. The two joins hang off the SAME `raw_spans`
-        # row `rs` and so MUST carry DISTINCT aliases (`eu_remap` / `ts_remap`; the
-        # default `id_remap` would collide).
-        eu_remap_join = remap_left_join(
-            "rs.end_user_id", "end_user_id_remap", "eu_remap"
-        )
-        ts_remap_join = remap_left_join(
-            "rs.trace_session_id", "trace_session_id_remap", "ts_remap"
-        )
-        resolved_eu = resolved_id_expr("rs.end_user_id", "eu_remap")
-        resolved_ts = resolved_id_expr("rs.trace_session_id", "ts_remap")
         eval_table, eval_nd_e = eval_logger_source("e")
 
         query = f"""
@@ -212,11 +192,24 @@ class UserListQueryBuilder(BaseQueryBuilder):
               {search_filter}
               {end_user_filter}
         ),
-        raw_spans AS (
+        rollup_usage AS (
             SELECT
-                id,
-                trace_id,
-                project_id,
+                end_user_id,
+                sumMerge(cost_sum) AS total_cost,
+                sumMerge(total_tokens_sum) AS total_tokens,
+                sumMerge(prompt_tokens_sum) AS input_tokens,
+                sumMerge(completion_tokens_sum) AS output_tokens,
+                uniqMerge(trace_count) AS num_traces,
+                maxMerge(last_seen) AS last_active
+            FROM span_user_rollup
+            WHERE end_user_id IN (SELECT end_user_id FROM filtered_end_users)
+              AND hour_first_seen >= %(start_date)s
+              AND hour_first_seen < %(end_date)s
+              {project_filter}
+            GROUP BY end_user_id
+        ),
+        raw_spans_light AS (
+            SELECT
                 end_user_id,
                 trace_session_id,
                 observation_type,
@@ -224,62 +217,25 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 start_time,
                 end_time,
                 latency_ms,
-                cost,
-                total_tokens,
-                prompt_tokens,
-                completion_tokens
+                trace_id
             FROM spans
             WHERE is_deleted = 0
               AND isNotNull(end_user_id)
+              AND end_user_id IN (SELECT end_user_id FROM filtered_end_users)
               AND start_time >= %(start_date)s
               AND start_time < %(end_date)s
               {project_filter}
               {span_extra}
         ),
-        filtered_spans AS (
-            -- P3b step1.5: resolve each span's `end_user_id` and
-            -- `trace_session_id` through the id-remap SURVIVOR MAP before the
-            -- enduser-set membership check and grouping, so a straddler and a
-            -- many-old→one-new consolidation group each read as ONE user/session.
-            -- The resolved id is projected AS the same column, so downstream CTEs
-            -- group on the unified id unchanged. See id_remap_sql (survivor
-            -- collapse, zero-uuid guard, gate-B no-op).
-            SELECT
-                rs.id AS id,
-                rs.trace_id AS trace_id,
-                rs.project_id AS project_id,
-                {resolved_eu} AS end_user_id,
-                {resolved_ts} AS trace_session_id,
-                rs.observation_type AS observation_type,
-                rs.status AS status,
-                rs.start_time AS start_time,
-                rs.end_time AS end_time,
-                rs.latency_ms AS latency_ms,
-                rs.cost AS cost,
-                rs.total_tokens AS total_tokens,
-                rs.prompt_tokens AS prompt_tokens,
-                rs.completion_tokens AS completion_tokens
-            FROM raw_spans AS rs
-            {eu_remap_join}
-            {ts_remap_join}
-            WHERE {resolved_eu}
-                  IN (SELECT end_user_id FROM filtered_end_users)
-        ),
-        aggregated_usage AS (
+        extra_metrics AS (
             SELECT
                 end_user_id,
-                sum(ifNull(cost, 0)) AS total_cost,
-                sum(ifNull(total_tokens, 0)) AS total_tokens,
-                sum(ifNull(prompt_tokens, 0)) AS input_tokens,
-                sum(ifNull(completion_tokens, 0)) AS output_tokens,
-                uniqExact(trace_id) AS num_traces,
                 countIf(observation_type = 'llm') AS num_llm_calls,
-                uniqExactIf(trace_id, observation_type = 'guardrail') AS num_guardrails_triggered,
+                uniqIf(trace_id, observation_type = 'guardrail') AS num_guardrails_triggered,
                 round(avgIf(latency_ms, isNotNull(latency_ms)), 2) AS avg_trace_latency,
-                max(end_time) AS last_active,
                 uniqExactIf(toDate(start_time), isNotNull(start_time)) AS num_active_days,
-                uniqExactIf(trace_id, status = 'ERROR') AS num_traces_with_errors
-            FROM filtered_spans
+                uniqIf(trace_id, status = 'ERROR') AS num_traces_with_errors
+            FROM raw_spans_light
             GROUP BY end_user_id
         ),
         session_durations AS (
@@ -287,7 +243,7 @@ class UserListQueryBuilder(BaseQueryBuilder):
                 end_user_id,
                 trace_session_id,
                 dateDiff('millisecond', min(start_time), max(end_time)) / 1000.0 AS duration_seconds
-            FROM filtered_spans
+            FROM raw_spans_light
             WHERE isNotNull(trace_session_id)
               AND isNotNull(start_time)
               AND isNotNull(end_time)
@@ -301,54 +257,33 @@ class UserListQueryBuilder(BaseQueryBuilder):
             FROM session_durations
             GROUP BY end_user_id
         ),
-        user_traces AS (
-            SELECT DISTINCT end_user_id, trace_id
-            FROM filtered_spans
-            WHERE notEmpty(trace_id)
-        ),
-        eval_pass_rate AS (
-            SELECT
-                ut.end_user_id,
-                round(
-                    100.0 * countIf(e.output_bool = 1)
-                    / nullIf(countIf(isNotNull(e.output_bool)), 0),
-                    2
-                ) AS bool_eval_pass_rate,
-                round(avg(e.output_float), 2) AS avg_output_float
-            FROM {eval_table} AS e FINAL
-            INNER JOIN user_traces AS ut ON toString(e.trace_id) = ut.trace_id
-            WHERE {eval_nd_e}
-            GROUP BY ut.end_user_id
-        ),
         final_rows AS (
             SELECT
                 eu.user_id AS user_id,
-                coalesce(au.total_cost, 0) AS total_cost,
-                coalesce(au.total_tokens, 0) AS total_tokens,
-                coalesce(au.input_tokens, 0) AS input_tokens,
-                coalesce(au.output_tokens, 0) AS output_tokens,
-                coalesce(au.num_traces, 0) AS num_traces,
+                coalesce(ru.total_cost, 0) AS total_cost,
+                coalesce(ru.total_tokens, 0) AS total_tokens,
+                coalesce(ru.input_tokens, 0) AS input_tokens,
+                coalesce(ru.output_tokens, 0) AS output_tokens,
+                coalesce(ru.num_traces, 0) AS num_traces,
                 coalesce(sa.num_sessions, 0) AS num_sessions,
                 coalesce(sa.avg_session_duration, 0) AS avg_session_duration,
-                coalesce(au.avg_trace_latency, 0) AS avg_trace_latency,
-                coalesce(au.num_llm_calls, 0) AS num_llm_calls,
-                coalesce(au.num_guardrails_triggered, 0) AS num_guardrails_triggered,
+                coalesce(em.avg_trace_latency, 0) AS avg_trace_latency,
+                coalesce(em.num_llm_calls, 0) AS num_llm_calls,
+                coalesce(em.num_guardrails_triggered, 0) AS num_guardrails_triggered,
                 eu.first_seen AS activated_at,
-                au.last_active AS last_active,
-                coalesce(au.num_active_days, 0) AS num_active_days,
-                coalesce(au.num_traces_with_errors, 0) AS num_traces_with_errors,
-                coalesce(epr.bool_eval_pass_rate, 0) AS bool_eval_pass_rate,
-                coalesce(epr.avg_output_float, 0) AS avg_output_float,
+                ru.last_active AS last_active,
+                coalesce(em.num_active_days, 0) AS num_active_days,
+                coalesce(em.num_traces_with_errors, 0) AS num_traces_with_errors,
+                0 AS bool_eval_pass_rate,
+                0 AS avg_output_float,
                 eu.project_id AS project_id,
                 eu.user_id_type AS user_id_type,
                 eu.user_id_hash AS user_id_hash,
                 eu.end_user_id AS end_user_id
             FROM filtered_end_users AS eu
-            INNER JOIN (SELECT DISTINCT end_user_id FROM filtered_spans) AS visible
-                ON visible.end_user_id = eu.end_user_id
-            LEFT JOIN aggregated_usage AS au ON au.end_user_id = eu.end_user_id
+            INNER JOIN rollup_usage AS ru ON ru.end_user_id = eu.end_user_id
             LEFT JOIN session_aggregates AS sa ON sa.end_user_id = eu.end_user_id
-            LEFT JOIN eval_pass_rate AS epr ON epr.end_user_id = eu.end_user_id
+            LEFT JOIN extra_metrics AS em ON em.end_user_id = eu.end_user_id
         ),
         counted_rows AS (
             SELECT
@@ -363,6 +298,56 @@ class UserListQueryBuilder(BaseQueryBuilder):
         {pagination}
         """
         return query, self.params
+
+    def build_eval_query(
+        self, end_user_ids: list[str]
+    ) -> tuple[str, dict[str, Any]]:
+        """Build a lightweight eval-pass-rate query for a page of user IDs.
+
+        Runs AFTER the main ``build()`` query returns the paginated page.
+        Only joins eval_logger against the page's users (not all users),
+        avoiding the expensive full-table FINAL scan in the hot path.
+        """
+        if not end_user_ids:
+            return "", {}
+        start_date, end_date = self.parse_time_range(self.filters)
+        eval_table, eval_nd = eval_logger_source("e")
+        params: dict[str, Any] = {
+            "eval_eu_ids": tuple(end_user_ids),
+            "start_date": start_date,
+            "end_date": end_date,
+        }
+        if self.project_ids:
+            params["project_ids"] = tuple(self.project_ids)
+            project_filter = "AND project_id IN %(project_ids)s"
+        elif self.project_id:
+            params["project_id"] = self.project_id
+            project_filter = "AND project_id = %(project_id)s"
+        else:
+            project_filter = ""
+        query = f"""
+        SELECT
+            end_user_id,
+            round(
+                100.0 * countIf(e.output_bool = 1)
+                / nullIf(countIf(isNotNull(e.output_bool)), 0),
+                2
+            ) AS bool_eval_pass_rate,
+            round(avg(e.output_float), 2) AS avg_output_float
+        FROM {eval_table} AS e FINAL
+        INNER JOIN (
+            SELECT DISTINCT end_user_id, trace_id
+            FROM spans
+            WHERE is_deleted = 0
+              AND end_user_id IN %(eval_eu_ids)s
+              AND start_time >= %(start_date)s
+              AND start_time < %(end_date)s
+              {project_filter}
+        ) AS ut ON e.trace_id = toUUIDOrNull(ut.trace_id)
+        WHERE {eval_nd}
+        GROUP BY end_user_id
+        """
+        return query, params
 
     def _span_filters(self) -> list[dict[str, Any]]:
         return [

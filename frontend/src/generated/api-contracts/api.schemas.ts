@@ -7303,23 +7303,6 @@ export interface DatasetOptimizationCreateApi {
   readonly created_at?: string;
 }
 
-export type DatasetOptimizationDetailApiOptimizerAlgorithm = typeof DatasetOptimizationDetailApiOptimizerAlgorithm[keyof typeof DatasetOptimizationDetailApiOptimizerAlgorithm];
-
-
-export const DatasetOptimizationDetailApiOptimizerAlgorithm = {
-  random_search: 'random_search',
-  bayesian: 'bayesian',
-  metaprompt: 'metaprompt',
-  protegi: 'protegi',
-  promptwizard: 'promptwizard',
-  gepa: 'gepa',
-} as const;
-
-/**
- * Optimizer-specific configuration (num_trials, etc.)
- */
-export type DatasetOptimizationDetailApiOptimizerConfig = { [key: string]: unknown };
-
 export type DatasetOptimizationDetailApiStatus = typeof DatasetOptimizationDetailApiStatus[keyof typeof DatasetOptimizationDetailApiStatus];
 
 
@@ -7332,72 +7315,86 @@ export const DatasetOptimizationDetailApiStatus = {
   cancelled: 'cancelled',
 } as const;
 
-export type DatasetOptimizationStepApiStatus = typeof DatasetOptimizationStepApiStatus[keyof typeof DatasetOptimizationStepApiStatus];
+export type DatasetOptimizationParameterItemApiValue = { [key: string]: unknown };
 
+export interface DatasetOptimizationParameterItemApi {
+  /** @minLength 1 */
+  key: string;
+  /** @minLength 1 */
+  label: string;
+  description: string;
+  value: DatasetOptimizationParameterItemApiValue;
+}
 
-export const DatasetOptimizationStepApiStatus = {
-  pending: 'pending',
-  running: 'running',
-  completed: 'completed',
-  failed: 'failed',
-} as const;
+export interface DatasetOptimizationTrialEvalScoreApi {
+  score?: number;
+  percentage_change?: number;
+}
 
-export type DatasetOptimizationStepApiMetadata = { [key: string]: unknown };
+export type DatasetOptimizationTrialTableRowApiEvalScores = {[key: string]: DatasetOptimizationTrialEvalScoreApi};
 
-export interface DatasetOptimizationStepApi {
-  readonly id?: string;
-  /**
-     * @minLength 1
-     * @maxLength 255
-     */
+export interface DatasetOptimizationTrialTableRowApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  trial: string;
+  prompt: string;
+  is_best: boolean;
+  score_percentage_change?: number;
+  eval_scores: DatasetOptimizationTrialTableRowApiEvalScores;
+}
+
+export interface DatasetOptimizationColumnConfigItemApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
   name: string;
-  description?: string;
-  status?: DatasetOptimizationStepApiStatus;
-  metadata?: DatasetOptimizationStepApiMetadata;
-  /**
-     * @minimum -2147483648
-     * @maximum 2147483647
-     */
-  step_number: number;
-  readonly created_at?: string;
-  readonly updated_at?: string;
+  is_visible: boolean;
 }
 
-export interface DatasetOptimizationTrialListApi {
-  readonly id?: string;
-  /**
-     * @minimum -2147483648
-     * @maximum 2147483647
-     */
-  trial_number: number;
-  is_baseline?: boolean;
-  average_score: number;
-  readonly created_at?: string;
+export interface DatasetOptimizationEvalTemplateItemApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  eval_id: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  template_id: string;
 }
+
+export type DatasetOptimizationDetailApiConfiguration = { [key: string]: unknown };
 
 export interface DatasetOptimizationDetailApi {
-  readonly id?: string;
-  /**
-     * @minLength 1
-     * @maxLength 255
-     */
-  name: string;
-  /** Column being optimized */
-  column?: string;
-  optimizer_algorithm?: DatasetOptimizationDetailApiOptimizerAlgorithm;
-  /** Model used for optimization (separate from eval model) */
-  optimizer_model?: string;
-  /** Optimizer-specific configuration (num_trials, etc.) */
-  optimizer_config?: DatasetOptimizationDetailApiOptimizerConfig;
+  /** @minLength 1 */
+  readonly optimiser_name?: string;
+  /** @minLength 1 */
+  readonly optimiser_type?: string;
+  /** @minLength 1 */
+  readonly model?: string;
+  /** @minLength 1 */
+  readonly provider_logo?: string;
+  readonly configuration?: DatasetOptimizationDetailApiConfiguration;
   status?: DatasetOptimizationDetailApiStatus;
   error_message?: string;
+  readonly start_time?: string;
+  readonly parameters?: readonly DatasetOptimizationParameterItemApi[];
+  /** @minLength 1 */
+  readonly column_id?: string;
+  /** @minLength 1 */
+  readonly column_name?: string;
   best_score?: number;
   baseline_score?: number;
-  optimized_k_prompts?: string[];
-  readonly steps?: readonly DatasetOptimizationStepApi[];
-  readonly trials?: readonly DatasetOptimizationTrialListApi[];
-  readonly trial_count?: string;
-  readonly created_at?: string;
+  readonly table?: readonly DatasetOptimizationTrialTableRowApi[];
+  readonly column_config?: readonly DatasetOptimizationColumnConfigItemApi[];
+  /** @minLength 1 */
+  readonly optimizer_model_id?: string;
+  readonly user_eval_templates?: readonly DatasetOptimizationEvalTemplateItemApi[];
+}
+
+export interface DatasetOptimizationDetailApiResponseApi {
+  status: boolean;
+  result: DatasetOptimizationDetailApi;
 }
 
 export type DatasetOptimizationApiOptimizerAlgorithm = typeof DatasetOptimizationApiOptimizerAlgorithm[keyof typeof DatasetOptimizationApiOptimizerAlgorithm];

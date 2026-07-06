@@ -1,4 +1,3 @@
-from typing import List, Optional
 from uuid import UUID
 
 import structlog
@@ -24,34 +23,34 @@ class UpdateEvalTaskInput(PydanticBaseModel):
             "or 'edit_rerun' (preserve existing results, fill gaps)"
         )
     )
-    name: Optional[str] = Field(
+    name: str | None = Field(
         default=None,
         min_length=1,
         max_length=255,
         description="New name for the eval task",
     )
-    sampling_rate: Optional[float] = Field(
+    sampling_rate: float | None = Field(
         default=None,
         ge=1.0,
         le=100.0,
         description="New sampling rate (1-100)",
     )
-    spans_limit: Optional[int] = Field(
+    spans_limit: int | None = Field(
         default=None,
         ge=1,
         le=1000000,
         description="New spans limit",
     )
-    run_type: Optional[str] = Field(
+    run_type: str | None = Field(
         default=None,
         description="New run type: 'historical' or 'continuous'",
     )
-    evals: Optional[List[UUID]] = Field(
+    evals: list[UUID] | None = Field(
         default=None,
         min_length=1,
         description="New list of CustomEvalConfig IDs to link to this task",
     )
-    filters: Optional[dict] = Field(
+    filters: dict | None = Field(
         default=None,
         description="New filter configuration",
     )
@@ -73,14 +72,11 @@ class UpdateEvalTaskTool(BaseTool):
         from django.db import transaction
         from django.utils import timezone
 
+        from tfc.temporal.eval_tasks.client import start_eval_task_workflow_sync
         from tracer.models.custom_eval_config import CustomEvalConfig
-        from tracer.models.eval_task import (
-            EvalTask,
-            EvalTaskLogger,
-            EvalTaskStatus,
-        )
-        from tracer.models.observation_span import EvalLogger
+        from tracer.models.eval_task import EvalTask, EvalTaskStatus
         from tracer.serializers.eval_task import EditEvalTaskSerializer
+        from tracer.services.eval_tasks.entries import soft_delete_live
 
         # Validate edit_type
         if params.edit_type not in ("fresh_run", "edit_rerun"):
@@ -176,27 +172,6 @@ class UpdateEvalTaskTool(BaseTool):
 
         # Apply updates in transaction
         with transaction.atomic():
-            if params.edit_type == "fresh_run":
-                # Delete all previous results and reset
-                EvalLogger.objects.filter(
-                    eval_task_id=str(eval_task.id), deleted=False
-                ).update(deleted=True, deleted_at=timezone.now())
-
-                eval_task_logger, _ = EvalTaskLogger.objects.get_or_create(
-                    eval_task_id=eval_task.id,
-                    defaults={
-                        "offset": 0,
-                        "status": EvalTaskStatus.PENDING,
-                        "spanids_processed": [],
-                    },
-                )
-                eval_task_logger.spanids_processed = []
-                eval_task_logger.offset = 0
-                eval_task_logger.status = EvalTaskStatus.PENDING
-                eval_task_logger.save(
-                    update_fields=["spanids_processed", "offset", "status"]
-                )
-
             # Apply field updates
             if params.name is not None:
                 eval_task.name = params.name
@@ -215,6 +190,12 @@ class UpdateEvalTaskTool(BaseTool):
 
             if new_eval_ids is not None:
                 eval_task.evals.set(new_eval_ids)
+
+            # Delete & rerun wipes live entries; the workflow reconciles and
+            # drains for both cases once (re)started.
+            if params.edit_type == "fresh_run":
+                soft_delete_live(eval_task)
+            start_eval_task_workflow_sync(eval_task)
 
         info = key_value_block(
             [

@@ -104,11 +104,14 @@ const getResultSyntheticPercentage = (result) =>
 const getResultIsSyntheticRegenerate = (result) =>
   Boolean(result?.synthetic_regenerate);
 const getRowId = (row) => row?.row_id ?? row?.rowId;
-const getColumnSourceId = (column) => column?.source_id ?? column?.sourceId;
+const getColumnSourceId = (column) =>
+  column?.source_id !== undefined ? column.source_id : column?.sourceId;
 const getColumnOriginType = (column) =>
-  column?.origin_type ?? column?.originType;
-const getColumnIsFrozen = (column) => column?.is_frozen ?? column?.isFrozen;
-const getColumnIsVisible = (column) => column?.is_visible ?? column?.isVisible;
+  column?.origin_type !== undefined ? column.origin_type : column?.originType;
+const getColumnIsFrozen = (column) =>
+  column?.is_frozen !== undefined ? column.is_frozen : column?.isFrozen;
+const getColumnIsVisible = (column) =>
+  column?.is_visible !== undefined ? column.is_visible : column?.isVisible;
 const SkeletonHeader = () => {
   return <Skeleton width="60%" />;
 };

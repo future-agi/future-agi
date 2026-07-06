@@ -1,4 +1,5 @@
 import structlog
+from concurrent.futures import ThreadPoolExecutor
 from django.http import Http404
 from django.utils import timezone
 from rest_framework.decorators import action
@@ -293,7 +294,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
     @staticmethod
     def _run_metric_queries(builder, source, fetch_rows):
-        """Build + execute each metric in isolation; return [(metric_info, rows)].
+        """Build + execute each metric in parallel; return [(metric_info, rows)].
 
         Only ``InvalidMetricCombinationError`` is caught per-metric (the metric
         is non-sensical and a user-facing message is attached). All other
@@ -301,17 +302,29 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         surface as real errors instead of being silently masked as per-widget
         "could not be computed" text.
         """
-        results = []
-        for metric in builder.metrics:
+        metrics = builder.metrics
+        if not metrics:
+            return []
+
+        def _exec_one(metric):
             metric_info = builder.metric_info(metric)
             metric_info["source"] = source
             try:
                 sql, params = builder.build_metric_query(metric)
-                results.append((metric_info, fetch_rows(sql, params)))
+                return (metric_info, fetch_rows(sql, params))
             except InvalidMetricCombinationError as e:
                 metric_info["error"] = str(e)
-                results.append((metric_info, []))
-        return results
+                return (metric_info, [])
+            except Exception as e:
+                logger.warning("metric_query_failed", metric=metric_info.get("name"), error=str(e)[:200])
+                return (metric_info, [])
+
+        if len(metrics) == 1:
+            return [_exec_one(metrics[0])]
+
+        with ThreadPoolExecutor(max_workers=min(len(metrics), 4)) as pool:
+            futures = [pool.submit(_exec_one, m) for m in metrics]
+        return [f.result() for f in futures]
 
     def _format_merged_metric_results(self, query_config, all_metric_results):
         formatter = DatasetQueryBuilder(
@@ -1095,7 +1108,45 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     }
                 )
 
-            # 3. Eval metrics — scoped to project(s) when project_ids provided
+            # 3-6: Eval metrics, annotations, and span attributes are independent.
+            # Span attribute discovery (CH) runs concurrently with the PG lookups.
+            def _discover_span_attributes():
+                attrs = []
+                try:
+                    if is_clickhouse_enabled() and project_ids:
+                        analytics = AnalyticsQueryService()
+                        rows = analytics.get_span_attribute_keys_ch_for_projects(
+                            project_ids,
+                            recent_days=None,
+                            timeout_ms=15000,
+                            outer_limit=2000,
+                        )
+                        for r in rows:
+                            k = r.get("key", "")
+                            t = r.get("type", "string")
+                            if k:
+                                attrs.append({"key": k, "type": t})
+                    elif project_ids:
+                        for pid in project_ids:
+                            keys = SQL_query_handler.get_span_attributes_for_project(pid)
+                            for key in keys:
+                                k = key if isinstance(key, str) else str(key)
+                                if k not in [
+                                    a.get("key") if isinstance(a, dict) else a
+                                    for a in attrs
+                                ]:
+                                    attrs.append({"key": k, "type": "string"})
+                except Exception as exc:
+                    logger.warning(
+                        "dashboard_span_attribute_discovery_failed",
+                        error=str(exc)[:200],
+                    )
+                return attrs
+
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                f_attrs = pool.submit(_discover_span_attributes)
+
+            # 3. Eval metrics (PG-heavy chain, runs in main thread)
             try:
                 from model_hub.models.evals_metric import EvalTemplate
 
@@ -1108,7 +1159,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     ch = get_clickhouse_client()
 
                     if filter_by_project:
-                        # Get eval template IDs that have results on traces in the given project(s)
                         result = ch.execute_read(
                             "SELECT DISTINCT toString(custom_eval_config_id) AS tid "
                             "FROM tracer_eval_logger "
@@ -1130,7 +1180,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             timeout_ms=5000,
                         )
 
-                    # execute_read returns (rows, columns, time_ms)
                     raw_rows = result[0] if isinstance(result, tuple) else result
                     used_template_ids = [
                         (
@@ -1142,7 +1191,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     ]
 
                 if not used_template_ids and filter_by_project:
-                    # PG fallback: resolve via CustomEvalConfig → EvalTemplate
                     used_template_ids = list(
                         CustomEvalConfig.objects.filter(
                             project_id__in=project_ids,
@@ -1152,7 +1200,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         .distinct()
                     )
                 elif used_template_ids and filter_by_project:
-                    # CH returned CustomEvalConfig IDs; resolve to EvalTemplate
                     used_template_ids = list(
                         CustomEvalConfig.objects.filter(
                             id__in=used_template_ids,
@@ -1160,19 +1207,15 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     )
 
                 if used_template_ids:
-                    # Use no_workspace_objects since system eval templates
-                    # may have no workspace (workspace=None).
                     eval_templates = EvalTemplate.no_workspace_objects.filter(
                         id__in=used_template_ids,
                         deleted=False,
                     ).values("id", "name", "config", "choices")
                 elif filter_by_project:
-                    # Project-scoped but no evals found — return empty
                     eval_templates = EvalTemplate.objects.none().values(
                         "id", "name", "config", "choices"
                     )
                 else:
-                    # Fallback: list all templates for the org
                     eval_templates = EvalTemplate.objects.filter(
                         organization=workspace.organization,
                         deleted=False,
@@ -1190,8 +1233,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             except (ImportError, Exception) as e:
                 logger.warning(f"Failed to load eval templates: {e}")
 
-            # 3b. Simulation eval metrics — scoped by agent definition for
-            # annotation automation rule filters.
+            # 3b. Simulation eval metrics
             agent_definition_id = request.query_params.get("agent_definition_id")
             if agent_definition_id:
                 try:
@@ -1204,7 +1246,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 except (ImportError, Exception) as e:
                     logger.warning(f"Failed to load simulation eval configs: {e}")
 
-            # 4. Annotation metrics — scoped to project(s) when project_ids provided
+            # 4. Annotation metrics
             try:
                 from django.db.models import Q
 
@@ -1256,7 +1298,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         "output_type": label_type,
                     }
 
-                    # Include static choices for choice-based annotation types
                     if label_type == "categorical":
                         options = settings.get("options", [])
                         metric_entry["choices"] = [
@@ -1271,59 +1312,8 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
             except Exception:
                 logger.exception("annotation_metrics_failed")
 
-            # 6. Span attributes (traces only) — single query for all projects
-            custom_attributes = []
-            try:
-                if is_clickhouse_enabled() and project_ids:
-                    from tracer.services.clickhouse.client import get_clickhouse_client
-
-                    ch = get_clickhouse_client()
-                    # Single batch query with type inference across all projects
-                    rows, cols, _ = ch.execute_read(
-                        """
-                        SELECT key, argMax(type, cnt) AS type FROM (
-                            SELECT key, 'text' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(attrs_string) AS key
-                            WHERE project_id IN %(project_ids)s AND is_deleted = 0
-                            GROUP BY key
-                            UNION ALL
-                            SELECT key, 'number' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(attrs_number) AS key
-                            WHERE project_id IN %(project_ids)s AND is_deleted = 0
-                            GROUP BY key
-                            UNION ALL
-                            SELECT key, 'boolean' AS type, count() AS cnt
-                            FROM spans ARRAY JOIN mapKeys(attrs_bool) AS key
-                            WHERE project_id IN %(project_ids)s AND is_deleted = 0
-                            GROUP BY key
-                        )
-                        GROUP BY key ORDER BY key LIMIT 2000
-                        """,
-                        {"project_ids": project_ids},
-                        timeout_ms=15000,
-                    )
-                    for r in rows:
-                        if isinstance(r, dict):
-                            k, t = r.get("key", ""), r.get("type", "string")
-                        elif isinstance(r, (list, tuple)) and len(r) >= 2:
-                            k, t = r[0], r[1]
-                        else:
-                            continue
-                        if k:
-                            custom_attributes.append({"key": k, "type": t})
-                elif project_ids:
-                    for pid in project_ids:
-                        keys = SQL_query_handler.get_span_attributes_for_project(pid)
-                        for key in keys:
-                            k = key if isinstance(key, str) else str(key)
-                            if k not in [
-                                a.get("key") if isinstance(a, dict) else a
-                                for a in custom_attributes
-                            ]:
-                                custom_attributes.append({"key": k, "type": "string"})
-            except Exception:
-                pass  # non-fatal — attributes just won't appear in picker
-
+            # Collect span attributes from background thread
+            custom_attributes = f_attrs.result()
             for attr in custom_attributes:
                 k = attr["key"] if isinstance(attr, dict) else attr
                 t = attr.get("type", "string") if isinstance(attr, dict) else "string"

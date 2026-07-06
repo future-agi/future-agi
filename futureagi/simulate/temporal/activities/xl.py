@@ -271,34 +271,27 @@ def _build_transcript_data(call_execution):
                             elif chat_message.role == "assistant":
                                 assistant_chat_transcript_text.append(message)
             else:
-                try:
-                    from ee.voice.utils.transcript_roles import SpeakerRoleResolver
-                except ImportError:
-                    SpeakerRoleResolver = None
-                    logger.warning(
-                        "speaker_role_resolver_unavailable_for_xl_transcript",
-                        call_execution_id=str(call_execution.id),
-                    )
-                else:
-                    provider = SpeakerRoleResolver.detect_provider(
-                        call_execution.provider_call_data
-                    )
-                    call_dir = (call_execution.call_metadata or {}).get(
-                        "call_direction", ""
-                    )
-                    is_outbound = str(call_dir).strip().lower() == "outbound"
+                from simulate.utils.speaker_roles import SpeakerRoleResolver
 
+                provider = SpeakerRoleResolver.detect_provider(
+                    call_execution.provider_call_data
+                )
+                call_dir = (call_execution.call_metadata or {}).get(
+                    "call_direction", ""
+                )
+                is_outbound = str(call_dir).strip().lower() == "outbound"
+                conversational_roles = SpeakerRoleResolver.get_conversational_roles()
                 for transcript in transcripts:
-                    if transcript.content.strip():
-                        if SpeakerRoleResolver is None:
-                            eval_role = transcript.speaker_role
-                        else:
-                            eval_role = SpeakerRoleResolver.get_eval_role_label(
-                                transcript.speaker_role,
-                                provider=provider,
-                                is_outbound=is_outbound,
-                            )
-                        transcript_text.append(f"{eval_role}: {transcript.content}")
+                    if not transcript.content.strip():
+                        continue
+                    if transcript.speaker_role not in conversational_roles:
+                        continue
+                    eval_role = SpeakerRoleResolver.get_eval_role_label(
+                        transcript.speaker_role,
+                        provider=provider,
+                        is_outbound=is_outbound,
+                    )
+                    transcript_text.append(f"{eval_role}: {transcript.content}")
 
             transcript_data["transcript"] = "\n".join(transcript_text)
             transcript_data["user_chat_transcript"] = "\n".join(

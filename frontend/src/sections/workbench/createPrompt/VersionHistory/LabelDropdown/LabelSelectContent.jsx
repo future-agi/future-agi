@@ -49,11 +49,6 @@ const LabelSelectContent = ({
     return [];
   });
 
-  const originalLabelIds = new Set((selectedLabels ?? []).map((l) => l.id));
-  const hasChanges =
-    selectedLabelsList.length !== originalLabelIds.size ||
-    selectedLabelsList.some((l) => !originalLabelIds.has(l.id));
-
   const { mutate: assignLabel, isPending: isAssigning } = useMutation({
     mutationFn: (labelIds) =>
       axios.post(endpoints.develop.runPrompt.assignMultipleLabels, {
@@ -111,6 +106,11 @@ const LabelSelectContent = ({
   );
 
   const handleSave = useCallback(() => {
+    if (selectedLabelsList.length === 0) {
+      return enqueueSnackbar("Please select at least one label", {
+        variant: "warning",
+      });
+    }
     const labelIds = selectedLabelsList.map((label) => label.id);
     assignLabel(labelIds);
   }, [selectedLabelsList, assignLabel]);
@@ -257,7 +257,7 @@ const LabelSelectContent = ({
 
         <LoadingButton
           size="small"
-          disabled={!hasChanges}
+          disabled={selectedLabelsList?.length === 0}
           loading={isAssigning}
           color="primary"
           variant="contained"

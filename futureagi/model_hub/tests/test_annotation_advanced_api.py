@@ -232,6 +232,38 @@ class TestReservations:
         assert item.reserved_by == user
         assert item.reservation_expires_at is not None
 
+    def test_reviewer_reopening_reviewed_item_does_not_reserve(
+        self, auth_client, organization, workspace, user
+    ):
+        """After a reviewer requests changes, re-opening the item must not grab
+        the editing lock. The FE re-fetches annotate-detail with reserve=true
+        right after the review; if the reviewer takes the reservation it
+        survives the hand-back and strands the annotator who has to rework the
+        item until expiry (the review/reservation deadlock).
+        """
+        queue_id = _create_queue(auth_client, name="Res Review Q")
+        _, row = _create_dataset_row(organization, workspace)
+        item = _add_item(auth_client, queue_id, row)
+
+        # Item sent back for rework: the auth user (a queue manager => reviewer)
+        # is recorded as its reviewer.
+        item.status = "in_progress"
+        item.review_status = "rejected"
+        item.reviewed_by = user
+        item.reviewed_at = timezone.now()
+        item.save(
+            update_fields=["status", "review_status", "reviewed_by", "reviewed_at"]
+        )
+
+        resp = auth_client.get(
+            f"{QUEUE_URL}{queue_id}/items/{item.id}/annotate-detail/",
+            {"reserve": "true"},
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        item.refresh_from_db()
+        assert item.reserved_by is None
+        assert item.reservation_expires_at is None
+
     def test_release_reservation(self, auth_client, organization, workspace):
         queue_id = _create_queue(auth_client, name="Res Q2")
         _, row = _create_dataset_row(organization, workspace)

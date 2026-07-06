@@ -110,7 +110,7 @@ export const enrichTurns = (transcript) => {
     return {
       id: item.id ?? `turn-${i}`,
       role,
-      rawRole: item.speakerRole || item.role,
+      rawRole: item.speaker_role || item.role,
       content: getContent(item),
       start,
       end,

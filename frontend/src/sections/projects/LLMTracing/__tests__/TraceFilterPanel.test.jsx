@@ -36,7 +36,7 @@ describe("TraceFilterPanel AI apply (#577)", () => {
     parseQueryMock.mockReset();
   });
 
-  it("runs the AI filter when Apply is clicked with an AI query present", async () => {
+  it("runs the AI filter when the AI query is submitted (Enter)", async () => {
     parseQueryMock.mockResolvedValue([
       { field: "status", operator: "equals", value: "ERROR" },
     ]);
@@ -69,10 +69,11 @@ describe("TraceFilterPanel AI apply (#577)", () => {
       </QueryClientProvider>,
     );
 
-    fireEvent.change(screen.getByPlaceholderText(/Ask AI/i), {
-      target: { value: "show errors" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+    const aiInput = screen.getByPlaceholderText(/Ask AI/i);
+    fireEvent.change(aiInput, { target: { value: "show errors" } });
+    // Auto-apply removed the footer "Apply" button; the AI query is now
+    // submitted via Enter (or the inline send button in the input).
+    fireEvent.keyDown(aiInput, { key: "Enter" });
 
     await waitFor(() => {
       expect(parseQueryMock).toHaveBeenCalledWith("show errors", {
@@ -81,13 +82,15 @@ describe("TraceFilterPanel AI apply (#577)", () => {
         source: "traces",
       });
     });
+    // The AI path now applies computeValidFilters(converted) like every other
+    // path, so the operator is normalized to the canonical string op ("in").
     expect(onApply).toHaveBeenCalledWith([
       {
         field: "status",
         fieldCategory: "system",
         fieldType: "string",
         apiColType: undefined,
-        operator: "equals",
+        operator: "in",
         value: ["ERROR"],
       },
     ]);

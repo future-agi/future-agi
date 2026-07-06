@@ -29,11 +29,11 @@ const MessageValidationSchema = z
         if (item.type === "text") {
           return item.text.trim().length > 0;
         } else if (item.type === "audio_url") {
-          return item.audioUrl?.url?.trim() !== "";
+          return item.audio_url?.url?.trim() !== "";
         } else if (item.type === "pdf_url") {
-          return item.pdfUrl?.url?.trim() !== "";
+          return item.pdf_url?.url?.trim() !== "";
         } else if (item.type === "image_url") {
-          return item.imageUrl.url.trim().length > 0;
+          return item.image_url?.url?.trim()?.length > 0;
         }
         return false;
       });

@@ -4419,9 +4419,14 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             # called `get_reader().get(sid)` inside both the project- and
             # agent-definition-scope branches for every queue × source
             # combination, producing N×M CH round-trips. Precompute the
-            # span lookup once with list_by_ids; the inner branches now
-            # consult an in-memory dict.
-            _ch_span_by_id: dict[str, object] = {}
+            # span lookup once; the inner branches now consult an in-memory dict.
+            #
+            # These branches only need each span's project_id (a scope check),
+            # so read the lean ``scope_by_ids`` projection — pulling the full
+            # span row here blows the shared ClickHouse memory limit (code 241)
+            # on fat voice spans whose ``attributes_extra`` carries a whole raw
+            # log.
+            _ch_scope_by_span: dict[str, object] = {}
             _span_source_ids = [
                 str(src["source_id"])
                 for src in sources
@@ -4431,8 +4436,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 from tracer.services.clickhouse.v2 import get_reader as _gr_bulk
 
                 with _gr_bulk() as _reader_bulk:
-                    for _s in _reader_bulk.list_by_ids(_span_source_ids):
-                        _ch_span_by_id[str(_s.id)] = _s
+                    _ch_scope_by_span = _reader_bulk.scope_by_ids(_span_source_ids)
 
             for dq in missing_defaults:
                 if dq.id in seen_queues:
@@ -4459,8 +4463,8 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                         elif st == "observation_span":
                             # Bulk-prefetched above; in-memory dict lookup
                             # (avoids N×M CH round-trips per codex P2).
-                            _sp = _ch_span_by_id.get(str(sid))
-                            exists = _sp is not None and _sp.project_id == str(
+                            _scope = _ch_scope_by_span.get(str(sid))
+                            exists = _scope is not None and _scope.project_id == str(
                                 dq.project_id
                             )
                         elif st == "trace_session":
@@ -4528,11 +4532,12 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                             # `project__observability_providers__agent_definition`
                             # isn't on the CH span row, so verify the project
                             # linkage via PG after the in-memory CH lookup.
-                            _sp = _ch_span_by_id.get(str(sid))
+                            _scope = _ch_scope_by_span.get(str(sid))
                             exists = (
-                                _sp is not None
+                                _scope is not None
+                                and _scope.project_id is not None
                                 and Project.objects.filter(
-                                    id=_sp.project_id,
+                                    id=_scope.project_id,
                                     observability_providers__agent_definition=dq.agent_definition_id,
                                 ).exists()
                             )
@@ -5846,8 +5851,18 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             if assignment_denial_reason:
                 return self._gm.forbidden_response(assignment_denial_reason)
 
-        # Reservation logic: opt-in via ?reserve=true query param
+        # Reservation logic: opt-in via ?reserve=true query param.
         reserve = _is_truthy(query_params.get("reserve"))
+        # The reservation is an editing lock for the user annotating their own
+        # draft. A reviewer/manager opening the review workspace, or re-opening
+        # an item that already carries a review decision (reviewed_by set — e.g.
+        # after request-changes), is acting as a reviewer, not the editor.
+        # Granting them the lock strands the annotator who must rework the item
+        # until the reservation expires. Don't reserve in those review contexts.
+        if reserve and (
+            is_review_detail or (is_reviewer and item.reviewed_by_id is not None)
+        ):
+            reserve = False
         if reserve:
             # Atomic reservation to prevent race condition
             updated = (
@@ -7491,25 +7506,6 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
                 ),
             )
 
-        # Multi-click guard. If the rule fired in the last 30s, refuse with
-        # 409 so a second click while the first run is still in flight
-        # doesn't blow up to two workflows + two emails + two PG row-lock
-        # waits. The lower-level QueueItem unique constraint already prevents
-        # data corruption, but it's still wasteful work and confusing UX.
-        # 30s is small enough that legitimate re-runs aren't impacted —
-        # users can wait, and the FE keeps the Run button disabled for the
-        # same window.
-        if rule.last_triggered_at and (
-            timezone.now() - rule.last_triggered_at
-        ) < timedelta(seconds=30):
-            return self._gm.custom_error_response(
-                status_code=status.HTTP_409_CONFLICT,
-                result=(
-                    "A run is already in progress for this rule. "
-                    "Please wait a few seconds before trying again."
-                ),
-            )
-
         from model_hub.utils.annotation_queue_helpers import (
             RULE_RUN_SYNC_THRESHOLD,
         )
@@ -7539,29 +7535,21 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
             result = evaluate_rule(rule, user=request.user, cap=RULE_RUN_SYNC_THRESHOLD)
             return self._gm.success_response(result)
 
-        # Large run — hand off to Temporal. task_id is suffixed with a
-        # millisecond timestamp so two clicks of "Run" don't collide on the
-        # same workflow_id. Activity-level serialisation already handles
-        # concurrency: ``evaluate_rule`` holds a ``select_for_update`` on
-        # the rule row inside the activity, and ``QueueItem`` unique
-        # constraints make the bulk_create idempotent.
+        # Large run — hand off to Temporal. The workflow id is stable per rule,
+        # so Temporal itself rejects a second "Run" click while a run for this
+        # rule is still open (its default id-conflict behaviour raises
+        # WorkflowAlreadyStartedError), which we surface as a 409 — no duplicate
+        # workflow, no duplicate completion email. A run that has already
+        # finished (closed workflow) never blocks a fresh one, so a re-run after
+        # completion still works. Concurrency within a run is handled at the
+        # activity: ``evaluate_rule`` holds a ``select_for_update`` on the rule
+        # row and ``QueueItem`` unique constraints make the bulk_create
+        # idempotent.
+        from temporalio.exceptions import WorkflowAlreadyStartedError
+
         from tfc.temporal.drop_in.runner import start_activity_sync
 
-        # Reserve the rule *before* scheduling — the 30s multi-click guard
-        # above only catches in-flight runs once the worker has bumped
-        # ``last_triggered_at`` via ``_update_rule_stats``. For async runs
-        # that bump happens minutes later (inside the Temporal activity),
-        # leaving a window where two clicks both pass the guard and schedule
-        # duplicate workflows + duplicate completion emails. Bump now from
-        # the view so the second click sees a fresh timestamp.
-        previous_last_triggered_at = rule.last_triggered_at
-        scheduled_at = timezone.now()
-        AutomationRule.objects.filter(pk=rule.pk).update(last_triggered_at=scheduled_at)
-        rule.last_triggered_at = scheduled_at
-
-        task_id = (
-            f"automation-rule-eval-{rule.pk}-{int(scheduled_at.timestamp() * 1000)}"
-        )
+        task_id = f"automation-rule-eval-{rule.pk}"
 
         try:
             workflow_id = start_activity_sync(
@@ -7575,13 +7563,17 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
                 queue="tasks_l",
                 task_id=task_id,
             )
-        except Exception as exc:
-            # Schedule failed — release the reservation so the user can
-            # retry immediately without waiting out the 30s lockout.
-            AutomationRule.objects.filter(pk=rule.pk).update(
-                last_triggered_at=previous_last_triggered_at
+        except WorkflowAlreadyStartedError:
+            # A run for this rule is already open on Temporal — refuse the
+            # duplicate rather than spawning a second workflow + second email.
+            return self._gm.custom_error_response(
+                status_code=status.HTTP_409_CONFLICT,
+                result=(
+                    "A run is already in progress for this rule. "
+                    "Please wait for it to finish before starting another."
+                ),
             )
-            rule.last_triggered_at = previous_last_triggered_at
+        except Exception as exc:
             logger.exception(
                 "automation_rule_manual_run_schedule_failed",
                 rule_id=str(rule.pk),

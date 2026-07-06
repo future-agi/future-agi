@@ -55,6 +55,7 @@ class SessionListQueryBuilderV2(V2RewriteMixin, SessionListQueryBuilder):
         WHERE {self.project_filter_sql()}
           AND is_deleted = 0
           AND (parent_span_id IS NULL OR parent_span_id = '')
+          AND s.trace_session_id IN %(attr_session_ids)s
           AND (
             (attributes_extra != '{{}}' AND attributes_extra != '')
             OR length(mapKeys(attrs_string)) > 0

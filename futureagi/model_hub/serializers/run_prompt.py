@@ -324,11 +324,14 @@ class PromptConfigSerializer(serializers.Serializer):
         if item_type == "text":
             return bool(item.get("text", "").strip())
         elif item_type == "image_url":
-            return bool(item.get("imageUrl", {}).get("url", "").strip())
+            outer = item.get("image_url") or item.get("imageUrl") or {}
+            return bool(outer.get("url", "").strip())
         elif item_type == "audio_url":
-            return bool(item.get("audioUrl", {}).get("url", "").strip())
+            outer = item.get("audio_url") or item.get("audioUrl") or {}
+            return bool(outer.get("url", "").strip())
         elif item_type == "pdf_url":
-            return bool(item.get("pdfUrl", {}).get("url", "").strip())
+            outer = item.get("pdf_url") or item.get("pdfUrl") or {}
+            return bool(outer.get("url", "").strip())
         return False
 
     def validate(self, attrs):
