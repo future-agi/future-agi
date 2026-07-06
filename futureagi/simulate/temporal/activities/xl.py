@@ -448,9 +448,14 @@ def _step_segment(current, part):
     return _STEP_MISS
 
 
+_MAX_PATH_SEGMENTS = 32  # cap traversal depth to bound FK descriptor chains
+
+
 def walk_subject_path(subjects, path):
     """Resolve a dotted path against any registered subject root at any depth."""
     if not isinstance(path, str) or "." not in path:
+        return PATH_MISSING
+    if path.count(".") + 1 > _MAX_PATH_SEGMENTS:
         return PATH_MISSING
     head, _, rest = path.partition(".")
     if head in subjects:
