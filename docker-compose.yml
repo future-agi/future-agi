@@ -64,12 +64,14 @@ x-backend-env: &backend-env
   # Local-only defaults. deploy/docker-compose.production.yml re-binds these
   # with ${VAR:?error} guards so prod refuses to boot on the dev values.
   SECRET_KEY: ${SECRET_KEY:-local-dev-only-not-for-production-replace-me}
-  ENV_TYPE: ${ENV_TYPE:-development}
+  ENV_TYPE: ${ENV_TYPE:-local}
   EE_LICENSE_KEY: ${EE_LICENSE_KEY:-test-license-key}
   DJANGO_SETTINGS_MODULE: tfc.settings.settings
   FAST_STARTUP: ${FAST_STARTUP:-false}
   OTEL_ENABLED: ${OTEL_ENABLED:-false}
-  INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+  # Empty -> settings.py auto-generates a throwaway dev key. Set in .env for
+  # persistence across restarts (generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())")
+  INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
   FUTURE_AGI_VERSION: ${FUTURE_AGI_VERSION:-unknown}
   FUTURE_AGI_DEPLOYMENT_TYPE: ${FUTURE_AGI_DEPLOYMENT_TYPE:-docker}
   FUTURE_AGI_TELEMETRY_DISABLED: ${FUTURE_AGI_TELEMETRY_DISABLED:-false}
