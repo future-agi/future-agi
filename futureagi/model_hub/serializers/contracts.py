@@ -515,38 +515,10 @@ class PromptMetricsMetadataSerializer(serializers.Serializer):
     total_rows = serializers.IntegerField()
 
 
-class PromptMetricsTableRowSerializer(_ExtraFieldsMixin, serializers.Serializer):
-    """One row in the prompt-metrics table.
-
-    Known aggregate columns are typed explicitly; per-eval metric columns land
-    as dynamic ``<eval_config_id>`` keys and pass through via
-    ``additionalProperties: True`` so orval emits an open-shape object.
-    ``_ExtraFieldsMixin`` preserves the dynamic keys on ``.data`` output.
-    """
-
-    prompt_version_id = serializers.CharField(required=False)
-    prompt_template_version = serializers.CharField(
-        required=False, allow_null=True, allow_blank=True
-    )
-    avg_latency = serializers.FloatField(required=False, allow_null=True)
-    avg_input_tokens = serializers.FloatField(required=False, allow_null=True)
-    avg_output_tokens = serializers.FloatField(required=False, allow_null=True)
-    total_spans = serializers.IntegerField(required=False, allow_null=True)
-    unique_traces = serializers.IntegerField(required=False, allow_null=True)
-    avg_cost = serializers.FloatField(required=False, allow_null=True)
-    first_used = serializers.CharField(required=False, allow_null=True)
-    last_used = serializers.CharField(required=False, allow_null=True)
-    prompt_label_id = serializers.CharField(required=False, allow_null=True)
-    prompt_label_name = serializers.CharField(required=False, allow_null=True)
-
-    class Meta:
-        swagger_schema_fields = {"additionalProperties": True}
-
-
 class PromptMetricsResultSerializer(serializers.Serializer):
     prompt_template_id = serializers.UUIDField(required=False)
     prompt_template_name = serializers.CharField(required=False)
-    table = serializers.ListField(child=PromptMetricsTableRowSerializer())
+    table = serializers.ListField(child=serializers.JSONField())
     config = serializers.JSONField()
     metadata = PromptMetricsMetadataSerializer()
 

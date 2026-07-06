@@ -85691,7 +85691,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "table": {
           "type": "array",
           "items": {
-            "$ref": "#/definitions/PromptMetricsTableRow"
+            "type": "object"
           }
         },
         "config": {
@@ -96284,76 +96284,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "integer"
         }
       }
-    },
-    "PromptMetricsTableRow": {
-      "type": "object",
-      "properties": {
-        "prompt_version_id": {
-          "title": "Prompt version id",
-          "type": "string",
-          "minLength": 1
-        },
-        "prompt_template_version": {
-          "title": "Prompt template version",
-          "type": "string",
-          "x-nullable": true
-        },
-        "avg_latency": {
-          "title": "Avg latency",
-          "type": "number",
-          "x-nullable": true
-        },
-        "avg_input_tokens": {
-          "title": "Avg input tokens",
-          "type": "number",
-          "x-nullable": true
-        },
-        "avg_output_tokens": {
-          "title": "Avg output tokens",
-          "type": "number",
-          "x-nullable": true
-        },
-        "total_spans": {
-          "title": "Total spans",
-          "type": "integer",
-          "x-nullable": true
-        },
-        "unique_traces": {
-          "title": "Unique traces",
-          "type": "integer",
-          "x-nullable": true
-        },
-        "avg_cost": {
-          "title": "Avg cost",
-          "type": "number",
-          "x-nullable": true
-        },
-        "first_used": {
-          "title": "First used",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "last_used": {
-          "title": "Last used",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "prompt_label_id": {
-          "title": "Prompt label id",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "prompt_label_name": {
-          "title": "Prompt label name",
-          "type": "string",
-          "minLength": 1,
-          "x-nullable": true
-        }
-      },
-      "additionalProperties": true
     },
     "PromptSimulationTemplateSummary": {
       "type": "object",

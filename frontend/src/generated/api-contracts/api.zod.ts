@@ -25509,30 +25509,14 @@ export const ModelHubPromptMetricsListQueryParams = zod.object({
 
 
 
-
-
-
-
-
 export const ModelHubPromptMetricsListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
   "prompt_template_id": zod.string().uuid().optional(),
   "prompt_template_name": zod.string().min(1).optional(),
   "table": zod.array(zod.object({
-  "prompt_version_id": zod.string().min(1).optional(),
-  "prompt_template_version": zod.string().optional(),
-  "avg_latency": zod.number().optional(),
-  "avg_input_tokens": zod.number().optional(),
-  "avg_output_tokens": zod.number().optional(),
-  "total_spans": zod.number().optional(),
-  "unique_traces": zod.number().optional(),
-  "avg_cost": zod.number().optional(),
-  "first_used": zod.string().min(1).optional(),
-  "last_used": zod.string().min(1).optional(),
-  "prompt_label_id": zod.string().min(1).optional(),
-  "prompt_label_name": zod.string().min(1).optional()
-})),
+
+}).passthrough()),
   "config": zod.object({
 
 }).passthrough(),
@@ -25578,30 +25562,14 @@ export const ModelHubPromptSpanMetricsListQueryParams = zod.object({
 
 
 
-
-
-
-
-
 export const ModelHubPromptSpanMetricsListResponse = zod.object({
   "status": zod.boolean(),
   "result": zod.object({
   "prompt_template_id": zod.string().uuid().optional(),
   "prompt_template_name": zod.string().min(1).optional(),
   "table": zod.array(zod.object({
-  "prompt_version_id": zod.string().min(1).optional(),
-  "prompt_template_version": zod.string().optional(),
-  "avg_latency": zod.number().optional(),
-  "avg_input_tokens": zod.number().optional(),
-  "avg_output_tokens": zod.number().optional(),
-  "total_spans": zod.number().optional(),
-  "unique_traces": zod.number().optional(),
-  "avg_cost": zod.number().optional(),
-  "first_used": zod.string().min(1).optional(),
-  "last_used": zod.string().min(1).optional(),
-  "prompt_label_id": zod.string().min(1).optional(),
-  "prompt_label_name": zod.string().min(1).optional()
-})),
+
+}).passthrough()),
   "config": zod.object({
 
 }).passthrough(),

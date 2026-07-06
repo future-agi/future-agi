@@ -12747,30 +12747,11 @@ export interface DerivedVariableExtractRequestApi {
   response_format_type?: string;
 }
 
-export interface PromptMetricsTableRowApi {
-  /** @minLength 1 */
-  prompt_version_id?: string;
-  prompt_template_version?: string;
-  avg_latency?: number;
-  avg_input_tokens?: number;
-  avg_output_tokens?: number;
-  total_spans?: number;
-  unique_traces?: number;
-  avg_cost?: number;
-  /** @minLength 1 */
-  first_used?: string;
-  /** @minLength 1 */
-  last_used?: string;
-  /** @minLength 1 */
-  prompt_label_id?: string;
-  /** @minLength 1 */
-  prompt_label_name?: string;
-  [key: string]: unknown;
- }
-
 export interface PromptMetricsMetadataApi {
   total_rows: number;
 }
+
+export type PromptMetricsResultApiTableItem = { [key: string]: unknown };
 
 export type PromptMetricsResultApiConfig = { [key: string]: unknown };
 
@@ -12778,7 +12759,7 @@ export interface PromptMetricsResultApi {
   prompt_template_id?: string;
   /** @minLength 1 */
   prompt_template_name?: string;
-  table: PromptMetricsTableRowApi[];
+  table: PromptMetricsResultApiTableItem[];
   config: PromptMetricsResultApiConfig;
   metadata: PromptMetricsMetadataApi;
 }
