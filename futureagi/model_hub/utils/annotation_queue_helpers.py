@@ -2,9 +2,8 @@ from datetime import datetime, timedelta
 from typing import Any, TypedDict
 
 import structlog
-from django.db import transaction
 from django.core.exceptions import ObjectDoesNotExist
-from django.db import DatabaseError
+from django.db import DatabaseError, transaction
 from django.db.models import DateTimeField, Exists, F, FloatField, OuterRef, Q
 from django.db.models.functions import Cast
 from django.db.utils import ProgrammingError
@@ -590,8 +589,9 @@ def resolve_source_object(
     # collector one (no PG row) needs CH. `source_type` alone can't tell them apart
     # — both are e.g. `observation_span` — so the missing row is the discriminator.
     # A dropped legacy table reads the same as a missing row here: no PG row → CH.
-    # The probe gets its own savepoint so an ``undefined_table`` abort doesn't poison
-    # an enclosing transaction (this helper also runs inside ``evaluate_rule``'s atomic).
+    # The probe gets its own savepoint so an ``undefined_table`` abort can't poison
+    # an enclosing transaction: this is a shared read helper, and a caller that runs
+    # it inside ``transaction.atomic()`` would otherwise be left with an aborted txn.
     try:
         with transaction.atomic():
             obj = model.objects.filter(pk=source_id).first()
