@@ -23,7 +23,9 @@ def error_localizer_enabled(eval_config: Any) -> bool:
 
 
 def should_run_error_localizer(
-    value: Any, eval_template: EvalTemplate | None
+    value: Any,
+    eval_template: EvalTemplate | None,
+    runtime_threshold: float | None = None,
 ) -> tuple[bool, str]:
     if eval_template is None:
         return (
@@ -50,8 +52,11 @@ def should_run_error_localizer(
 
     score = normalize_score(extracted, output_type, choice_scores)
 
-    threshold = getattr(eval_template, "pass_threshold", None)
-    threshold = float(threshold) if threshold is not None else 0.5
+    if runtime_threshold is not None:
+        threshold = float(runtime_threshold)
+    else:
+        template_threshold = getattr(eval_template, "pass_threshold", None)
+        threshold = float(template_threshold) if template_threshold is not None else 0.5
 
     decision = determine_pass_fail(score, threshold)
     if output_type == "pass_fail":
