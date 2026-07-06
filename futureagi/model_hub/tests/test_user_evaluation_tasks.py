@@ -1251,3 +1251,168 @@ class TestErrorLocalizerGateE2E:
         task.refresh_from_db()
         assert task.status == ErrorLocalizerStatus.SKIPPED
         assert "template" in task.error_message
+
+
+class TestTriggerMetadataSnapshot:
+    """Every EL trigger must snapshot resolve_pass_threshold onto task.metadata.
+
+    The worker reads task.metadata['pass_threshold'] as runtime_threshold; a
+    rename or drop here silently reverts EL to the template default.
+    """
+
+    _SENTINEL = 0.777
+
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizerTask")
+    @patch("model_hub.tasks.user_evaluation.resolve_pass_threshold")
+    def test_standalone_writes_pass_threshold(self, mock_resolve, mock_task):
+        from model_hub.tasks.user_evaluation import (
+            trigger_error_localization_for_standalone,
+        )
+
+        mock_resolve.return_value = self._SENTINEL
+        evaluation = MagicMock()
+        evaluation.eval_template.config = {"rule_prompt": "r"}
+        evaluation.input_data = {"q": "hi"}
+        evaluation.data = "Failed"
+        evaluation.reason = ""
+
+        trigger_error_localization_for_standalone(evaluation)
+
+        mock_resolve.assert_called_once_with(
+            evaluation.eval_template, evaluation.eval_config
+        )
+        create_kwargs = mock_task.objects.create.call_args.kwargs
+        assert create_kwargs["metadata"]["pass_threshold"] == self._SENTINEL
+
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizerTask")
+    @patch("model_hub.tasks.user_evaluation.resolve_pass_threshold")
+    def test_playground_writes_pass_threshold_on_create(
+        self, mock_resolve, mock_task
+    ):
+        from model_hub.models.error_localizer_model import ErrorLocalizerTask
+        from model_hub.tasks.user_evaluation import (
+            trigger_error_localization_for_playground,
+        )
+
+        mock_resolve.return_value = self._SENTINEL
+        mock_task.DoesNotExist = ErrorLocalizerTask.DoesNotExist
+        mock_task.objects.get.side_effect = ErrorLocalizerTask.DoesNotExist
+        eval_template = MagicMock()
+        eval_template.config = {"rule_prompt": "r"}
+        log = MagicMock()
+        eval_config = {"run_config": {"pass_threshold": 0.9}}
+
+        trigger_error_localization_for_playground(
+            eval_template=eval_template,
+            log=log,
+            value="Failed",
+            mapping={"q": "hi"},
+            eval_explanation="",
+            eval_config=eval_config,
+        )
+
+        mock_resolve.assert_called_once_with(eval_template, eval_config)
+        construct_kwargs = mock_task.call_args.kwargs
+        assert construct_kwargs["metadata"]["pass_threshold"] == self._SENTINEL
+
+    @patch("model_hub.tasks.user_evaluation.Workspace")
+    @patch("model_hub.tasks.user_evaluation.Cell")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizerTask")
+    @patch("model_hub.tasks.user_evaluation.resolve_pass_threshold")
+    def test_column_writes_pass_threshold_on_create(
+        self, mock_resolve, mock_task, mock_cell, _mock_workspace
+    ):
+        from model_hub.tasks.user_evaluation import (
+            trigger_error_localization_for_column,
+        )
+
+        mock_resolve.return_value = self._SENTINEL
+        mock_task.objects.filter.return_value.exists.return_value = False
+        cell = MagicMock()
+        mock_cell.objects.select_related.return_value.get.return_value = cell
+        eval_template = MagicMock()
+        eval_template.name = "some-template"
+        config = {"rule_prompt": "r", "run_config": {"pass_threshold": 0.9}}
+
+        trigger_error_localization_for_column(
+            eval_template=eval_template,
+            config=config,
+            required_field=["required_keys"],
+            mapping=[["q"], "hi"],
+            eval_result="Failed",
+            response={"reason": ""},
+            cell=cell,
+            log_id="log-1",
+        )
+
+        mock_resolve.assert_called_once_with(eval_template, config)
+        construct_kwargs = mock_task.call_args.kwargs
+        assert construct_kwargs["metadata"]["pass_threshold"] == self._SENTINEL
+
+    @patch("model_hub.tasks.user_evaluation.Workspace")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizerTask")
+    @patch("model_hub.tasks.user_evaluation.resolve_pass_threshold")
+    def test_span_writes_pass_threshold_on_create(
+        self, mock_resolve, mock_task, _mock_workspace
+    ):
+        from model_hub.models.error_localizer_model import ErrorLocalizerTask
+        from model_hub.tasks.user_evaluation import (
+            trigger_error_localization_for_span,
+        )
+
+        mock_resolve.return_value = self._SENTINEL
+        mock_task.objects.filter.return_value.exists.return_value = False
+        eval_template = MagicMock()
+        eval_template.config = {"rule_prompt": "r"}
+        eval_logger = MagicMock()
+        eval_config = {"run_config": {"pass_threshold": 0.9}}
+
+        trigger_error_localization_for_span(
+            eval_template=eval_template,
+            eval_logger=eval_logger,
+            value="Failed",
+            mapping={"q": "hi"},
+            eval_explanation="",
+            log_id="log-1",
+            eval_config=eval_config,
+        )
+
+        mock_resolve.assert_called_once_with(eval_template, eval_config)
+        construct_kwargs = mock_task.call_args.kwargs
+        assert construct_kwargs["metadata"]["pass_threshold"] == self._SENTINEL
+
+    @patch("model_hub.tasks.user_evaluation.Workspace")
+    @patch("model_hub.tasks.user_evaluation.ErrorLocalizerTask")
+    @patch("model_hub.tasks.user_evaluation.resolve_pass_threshold")
+    def test_simulate_writes_pass_threshold(
+        self, mock_resolve, mock_task, _mock_workspace
+    ):
+        from model_hub.tasks.user_evaluation import (
+            trigger_error_localization_for_simulate,
+        )
+
+        mock_resolve.return_value = self._SENTINEL
+        mock_task.no_workspace_objects.update_or_create.return_value = (
+            MagicMock(),
+            True,
+        )
+        eval_template = MagicMock()
+        eval_template.config = {"rule_prompt": "r"}
+        call_execution = MagicMock()
+        eval_config = MagicMock()
+        eval_config.id = uuid.uuid4()
+        eval_config.config = {"run_config": {"pass_threshold": 0.9}}
+
+        trigger_error_localization_for_simulate(
+            eval_template=eval_template,
+            call_execution=call_execution,
+            eval_config=eval_config,
+            value="Failed",
+            mapping={"q": "hi"},
+            eval_explanation="",
+            log_id="log-1",
+        )
+
+        mock_resolve.assert_called_once_with(eval_template, eval_config.config)
+        update_kwargs = mock_task.no_workspace_objects.update_or_create.call_args.kwargs
+        assert update_kwargs["defaults"]["metadata"]["pass_threshold"] == self._SENTINEL
