@@ -16,6 +16,7 @@ vi.mock("src/hooks/useDashboards", () => ({
     data: {
       id: "dash-1",
       name: "My Dash",
+      created_by: { email: "owner@test.com" },
       widgets: h.widgets,
     },
     isLoading: false,
@@ -41,6 +42,12 @@ vi.mock("../WidgetChart", () => ({
 
 vi.mock("src/components/snackbar", () => ({
   useSnackbar: () => ({ enqueueSnackbar: vi.fn() }),
+}));
+
+// Dashboard delete is gated on ownership (created_by.email === current user);
+// this suite exercises the owner path, so the auth user matches the mock owner.
+vi.mock("src/auth/hooks", () => ({
+  useAuthContext: () => ({ user: { email: "owner@test.com" } }),
 }));
 
 const openWidgetDeleteDialog = () => {
