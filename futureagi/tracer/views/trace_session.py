@@ -16,22 +16,18 @@ import pandas as pd
 import structlog
 from django.db import OperationalError, models, transaction
 from django.db.models import (
-    Avg,
-    Case,
     Count,
     DurationField,
     Exists,
     ExpressionWrapper,
     F,
     FloatField,
-    IntegerField,
     Max,
     Min,
     OuterRef,
     Q,
     Subquery,
     Sum,
-    When,
 )
 from django.db.models.functions import (
     Coalesce,
@@ -55,7 +51,6 @@ from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.observation_span import (
     EndUser,
     EvalLogger,
-    EvalTargetType,
     ObservationSpan,
 )
 from tracer.models.project import Project, ProjectSourceChoices
@@ -75,6 +70,9 @@ from tracer.services.clickhouse.graph_dispatch import (
     fetch_eval_graph_ch,
 )
 from tracer.services.clickhouse.query_builders.base import NIL_UUID
+from tracer.services.clickhouse.query_builders.eval_status import (
+    non_terminal_eval_marker,
+)
 from tracer.utils.filters import FilterEngine, apply_created_at_filters
 from tracer.utils.helper import (
     FieldConfig,
@@ -242,9 +240,7 @@ def _resolve_end_user_ids_for_user_id(user_id, *, org, org_scope, project_id):
             project_id=(project_id if (not org_scope and project_id) else None),
         )
     except Exception as e:
-        logger.warning(
-            "session_list_user_id_ch_resolve_failed", error=str(e)[:200]
-        )
+        logger.warning("session_list_user_id_ch_resolve_failed", error=str(e)[:200])
         ids = []
 
     display_row = None
@@ -363,9 +359,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         return queryset
 
     @staticmethod
-    def _upsert_overlay(
-        trace_session_id, *, project_id, bookmarked, display_name
-    ):
+    def _upsert_overlay(trace_session_id, *, project_id, bookmarked, display_name):
         """Single write path for the TraceSessionOverlay (DESIGN §5 / §5.1).
 
         Used by BOTH the PG-backed ``perform_update`` (post-save mirror) and
@@ -402,9 +396,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
             )
 
     @staticmethod
-    def _build_update_response(
-        session_id, *, project_id, bookmarked, name, created_at
-    ):
+    def _build_update_response(session_id, *, project_id, bookmarked, name, created_at):
         """Shared response builder for PATCH — same shape from PG and CH paths.
 
         Uses ``TraceSessionSerializer``'s ``DateTimeField`` to format
@@ -504,9 +496,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
 
         project_id = session_fields["project_id"]
 
-        TraceSessionOverlay.objects.filter(
-            trace_session_id=trace_session_id
-        ).delete()
+        TraceSessionOverlay.objects.filter(trace_session_id=trace_session_id).delete()
 
         # Mark as deleted in the CH trace_sessions RMT: INSERT a row with
         # is_deleted=1 and a newer version so FINAL picks it up.
@@ -564,9 +554,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 trace_session = self.get_queryset().get(id=trace_session_id)
                 project_id = trace_session.project.id
             except TraceSession.DoesNotExist:
-                session_fields = _resolve_ch_session_fields(
-                    request, trace_session_id
-                )
+                session_fields = _resolve_ch_session_fields(request, trace_session_id)
                 if not session_fields:
                     return self._gm.bad_request("Session not found.")
                 project_id = session_fields["project_id"]
@@ -758,6 +746,17 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     eval_map[key] = {"score": row["float_score"], "type": "float"}
                 elif row.get("bool_count", 0) > 0:
                     eval_map[key] = {"score": row["bool_score"], "type": "bool"}
+                elif (row.get("error_count", 0) or 0) > 0:
+                    # No completed score but the eval errored — surface an error
+                    # marker (errored wins over the non-terminal states).
+                    eval_map[key] = {"type": "error"}
+                else:
+                    # No completed score: surface the eval's lifecycle status
+                    # (skipped > running > pending) so the cell renders a
+                    # loading / pending / skipped state instead of vanishing.
+                    marker = non_terminal_eval_marker(row)
+                    if marker is not None:
+                        eval_map[key] = {"type": "status", **marker}
 
         response = []
         for trace_row in traces_data:
@@ -790,6 +789,23 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         "name": config.name,
                         "explanation": None,
                     }
+                elif data and data["type"] == "error":
+                    eval_metrics[config_id_str] = {
+                        "score": None,
+                        "name": config.name,
+                        "explanation": None,
+                        "error": True,
+                    }
+                elif data and data["type"] == "status":
+                    entry = {
+                        "score": None,
+                        "name": config.name,
+                        "explanation": data.get("skipped_reason"),
+                        "status": data["status"],
+                    }
+                    if data.get("skipped_reason"):
+                        entry["skipped_reason"] = data["skipped_reason"]
+                    eval_metrics[config_id_str] = entry
 
             result["evals_metrics"] = eval_metrics
             response.append(result)
@@ -2041,9 +2057,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     user_id_op = _cfg.get("filter_op") or "in"
                 _val = _cfg.get("filter_value")
                 if isinstance(_val, list):
-                    user_id_values.extend(
-                        str(v) for v in _val if v not in (None, "")
-                    )
+                    user_id_values.extend(str(v) for v in _val if v not in (None, ""))
                 elif _val not in (None, ""):
                     user_id_values.append(str(_val))
                 continue
@@ -2609,9 +2623,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 session_id = str(session.id)
                 session_name = session.name or ""
             except Http404:
-                session_fields = _resolve_ch_session_fields(
-                    request, trace_session_id
-                )
+                session_fields = _resolve_ch_session_fields(request, trace_session_id)
                 if not session_fields:
                     return self._gm.bad_request("Session not found.")
                 session_id = str(trace_session_id)
@@ -2645,7 +2657,9 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                   AND {el_pred}
             """
             count_r = analytics.execute_ch_query(
-                count_q, {"sid": session_id}, timeout_ms=3000,
+                count_q,
+                {"sid": session_id},
+                timeout_ms=3000,
             )
             total = count_r.data[0]["cnt"] if count_r.data else 0
 
@@ -2664,6 +2678,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         eval_explanation,
                         results_explanation,
                         target_type,
+                        status AS eval_status,
+                        skipped_reason,
                         created_at
                     FROM {el_table} FINAL
                     WHERE trace_session_id = %(sid)s
@@ -2686,7 +2702,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                 config_map = {}
                 if config_ids:
                     configs = CustomEvalConfig.objects.filter(
-                        id__in=config_ids, deleted=False,
+                        id__in=config_ids,
+                        deleted=False,
                     ).select_related("eval_template")
                     config_map = {str(c.id): c for c in configs}
 
@@ -2695,11 +2712,24 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     output_bool = log.get("output_bool")
                     output_float = log.get("output_float")
                     output_str = log.get("output_str")
+                    # Real EvalLogger lifecycle status (pending/running/
+                    # completed/errored/skipped) — distinct from the derived
+                    # display ``status`` below.
+                    eval_status = (log.get("eval_status") or "").lower()
 
-                    if error:
+                    if error or eval_status == "errored":
                         result_label = "Error"
                         score_val = None
                         status = "error"
+                    elif eval_status in ("pending", "running", "skipped"):
+                        # Lifecycle status wins over the output columns: a
+                        # non-terminal row can still carry stale/coerced output
+                        # (the CH mirror stores 0 for a NULL bool), so deriving
+                        # from output here would mislabel a queued/running eval
+                        # as a real Pass/Fail. Reflect the lifecycle state.
+                        result_label = eval_status.capitalize()
+                        score_val = None
+                        status = eval_status
                     elif output_bool == 1:
                         result_label = "Passed"
                         score_val = 1.0
@@ -2722,7 +2752,16 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         status = "success"
 
                     config = config_map.get(log.get("custom_eval_config_id"))
-                    reason = log.get("eval_explanation") or log.get("error_message") or ""
+                    reason = (
+                        log.get("eval_explanation")
+                        or log.get("error_message")
+                        or (
+                            log.get("skipped_reason")
+                            if eval_status == "skipped"
+                            else ""
+                        )
+                        or ""
+                    )
                     created = log.get("created_at")
 
                     items.append(
@@ -2733,9 +2772,12 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                             "score": score_val,
                             "reason": reason,
                             "status": status,
+                            "eval_status": eval_status or None,
                             "source": "eval_task",
                             "created_at": (
-                                created.isoformat() if hasattr(created, "isoformat") else str(created or "")
+                                created.isoformat()
+                                if hasattr(created, "isoformat")
+                                else str(created or "")
                             ),
                             "session_id": session_id,
                             "eval_id": str(config.id) if config else None,

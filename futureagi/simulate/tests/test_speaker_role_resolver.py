@@ -471,4 +471,3 @@ class TestRegressionContracts:
         assert "system" not in roles
         assert "tool_calls" not in roles
         assert "tool_call_result" not in roles
-

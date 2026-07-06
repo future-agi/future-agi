@@ -110,6 +110,10 @@ except ImportError:
     ConversationMetricsCalculator = None
     PhoneNumberService = None
     decide_processing_skip = None
+from simulate.temporal.activities.xl import (
+    TRANSCRIPT_DOT_ALIASES,
+    _build_simulation_context_map,
+)
 from simulate.utils.eval_summary import derive_kpi_output_type
 from simulate.utils.processing_outcomes import (
     build_skipped_eval_output_payload,
@@ -4676,12 +4680,17 @@ class TestExecutor:
             # Get agent_version with fallback to latest_version if not set on call_execution
             agent_version = call_execution.agent_version
             if not agent_version:
-                agent_def = call_execution.test_execution.run_test.agent_definition
+                agent_def = (
+                    call_execution.test_execution.agent_definition
+                    or call_execution.test_execution.run_test.agent_definition
+                )
                 if agent_def:
                     agent_version = agent_def.latest_version
                     logger.debug(
                         f"Using fallback agent_version (latest_version) for call_execution {call_execution.id}"
                     )
+
+            context_map = _build_simulation_context_map(call_execution, agent_version)
 
             logger.info(
                 f"Eval mapping validation for call_execution {call_execution.id}: "
@@ -4714,6 +4723,18 @@ class TestExecutor:
                     updated_mapping[key] = transcript_data["user_chat_transcript"]
                 elif value == "assistant_chat_transcript":
                     updated_mapping[key] = transcript_data["assistant_chat_transcript"]
+                elif value in TRANSCRIPT_DOT_ALIASES:
+                    legacy_key = TRANSCRIPT_DOT_ALIASES[value]
+                    if legacy_key == "agent_prompt":
+                        if agent_version and agent_version.configuration_snapshot:
+                            snapshot = agent_version.configuration_snapshot
+                            updated_mapping[key] = snapshot.get("description", "")
+                        else:
+                            updated_mapping[key] = ""
+                    else:
+                        updated_mapping[key] = transcript_data.get(legacy_key, "")
+                elif value in context_map:
+                    updated_mapping[key] = context_map[value]
                 else:
                     if value == "agent_prompt":
                         if agent_version and agent_version.configuration_snapshot:
@@ -4838,6 +4859,32 @@ class TestExecutor:
             # Get organization
             organization = call_execution.test_execution.run_test.organization
 
+            from common.utils.data_injection import is_enabled as _di_enabled
+
+            _di_cfg = (
+                (config or {}).get("run_config", {}).get("data_injection")
+                or (config or {}).get("data_injection")
+                or {}
+            )
+            _call_context = None
+            if _di_enabled(_di_cfg, "call_context"):
+                _call_context = {
+                    "id": str(call_execution.id),
+                    "status": call_execution.status,
+                    "call_type": call_execution.call_type,
+                    "simulation_call_type": call_execution.simulation_call_type,
+                    "phone_number": call_execution.phone_number,
+                    "started_at": str(call_execution.started_at) if call_execution.started_at else None,
+                    "ended_at": str(call_execution.ended_at) if call_execution.ended_at else None,
+                    "duration_seconds": call_execution.duration_seconds,
+                    "recording_url": call_execution.recording_url,
+                    "call_summary": call_execution.call_summary,
+                    "ended_reason": call_execution.ended_reason,
+                    "error_message": call_execution.error_message,
+                    "message_count": call_execution.message_count,
+                    "overall_score": float(call_execution.overall_score) if call_execution.overall_score is not None else None,
+                }
+
             # Run the evaluation
             logger.info(
                 f"Running evaluation {eval_config.id} for call {call_execution.id}"
@@ -4853,6 +4900,7 @@ class TestExecutor:
                 error_localizer=eval_config.error_localizer,
                 workspace=call_execution.test_execution.run_test.workspace,
                 source="simulate",
+                call_context=_call_context,
             )
 
             if isinstance(eval_result, str):
@@ -4906,6 +4954,9 @@ class TestExecutor:
                             f"Error triggering error localization for evaluation {eval_config.id}: {str(e)}"
                         )
 
+                eval_config.status = StatusType.COMPLETED.value
+                eval_config.save()
+
                 logger.info(f"Successfully completed evaluation {eval_config.id}")
             else:
                 logger.info(f"Evaluation {eval_config.id} returned no result")
@@ -4930,6 +4981,9 @@ class TestExecutor:
                 "status"
             ] = StatusType.FAILED.value
             call_execution.save(update_fields=["eval_outputs"])
+
+            eval_config.status = StatusType.FAILED.value
+            eval_config.save()
             raise
 
     def _aggregate_tool_columns_to_test_execution(self, test_execution):

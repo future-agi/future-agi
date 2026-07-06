@@ -976,10 +976,22 @@ const DatapointDrawerChild = () => {
                     fullWidth
                     size="small"
                     onClick={() => {
+                      // Capture the currently-open eval (not the cell that
+                      // opened the datapoint drawer), so the feedback panel
+                      // shows this eval's reason and posts the matching eval
+                      // column / metric.
+                      const evalColumn =
+                        allColumns.find(
+                          (c) => c?.col?.sourceId === evalOpen?.evalMetricId,
+                        )?.col ?? column?.col;
                       setAddEvaluationFeeback({
-                        ...column?.col,
+                        ...evalColumn,
                         ...datapoint,
                         rowData: datapoint?.rowData,
+                        valueInfos:
+                          evalOpen?.value_infos ??
+                          evalOpen?.valueInfos ??
+                          datapoint?.valueInfos,
                       });
                       setEvalOpen(null);
                       trackEvent(Events.datasetAddFeedbackClicked, {

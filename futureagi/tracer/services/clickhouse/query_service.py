@@ -268,7 +268,9 @@ class AnalyticsQueryService:
                 eval_explanation,
                 error,
                 error_message,
-                output_str
+                output_str,
+                status,
+                skipped_reason
             FROM {eval_table} FINAL
             WHERE observation_span_id IN %(span_ids)s
               AND {eval_nd}
@@ -318,18 +320,32 @@ class AnalyticsQueryService:
             SELECT
                 toString(trace_id) AS trace_id,
                 toString(custom_eval_config_id) AS config_id,
-                round(avg(output_float) * 100, 2) AS float_score,
-                round(avg(CASE WHEN output_bool = 1 THEN 100.0
-                               WHEN output_bool = 0 THEN 0.0
-                               ELSE NULL END), 2) AS bool_score,
-                count(output_float) AS float_count,
-                count(output_bool) AS bool_count
+                -- Score aggregates count *terminal* rows only: a non-terminal
+                -- row can carry stale/coerced output (the CH mirror stores 0
+                -- for a NULL bool), which would otherwise fabricate a score for
+                -- a queued/running eval. The per-status counts below still see
+                -- those rows so the caller can render the lifecycle state.
+                round(avgIf(output_float,
+                    error = 0 AND ifNull(output_str, '') != 'ERROR'
+                    AND status NOT IN ('pending', 'running', 'skipped', 'errored')) * 100, 2) AS float_score,
+                round(avgIf(CASE WHEN output_bool = 1 THEN 100.0
+                                 WHEN output_bool = 0 THEN 0.0
+                                 ELSE NULL END,
+                    error = 0 AND ifNull(output_str, '') != 'ERROR'
+                    AND status NOT IN ('pending', 'running', 'skipped', 'errored')), 2) AS bool_score,
+                countIf(output_float IS NOT NULL AND error = 0 AND ifNull(output_str, '') != 'ERROR'
+                    AND status NOT IN ('pending', 'running', 'skipped', 'errored')) AS float_count,
+                countIf(output_bool IS NOT NULL AND error = 0 AND ifNull(output_str, '') != 'ERROR'
+                    AND status NOT IN ('pending', 'running', 'skipped', 'errored')) AS bool_count,
+                countIf(error = 1 OR ifNull(output_str, '') = 'ERROR' OR status = 'errored') AS error_count,
+                countIf(status = 'skipped') AS skipped_count,
+                countIf(status = 'running') AS running_count,
+                countIf(status = 'pending') AS pending_count,
+                anyIf(skipped_reason, status = 'skipped') AS skipped_reason
             FROM {eval_table} FINAL
             WHERE trace_id IN %(trace_ids)s
               AND custom_eval_config_id IN %(config_ids)s
               AND {eval_nd}
-              AND ifNull(output_str, '') != 'ERROR'
-              AND (error = 0 OR error IS NULL)
             GROUP BY trace_id, custom_eval_config_id
         """
         result = self.execute_ch_query(

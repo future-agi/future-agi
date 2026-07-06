@@ -400,6 +400,15 @@ export const getTestRunDetailGridColumnDefs = (columnOrder) => {
   return config;
 };
 
+export const getColumnDefsSignature = (colDefs = []) =>
+  colDefs
+    .map((colDef) =>
+      colDef?.children
+        ? `${colDef.id}:[${getColumnDefsSignature(colDef.children)}]`
+        : String(colDef?.id ?? colDef?.field ?? ""),
+    )
+    .join(",");
+
 export const getTestRunDetailColumnQuery = (
   executionId,
   pageNumber,

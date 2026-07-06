@@ -294,7 +294,7 @@ export const isValidNumericInput = (v) => {
   return /^-?\d*\.?\d*$/.test(String(v).trim());
 };
 
-// Empty values pass — handleApply already drops empty rows before submit,
+// Empty values pass — computeValidFilters already drops empty rows before apply,
 // so this only guards against partial inputs like "-" or "1.5.6" leaking through.
 export const isCompleteNumericValue = (v) => {
   if (v === undefined || v === null) return true;
@@ -391,6 +391,59 @@ const HYDRATE_STRING_OP = { equals: "in", not_equals: "not_in" };
 const HYDRATE_CATEGORICAL_OP = { equals: "is", not_equals: "is_not" };
 
 const NO_VALUE_OPS = new Set(["is_null", "is_not_null"]);
+
+// Build the list of *valid, applyable* filter rows: a row needs a field and,
+// unless its operator takes no value, a non-empty value. Returns null when
+// nothing is applyable. Shared by the debounced auto-apply and the
+// flush-on-close path so both compute the filter set identically.
+const computeValidFilters = (rows) => {
+  const valid = rows.map(normalizeFilterRowOperator).filter((r) => {
+    if (!r.field) return false;
+    if (NO_VALUE_OPS.has(r.operator)) return true;
+    const ops = getOperatorsForFilter(r);
+    const opDef = ops.find((o) => o.value === r.operator);
+    if (opDef?.range)
+      return Array.isArray(r.value) && r.value[0] !== "" && r.value[1] !== "";
+    if (Array.isArray(r.value)) return r.value.length > 0;
+    return r.value !== "" && r.value !== undefined && r.value !== null;
+  });
+  return valid.length ? valid : null;
+};
+
+// Canonical projection for dedup: two filter sets that produce the same API
+// query serialize identically regardless of row key order or display-only
+// fields (fieldName/fieldCategory can differ between the open/AI/apply init
+// paths), so an identical set never fires a redundant request.
+export const serializeFilterSet = (filters) =>
+  JSON.stringify(
+    (filters || []).map((f) => ({
+      field: f.field,
+      operator: normalizeFilterRowOperator(f).operator,
+      value: f.value,
+    })),
+  );
+
+// Hold auto-apply while a numeric row is mid-edit: a partial/invalid value
+// ("-", "1.5.6"), or a range with only one bound filled. Mirrors the old
+// disabled-Apply gate (TH-5195) so invalid numbers never reach the API and a
+// half-filled range doesn't drop the already-applied filter and refire.
+export const hasIncompleteNumericRow = (rows) =>
+  rows.some((r) => {
+    if (normalizeFieldType(r.fieldType) !== "number") return false;
+    if (Array.isArray(r.value)) {
+      const filled = r.value.filter(
+        (v) => v !== "" && v !== undefined && v !== null,
+      );
+      if (r.value.length >= 2 && filled.length === 1) return true;
+      return filled.some((v) => !isCompleteNumericValue(v));
+    }
+    return (
+      r.value !== "" &&
+      r.value !== undefined &&
+      r.value !== null &&
+      !isCompleteNumericValue(r.value)
+    );
+  });
 
 // Scalar ops — value picker forces single-select. Multi-value goes via in/not_in.
 const SINGLE_VALUE_OPS = new Set([
@@ -1875,6 +1928,11 @@ const TraceFilterPanel = ({
     error: aiError,
   } = useAIFilter(aiFilterSchema);
   const [rows, setRows] = useState([{ ...DEFAULT_ROW }]);
+  // Serialized snapshot of the filter set last sent to onApply. Auto-apply
+  // compares against this so we only hit the API when the applyable filter set
+  // actually changes — picking a field/operator with no value, or re-opening
+  // the popover, yields the same set and is skipped.
+  const lastAppliedRef = useRef(undefined);
 
   // Convert dashboard properties to QueryInput format (same IDs as dashboard API)
   const queryFilterFields = useMemo(() => {
@@ -1951,16 +2009,29 @@ const TraceFilterPanel = ({
           });
         });
         setRows(enriched);
+        // Seed last-applied with the already-applied set so the first
+        // auto-apply pass after opening doesn't refire the same filters.
+        lastAppliedRef.current = serializeFilterSet(
+          computeValidFilters(enriched),
+        );
       } else {
-        setRows([{ ...effectiveDefaultRow }]);
+        const initialRows = [{ ...effectiveDefaultRow }];
+        setRows(initialRows);
+        lastAppliedRef.current = serializeFilterSet(
+          computeValidFilters(initialRows),
+        );
       }
     }
-  }, [open, currentFilters]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Initialize rows only when the popover OPENS. With auto-apply, picking a
+    // value pushes to currentFilters; if this effect also re-ran on
+    // currentFilters it would reset rows and "unchoose" the value (feedback
+    // loop). While open, local rows are the source of truth.
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const queryInputRef = useRef(null);
 
-  // Pure converter: query-input tokens → FilterRow shape. Extracted so
-  // handleApply can also run it directly against tokens that were just
+  // Pure converter: query-input tokens → FilterRow shape. Extracted so the
+  // query-apply path can run it directly against tokens that were just
   // flushed from QueryInput, without waiting for the setRows state cycle.
   const queryTokensToRows = useCallback(
     (tokens) =>
@@ -2007,19 +2078,6 @@ const TraceFilterPanel = ({
     setRows((prev) => prev.map((r, i) => (i === idx ? updated : r)));
   }, []);
 
-  const hasInvalidNumericRow = rows.some((r) => {
-    if (normalizeFieldType(r.fieldType) !== "number") return false;
-    if (Array.isArray(r.value)) {
-      if (r.value.some((v) => !isCompleteNumericValue(v))) return true;
-      // Half-filled range: handleApply would silently drop it, so gate Apply.
-      const filledSides = r.value.filter(
-        (v) => String(v ?? "").trim() !== "",
-      ).length;
-      return filledSides === 1;
-    }
-    return !isCompleteNumericValue(r.value);
-  });
-
   const handleRemove = useCallback(
     (idx) => {
       setRows((prev) => {
@@ -2030,30 +2088,62 @@ const TraceFilterPanel = ({
     [effectiveDefaultRow],
   );
 
-  const handleApply = useCallback(() => {
-    // Commit any complete partial in the Query tab so Apply doesn't drop
-    // a `field op value` the user typed but never pressed Enter on.
-    // `flushPartial` returns the new tokens only when it actually
-    // committed; null otherwise.
-    const flushed = queryInputRef.current?.flushPartial?.();
-    const effectiveRows = flushed ? queryTokensToRows(flushed) : rows;
+  // Auto-apply: filters take effect as soon as a value is chosen (debounced),
+  // so there's no Apply button — only Clear all. We apply WITHOUT closing the
+  // popover so the user can keep adjusting filters and see them apply live.
+  const autoApplyTimerRef = useRef(null);
+  // Apply only when the resulting filter set differs from the last one sent.
+  const applyIfChanged = useCallback(
+    (sourceRows) => {
+      // Hold while a numeric row is mid-edit so partial/invalid values don't
+      // auto-fire and a half-filled range doesn't drop the applied filter.
+      if (hasIncompleteNumericRow(sourceRows)) return;
+      const next = computeValidFilters(sourceRows);
+      const serialized = serializeFilterSet(next);
+      if (serialized === lastAppliedRef.current) return;
+      lastAppliedRef.current = serialized;
+      onApply(next);
+    },
+    [onApply],
+  );
 
-    const valid = effectiveRows.map(normalizeFilterRowOperator).filter((r) => {
-      if (!r.field) return false;
-      if (NO_VALUE_OPS.has(r.operator)) return true;
-      const ops = getOperatorsForFilter(r);
-      const opDef = ops.find((o) => o.value === r.operator);
-      if (opDef?.range)
-        return Array.isArray(r.value) && r.value[0] !== "" && r.value[1] !== "";
-      if (Array.isArray(r.value)) return r.value.length > 0;
-      return r.value !== "" && r.value !== undefined && r.value !== null;
-    });
-    onApply(valid.length ? valid : null);
-    onClose();
-  }, [rows, queryTokensToRows, onApply, onClose]);
+  useEffect(() => {
+    if (!open) return undefined;
+    if (autoApplyTimerRef.current) clearTimeout(autoApplyTimerRef.current);
+    autoApplyTimerRef.current = setTimeout(() => applyIfChanged(rows), 350);
+    return () => {
+      if (autoApplyTimerRef.current) clearTimeout(autoApplyTimerRef.current);
+    };
+  }, [rows, open, applyIfChanged]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Flush on close: if a value was entered then the popover closed before the
+  // 350ms debounce fired, run the pending apply immediately so the filter
+  // isn't dropped. On the Query tab a value can be typed but not committed
+  // (no Enter) — it lives only in QueryInput's internal state, so flush that
+  // partial token to rows first. applyIfChanged dedups, so an unchanged set
+  // is a no-op.
+  const wasOpenRef = useRef(open);
+  useEffect(() => {
+    if (wasOpenRef.current && !open) {
+      if (autoApplyTimerRef.current) {
+        clearTimeout(autoApplyTimerRef.current);
+        autoApplyTimerRef.current = null;
+      }
+      const flushed = queryInputRef.current?.flushPartial?.();
+      if (flushed && flushed.length) {
+        const flushedRows = queryTokensToRows(flushed);
+        setRows(flushedRows);
+        applyIfChanged(flushedRows);
+      } else {
+        applyIfChanged(rows);
+      }
+    }
+    wasOpenRef.current = open;
+  }, [open, rows, applyIfChanged, queryTokensToRows]);
 
   const handleClear = useCallback(() => {
     setRows([{ ...effectiveDefaultRow }]);
+    lastAppliedRef.current = serializeFilterSet(null);
     onApply(null);
     onClose();
   }, [onApply, onClose, effectiveDefaultRow]);
@@ -2078,20 +2168,16 @@ const TraceFilterPanel = ({
           value: Array.isArray(f.value) ? f.value : [f.value],
         };
       });
+      // Apply the same normalized/valid-filtered shape every other path sends,
+      // and seed lastAppliedRef with it so dedup matches what we actually sent.
+      const validFilters = computeValidFilters(converted);
       setRows(converted);
-      onApply(converted);
+      lastAppliedRef.current = serializeFilterSet(validFilters);
+      onApply(validFilters);
       setAiQuery("");
       onClose();
     }
   }, [aiQuery, aiParseQuery, observeId, source, properties, onApply, onClose]);
-
-  const handlePrimaryApply = useCallback(() => {
-    if (showAi && aiQuery.trim()) {
-      handleAiFilter();
-      return;
-    }
-    handleApply();
-  }, [showAi, aiQuery, handleAiFilter, handleApply]);
 
   return (
     <Popover
@@ -2258,31 +2344,6 @@ const TraceFilterPanel = ({
                 >
                   Clear all
                 </Button>
-                <CustomTooltip
-                  show={hasInvalidNumericRow}
-                  arrow
-                  size="small"
-                  type="black"
-                  placement="top"
-                  title="Fix invalid number values"
-                >
-                  <span>
-                    <Button
-                      size="small"
-                      variant="contained"
-                      data-filter-panel-action="apply"
-                      onClick={handlePrimaryApply}
-                      disabled={aiLoading || hasInvalidNumericRow}
-                      sx={{
-                        textTransform: "none",
-                        fontSize: 12,
-                        px: 2,
-                      }}
-                    >
-                      Apply
-                    </Button>
-                  </span>
-                </CustomTooltip>
               </Stack>
             </Stack>
           </Box>
@@ -2332,15 +2393,6 @@ const TraceFilterPanel = ({
                 sx={{ textTransform: "none", fontSize: 12 }}
               >
                 Clear all
-              </Button>
-              <Button
-                size="small"
-                variant="contained"
-                data-filter-panel-action="apply"
-                onClick={handleApply}
-                sx={{ textTransform: "none", fontSize: 12, px: 2 }}
-              >
-                Apply
               </Button>
             </Stack>
             <Typography

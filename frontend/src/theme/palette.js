@@ -338,6 +338,9 @@ export function palette(mode) {
       neutral: "#F8F8F8",
       subtle: "#F8F8F8",
       accent: grey[100],
+      // Falcon AI surfaces (inline AI bar background + AI-action hover)
+      aiSurface: "#fafafe",
+      aiHover: "rgba(124, 77, 255, 0.06)",
     },
     action: {
       ...base.action,
@@ -378,6 +381,9 @@ export function palette(mode) {
       neutral: darkSpace.asteroid,
       subtle: darkSpace.dust,
       accent: darkSpace.shadow,
+      // Falcon AI surfaces (inline AI bar background + AI-action hover)
+      aiSurface: "#1a1a2e",
+      aiHover: "rgba(124, 77, 255, 0.12)",
     },
     divider: darkBorder.default,
     action: {
