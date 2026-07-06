@@ -1,18 +1,43 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import PropTypes from "prop-types";
 import { Box, Button, Typography } from "@mui/material";
 import { useWatch } from "react-hook-form";
 import Iconify from "src/components/iconify";
 import { getRandomId } from "src/utils/utils";
-import TraceFilterPanel from "src/sections/projects/LLMTracing/TraceFilterPanel";
+import TraceFilterPanel, {
+  useTraceFilterProperties,
+} from "src/sections/projects/LLMTracing/TraceFilterPanel";
+import {
+  FIELD_CATEGORY_TO_COL_TYPE,
+  RANGE_OPS,
+  LIST_OPS,
+  NO_VALUE_OPS,
+} from "src/sections/common/EvalsTasks/common";
+import { useDashboardFilterValues } from "src/hooks/useDashboards";
+import {
+  getPickerOptionValue,
+  getPickerOptionLabel,
+  getPickerOptionSecondaryLabel,
+} from "src/sections/projects/LLMTracing/filterValuePickerUtils";
 
-const RANGE_OPS = new Set(["between", "not_between"]);
-const LIST_OPS = new Set(["in", "not_in"]);
-const NO_VALUE_OPS = new Set(["is_null", "is_not_null"]);
+// ── Operator handling — canonical backend ops ──
+//
+// `TraceFilterPanel` (PR #432 / TH-4924) emits canonical backend op names
+// directly: `equals`, `not_equals`, `in`, `not_in`, `contains`,
+// `not_contains`, `starts_with`, `ends_with`, `is_null`, `is_not_null`,
+// `greater_than`, `greater_than_or_equal`, `less_than`,
+// `less_than_or_equal`, `between`, `not_between`.
+const resolveApiColType = (apiColType, fieldCategory) =>
+  apiColType || FIELD_CATEGORY_TO_COL_TYPE[fieldCategory] || "SPAN_ATTRIBUTE";
 
-// Legacy string ops persisted before TH-4924 land in form state as
-// `equals`/`not_equals`. Rewrite to `in`/`not_in` on read so the new
-// panel renders the row under the multi-value picker.
+// Legacy `equals`/`not_equals` on string rows → multi-value `in`/`not_in`
+// on hydration so the new panel renders the multi-select picker.
 const HYDRATE_STRING_OP = { equals: "in", not_equals: "not_in" };
 
 const isStringLike = (fieldType) =>
@@ -53,23 +78,8 @@ const OP_DISPLAY = {
   not_between: "not between",
 };
 
-const TASK_FILTER_CATEGORIES = [
-  { key: "all", label: "All", icon: "mdi:view-grid-outline" },
-  { key: "system", label: "Span type", icon: "mdi:shape-outline" },
-  { key: "attribute", label: "Attributes", icon: "mdi:code-braces" },
-];
-
-const isTaskFilterProperty = (property) =>
-  property?.id === "span_kind" || property?.category === "attribute";
-
-// ── new panel filter → form filter(s) ──
-//
-// List ops (`in`/`not_in`) carry the full array on a single form row so
-// the wire keeps the BE's canonical shape; range ops carry a 2-element
-// array; no-value ops omit `filterValue`; other ops explode into one
-// scalar row per value so system-filter accumulation keeps working.
-// `fieldCategory` / `fieldLabel` are stashed for the live preview and
-// chip rendering — zod strips them on submit.
+// Panel filter → form row(s). List/range ops keep array `filterValue`;
+// no-value ops drop it; other ops explode into one scalar row per value.
 function convertNewToOld(newFilters) {
   const out = [];
   (newFilters || []).forEach((f) => {
@@ -88,7 +98,8 @@ function convertNewToOld(newFilters) {
       property: isAttribute ? "attributes" : f.field,
       propertyId: f.field,
       fieldCategory: f.fieldCategory || "system",
-      fieldLabel: f.fieldLabel || f.field,
+      fieldLabel: f.fieldName || f.fieldLabel || f.field,
+      apiColType: resolveApiColType(f.apiColType, f.fieldCategory),
     };
 
     if (NO_VALUE_OPS.has(op)) {
@@ -151,9 +162,15 @@ function convertNewToOld(newFilters) {
   return out;
 }
 
-// ── form filter → new panel format (one row per property+op group) ──
+// ── form filter → new panel format ──
+// One form row → one panel row. Only ops with a natural multi-value shape
+// (range, list, or string equals/not_equals just rewritten to in/not_in via
+// HYDRATE_STRING_OP) collapse same-(field, op) rows into one multi-value
+// panel row — grouping any other op (e.g. not_contains) would let the chip
+// + panel UI fold "exclude A AND exclude B" into a single "[A, B]" row.
 function convertOldToNew(oldFilters) {
   const groups = new Map();
+  const result = [];
   (oldFilters || []).forEach((f) => {
     if (!f) return;
     const isAttribute = f.property === "attributes";
@@ -167,38 +184,62 @@ function convertOldToNew(oldFilters) {
       ft === "number" ? "number" : ft === "boolean" ? "boolean" : "string";
 
     let op = rawOp;
-    if (isStringLike(fieldType) && HYDRATE_STRING_OP[op]) {
+    const hydrated = isStringLike(fieldType) && HYDRATE_STRING_OP[op];
+    if (hydrated) {
       op = HYDRATE_STRING_OP[op];
     }
 
-    const key = `${field}|${op}|${category}`;
-    if (!groups.has(key)) {
-      groups.set(key, {
+    const isMultiValueOp =
+      RANGE_OPS.has(op) || LIST_OPS.has(op) || Boolean(hydrated);
+
+    let entry;
+    if (isMultiValueOp) {
+      const key = `${field}|${op}|${category}`;
+      entry = groups.get(key);
+      if (!entry) {
+        entry = {
+          field,
+          fieldLabel: f.fieldLabel || field,
+          fieldType,
+          fieldCategory: category,
+          operator: op,
+          value: [],
+        };
+        groups.set(key, entry);
+        result.push(entry);
+      }
+    } else {
+      entry = {
         field,
         fieldLabel: f.fieldLabel || field,
         fieldType,
         fieldCategory: category,
+        // Preserved so the panel re-renders the right chip on edit-open.
+        apiColType: resolveApiColType(
+          f.apiColType || f?.filterConfig?.colType,
+          category,
+        ),
         operator: op,
         value: [],
-      });
+      };
+      result.push(entry);
     }
 
     if (NO_VALUE_OPS.has(op)) return;
 
     const val = f?.filterConfig?.filterValue;
     if (RANGE_OPS.has(op)) {
-      // Range: the form row carries the [low, high] array directly.
-      groups.get(key).value = Array.isArray(val) ? val : [];
+      entry.value = Array.isArray(val) ? val : [];
       return;
     }
     if (val === undefined || val === null || val === "") return;
     if (Array.isArray(val)) {
-      groups.get(key).value.push(...val);
+      entry.value.push(...val);
     } else {
-      groups.get(key).value.push(val);
+      entry.value.push(val);
     }
   });
-  return Array.from(groups.values());
+  return result;
 }
 
 // ── Chip display for an active filter ──
@@ -235,7 +276,7 @@ const FilterChip = ({ filter, onRemove }) => {
         sx={{ color: "text.disabled" }}
       />
       <Typography sx={{ fontSize: 12, color: "text.secondary" }}>
-        {filter.fieldLabel || filter.field}
+        {filter.fieldName || filter.fieldLabel || filter.field}
       </Typography>
       <Typography sx={{ fontSize: 11, color: "text.disabled" }}>
         {opLabel}
@@ -272,10 +313,8 @@ FilterChip.propTypes = {
   onRemove: PropTypes.func.isRequired,
 };
 
-// Map task rowType → TraceFilterPanel `tab` so the property picker
-// surfaces Trace ID / Span ID the same way LLM Tracing does. Callers
-// use inconsistent casing ("spans"/"Span", "traces"/"Trace") so we
-// normalize. Sessions / voiceCalls return null (no id fields).
+// Task rowType → TraceFilterPanel `tab`. Sessions / voiceCalls have no
+// id-field tab. Casing is normalized to handle inconsistent callers.
 const rowTypeToFilterTab = (rowType) => {
   const key = String(rowType || "").toLowerCase();
   if (key === "spans" || key === "span") return "spans";
@@ -297,6 +336,57 @@ const TaskFilterBar = ({
     convertOldToNew(formFilters),
   );
   const suppressNextSync = useRef(false);
+
+  // Resolve UUID column ids → display names. Shares cache with TraceFilterPanel.
+  const { data: properties = [] } = useTraceFilterProperties(projectId, {
+    isSimulator,
+  });
+  const propertyById = useMemo(() => {
+    const map = {};
+    for (const p of properties) map[p.id] = p;
+    return map;
+  }, [properties]);
+
+  // Resolve annotator user UUIDs → "Name (email)" for chip values.
+  const hasAnnotatorFilter = panelFilters.some((f) => f.field === "annotator");
+  const { data: annotatorOptions = [] } = useDashboardFilterValues({
+    metricName: "annotator",
+    metricType: "annotation_metric",
+    projectIds: projectId ? [projectId] : [],
+    source: "traces",
+    enabled: hasAnnotatorFilter,
+  });
+  const annotatorLabelById = useMemo(() => {
+    const map = {};
+    for (const opt of annotatorOptions) {
+      const value = String(getPickerOptionValue(opt));
+      if (!value) continue;
+      const label = getPickerOptionLabel(opt);
+      const email = getPickerOptionSecondaryLabel(opt);
+      map[value] = email ? `${label} (${email})` : label;
+    }
+    return map;
+  }, [annotatorOptions]);
+
+  const enrichedFilters = useMemo(
+    () =>
+      panelFilters.map((f) => {
+        const prop = propertyById[f.field];
+        let next = f;
+        if (!f.fieldName && f.fieldLabel === f.field && prop) {
+          next = { ...next, fieldLabel: prop.name };
+        }
+        if (f.field === "annotator" && Object.keys(annotatorLabelById).length) {
+          const remap = (v) => annotatorLabelById[String(v)] || v;
+          next = {
+            ...next,
+            value: Array.isArray(f.value) ? f.value.map(remap) : remap(f.value),
+          };
+        }
+        return next;
+      }),
+    [panelFilters, propertyById, annotatorLabelById],
+  );
 
   // Keep local panel state in sync with form filters when they change externally
   // (e.g. edit mode hydration). Skip the sync right after our own apply.
@@ -361,7 +451,7 @@ const TaskFilterBar = ({
             flexWrap: "wrap",
           }}
         >
-          {panelFilters.map((f, idx) => (
+          {enrichedFilters.map((f, idx) => (
             <FilterChip
               key={`${f.field}-${idx}`}
               filter={f}
@@ -454,8 +544,6 @@ const TaskFilterBar = ({
         projectId={projectId}
         isSimulator={isSimulator}
         tab={rowTypeToFilterTab(rowType)}
-        categories={TASK_FILTER_CATEGORIES}
-        propertyFilter={isTaskFilterProperty}
         onApply={(next) => applyPanelFilters(next || [])}
       />
     </Box>

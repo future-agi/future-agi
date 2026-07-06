@@ -7,6 +7,7 @@ import React, {
   useRef,
 } from "react";
 import {
+  Alert,
   Box,
   Breadcrumbs,
   Button,
@@ -40,20 +41,27 @@ import {
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import ReactApexChart from "react-apexcharts";
 import ChartLegend from "./ChartLegend";
+import {
+  buildTimeRangePayload,
+  resolveInitialTimeRange,
+} from "./dashboardDateRange";
 import { paths } from "src/routes/paths";
 import {
   useDashboardDetail,
   useDashboardMetrics,
   useDashboardMetricsPaginated,
   useDashboardQuery,
-  useDashboardFilterValues,
   useCreateWidget,
   useUpdateWidget,
   useDeleteWidget,
   useSimulationAgents,
 } from "src/hooks/useDashboards";
 import Iconify from "src/components/iconify";
+import FilterValueLabel, {
+  useResolvedFilterOptions,
+} from "src/components/filter-value-label";
 import { useSnackbar } from "src/components/snackbar";
+import { ConfirmDialog } from "src/components/custom-dialog";
 import { format } from "date-fns";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import {
@@ -70,7 +78,9 @@ import {
   getAutoDecimals,
   getSeriesAverage,
   getSuggestedUnitConfig,
+  getYAxisRangeWarning,
 } from "./widgetUtils";
+import { DATE_PRESETS } from "./constants";
 
 const escapeCsvField = (field) => {
   const str = String(field ?? "");
@@ -80,18 +90,8 @@ const escapeCsvField = (field) => {
   return str;
 };
 
-const TIME_PRESETS = [
-  { label: "Custom", value: "custom" },
-  { label: "30 mins", value: "30m" },
-  { label: "6 hrs", value: "6h" },
-  { label: "Today", value: "today" },
-  { label: "Yesterday", value: "yesterday" },
-  { label: "7D", value: "7D" },
-  { label: "30D", value: "30D" },
-  { label: "3M", value: "3M" },
-  { label: "6M", value: "6M" },
-  { label: "12M", value: "12M" },
-];
+const SAVED_NAV_DELAY_MS = 400;
+const AXIS_LABEL_MAX_LENGTH = 50;
 
 const GRANULARITY_OPTIONS = [
   { label: "Minute", value: "minute" },
@@ -474,7 +474,8 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
           size="small"
           value={config.label}
           onChange={(e) => onChange("label", e.target.value)}
-          placeholder=""
+          placeholder="e.g. Cost ($)"
+          inputProps={{ maxLength: AXIS_LABEL_MAX_LENGTH }}
           sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
         />
       </Stack>
@@ -874,56 +875,7 @@ function FilterValuePickerPopup({
     Array.isArray(filter?.value) ? [...filter.value] : [],
   );
 
-  const backendType = (() => {
-    const map = {
-      system: "system_metric",
-      eval_metric: "eval_metric",
-      annotation: "annotation_metric",
-      custom_attribute: "custom_attribute",
-      custom_column: "custom_column",
-    };
-    return map[filter?.type] || filter?.type || "system_metric";
-  })();
-
-  // For eval metrics with known output types, provide static options
-  const evalOutputType = filter?.outputType?.toUpperCase() || "";
-  const isEvalWithStaticOptions =
-    backendType === "eval_metric" &&
-    (evalOutputType === "PASS_FAIL" || evalOutputType === "CHOICES");
-
-  const { data: fetchedOptions = [], isLoading } = useDashboardFilterValues({
-    metricName: filter?.id || "",
-    metricType: backendType,
-    projectIds: [],
-    source: source || "traces",
-    enabled: !isEvalWithStaticOptions,
-  });
-
-  const options = useMemo(() => {
-    if (isEvalWithStaticOptions) {
-      if (evalOutputType === "PASS_FAIL") {
-        return [
-          { value: "Passed", label: "Passed" },
-          { value: "Failed", label: "Failed" },
-        ];
-      }
-      if (
-        (evalOutputType === "CHOICES" || evalOutputType === "CHOICE") &&
-        filter?.choices?.length
-      ) {
-        return filter.choices.map((c) => ({
-          value: typeof c === "string" ? c : c.value || c.label || String(c),
-          label: typeof c === "string" ? c : c.label || c.value || String(c),
-        }));
-      }
-    }
-    return fetchedOptions;
-  }, [
-    isEvalWithStaticOptions,
-    evalOutputType,
-    fetchedOptions,
-    filter?.choices,
-  ]);
+  const { options, isLoading } = useResolvedFilterOptions(filter, source);
 
   const filteredOptions = useMemo(() => {
     if (!search) return options;
@@ -1119,8 +1071,31 @@ export default function WidgetEditorView() {
   const [editingName, setEditingName] = useState(false);
   const [editingDesc, setEditingDesc] = useState(false);
   const [moreMenuAnchor, setMoreMenuAnchor] = useState(null);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
+
+  const incomingTimePreset = searchParams.get("timePreset");
+  const dashboardDetailUrl = `${paths.dashboard.dashboards.detail(dashboardId)}${incomingTimePreset ? `?timePreset=${incomingTimePreset}` : ""}`;
+
+  const confirmDeleteWidget = () => {
+    if (!isEditing) {
+      setConfirmDeleteOpen(false);
+      return;
+    }
+    deleteMutation.mutate(
+      { dashboardId, widgetId: effectiveWidgetId },
+      {
+        onSuccess: () => {
+          enqueueSnackbar("Widget deleted", { variant: "success" });
+          navigate(dashboardDetailUrl);
+        },
+        // Close once the request settles, not before it starts.
+        onSettled: () => setConfirmDeleteOpen(false),
+      },
+    );
+  };
+
   const [timePreset, setTimePreset] = useState(
-    searchParams.get("timePreset") || "30D",
+    incomingTimePreset || "30D",
   );
   const [granularity, setGranularity] = useState("day");
   const [chartType, setChartType] = useState("line");
@@ -1156,6 +1131,8 @@ export default function WidgetEditorView() {
   const customDateAnchorRef = useRef(null);
   const pieChartRef = useRef(null);
   const lineChartRef = useRef(null);
+  const saveNavTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(saveNavTimerRef.current), []);
   const [pieConnectors, setPieConnectors] = useState([]);
 
   // Auto-set granularity when time preset changes
@@ -1361,12 +1338,13 @@ export default function WidgetEditorView() {
         setChartDescription(widget.description || "");
         const qc = widget.queryConfig || widget.query_config || {};
         const cc = widget.chartConfig || widget.chart_config || {};
-        setTimePreset(
-          searchParams.get("timePreset") ||
-            qc.timeRange?.preset ||
-            qc.time_range?.preset ||
-            "30D",
-        );
+        const { timePreset: initialPreset, customDateRange: initialRange } =
+          resolveInitialTimeRange(
+            qc.timeRange || qc.time_range,
+            searchParams.get("timePreset"),
+          );
+        setTimePreset(initialPreset);
+        if (initialRange) setCustomDateRange(initialRange);
         setGranularity(qc.granularity || "day");
         setChartType(cc.chartType || cc.chart_type || "line");
         // Restore axis config if saved
@@ -1768,13 +1746,7 @@ export default function WidgetEditorView() {
   };
 
   const buildQueryConfig = useCallback(() => {
-    const timeRange =
-      timePreset === "custom" && customDateRange
-        ? {
-            custom_start: customDateRange[0].toISOString(),
-            custom_end: customDateRange[1].toISOString(),
-          }
-        : { preset: timePreset };
+    const timeRange = buildTimeRangePayload(timePreset, customDateRange);
     return {
       project_ids: [],
       time_range: timeRange,
@@ -1801,7 +1773,8 @@ export default function WidgetEditorView() {
   // Auto-preview when config changes (debounced)
   const previewTimerRef = useRef(null);
   useEffect(() => {
-    if (metrics.length > 0) {
+    const customWithoutRange = timePreset === "custom" && !customDateRange;
+    if (metrics.length > 0 && !customWithoutRange) {
       clearTimeout(previewTimerRef.current);
       previewTimerRef.current = setTimeout(() => {
         queryMutation.mutate(buildQueryConfig());
@@ -2079,7 +2052,11 @@ export default function WidgetEditorView() {
         }
       }
       setSaveStatus("saved");
-      setTimeout(() => setSaveStatus("idle"), 2000);
+      clearTimeout(saveNavTimerRef.current);
+      saveNavTimerRef.current = setTimeout(() => {
+        navigate(dashboardDetailUrl);
+        setSaveStatus("idle");
+      }, SAVED_NAV_DELAY_MS);
     } catch {
       setSaveStatus("idle");
       enqueueSnackbar(`Failed to ${isEditing ? "update" : "create"} widget`, {
@@ -2164,6 +2141,11 @@ export default function WidgetEditorView() {
     if (visibleSeries === null) return previewSeries;
     return previewSeries.filter((_, i) => visibleSeries.has(i));
   }, [previewSeries, visibleSeries]);
+
+  const outOfRangeWarning = useMemo(
+    () => getYAxisRangeWarning(chartSeries, axisConfig),
+    [chartSeries, axisConfig],
+  );
 
   const autoDecimals = useMemo(
     () => getAutoDecimals(chartSeries),
@@ -2865,7 +2847,7 @@ export default function WidgetEditorView() {
               display: "block",
             }}
             onClick={() =>
-              navigate(paths.dashboard.dashboards.detail(dashboardId))
+              navigate(dashboardDetailUrl)
             }
           >
             {dashboard?.name || "Dashboard"}
@@ -2964,40 +2946,24 @@ export default function WidgetEditorView() {
           transformOrigin={{ vertical: "top", horizontal: "right" }}
           slotProps={{ paper: { sx: { minWidth: 180 } } }}
         >
-          <MenuItem
-            onClick={() => {
-              setMoreMenuAnchor(null);
-              if (
-                !window.confirm("Are you sure you want to delete this widget?")
-              )
-                return;
-              if (effectiveWidgetId && effectiveWidgetId !== "new") {
-                deleteMutation
-                  .mutateAsync({ dashboardId, widgetId: effectiveWidgetId })
-                  .then(() => {
-                    enqueueSnackbar("Widget deleted", { variant: "success" });
-                    navigate(paths.dashboard.dashboards.detail(dashboardId));
-                  })
-                  .catch(() => {
-                    enqueueSnackbar("Failed to delete widget", {
-                      variant: "error",
-                    });
-                  });
-              } else {
-                navigate(paths.dashboard.dashboards.detail(dashboardId));
-              }
-            }}
-            sx={{ color: "error.main" }}
-          >
-            <ListItemIcon>
-              <Iconify
-                icon="mdi:delete-outline"
-                width={18}
-                sx={{ color: "error.main" }}
-              />
-            </ListItemIcon>
-            <ListItemText>Delete</ListItemText>
-          </MenuItem>
+          {isEditing && (
+            <MenuItem
+              onClick={() => {
+                setMoreMenuAnchor(null);
+                setConfirmDeleteOpen(true);
+              }}
+              sx={{ color: "error.main" }}
+            >
+              <ListItemIcon>
+                <Iconify
+                  icon="mdi:delete-outline"
+                  width={18}
+                  sx={{ color: "error.main" }}
+                />
+              </ListItemIcon>
+              <ListItemText>Delete</ListItemText>
+            </MenuItem>
+          )}
           <MenuItem
             onClick={() => {
               setMoreMenuAnchor(null);
@@ -3119,9 +3085,27 @@ export default function WidgetEditorView() {
           </MenuItem>
         </Menu>
 
+        <ConfirmDialog
+          open={confirmDeleteOpen}
+          onClose={() => setConfirmDeleteOpen(false)}
+          title="Delete Widget"
+          content={`Are you sure you want to delete "${chartName || "this widget"}"? This action cannot be undone.`}
+          action={
+            <Button
+              variant="contained"
+              color="error"
+              size="small"
+              onClick={confirmDeleteWidget}
+              disabled={deleteMutation.isPending}
+            >
+              Delete
+            </Button>
+          }
+        />
+
         <Button
           onClick={() =>
-            navigate(paths.dashboard.dashboards.detail(dashboardId))
+            navigate(dashboardDetailUrl)
           }
           sx={{ color: "text.primary", fontWeight: 500 }}
         >
@@ -3130,7 +3114,7 @@ export default function WidgetEditorView() {
         <Button
           variant="contained"
           onClick={handleSave}
-          disabled={saveStatus === "saving"}
+          disabled={saveStatus !== "idle"}
           color={saveStatus === "saved" ? "success" : "primary"}
           startIcon={
             saveStatus === "saved" ? (
@@ -3171,7 +3155,7 @@ export default function WidgetEditorView() {
                 flexShrink: 0,
               }}
             >
-              {TIME_PRESETS.map((p, i) => (
+              {DATE_PRESETS.map((p, i) => (
                 <Box
                   key={p.value}
                   ref={p.value === "custom" ? customDateAnchorRef : undefined}
@@ -3200,7 +3184,7 @@ export default function WidgetEditorView() {
                           : "rgba(0,0,0,0.06)"
                         : "transparent",
                     borderRight:
-                      i < TIME_PRESETS.length - 1
+                      i < DATE_PRESETS.length - 1
                         ? `1px solid ${theme.palette.divider}`
                         : "none",
                     whiteSpace: "nowrap",
@@ -3231,6 +3215,7 @@ export default function WidgetEditorView() {
               open={isDatePickerOpen}
               onClose={() => setIsDatePickerOpen(false)}
               anchorEl={customDateAnchorRef.current}
+              value={customDateRange}
               setDateFilter={(filter) => {
                 if (filter && filter[0] && filter[1]) {
                   setCustomDateRange([
@@ -3327,7 +3312,7 @@ export default function WidgetEditorView() {
                     alignItems: "center",
                   }}
                 >
-                  <Typography variant="body2" color="text.disabled">
+                  <Typography variant="body2" color="text.secondary">
                     Fill in the required fields to see preview
                   </Typography>
                 </Box>
@@ -3987,6 +3972,20 @@ export default function WidgetEditorView() {
                           )}
                         </Box>
                       </Box>
+                    ) : outOfRangeWarning ? (
+                      <Box
+                        sx={{
+                          display: "flex",
+                          alignItems: "center",
+                          width: "100%",
+                          height: "100%",
+                          px: 2,
+                        }}
+                      >
+                        <Alert severity="warning" sx={{ width: "100%" }}>
+                          {outOfRangeWarning}
+                        </Alert>
+                      </Box>
                     ) : (
                       <Box
                         ref={lineChartRef}
@@ -4018,7 +4017,7 @@ export default function WidgetEditorView() {
                     )}
                   </Box>
                 ) : (
-                  <Typography variant="body2" color="text.disabled">
+                  <Typography variant="body2" color="text.secondary">
                     Fill in the required fields to see preview
                   </Typography>
                 )}
@@ -4965,9 +4964,11 @@ export default function WidgetEditorView() {
                               </Select>
                             </FormControl>
                             {curMfOp?.noValue ? null : curMfOp?.multi ? (
-                              <Typography
+                              <FilterValueLabel
+                                filter={mf}
+                                source={mf.source || "traces"}
                                 variant="caption"
-                                ref={(el) => {
+                                innerRef={(el) => {
                                   mfValueRefs.current[`${i}_${fi}`] = el;
                                 }}
                                 onClick={(e) => {
@@ -4977,25 +4978,7 @@ export default function WidgetEditorView() {
                                     filterIdx: fi,
                                   });
                                 }}
-                                sx={{
-                                  flex: 1,
-                                  fontSize: "12px",
-                                  cursor: "pointer",
-                                  color:
-                                    Array.isArray(mf.value) &&
-                                    mf.value.length > 0
-                                      ? "text.primary"
-                                      : "text.disabled",
-                                  "&:hover": { color: "primary.main" },
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                {Array.isArray(mf.value) && mf.value.length > 0
-                                  ? `${mf.value.length} selected`
-                                  : "Select value..."}
-                              </Typography>
+                              />
                             ) : curMfOp?.range ? (
                               <Stack
                                 direction="row"
@@ -5442,9 +5425,11 @@ export default function WidgetEditorView() {
                               </Select>
                             </FormControl>
                             {currentOp?.noValue ? null : currentOp?.multi ? (
-                              <Typography
+                              <FilterValueLabel
+                                filter={f}
+                                source={f.source || "traces"}
                                 variant="body2"
-                                ref={(el) => {
+                                innerRef={(el) => {
                                   filterValueRefs.current[i] = el;
                                 }}
                                 onClick={(e) => {
@@ -5452,24 +5437,7 @@ export default function WidgetEditorView() {
                                   setFilterValueIndex(i);
                                   setFilterValueSearch("");
                                 }}
-                                sx={{
-                                  flex: 1,
-                                  fontSize: "13px",
-                                  cursor: "pointer",
-                                  color:
-                                    Array.isArray(f.value) && f.value.length > 0
-                                      ? "text.primary"
-                                      : "text.disabled",
-                                  "&:hover": { color: "primary.main" },
-                                  overflow: "hidden",
-                                  textOverflow: "ellipsis",
-                                  whiteSpace: "nowrap",
-                                }}
-                              >
-                                {Array.isArray(f.value) && f.value.length > 0
-                                  ? `${f.value.length} selected`
-                                  : "Select value..."}
-                              </Typography>
+                              />
                             ) : currentOp?.range ? (
                               <Stack
                                 direction="row"
@@ -5882,7 +5850,7 @@ export default function WidgetEditorView() {
               {isPie || isTable || isMetricCard ? (
                 <Typography
                   variant="body2"
-                  color="text.disabled"
+                  color="text.secondary"
                   sx={{ fontStyle: "italic", textAlign: "center", mt: 4 }}
                 >
                   {isPie
@@ -6000,7 +5968,8 @@ export default function WidgetEditorView() {
                         onChange={(e) =>
                           updateAxis("xAxis", "label", e.target.value)
                         }
-                        placeholder=""
+                        placeholder="e.g. Time (s)"
+                        inputProps={{ maxLength: AXIS_LABEL_MAX_LENGTH }}
                         sx={{
                           width: 180,
                           "& .MuiOutlinedInput-root": { fontSize: "13px" },
@@ -6081,7 +6050,7 @@ export default function WidgetEditorView() {
                     {previewSeries.length === 0 && (
                       <Typography
                         variant="body2"
-                        color="text.disabled"
+                        color="text.secondary"
                         sx={{ fontStyle: "italic" }}
                       >
                         Add metrics to see axis assignments
@@ -6285,7 +6254,7 @@ export default function WidgetEditorView() {
 
                   return (
                     <Box
-                      key={`${opt.type}-${opt.id}`}
+                      key={`${opt.source || "all"}-${opt.type}-${opt.id}`}
                       onClick={
                         alreadyUsed ? undefined : () => handlePickerSelect(opt)
                       }

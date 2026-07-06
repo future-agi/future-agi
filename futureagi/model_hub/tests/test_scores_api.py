@@ -863,6 +863,55 @@ class TestForSourceEndpoint:
         assert "sourceType" in str(resp.data)
         assert "sourceId" in str(resp.data)
 
+    def test_span_scope_uses_lean_projection(
+        self, mocker, auth_client, observe_project, observation_span, star_label
+    ):
+        """The span-note org-scope check must read only project_id/trace_id via
+        ``scope_by_ids`` — reading the full span row (``reader.get``) OOMs the
+        shared ClickHouse cluster on fat voice spans (code 241). Guard that the
+        wide read is never used, and scores still return.
+        """
+        from unittest.mock import MagicMock
+
+        from tracer.services.clickhouse.v2.span_reader import SpanScope
+
+        auth_client.post(
+            SCORE_URL,
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+                "label_id": str(star_label.id),
+                "value": {"rating": 4},
+            },
+            format="json",
+        )
+
+        fake_reader = MagicMock()
+        fake_reader.__enter__.return_value = fake_reader
+        fake_reader.__exit__.return_value = False
+        fake_reader.scope_by_ids.return_value = {
+            observation_span.id: SpanScope(
+                project_id=str(observe_project.id), trace_id=None
+            )
+        }
+        fake_reader.get.side_effect = AssertionError(
+            "scores for-source must not read full span rows (OOMs shared ClickHouse)"
+        )
+        mocker.patch(
+            "tracer.services.clickhouse.v2.get_reader", return_value=fake_reader
+        )
+
+        resp = auth_client.get(
+            f"{SCORE_URL}for-source/",
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+            },
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        fake_reader.scope_by_ids.assert_called_once()
+        assert len(resp.data["result"]) == 1
+
 
 @pytest.mark.django_db
 class TestDeleteScore:
@@ -1370,3 +1419,114 @@ class TestAnnotationTypeRoundtrip:
         )
         score = Score.objects.get(label=text_label, deleted=False)
         assert score.value == {"text": "This response is very helpful"}
+
+
+@pytest.mark.django_db
+class TestScoreOnCollectorOnlySpan:
+    """Annotating a collector-only span (no PG row) resolves via CH fallback, not 404."""
+
+    def _fake_reader(self, monkeypatch, ch_span_id, project, organization, trace):
+        from types import SimpleNamespace
+
+        fake = SimpleNamespace(
+            id=ch_span_id,
+            pk=ch_span_id,
+            project_id=str(project.id),
+            org_id=str(organization.id),
+            trace_id=str(trace.id),
+        )
+
+        class _R:
+            def get(self, sid):
+                return fake if str(sid) == ch_span_id else None
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: _R())
+
+    def _fake_reader_with_org(self, monkeypatch, ch_span_id, project, org_id, trace):
+        """Like _fake_reader but with explicit org_id to exercise the org-scope gate."""
+        from types import SimpleNamespace
+
+        fake = SimpleNamespace(
+            id=ch_span_id,
+            pk=ch_span_id,
+            project_id=str(project.id),
+            org_id=org_id,
+            trace_id=str(trace.id),
+        )
+
+        class _R:
+            def get(self, sid):
+                return fake if str(sid) == ch_span_id else None
+
+            def close(self):
+                pass
+
+        monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: _R())
+
+    @pytest.mark.parametrize("foreign_org", ["", str(uuid.uuid4())])
+    def test_ch_only_span_denied_cross_org(
+        self,
+        auth_client,
+        observe_project,
+        trace,
+        organization,
+        star_label,
+        monkeypatch,
+        foreign_org,
+    ):
+        """CH span with empty/foreign org_id must 404 (the org-scope guard failed OPEN on empty org)."""
+        ch_span_id = "ch_" + uuid.uuid4().hex[:16]
+        self._fake_reader_with_org(
+            monkeypatch, ch_span_id, observe_project, foreign_org, trace
+        )
+        payload = {
+            "source_type": "observation_span",
+            "source_id": ch_span_id,
+            "label_id": str(star_label.id),
+            "value": {"rating": 4},
+        }
+        resp = auth_client.post(SCORE_URL, payload, format="json")
+        assert resp.status_code == status.HTTP_404_NOT_FOUND, resp.content
+        assert not Score.objects.filter(observation_span_id=ch_span_id).exists()
+
+    def test_create_score_on_ch_only_span(
+        self, auth_client, observe_project, trace, organization, star_label, monkeypatch
+    ):
+        ch_span_id = "ch_" + uuid.uuid4().hex[:16]
+        self._fake_reader(monkeypatch, ch_span_id, observe_project, organization, trace)
+        payload = {
+            "source_type": "observation_span",
+            "source_id": ch_span_id,
+            "label_id": str(star_label.id),
+            "value": {"rating": 4},
+        }
+        resp = auth_client.post(SCORE_URL, payload, format="json")
+        assert resp.status_code == status.HTTP_200_OK, resp.content  # NOT 404
+        s = Score.objects.get(observation_span_id=ch_span_id, deleted=False)
+        assert s.source_type == "observation_span"
+        # denormalized trace locator stamped so it rolls up to the trace
+        assert str(s.trace_id) == str(trace.id)
+
+    def test_bulk_score_and_spannote_on_ch_only_span(
+        self, auth_client, observe_project, trace, organization, star_label, monkeypatch
+    ):
+        from tracer.models.span_notes import SpanNotes
+
+        ch_span_id = "ch_" + uuid.uuid4().hex[:16]
+        self._fake_reader(monkeypatch, ch_span_id, observe_project, organization, trace)
+        payload = {
+            "source_type": "observation_span",
+            "source_id": ch_span_id,
+            "span_notes": "looks correct",
+            "scores": [{"label_id": str(star_label.id), "value": {"rating": 5}}],
+        }
+        resp = auth_client.post(SCORE_URL + "bulk/", payload, format="json")
+        assert resp.status_code == status.HTTP_200_OK, resp.content  # NOT 404/500
+        assert Score.objects.filter(
+            observation_span_id=ch_span_id, deleted=False
+        ).exists()
+        # SpanNotes written by id (the FK rejects a CHSpan OBJECT) on the CH span id
+        assert SpanNotes.objects.filter(span_id=ch_span_id).exists()

@@ -38,7 +38,7 @@ const EmptyVersions = ({ activeTab }) => {
       <Typography
         variant="m3"
         fontWeight="fontWeightMedium"
-        color="text.disabled"
+        color="text.secondary"
         sx={{ width: "300px", textAlign: "center" }}
       >
         {activeTab === "commit_history"

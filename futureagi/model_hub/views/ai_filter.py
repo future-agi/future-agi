@@ -28,6 +28,7 @@ import structlog
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from agentic_eval.core.utils.json_utils import strip_code_fence
 from model_hub.serializers.ai_filter import (
     AIFilterRequestSerializer,
     AIFilterResponseSerializer,
@@ -540,15 +541,15 @@ def _fetch_dataset_column_values(dataset_id, column_id):
         candidates = []
         if isinstance(parsed, list):
             for elem in parsed:
-                if isinstance(elem, (str, int, float, bool)):
+                if isinstance(elem, str | int | float | bool):
                     candidates.append(str(elem))
                 elif isinstance(elem, dict):
                     for v in elem.values():
-                        if isinstance(v, (str, int, float)):
+                        if isinstance(v, str | int | float):
                             candidates.append(str(v))
         elif isinstance(parsed, dict):
             for v in parsed.values():
-                if isinstance(v, (str, int, float)):
+                if isinstance(v, str | int | float):
                     candidates.append(str(v))
         else:
             candidates.append(blob)
@@ -1106,15 +1107,8 @@ class AIFilterView(APIView):
                 ],
             ).strip()
 
-            # Parse the JSON response
-            # Handle cases where the model wraps in ```json ... ```
-            if raw_text.startswith("```"):
-                raw_text = raw_text.split("```")[1]
-                if raw_text.startswith("json"):
-                    raw_text = raw_text[4:]
-                raw_text = raw_text.strip()
-
-            parsed = json.loads(raw_text)
+            # Unwrap any ```json ... ``` fence the model added, then parse.
+            parsed = json.loads(strip_code_fence(raw_text))
 
             if mode == "select_fields":
                 fields_out = []

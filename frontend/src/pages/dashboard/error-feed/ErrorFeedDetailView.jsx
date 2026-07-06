@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Box,
   Button,
@@ -21,12 +21,16 @@ import {
 } from "src/api/errorFeed/error-feed";
 import ErrorStatusChip from "./components/ErrorStatusChip";
 import ErrorSeverityBadge from "./components/ErrorSeverityBadge";
-import ErrorMetadataPanel from "./components/ErrorMetadataPanel";
+import ErrorMetadataPanel, {
+  LinearTeamPicker,
+} from "./components/ErrorMetadataPanel";
 import OverviewTab from "./components/OverviewTab";
 import TracesTab from "./components/TracesTab";
-import StateGraphTab from "./components/StateGraphTab";
 import TrendsTab from "./components/TrendsTab";
+import ClusterHeadlineCard from "./components/ClusterHeadlineCard";
+import AnalyzeTab from "./components/AnalyzeTab";
 import { useErrorFeedStore } from "./store";
+import { useAnalyzeRunner } from "./useAnalyzeRunner";
 
 // ── Detail page skeleton ─────────────────────────────────────────────────────
 function DetailSkeleton() {
@@ -85,8 +89,8 @@ TabLabel.propTypes = {
 const TABS = [
   { key: "overview", label: "Overview", icon: "mdi:view-dashboard-outline" },
   { key: "traces", label: "Traces", icon: "mdi:timeline-text-outline" },
-  { key: "stategraph", label: "State Graph", icon: "mdi:graph-outline" },
   { key: "trends", label: "Trends", icon: "mdi:chart-line" },
+  { key: "analyze", label: "Fix", icon: "mdi:wrench-outline" },
 ];
 
 // ── Main view ─────────────────────────────────────────────────────────────────
@@ -94,6 +98,10 @@ export default function ErrorFeedDetailView() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { activeTab, setActiveTab } = useErrorFeedStore();
+  const [linearPickerOpen, setLinearPickerOpen] = useState(false);
+  const setAnalyzePendingStart = useErrorFeedStore(
+    (s) => s.setAnalyzePendingStart,
+  );
   const { data: detail, isLoading } = useErrorFeedDetail(id);
   const updateIssue = useUpdateErrorFeedIssue();
 
@@ -102,10 +110,13 @@ export default function ErrorFeedDetailView() {
     return {
       ...detail.row,
       description: detail.description,
-      successTrace: detail.successTrace,
-      representativeTrace: detail.representativeTrace,
+      success_trace: detail.success_trace,
+      representative_trace: detail.representative_trace,
+      rca: detail.rca,
     };
   }, [detail]);
+
+  useAnalyzeRunner(currentError?.cluster_id, currentError);
 
   if (isLoading || !currentError) {
     return <DetailSkeleton />;
@@ -113,6 +124,10 @@ export default function ErrorFeedDetailView() {
 
   const tabIndex = TABS.findIndex((t) => t.key === activeTab);
   const safeTabIndex = tabIndex === -1 ? 0 : tabIndex;
+  // Gate tab content on the tab KEY, not the numeric index — reordering TABS
+  // must never silently swap which panel renders. `safeTabIndex` is only used
+  // to drive the MUI <Tabs> indicator.
+  const activeTabKey = TABS[safeTabIndex].key;
 
   return (
     <Box
@@ -182,6 +197,9 @@ export default function ErrorFeedDetailView() {
                 bgcolor: "action.hover",
                 color: "text.secondary",
                 "& .MuiChip-label": { px: "7px" },
+                // Static badge — kill the default Chip hover/focus tinting.
+                "&:hover": { bgcolor: "action.hover" },
+                "&:focus": { bgcolor: "action.hover" },
               }}
             />
           </Stack>
@@ -227,7 +245,7 @@ export default function ErrorFeedDetailView() {
                 {/* Cluster badge */}
                 <Chip
                   icon={<Iconify icon="mdi:layers-outline" width={12} />}
-                  label={`${currentError.traceCount?.toLocaleString()} traces`}
+                  label={`${currentError.trace_count?.toLocaleString()} traces`}
                   size="small"
                   sx={{
                     height: 20,
@@ -277,13 +295,12 @@ export default function ErrorFeedDetailView() {
               </Tooltip>
               <Button
                 size="small"
-                variant="contained"
-                color="primary"
+                variant="outlined"
                 startIcon={<Iconify icon="mdi:check" width={13} />}
                 disabled={updateIssue.isPending}
                 onClick={() =>
                   updateIssue.mutate({
-                    clusterId: currentError.clusterId,
+                    clusterId: currentError.cluster_id,
                     status: "resolved",
                   })
                 }
@@ -292,6 +309,8 @@ export default function ErrorFeedDetailView() {
                   fontSize: "12px",
                   borderRadius: "6px",
                   textTransform: "none",
+                  borderColor: "divider",
+                  color: "text.secondary",
                 }}
               >
                 Resolve
@@ -305,7 +324,7 @@ export default function ErrorFeedDetailView() {
                 disabled={updateIssue.isPending}
                 onClick={() =>
                   updateIssue.mutate({
-                    clusterId: currentError.clusterId,
+                    clusterId: currentError.cluster_id,
                     status: "acknowledged",
                   })
                 }
@@ -327,7 +346,7 @@ export default function ErrorFeedDetailView() {
                 disabled={updateIssue.isPending}
                 onClick={() =>
                   updateIssue.mutate({
-                    clusterId: currentError.clusterId,
+                    clusterId: currentError.cluster_id,
                     status: "escalating",
                   })
                 }
@@ -387,7 +406,7 @@ export default function ErrorFeedDetailView() {
                     icon={tab.icon}
                     count={
                       tab.key === "traces"
-                        ? currentError?.traceCount
+                        ? currentError?.trace_count
                         : undefined
                     }
                   />
@@ -397,19 +416,68 @@ export default function ErrorFeedDetailView() {
           </Tabs>
         </Box>
 
-        {/* ── Scrollable tab content ── */}
-        <Box sx={{ flex: 1, overflowY: "auto" }}>
-          <Box sx={{ p: 2 }}>
-            {safeTabIndex === 0 && <OverviewTab _error={currentError} />}
-            {safeTabIndex === 1 && <TracesTab error={currentError} />}
-            {safeTabIndex === 2 && <StateGraphTab error={currentError} />}
-            {safeTabIndex === 3 && <TrendsTab error={currentError} />}
-          </Box>
+        {/* ── Tab content ── */}
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {activeTabKey === "analyze" ? (
+            <Box
+              sx={{
+                flex: 1,
+                minHeight: 0,
+                p: 2,
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              <AnalyzeTab error={currentError} />
+            </Box>
+          ) : (
+            <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+              <Box sx={{ p: 2 }}>
+                {activeTabKey === "overview" && (
+                  <Box sx={{ mb: 2 }}>
+                    <ClusterHeadlineCard
+                      error={currentError}
+                      onOpenAnalyze={() => setActiveTab("analyze")}
+                      onStartAnalysis={() => {
+                        setAnalyzePendingStart(currentError.cluster_id, true);
+                        setActiveTab("analyze");
+                      }}
+                      onCreateLinear={() => setLinearPickerOpen(true)}
+                    />
+                  </Box>
+                )}
+                {activeTabKey === "overview" && (
+                  <OverviewTab _error={currentError} />
+                )}
+                {activeTabKey === "traces" && (
+                  <TracesTab error={currentError} />
+                )}
+                {activeTabKey === "trends" && (
+                  <TrendsTab error={currentError} />
+                )}
+              </Box>
+            </Box>
+          )}
         </Box>
       </Box>
 
       {/* ── Right sidebar ── */}
       <ErrorMetadataPanel error={currentError} />
+
+      <LinearTeamPicker
+        open={linearPickerOpen}
+        onClose={() => setLinearPickerOpen(false)}
+        clusterId={currentError?.cluster_id}
+        traceId={null}
+      />
     </Box>
   );
 }

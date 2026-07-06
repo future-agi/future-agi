@@ -24,11 +24,6 @@ from rest_framework.views import APIView
 
 from model_hub.models.api_key import ApiKey
 from model_hub.models.develop_dataset import Cell, Column, Row
-from model_hub.models.error_localizer_model import (
-    ErrorLocalizerSource,
-    ErrorLocalizerStatus,
-    ErrorLocalizerTask,
-)
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.utils.function_eval_params import (
     normalize_eval_runtime_config,
@@ -78,6 +73,7 @@ from simulate.serializers.response.call_execution import (
     CallExecutionErrorLocalizerTasksResponseSerializer,
     CallExecutionErrorResponseSerializer,
     CallExecutionLogsResponseSerializer,
+    ErrorLocalizerTaskResponseSerializer,
 )
 from simulate.serializers.response.run_test import (
     RunTestCallExecutionsResponseSerializer,
@@ -133,9 +129,11 @@ from simulate.serializers.test_execution import (
 )
 
 # Import Temporal activities (using @temporal_activity drop-in decorator)
+from simulate.services.agent_definition import resolve_api_key_for_version
 from simulate.services.test_executor import (
     TestExecutor,
     _run_simulate_evaluations_task,
+    build_eval_configs_map,
     run_new_evals_on_call_executions_task,
 )
 from simulate.tasks.eval_summary_tasks import run_eval_summary_task
@@ -145,6 +143,7 @@ from simulate.utils.agent_optimiser import (
     get_or_create_optimiser_for_test_execution,
 )
 from simulate.utils.baseline import resolve_baseline_id
+from simulate.utils.eval_summary import iter_live_eval_outputs
 from simulate.utils.eval_summary import (
     _build_template_statistics,
     _calculate_final_template_summaries,
@@ -334,7 +333,6 @@ class RunTestListView(APIView):
                 )
                 .select_related(
                     "agent_definition",
-                    "agent_definition__credentials",
                     "agent_version",
                     "simulator_agent",
                     "prompt_template",
@@ -1183,7 +1181,6 @@ class RunTestAPIView(APIView):
                 .prefetch_related("scenarios")
                 .select_related(
                     "agent_definition",
-                    "agent_definition__credentials",
                     "simulator_agent",
                 )
             )
@@ -2512,9 +2509,16 @@ class TestExecutionDetailView(APIView):
                 call_executions_serializer.data
             )
 
-            # Add column order and metadata to response
+            # Add column order and metadata to response. Drop evaluation
+            # columns whose config was soft-deleted from the run test —
+            # column_order is persisted and is not pruned on eval delete.
             response_data = paginated_response.data
-            response_data["column_order"] = column_order
+            response_data["column_order"] = [
+                col
+                for col in column_order
+                if col.get("type") != "evaluation"
+                or str(col.get("id")) in eval_configs_map
+            ]
             response_data["error_messages"] = error_messages
             response_data["status"] = test_execution.status
             response_data["provider"] = (
@@ -3234,7 +3238,7 @@ class CallExecutionDetailView(APIView):
                 call_execution,
                 context={
                     "request": request,
-                    "eval_configs": {},
+                    "eval_configs": build_eval_configs_map(call_execution),
                     "scenarios": {},
                     "row_session_id_map": row_session_id_map,
                     "rows_map": {},
@@ -4112,22 +4116,21 @@ class RunTestComponentsUpdateView(APIView):
                             not agent_type
                             or agent_type == AgentDefinition.AgentTypeChoices.VOICE
                         ):
-                            # Check configuration_snapshot for api_key and assistant_id
-                            config_snapshot = (
-                                agent_version_to_check.configuration_snapshot or {}
-                            )
-                            api_key = config_snapshot.get("api_key")
-                            assistant_id = config_snapshot.get("assistant_id")
+                            api_key = resolve_api_key_for_version(agent_version_to_check)
+                            assistant_id = None
+                            try:
+                                creds = agent_version_to_check.credentials
+                                if creds:
+                                    assistant_id = creds.assistant_id
+                            except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                                pass
+                            if not assistant_id:
+                                assistant_id = agent_version_to_check.configuration_snapshot.get("assistant_id") if agent_version_to_check.configuration_snapshot else None
 
                             missing_fields = []
-                            if not api_key or (
-                                isinstance(api_key, str) and not api_key.strip()
-                            ):
+                            if not api_key:
                                 missing_fields.append("api_key")
-                            if not assistant_id or (
-                                isinstance(assistant_id, str)
-                                and not assistant_id.strip()
-                            ):
+                            if not assistant_id:
                                 missing_fields.append("assistant_id")
 
                             if missing_fields:
@@ -4198,72 +4201,25 @@ class CallExecutionErrorLocalizerTasksView(APIView):
                 test_execution__run_test__deleted=False,
             )
 
-            # Find error localizer tasks for this call execution
-            # Filter by source_id (call_execution_id) and eval_config_id if provided
-            query_filter = {
-                "source": ErrorLocalizerSource.SIMULATE,
-                "source_id": call_execution.id,
-            }
-
-            # If eval_config_id is provided, filter by it in metadata
-            if eval_config_id:
-                query_filter["metadata__eval_config_id"] = str(eval_config_id)
-
-            call_execution_task = (
-                ErrorLocalizerTask.no_workspace_objects.filter(**query_filter)
-                .order_by("-created_at")
-                .first()
+            from model_hub.selectors.error_localizer import (
+                list_error_localizer_tasks_for_call_execution,
+                serialize_error_localizer_task,
             )
+
+            call_execution_task = list_error_localizer_tasks_for_call_execution(
+                call_execution.id,
+                eval_config_id=eval_config_id,
+                order_latest_first=True,
+                skip_workspace_scope=True,
+            ).first()
 
             error_localizer_data = []
             if call_execution_task:
-                # Extract eval_config_id from metadata
-                task_eval_config_id = call_execution_task.metadata.get("eval_config_id")
-
-                # Normalize status: running -> "running", completed -> "completed", failed -> "FAILED", others -> ""
-                normalized_status = ""
-                if call_execution_task.status == ErrorLocalizerStatus.RUNNING:
-                    normalized_status = "running"
-                elif call_execution_task.status == ErrorLocalizerStatus.COMPLETED:
-                    normalized_status = "completed"
-                elif call_execution_task.status == ErrorLocalizerStatus.FAILED:
-                    normalized_status = "failed"
-
+                payload = serialize_error_localizer_task(
+                    call_execution_task, include_eval_template=True
+                )
                 error_localizer_data.append(
-                    {
-                        "task_id": str(call_execution_task.id),
-                        "eval_config_id": task_eval_config_id,
-                        "status": normalized_status,
-                        "eval_result": call_execution_task.eval_result,
-                        "eval_explanation": call_execution_task.eval_explanation,
-                        "input_data": call_execution_task.input_data,
-                        "input_keys": call_execution_task.input_keys,
-                        "input_types": call_execution_task.input_types,
-                        "rule_prompt": call_execution_task.rule_prompt,
-                        "error_analysis": call_execution_task.error_analysis,
-                        "selected_input_key": call_execution_task.selected_input_key,
-                        "error_message": call_execution_task.error_message,
-                        "created_at": (
-                            call_execution_task.created_at.isoformat()
-                            if call_execution_task.created_at
-                            else None
-                        ),
-                        "updated_at": (
-                            call_execution_task.updated_at.isoformat()
-                            if call_execution_task.updated_at
-                            else None
-                        ),
-                        "eval_template_name": (
-                            call_execution_task.eval_template.name
-                            if call_execution_task.eval_template
-                            else None
-                        ),
-                        "eval_template_id": (
-                            str(call_execution_task.eval_template.id)
-                            if call_execution_task.eval_template
-                            else None
-                        ),
-                    }
+                    ErrorLocalizerTaskResponseSerializer(payload).data
                 )
 
             return Response(
@@ -5407,6 +5363,16 @@ class CSVExportView(APIView):
             # Order by updated date (newest/most recently rerun first)
             call_executions = call_executions.order_by("-updated_at")
 
+            run_test_for_evals = (
+                run_test if export_type == "runtest" else test_execution.run_test
+            )
+            live_eval_config_ids = {
+                str(eid)
+                for eid in SimulateEvalConfig.objects.filter(
+                    run_test=run_test_for_evals
+                ).values_list("id", flat=True)
+            }
+
             # Create a CSV response
             response = HttpResponse(content_type="text/csv")
             response["Content-Disposition"] = f'attachment; filename="{filename}"'
@@ -5414,13 +5380,11 @@ class CSVExportView(APIView):
             # Get all unique evaluation names from eval_outputs to create dynamic columns
             eval_columns = set()
             for call_execution in call_executions:
-                if call_execution.eval_outputs:
-                    for (
-                        eval_config_id,
-                        eval_data,
-                    ) in call_execution.eval_outputs.items():
-                        eval_name = eval_data.get("name", f"Eval_{eval_config_id}")
-                        eval_columns.add(eval_name)
+                for eval_config_id, eval_data in iter_live_eval_outputs(
+                    call_execution.eval_outputs, live_eval_config_ids
+                ):
+                    eval_name = eval_data.get("name", f"Eval_{eval_config_id}")
+                    eval_columns.add(eval_name)
 
             # Get all unique tool output names from tool_outputs to create dynamic columns
             tool_columns = set()
@@ -5509,16 +5473,14 @@ class CSVExportView(APIView):
                     row_data[f"{eval_name}_reason"] = ""
 
                 # Add evaluation outputs and reasons as separate columns
-                if call_execution.eval_outputs:
-                    for (
-                        eval_config_id,
-                        eval_data,
-                    ) in call_execution.eval_outputs.items():
-                        eval_name = eval_data.get("name", f"Eval_{eval_config_id}")
-                        eval_output = eval_data.get("output", "")
-                        eval_reason = eval_data.get("reason", "")
-                        row_data[eval_name] = str(eval_output)
-                        row_data[f"{eval_name}_reason"] = str(eval_reason)
+                for eval_config_id, eval_data in iter_live_eval_outputs(
+                    call_execution.eval_outputs, live_eval_config_ids
+                ):
+                    eval_name = eval_data.get("name", f"Eval_{eval_config_id}")
+                    eval_output = eval_data.get("output", "")
+                    eval_reason = eval_data.get("reason", "")
+                    row_data[eval_name] = str(eval_output)
+                    row_data[f"{eval_name}_reason"] = str(eval_reason)
 
                 # Initialize all tool output columns with empty values
                 for tool_name in tool_columns:

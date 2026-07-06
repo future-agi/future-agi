@@ -17,6 +17,26 @@ const CallLogsCellRenderer = (props) => {
       ? format(createdAt, "MM/dd/yyyy, hh:mmaaa")
       : rowData?.created_at?.split("T")[0] ?? "-";
 
+  // Bypass the outer flex wrapper for id/phone columns — match the IPOPCell
+  // structure (a single `.ipop-cell` div directly in the AG cell) so the
+  // text truncates at the column boundary instead of extending past it.
+  if (
+    columnId === "call_id" ||
+    columnId === "assistant_phone_number" ||
+    columnId === "phone_number"
+  ) {
+    return (
+      <CustomTooltip size="small" show={!!value} arrow title={value}>
+        <Box
+          className="ipop-cell"
+          sx={{ px: 1.5, color: "text.secondary" }}
+        >
+          {value || "-"}
+        </Box>
+      </CustomTooltip>
+    );
+  }
+
   let content;
 
   if (columnId === "call_summary") {
@@ -178,22 +198,6 @@ const CallLogsCellRenderer = (props) => {
       <Typography variant="body2" sx={{ fontSize: 13 }}>
         {formatted}
       </Typography>
-    );
-  } else if (
-    columnId === "call_id" ||
-    columnId === "assistant_phone_number" ||
-    columnId === "phone_number"
-  ) {
-    content = (
-      <CustomTooltip show={!!value} arrow title={value}>
-        <Typography
-          variant="body2"
-          noWrap
-          sx={{ fontSize: 13, maxWidth: 130, color: "text.secondary" }}
-        >
-          {value || "-"}
-        </Typography>
-      </CustomTooltip>
     );
   } else if (columnId === "turn_count") {
     const n = value != null && value !== "" ? Number(value) : NaN;

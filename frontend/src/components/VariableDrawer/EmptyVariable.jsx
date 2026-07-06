@@ -38,7 +38,7 @@ const EmptyVariable = () => {
       <Typography
         variant="m3"
         fontWeight="fontWeightMedium"
-        color="text.disabled"
+        color="text.secondary"
         sx={{ width: "386px", textAlign: "center" }}
       >
         Create variables within the prompt using double curly braces {"{{}}"} to

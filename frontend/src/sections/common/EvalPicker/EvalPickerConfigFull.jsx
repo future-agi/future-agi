@@ -143,7 +143,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const createVersion = useCreateEvalVersion(templateId);
 
   // ── Editable state (mirrors EvalDetailPage) ──
-  const [selectedVersionId, setSelectedVersionId] = useState(null);
+  const [selectedVersionId, setSelectedVersionId] = useState(
+    evalData?.pinned_version_id ?? null,
+  );
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState("");
   const [codeLanguage, setCodeLanguage] = useState("python");
@@ -151,6 +153,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
   const [choiceScores, setChoiceScores] = useState({});
+  const [multiChoice, setMultiChoice] = useState(false);
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [templateFormat, setTemplateFormat] = useState("mustache");
@@ -226,16 +229,25 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   useEffect(() => {
     if (!isComposite) return;
     if (!compositeDetail) return;
+    // In edit mode, wait for evalData so saved overrides aren't missed
+    if (isEditMode && !evalData) return;
     if (compositePopulatedRef.current) return;
+    // Start from template child weights, then overlay saved per-binding overrides
     const initial = {};
     (compositeDetail.children || []).forEach((c) => {
       if (c?.child_id != null) {
         initial[c.child_id] = c.weight != null ? c.weight : 1.0;
       }
     });
+    const saved = evalData?.composite_weight_overrides || {};
+    if (saved && typeof saved === "object") {
+      Object.entries(saved).forEach(([childId, w]) => {
+        if (w != null) initial[childId] = w;
+      });
+    }
     setCompositeChildWeights(initial);
     compositePopulatedRef.current = true;
-  }, [isComposite, compositeDetail]);
+  }, [isComposite, compositeDetail, evalData]);
   // Configuring a per-dataset attachment (UserEvalMetric) — NOT editing the
   // underlying template itself. Lock-down policy:
   //   - System evals: instructions + output_type category are READ-ONLY.
@@ -368,7 +380,43 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     () => evalType !== "llm" || hasNonEmptyPromptMessage(messages),
     [evalType, messages],
   );
-  // ── Populate from eval detail ──
+  // ── Load pinned version content on mount (edit mode) ──
+  const pinnedVersionLoadDone = useRef(false);
+  useEffect(() => {
+    if (
+      selectedVersionId &&
+      versions.length > 0 &&
+      !pinnedVersionLoadDone.current &&
+      !isDirty
+    ) {
+      const version = versions.find((v) => v.id === selectedVersionId);
+      if (version) {
+        pinnedVersionLoadDone.current = true;
+        const config = version.config_snapshot || version.configSnapshot || {};
+        const promptText = config.rule_prompt || version.criteria || "";
+        const _type =
+          normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
+        if (_type === "code") {
+          setInstructions("");
+          setCode(config.code || "");
+        } else {
+          setInstructions(promptText);
+          setCode("");
+        }
+        setModel(config.model || fullEval?.model || "turing_large");
+        if (config.messages?.length > 0) {
+          setMessages(config.messages);
+        } else if (_type === "llm" && promptText) {
+          setMessages([{ role: "system", content: promptText }]);
+        }
+        if (isEditMode) setEvalName(evalData?.name || fullEval?.name || "");
+        setIsDirty(false);
+        setDataReady(true);
+        initialLoadDone.current = true;
+      }
+    }
+  }, [selectedVersionId, versions, isDirty, fullEval, normalizedFullEval, normalizedEvalData, isEditMode, evalData]);
+
   // ── Populate from eval detail (same logic as EvalDetailPage) ──
   const initialLoadDone = useRef(false);
   useEffect(() => {
@@ -428,6 +476,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           rawRunConfig.choiceScores ??
           evalData?.choice_scores ??
           evalData?.choiceScores,
+        multi_choice:
+          rawRunConfig.multi_choice ??
+          rawRunConfig.multiChoice ??
+          evalData?.multi_choice ??
+          evalData?.multiChoice,
         params: rawRunConfig.params ?? evalData?.params,
         messages: rawRunConfig.messages ?? evalData?.messages,
       };
@@ -469,6 +522,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       // Prefer user's saved run_config overrides (edit flow) over template defaults
       setPassThreshold(config.pass_threshold ?? fullEval.pass_threshold ?? 0.5);
       setChoiceScores(config.choice_scores || fullEval.choice_scores || {});
+      setMultiChoice(config.multi_choice ?? fullEval.multi_choice ?? false);
       // Messages: use config.messages if present, otherwise build from
       // instructions — but only for llm/agent evals, since code evals
       // don't have a prompt to seed into a system message.
@@ -643,7 +697,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       const version = versions.find((v) => v.id === vId);
       if (version) {
         const config = version.config_snapshot || version.configSnapshot || {};
-        const promptText = version.criteria || config.rule_prompt || "";
+        const promptText = config.rule_prompt || version.criteria || "";
         // Type-aware split — version snapshot's `criteria` is the code
         // text for code evals, the prompt for agent/llm.
         const _type =
@@ -721,6 +775,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         pass_threshold: passThreshold,
         choice_scores:
           Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
+        multi_choice: multiChoice,
         messages: evalType === "llm" ? messages : undefined,
         few_shot_examples:
           evalType === "llm" && fewShotExamples.length > 0
@@ -744,6 +799,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         pass_threshold: passThreshold,
         choice_scores:
           Object.keys(choiceScores || {}).length > 0 ? choiceScores : undefined,
+        multi_choice: multiChoice,
         messages: evalType === "llm" ? messages : undefined,
         few_shot_examples:
           evalType === "llm" && fewShotExamples.length > 0
@@ -783,6 +839,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     outputType,
     passThreshold,
     choiceScores,
+    multiChoice,
     messages,
     fewShotExamples,
     fullEval,
@@ -857,7 +914,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     const templateType =
       fullEval?.template_type ||
       fullEval?.templateType ||
-      evalData?.templateType;
+      evalData?.template_type;
 
     const resolvedConfig = buildEvalTemplateConfig({
       baseConfig: fullEval?.config || evalData?.config || {},
@@ -870,6 +927,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       outputType,
       passThreshold,
       choiceScores,
+      multiChoice,
       templateFormat,
     });
 
@@ -929,6 +987,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       messages,
       pass_threshold: passThreshold,
       choice_scores: choiceScores,
+      multi_choice: multiChoice,
       // Code-eval static params (function_params_schema inputs, e.g.
       // min_words / max_words). Persisted so the backend writes them onto
       // UserEvalMetric.config.params and future runs can read them via
@@ -965,6 +1024,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     fewShotExamples,
     passThreshold,
     choiceScores,
+    multiChoice,
     codeParams,
     agentMode,
     useInternet,
@@ -1530,6 +1590,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     setChoiceScores(v);
                     setIsDirty(true);
                   }}
+                  multiChoice={multiChoice}
+                  onMultiChoiceChange={(v) => {
+                    setMultiChoice(v);
+                    setIsDirty(true);
+                  }}
                   passThreshold={passThreshold}
                   onPassThresholdChange={(v) => {
                     setPassThreshold(v);
@@ -1678,6 +1743,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     onClearResult={handleClearTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
+                    hasDataInjection={hasDataInjection}
                     errorLocalizerEnabled={errorLocalizerEnabled}
                     initialMapping={evalData?.mapping}
                     {...compositeSourceModeProps}
@@ -1721,6 +1787,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     onClearResult={handleClearTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
+                    hasDataInjection={hasDataInjection}
                     initialProjectId={sourceId}
                     initialRowType={sourceRowType}
                     initialMapping={evalData?.mapping}
@@ -1758,6 +1825,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TestPlayground
                     ref={sourceRef}
                     templateId={templateId}
+                    evalName={evalName || ""}
                     instructions={evalType === "code" ? "" : instructions}
                     evalType={evalType}
                     isSystemEval={isSystemEval}
@@ -1873,12 +1941,11 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
             settings only. */}
         {source !== "composite" &&
           !sourceReady &&
-          !hasDataInjection &&
           !testError &&
           !testPassed && (
             <Typography
               variant="caption"
-              color="text.disabled"
+              color="text.secondary"
               sx={{ mr: "auto", fontSize: "11px" }}
             >
               Map all variables to enable testing & adding
@@ -2036,14 +2103,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                 : `Your Mustache template has no variables. Add a {{variable}} placeholder (e.g. {{input}}) before ${actionLabel}.`;
           }
 
-          // Non-composite flows additionally require the full source config
-          // (name / output type / etc.) to be valid.
-          if (
-            !addDisabled &&
-            source !== "composite" &&
-            !sourceReady &&
-            !hasDataInjection
-          ) {
+          if (!addDisabled && source !== "composite" && !sourceReady) {
             addDisabled = true;
             addDisabledReason = `Map all variables before ${actionLabel}.`;
           }

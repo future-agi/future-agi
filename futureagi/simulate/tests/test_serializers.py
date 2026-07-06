@@ -17,7 +17,7 @@ from rest_framework.request import Request
 from rest_framework.test import APIRequestFactory
 
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices
-from model_hub.models.develop_dataset import Dataset
+from model_hub.models.develop_dataset import Dataset, Row
 from simulate.serializers.scenarios import (
     AddScenarioColumnsSerializer,
     AddScenarioRowsSerializer,
@@ -52,14 +52,35 @@ def mock_request(request_factory, user):
 
 @pytest.fixture
 def source_dataset(db, organization, workspace, user):
-    """Create a source dataset for scenario creation tests."""
-    return Dataset.no_workspace_objects.create(
+    """Create a source dataset with the minimum required rows for scenario creation tests.
+
+    The Import Dataset path requires the source dataset to have at least
+    ``no_of_rows.min_value`` rows, so the fixture seeds enough rows to
+    satisfy that floor by default.
+    """
+    dataset = Dataset.no_workspace_objects.create(
         name="Source Dataset",
         organization=organization,
         workspace=workspace,
         user=user,
         source=DatasetSourceChoices.BUILD.value,
     )
+    Row.objects.bulk_create([Row(dataset=dataset, order=i) for i in range(10)])
+    return dataset
+
+
+@pytest.fixture
+def too_small_source_dataset(db, organization, workspace, user):
+    """Create a source dataset with fewer rows than the required minimum."""
+    dataset = Dataset.no_workspace_objects.create(
+        name="Tiny Source Dataset",
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        source=DatasetSourceChoices.BUILD.value,
+    )
+    Row.objects.create(dataset=dataset, order=0)
+    return dataset
 
 
 @pytest.fixture
@@ -234,7 +255,9 @@ class TestCreateScenarioSerializer:
             data=data, context={"request": mock_request}
         )
         assert not serializer.is_valid()
-        assert "dataset_id" in serializer.errors or "non_field_errors" in serializer.errors
+        assert (
+            "dataset_id" in serializer.errors or "non_field_errors" in serializer.errors
+        )
         all_errors = str(serializer.errors).lower()
         assert "dataset_id" in all_errors
 
@@ -249,7 +272,9 @@ class TestCreateScenarioSerializer:
             data=data, context={"request": mock_request}
         )
         assert not serializer.is_valid()
-        assert "script_url" in serializer.errors or "non_field_errors" in serializer.errors
+        assert (
+            "script_url" in serializer.errors or "non_field_errors" in serializer.errors
+        )
         all_errors = str(serializer.errors).lower()
         assert "script_url" in all_errors
 

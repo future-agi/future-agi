@@ -136,7 +136,7 @@ const CreateNewAgentDefinitionView = () => {
         assistant_id: data.assistantId,
         description: data.description,
         knowledge_base: data.knowledgeBase || null,
-        country_code: data.countryCode,
+        // country_code: data.countryCode,
         contact_number: data.contactNumber,
         inbound: data.inbound,
         commit_message: data.commitMessage,

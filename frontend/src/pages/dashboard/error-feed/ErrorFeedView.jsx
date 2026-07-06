@@ -85,7 +85,7 @@ export default function ErrorFeedView() {
           </Stack>
           <Typography
             typography="s2"
-            color="text.disabled"
+            color="text.secondary"
             fontWeight="fontWeightRegular"
           >
             Track, triage, and resolve AI errors — hallucinations, eval

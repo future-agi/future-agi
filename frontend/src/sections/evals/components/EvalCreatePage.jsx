@@ -37,6 +37,8 @@ import CodeEvalEditor, { PYTHON_CODE_TEMPLATE } from "./CodeEvalEditor";
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
 import { extractVariables } from "src/utils/utils";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 
 const EVAL_TYPE_TABS = [
@@ -136,6 +138,9 @@ const resolveContextOptions = (dataInjection) => {
 const EvalCreatePage = () => {
   const { draftId: urlDraftId } = useParams();
   const navigate = useNavigate();
+  const { role } = useAuthContext();
+  const canEditEvals =
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
   const { enqueueSnackbar } = useSnackbar();
   const { isOSS } = useDeploymentMode();
   const createEval = useCreateEval();
@@ -625,7 +630,8 @@ const EvalCreatePage = () => {
   // Single evals require a successful test run before save. Composites
   // don't have a test flow in the create page — their children already exist
   // and can be tested individually.
-  const canSave = mode === "single" ? canSaveSingle : canSaveComposite;
+  const canSave =
+    canEditEvals && (mode === "single" ? canSaveSingle : canSaveComposite);
 
   return (
     <Box
@@ -1215,6 +1221,7 @@ const EvalCreatePage = () => {
                   ref={testPlaygroundRef}
                   templateId={draftId}
                   model={model}
+                  evalName={name || ""}
                   instructions={
                     mode === "composite" || evalType === "code"
                       ? ""
@@ -1326,10 +1333,14 @@ const EvalCreatePage = () => {
                       : evalType === "code"
                         ? hasCode
                         : instructionsReady;
-                  const testDisabled = isTesting || !hasTestInput;
+                  const testDisabled =
+                    isTesting || !hasTestInput || !canEditEvals;
 
                   let testDisabledReason = "";
-                  if (isTesting) {
+                  if (!canEditEvals) {
+                    testDisabledReason =
+                      "You don't have permission to create or edit evaluations.";
+                  } else if (isTesting) {
                     testDisabledReason = "Test is already running.";
                   } else if (mode === "composite" && !hasCompositeChildren) {
                     testDisabledReason =
@@ -1393,7 +1404,10 @@ const EvalCreatePage = () => {
                 {(() => {
                   const saveDisabled = isLoading || !canSave;
                   let saveDisabledReason = "";
-                  if (isLoading) {
+                  if (!canEditEvals) {
+                    saveDisabledReason =
+                      "You don't have permission to create or edit evaluations.";
+                  } else if (isLoading) {
                     saveDisabledReason = "Save is already in progress.";
                   } else if (mode === "composite") {
                     if (!compositeName.trim()) {

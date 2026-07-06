@@ -67,9 +67,9 @@ const AddTagsPopover = ({
         isBulk ? `Tags applied to ${items.length} items` : "Tags updated",
         { variant: "success" },
       );
+      // Refreshes the trace-detail drawer. The LLM tracing grid is AG-Grid
+      // server-side (not React Query), so it relies on onSuccess instead.
       queryClient.invalidateQueries({ queryKey: ["trace-detail"] });
-      queryClient.invalidateQueries({ queryKey: ["traceList"] });
-      queryClient.invalidateQueries({ queryKey: ["spanList"] });
       onSuccess?.();
     },
     onError: () => {

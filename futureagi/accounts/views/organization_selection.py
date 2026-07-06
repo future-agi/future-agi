@@ -17,6 +17,7 @@ from accounts.serializers.contracts import (
     OrganizationSwitchRequestSerializer,
     OrganizationSwitchResponseSerializer,
 )
+from accounts.services.workspace_membership import resolve_org_membership
 from tfc.constants.roles import RoleMapping
 from tfc.utils.api_contracts import validated_api_request, validated_request
 from tfc.utils.general_methods import GeneralMethods
@@ -290,6 +291,9 @@ class SwitchOrganizationView(APIView):
                     "role": ws_role,
                     "invited_by": user,
                     "is_active": True,
+                    "organization_membership": resolve_org_membership(
+                        user, organization
+                    ),
                 },
             )
             return ws

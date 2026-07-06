@@ -820,3 +820,87 @@ class TestEvalListOutputTypeFilter:
             filters={},
         )
         assert qs.count() >= 6
+
+
+# =============================================================================
+# Tag filter — case-insensitive (TH-5638)
+# =============================================================================
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestTagFilterCaseInsensitive:
+    """Tag filters must match regardless of how the tag was stored (TH-5638).
+
+    The fix lowercases both the stored tags (via DB ARRAY/UNNEST/LOWER) and
+    the filter values so any casing (iOS, coDe, GPT4, ...) matches correctly.
+    """
+
+    def _make(self, organization, workspace, name, tags):
+        return EvalTemplate.no_workspace_objects.create(
+            name=name,
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            config={"output": "score"},
+            eval_tags=tags,
+            visible_ui=True,
+        )
+
+    def test_uppercase_filter_matches_lowercase_stored(self, organization, workspace):
+        """Filter tag 'CODE' matches eval stored with 'code'."""
+        self._make(organization, workspace, "eval_stored_lower", ["code"])
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"tags": ["CODE"]},
+        )
+        assert qs.filter(name="eval_stored_lower").exists()
+
+    def test_lowercase_filter_matches_uppercase_stored(self, organization, workspace):
+        """Filter tag 'code' matches eval stored with 'CODE'."""
+        self._make(organization, workspace, "eval_stored_upper", ["CODE"])
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"tags": ["code"]},
+        )
+        assert qs.filter(name="eval_stored_upper").exists()
+
+    def test_mixed_case_filter_matches_title_stored(self, organization, workspace):
+        """Filter tag 'CODE' matches eval stored with 'Code'."""
+        self._make(organization, workspace, "eval_stored_title", ["Code"])
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"tags": ["CODE"]},
+        )
+        assert qs.filter(name="eval_stored_title").exists()
+
+    def test_arbitrary_mixed_case_filter_matches(self, organization, workspace):
+        """Filter 'iOS' matches stored 'ios', 'IOS', 'iOS' — not just lower/upper/title."""
+        self._make(organization, workspace, "eval_ios_lower", ["ios"])
+        self._make(organization, workspace, "eval_ios_upper", ["IOS"])
+        self._make(organization, workspace, "eval_ios_mixed", ["iOS"])
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"tags": ["iOS"]},
+        )
+        names = set(qs.values_list("name", flat=True))
+        assert "eval_ios_lower" in names
+        assert "eval_ios_upper" in names
+        assert "eval_ios_mixed" in names
+
+    def test_tags_not_filter_is_also_case_insensitive(self, organization, workspace):
+        """Exclusion filter 'tags_not' works case-insensitively."""
+        self._make(organization, workspace, "eval_to_exclude", ["CODE"])
+        self._make(organization, workspace, "eval_to_keep", ["safety"])
+        qs = build_eval_list_queryset(
+            organization=organization,
+            workspace=workspace,
+            filters={"tags_not": ["code"]},
+        )
+        names = set(qs.values_list("name", flat=True))
+        assert "eval_to_exclude" not in names
+        assert "eval_to_keep" in names

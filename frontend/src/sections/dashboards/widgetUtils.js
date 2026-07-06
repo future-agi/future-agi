@@ -88,6 +88,50 @@ export const getSuggestedUnitConfig = (metricConfigs = []) => {
   return { unit: "", prefixSuffix: "prefix" };
 };
 
+// ApexCharts silently clips any series point outside yaxis min/max — if
+// every point in every series falls outside the configured bounds, the
+// chart renders fully blank with no indication why. Surface that as a
+// message instead of an empty canvas.
+export const getYAxisRangeWarning = (series = [], axisConfig = {}) => {
+  const rightCfg = axisConfig?.rightY || {};
+  const seriesAxis = axisConfig?.seriesAxis || {};
+  const hasRightAxis =
+    rightCfg.visible && Object.values(seriesAxis).some((s) => s === "right");
+  if (hasRightAxis) return null;
+
+  const leftAxisConfig = axisConfig?.leftY || {};
+  const parseBound = (value) => {
+    if (value === undefined || value === "") return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  };
+  const min = parseBound(leftAxisConfig.min);
+  const max = parseBound(leftAxisConfig.max);
+  if (min == null && max == null) return null;
+
+  let sawPoint = false;
+  for (const s of series) {
+    for (const pt of s.data || []) {
+      if (pt?.y == null) continue;
+      const y = Number(pt.y);
+      if (!Number.isFinite(y)) continue;
+      sawPoint = true;
+      if ((min == null || y >= min) && (max == null || y <= max)) {
+        return null;
+      }
+    }
+  }
+  if (!sawPoint) return null;
+
+  if (min != null && max != null) {
+    return `Data is outside your configured Y-axis range (${min}–${max}). Adjust bounds to see your data.`;
+  }
+  if (min != null) {
+    return `Data is outside your configured Y-axis minimum (${min}). Adjust bounds to see your data.`;
+  }
+  return `Data is outside your configured Y-axis maximum (${max}). Adjust bounds to see your data.`;
+};
+
 export const formatValueWithConfig = (
   val,
   cfg,

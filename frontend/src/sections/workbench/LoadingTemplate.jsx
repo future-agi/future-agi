@@ -36,7 +36,7 @@ export default function LoadingTemplate({ sx }) {
         </Typography>
         <Typography
           typography={"s2"}
-          color={"text.disabled"}
+          color={"text.secondary"}
           fontWeight={"fontWeightMedium"}
         >
           We are loading your template...

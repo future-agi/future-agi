@@ -22,6 +22,7 @@ import {
   getTraceListColumnDefs,
   FILTER_FOR_HAS_EVAL,
   generateAnnotationColumnsForTracing,
+  normalizeConfigKeys,
 } from "./common";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
@@ -32,19 +33,11 @@ import { APP_CONSTANTS } from "src/utils/constants";
 import { useReplaySessionsStoreShallow } from "../SessionsView/ReplaySessions/store";
 import { REPLAY_MODULES } from "../SessionsView/ReplaySessions/configurations";
 import { useShallowToggleAnnotationsStore } from "../../agents/store";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 const ROWS_LIMIT = 100;
 const EMPTY_EXTRA_FILTERS = [];
-
-// Normalize config object keys from snake_case to camelCase while preserving id values as snake_case
-const normalizeConfigKeys = (config) =>
-  config?.map((obj) => {
-    const result = {};
-    for (const [key, value] of Object.entries(obj)) {
-      result[key.replace(/_([a-z])/g, (_, c) => c.toUpperCase())] = value;
-    }
-    return result;
-  });
 
 const TraceGrid = React.forwardRef(
   (
@@ -62,6 +55,7 @@ const TraceGrid = React.forwardRef(
       hasEvalFilter,
       metricFilters,
       pendingCustomColumnsRef,
+      canonicalOrderRef,
       enabled = true,
       showErrors = false,
     },
@@ -194,6 +188,18 @@ const TraceGrid = React.forwardRef(
       [setFilterOpen, setExtraFilters],
     );
 
+    const { role } = useAuthContext();
+    // Viewers can browse traces but not edit tags — gate the cell affordance.
+    const canEditTags = Boolean(
+      RolePermission.OBSERVABILITY[PERMISSIONS.CREATE_EDIT_PROJECT]?.[role],
+    );
+    // Tells cell renderers (e.g. TagsCell) they are on the trace grid (so tag
+    // edits target the trace, not its root span) and whether the role may edit.
+    const gridContext = useMemo(
+      () => ({ entityType: "trace", canEditTags }),
+      [canEditTags],
+    );
+
     const dataSource = useMemo(
       () => {
         prefetchCache.current.clear();
@@ -243,6 +249,9 @@ const TraceGrid = React.forwardRef(
               // Use ref to get latest columns for comparison without triggering dataSource recreation
               // Compare only non-custom columns to avoid unnecessary re-renders
               if (newCols) {
+                // Canonical order, to restore default when leaving a saved view.
+                if (canonicalOrderRef)
+                  canonicalOrderRef.current = newCols.map((c) => c.id);
                 const currentNonCustom = (columnsRef.current || []).filter(
                   (c) => c.groupBy !== "Custom Columns",
                 );
@@ -274,7 +283,10 @@ const TraceGrid = React.forwardRef(
                       .filter((cc) => newById.has(cc.id))
                       .map((cc) => {
                         seen.add(cc.id);
-                        return { ...newById.get(cc.id), isVisible: cc.isVisible };
+                        return {
+                          ...newById.get(cc.id),
+                          isVisible: cc.isVisible,
+                        };
                       });
                     const added = newCols.filter((nc) => !seen.has(nc.id));
                     finalNonCustom = [...kept, ...added];
@@ -369,33 +381,17 @@ const TraceGrid = React.forwardRef(
       const annotationCols = columns.filter(
         (c) => c?.groupBy === "Annotation Metrics",
       );
-      const customCols = columns.filter((c) => c?.groupBy === "Custom Columns");
-      const otherCols = columns.filter(
-        (c) =>
-          c?.groupBy !== "Annotation Metrics" &&
-          c?.groupBy !== "Custom Columns",
-      );
-
-      // Build flat column defs for non-annotation, non-custom columns
-      const columnDefsResult = otherCols.map((c) => {
+      // Custom columns flat (ungrouped), in store order.
+      const columnDefsResult = [];
+      for (const c of columns) {
+        if (c?.groupBy === "Annotation Metrics") continue;
         bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-        return getTraceListColumnDefs(c);
-      });
-
-      // Group custom columns under a "Custom Columns" header (TH-4151)
-      if (customCols.length > 0) {
-        columnDefsResult.push({
-          headerName: "Custom Columns",
-          children: customCols.map((c) => {
-            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-            const colDef = getTraceListColumnDefs(c);
-            return {
-              ...colDef,
-              minWidth: 200,
-              flex: 1,
-            };
-          }),
-        });
+        if (c?.groupBy === "Custom Columns") {
+          const colDef = getTraceListColumnDefs(c);
+          columnDefsResult.push({ ...colDef, minWidth: 200, flex: 1 });
+          continue;
+        }
+        columnDefsResult.push(getTraceListColumnDefs(c));
       }
 
       // Add annotation columns as flat columns (not grouped)
@@ -430,6 +426,8 @@ const TraceGrid = React.forwardRef(
     const onColumnMoved = useCallback(
       (params) => {
         if (!params.finished) return;
+        // User drags only; programmatic moves would feed back into setColumns.
+        if (params.source !== "uiColumnMoved") return;
 
         const newOrder = params.api
           .getColumnState()
@@ -552,6 +550,7 @@ const TraceGrid = React.forwardRef(
           rowHeight={userTraceRowHeightMapping[cellHeight]?.height ?? 40}
           columnDefs={columnDefs}
           defaultColDef={defaultColDef}
+          context={gridContext}
           tooltipShowDelay={0}
           tooltipHideDelay={2000}
           tooltipInteraction={true}

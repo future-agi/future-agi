@@ -122,7 +122,7 @@ const ViewDetailsModal = ({ open, onClose, selectedViewDetail, title }) => {
             </Typography>
             <Typography
               fontSize={typographyTheme.caption.fontSize}
-              color="text.disabled"
+              color="text.secondary"
             >
               This evaluation hasn&apos;t produced a result for this span yet,
               or the previous result was removed.

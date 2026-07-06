@@ -127,7 +127,7 @@ const TemplateRow = ({ template, idx, count, isOutlined }) => {
         <Typography
           sx={{ paddingLeft: 5 }}
           variant="caption"
-          color="text.disabled"
+          color="text.secondary"
         >
           Best template out of the {count}
         </Typography>

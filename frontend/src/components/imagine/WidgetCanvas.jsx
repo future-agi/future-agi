@@ -74,7 +74,7 @@ export default function WidgetCanvas({
           </Typography>
           <Typography
             fontSize={12}
-            color="text.disabled"
+            color="text.secondary"
             textAlign="center"
             maxWidth={320}
           >

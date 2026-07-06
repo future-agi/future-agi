@@ -9,9 +9,7 @@ import CreateNewAgentCards from "../../CreateNewAgentCards";
 import { useFormContext } from "react-hook-form";
 
 const AgentBehaviourStep = ({ control }) => {
-  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null, {
-    status: true,
-  });
+  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null);
 
   // const [openKnowledgeBase, setOpenKnowledgeBase] = useState(false);
   useFormContext();
@@ -38,7 +36,7 @@ const AgentBehaviourStep = ({ control }) => {
         <Typography
           typography="s1"
           fontWeight="fontWeightRegular"
-          color="text.disabled"
+          color="text.secondary"
         >
           Define how your agent thinks, responds, and handles interactions.
         </Typography>
@@ -84,7 +82,7 @@ const AgentBehaviourStep = ({ control }) => {
             </Link>
           </Box>
 
-          <Typography variant="body2" color="text.primary">
+          <Typography variant="body2" color="text.secondary">
             Provide domain-specific information to help agent behaviour as per
             your business use-case
           </Typography>

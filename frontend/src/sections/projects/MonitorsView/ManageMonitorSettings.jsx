@@ -225,7 +225,7 @@ const ManageMonitorSettings = ({
       </Typography>
       <Typography
         variant="s2"
-        color="text.disabled"
+        color="text.secondary"
         fontWeight={"fontWeightRegular"}
       >
         Create alerts to get notifications

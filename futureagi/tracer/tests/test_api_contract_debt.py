@@ -321,12 +321,6 @@ def test_tracer_observe_helper_routes_reject_anonymous_before_work(
 
 @pytest.mark.django_db
 def test_tracer_system_public_routes_keep_expected_boundary_semantics(api_client):
-    otlp = api_client.post("/tracer/otlp/v1/traces", data={}, format="json")
-    assert otlp.status_code == status.HTTP_401_UNAUTHORIZED
-    assert otlp["Content-Type"].startswith("application/json")
-    assert otlp.data["type"] == "authentication_error"
-    assert otlp.data["code"] == "not_authenticated"
-
     health = api_client.get("/tracer/v1/health")
     assert health.status_code == status.HTTP_200_OK
     assert health["Content-Type"].startswith("application/json")

@@ -521,7 +521,6 @@ WarningGroupCard.propTypes = {
 
 const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   const theme = useTheme();
-  const isRunning = taskStatus === "running";
 
   const { data, isLoading } = useQuery({
     queryKey: ["eval-task-logs", evalTaskId],
@@ -531,7 +530,12 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
       }),
     select: (d) => d?.data?.result,
     enabled: !!evalTaskId,
-    refetchInterval: isRunning ? 5000 : false, // Auto-refresh every 5s when running
+    // Poll off the response's own status (not the prop) so the same fetch that
+    // reports "completed" also carries the final counts — no stale tick.
+    refetchInterval: (query) => {
+      const status = query?.state?.data?.data?.result?.status ?? taskStatus;
+      return status === "pending" || status === "running" ? 3000 : false;
+    },
   });
 
   // Enrich the backend-aggregated error groups with classifier metadata
@@ -595,12 +599,20 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
   const {
     success_count: successCount = 0,
     errors_count: errorsCount = 0,
+    skipped_count: skippedCount = 0,
     warnings_count: warningsCount = data?.warningsCount ?? 0,
     total_count: totalCount = 0,
     start_time: startTime,
     end_time: endTime,
     row_type: rowType = "spans",
+    run_type: runType,
+    status: responseStatus,
   } = data;
+  const effectiveStatus = responseStatus ?? taskStatus;
+  const isRunning = effectiveStatus === "running";
+  const isPending = effectiveStatus === "pending";
+  // Continuous tasks never finalize, so duration is meaningless for them.
+  const showDuration = runType !== "continuous";
   const TOTAL_LABEL_BY_ROW_TYPE = {
     spans: "Total Spans",
     traces: "Total Traces",
@@ -614,6 +626,8 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
     totalCount > 0 ? Math.round((errorsCount / totalCount) * 100) : 0;
   const hasErrors = errorGroups.length > 0;
   const hasWarnings = warningGroups.length > 0;
+  const processedCount = successCount + errorsCount + skippedCount;
+  const isDrained = totalCount > 0 && processedCount >= totalCount;
   const isHighErrorRate = errorRate > 50;
 
   return (
@@ -631,9 +645,13 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
           <Typography variant="caption" color="text.secondary" fontWeight={500}>
             {isRunning
               ? "Running..."
-              : totalCount > 0
-                ? "Completed"
-                : "No data"}
+              : isPending
+                ? "Pending"
+                : isDrained
+                  ? "Completed"
+                  : totalCount > 0
+                    ? "Processing"
+                    : "No data"}
           </Typography>
           <Typography variant="caption" color="text.secondary">
             {totalCount > 0 ? `${successCount} / ${totalCount} passed` : "—"}
@@ -701,13 +719,15 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
           color="info.main"
           bgColor={alpha(theme.palette.info.main, 0.1)}
         />
-        <StatCard
-          icon="solar:clock-circle-linear"
-          label="Duration"
-          value={formatDuration(startTime, endTime)}
-          color="secondary.main"
-          bgColor={alpha(theme.palette.secondary.main, 0.1)}
-        />
+        {showDuration && (
+          <StatCard
+            icon="solar:clock-circle-linear"
+            label="Duration"
+            value={formatDuration(startTime, endTime)}
+            color="secondary.main"
+            bgColor={alpha(theme.palette.secondary.main, 0.1)}
+          />
+        )}
       </Box>
 
       {/* Task Run Time */}
@@ -927,7 +947,7 @@ const TaskLogsView = ({ evalTaskId, taskStatus }) => {
       )}
 
       {/* Empty state for no errors */}
-      {!hasErrors && !hasWarnings && totalCount > 0 && (
+      {!hasErrors && !hasWarnings && isDrained && (
         <Box
           sx={{
             p: 3,

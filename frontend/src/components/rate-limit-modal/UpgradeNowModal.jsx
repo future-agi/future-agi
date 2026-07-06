@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import {
   Dialog,
   DialogTitle,
@@ -19,18 +19,18 @@ import {
 } from "@mui/material";
 import PropTypes from "prop-types";
 import Iconify from "../iconify";
-// purple import removed - using theme tokens for dark mode support
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
-import { stripePromise } from "src/pages/dashboard/settings/stripeVariables";
 import { LoadingButton } from "@mui/lab";
 import { useNavigate } from "react-router";
 import logger from "src/utils/logger";
+import { formatFeatures } from "src/utils/planFormatters";
+import { usePlansAndAddons } from "src/hooks/use-plans-and-addons";
 
 const PLAN_TYPES = {
   FREE: "free",
-  PRO: "basic",
+  PRO: "payg",
   CUSTOM: "custom",
 };
 
@@ -45,11 +45,10 @@ const planData = {
     footerText: "Advanced features with higher limits and SLAs",
   },
   [PLAN_TYPES.PRO]: {
-    name: "Pro/Business plan",
+    name: "Pay-as-you-go",
     icon: "circle",
     iconColor: "divider", // Gray color based on the image
-    tagline: "For fast growing organization",
-    // price: 50,
+    tagline: "For fast growing organizations",
     isCurrentPlan: false,
     includes: PLAN_TYPES.FREE,
     includesLowerTier: true,
@@ -84,46 +83,23 @@ function PlanCard({
   redirectToPlan,
 }) {
   const [isLoadingButton, setIsLoadingButton] = useState(false);
+  const isPaygPlan = plan === PLAN_TYPES.PRO;
 
   const handleContactSales = () => {
     trackEvent(Events.contactSalesClicked);
     window.open(
-      "https://calendly.com/nikhil-pareek/futureagi-demo?month=2024-12",
+      "https://meetings.hubspot.com/salil-kolhe/help-futureagi-app?uuid=3b9c0e31-9f37-4d63-ad15-88190748204a",
     );
   };
 
-  const handleUpgradeClick = async (subscription_type) => {
+  const handleUpgradeClick = async () => {
     setIsLoadingButton(true);
     try {
-      const stripe = await stripePromise;
-      if (!stripe) {
-        enqueueSnackbar("Failed to create checkout session", {
-          variant: "error",
-        });
-        setIsLoadingButton(false);
-        return;
-      }
-      const response = await axios.post(
-        endpoints.stripe.createCheckoutSession,
-        {
-          subscription_type: subscription_type,
-        },
-      );
+      const response = await axios.post(endpoints.settings.v2.upgradeToPayg);
+      const checkoutUrl = response?.data?.result?.checkout_url;
 
-      if (response?.data?.session_id) {
-        const { error } = await stripe.redirectToCheckout({
-          sessionId: response.data.session_id,
-        });
-        if (error) {
-          logger.error("Error during checkout:", error);
-        }
-      } else if (response?.data?.result?.message) {
-        enqueueSnackbar(response?.data?.result?.message, {
-          variant: "success",
-        });
-        enqueueSnackbar("Please refresh the page to view the changes.", {
-          variant: "info",
-        });
+      if (checkoutUrl) {
+        window.location.href = checkoutUrl;
       } else {
         enqueueSnackbar("Failed to create checkout session", {
           variant: "error",
@@ -131,6 +107,9 @@ function PlanCard({
       }
     } catch (err) {
       logger.error("Failed to create checkout session:", err);
+      enqueueSnackbar("Failed to create checkout session", {
+        variant: "error",
+      });
     } finally {
       setIsLoadingButton(false);
     }
@@ -201,7 +180,7 @@ function PlanCard({
         </Box>
       </Box>
       <Box sx={{ borderBottom: "1px solid", borderColor: "divider", pb: 1 }}>
-        {plan != PLAN_TYPES.CUSTOM && (
+        {plan != PLAN_TYPES.CUSTOM && !isPaygPlan && (
           <Typography
             variant="h5"
             sx={{ fontSize: "16px" }}
@@ -219,6 +198,27 @@ function PlanCard({
               /monthly
             </Typography>
           </Typography>
+        )}
+
+        {isPaygPlan && (
+          <Box>
+            <Typography
+              variant="h5"
+              sx={{ fontSize: "16px" }}
+              color={"text.primary"}
+              fontWeight={600}
+            >
+              Usage-based
+            </Typography>
+            <Typography
+              variant="body2"
+              sx={{ fontSize: "12px" }}
+              fontWeight={400}
+              color="text.primary"
+            >
+              No monthly platform fee
+            </Typography>
+          </Box>
         )}
 
         {plan == PLAN_TYPES.CUSTOM && (
@@ -292,27 +292,29 @@ function PlanCard({
           variant="contained"
           fullWidth
           color="primary"
-          onClick={() => handleUpgradeClick(plan)}
+          onClick={handleUpgradeClick}
           loading={isLoadingButton}
           sx={{
             mt: 3,
             borderRadius: "8px",
           }}
         >
-          Upgrade to Pro
+          Upgrade to PAYG
         </LoadingButton>
       )}
 
       {((currentPlan == PLAN_TYPES.FREE && plan == PLAN_TYPES.PRO) ||
         currentPlan == PLAN_TYPES.PRO) && (
         <Typography
+          component="div"
           fontSize={"10px"}
           sx={{
             mt: 0.5,
           }}
         >
-          Annual pro plan has upgraded limits and discounts
+          Pay-as-you-go unlocks higher limits and usage-based billing
           <Typography
+            component="span"
             fontSize={"10px"}
             fontWeight={500}
             onClick={() => redirectToPlan()}
@@ -330,7 +332,7 @@ PlanCard.propTypes = {
   name: PropTypes.string,
   icon: PropTypes.string,
   tagline: PropTypes.string,
-  price: PropTypes.number,
+  price: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
   plan: PropTypes.string,
   includes: PropTypes.string,
   includesLowerTier: PropTypes.bool,
@@ -342,49 +344,32 @@ PlanCard.propTypes = {
 };
 
 const PricingDialog = ({ open, onClose, title, description }) => {
-  const [plansLoading, setPlanLoading] = useState(true);
-  const [currentPlan, setCurrentPlan] = useState(PLAN_TYPES.FREE);
-  const [businessMonthlyPrice, setBusinessMonthlyPrice] = useState(null);
-  const [data, setData] = useState(null);
   const theme = useTheme();
   const navigate = useNavigate();
+
+  const { data: result, isLoading: plansLoading } = usePlansAndAddons(open);
+
+  const plansByKey = [
+    ...(result?.tiers || []),
+    ...(result?.addons || []),
+  ].reduce((acc, plan) => {
+    acc[plan.key] = plan;
+    return acc;
+  }, {});
+
+  const currentPlan = result?.current_plan || PLAN_TYPES.FREE;
+  const data = {
+    ...plansByKey,
+    [PLAN_TYPES.CUSTOM]:
+      result?.customDetails || plansByKey.enterprise || plansByKey.scale,
+  };
+  const businessMonthlyPrice =
+    plansByKey[PLAN_TYPES.PRO]?.platform_fee_monthly || 0;
 
   const redirectToPlan = () => {
     onClose();
     navigate("/dashboard/settings/pricing");
   };
-
-  useEffect(() => {
-    let isMounted = true;
-
-    const fetchAllData = async () => {
-      setPlanLoading(true);
-      try {
-        const [planRes, pricingRes] = await Promise.all([
-          axios.get(endpoints.stripe.subscriptionPlanStatus),
-          axios.post(endpoints.stripe.pricingCardDetails),
-        ]);
-
-        if (!isMounted) return;
-
-        setCurrentPlan(planRes.data?.result?.currentSubscription);
-        setData(planRes.data?.result?.data);
-        setBusinessMonthlyPrice(pricingRes.data?.result?.businessMonthlyPrice);
-      } catch (err) {
-        logger.error("Error fetching subscription or pricing details:", err);
-      } finally {
-        if (isMounted) setPlanLoading(false);
-      }
-    };
-
-    if (open) {
-      fetchAllData();
-    }
-
-    return () => {
-      isMounted = false;
-    };
-  }, [open]);
 
   return (
     <Dialog
@@ -460,7 +445,7 @@ const PricingDialog = ({ open, onClose, title, description }) => {
             <Grid item xs={12} md={4}>
               <PlanCard
                 {...planData[PLAN_TYPES?.FREE]}
-                features={data[PLAN_TYPES?.FREE]?.features}
+                features={formatFeatures(data?.[PLAN_TYPES?.FREE]?.features)}
                 currentPlan={currentPlan}
                 plan={PLAN_TYPES?.FREE}
                 redirectToPlan={redirectToPlan}
@@ -473,7 +458,7 @@ const PricingDialog = ({ open, onClose, title, description }) => {
               <PlanCard
                 {...planData[PLAN_TYPES?.PRO]}
                 price={businessMonthlyPrice}
-                features={data[PLAN_TYPES?.PRO]?.features}
+                features={formatFeatures(data?.[PLAN_TYPES?.PRO]?.features)}
                 currentPlan={currentPlan}
                 plan={PLAN_TYPES?.PRO}
                 redirectToPlan={redirectToPlan}
@@ -485,7 +470,7 @@ const PricingDialog = ({ open, onClose, title, description }) => {
             <Grid item xs={12} md={4}>
               <PlanCard
                 {...planData[PLAN_TYPES?.CUSTOM]}
-                features={data[PLAN_TYPES?.CUSTOM]?.features}
+                features={formatFeatures(data?.[PLAN_TYPES?.CUSTOM]?.features)}
                 currentPlan={currentPlan}
                 plan={PLAN_TYPES?.CUSTOM}
                 redirectToPlan={redirectToPlan}

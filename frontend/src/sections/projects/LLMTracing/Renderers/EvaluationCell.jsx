@@ -4,6 +4,8 @@ import { interpolateColorTokenBasedOnScore } from "src/utils/utils";
 import PropTypes from "prop-types";
 import NumericCell from "../../../common/DevelopCellRenderer/EvaluateCellRenderer/NumericCell";
 import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
+import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
+import { getEvalNonScoreStatusFromValue } from "src/utils/evalStatus";
 
 const EvaluationCell = ({ value, column }) => {
   const shouldReverse = column?.reverseOutput;
@@ -20,39 +22,19 @@ const EvaluationCell = ({ value, column }) => {
     !Array.isArray(value) &&
     value.error === true;
 
-  if (isError) {
+  // Non-score states (queued/running/skipped) and errored all render through
+  // the shared EvalStatusIndicator so every surface stays visually unified.
+  // The wrapper fills the cell so the "Evaluating…" skeleton covers it like a
+  // real result does.
+  const indicatorStatus =
+    getEvalNonScoreStatusFromValue(value) || (isError ? "errored" : null);
+  if (indicatorStatus) {
     return (
-      <div
-        style={{
-          padding: "0 12px",
-          display: "flex",
-          alignItems: "center",
-          gap: "6px",
-          height: "100%",
-          color: "#b91c1c",
-          fontSize: "13px",
-          fontWeight: 500,
-        }}
-        title="Eval errored"
-      >
-        <span
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: "14px",
-            height: "14px",
-            borderRadius: "50%",
-            background: "#fee2e2",
-            color: "#b91c1c",
-            fontSize: "10px",
-            fontWeight: 700,
-            lineHeight: 1,
-          }}
-        >
-          !
-        </span>
-        Error
+      <div style={{ width: "100%", height: "100%" }}>
+        <EvalStatusIndicator
+          status={indicatorStatus}
+          skippedReason={value?.skipped_reason}
+        />
       </div>
     );
   }

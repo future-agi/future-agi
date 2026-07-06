@@ -188,7 +188,7 @@ const SimulationEvaluationPage = ({
             <Typography fontSize={15} fontWeight={600} mb={0.5}>
               No evaluations added
             </Typography>
-            <Typography fontSize={12} color="text.disabled" mb={2}>
+            <Typography fontSize={12} color="text.secondary" mb={2}>
               Add evaluations to measure simulation quality
             </Typography>
             <Button

@@ -124,7 +124,7 @@ export default function useWorkflowExecution() {
     setIsInitiating(false);
     try {
       const res = await executeDataset({ graphId });
-      const executionIds = res.data?.result?.executionIds;
+      const executionIds = res.data?.result?.execution_ids;
       if (executionIds?.[0]) {
         startPolling(executionIds[0]);
       } else {

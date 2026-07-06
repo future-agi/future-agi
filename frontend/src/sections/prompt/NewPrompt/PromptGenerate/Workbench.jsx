@@ -71,7 +71,7 @@ const Workbench = ({
           mb: 3,
         }}
       >
-        <Typography fontSize="12px" color="text.disabled">
+        <Typography fontSize="12px" color="text.secondary">
           Test, Evaluate, and refine your prompts before running them on the
           full dataset, ensuring optimal results
         </Typography>

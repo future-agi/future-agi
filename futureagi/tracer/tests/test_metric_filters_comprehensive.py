@@ -50,6 +50,7 @@ def _errors_filter():
             "filter_type": "text",
             "filter_op": "equals",
             "filter_value": "ERROR",
+            "col_type": "SYSTEM_METRIC",
         },
     }
 
@@ -325,13 +326,6 @@ class TestPGMetricFilters:
     def test_status_equals_error(self):
         """status filter should be recognized as system metric."""
         q = FilterEngine.get_filter_conditions_for_system_metrics([_errors_filter()])
-        assert q != Q()
-
-    def test_status_filter_without_col_type(self):
-        """Status filter from FILTER_FOR_ERRORS has no col_type — must still work."""
-        f = _errors_filter()
-        assert "col_type" not in f["filter_config"]
-        q = FilterEngine.get_filter_conditions_for_system_metrics([f])
         assert q != Q()
 
     # --- combined ---

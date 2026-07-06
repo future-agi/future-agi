@@ -1578,7 +1578,7 @@ class FilterEngine:
 
     @staticmethod
     def get_filter_conditions_for_voice_call_annotations(
-        filters, user_id=None, span_filter_kwargs=None
+        filters, user_id=None, span_filter_kwargs=None, source_q=None
     ):
         """
         Create Django Q objects for filtering voice call traces based on annotations.
@@ -1672,6 +1672,11 @@ class FilterEngine:
         Args:
             filters: List of filter conditions
             user_id: Current user's ID (needed for my_annotations filter)
+            span_filter_kwargs: Equality kwargs matching scores to the outer
+                row, e.g. ``{"observation_span_id": OuterRef("id")}`` for
+                span-level queries.
+            source_q: Prebuilt Q matching scores to the outer row. Takes
+                precedence over ``span_filter_kwargs`` (allows OR scopes).
 
         Returns:
             tuple[Q, dict]: A Django Q object for filtering, and a dict of extra
@@ -1682,16 +1687,15 @@ class FilterEngine:
         if not filters:
             return Q(), {}
 
-        # Build a Q object for matching scores to the outer row.
-        # For span-level queries, callers pass span_filter_kwargs directly.
-        # For the default trace-level context, match scores on the trace
-        # directly OR on any observation span belonging to the trace.
-        if span_filter_kwargs is not None:
-            source_q = Q(**span_filter_kwargs)
-        else:
-            source_q = Q(trace_id=OuterRef("trace_id")) | Q(
-                observation_span__trace_id=OuterRef("trace_id")
-            )
+        # Default (no source_q / span_filter_kwargs): trace-level — scores
+        # on the trace OR on any span of the trace.
+        if source_q is None:
+            if span_filter_kwargs is not None:
+                source_q = Q(**span_filter_kwargs)
+            else:
+                source_q = Q(trace_id=OuterRef("trace_id")) | Q(
+                    observation_span__trace_id=OuterRef("trace_id")
+                )
 
         q_conditions = Q()
         extra_annotations = {}
@@ -2165,7 +2169,7 @@ class FilterEngine:
 
     @staticmethod
     def get_filter_conditions_for_has_annotation(
-        filters, observe_type="trace", annotation_label_ids=None
+        filters, observe_type="trace", annotation_label_ids=None, source_q=None
     ):
         """
         Create a Django Q object to filter traces/spans by annotation completeness.
@@ -2175,6 +2179,8 @@ class FilterEngine:
 
         When ``annotation_label_ids`` is provided, checks that ALL labels are
         present (fully annotated).  Without it, falls back to simple existence.
+
+        ``source_q`` (a prebuilt Q) overrides the ``observe_type`` dispatch.
         """
         if not filters:
             return Q()
@@ -2194,16 +2200,19 @@ class FilterEngine:
 
             label_ids = annotation_label_ids or []
 
+            # Score.trace_id is often NULL (annotations live on spans), so
+            # the trace branch checks both trace_id and the span's trace_id.
+            if source_q is not None:
+                score_filter = source_q
+            elif observe_type == "span":
+                score_filter = Q(observation_span_id=OuterRef("id"))
+            else:
+                score_filter = Q(trace_id=OuterRef("id")) | Q(
+                    observation_span__trace_id=OuterRef("id")
+                )
+
             if label_ids:
                 # Completeness check: fully annotated = has score for ALL labels.
-                # Score.trace_id is often NULL — annotations are stored on spans.
-                # Must check BOTH Score.trace_id AND Score.observation_span.trace_id.
-                if observe_type == "span":
-                    score_filter = Q(observation_span_id=OuterRef("id"))
-                else:
-                    score_filter = Q(trace_id=OuterRef("id")) | Q(
-                        observation_span__trace_id=OuterRef("id")
-                    )
                 fully_annotated_q = Q()
                 for lid in label_ids:
                     fully_annotated_q &= Q(
@@ -2212,23 +2221,7 @@ class FilterEngine:
                 return fully_annotated_q if filter_value else ~fully_annotated_q
             else:
                 # Fallback: simple existence check
-                if observe_type == "span":
-                    exists_q = Q(
-                        Exists(
-                            Score.objects.filter(
-                                observation_span_id=OuterRef("id"),
-                            )
-                        )
-                    )
-                else:
-                    exists_q = Q(
-                        Exists(
-                            Score.objects.filter(
-                                Q(trace_id=OuterRef("id"))
-                                | Q(observation_span__trace_id=OuterRef("id")),
-                            )
-                        )
-                    )
+                exists_q = Q(Exists(Score.objects.filter(score_filter)))
                 return exists_q if filter_value else ~exists_q
 
         return Q()

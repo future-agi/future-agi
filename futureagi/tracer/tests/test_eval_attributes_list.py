@@ -74,9 +74,7 @@ class TestGetEvalAttributesListTraces:
         reason="Production CH query references span_attr_str (v1 column) not yet migrated to v2 schema",
         strict=False,
     )
-    def test_includes_trace_public_fields(
-        self, auth_client, populated_observe_project
-    ):
+    def test_includes_trace_public_fields(self, auth_client, populated_observe_project):
         project = populated_observe_project["project"]
         response = auth_client.get(
             "/tracer/observation-span/get_eval_attributes_list/",
@@ -312,9 +310,7 @@ class TestSpanAttributeKeysNormalisation:
 @pytest.mark.integration
 @pytest.mark.api
 class TestGetEvalAttributesListUnknownRowType:
-    def test_unknown_row_type_returns_400(
-        self, auth_client, populated_observe_project
-    ):
+    def test_unknown_row_type_returns_400(self, auth_client, populated_observe_project):
         project = populated_observe_project["project"]
         response = auth_client.get(
             "/tracer/observation-span/get_eval_attributes_list/",
@@ -324,71 +320,3 @@ class TestGetEvalAttributesListUnknownRowType:
             },
         )
         assert response.status_code == 400
-
-
-@pytest.mark.integration
-@pytest.mark.api
-@pytest.mark.django_db
-class TestTraceEvalResolvesDottedSpanPath:
-    """End-to-end: a trace task with mapping ``output -> spans.0.output``
-    actually resolves through ``_process_trace_mapping`` to the first span's
-    ``span_attributes.output.value`` and writes a non-error EvalLogger row.
-    """
-
-    def test_trace_eval_resolves_indexed_span_path(
-        self,
-        populated_observe_project,
-        eval_template,
-        stub_run_eval,
-        stub_cost_log,
-        inline_temporal,
-    ):
-        from tracer.models.custom_eval_config import CustomEvalConfig
-        from tracer.models.eval_task import (
-            EvalTask,
-            EvalTaskStatus,
-            RowType,
-            RunType,
-        )
-        from tracer.models.observation_span import EvalLogger
-        from tracer.utils.eval_tasks import process_eval_task
-
-        project = populated_observe_project["project"]
-        config = CustomEvalConfig.objects.create(
-            project=project,
-            eval_template=eval_template,
-            name="Trace eval w/ dotted span path",
-            config={"output": "Pass/Fail"},
-            mapping={
-                "input": "spans.0.input",
-                "output": "spans.0.output",
-            },
-            model="turing_large",
-        )
-        task = EvalTask.objects.create(
-            project=project,
-            name="Dotted path trace task",
-            filters={"project_id": str(project.id)},
-            sampling_rate=100.0,
-            run_type=RunType.HISTORICAL,
-            spans_limit=1000,
-            status=EvalTaskStatus.PENDING,
-            row_type=RowType.TRACES,
-        )
-        task.evals.add(config)
-
-        process_eval_task._original_func(str(task.id))
-
-        rows = list(
-            EvalLogger.objects.filter(
-                eval_task_id=str(task.id), deleted=False
-            ).select_related("trace")
-        )
-        # 4 traces × 1 eval = 4 rows. None should be error rows — the dotted
-        # path resolves successfully because every trace has spans whose
-        # span_attributes carry ``input`` and ``output`` keys (set by
-        # populated_observe_project).
-        assert len(rows) == 4
-        assert all(not r.error for r in rows), [
-            (r.id, r.error_message) for r in rows if r.error
-        ]

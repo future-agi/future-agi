@@ -338,57 +338,77 @@ function StarInput({ value, settings, onChange, focused }) {
   const current = value?.rating || 0;
 
   return (
-    <Stack direction="row" spacing={0.25} alignItems="center">
-      {Array.from({ length: max }, (_, i) => {
-        const starVal = i + 1;
-        const isActive = starVal <= current;
-        return (
-          <Box
-            key={starVal}
-            onClick={() =>
-              onChange({ rating: starVal === current ? 0 : starVal })
-            }
-            sx={{
-              position: "relative",
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 32,
-              height: 32,
-              borderRadius: 0.5,
-              transition: "all 0.1s",
-              bgcolor: isActive ? "rgba(239,68,68,0.1)" : "transparent",
-              "&:hover": {
-                bgcolor: "rgba(239,68,68,0.15)",
-              },
-            }}
-          >
-            <Iconify
-              icon={isActive ? "solar:star-bold" : "solar:star-line-duotone"}
-              width={20}
+    <Stack spacing={0.5}>
+      <Stack direction="row" spacing={0.25} alignItems="center">
+        {Array.from({ length: max }, (_, i) => {
+          const starVal = i + 1;
+          const isActive = starVal <= current;
+          return (
+            <Box
+              key={starVal}
+              onClick={() =>
+                onChange({ rating: starVal === current ? 0 : starVal })
+              }
               sx={{
-                color: isActive ? "#ef4444" : "text.disabled",
-                transition: "color 0.1s",
+                position: "relative",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 32,
+                height: 32,
+                borderRadius: 0.5,
+                transition: "all 0.1s",
+                bgcolor: isActive ? "rgba(239,68,68,0.1)" : "transparent",
+                "&:hover": {
+                  bgcolor: "rgba(239,68,68,0.15)",
+                },
               }}
-            />
-            {focused && (
-              <Box
+            >
+              <Iconify
+                icon={isActive ? "solar:star-bold" : "solar:star-line-duotone"}
+                width={20}
                 sx={{
-                  position: "absolute",
-                  bottom: -1,
-                  fontSize: 8,
-                  fontWeight: 700,
-                  color: "text.disabled",
-                  lineHeight: 1,
+                  color: isActive ? "#ef4444" : "text.disabled",
+                  transition: "color 0.1s",
                 }}
-              >
-                {starVal}
-              </Box>
-            )}
-          </Box>
-        );
-      })}
+              />
+              {focused && (
+                <Box
+                  sx={{
+                    position: "absolute",
+                    bottom: -1,
+                    fontSize: 8,
+                    fontWeight: 700,
+                    color: "text.disabled",
+                    lineHeight: 1,
+                  }}
+                >
+                  {starVal === 10 ? 0 : starVal}
+                </Box>
+              )}
+            </Box>
+          );
+        })}
+      </Stack>
+      {focused && max >= 10 && (
+        <Box
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 0.5,
+            color: "text.secondary",
+          }}
+        >
+          <Typography variant="caption" sx={{ fontSize: 11 }}>
+            Press
+          </Typography>
+          <Kbd>0</Kbd>
+          <Typography variant="caption" sx={{ fontSize: 11 }}>
+            for 10
+          </Typography>
+        </Box>
+      )}
     </Stack>
   );
 }
@@ -500,6 +520,13 @@ function CategoricalInput({ settings, value, onChange, focused }) {
   const options = rawOptions.map(getOptionLabel).filter(Boolean);
   const isMulti = settings.multi_choice || false;
 
+  const keyHintFor = (i) => {
+    if (options.length > 10) return null;
+    if (i < 9) return i + 1;
+    if (i === 9 && options.length === 10) return 0;
+    return null;
+  };
+
   if (isMulti) {
     return (
       <Stack spacing={0.25}>
@@ -542,7 +569,7 @@ function CategoricalInput({ settings, value, onChange, focused }) {
               />
               <Typography variant="body2">{opt}</Typography>
             </Box>
-            {focused && i < 9 && <Kbd>{i + 1}</Kbd>}
+            {focused && keyHintFor(i) !== null && <Kbd>{keyHintFor(i)}</Kbd>}
           </Box>
         ))}
       </Stack>
@@ -586,7 +613,7 @@ function CategoricalInput({ settings, value, onChange, focused }) {
               />
               <Typography variant="body2">{opt}</Typography>
             </Box>
-            {focused && i < 9 && <Kbd>{i + 1}</Kbd>}
+            {focused && keyHintFor(i) !== null && <Kbd>{keyHintFor(i)}</Kbd>}
           </Box>
         );
       })}

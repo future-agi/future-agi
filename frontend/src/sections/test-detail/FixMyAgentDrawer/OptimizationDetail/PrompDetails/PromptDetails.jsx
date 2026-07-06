@@ -13,8 +13,8 @@ const PromptDetails = ({ optimizationId, trialId, showDiff }) => {
   if (showDiff) {
     return (
       <PromptDiffView
-        originalPrompt={trailPromptData?.basePrompt}
-        optimizedPrompt={trailPromptData?.trialPrompt}
+        originalPrompt={trailPromptData?.base_prompt}
+        optimizedPrompt={trailPromptData?.trial_prompt}
       />
     );
   }
@@ -24,7 +24,7 @@ const PromptDetails = ({ optimizationId, trialId, showDiff }) => {
       <Box sx={{ flex: 1 }}>
         <PromptPanel
           title="OPTIMIZED AGENT PROMPT"
-          prompt={trailPromptData?.trialPrompt}
+          prompt={trailPromptData?.trial_prompt}
         />
       </Box>
     </Box>

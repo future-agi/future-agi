@@ -191,6 +191,36 @@ class MemberListResponseSerializer(serializers.Serializer):
     result = MemberListResultSerializer()
 
 
+class WorkspaceMemberRowSerializer(serializers.Serializer):
+    """Contract for a single row of the workspace-members list — the shape built
+    by ``services.workspace_members._member_row`` (explicit members, auto-access
+    admins, and pending invites all share it)."""
+
+    id = serializers.UUIDField()
+    name = serializers.CharField(allow_blank=True)
+    email = serializers.EmailField()
+    ws_level = serializers.IntegerField(required=False, allow_null=True)
+    ws_role = serializers.CharField(required=False, allow_null=True)
+    org_level = serializers.IntegerField(required=False, allow_null=True)
+    org_role = serializers.CharField(required=False, allow_null=True)
+    status = serializers.CharField()
+    created_at = serializers.CharField(allow_blank=True)
+    type = serializers.ChoiceField(choices=["member", "invite"])
+    auto_access = serializers.BooleanField(required=False)
+
+
+class WorkspaceMemberListResultSerializer(serializers.Serializer):
+    results = WorkspaceMemberRowSerializer(many=True)
+    total = serializers.IntegerField()
+    page = serializers.IntegerField()
+    limit = serializers.IntegerField()
+
+
+class WorkspaceMemberListResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = WorkspaceMemberListResultSerializer()
+
+
 class MemberRoleUpdateResultSerializer(serializers.Serializer):
     message = serializers.CharField()
     changes = serializers.JSONField()

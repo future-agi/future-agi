@@ -66,6 +66,14 @@ _LEGACY_CDC_CHAIN_NAMES = (
     "spans_mv",
     "span_metrics_hourly",
     "tracer_observation_span",
+    "eval_metrics_hourly_mv",
+    "enduser_dict",
+    "trace_session_dict",
+    "tracer_trace",
+    "tracer_enduser",
+    "trace_session",
+    "tracer_eval_logger",
+    "eval_metrics_hourly",
 )
 
 # The legacy v1 ``spans`` DDL in this module conflicts with the v2 spans
@@ -316,6 +324,10 @@ CREATE TABLE IF NOT EXISTS tracer_eval_logger (
     -- Error tracking
     error UInt8 DEFAULT 0,
     error_message Nullable(String),
+
+    -- Work-item state (mirror of EvalLogger.status / config_hash)
+    status LowCardinality(String) DEFAULT 'completed',
+    config_hash Nullable(String),
 
     -- Explanation / metadata
     eval_explanation Nullable(String),
@@ -975,7 +987,6 @@ CREATE TABLE IF NOT EXISTS span_metrics_hourly (
 ENGINE = ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/span_metrics_hourly', '{replica}')
 PARTITION BY toYYYYMM(hour)
 ORDER BY (project_id, hour, observation_type, model, status)
-TTL hour + INTERVAL 365 DAY
 SETTINGS index_granularity = 8192, allow_nullable_key = 1;
 """
 
@@ -1037,7 +1048,6 @@ CREATE TABLE IF NOT EXISTS eval_metrics_hourly (
 ENGINE = ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/eval_metrics_hourly', '{replica}')
 PARTITION BY toYYYYMM(hour)
 ORDER BY (project_id, custom_eval_config_id, hour)
-TTL hour + INTERVAL 365 DAY
 SETTINGS index_granularity = 8192, allow_nullable_key = 1;
 """
 
@@ -1912,6 +1922,19 @@ POST_DDL_ALTERS: list[str] = [
     "idx_trace_session_id trace_session_id TYPE bloom_filter GRANULARITY 1",
     "ALTER TABLE tracer_eval_logger ADD INDEX IF NOT EXISTS "
     "idx_target_type target_type TYPE bloom_filter GRANULARITY 1",
+    # Work-item columns (mirror of EvalLogger.status / config_hash).
+    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+    "status LowCardinality(String) DEFAULT 'completed'",
+    "ALTER TABLE tracer_eval_logger ADD COLUMN IF NOT EXISTS "
+    "config_hash Nullable(String)",
+    # Strip the legacy 365d TTL from the v1 hourly rollup tables. The CREATE
+    # strings above no longer declare TTL, but existing prod clusters carry
+    # the original TTL on the live tables — these ALTERs remove it.
+    # In dev/test where the legacy CDC chain is gated off, the tables don't
+    # exist and these ALTERs error out; _ensure_analytics_schema() catches
+    # those as warnings (model_hub/apps.py:88-93).
+    "ALTER TABLE span_metrics_hourly REMOVE TTL",
+    "ALTER TABLE eval_metrics_hourly REMOVE TTL",
 ]
 
 
@@ -2026,6 +2049,8 @@ def get_legacy_chain_drop_statements() -> list[tuple[str, str]]:
     for name in _LEGACY_CDC_CHAIN_NAMES:
         if name.endswith("_mv"):
             statements.append((name, f"DROP VIEW IF EXISTS {name}"))
+        elif name.endswith("_dict"):
+            statements.append((name, f"DROP DICTIONARY IF EXISTS {name}"))
         else:
             statements.append((name, f"DROP TABLE IF EXISTS {name}"))
     return statements

@@ -142,7 +142,7 @@ const PersonaCreateEditForm = ({
           <Typography
             typography="s1"
             fontWeight="fontWeightRegular"
-            color="text.disabled"
+            color="text.secondary"
           >
             Create custom personas for more realistic scenario
           </Typography>

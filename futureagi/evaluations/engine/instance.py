@@ -39,6 +39,7 @@ _RUNTIME_ALLOWED_KEYS = {
         "choices",
         "choice_scores",
         "reverse_output",
+        "multi_choice",
     },
     "CustomPromptEvaluator": {
         "check_internet",
@@ -65,6 +66,7 @@ def resolve_version(eval_template, version_number=None, organization=None):
     """
     try:
         from django.db import models
+        from django.db.utils import DatabaseError, ProgrammingError
 
         from model_hub.models.evals_metric import EvalTemplateVersion
 
@@ -88,9 +90,16 @@ def resolve_version(eval_template, version_number=None, organization=None):
             resolved = EvalTemplateVersion.objects.get_default(eval_template)
 
         if resolved:
-            EvalTemplateVersion.all_objects.filter(id=resolved.id).update(
-                usage_count=models.F("usage_count") + 1
-            )
+            try:
+                EvalTemplateVersion.all_objects.filter(id=resolved.id).update(
+                    usage_count=models.F("usage_count") + 1
+                )
+            except (DatabaseError, ProgrammingError):
+                logger.warning(
+                    "usage_count_update_failed",
+                    version_id=str(resolved.id),
+                    exc_info=True,
+                )
 
         return resolved
 
@@ -247,7 +256,9 @@ def prepare_eval_config(
 
     # AgentEvaluator — multi-turn reasoning via Falcon AI AgentLoop
     if eval_type_id == "AgentEvaluator":
-        config["rule_prompt"] = eval_template.config.get("rule_prompt")
+        config["rule_prompt"] = config["rule_prompt"] if "rule_prompt" in config else eval_template.config.get(
+            "rule_prompt"
+        )
         config["model"] = model or eval_template.config.get("model")
         raw_output = eval_template.config.get("output")
         if eval_template.choice_scores and raw_output != "Pass/Fail":
@@ -275,6 +286,7 @@ def prepare_eval_config(
         config["knowledge_bases"] = eval_template.config.get("knowledge_bases", [])
         config["data_injection"] = eval_template.config.get("data_injection", {})
         config["summary"] = eval_template.config.get("summary", {"type": "concise"})
+        config["multi_choice"] = bool(getattr(eval_template, "multi_choice", False))
         # Pass org/workspace context for tool resolution
         config["organization_id"] = (
             str(eval_template.organization.id) if eval_template.organization else None
@@ -288,8 +300,12 @@ def prepare_eval_config(
     # CustomPromptEvaluator — LLM-as-judge
     elif eval_type_id == "CustomPromptEvaluator":
         config["provider"] = eval_template.config.get("provider")
-        config["rule_prompt"] = eval_template.config.get("rule_prompt")
-        config["system_prompt"] = eval_template.config.get("system_prompt")
+        config["rule_prompt"] = config["rule_prompt"] if "rule_prompt" in config else eval_template.config.get(
+            "rule_prompt"
+        )
+        config["system_prompt"] = config["system_prompt"] if "system_prompt" in config else eval_template.config.get(
+            "system_prompt"
+        )
         raw_output = eval_template.config.get("output")
         if eval_template.choice_scores and raw_output != "Pass/Fail":
             config["output_type"] = "choices"
@@ -299,7 +315,14 @@ def prepare_eval_config(
         if eval_template.config.get("messages"):
             config["messages"] = eval_template.config.get("messages")
         if eval_template.config.get("few_shot_examples"):
-            config["few_shot_examples"] = eval_template.config.get("few_shot_examples")
+            from model_hub.utils.few_shot_examples import (
+                expand_static_few_shot_examples,
+            )
+
+            config["few_shot_examples"] = expand_static_few_shot_examples(
+                eval_template.config.get("few_shot_examples"),
+                organization=eval_template.organization,
+            )
 
         # Resolve model
         raw_model = model or eval_template.config.get("model")
@@ -333,6 +356,7 @@ def prepare_eval_config(
             else []
         )
         config["choice_scores"] = eval_template.choice_scores
+        config["multi_choice"] = bool(getattr(eval_template, "multi_choice", False))
 
     # FutureAGI evals (DeterministicEvaluator, RankingEvaluator)
     if is_futureagi:

@@ -31,6 +31,41 @@ import "@xyflow/react/dist/style.css";
 import Dagre from "@dagrejs/dagre";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip";
+import { error as errorPalette, success } from "src/theme/palette";
+import FullscreenGraphDialog from "./FullscreenGraphDialog";
+
+// ---------------------------------------------------------------------------
+// Diff-overlay status (set by buildGraphDiff for the error-feed split view)
+// ---------------------------------------------------------------------------
+const DIFF_STATUS = {
+  FAIL_ONLY: "fail-only",
+  PASS_ONLY: "pass-only",
+  PASS_ONLY_GHOST: "pass-only-ghost",
+  MATCHED_REGRESSED: "matched-regressed",
+  MATCHED: "matched",
+};
+
+// Amber regression accent — not a 1:1 palette token yet, kept local.
+const DIFF_REGRESSED_COLOR = "#F5A623";
+
+// `_isFailurePoint` is the headline and takes priority over diff status.
+const getDiffOverlay = (diffStatus, isFailurePoint) => {
+  if (isFailurePoint) {
+    return { ringColor: errorPalette.main, badge: "✕", label: "Failed" };
+  }
+  switch (diffStatus) {
+    case DIFF_STATUS.FAIL_ONLY:
+      return { ringColor: errorPalette.main, badge: "+", label: null };
+    case DIFF_STATUS.PASS_ONLY:
+      return { ringColor: success.main, badge: "+", label: null };
+    case DIFF_STATUS.PASS_ONLY_GHOST:
+      return { ringColor: success.main, badge: "−", label: "Missing" };
+    case DIFF_STATUS.MATCHED_REGRESSED:
+      return { ringColor: DIFF_REGRESSED_COLOR, badge: "Δ", label: null };
+    default:
+      return { ringColor: null, badge: null, label: null };
+  }
+};
 
 // ---------------------------------------------------------------------------
 // Node type → color + icon
@@ -92,6 +127,28 @@ const AgentNode = ({ data }) => {
       : null;
   // Dim nodes that don't match the active filter
   const isDimmed = data._hasMatch === false;
+
+  // ── Optional diff overlay (used by the error-feed Split-with-working view).
+  // The Observe Tracing view never sets `_diffStatus` / `_isFailurePoint` so
+  // this is fully inert there.
+  //   "fail-only"          → extra step in failing trace          (red, "+")
+  //   "pass-only"          → step missing from failing            (green, "+")
+  //   "pass-only-ghost"    → missing step ghosted INTO failing    (green dash, "−")
+  //   "matched-regressed"  → same step both sides, but failing has
+  //                          errors / much slower                 (amber, "Δ")
+  //   "matched" / unset    → no overlay
+  //
+  // `_isFailurePoint` is the actual failure marker — it takes visual priority
+  // over diff status (a failed node is the headline, not a diff cue).
+  const diffStatus = data._diffStatus;
+  const isFailurePoint = !!data._isFailurePoint;
+  const isGhost = diffStatus === DIFF_STATUS.PASS_ONLY_GHOST;
+
+  const {
+    ringColor: diffRingColor,
+    badge: diffBadge,
+    label: diffBadgeLabel,
+  } = getDiffOverlay(diffStatus, isFailurePoint);
 
   // Tooltip: name, duration/tokens side-by-side, cost, eval bars, annotations
   const evals = data.evals || [];
@@ -369,33 +426,96 @@ const AgentNode = ({ data }) => {
       >
         <Box
           sx={{
+            position: "relative",
             display: "flex",
             alignItems: "center",
             gap: 0.75,
             px: isSentinel ? 1 : 1.25,
             py: isSentinel ? 0.25 : 0.5,
             borderRadius: isSentinel ? "20px" : "8px",
-            border: isSentinel ? "1.5px solid" : "2px solid",
-            borderColor: color.border,
-            bgcolor: isSentinel ? "transparent" : "background.paper",
-            boxShadow: isSentinel
-              ? "none"
-              : (theme) =>
-                  `0 1px 3px ${alpha(theme.palette.common.black, 0.06)}`,
+            // Ghosts get a dashed border so they read as "what could have been"
+            // at a glance, even before the user notices the badge.
+            border: isSentinel
+              ? "1.5px solid"
+              : isGhost
+                ? "2px dashed"
+                : "2px solid",
+            borderColor: diffRingColor ?? color.border,
+            // Failure point gets a soft red wash so the failed node is the
+            // most visible thing in the graph.
+            bgcolor: isSentinel
+              ? "transparent"
+              : isFailurePoint
+                ? (theme) =>
+                    alpha(
+                      "#DB2F2D",
+                      theme.palette.mode === "dark" ? 0.12 : 0.06,
+                    )
+                : "background.paper",
+            boxShadow: (theme) => {
+              const base = isSentinel
+                ? "none"
+                : `0 1px 3px ${alpha(theme.palette.common.black, 0.06)}`;
+              if (!diffRingColor) return base;
+              // Outer halo so the diff status reads at a glance even when
+              // the graph is zoomed out. Failure points get a stronger halo.
+              const haloAlpha = isFailurePoint ? 0.35 : 0.22;
+              const haloRadius = isFailurePoint ? 4 : 3;
+              const halo = `0 0 0 ${haloRadius}px ${alpha(diffRingColor, haloAlpha)}`;
+              return base === "none" ? halo : `${halo}, ${base}`;
+            },
             minWidth: isSentinel ? 44 : 80,
             justifyContent: isSentinel ? "center" : "flex-start",
             cursor: isSentinel ? "default" : "pointer",
-            opacity: isDimmed ? 0.3 : 1,
+            // Ghosts read as semi-transparent without losing the badge.
+            opacity: isGhost ? 0.6 : isDimmed ? 0.3 : 1,
             transition: "all 0.15s ease",
             "&:hover": isSentinel
               ? {}
               : {
                   boxShadow: (theme) =>
-                    `0 0 0 2px ${color.border}, 0 2px 8px ${alpha(theme.palette.common.black, 0.1)}`,
+                    `0 0 0 2px ${diffRingColor ?? color.border}, 0 2px 8px ${alpha(theme.palette.common.black, 0.1)}`,
                   transform: "scale(1.03)",
+                  opacity: 1,
                 },
           }}
         >
+          {/* Diff badge (top-right) — only rendered when this node was tagged
+              by the error-feed diff helper. Pure decoration; doesn't affect
+              the node's layout dimensions. Failure points and ghosts get a
+              text label alongside the symbol so the meaning is unambiguous. */}
+          {diffBadge && (
+            <Box
+              sx={{
+                position: "absolute",
+                top: -8,
+                right: -6,
+                minWidth: 16,
+                height: 16,
+                px: diffBadgeLabel ? 0.65 : 0.5,
+                gap: diffBadgeLabel ? 0.3 : 0,
+                borderRadius: "9px",
+                bgcolor: diffRingColor,
+                color: (theme) => theme.palette.common.white,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 9.5,
+                fontWeight: 700,
+                lineHeight: 1,
+                fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                letterSpacing: "0.02em",
+                textTransform: "uppercase",
+                boxShadow: (theme) =>
+                  `0 1px 4px ${alpha(theme.palette.common.black, 0.25)}`,
+                pointerEvents: "none",
+                whiteSpace: "nowrap",
+              }}
+            >
+              <span>{diffBadge}</span>
+              {diffBadgeLabel && <span>{diffBadgeLabel}</span>}
+            </Box>
+          )}
           <Iconify
             icon={color.icon}
             width={isSentinel ? 12 : 14}
@@ -466,7 +586,7 @@ const layoutGraph = (nodes, edges, direction = "LR") => {
 // ---------------------------------------------------------------------------
 // Build React Flow nodes + edges from API data
 // ---------------------------------------------------------------------------
-const buildFlowData = (graphData, direction = "LR", theme = null) => {
+export const buildFlowData = (graphData, direction = "LR", theme = null) => {
   if (!graphData?.nodes?.length) return { nodes: [], edges: [] };
 
   const nodeIdSet = new Set(graphData.nodes.map((n) => n.id));
@@ -474,7 +594,15 @@ const buildFlowData = (graphData, direction = "LR", theme = null) => {
   const flowNodes = graphData.nodes.map((node) => ({
     id: node.id,
     type: "agentNode",
-    data: { ...node, _direction: direction },
+    data: {
+      ...node,
+      span_count: node.spanCount ?? 0,
+      avg_latency_ms: node.avgLatencyMs ?? 0,
+      total_tokens: node.totalTokens ?? 0,
+      total_cost: node.totalCost ?? 0,
+      error_count: node.errorCount ?? 0,
+      _direction: direction,
+    },
     position: { x: 0, y: 0 },
     connectable: false,
   }));
@@ -495,6 +623,42 @@ const buildFlowData = (graphData, direction = "LR", theme = null) => {
       const edgeColor = theme ? theme.palette.text.disabled : "#94a3b8";
       const strokeColor = theme ? theme.palette.divider : "#cbd5e1";
       const labelBgColor = theme ? theme.palette.background.paper : "#ffffff";
+
+      // Synthetic "skipped path" edges from the error-feed diff helper
+      // override the regular styling: dashed red stroke + a SKIPPED PATH
+      // pill so the divergence is unmistakable. Inert in the Observe view.
+      if (edge._skipped) {
+        const skippedColor = errorPalette.main;
+        return {
+          id: `e-skipped-${idx}`,
+          source: edge.source,
+          target: edge.target,
+          type: "default",
+          animated: false,
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color: skippedColor,
+            width: 10,
+            height: 10,
+          },
+          style: {
+            stroke: skippedColor,
+            strokeWidth: 1.6,
+            strokeDasharray: "6 4",
+          },
+          label: "SKIPPED PATH",
+          labelStyle: {
+            fontSize: 9,
+            fill: "#fff",
+            fontWeight: 700,
+            letterSpacing: "0.04em",
+          },
+          labelBgStyle: { fill: skippedColor, fillOpacity: 0.95 },
+          labelBgPadding: [5, 3],
+          labelBgBorderRadius: 4,
+          zIndex: 5,
+        };
+      }
 
       return {
         id: `e-${idx}`,
@@ -529,7 +693,7 @@ const buildFlowData = (graphData, direction = "LR", theme = null) => {
 // ---------------------------------------------------------------------------
 // Zoom controls — top-right, appear on hover
 // ---------------------------------------------------------------------------
-const ZoomControls = () => {
+const ZoomControls = ({ isFullscreen, onToggleFullscreen }) => {
   const { zoomIn, zoomOut, fitView } = useReactFlow();
   const btnSx = {
     p: 0.5,
@@ -579,13 +743,22 @@ const ZoomControls = () => {
       </IconButton>
       <IconButton
         size="small"
-        onClick={() => fitView({ duration: 300, padding: 0.2 })}
+        title={isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+        onClick={onToggleFullscreen}
         sx={btnSx}
       >
-        <Iconify icon="mdi:fullscreen" width={14} />
+        <Iconify
+          icon={isFullscreen ? "mdi:fullscreen-exit" : "mdi:fullscreen"}
+          width={14}
+        />
       </IconButton>
     </Box>
   );
+};
+
+ZoomControls.propTypes = {
+  isFullscreen: PropTypes.bool,
+  onToggleFullscreen: PropTypes.func,
 };
 
 // ---------------------------------------------------------------------------
@@ -597,6 +770,8 @@ const AgentGraphInner = ({
   isError,
   direction = "LR",
   onNodeClick,
+  isFullscreen = false,
+  onToggleFullscreen,
 }) => {
   const theme = useTheme();
   const [isHovering, setIsHovering] = useState(false);
@@ -671,6 +846,7 @@ const AgentGraphInner = ({
         minHeight: 120,
         width: "100%",
         position: "relative",
+        bgcolor: "background.paper",
       }}
       onMouseEnter={() => setIsHovering(true)}
       onMouseLeave={() => setIsHovering(false)}
@@ -699,7 +875,12 @@ const AgentGraphInner = ({
         maxZoom={2}
         proOptions={{ hideAttribution: true }}
       >
-        {isHovering && <ZoomControls />}
+        {(isHovering || isFullscreen) && (
+          <ZoomControls
+            isFullscreen={isFullscreen}
+            onToggleFullscreen={onToggleFullscreen}
+          />
+        )}
       </ReactFlow>
     </Box>
   );
@@ -711,12 +892,24 @@ AgentGraphInner.propTypes = {
   isError: PropTypes.bool,
   direction: PropTypes.oneOf(["LR", "TB"]),
   onNodeClick: PropTypes.func,
+  isFullscreen: PropTypes.bool,
+  onToggleFullscreen: PropTypes.func,
 };
 
 const AgentGraph = (props) => (
-  <ReactFlowProvider>
-    <AgentGraphInner {...props} />
-  </ReactFlowProvider>
+  <FullscreenGraphDialog
+    onNodeClick={props.onNodeClick}
+    renderGraph={({ isFullscreen, onToggleFullscreen, onNodeClick }) => (
+      <ReactFlowProvider>
+        <AgentGraphInner
+          {...props}
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={onToggleFullscreen}
+          onNodeClick={onNodeClick}
+        />
+      </ReactFlowProvider>
+    )}
+  />
 );
 
 AgentGraph.propTypes = {

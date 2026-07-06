@@ -57,6 +57,7 @@ const OptmizationLoaderComponent = ({
             <Typography
               variant="s1"
               fontWeight="fontWeightRegular"
+              color="text.secondary"
               sx={{ width: "250px" }}
             >
               We are optimizing your agent’s issues, this might take some time.

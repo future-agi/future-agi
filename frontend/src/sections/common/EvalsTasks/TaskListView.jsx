@@ -9,7 +9,7 @@ import {
 } from "@mui/material";
 import { formatDistanceToNow } from "date-fns";
 import { useCallback, useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import PropTypes from "prop-types";
 import _ from "lodash";
 import Iconify from "src/components/iconify";
@@ -18,7 +18,20 @@ import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { enqueueSnackbar } from "src/components/snackbar";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import DeleteConfirmation from "./DeleteConfirmation";
+
+const POLL_INTERVAL_MS = 5000;
+
+// Continuous tasks stay in "running" forever — only poll their pending → running flip.
+const shouldPollRow = (row) => {
+  const status = row?.status?.toLowerCase?.();
+  const runType = row?.run_type?.toLowerCase?.();
+  if (status === "pending") return true;
+  if (status === "running") return runType === "historical";
+  return false;
+};
 
 // ── Status Config ──
 
@@ -213,26 +226,12 @@ EvalChips.propTypes = {
 
 // ── Filter Chips ──
 
+// Date range and project are intrinsic to every task (project has its own
+// column), so the Filters column shows only the user-applied filters.
 const buildFilterChips = (filtersApplied) => {
   if (!filtersApplied) return [];
   const chips = [];
 
-  const dateRange = filtersApplied.date_range || filtersApplied.dateRange;
-  if (dateRange?.length === 2) {
-    const [start, end] = dateRange;
-    const fmt = (d) => {
-      try {
-        return new Date(d).toLocaleDateString(undefined, {
-          month: "short",
-          day: "numeric",
-          year: "2-digit",
-        });
-      } catch {
-        return d;
-      }
-    };
-    chips.push(`Date: ${fmt(start)} → ${fmt(end)}`);
-  }
   const observationTypes =
     filtersApplied.observation_type || filtersApplied.observationType;
   if (observationTypes?.length) {
@@ -257,9 +256,6 @@ const buildFilterChips = (filtersApplied) => {
           : `${key} ${op} ${val}`,
       );
     });
-  }
-  if (filtersApplied.project_id) {
-    chips.push(`Project: ${filtersApplied.project_id.slice(0, 8)}…`);
   }
   [
     ["trace_id", "Trace"],
@@ -299,6 +295,7 @@ const TaskListView = ({
   _onEditTask,
   refreshKey,
 }) => {
+  const { role } = useAuthContext();
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
@@ -308,6 +305,7 @@ const TaskListView = ({
   const [deleteLoading, setDeleteLoading] = useState(false);
 
   const debouncedSearch = useDebounce(searchQuery.trim(), 500);
+  const queryClient = useQueryClient();
 
   // Fetch task list
   const apiEndpoint = observeId
@@ -354,6 +352,12 @@ const TaskListView = ({
       return resp?.result;
     },
     keepPreviousData: true,
+    structuralSharing: false,
+    refetchInterval: (query) =>
+      (query?.state?.data?.table || []).some(shouldPollRow)
+        ? POLL_INTERVAL_MS
+        : false,
+    refetchIntervalInBackground: false,
   });
 
   const items = useMemo(
@@ -373,23 +377,52 @@ const TaskListView = ({
     data?.total_count ??
     items.length;
 
-  // Pause/Resume mutations
+  // Optimistically flip the row's status across every cached eval-tasks page
+  // (the exact key carries page/sort/search) so the badge reacts on click.
+  const optimisticRowStatus = async (taskId, status) => {
+    await queryClient.cancelQueries({ queryKey: ["eval-tasks"] });
+    const prev = queryClient.getQueriesData({ queryKey: ["eval-tasks"] });
+    queryClient.setQueriesData({ queryKey: ["eval-tasks"] }, (old) =>
+      old?.table
+        ? {
+            ...old,
+            table: old.table.map((t) =>
+              t.id === taskId ? { ...t, status } : t,
+            ),
+          }
+        : old,
+    );
+    return { prev };
+  };
+  const rollbackRows = (ctx) =>
+    ctx?.prev?.forEach(([key, data]) => queryClient.setQueryData(key, data));
+
   const { mutate: pauseTask } = useMutation({
-    mutationFn: (taskId) => axios.post(endpoints.project.pauseEvalTask(taskId)),
-    onSuccess: () => refetch(),
+    // {} body required — the request-contract interceptor drops a bodyless POST.
+    mutationFn: (taskId) =>
+      axios.post(endpoints.project.pauseEvalTask(taskId), {}),
+    meta: { errorHandled: true },
+    onMutate: (taskId) => optimisticRowStatus(taskId, "paused"),
+    onError: (_e, _v, ctx) => {
+      rollbackRows(ctx);
+      enqueueSnackbar("Failed to pause task", { variant: "error" });
+    },
+    onSettled: () => refetch(),
   });
 
   const { mutate: resumeTask } = useMutation({
     mutationFn: (taskId) =>
-      axios.post(endpoints.project.resumeEvalTask(taskId)),
+      axios.post(endpoints.project.resumeEvalTask(taskId), {}),
     meta: { errorHandled: true },
-    onSuccess: () => refetch(),
-    onError: () => {
-      refetch();
+    // pending (not running): resume re-queues, so the badge moves forward only.
+    onMutate: (taskId) => optimisticRowStatus(taskId, "pending"),
+    onError: (_e, _v, ctx) => {
+      rollbackRows(ctx);
       enqueueSnackbar("Failed to resume task. It may have already finished.", {
         variant: "error",
       });
     },
+    onSettled: () => refetch(),
   });
 
   // Delete mutation
@@ -621,6 +654,11 @@ const TaskListView = ({
                   <Iconify icon="solar:trash-bin-trash-linear" width={16} />
                 }
                 onClick={() => setDeleteTarget(selectedItems)}
+                disabled={
+                  !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
+                    role
+                  ]
+                }
                 sx={{ textTransform: "none", fontSize: "12px", height: 32 }}
               >
                 Delete
@@ -641,6 +679,11 @@ const TaskListView = ({
               color="primary"
               startIcon={<Iconify icon="mingcute:add-line" width={18} />}
               onClick={onCreateTask}
+              disabled={
+                !RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][
+                  role
+                ]
+              }
               sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
             >
               Create Task

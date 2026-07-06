@@ -161,12 +161,16 @@ const SaveViewPopover = ({ anchorEl, open, onClose, onSave, isLoading }) => {
             fontSize: 12,
             fontWeight: 500,
             fontFamily: "'IBM Plex Sans', sans-serif",
-            bgcolor: name.trim() ? "#573FCC" : "text.disabled",
-            color: "background.paper",
             borderRadius: "2px",
             px: 2,
             py: 0.25,
-            "&:hover": { bgcolor: name.trim() ? "#4530a8" : "text.disabled" },
+            ...(name.trim()
+              ? {}
+              : {
+                  bgcolor: "text.disabled",
+                  color: "background.paper",
+                  "&:hover": { bgcolor: "text.disabled" },
+                }),
             "&.Mui-disabled": {
               bgcolor: "text.disabled",
               color: "background.paper",

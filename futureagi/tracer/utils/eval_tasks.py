@@ -4,7 +4,7 @@ from random import sample
 import structlog
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import OuterRef, Q
 from django.utils import timezone
 
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
@@ -29,9 +29,11 @@ from tracer.utils.eval import (
     evaluate_trace_observe,
     evaluate_trace_session_observe,
 )
+from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.filters import FilterEngine
 
 logger = structlog.get_logger(__name__)
+from tracer.utils.helper import get_annotation_labels_for_project
 
 # Cron-side drain window — once the dispatcher has fired every
 # per-span activity, the task stays in RUNNING until either the
@@ -131,10 +133,139 @@ def compute_drain_state(eval_task, eval_task_logger=None):
     }
 
 
-def parsing_evaltask_filters(filters: dict) -> Q:
+def annotation_source_q_for_row_type(row_type: RowType | str) -> Q:
+    """Q matching Score rows against a span-outer queryset, scoped per row_type.
+
+    Mirrors each row_type's grid so the runner selects the same rows the
+    user previewed. Voice/trace annotations are stored trace-scoped, so
+    those bridge trace OR span; spans and sessions match their own scope.
     """
-    Parses the input filters dictionary and returns a single combined Q object
-    for Django ORM filtering.
+    row_type = RowType(row_type)
+    if row_type in (RowType.TRACES, RowType.VOICE_CALLS):
+        return Q(trace_id=OuterRef("trace_id")) | Q(
+            observation_span__trace_id=OuterRef("trace_id")
+        )
+    if row_type == RowType.SESSIONS:
+        return Q(trace_session_id=OuterRef("trace__session_id"))
+    return Q(observation_span_id=OuterRef("id"))
+
+
+def parsing_evaltask_filters(
+    filters: dict, *, row_type: RowType | str
+) -> tuple[Q, dict]:
+    """Combine eval-task filter JSON into ``(Q, annotation_kwargs)``.
+
+    Per-handler dispatch mirrors ``list_spans_observe``
+    (``tracer/views/observation_span.py:1755-1826``): one flat ``filters``
+    list, each item carrying ``col_type``, passed to every handler.
+
+    ANNOTATION predicates are scoped per ``row_type`` (see
+    ``annotation_source_q_for_row_type``); everything else stays span-outer.
+
+    Callers must apply ``.annotate(**extra_annotations).filter(combined_q)``.
+    Per-label ANNOTATION filters (e.g. ``columnId == "<label_uuid>"``)
+    additionally require ``build_annotation_subqueries`` (with the same
+    row_type source Q) to have been applied to the queryset first —
+    ``process_eval_task`` does that; other callers must mirror it if they
+    accept per-label filters.
+
+    Accepts both ``filters`` and legacy ``span_attributes_filters`` keys.
+    """
+    annotation_source_q = annotation_source_q_for_row_type(row_type)
+    combined_q = Q()
+    extra_anns: dict = {}
+
+    if filters is None:
+        return combined_q, extra_anns
+
+    for key, value in filters.items():
+        if key in ("filters", "span_attributes_filters") and isinstance(value, list):
+            if key == "span_attributes_filters":
+                logger.error(
+                    "Eval task still uses the legacy "
+                    "`span_attributes_filters` key; re-save the task to "
+                    "migrate it to the canonical `filters` key."
+                )
+
+            items = value
+            if not items:
+                continue
+
+            q_sys = FilterEngine.get_filter_conditions_for_system_metrics(items)
+            if q_sys:
+                combined_q &= q_sys
+
+            # ANNOTATION rows (incl. my_annotations/annotator pinned to
+            # col_type=ANNOTATION) are skipped inside the handler at
+            # filters.py:1386-1391 — no call-site pre-filter needed.
+            q_eval = FilterEngine.get_filter_conditions_for_non_system_metrics(items)
+            if q_eval:
+                combined_q &= q_eval
+
+            # user_id=None: background activity, so my_annotations is a no-op.
+            q_anno, anno_anns = (
+                FilterEngine.get_filter_conditions_for_voice_call_annotations(
+                    items,
+                    user_id=None,
+                    source_q=annotation_source_q,
+                )
+            )
+            if q_anno:
+                combined_q &= q_anno
+            if anno_anns:
+                extra_anns.update(anno_anns)
+
+            q_span = FilterEngine.get_filter_conditions_for_span_attributes(items)
+            if q_span:
+                combined_q &= q_span
+
+            q_has_eval = FilterEngine.get_filter_conditions_for_has_eval(
+                items, observe_type="span"
+            )
+            if q_has_eval:
+                combined_q &= q_has_eval
+            q_has_anno = FilterEngine.get_filter_conditions_for_has_annotation(
+                items, source_q=annotation_source_q
+            )
+            if q_has_anno:
+                combined_q &= q_has_anno
+
+        elif key == "observation_type":
+            if isinstance(value, list):
+                combined_q &= Q(observation_type__in=list(value))
+            elif isinstance(value, str):
+                combined_q &= Q(observation_type=value)
+            else:
+                raise Exception(
+                    "Invalid value for observation_type filter; expected list or string"
+                )
+        elif key == "session_id":
+            traces = Trace.objects.filter(session_id=value).values_list("id", flat=True)
+            combined_q &= Q(trace_id__in=list(traces))
+        elif key == "date_range":
+            if isinstance(value, list) and len(value) == 2:
+                start_date, end_date = value
+                combined_q &= Q(created_at__range=[start_date, end_date])
+        elif key == "created_at":
+            combined_q &= Q(created_at__gte=value)
+        elif key == "project_id":
+            combined_q &= Q(project_id=value)
+
+    return combined_q, extra_anns
+
+
+def parsing_monitor_filters(filters: dict) -> Q:
+    """Legacy filter parser kept for monitor.py and monitor_graphs.py.
+
+    Monitors use a simpler filter UI than eval tasks — only SPAN_ATTRIBUTE
+    chips, no annotation/eval-metric/system-metric col_types. Keeping the
+    old single-handler dispatch here avoids monitor pages paying for the
+    annotate-subqueries cost or surfacing FieldErrors for filters they
+    never carry.
+
+    Eval task create/edit and the eval-task rerun count use the richer
+    ``parsing_evaltask_filters`` (above), which returns ``(Q, dict)`` and
+    routes by col_type.
     """
     combined_q = Q()
 
@@ -303,8 +434,22 @@ def process_eval_task(eval_task_id: str):
             )
 
         filters = Q()
+        extra_anns: dict = {}
         if eval_task.filters is not None:
-            filters = parsing_evaltask_filters(eval_task.filters)
+            filters, extra_anns = parsing_evaltask_filters(
+                eval_task.filters, row_type=eval_task.row_type
+            )
+
+        # Pre-annotate the ``annotation_<label_id>`` columns that per-label
+        # ANNOTATION filters reference, scoped to the row_type's Score sources.
+        annotation_labels = get_annotation_labels_for_project(eval_task.project_id)
+        span_qs = build_annotation_subqueries(
+            ObservationSpan.objects.all(),
+            annotation_labels,
+            eval_task.project.organization,
+            source_q=annotation_source_q_for_row_type(eval_task.row_type),
+        )
+        span_qs = span_qs.annotate(**extra_anns).filter(filters)
 
         # Branch the candidate queryset and dispatch activity on
         # row_type. The rest of the function operates on ``entity_qs``
@@ -325,9 +470,7 @@ def process_eval_task(eval_task_id: str):
             # A trace is in scope iff at least one of its spans matches
             # the existing span-level filters.
             entity_qs = Trace.objects.filter(
-                id__in=ObservationSpan.objects.filter(filters)
-                .values("trace_id")
-                .distinct()
+                id__in=span_qs.values("trace_id").distinct()
             )
             dispatch = evaluate_trace_observe
         elif eval_task.row_type == RowType.SESSIONS:
@@ -353,7 +496,7 @@ def process_eval_task(eval_task_id: str):
             # already aliases voiceCalls→spans (observation_span.py:2890),
             # and any conversation-type narrowing the user wants comes
             # through ``filters`` like every other span query.
-            entity_qs = ObservationSpan.objects.filter(filters)
+            entity_qs = span_qs
             dispatch = evaluate_observation_span_observe
         else:
             # Fail fast on unknown / future row types instead of silently

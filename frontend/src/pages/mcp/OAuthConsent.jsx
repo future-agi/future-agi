@@ -62,7 +62,7 @@ export default function OAuthConsent() {
             const result = response.data.result;
             setConsentData(result);
             const initial = {};
-            (result.availableGroups || []).forEach((group) => {
+            (result.available_groups || []).forEach((group) => {
               initial[group.slug] = group.checked;
             });
             setSelectedGroups(initial);
@@ -119,7 +119,7 @@ export default function OAuthConsent() {
           setConsentData(result);
           // Initialize checkbox state from server response
           const initial = {};
-          (result.availableGroups || []).forEach((group) => {
+          (result.available_groups || []).forEach((group) => {
             initial[group.slug] = group.checked;
           });
           setSelectedGroups(initial);
@@ -178,7 +178,6 @@ export default function OAuthConsent() {
       }
 
       const redirectUrl =
-        response.data?.result?.redirectUrl ||
         response.data?.result?.redirect_url;
       if (response.data?.status && redirectUrl) {
         window.location.href = redirectUrl;
@@ -199,7 +198,7 @@ export default function OAuthConsent() {
 
   // Render
   const selectedCount = Object.values(selectedGroups).filter(Boolean).length;
-  const totalCount = consentData?.availableGroups?.length || 0;
+  const totalCount = consentData?.available_groups?.length || 0;
 
   return (
     <Box
@@ -266,7 +265,7 @@ export default function OAuthConsent() {
                 Authorize MCP Connection
               </Typography>
               <Typography variant="body2" color="text.secondary" align="center">
-                <strong>{consentData.clientName}</strong> wants to access your
+                 <strong>{consentData.client_name}</strong> wants to access your
                 Future AGI account
               </Typography>
             </>
@@ -299,7 +298,7 @@ export default function OAuthConsent() {
                 Permissions ({selectedCount} of {totalCount})
               </Typography>
               <Stack spacing={0}>
-                {(consentData.availableGroups || []).map((group) => (
+                {(consentData.available_groups || []).map((group) => (
                   <FormControlLabel
                     key={group.slug}
                     control={

@@ -71,7 +71,7 @@ const UploadMediaChild = ({ control, type, onClose, onSubmit, isPending }) => {
           >
             {TitleMap[type]}
           </Typography>
-          <Typography variant="s1" color="text.disabled">
+          <Typography variant="s1" color="text.secondary">
             {DescriptionMap[type]}
           </Typography>
         </Box>

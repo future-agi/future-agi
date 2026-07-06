@@ -502,7 +502,7 @@ func TestTranslateMessage_UserMessage(t *testing.T) {
 		Content: mustJSON("Hello there"),
 	}
 
-	gc := translateMessage(msg)
+	gc := translateMessage(msg, nil)
 
 	if gc.Role != "user" {
 		t.Errorf("Role = %q, want %q", gc.Role, "user")
@@ -521,7 +521,7 @@ func TestTranslateMessage_AssistantToModel(t *testing.T) {
 		Content: mustJSON("I can help with that."),
 	}
 
-	gc := translateMessage(msg)
+	gc := translateMessage(msg, nil)
 
 	if gc.Role != "model" {
 		t.Errorf("Role = %q, want %q (assistant->model)", gc.Role, "model")
@@ -541,7 +541,7 @@ func TestTranslateMessage_ToolResult(t *testing.T) {
 		Content: mustJSON("72°F and sunny"),
 	}
 
-	gc := translateMessage(msg)
+	gc := translateMessage(msg, nil)
 
 	if gc.Role != "user" {
 		t.Errorf("Role = %q, want %q (tool -> user for function responses)", gc.Role, "user")
@@ -567,6 +567,43 @@ func TestTranslateMessage_ToolResult(t *testing.T) {
 	}
 }
 
+func TestTranslateMessage_ToolResult_ResolvesNameFromIDMap(t *testing.T) {
+	// A spec-compliant OpenAI tool message may omit Name and carry only the
+	// tool_call_id. functionResponse.Name must still resolve to the real
+	// function name via the id->name map built from the assistant turn.
+	msg := models.Message{
+		Role:       "tool",
+		ToolCallID: "call_0::sig::abc123",
+		Content:    mustJSON("72°F and sunny"),
+	}
+	names := map[string]string{"call_0::sig::abc123": "get_weather"}
+
+	gc := translateMessage(msg, names)
+
+	if gc.Parts[0].FunctionResponse == nil {
+		t.Fatal("FunctionResponse should not be nil")
+	}
+	if got := gc.Parts[0].FunctionResponse.Name; got != "get_weather" {
+		t.Errorf("FunctionResponse.Name = %q, want %q (resolved via id->name map)", got, "get_weather")
+	}
+}
+
+func TestTranslateMessage_ToolResult_StemFallbackStripsSignature(t *testing.T) {
+	// With no Name and no map entry, the name falls back to the id stem with
+	// the smuggled thoughtSignature stripped — never the raw "call_0::sig::..".
+	msg := models.Message{
+		Role:       "tool",
+		ToolCallID: "call_0::sig::abc123",
+		Content:    mustJSON("ok"),
+	}
+
+	gc := translateMessage(msg, nil)
+
+	if got := gc.Parts[0].FunctionResponse.Name; got != "call_0" {
+		t.Errorf("FunctionResponse.Name = %q, want %q (stem, signature stripped)", got, "call_0")
+	}
+}
+
 func TestTranslateMessage_AssistantWithToolCalls(t *testing.T) {
 	msg := models.Message{
 		Role:    "assistant",
@@ -583,7 +620,7 @@ func TestTranslateMessage_AssistantWithToolCalls(t *testing.T) {
 		},
 	}
 
-	gc := translateMessage(msg)
+	gc := translateMessage(msg, nil)
 
 	if gc.Role != "model" {
 		t.Errorf("Role = %q, want %q", gc.Role, "model")
@@ -635,7 +672,7 @@ func TestTranslateMessage_AssistantWithMultipleToolCalls(t *testing.T) {
 		},
 	}
 
-	gc := translateMessage(msg)
+	gc := translateMessage(msg, nil)
 
 	if gc.Role != "model" {
 		t.Errorf("Role = %q, want %q", gc.Role, "model")
@@ -658,7 +695,7 @@ func TestTranslateMessage_EmptyContent(t *testing.T) {
 		Content: nil,
 	}
 
-	gc := translateMessage(msg)
+	gc := translateMessage(msg, nil)
 
 	if gc.Role != "user" {
 		t.Errorf("Role = %q, want %q", gc.Role, "user")
@@ -996,7 +1033,7 @@ func TestTranslateMessage_Gemini_VisionContent_ImageOnly(t *testing.T) {
 		]`),
 	}
 
-	gc := translateMessage(msg)
+	gc := translateMessage(msg, nil)
 
 	if gc.Role != "user" {
 		t.Errorf("Role = %q, want %q", gc.Role, "user")
@@ -1025,7 +1062,7 @@ func TestTranslateMessage_Gemini_VisionContent_WithText(t *testing.T) {
 		]`),
 	}
 
-	gc := translateMessage(msg)
+	gc := translateMessage(msg, nil)
 
 	if gc.Role != "user" {
 		t.Errorf("Role = %q, want %q", gc.Role, "user")
@@ -1052,7 +1089,7 @@ func TestTranslateMessage_Gemini_VisionContent_TextOnlyFallback(t *testing.T) {
 		Content: json.RawMessage(`[{"type":"text","text":"Just a text message"}]`),
 	}
 
-	gc := translateMessage(msg)
+	gc := translateMessage(msg, nil)
 
 	if gc.Role != "user" {
 		t.Errorf("Role = %q, want %q", gc.Role, "user")
@@ -1996,5 +2033,32 @@ func TestMapGeminiErrorType(t *testing.T) {
 				t.Errorf("mapGeminiErrorType(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+// Gemini reports thinking tokens as thoughtsTokenCount, separate from
+// candidatesTokenCount, but bills them as output. CompletionTokens must fold
+// them in, or thinking-on runs (the cluster-RCA agent's default) under-bill by
+// exactly their thinking cost — invisibly, since cost is derived from it.
+func TestTranslateResponse_FoldsThinkingTokensIntoCompletion(t *testing.T) {
+	resp := &geminiResponse{
+		UsageMetadata: &geminiUsageMetadata{
+			PromptTokenCount:     100,
+			CandidatesTokenCount: 40,
+			ThoughtsTokenCount:   25,
+			TotalTokenCount:      165,
+		},
+	}
+
+	out := translateResponse(resp, "gemini-3.5-flash")
+
+	if out.Usage == nil {
+		t.Fatal("expected usage to be populated")
+	}
+	if got, want := out.Usage.CompletionTokens, 65; got != want {
+		t.Fatalf("CompletionTokens = %d, want %d (candidates 40 + thoughts 25)", got, want)
+	}
+	if got, want := out.Usage.PromptTokens, 100; got != want {
+		t.Fatalf("PromptTokens = %d, want %d", got, want)
 	}
 }

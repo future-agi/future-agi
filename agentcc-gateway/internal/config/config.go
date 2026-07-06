@@ -939,6 +939,18 @@ func loadFromFile(cfg *Config, path string) error {
 	return yaml.Unmarshal([]byte(expanded), cfg)
 }
 
+// authKeyConfigured reports whether an auth key with the given raw value is
+// already present (e.g. loaded from config.yaml), so env seeding doesn't
+// clobber an operator's explicit entry.
+func authKeyConfigured(keys []AuthKeyConfig, raw string) bool {
+	for i := range keys {
+		if keys[i].Key == raw {
+			return true
+		}
+	}
+	return false
+}
+
 func loadFromEnv(cfg *Config) {
 	if v := os.Getenv("AGENTCC_PORT"); v != "" {
 		if port, err := strconv.Atoi(v); err == nil {
@@ -977,6 +989,34 @@ func loadFromEnv(cfg *Config) {
 	}
 	if v := os.Getenv("AGENTCC_WEBHOOK_SECRET"); v != "" {
 		cfg.ControlPlane.WebhookSecret = v
+	}
+
+	// Auth env overrides. Evaluate the explicit toggle first, then let a present
+	// internal API key have the final say: it seeds the key store and forces auth
+	// on. A configured key can therefore never leave the gateway open, even if
+	// AGENTCC_AUTH_ENABLED=false is also set (fail closed).
+	if v := os.Getenv("AGENTCC_AUTH_ENABLED"); v != "" {
+		if enabled, err := strconv.ParseBool(v); err == nil {
+			cfg.Auth.Enabled = enabled
+		}
+	}
+	if v := os.Getenv("AGENTCC_INTERNAL_API_KEY"); v != "" {
+		cfg.Auth.Enabled = true
+		// Seed as an "internal" key: byok (the keystore's default type) is barred
+		// from the global, FutureAGI-credentialed providers, so a mistyped seed
+		// authenticates and then 403s the backend's own LLM route.
+		//
+		// Skip when this key is already configured (e.g. in config.yaml): the
+		// keystore is last-write-wins by hash, so appending here would override
+		// — and could re-type — an operator's explicit entry.
+		if !authKeyConfigured(cfg.Auth.Keys, v) {
+			cfg.Auth.Keys = append(cfg.Auth.Keys, AuthKeyConfig{
+				Name:    "internal-backend",
+				Key:     v,
+				Owner:   "futureagi-backend",
+				KeyType: "internal",
+			})
+		}
 	}
 
 	// Redis state env overrides.

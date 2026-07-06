@@ -49,7 +49,7 @@ export default function ExecutionDetailView({ graphId, executionId }) {
 
     const newNodeStatuses = {};
     for (const node of executionData.nodes) {
-      const nodeExecution = node.nodeExecution || node.node_execution;
+      const nodeExecution = node.node_execution;
       const currentStatus = nodeExecution?.status?.toLowerCase();
       const nodeExecId = nodeExecution?.id;
       const prevNodeStatus = nodeStatusesRef.current[node.id];
@@ -82,18 +82,17 @@ export default function ExecutionDetailView({ graphId, executionId }) {
       setSelectedNodeId(null);
       return;
     }
-    // Find last node that has a nodeExecution (skip pending nodes)
-    const executedNodes = executionData.nodes.filter(
-      (n) => n.nodeExecution || n.node_execution,
-    );
+    // Find last node that has a node_execution (skip pending nodes)
+    const executedNodes = executionData.nodes.filter((n) => n.node_execution);
     if (executedNodes.length === 0) {
       setSelectedNodeId(null);
       return;
     }
     const lastNode = executedNodes[executedNodes.length - 1];
-    if (lastNode.subGraph?.nodes?.length) {
-      const executedInner = lastNode.subGraph.nodes.filter(
-        (n) => n.nodeExecution || n.node_execution,
+    const lastNodeSubGraph = lastNode.sub_graph;
+    if (lastNodeSubGraph?.nodes?.length) {
+      const executedInner = lastNodeSubGraph.nodes.filter(
+        (n) => n.node_execution,
       );
       if (executedInner.length > 0) {
         const lastInner = executedInner[executedInner.length - 1];
@@ -122,7 +121,7 @@ export default function ExecutionDetailView({ graphId, executionId }) {
           justifyContent: "center",
         }}
       >
-        <Typography typography="s2" color="text.disabled">
+        <Typography typography="s2" color="text.secondary">
           Select an execution to view details
         </Typography>
       </Box>

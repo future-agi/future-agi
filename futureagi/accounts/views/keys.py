@@ -1,6 +1,10 @@
+import hashlib
 import traceback
 from math import ceil
 
+import redis
+import structlog
+from django.conf import settings
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
@@ -8,6 +12,25 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ViewSet
+
+logger = structlog.get_logger(__name__)
+
+FI_AUTH_REVOKE_CHANNEL = "fi:auth:revoke"
+
+
+def _publish_key_revocation(api_key: str, secret_key: str) -> None:
+    """
+    Publish a cache-bust to fi-collector so revoked keys are evicted immediately.
+    """
+    try:
+        cache_key = hashlib.sha256(f"{api_key}:{secret_key}".encode()).hexdigest()
+        r = redis.Redis.from_url(
+            getattr(settings, "REDIS_URL", "redis://localhost:6379/0"),
+            decode_responses=True,
+        )
+        r.publish(FI_AUTH_REVOKE_CHANNEL, cache_key)
+    except Exception:
+        logger.warning("fi_auth_revoke_publish_failed", exc_info=True)
 
 from accounts.models import OrgApiKey
 from accounts.serializers.contracts import (
@@ -231,6 +254,7 @@ class SecretKeyAPIViewSet(ViewSet):
                     return self._gm.bad_request(get_error_message("API_KEY_DISABLED"))
                 apikey.enabled = False
                 apikey.save(update_fields=["enabled"])
+                _publish_key_revocation(apikey.api_key, apikey.secret_key)
 
                 return self._gm.success_response(f"{apikey.name} has been disabled")
             except OrgApiKey.DoesNotExist:
@@ -317,6 +341,7 @@ class SecretKeyAPIViewSet(ViewSet):
             org_key.deleted = True
             org_key.deleted_at = timezone.now()
             org_key.save(update_fields=["deleted", "deleted_at"])
+            _publish_key_revocation(org_key.api_key, org_key.secret_key)
 
             return self._gm.success_response(f"Successfully deleted {org_key.name}")
         except OrgApiKey.DoesNotExist:

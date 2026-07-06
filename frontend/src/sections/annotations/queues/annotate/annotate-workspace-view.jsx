@@ -453,6 +453,7 @@ export default function AnnotateWorkspaceView() {
       isReviewWorkspaceMode && requiresReview ? "pending_review" : undefined,
     excludeReviewStatus:
       !isReviewWorkspaceMode && requiresReview ? "pending_review" : undefined,
+    reserve: !isReviewWorkspaceMode && queueDetail?.annotations_required === 1,
     enabled: detailEnabled,
     staleTime: 0,
     refetchOnMount: "always",
@@ -1399,8 +1400,10 @@ export default function AnnotateWorkspaceView() {
 
   // Reservation conflict
   if (
-    detailError?.statusCode === 400 ||
-    detailError?.response?.status === 400
+    detailError?.statusCode === 409 ||
+    detailError?.response?.status === 409 ||
+    detailError?.code === "item_reserved" ||
+    detailError?.response?.data?.code === "item_reserved"
   ) {
     const msg =
       detailError?.detail ||

@@ -61,7 +61,7 @@ const MetadataItem = ({
         {iconSrc && <SvgColor sx={{ width: 20, ...iconSx }} src={iconSrc} />}
         <Typography
           typography="s2_1"
-          color="text.disabled"
+          color="text.secondary"
           fontWeight="fontWeightRegular"
           sx={{ ...sx }}
         >

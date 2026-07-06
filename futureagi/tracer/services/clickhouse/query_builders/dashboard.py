@@ -39,6 +39,11 @@ def _sanitize_attr_key(key: str) -> str:
     return key
 
 
+def _snap_to_hour(dt: datetime) -> datetime:
+    """Truncate a datetime to the hour (ClickHouse ``toStartOfHour``)."""
+    return dt.replace(minute=0, second=0, microsecond=0)
+
+
 # ---------------------------------------------------------------------------
 # Metric resolution tables
 # ---------------------------------------------------------------------------
@@ -108,6 +113,12 @@ METRIC_UNITS: dict[str, str] = {
 # ``rescale_rate_to_percent`` so the result matches the ``%`` unit.
 _RATE_INDICATOR_METRICS = frozenset({"error_rate"})
 
+# Covered by dashboard_attr_rollup. Adding one: extend the MV's ARRAY JOIN list too.
+_ROLLUP_COVERED_ATTRS = frozenset({"final_status", "country"})
+
+# Rollup is hour-resolution; sub-hour granularities keep the spans scan.
+_ROLLUP_GRANULARITIES = frozenset({"hour", "day", "week", "month", "year"})
+
 # Metrics that are non-numeric identifiers — force count_distinct aggregation
 _COUNT_DISTINCT_METRICS = frozenset(
     {
@@ -172,6 +183,23 @@ AGGREGATIONS: dict[str, str] = {
     "count_distinct": "uniq({col})",
     "sum": "sum({col})",
 }
+
+# Aggregations that require a numeric operand. ClickHouse raises "Illegal type
+# String of argument for aggregate function ..." when these are applied to a
+# text column (e.g. a string custom attribute). ``count`` / ``count_distinct``
+# work on any type, so they are NOT listed here.
+_NUMERIC_ONLY_AGGREGATIONS = frozenset(
+    {"avg", "sum", "median", "p25", "p50", "p75", "p90", "p95", "p99"}
+)
+
+
+class InvalidMetricCombinationError(ValueError):
+    """A metric's aggregation cannot be applied to its value type.
+
+    e.g. averaging a text custom attribute. The message is user-facing — callers
+    surface it per-widget so one nonsensical metric does not fail the whole
+    dashboard query.
+    """
 
 FILTER_OPERATORS: dict[str, str] = {
     "less_than": "< %({prefix}{idx}_val)s",
@@ -349,6 +377,10 @@ class DashboardQueryBuilder:
     project_ids and builds multiple queries (one per metric).
     """
 
+    # dashboard_attr_rollup lives only in the v2 schema; the v2 subclass flips
+    # this True. Base/v1 never routes to the rollup (fail-closed: missing table).
+    _attr_rollup_available: bool = False
+
     def __init__(self, query_config: dict) -> None:
         self.config = query_config
         self.project_ids = query_config.get("project_ids", [])
@@ -494,6 +526,46 @@ class DashboardQueryBuilder:
     # System metric
     # ------------------------------------------------------------------
 
+    def _attr_rollup_window_covered(self, start_date: datetime) -> bool:
+        """True only when the rollup flag is on AND the requested window starts
+        within the backfilled-and-covered range — fail-closed on a fresh deploy
+        (off until ops backfills the rollup and sets the coverage date)."""
+        from django.conf import settings
+
+        if not getattr(settings, "DASHBOARD_ATTR_ROLLUP_ENABLED", False):
+            return False
+        covered_since = getattr(settings, "DASHBOARD_ATTR_ROLLUP_COVERED_SINCE", None)
+        if covered_since is None:
+            return False
+        if covered_since.tzinfo is None:
+            covered_since = covered_since.replace(tzinfo=UTC)
+        if start_date.tzinfo is None:
+            start_date = start_date.replace(tzinfo=UTC)
+        return start_date >= covered_since
+
+    def _should_use_rollup(
+        self,
+        metric_name: str,
+        aggregation: str,
+        single_bd: dict | None,
+        per_metric_filters: list[dict],
+        start_date: datetime,
+    ) -> bool:
+        """True only for the covered latency-breakdown shape on a v2 build with the
+        rollup enabled and the window inside coverage — fail-closed everywhere else."""
+        return (
+            self._attr_rollup_available
+            and metric_name == "latency"
+            and aggregation == "avg"
+            and self.granularity in _ROLLUP_GRANULARITIES
+            and single_bd is not None
+            and single_bd.get("type") == "custom_attribute"
+            and single_bd.get("name") in _ROLLUP_COVERED_ATTRS
+            and not per_metric_filters
+            and not self.global_filters
+            and self._attr_rollup_window_covered(start_date)
+        )
+
     def _build_system_metric_query(
         self,
         metric_name: str,
@@ -504,6 +576,32 @@ class DashboardQueryBuilder:
     ) -> tuple[str, dict]:
         # Normalize: saved widgets may have capitalized names (e.g. "Latency")
         metric_name = metric_name.lower() if metric_name else metric_name
+
+        # Covered latency-breakdown shape → the pre-aggregated rollup; anything
+        # else falls through to the spans scan (fail-closed, see _should_use_rollup).
+        single_bd = self.breakdowns[0] if len(self.breakdowns) == 1 else None
+        if self._should_use_rollup(
+            metric_name, aggregation, single_bd, per_metric_filters, params["start_date"]
+        ):
+            params = dict(params)
+            params["attr_key"] = _sanitize_attr_key(single_bd["name"])
+            # Rollup is hourly — snap the window to whole hours so no partial bucket.
+            params["start_date"] = _snap_to_hour(params["start_date"])
+            params["end_date"] = _snap_to_hour(params["end_date"])
+            rollup_query = (
+                f"SELECT {bucket_fn}(hour) AS time_bucket,\n"
+                "       attr_value AS breakdown_value,\n"
+                "       sumMerge(latency_sum) / countMerge(n) AS value\n"
+                "FROM dashboard_attr_rollup\n"
+                "WHERE project_id IN %(project_ids)s\n"
+                "  AND attr_key = %(attr_key)s\n"
+                "  AND hour >= %(start_date)s\n"
+                "  AND hour < %(end_date)s\n"
+                "GROUP BY time_bucket, breakdown_value\n"
+                "ORDER BY time_bucket, breakdown_value"
+            )
+            return rollup_query, params
+
         if metric_name not in SYSTEM_METRICS:
             # Fallback: treat unknown system metrics as custom span attributes
             # (handles widgets saved with wrong type, e.g. span attribute saved as system_metric)
@@ -1073,6 +1171,12 @@ class DashboardQueryBuilder:
         if attr_type == "number":
             col_expr = f"span_attr_num['{attr_key}']"
         else:
+            if aggregation in _NUMERIC_ONLY_AGGREGATIONS:
+                raise InvalidMetricCombinationError(
+                    f"'{aggregation}' can't be applied to the text attribute "
+                    f"'{attr_key}'. Use count or count distinct, or pick a "
+                    f"numeric attribute."
+                )
             col_expr = f"span_attr_str['{attr_key}']"
 
         agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
@@ -1129,16 +1233,24 @@ class DashboardQueryBuilder:
         results = []
         for metric in self.metrics:
             sql, params = self.build_metric_query(metric)
-            metric_info = {
-                "id": metric.get("id", ""),
-                "name": metric.get("display_name")
-                or metric.get("displayName")
-                or metric.get("name", ""),
-                "type": metric.get("type", "system_metric"),
-                "aggregation": metric.get("aggregation", "avg"),
-            }
-            results.append((sql, params, metric_info))
+            results.append((sql, params, self.metric_info(metric)))
         return results
+
+    def metric_info(self, metric: dict) -> dict:
+        """Build the response metadata for a single metric.
+
+        Exposed so callers can construct the metric's ``metric_info`` without
+        building its SQL — e.g. to attach a per-metric error when the build or
+        execution fails, keeping the rest of the dashboard's widgets intact.
+        """
+        return {
+            "id": metric.get("id", ""),
+            "name": metric.get("display_name")
+            or metric.get("displayName")
+            or metric.get("name", ""),
+            "type": metric.get("type", "system_metric"),
+            "aggregation": metric.get("aggregation", "avg"),
+        }
 
     # ------------------------------------------------------------------
     # Result formatting
@@ -1237,15 +1349,16 @@ class DashboardQueryBuilder:
                     )
                 series.append({"name": name, "data": filled})
 
-            formatted_metrics.append(
-                {
-                    "id": metric_info.get("id", ""),
-                    "name": metric_name,
-                    "aggregation": metric_info.get("aggregation", "avg"),
-                    "unit": unit,
-                    "series": series,
-                }
-            )
+            formatted_metric = {
+                "id": metric_info.get("id", ""),
+                "name": metric_name,
+                "aggregation": metric_info.get("aggregation", "avg"),
+                "unit": unit,
+                "series": series,
+            }
+            if metric_info.get("error"):
+                formatted_metric["error"] = metric_info["error"]
+            formatted_metrics.append(formatted_metric)
 
         return {
             "metrics": formatted_metrics,
@@ -1480,6 +1593,13 @@ class DashboardQueryBuilder:
             f"{time_col} >= %(start_date)s",
             f"{time_col} < %(end_date)s",
         ]
+
+        # spans is partitioned by toYYYYMM(created_at) but the window is
+        # filtered on start_time, so bound created_at too — otherwise no
+        # partitions prune and the scan covers all history. Lower bound only
+        # (created_at >= start_time always holds), so no in-window row drops.
+        if time_col != "created_at":
+            clauses.append("created_at >= %(start_date)s - INTERVAL 1 DAY")
 
         # Apply global + per-metric system_metric filters directly
         # For string-comparable system metrics, use toString() to avoid UUID parse errors

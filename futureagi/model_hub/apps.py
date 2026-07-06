@@ -18,6 +18,9 @@ class ModelHubConfig(AppConfig):
         if "migrate" in sys.argv or "makemigrations" in sys.argv:
             return
 
+        if "pytest" in sys.modules:
+            return
+
         # Seed system eval templates from YAML (idempotent)
         try:
             from model_hub.management.commands.seed_system_evals import seed_evals

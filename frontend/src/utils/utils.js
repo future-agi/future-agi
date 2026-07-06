@@ -1110,16 +1110,18 @@ export const normalizeRecordings = (recordings) => {
   if (!recordings)
     return { stereo: "", assistant: "", customer: "", combined: "", mono: "" };
 
-  // Check if it's nested format (has mono object or stereoUrl)
-  const isNestedFormat = recordings.mono || recordings.stereoUrl;
+  // Nested format: backend sends snake_case (stereo_url / mono.*_url);
+  // keep camelCase fallback for the aliased/main response shape.
+  const isNestedFormat =
+    recordings.mono || recordings.stereo_url || recordings.stereoUrl;
 
   if (isNestedFormat) {
     const mono = recordings.mono || {};
-    const combined = mono.combinedUrl || "";
+    const combined = mono.combined_url || mono.combinedUrl || "";
     return {
-      stereo: recordings.stereoUrl || "",
-      assistant: mono.assistantUrl || "",
-      customer: mono.customerUrl || "",
+      stereo: recordings.stereo_url || recordings.stereoUrl || "",
+      assistant: mono.assistant_url || mono.assistantUrl || "",
+      customer: mono.customer_url || mono.customerUrl || "",
       combined,
       mono: combined, // alias for AudioDownloadButton
     };
@@ -1360,3 +1362,15 @@ export const stripAttributePathPrefix = (key) =>
   String(key ?? "")
     .replace(/^observation_span\.\d+\.(?:span_attributes\.)?/, "")
     .replace(/(^|\.)span_attributes\./g, "$1");
+
+export const pluralize = (word, count) => {
+  if (count === 1) return word;
+  if (/[^aeiou]y$/i.test(word)) return word.replace(/y$/i, "ies");
+  if (/(s|x|z|ch|sh)$/i.test(word)) return `${word}es`;
+  return `${word}s`;
+};
+
+export const getVersionLabel = (templateVersion) => {
+  const tv = String(templateVersion ?? "");
+  return tv.startsWith("v") ? tv : `v${tv}`;
+};

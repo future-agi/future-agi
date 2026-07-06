@@ -8,6 +8,7 @@ import { endpoints } from "src/utils/axios";
 import ScenarioCellRenderer from "./CellRenderers/ScenarioCellRenderer";
 import { useQuery } from "@tanstack/react-query";
 import { canonicalKeys } from "src/utils/utils";
+import { stripUiFilterKeys } from "src/components/ComplexFilter/common";
 import { getAnnotationMetricFilterDefinition } from "src/utils/prototypeObserveUtils";
 import ToolEvaluationCellRenderer from "./CellRenderers/ToolEvaluationCellRenderer";
 import { getLabel } from "./PerformanceMetrics/common";
@@ -399,6 +400,15 @@ export const getTestRunDetailGridColumnDefs = (columnOrder) => {
   return config;
 };
 
+export const getColumnDefsSignature = (colDefs = []) =>
+  colDefs
+    .map((colDef) =>
+      colDef?.children
+        ? `${colDef.id}:[${getColumnDefsSignature(colDef.children)}]`
+        : String(colDef?.id ?? colDef?.field ?? ""),
+    )
+    .join(",");
+
 export const getTestRunDetailColumnQuery = (
   executionId,
   pageNumber,
@@ -420,7 +430,7 @@ export const getTestRunDetailColumnQuery = (
           page: pageNumber + 1,
           limit: 30,
           search: debouncedSearchQuery,
-          filters: JSON.stringify(validatedFilters || []),
+          filters: JSON.stringify(stripUiFilterKeys(validatedFilters)),
           ...(pageSize && { limit: pageSize }),
         },
       }),

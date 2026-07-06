@@ -167,7 +167,13 @@ class TriggerErrorLocalizationTool(BaseTool):
         # Parse config to get eval data
         config = log.config
         if isinstance(config, str):
-            config = json.loads(config)
+            try:
+                config = json.loads(config)
+            except (json.JSONDecodeError, ValueError):
+                return ToolResult.error(
+                    "Malformed config on log entry — expected JSON.",
+                    error_code="VALIDATION_ERROR",
+                )
 
         reference_id = config.get("reference_id") or log.reference_id
         if not reference_id:

@@ -237,6 +237,7 @@ const ScenarioDatasetView = () => {
               viewOptions={{
                 showDrawer: false,
                 bottomRow: false,
+                showEvals: false,
               }}
             />
             <AddRowScenario

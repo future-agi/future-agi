@@ -104,11 +104,14 @@ const getResultSyntheticPercentage = (result) =>
 const getResultIsSyntheticRegenerate = (result) =>
   Boolean(result?.synthetic_regenerate);
 const getRowId = (row) => row?.row_id ?? row?.rowId;
-const getColumnSourceId = (column) => column?.source_id ?? column?.sourceId;
+const getColumnSourceId = (column) =>
+  column?.source_id !== undefined ? column.source_id : column?.sourceId;
 const getColumnOriginType = (column) =>
-  column?.origin_type ?? column?.originType;
-const getColumnIsFrozen = (column) => column?.is_frozen ?? column?.isFrozen;
-const getColumnIsVisible = (column) => column?.is_visible ?? column?.isVisible;
+  column?.origin_type !== undefined ? column.origin_type : column?.originType;
+const getColumnIsFrozen = (column) =>
+  column?.is_frozen !== undefined ? column.is_frozen : column?.isFrozen;
+const getColumnIsVisible = (column) =>
+  column?.is_visible !== undefined ? column.is_visible : column?.isVisible;
 const SkeletonHeader = () => {
   return <Skeleton width="60%" />;
 };
@@ -234,9 +237,14 @@ const getDataSource = (
           validFilters,
           sort,
           search,
-          { enabled: true, staleTime: 0, pageSize: DATASET_ROWS_LIMIT },
+          { enabled: true, staleTime: 5 * 1000, pageSize: DATASET_ROWS_LIMIT },
         );
-        const data = await queryClient.fetchQuery({ ...queryOptions });
+        const cachedState = queryClient.getQueryState(queryOptions.queryKey);
+        const servedFromCache =
+          cachedState?.data !== undefined && !cachedState.isInvalidated;
+        const data = servedFromCache
+          ? cachedState.data
+          : await queryClient.fetchQuery({ ...queryOptions });
         const result = data?.data?.result;
         const processingData = getResultIsProcessingData(result);
 
@@ -283,29 +291,45 @@ const getDataSource = (
           if (getResultIsSyntheticDataset(result)) {
             updateProcessingSyntheticData(false);
           }
-          // Infinite-scroll: don't expose total upfront
           const fetchedRows = rows || [];
           const isLastPage = fetchedRows.length < DATASET_ROWS_LIMIT;
-          const lastRow = isLastPage
-            ? request.startRow + fetchedRows.length
-            : -1;
 
           params.success({
             rowData: fetchedRows,
-            rowCount: lastRow,
+            rowCount: totalRows,
           });
 
-          // Prefetch next page so scroll feels instant
+          // Prefetch the next two pages so scrolling stays ahead of the
+          // network and never shows the 2-3s block loader. Pages past the
+          // end of the dataset are skipped — e.g. on the second-to-last
+          // page only the last page is prefetched, not a non-existent one.
+          // A prefetched page is reused only while it is still fresh when
+          // getRows consumes it — that is why this and the fetchQuery
+          // above use staleTime 5s; with staleTime 0 the page is stale on
+          // arrival and getRows fetches it again, wasting the prefetch.
           if (!isLastPage) {
-            const nextPageOptions = getDatasetQueryOptions(
-              datasetId,
-              pageNumber + 1,
-              validFilters,
-              sort,
-              search,
-              { enabled: true, staleTime: 0, pageSize: DATASET_ROWS_LIMIT },
-            );
-            queryClient.prefetchQuery({ ...nextPageOptions });
+            const totalPages = totalRows
+              ? Math.ceil(totalRows / DATASET_ROWS_LIMIT)
+              : pageNumber + 1;
+
+            [pageNumber + 1, pageNumber + 2]
+              .filter((page) => page < totalPages)
+              .forEach((page) => {
+                queryClient.prefetchQuery(
+                  getDatasetQueryOptions(
+                    datasetId,
+                    page,
+                    validFilters,
+                    sort,
+                    search,
+                    {
+                      enabled: true,
+                      staleTime: 5 * 1000,
+                      pageSize: DATASET_ROWS_LIMIT,
+                    },
+                  ),
+                );
+              });
           }
         }
       } catch (e) {
@@ -554,7 +578,11 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
   // (CustomCellRender) and the datapoint drawer can synchronously look up
   // the eval_type for an eval column. This is the same query key the
   // EvaluationDrawer uses, so the request is deduped.
-  useEvalsList(dataset, { eval_type: "user" }, "dataset");
+  useEvalsList(
+    _viewOptions.showEvals ? dataset : undefined,
+    { eval_type: "user" },
+    "dataset",
+  );
   const isRefreshingColumns = useRef(false);
   const { setGridApi, setRefetchTable } = useDevelopDetailContext();
   const setEditCell = useEditCellStoreShallow((s) => s.setEditCell);
@@ -919,6 +947,27 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
     const search = useDevelopSearchStore.getState().search;
     const validFilters = filters.filter(validateFilter).map(transformFilter);
 
+    const maxActivePage = activePages.length
+      ? Math.max(...activePages)
+      : currentPage;
+    const totalRowCount =
+      gridApiRef?.current?.api?.getGridOption("context")?.totalRowCount;
+    const lastPage = totalRowCount
+      ? Math.ceil(totalRowCount / DATASET_ROWS_LIMIT) - 1
+      : maxActivePage;
+    const endPage = Math.min(maxActivePage + 2, lastPage);
+    for (let p = Math.max(0, currentPage - 1); p <= endPage; p++) {
+      const { queryKey } = getDatasetQueryOptions(
+        dataset,
+        p,
+        validFilters,
+        sort,
+        search,
+        {},
+      );
+      queryClient.invalidateQueries({ queryKey });
+    }
+
     // Process pages in batches of 3 to avoid overwhelming the server
     const totalPages = pagesToRefresh.length;
 
@@ -1213,7 +1262,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
                   pagination={false}
                   cacheBlockSize={DATASET_ROWS_LIMIT}
                   rowBuffer={10}
-                  maxBlocksInCache={5}
+                  maxBlocksInCache={50}
                   suppressServerSideFullWidthLoadingRow={true}
                   serverSideInitialRowCount={DATASET_ROWS_LIMIT}
                   statusBar={statusBar}
@@ -1281,10 +1330,8 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
                         const datapointValue = {
                           index: params.rowIndex,
                           rowData: params.data,
-                          valueInfos:
-                            params?.data[params?.colDef?.col?.id]
-                              ?.value_infos ??
-                            params?.data[params?.colDef?.col?.id]?.valueInfos,
+                          value_infos:
+                            params?.data[params?.colDef?.col?.id]?.value_infos,
                         };
                         useDatapointDrawerStore
                           .getState()

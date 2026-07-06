@@ -70,16 +70,24 @@ class DashboardQueryBuilderBase:
         results = []
         for metric in self.metrics:
             sql, params = self.build_metric_query(metric)
-            metric_info = {
-                "id": metric.get("id", ""),
-                "name": metric.get("displayName")
-                or metric.get("display_name")
-                or metric.get("name", ""),
-                "type": metric.get("type", "system_metric"),
-                "aggregation": metric.get("aggregation", "avg"),
-            }
-            results.append((sql, params, metric_info))
+            results.append((sql, params, self.metric_info(metric)))
         return results
+
+    def metric_info(self, metric: dict) -> dict:
+        """Build the response metadata for a single metric.
+
+        Exposed so callers can construct a metric's ``metric_info`` without
+        building its SQL — e.g. to attach a per-metric error when the build or
+        execution fails, keeping the rest of the dashboard's widgets intact.
+        """
+        return {
+            "id": metric.get("id", ""),
+            "name": metric.get("display_name")
+            or metric.get("displayName")
+            or metric.get("name", ""),
+            "type": metric.get("type", "system_metric"),
+            "aggregation": metric.get("aggregation", "avg"),
+        }
 
     def build_metric_query(self, metric: dict) -> Tuple[str, dict]:
         """Build ClickHouse SQL for a single metric. Subclasses must override."""
@@ -192,10 +200,15 @@ class DashboardQueryBuilderBase:
                 )
             series.append({"name": name, "data": filled})
 
-        return {
+        result = {
             "id": metric_info.get("id", ""),
             "name": metric_name,
             "aggregation": metric_info.get("aggregation", "avg"),
             "unit": unit,
             "series": series,
         }
+        # Surface a per-metric error (e.g. an invalid metric/aggregation combo)
+        # so one bad widget doesn't fail the whole dashboard query.
+        if metric_info.get("error"):
+            result["error"] = metric_info["error"]
+        return result

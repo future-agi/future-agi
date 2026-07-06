@@ -617,6 +617,7 @@ def assert_llm_span(span, expected, adapter_name):
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="OTLP trace routes migrated to fi-collector — pending PII scrubbing port")
 @pytest.mark.e2e
 @pytest.mark.django_db(transaction=True)
 class TestOTLPEndpointAuth:
@@ -677,6 +678,7 @@ class TestOTLPEndpointAuth:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skip(reason="OTLP trace routes migrated to fi-collector — pending PII scrubbing port")
 @pytest.mark.e2e
 @pytest.mark.django_db(transaction=True)
 class TestLangfuseBasicAuth:

@@ -137,8 +137,8 @@ export function runPromptOverSocket({
     if (onError) onError(err);
   };
 
-  socket.onclose = () => {
-    if (onClose) onClose();
+  socket.onclose = (event) => {
+    if (onClose) onClose(event);
   };
 
   return socket;

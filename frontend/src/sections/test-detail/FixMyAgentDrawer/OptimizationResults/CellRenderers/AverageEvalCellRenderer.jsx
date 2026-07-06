@@ -24,11 +24,11 @@ const AverageEvalCellRenderer = ({ value }) => {
       <Typography typography="s1">{formatScore(value)}</Typography>
       <ShowComponent
         condition={
-          value?.percentageChange !== null &&
-          value?.percentageChange !== undefined
+          value?.percentage_change !== null &&
+          value?.percentage_change !== undefined
         }
       >
-        <Growth value={value?.percentageChange} />
+        <Growth value={value?.percentage_change} />
       </ShowComponent>
     </Box>
   );

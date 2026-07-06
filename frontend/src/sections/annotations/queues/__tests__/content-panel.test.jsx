@@ -4,8 +4,6 @@ import { render, screen, waitFor, userEvent } from "src/utils/test-utils";
 import axios from "src/utils/axios";
 import ContentPanel from "../annotate/content-panel";
 
-const traceDetailDrawerMock = vi.hoisted(() => vi.fn());
-
 vi.mock("src/components/iconify", () => ({
   default: ({ icon, ...props }) => (
     <span data-testid="iconify" data-icon={icon} {...props} />
@@ -57,6 +55,17 @@ vi.mock("src/components/VoiceDetailDrawerV2", () => ({
   ),
 }));
 
+vi.mock("src/components/ChatDetailDrawerV2", () => ({
+  default: ({ data, embedded, hideAnnotationTab }) => (
+    <div
+      data-testid="chat-drawer"
+      data-scenario={data?.scenario}
+      data-embedded={String(embedded)}
+      data-hide-annotation={String(hideAnnotationTab)}
+    />
+  ),
+}));
+
 vi.mock("src/sections/projects/TracesDrawer/SessionHistory", () => ({
   default: ({ traceDetail = [], onTraceClick }) => (
     <div data-testid="session-history">
@@ -91,19 +100,6 @@ vi.mock(
 
 vi.mock("src/components/CallLogsDetailDrawer/RightSection", () => ({
   default: () => <div data-testid="call-right-section" />,
-}));
-
-vi.mock("src/components/traceDetailDrawer/trace-detail-drawer", () => ({
-  default: (props) => {
-    traceDetailDrawerMock(props);
-    return (
-      <div
-        data-testid="trace-detail-drawer"
-        data-trace-id={props.traceData?.trace_id || ""}
-        data-camel-trace-id={props.traceData?.traceId || ""}
-      />
-    );
-  },
 }));
 
 vi.mock("src/components/traceDetail/SpanTreeTimeline", () => ({
@@ -152,7 +148,6 @@ describe("Annotation queue ContentPanel", () => {
   const clipboardWriteText = vi.fn(() => Promise.resolve());
 
   beforeEach(() => {
-    traceDetailDrawerMock.mockClear();
     clipboardWriteText.mockClear();
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText: clipboardWriteText },
@@ -211,7 +206,7 @@ describe("Annotation queue ContentPanel", () => {
     expect(screen.queryByTestId("new-scenario-view")).not.toBeInTheDocument();
   });
 
-  it("keeps chat call execution queue items on the chat detail layout", async () => {
+  it("renders ChatDetailDrawerV2 (embedded) for chat call execution queue items", async () => {
     axios.get.mockResolvedValueOnce({
       data: {
         status: "completed",
@@ -241,11 +236,19 @@ describe("Annotation queue ContentPanel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("new-scenario-view")).toHaveTextContent(
-        "Answer the customer",
-      );
+      expect(screen.getByTestId("chat-drawer")).toBeInTheDocument();
     });
+    expect(screen.getByTestId("chat-drawer")).toHaveAttribute(
+      "data-embedded",
+      "true",
+    );
+    expect(screen.getByTestId("chat-drawer")).toHaveAttribute(
+      "data-hide-annotation",
+      "true",
+    );
+    // Chat sims no longer use the voice drawer or the legacy ScenarioView path.
     expect(screen.queryByTestId("voice-drawer")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("new-scenario-view")).not.toBeInTheDocument();
   });
 
   it("copies every dataset field including JSON objects and booleans", async () => {
@@ -292,8 +295,7 @@ describe("Annotation queue ContentPanel", () => {
     });
   });
 
-  it("opens session traces with the backend trace_id contract key", async () => {
-    const user = userEvent.setup();
+  it("renders session traces without the legacy trace detail drawer", async () => {
     axios.get.mockResolvedValueOnce({
       data: {
         result: {
@@ -328,22 +330,11 @@ describe("Annotation queue ContentPanel", () => {
       </QueryClientProvider>,
     );
 
-    await user.click(await screen.findByText("customer asks for help"));
-
-    await waitFor(() => {
-      expect(screen.getByTestId("trace-detail-drawer")).toHaveAttribute(
-        "data-trace-id",
-        "trace-123",
-      );
-    });
-    expect(screen.getByTestId("trace-detail-drawer")).toHaveAttribute(
-      "data-camel-trace-id",
-      "",
-    );
-    expect(traceDetailDrawerMock).toHaveBeenLastCalledWith(
-      expect.objectContaining({
-        traceData: expect.objectContaining({ trace_id: "trace-123" }),
-      }),
-    );
+    // Session traces render, and the legacy trace-detail-drawer is gone — the
+    // per-card "View Trace" button now opens TraceDetailDrawerV2 instead.
+    expect(
+      await screen.findByText("customer asks for help"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("trace-detail-drawer")).not.toBeInTheDocument();
   });
 });

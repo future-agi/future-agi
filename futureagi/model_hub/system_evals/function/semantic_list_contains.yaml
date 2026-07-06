@@ -42,8 +42,8 @@ config:
         THRESHOLD = float(kwargs.get("similarity_threshold", 0.5))
         MATCH_ALL = bool(kwargs.get("match_all", False))
 
-        generated = str(output or "")
-        expected_val = expected or ""
+        generated = str(output) if output is not None else ""
+        expected_val = expected if expected is not None else ""
 
         # Parse expected as a list
         if isinstance(expected_val, str):
@@ -52,6 +52,9 @@ config:
             except (json.JSONDecodeError, ValueError):
                 expected_val = [s.strip() for s in expected_val.split(",") if s.strip()]
         if isinstance(expected_val, str):
+            expected_val = [expected_val]
+        # Coerce non-list scalars (int, float, bool) to a single-item list
+        if not isinstance(expected_val, (list, tuple)):
             expected_val = [expected_val]
         if not expected_val:
             return {"score": 0.0, "reason": "No expected phrases provided"}

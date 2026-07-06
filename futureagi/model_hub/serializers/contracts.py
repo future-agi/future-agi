@@ -9,6 +9,7 @@ from model_hub.serializers.optimize_dataset import (
     OptimizeDatasetSerializer,
 )
 from model_hub.serializers.performance_report import PerformanceReportSerializer
+from model_hub.services.ai_eval_writer_service import OUTPUT_FORMAT_PROMPTS
 from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
 from tracer.serializers.filters import (
     SortParamField,
@@ -259,14 +260,24 @@ class EvalSummaryTemplateDeleteResponseSerializer(serializers.Serializer):
 class AIEvalWriterRequestSerializer(serializers.Serializer):
     description = serializers.CharField()
     output_format = serializers.ChoiceField(
-        choices=["prompt", "messages"],
+        # Single source of truth: the dispatch dict in the service. Adding a
+        # format there automatically extends the accepted choices here.
+        choices=list(OUTPUT_FORMAT_PROMPTS),
         required=False,
         default="prompt",
     )
 
 
 class AIEvalWriterResultSerializer(serializers.Serializer):
-    prompt = serializers.CharField()
+    # Exactly one field is set, matching the request's output_format:
+    #   prompt    -> instruction text (string)
+    #   messages  -> LLM-as-a-Judge messages (list of {role, content})
+    #   test_data -> generated test data (object of variable -> value)
+    prompt = serializers.CharField(required=False, allow_null=True)
+    messages = serializers.ListField(
+        child=serializers.DictField(), required=False, allow_null=True
+    )
+    test_data = serializers.DictField(required=False, allow_null=True)
 
 
 class AIEvalWriterResponseSerializer(serializers.Serializer):
@@ -1368,7 +1379,7 @@ class ExperimentFeedbackSubmitRequestSerializer(serializers.Serializer):
     )
     feedback_id = serializers.UUIDField()
     user_eval_metric_id = serializers.UUIDField()
-    value = serializers.JSONField(required=False)
+    value = serializers.CharField(required=False, allow_blank=True)
     explanation = serializers.CharField(required=False, allow_blank=True)
 
 
@@ -1754,6 +1765,9 @@ class EvalFeedbackListItemSerializer(serializers.Serializer):
     action_type = serializers.CharField(allow_blank=True)
     user_name = serializers.CharField(allow_blank=True)
     created_at = serializers.CharField()
+    user_eval_metric_id = serializers.CharField(allow_blank=True)
+    custom_eval_config_id = serializers.CharField(allow_blank=True)
+    experiment_id = serializers.CharField(allow_blank=True)
 
 
 class EvalFeedbackListResponseResultSerializer(serializers.Serializer):
@@ -1767,6 +1781,24 @@ class EvalFeedbackListResponseResultSerializer(serializers.Serializer):
 class EvalFeedbackListResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = EvalFeedbackListResponseResultSerializer()
+
+
+class FeedbackDetailsItemSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    value = serializers.CharField(allow_blank=True, allow_null=True)
+    comment = serializers.CharField(allow_blank=True, allow_null=True)
+    created_at = serializers.CharField()
+    action_type = serializers.CharField(allow_blank=True, allow_null=True)
+
+
+class FeedbackDetailsResultSerializer(serializers.Serializer):
+    feedback = FeedbackDetailsItemSerializer(many=True)
+    total_count = serializers.IntegerField()
+
+
+class FeedbackDetailsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = FeedbackDetailsResultSerializer()
 
 
 class EvalApiLogRowResponseResultSerializer(serializers.Serializer):
@@ -2415,38 +2447,45 @@ class GroundTruthUploadRequestSerializer(serializers.Serializer):
         return attrs
 
 
-class GroundTruthMappingRequestSerializer(serializers.Serializer):
-    variable_mapping = serializers.JSONField()
+class GroundTruthRoleMappingSerializer(serializers.Serializer):
+    """Maps GT dataset columns to their semantic role for the eval prompt.
+
+    ``output`` (or legacy ``expected_output``) is required at the service
+    layer; ``explanation`` (or legacy ``reasoning`` / ``reason``) is
+    optional. All values are GT dataset column names.
+    """
+
+    output = serializers.CharField(required=False, allow_blank=False)
+    explanation = serializers.CharField(required=False, allow_blank=False)
+    expected_output = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        help_text="Legacy alias for `output`.",
+    )
+    reasoning = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        help_text="Legacy alias for `explanation`.",
+    )
+    reason = serializers.CharField(
+        required=False,
+        allow_blank=False,
+        help_text="Legacy alias for `explanation`.",
+    )
 
 
-class GroundTruthRoleMappingRequestSerializer(serializers.Serializer):
-    role_mapping = serializers.JSONField()
+class GroundTruthSetupRequestSerializer(serializers.Serializer):
+    """Atomic write covering variable mapping, role mapping, max_examples, enabled."""
 
-
-class GroundTruthConfigRequestSerializer(serializers.Serializer):
+    variable_mapping = JsonObjectRequestField(
+        help_text=(
+            "Map of template variable name to GT column name (string) "
+            "or list of column names. Keys are dynamic per-template."
+        ),
+    )
+    role_mapping = GroundTruthRoleMappingSerializer()
+    max_examples = serializers.IntegerField(min_value=1, max_value=20)
     enabled = serializers.BooleanField(required=False, default=True)
-    ground_truth_id = serializers.UUIDField(required=False, allow_null=True)
-    mode = serializers.ChoiceField(
-        choices=["auto", "manual", "disabled"],
-        required=False,
-        default="auto",
-    )
-    max_examples = serializers.IntegerField(required=False, min_value=1, max_value=10)
-    similarity_threshold = serializers.FloatField(
-        required=False,
-        min_value=0,
-        max_value=1,
-    )
-    injection_format = serializers.ChoiceField(
-        choices=["structured", "conversational", "xml"],
-        required=False,
-        default="structured",
-    )
-
-
-class GroundTruthSearchRequestSerializer(serializers.Serializer):
-    query = serializers.CharField(trim_whitespace=False)
-    max_results = serializers.IntegerField(required=False, min_value=1, max_value=20)
 
 
 class GroundTruthItemSerializer(serializers.Serializer):
@@ -2456,12 +2495,24 @@ class GroundTruthItemSerializer(serializers.Serializer):
     file_name = serializers.CharField(required=False, allow_blank=True)
     columns = serializers.ListField(child=serializers.CharField())
     row_count = serializers.IntegerField()
-    variable_mapping = serializers.JSONField(required=False, allow_null=True)
-    role_mapping = serializers.JSONField(required=False, allow_null=True)
+    variable_mapping = JsonObjectRequestField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "Map of template variable name to GT column name (string) "
+            "or list of column names."
+        ),
+    )
+    role_mapping = GroundTruthRoleMappingSerializer(required=False, allow_null=True)
     embedding_status = serializers.CharField(required=False)
     embedded_row_count = serializers.IntegerField(required=False)
     storage_type = serializers.CharField(required=False)
     created_at = serializers.CharField(required=False, allow_blank=True)
+    embeddings_stale = serializers.BooleanField(required=False, default=False)
+    is_active = serializers.BooleanField(required=False, default=False)
+    enabled = serializers.BooleanField(required=False, default=True)
+    max_examples = serializers.IntegerField(required=False, default=3)
+    similarity_threshold = serializers.FloatField(required=False, default=0.7)
 
 
 class GroundTruthListResponseResultSerializer(serializers.Serializer):
@@ -2488,25 +2539,37 @@ class GroundTruthUploadResponseSerializer(serializers.Serializer):
     result = GroundTruthUploadResponseResultSerializer()
 
 
-class GroundTruthMappingResponseResultSerializer(serializers.Serializer):
+class GroundTruthRuntimeConfigSerializer(serializers.Serializer):
+    """Per-tenant runtime knobs that drive GT retrieval at eval time."""
+
+    enabled = serializers.BooleanField()
+    ground_truth_id = serializers.UUIDField()
+    max_examples = serializers.IntegerField(min_value=1, max_value=20)
+    similarity_threshold = serializers.FloatField(min_value=0.0, max_value=1.0)
+
+
+class GroundTruthSetupResponseResultSerializer(serializers.Serializer):
+    """Shape returned by GroundTruthService.update_setup."""
+
     id = serializers.UUIDField()
-    variable_mapping = serializers.JSONField(required=False, allow_null=True)
-
-
-class GroundTruthMappingResponseSerializer(serializers.Serializer):
-    status = serializers.BooleanField()
-    result = GroundTruthMappingResponseResultSerializer()
-
-
-class GroundTruthRoleMappingResponseResultSerializer(serializers.Serializer):
-    id = serializers.UUIDField()
-    role_mapping = serializers.JSONField(required=False, allow_null=True)
+    template_id = serializers.UUIDField()
+    variable_mapping = JsonObjectRequestField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "Map of template variable name to GT column name (string) "
+            "or list of column names."
+        ),
+    )
+    role_mapping = GroundTruthRoleMappingSerializer(required=False, allow_null=True)
     embedding_status = serializers.CharField()
+    embeddings_stale = serializers.BooleanField(required=False, default=False)
+    config = GroundTruthRuntimeConfigSerializer()
 
 
-class GroundTruthRoleMappingResponseSerializer(serializers.Serializer):
+class GroundTruthSetupResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
-    result = GroundTruthRoleMappingResponseResultSerializer()
+    result = GroundTruthSetupResponseResultSerializer()
 
 
 class GroundTruthDataResponseResultSerializer(serializers.Serializer):
@@ -2530,6 +2593,7 @@ class GroundTruthStatusResponseResultSerializer(serializers.Serializer):
     embedded_row_count = serializers.IntegerField()
     total_rows = serializers.IntegerField()
     progress_percent = serializers.FloatField()
+    embeddings_stale = serializers.BooleanField(required=False, default=False)
 
 
 class GroundTruthStatusResponseSerializer(serializers.Serializer):
@@ -2545,35 +2609,6 @@ class GroundTruthDeleteResponseResultSerializer(serializers.Serializer):
 class GroundTruthDeleteResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = GroundTruthDeleteResponseResultSerializer()
-
-
-class GroundTruthConfigSerializer(serializers.Serializer):
-    enabled = serializers.BooleanField(required=False)
-    ground_truth_id = serializers.UUIDField(required=False, allow_null=True)
-    mode = serializers.CharField(required=False)
-    max_examples = serializers.IntegerField(required=False)
-    similarity_threshold = serializers.FloatField(required=False)
-    injection_format = serializers.CharField(required=False)
-
-
-class GroundTruthConfigResponseResultSerializer(serializers.Serializer):
-    ground_truth = GroundTruthConfigSerializer()
-
-
-class GroundTruthConfigResponseSerializer(serializers.Serializer):
-    status = serializers.BooleanField()
-    result = GroundTruthConfigResponseResultSerializer()
-
-
-class GroundTruthSearchResponseResultSerializer(serializers.Serializer):
-    query = serializers.CharField()
-    results = serializers.ListField(child=serializers.JSONField())
-    total = serializers.IntegerField()
-
-
-class GroundTruthSearchResponseSerializer(serializers.Serializer):
-    status = serializers.BooleanField()
-    result = GroundTruthSearchResponseResultSerializer()
 
 
 class GroundTruthEmbedResponseResultSerializer(serializers.Serializer):
@@ -2904,6 +2939,7 @@ class UserEvalUpdateRequestSerializer(serializers.Serializer):
         allow_null=True,
         default=None,
     )
+    pinned_version_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class StartEvalsProcessRequestSerializer(serializers.Serializer):

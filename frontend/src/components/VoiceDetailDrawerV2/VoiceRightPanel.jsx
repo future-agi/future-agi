@@ -80,7 +80,7 @@ const VoiceRightPanel = ({
     if (Array.isArray(data?.messages)) return data.messages;
     if (Array.isArray(data?.transcript)) {
       return data.transcript.map((t) => ({
-        role: t.speakerRole || t.role,
+        role: t.speaker_role || t.role,
         content: t.message || t.content || t.text,
         ...t,
       }));
@@ -250,12 +250,18 @@ const VoiceRightPanel = ({
         score,
         score_label: scoreLabel,
         score_items: scoreItems,
-        explanation: e?.reason || e?.explanation,
+        explanation: e?.reason || e?.explanation || e?.skipped_reason,
         error: e?.error === true,
+        skipped: e?.skipped === true || e?.status === "skipped",
+        // Lifecycle status (pending/running/skipped) so EvalsTabView renders a
+        // loading / queued / skipped state for not-yet-completed voice evals.
+        status: e?.status,
+        skipped_reason: e?.skipped_reason,
         // Error localization fields — pulled from whatever key the
         // backend used. Makes the shared EvalsTabView render the
         // dropdown / "Run" UX for failed voice evals.
         cell_id: e?.cell_id || e?.cellId,
+        template_type: e?.template_type,
         error_analysis:
           e?.error_analysis || e?.errorAnalysis || e?.error_details,
         error_localizer_status:

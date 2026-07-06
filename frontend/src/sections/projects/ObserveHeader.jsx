@@ -6,12 +6,10 @@ import {
   Button,
   Typography,
   useTheme,
-  Switch,
   styled,
   CircularProgress,
   Popover,
   MenuItem,
-  Stack,
 } from "@mui/material";
 import { useNavigate, useParams, useLocation } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -31,7 +29,6 @@ import TagEditor from "src/sections/project/TagEditor";
 import ConfigureProject from "../project-detail/ConfigureProject";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { ObserveIconButton } from "./SharedComponents";
-import { ShowComponent } from "src/components/show/ShowComponent";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 
 // CustomBackButton removed — replaced with inline Box button
@@ -60,6 +57,9 @@ const ObserveHeader = ({
   filterSpan,
   selectedTab,
   filterSession,
+  filterUsers,
+  searchUsers,
+  sortUsers,
   refreshData,
   resetFilters,
 }) => {
@@ -91,15 +91,10 @@ const ObserveHeader = ({
 
   const debouncedSearchText = useDebounce(searchText.trim(), 300);
 
-  // Check if current tab is alerts or evals-tasks to hide refresh and export buttons
   const currentPath = location.pathname;
   const isLLMTracingTab = currentPath.includes("/llm-tracing");
   const isSessionsTab = currentPath.includes("/sessions");
-  const isAlertsTab = currentPath.includes("/alerts");
-  const isEvalsTasksTab = currentPath.includes("/evals-tasks");
-  const isChartsTab = currentPath.includes("/charts");
   const isUsersTab = currentPath.includes("/users");
-  const shouldHideRefreshAndExport = isAlertsTab || isEvalsTasksTab;
 
   const handleBack = () => {
     if (window.history.length > 2) {
@@ -219,10 +214,21 @@ const ObserveHeader = ({
     mutationFn: () => {
       let url;
       let filters;
+      const extraParams = {};
 
       if (text === "Sessions") {
         url = endpoints.project.projectSessionListExport;
         filters = filterSession;
+      } else if (text === "Users") {
+        url = endpoints.project.getUsersList();
+        filters = filterUsers;
+        extraParams.export = true;
+        // Match the grid: it fetches with search + sort_params too, so the CSV
+        // reflects a searched/sorted table rather than just the filter set.
+        if (searchUsers) extraParams.search = searchUsers;
+        if (sortUsers && sortUsers.length) {
+          extraParams.sort_params = JSON.stringify(sortUsers);
+        }
       } else if (selectedTab === "spans") {
         url = endpoints.project.getSpansForObserveExport;
         filters = filterSpan;
@@ -236,6 +242,7 @@ const ObserveHeader = ({
         params: {
           project_id: observeId,
           filters: JSON.stringify(filters || []),
+          ...extraParams,
         },
       });
     },
@@ -244,11 +251,13 @@ const ObserveHeader = ({
       const fileSuffix =
         text === "Sessions"
           ? "sessions"
-          : selectedTab === "trace"
-            ? "traces"
-            : selectedTab === "spans"
-              ? "spans"
-              : "data";
+          : text === "Users"
+            ? "users"
+            : selectedTab === "trace"
+              ? "traces"
+              : selectedTab === "spans"
+                ? "spans"
+                : "data";
 
       enqueueSnackbar(
         `${fileSuffix.charAt(0).toUpperCase() + fileSuffix.slice(1)} downloaded successfully`,
@@ -261,13 +270,18 @@ const ObserveHeader = ({
         type: "text/csv;charset=utf-8;",
       });
 
+      // Prefer the backend's Content-Disposition name for every export so the
+      // server is the single source of truth; fall back to the readable
+      // project-label name when the header isn't present.
+      let downloadName = `${currentProject?.label || "project"}-${fileSuffix}.csv`;
+      const disposition = response.headers?.["content-disposition"] || "";
+      const match = /filename="?([^";]+)"?/i.exec(disposition);
+      if (match?.[1]) downloadName = match[1];
+
       const link = document.createElement("a");
       const url = window.URL.createObjectURL(blob);
       link.href = url;
-      link.setAttribute(
-        "download",
-        `${currentProject?.label || "project"}-${fileSuffix}.csv`,
-      );
+      link.setAttribute("download", downloadName);
       document.body.appendChild(link);
       link.click();
 
@@ -283,10 +297,7 @@ const ObserveHeader = ({
   const handleDocLink = () => {
     if (isLLMTracingTab) return DOC_LINKS.llmTracing;
     if (isSessionsTab) return DOC_LINKS.sessions;
-    if (isEvalsTasksTab) return DOC_LINKS.evals;
-    if (isAlertsTab) return DOC_LINKS.alerts;
     if (isUsersTab) return DOC_LINKS.users;
-    if (isChartsTab) return DOC_LINKS.charts;
 
     return DOC_LINKS.llmTracing;
   };
@@ -448,168 +459,178 @@ const ObserveHeader = ({
         {/* ── Right: Last updated + Auto refresh + Action buttons ── */}
         <Box display="flex" alignItems="center" gap={1}>
           {/* Last updated timestamp */}
-          {!shouldHideRefreshAndExport && (
+          <Box
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              gap: 0.5,
+              opacity: 0.8,
+            }}
+          >
+            <Iconify
+              icon="mdi:clock-outline"
+              width={14}
+              sx={{ color: "text.secondary" }}
+            />
+            <Typography
+              sx={{
+                fontSize: 12,
+                color: "text.secondary",
+                fontFamily: "'IBM Plex Sans', sans-serif",
+                whiteSpace: "nowrap",
+              }}
+            >
+              Last updated on{" "}
+              {lastUpdated.toLocaleDateString("en-GB", {
+                day: "2-digit",
+                month: "2-digit",
+                year: "numeric",
+              })}
+              ,{" "}
+              {lastUpdated
+                .toLocaleTimeString("en-US", {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  hour12: true,
+                })
+                .toLowerCase()}
+            </Typography>
+          </Box>
+
+          {/* Auto refresh toggle — bordered pill */}
+          <CustomTooltip
+            show
+            title={
+              autoRefresh
+                ? "Disabling Auto-refresh will need manual refresh"
+                : "Enabling Auto-refresh updates the data every 10 seconds"
+            }
+            arrow
+            size="small"
+            type="black"
+          >
             <Box
               sx={{
                 display: "flex",
                 alignItems: "center",
-                gap: 0.5,
-                opacity: 0.8,
+                gap: 1,
+                height: 26,
+                px: 1.5,
+                bgcolor: "background.neutral",
+                border: "1px solid",
+                borderColor: "divider",
+                borderRadius: "4px",
+                cursor: "pointer",
               }}
+              onClick={() => setAutoRefresh(!autoRefresh)}
             >
-              <Iconify
-                icon="mdi:clock-outline"
-                width={14}
-                sx={{ color: "text.secondary" }}
-              />
               <Typography
                 sx={{
-                  fontSize: 12,
-                  color: "text.secondary",
+                  fontSize: 13,
+                  fontWeight: 500,
                   fontFamily: "'IBM Plex Sans', sans-serif",
+                  color: "text.primary",
                   whiteSpace: "nowrap",
                 }}
               >
-                Last updated on{" "}
-                {lastUpdated.toLocaleDateString("en-GB", {
-                  day: "2-digit",
-                  month: "2-digit",
-                  year: "numeric",
-                })}
-                ,{" "}
-                {lastUpdated
-                  .toLocaleTimeString("en-US", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    hour12: true,
-                  })
-                  .toLowerCase()}
+                Auto refresh (10s)
               </Typography>
-            </Box>
-          )}
-
-          {/* Auto refresh toggle — bordered pill */}
-          {!shouldHideRefreshAndExport && (
-            <CustomTooltip
-              show
-              title={
-                autoRefresh
-                  ? "Disabling Auto-refresh will need manual refresh"
-                  : "Enabling Auto-refresh updates the data every 10 seconds"
-              }
-              arrow
-              size="small"
-              type="black"
-            >
               <Box
                 sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 1,
-                  height: 26,
-                  px: 1.5,
-                  bgcolor: "background.neutral",
-                  border: "1px solid",
-                  borderColor: "divider",
-                  borderRadius: "4px",
-                  cursor: "pointer",
+                  width: 27,
+                  height: 15,
+                  borderRadius: "75px",
+                  bgcolor: (theme) =>
+                    autoRefresh ? "#7857fc" : theme.palette.divider,
+                  position: "relative",
+                  transition: "background-color 150ms",
                 }}
-                onClick={() => setAutoRefresh(!autoRefresh)}
               >
-                <Typography
-                  sx={{
-                    fontSize: 13,
-                    fontWeight: 500,
-                    fontFamily: "'IBM Plex Sans', sans-serif",
-                    color: "text.primary",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  Auto refresh (10s)
-                </Typography>
                 <Box
                   sx={{
-                    width: 27,
-                    height: 15,
-                    borderRadius: "75px",
-                    bgcolor: (theme) =>
-                      autoRefresh ? "#7857fc" : theme.palette.divider,
-                    position: "relative",
-                    transition: "background-color 150ms",
+                    width: 12,
+                    height: 12,
+                    borderRadius: "50%",
+                    bgcolor: "background.paper",
+                    position: "absolute",
+                    top: 1.5,
+                    left: autoRefresh ? 13.5 : 1.5,
+                    boxShadow: "0 1.5px 3px rgba(39,39,39,0.1)",
+                    transition: "left 150ms",
                   }}
-                >
-                  <Box
-                    sx={{
-                      width: 12,
-                      height: 12,
-                      borderRadius: "50%",
-                      bgcolor: "background.paper",
-                      position: "absolute",
-                      top: 1.5,
-                      left: autoRefresh ? 13.5 : 1.5,
-                      boxShadow: "0 1.5px 3px rgba(39,39,39,0.1)",
-                      transition: "left 150ms",
-                    }}
-                  />
-                </Box>
+                />
               </Box>
-            </CustomTooltip>
-          )}
+            </Box>
+          </CustomTooltip>
 
           {/* Action buttons — bordered icon squares */}
           <Box display="flex" alignItems="center" gap={1}>
             {/* Reload */}
-            {!shouldHideRefreshAndExport && (
-              <CustomTooltip
-                show
-                title="Reload data"
-                arrow
+            <CustomTooltip
+              show
+              title="Reload data"
+              arrow
+              size="small"
+              type="black"
+            >
+              <ObserveIconButton
                 size="small"
-                type="black"
+                onClick={() => {
+                  // Use refreshData from LLMTracingView if available
+                  refreshData?.();
+                  setLastUpdated(new Date());
+                  // Also invalidate React Query caches
+                  queryClient.invalidateQueries({
+                    queryKey: ["llm-tracing-graph"],
+                  });
+                  queryClient.invalidateQueries({
+                    queryKey: ["observe-projects"],
+                  });
+                  queryClient.invalidateQueries({ queryKey: ["callLogs"] });
+                  // Dispatch a custom event that the grid can listen to
+                  window.dispatchEvent(new CustomEvent("observe-refresh"));
+                }}
               >
-                <ObserveIconButton
-                  size="small"
-                  onClick={() => {
-                    // Use refreshData from LLMTracingView if available
-                    refreshData?.();
-                    setLastUpdated(new Date());
-                    // Also invalidate React Query caches
-                    queryClient.invalidateQueries({
-                      queryKey: ["llm-tracing-graph"],
-                    });
-                    queryClient.invalidateQueries({
-                      queryKey: ["observe-projects"],
-                    });
-                    queryClient.invalidateQueries({ queryKey: ["callLogs"] });
-                    // Dispatch a custom event that the grid can listen to
-                    window.dispatchEvent(new CustomEvent("observe-refresh"));
-                  }}
-                >
-                  <Iconify icon="mdi:refresh" width={16} />
-                </ObserveIconButton>
-              </CustomTooltip>
-            )}
+                <Iconify icon="mdi:refresh" width={16} />
+              </ObserveIconButton>
+            </CustomTooltip>
 
             {/* Export/Download */}
-            {!shouldHideRefreshAndExport && !isChartsTab && (
-              <CustomTooltip
-                show
-                title={isExportData ? "Exporting..." : "Export CSV"}
-                arrow
+            <CustomTooltip
+              show
+              title={isExportData ? "Exporting..." : "Export CSV"}
+              arrow
+              size="small"
+              type="black"
+            >
+              <span>
+                <ObserveIconButton
+                  size="small"
+                  onClick={handleExportClick}
+                  disabled={isExportData}
+                >
+                  <Iconify icon="mdi:download-outline" width={16} />
+                </ObserveIconButton>
+              </span>
+            </CustomTooltip>
+
+            {/* View Docs */}
+            <CustomTooltip
+              show
+              title="View Docs"
+              arrow
+              size="small"
+              type="black"
+            >
+              <ObserveIconButton
                 size="small"
-                type="black"
+                onClick={() =>
+                  window.open(handleDocLink(), "_blank", "noopener,noreferrer")
+                }
               >
-                <span>
-                  <ObserveIconButton
-                    size="small"
-                    onClick={handleExportClick}
-                    disabled={isExportData}
-                  >
-                    <Iconify icon="mdi:download-outline" width={16} />
-                  </ObserveIconButton>
-                </span>
-              </CustomTooltip>
-            )}
+                <Iconify icon="mdi:book-open-page-variant-outline" width={16} />
+              </ObserveIconButton>
+            </CustomTooltip>
 
             {/* Settings/Configure */}
             <CustomTooltip
@@ -666,6 +687,9 @@ ObserveHeader.propTypes = {
   filterSpan: PropTypes.array,
   selectedTab: PropTypes.string,
   filterSession: PropTypes.array,
+  filterUsers: PropTypes.array,
+  searchUsers: PropTypes.string,
+  sortUsers: PropTypes.array,
   refreshData: PropTypes.func,
   resetFilters: PropTypes.func,
 };

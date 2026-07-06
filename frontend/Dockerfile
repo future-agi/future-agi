@@ -1,7 +1,7 @@
 # Dockerfile
 
 # Stage 1: Build the React app
-FROM node:20.17 AS build
+FROM node:22.18 AS build
 
 # Build args forwarded from docker-compose. Vite reads env vars prefixed
 # VITE_ at build time and bakes them into the bundle.
@@ -22,7 +22,7 @@ RUN yarn build
 # `target: dev` in docker-compose.dev.yml. Source is bind-mounted at runtime;
 # this stage just provides node + a baked-in node_modules so HMR works without
 # a host-side `yarn install`.
-FROM node:20.17 AS dev
+FROM node:22.18 AS dev
 WORKDIR /app
 COPY package.json yarn.lock ./
 RUN yarn install

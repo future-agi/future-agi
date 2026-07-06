@@ -199,6 +199,131 @@ class TestRunTestRuntimeContracts:
         run_test = RunTest.objects.get(id=response.json()["id"])
         assert run_test.workspace_id == workspace.id
 
+    def test_create_uses_active_org_not_legacy_user_fk(
+        self, auth_client, user, agent_definition, scenario_with_prompt_version
+    ):
+        """Regression for TH-6191.
+
+        A multi-org user whose legacy ``user.organization`` FK points at a
+        different org than the one they are actively working in must still be
+        able to create a run test against agent definitions/scenarios that live
+        in the active org. Before the fix, the create serializer scoped its
+        existence checks by ``request.user.organization`` (the legacy FK), so
+        objects in the active org were reported as "not found" even though the
+        write path (which uses ``request.organization``) would have found them.
+        """
+        from accounts.models import Organization
+
+        # agent_definition + scenario live in the active org (auth_client's
+        # org). Point the user's legacy FK at a *different* org to mimic a
+        # multi-org user operating outside their primary/legacy organization.
+        legacy_primary_org = Organization.objects.create(name="Legacy Primary Org")
+        user.organization = legacy_primary_org
+        user.save(update_fields=["organization"])
+
+        response = auth_client.post(
+            "/simulate/run-tests/create/",
+            {
+                "name": "Multi-org Active Org Run",
+                "agent_definition_id": str(agent_definition.id),
+                "scenario_ids": [str(scenario_with_prompt_version.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED, response.content
+        run_test = RunTest.objects.get(id=response.json()["id"])
+        assert run_test.organization_id == agent_definition.organization_id
+
+    def test_create_uses_active_org_for_eval_config_ids(
+        self,
+        auth_client,
+        user,
+        organization,
+        workspace,
+        agent_definition,
+        scenario_with_prompt_version,
+    ):
+        """Sibling to test_create_uses_active_org_not_legacy_user_fk, exercising
+        `CreateRunTestSerializer.validate_eval_config_ids`. Same active-org vs
+        legacy-FK divergence; the eval_config referenced in the payload lives in
+        the active org via its parent RunTest.
+        """
+        from accounts.models import Organization
+
+        seed_run_test = RunTest.objects.create(
+            name="Seed run test for eval config",
+            organization=organization,
+            workspace=workspace,
+            source_type=RunTest.SourceTypes.AGENT_DEFINITION,
+            agent_definition=agent_definition,
+        )
+        eval_config = SimulateEvalConfig.objects.create(
+            name="Active-org eval config",
+            eval_template=EvalTemplate.objects.create(
+                name="Reusable template",
+                eval_id=99001,
+                config={},
+            ),
+            run_test=seed_run_test,
+            model="turing_small",
+            error_localizer=False,
+        )
+
+        legacy_primary_org = Organization.objects.create(name="Legacy Primary Org")
+        user.organization = legacy_primary_org
+        user.save(update_fields=["organization"])
+
+        response = auth_client.post(
+            "/simulate/run-tests/create/",
+            {
+                "name": "Multi-org run using eval_config from active org",
+                "agent_definition_id": str(agent_definition.id),
+                "scenario_ids": [str(scenario_with_prompt_version.id)],
+                "eval_config_ids": [str(eval_config.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED, response.content
+        run_test = RunTest.objects.get(id=response.json()["id"])
+        assert run_test.organization_id == agent_definition.organization_id
+
+    def test_prompt_simulation_create_uses_active_org_not_legacy_user_fk(
+        self,
+        auth_client,
+        user,
+        prompt_template,
+        prompt_version_v10,
+        scenario_with_prompt_version,
+    ):
+        """Regression for TH-6191 on the prompt-simulation create path.
+
+        `CreatePromptSimulationSerializer.validate_prompt_template_id` and
+        `validate_scenario_ids` had the same legacy-FK vs active-org drift.
+        Multi-org users creating a prompt simulation against a template + scenario
+        that live in the active org must succeed.
+        """
+        from accounts.models import Organization
+
+        legacy_primary_org = Organization.objects.create(name="Legacy Primary Org")
+        user.organization = legacy_primary_org
+        user.save(update_fields=["organization"])
+
+        response = auth_client.post(
+            f"/simulate/prompt-templates/{prompt_template.id}/simulations/",
+            {
+                "name": "Multi-org Prompt Simulation",
+                "prompt_version_id": str(prompt_version_v10.id),
+                "scenario_ids": [str(scenario_with_prompt_version.id)],
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_201_CREATED, response.content
+        run_test = RunTest.objects.get(id=response.json()["result"]["id"])
+        assert run_test.organization_id == prompt_template.organization_id
+
     def test_create_rejects_unknown_body_field(
         self, auth_client, agent_definition, scenario_with_prompt_version
     ):

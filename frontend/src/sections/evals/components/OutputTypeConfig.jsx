@@ -16,6 +16,7 @@ import {
 import PropTypes from "prop-types";
 import React, { useCallback } from "react";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 const OutputTypeConfig = ({
   outputType,
@@ -115,38 +116,58 @@ const OutputTypeConfig = ({
             </Typography>
           </Box>
         )}
-        <RadioGroup
-          row
-          value={outputType}
-          onChange={(e) => {
-            const val = e.target.value;
-            onOutputTypeChange(val);
-            // Auto-add a default row if switching to scoring/deterministic with no choices
-            if (
-              (val === "percentage" || val === "deterministic") &&
-              Object.keys(choiceScores || {}).length === 0
-            ) {
-              onChoiceScoresChange({ "Choice 1": 0.5 });
-            }
-          }}
-          sx={{ px: 0.25 }}
+        <CustomTooltip
+          size="small"
+          type="black"
+          show={radioDisabled}
+          title="Output type is fixed for this evaluation and can't be changed."
+          arrow
+          placement="top"
         >
-          <FormControlLabel
-            value="pass_fail"
-            control={<Radio size="small" disabled={radioDisabled} />}
-            label="Pass/fail"
-          />
-          <FormControlLabel
-            value="percentage"
-            control={<Radio size="small" disabled={radioDisabled} />}
-            label="Scoring"
-          />
-          <FormControlLabel
-            value="deterministic"
-            control={<Radio size="small" disabled={radioDisabled} />}
-            label="Choices"
-          />
-        </RadioGroup>
+          <Box
+            component="span"
+            sx={{
+              display: "inline-block",
+              cursor: radioDisabled ? "not-allowed" : "default",
+            }}
+          >
+            <RadioGroup
+              row
+              value={outputType}
+              onChange={(e) => {
+                const val = e.target.value;
+                onOutputTypeChange(val);
+                // Auto-add a default row if switching to scoring/deterministic with no choices
+                if (
+                  (val === "percentage" || val === "deterministic") &&
+                  Object.keys(choiceScores || {}).length === 0
+                ) {
+                  onChoiceScoresChange({ "Choice 1": 0.5 });
+                }
+              }}
+              sx={{
+                px: 0.25,
+                ...(radioDisabled && { pointerEvents: "none" }),
+              }}
+            >
+              <FormControlLabel
+                value="pass_fail"
+                control={<Radio size="small" disabled={radioDisabled} />}
+                label="Pass/fail"
+              />
+              <FormControlLabel
+                value="percentage"
+                control={<Radio size="small" disabled={radioDisabled} />}
+                label="Scoring"
+              />
+              <FormControlLabel
+                value="deterministic"
+                control={<Radio size="small" disabled={radioDisabled} />}
+                label="Choices"
+              />
+            </RadioGroup>
+          </Box>
+        </CustomTooltip>
       </Box>
 
       {/* ══════ Scoring mode ══════ */}

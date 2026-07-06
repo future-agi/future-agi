@@ -70,6 +70,18 @@ x-backend-env: &backend-env
   FAST_STARTUP: ${FAST_STARTUP:-false}
   OTEL_ENABLED: ${OTEL_ENABLED:-false}
   INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+  FUTURE_AGI_VERSION: ${FUTURE_AGI_VERSION:-unknown}
+  FUTURE_AGI_DEPLOYMENT_TYPE: ${FUTURE_AGI_DEPLOYMENT_TYPE:-docker}
+  FUTURE_AGI_TELEMETRY_DISABLED: ${FUTURE_AGI_TELEMETRY_DISABLED:-false}
+  FUTURE_AGI_TELEMETRY_JITTER_SECONDS: ${FUTURE_AGI_TELEMETRY_JITTER_SECONDS:-1800}
+  FUTURE_AGI_TELEMETRY_BUFFER_DIR: ${FUTURE_AGI_TELEMETRY_BUFFER_DIR:-/tmp/futureagi-deployment-telemetry}
+  # The next three are forwarded so staging/test installs can redirect the
+  # sender at an alternate receiver and tune cadence/timeout without rebuilding
+  # the image. Defaults match the sender so leaving them unset is identical to
+  # the documented production behaviour.
+  FUTURE_AGI_TELEMETRY_URL: ${FUTURE_AGI_TELEMETRY_URL:-https://api.futureagi.com}
+  FUTURE_AGI_TELEMETRY_INTERVAL_HOURS: ${FUTURE_AGI_TELEMETRY_INTERVAL_HOURS:-6}
+  FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS: ${FUTURE_AGI_TELEMETRY_TIMEOUT_SECONDS:-5}
 
   # LLM gateway + code sandbox + embedding service
   AGENTCC_INTERNAL_URL: http://agentcc-gateway:8080

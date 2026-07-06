@@ -1,6 +1,6 @@
 /* eslint-disable react/prop-types */
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Box, CircularProgress, Stack, Typography } from "@mui/material";
+import { Alert, Box, CircularProgress, Stack, Typography } from "@mui/material";
 import ChartLegend from "./ChartLegend";
 import ReactApexChart from "react-apexcharts";
 import { useTheme } from "@mui/material/styles";
@@ -13,7 +13,9 @@ import {
   getAutoDecimals,
   getSeriesAverage,
   getSuggestedUnitConfig,
+  getYAxisRangeWarning,
 } from "./widgetUtils";
+import { toTimeRangePayload } from "./dashboardDateRange";
 
 const CHART_HEIGHT_FALLBACK = 280;
 const COLORS = [
@@ -49,12 +51,8 @@ export default function WidgetChart({ widget, globalDateRange }) {
   // If globalDateRange is provided, override the widget's time range
   const queryConfig = useMemo(() => {
     if (!rawQueryConfig) return rawQueryConfig;
-    if (!globalDateRange) return rawQueryConfig;
-    // Convert globalDateRange {start, end} to the format the backend expects
-    const timeOverride = {
-      custom_start: globalDateRange.start,
-      custom_end: globalDateRange.end,
-    };
+    const timeOverride = toTimeRangePayload(globalDateRange);
+    if (!timeOverride) return rawQueryConfig;
     return {
       ...rawQueryConfig,
       time_range: timeOverride,
@@ -157,12 +155,15 @@ export default function WidgetChart({ widget, globalDateRange }) {
     return series.filter((_, i) => visibleSeries.has(i));
   }, [series, visibleSeries]);
 
+  const outOfRangeWarning = useMemo(
+    () => getYAxisRangeWarning(chartSeries, axisConfig),
+    [chartSeries, axisConfig],
+  );
+
   const pieValues = useMemo(
     () =>
       isPie
-        ? chartSeries.map((s) =>
-            s.data.reduce((sum, pt) => sum + (pt.y || 0), 0),
-          )
+        ? chartSeries.map((s) => getSeriesAverage(s.data) ?? 0)
         : [],
     [isPie, chartSeries],
   );
@@ -425,11 +426,16 @@ export default function WidgetChart({ widget, globalDateRange }) {
                         flexShrink: 0,
                       }}
                     />
-                    {s.name === "total"
-                      ? queryConfig?.metrics?.[0]?.display_name ||
-                        queryConfig?.metrics?.[0]?.name ||
-                        "Total"
-                      : s.name}
+                    {(() => {
+                      const label =
+                        s.name === "total"
+                          ? queryConfig?.metrics?.[0]?.display_name ||
+                            queryConfig?.metrics?.[0]?.name ||
+                            "Total"
+                          : s.name;
+                      const unit = leftAxisFormatConfig?.unit;
+                      return unit ? `${label} (${unit})` : label;
+                    })()}
                   </span>
                 </th>
               ))}
@@ -482,7 +488,6 @@ export default function WidgetChart({ widget, globalDateRange }) {
                         {val != null
                           ? formatValueWithConfig(val, leftAxisFormatConfig, {
                               fallbackDecimals: autoDecimals,
-                              includeUnit: false,
                             })
                           : "-"}
                       </td>
@@ -501,12 +506,9 @@ export default function WidgetChart({ widget, globalDateRange }) {
     const isDarkPie = theme.palette.mode === "dark";
     const txtColor = isDarkPie ? "#fff" : "#1a1a2e";
     const pieTotal = pieValues.reduce((a, b) => a + b, 0);
-    const fmtTotal =
-      pieTotal >= 1000000
-        ? `${(pieTotal / 1000000).toFixed(1)}M`
-        : pieTotal >= 1000
-          ? pieTotal.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-          : pieTotal.toFixed(0);
+    const fmtTotal = formatValueWithConfig(pieTotal, leftAxisFormatConfig, {
+      fallbackDecimals: autoDecimals,
+    });
     const pieOptions = {
       chart: {
         type: "donut",
@@ -820,6 +822,27 @@ export default function WidgetChart({ widget, globalDateRange }) {
             );
           })}
         </Box>
+      </Box>
+    );
+  }
+
+  if (outOfRangeWarning) {
+    return (
+      <Box
+        ref={containerRef}
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          width: "100%",
+          height: "100%",
+          minHeight: 0,
+          px: 2,
+        }}
+      >
+        <Alert severity="warning" sx={{ width: "100%" }}>
+          {outOfRangeWarning}
+        </Alert>
       </Box>
     );
   }

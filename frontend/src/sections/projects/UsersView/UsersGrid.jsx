@@ -4,7 +4,11 @@ import { AgGridReact } from "ag-grid-react";
 import "src/styles/clean-data-table.css";
 import useUsersStore from "./Store/usersStore";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
-import { getUsersColumnConfig, userTraceRowHeightMapping } from "./common";
+import {
+  getUsersColumnConfig,
+  userTraceRowHeightMapping,
+  buildUsersRequestFilters,
+} from "./common";
 import { mergeCellStyle } from "../LLMTracing/common";
 import axios, { endpoints } from "src/utils/axios";
 import { useNavigate, useParams } from "react-router";
@@ -12,19 +16,19 @@ import { useDebounce } from "src/hooks/use-debounce";
 import PropTypes from "prop-types";
 import NoRowsOverlay from "src/sections/project-detail/CompareDrawer/NoRowsOverlay";
 import { APP_CONSTANTS } from "src/utils/constants";
-import { serializeFilterListForApi } from "src/api/contracts/filter-contract";
 
-const USERS_GRID_THEME_PARAMS = {
+const getUsersGridThemeParams = (theme) => ({
   columnBorder: false,
-  headerColumnBorder: { width: 0 },
+  headerColumnBorder: false,
   wrapperBorder: { width: 0 },
   wrapperBorderRadius: 0,
   rowBorder: { width: 1, color: "rgba(0,0,0,0.06)" },
   headerFontSize: "13px",
-  headerFontWeight: 500,
+  headerFontWeight: theme.typography.fontWeightMedium,
   headerBackgroundColor: "transparent",
+  headerTextColor: theme.palette.text.primary,
   rowHoverColor: "rgba(120,87,252,0.04)",
-};
+});
 
 const UsersGrid = React.memo(
   ({
@@ -35,7 +39,7 @@ const UsersGrid = React.memo(
     cellHeight,
   }) => {
     const theme = useTheme();
-    const agTheme = useAgThemeWith(USERS_GRID_THEME_PARAMS);
+    const agTheme = useAgThemeWith(getUsersGridThemeParams(theme));
     const gridApiRef = useRef(null);
     const {
       setGridApi,
@@ -48,43 +52,20 @@ const UsersGrid = React.memo(
       columns,
       setColumns,
       filters,
-      selectedProjectDay,
-      selectedProjectId,
     } = useUsersStore();
 
-    const convertToISO = (dateArray) => {
-      return dateArray.map((date) => new Date(date).toISOString());
-    };
     const userFirstRef = useRef(true);
 
-    const today = new Date();
-    const pastDate = new Date();
-    pastDate.setDate(today.getDate() - selectedProjectDay);
-
     const { observeId } = useParams();
-    const updatedObserveId = selectedProjectId || observeId;
+    const updatedObserveId = observeId;
     const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
 
-    const projectFilter = useMemo(
-      () => ({
-        column_id: "created_at",
-        filter_config: {
-          filter_type: "datetime",
-          filter_op: "between",
-          filter_value: convertToISO([pastDate, today]),
-        },
-      }),
-      [selectedProjectDay],
+    const validatedFilters = useMemo(
+      () => buildUsersRequestFilters(filters),
+      [filters],
     );
 
-    const validatedFilters = useMemo(() => {
-      return serializeFilterListForApi([...(filters || []), projectFilter]);
-    }, [filters, projectFilter]);
-
     const navigate = useNavigate();
-
-    const hasProjectFilter =
-      selectedProjectId || (selectedProjectDay !== 90 && !selectedProjectId);
 
     useEffect(() => {
       const initial = getUsersColumnConfig();
@@ -147,25 +128,20 @@ const UsersGrid = React.memo(
         };
       };
 
-      const customCols = columns.filter((c) => c?.groupBy === "Custom Columns");
-      const otherCols = columns.filter((c) => c?.groupBy !== "Custom Columns");
-
-      const result = otherCols.map(buildColDef);
-
-      // Group custom columns under a "Custom Columns" header (TH-4151)
-      if (customCols.length > 0) {
-        result.push({
-          headerName: "Custom Columns",
-          children: customCols.map((c) => {
-            const colDef = buildColDef(c);
-            return {
-              ...colDef,
-              minWidth: 200,
-              flex: 1,
-              cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
-            };
-          }),
-        });
+      // Custom columns flat (ungrouped), in store order.
+      const result = [];
+      for (const c of columns) {
+        if (c?.groupBy === "Custom Columns") {
+          const colDef = buildColDef(c);
+          result.push({
+            ...colDef,
+            minWidth: 200,
+            flex: 1,
+            cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
+          });
+          continue;
+        }
+        result.push(buildColDef(c));
       }
 
       return result;
@@ -196,21 +172,23 @@ const UsersGrid = React.memo(
               }
               userFirstRef.current = false;
             }
+            const sortParams =
+              request.sortModel && request.sortModel.length > 0
+                ? request.sortModel.map(({ colId, sort }) => ({
+                    column_id: colId,
+                    direction: sort,
+                  }))
+                : request.sortModel || [];
+            // Mirror the active sort into the store so the export button (in the
+            // Observe header) can carry the same sort the grid is showing.
+            useUsersStore.setState({ sortParams });
             const results = await axios.get(endpoints.project.getUsersList(), {
               params: {
                 // Omit project_id when there's no project context — the
                 // backend handles project_id=null as org-scoped, used by
                 // the cross-project users page at /dashboard/users.
                 ...(updatedObserveId ? { project_id: updatedObserveId } : {}),
-                sort_params:
-                  request.sortModel && request.sortModel.length > 0
-                    ? JSON.stringify(
-                        request.sortModel.map(({ colId, sort }) => ({
-                          column_id: colId,
-                          direction: sort,
-                        })),
-                      )
-                    : JSON.stringify(request.sortModel),
+                sort_params: JSON.stringify(sortParams),
                 search: debouncedSearchQuery?.length
                   ? debouncedSearchQuery
                   : null,
@@ -233,7 +211,7 @@ const UsersGrid = React.memo(
             }
 
             if (debouncedSearchQuery === "") {
-              if (hasActiveFilter || hasProjectFilter) {
+              if (hasActiveFilter) {
                 setSearchState("searching");
               } else {
                 setSearchState(hasResults ? "idle" : "empty");
@@ -286,7 +264,6 @@ const UsersGrid = React.memo(
         setIsLoading,
         setSearchState,
         hasActiveFilter,
-        hasProjectFilter,
       ],
     );
 
@@ -421,6 +398,8 @@ const UsersGrid = React.memo(
     const onColumnMoved = useCallback(
       (params) => {
         if (!params.finished) return;
+        // User drags only; programmatic moves would feed back into setColumns.
+        if (params.source !== "uiColumnMoved") return;
 
         const newOrder = params.api
           .getColumnState()

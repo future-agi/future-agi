@@ -58,7 +58,7 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
 
   const queryClient = useQueryClient();
   const { getViewConfig, setActiveViewConfig } = useObserveHeader();
-  const [, setSearchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Pre-seed the URL-synced state keys for the target sub-tab from the saved
   // view's config. Lets useUrlState read correct values on mount / refresh so
@@ -83,7 +83,9 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
                 JSON.stringify(display.showCompare),
               );
             }
-          } else if (subTab === "traces") {
+          } else if (subTab === "traces" || subTab === "spans") {
+            // Restore the trace/span grouping encoded in sub_tab.
+            next.set("selectedTab", subTab === "spans" ? "spans" : "trace");
             if (display.dateFilter) {
               next.set(
                 "primaryTraceDateFilter",
@@ -136,7 +138,11 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
     // transitions, e.g. handleClose at line ~230 calling
     // `onTabChange("sessions","sessions")` after deleting an active view.
     if (FIXED_TABS.some((t) => t.key === activeTab)) {
-      setSearchParams(new URLSearchParams({ userTab: activeTab }), {
+      // Preserve selectedTab (the trace/span grouping) — not a stale saved-view param.
+      const next = new URLSearchParams({ userTab: activeTab });
+      const selectedTab = searchParams.get("selectedTab");
+      if (selectedTab) next.set("selectedTab", selectedTab);
+      setSearchParams(next, {
         replace: true,
       });
       lastAppliedTabRef.current = activeTab;
@@ -173,6 +179,8 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
     // refetch will land and customViews will include the new view).
   }, [
     activeTab,
+    searchParams,
+    setSearchParams,
     setActiveViewConfig,
     onTabChange,
     customViews,
@@ -187,7 +195,12 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
       // be a custom view — in that case fall back to its underlying sub_tab.
       let targetSubTab = null;
       if (FIXED_TABS.some((t) => t.key === activeTab)) {
-        targetSubTab = activeTab;
+        // Encode the grouping in sub_tab — selectedTab isn't an allowed
+        // saved-view config key, so the backend would reject it.
+        targetSubTab =
+          activeTab === "traces" && searchParams.get("selectedTab") === "spans"
+            ? "spans"
+            : activeTab;
       } else {
         const id = activeTab?.startsWith?.("view-") ? activeTab.slice(5) : null;
         const view = id ? customViews.find((v) => v.id === id) : null;
@@ -215,7 +228,14 @@ const UserDetailTabBar = ({ activeTab, onTabChange }) => {
         },
       );
     },
-    [activeTab, customViews, createSavedView, getViewConfig, onTabChange],
+    [
+      activeTab,
+      searchParams,
+      customViews,
+      createSavedView,
+      getViewConfig,
+      onTabChange,
+    ],
   );
 
   const handleClose = useCallback(
