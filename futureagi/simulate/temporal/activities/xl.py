@@ -436,9 +436,15 @@ def _step_segment(current, part):
             return current[int(part)]
         except (ValueError, IndexError):
             return _STEP_MISS
+    # Reject dunder / private attrs and callables to block escapes to module globals.
+    if part.startswith("_"):
+        return _STEP_MISS
     for candidate in (part, to_snake_case(part), to_camel_case(part)):
         if hasattr(current, candidate):
-            return getattr(current, candidate)
+            value = getattr(current, candidate)
+            if callable(value):
+                return _STEP_MISS
+            return value
     return _STEP_MISS
 
 
