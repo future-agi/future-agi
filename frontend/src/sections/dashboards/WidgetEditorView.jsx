@@ -80,6 +80,7 @@ import {
   getSuggestedUnitConfig,
   getYAxisRangeWarning,
 } from "./widgetUtils";
+import { DATE_PRESETS } from "./constants";
 
 const escapeCsvField = (field) => {
   const str = String(field ?? "");
@@ -91,19 +92,6 @@ const escapeCsvField = (field) => {
 
 const SAVED_NAV_DELAY_MS = 400;
 const AXIS_LABEL_MAX_LENGTH = 50;
-
-const TIME_PRESETS = [
-  { label: "Custom", value: "custom" },
-  { label: "30 mins", value: "30m" },
-  { label: "6 hrs", value: "6h" },
-  { label: "Today", value: "today" },
-  { label: "Yesterday", value: "yesterday" },
-  { label: "7D", value: "7D" },
-  { label: "30D", value: "30D" },
-  { label: "3M", value: "3M" },
-  { label: "6M", value: "6M" },
-  { label: "12M", value: "12M" },
-];
 
 const GRANULARITY_OPTIONS = [
   { label: "Minute", value: "minute" },
@@ -3167,7 +3155,7 @@ export default function WidgetEditorView() {
                 flexShrink: 0,
               }}
             >
-              {TIME_PRESETS.map((p, i) => (
+              {DATE_PRESETS.map((p, i) => (
                 <Box
                   key={p.value}
                   ref={p.value === "custom" ? customDateAnchorRef : undefined}
@@ -3196,7 +3184,7 @@ export default function WidgetEditorView() {
                           : "rgba(0,0,0,0.06)"
                         : "transparent",
                     borderRight:
-                      i < TIME_PRESETS.length - 1
+                      i < DATE_PRESETS.length - 1
                         ? `1px solid ${theme.palette.divider}`
                         : "none",
                     whiteSpace: "nowrap",
