@@ -125,6 +125,22 @@ const TestEvaluationPage = ({
       queryClient.invalidateQueries({
         queryKey: ["test-runs-detail", testId],
       });
+      // Also refresh the KPI cards and Analytics tab, which are keyed
+      // separately and would otherwise show stale counts after a delete.
+      if (executionIds?.length) {
+        executionIds.forEach((id) => {
+          queryClient.invalidateQueries({
+            queryKey: ["test-execution-detail", "KPIS", id],
+          });
+        });
+      } else {
+        queryClient.invalidateQueries({
+          queryKey: ["test-execution-detail", "KPIS"],
+        });
+      }
+      queryClient.invalidateQueries({
+        queryKey: ["test-execution-analytics", testId],
+      });
       enqueueSnackbar("Eval deleted successfully", {
         variant: "success",
       });
