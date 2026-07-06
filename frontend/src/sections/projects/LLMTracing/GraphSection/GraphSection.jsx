@@ -31,6 +31,7 @@ import LeftControl from "./LeftControl";
 import Legend from "./Legend";
 import GraphSkeleton from "./GraphSkeleton";
 import { formatYAxisValue, getYAxisUnit, getLineSeriesName } from "./common";
+import { parseTimestampToMs } from "./timestampUtils";
 import SVGColor from "src/components/svg-color";
 import { useLLMTracingStoreShallow } from "../states";
 import { logger } from "src/utils/logger";
@@ -233,16 +234,14 @@ const GraphSection = ({
     const evalData = Array.isArray(apiGraphData?.data) ? apiGraphData.data : [];
 
     for (const item of evalData) {
-      if (item.timestamp != null) {
-        // Remove timezone suffix to normalize format
-        const normalizedTimestamp = item.timestamp.replace(/\+00:00$/, "");
+      const normalizedTimestamp = parseTimestampToMs(item.timestamp);
+      if (normalizedTimestamp == null) continue;
 
-        primaryData.push({ x: normalizedTimestamp, y: item.value ?? 0 });
-        trafficData.push({
-          x: normalizedTimestamp,
-          y: item.primary_traffic ?? 0,
-        });
-      }
+      primaryData.push({ x: normalizedTimestamp, y: item.value ?? 0 });
+      trafficData.push({
+        x: normalizedTimestamp,
+        y: item.primary_traffic ?? 0,
+      });
     }
 
     const lineSeriesName = getLineSeriesName(selectedGraphProperty);
