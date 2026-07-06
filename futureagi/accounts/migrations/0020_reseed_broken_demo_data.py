@@ -8,6 +8,13 @@ Affected orgs have a Demo-dataset with 0 rows and no Image-Demo-dataset.
 
 Idempotent: only targets demo datasets with 0 rows. Successfully reseeded
 datasets have 50 rows and won't be matched on re-run.
+
+NOTE: This migration avoids cross-app migration dependencies on model_hub
+and tracer because those apps may not yet be loadable from the migration
+state on a fresh database (Issue #671). Instead we wrap the cross-app model
+lookups in try/except and skip the reseed if the apps aren't available.
+On a fresh install there are no broken demo datasets to fix, so skipping is
+safe — the migration is strictly a repair for existing installations.
 """
 
 from django.db import migrations, transaction
@@ -15,12 +22,16 @@ from django.db.models import Count, Q
 
 
 def reseed_broken_demo_data(apps, schema_editor):
-    Dataset = apps.get_model("model_hub", "Dataset")
-    Row = apps.get_model("model_hub", "Row")
-    Cell = apps.get_model("model_hub", "Cell")
-    Column = apps.get_model("model_hub", "Column")
-    Project = apps.get_model("tracer", "Project")
-    OrganizationMembership = apps.get_model("accounts", "OrganizationMembership")
+    try:
+        Dataset = apps.get_model("model_hub", "Dataset")
+        Row = apps.get_model("model_hub", "Row")
+        Cell = apps.get_model("model_hub", "Cell")
+        Column = apps.get_model("model_hub", "Column")
+        Project = apps.get_model("tracer", "Project")
+        OrganizationMembership = apps.get_model("accounts", "OrganizationMembership")
+    except LookupError as exc:
+        print(f"  SKIP — cross-app model not yet available: {exc}")
+        return
 
     from accounts.user_onboard import (
         create_demo_traces_and_spans,
@@ -124,13 +135,6 @@ def reseed_broken_demo_data(apps, schema_editor):
 class Migration(migrations.Migration):
     dependencies = [
         ("accounts", "0019_merge_20260407_1927"),
-        # This data migration reads model_hub (Dataset/Row/Cell/Column) and
-        # tracer (Project) via apps.get_model(), so those apps must be migrated
-        # first. Without these deps a fresh database can apply this migration
-        # before them, raising "No installed app with label 'model_hub'" and
-        # crash-looping the backend on first boot.
-        ("model_hub", "0104_merge_20260526_0921"),
-        ("tracer", "0078_canonicalize_persisted_filter_contracts"),
     ]
 
     operations = [
