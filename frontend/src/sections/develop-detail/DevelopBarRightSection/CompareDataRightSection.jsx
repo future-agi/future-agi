@@ -35,8 +35,18 @@ const CompareDataRightSection = ({
   const { diffMode, handleToggleDiffMode } = useDevelopDetailContext();
   const { role } = useAuthContext();
 
-  // Initialize all columns as selected when the component mounts or columns prop changes
+  // Initialize all columns as selected only on first load, i.e. while nothing is
+  // selected yet. React Query hands back a new `columns` array reference on every
+  // refetch even when the data is unchanged; the previous `[columns]` dependency
+  // fired this effect on those reference changes and reset every checkbox,
+  // silently discarding the user's deselections. Guarding on "nothing selected
+  // yet" preserves the user's choices while still initializing once the columns
+  // finish loading (which happens after mount, so a mount-only `[]` effect would
+  // never run).
   useEffect(() => {
+    if (selectedColumns.length > 0 || columns.length === 0) {
+      return;
+    }
     const temp = [];
     for (const col of columns) {
       temp.push(col?.id);
@@ -47,8 +57,7 @@ const CompareDataRightSection = ({
       }
     }
     setSelectedColumn(temp);
-    // setUnselectedColumns([]);
-  }, [columns]);
+  }, [columns, selectedColumns]);
 
   const handleColumnClick = () => {
     setColumnPopoverOpen(true);
