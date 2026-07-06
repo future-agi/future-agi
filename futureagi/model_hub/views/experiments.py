@@ -5213,10 +5213,7 @@ class ExperimentListV2APIView(generics.ListAPIView):
 
     def get_queryset(self):
         return (
-            ExperimentsTable.objects.filter(
-                dataset__organization=self.request.user.organization,
-                deleted=False,
-            )
+            _scoped_experiment_queryset(self.request)
             .select_related("dataset")
             .prefetch_related("user_eval_template_ids")
             .annotate(
