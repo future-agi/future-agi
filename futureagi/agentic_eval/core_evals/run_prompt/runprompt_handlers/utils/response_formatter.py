@@ -9,6 +9,7 @@ This module standardizes response formatting for LLM handlers:
 All formatters return consistent metadata and value_info structures.
 """
 
+import ast
 import json
 import time
 from dataclasses import dataclass
@@ -16,9 +17,16 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import structlog
 
+from agentic_eval.core.utils.json_utils import strip_code_fence
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 
 logger = structlog.get_logger(__name__)
+
+# Output formats whose raw model text must be parsed into a structured value.
+# "string"/"text" (and anything else) pass through unchanged.
+ARRAY_OUTPUT_FORMAT = "array"
+OBJECT_OUTPUT_FORMAT = "object"
+NUMBER_OUTPUT_FORMAT = "number"
 
 
 @dataclass
@@ -221,22 +229,59 @@ class ResponseFormatter:
     @staticmethod
     def _apply_output_format(response: Any, output_format: str) -> Any:
         """
-        Apply output format transformation to response.
+        Parse the raw model text into the requested output format.
 
-        Currently returns raw content - output format handling is done
-        at the handler level via get_formatted_output().
+        A caller asking for "array" must receive a ``list`` (not the raw JSON
+        text), "object" a ``dict``, and "number" a ``float``; consumers type-
+        check the result and silently drop anything of the wrong type. The
+        legacy handler path did this in ``RunPrompt.get_formatted_output()`` —
+        this restores the same contract for the new handler path.
+
+        Falls back to the raw content whenever the text cannot be parsed into
+        the requested shape, so a malformed model response degrades to a
+        passthrough instead of raising.
 
         Args:
             response: LiteLLM response object
             output_format: Output format specification
 
         Returns:
-            Formatted response content
+            Parsed response value, or the raw content when it does not match
         """
-        # Output format transformations are currently handled by
-        # RunPrompt.get_formatted_output() - this is a placeholder
-        # for future centralization
-        return response.choices[0].message.content
+        content = response.choices[0].message.content
+
+        if output_format == ARRAY_OUTPUT_FORMAT:
+            parsed = ResponseFormatter._parse_structured(content)
+            return parsed if isinstance(parsed, list) else content
+        if output_format == OBJECT_OUTPUT_FORMAT:
+            parsed = ResponseFormatter._parse_structured(content)
+            return parsed if isinstance(parsed, dict) else content
+        if output_format == NUMBER_OUTPUT_FORMAT:
+            try:
+                return float(strip_code_fence(content))
+            except (TypeError, ValueError):
+                return content
+        return content
+
+    @staticmethod
+    def _parse_structured(content: Any) -> Any:
+        """
+        Best-effort parse of model text into a Python object.
+
+        Unwraps a Markdown code fence some models emit, then tries JSON, then a
+        Python literal. Returns the raw content unchanged when neither parse
+        succeeds — the caller decides whether the resulting type is acceptable.
+        """
+        if not isinstance(content, str):
+            return content
+        unfenced = strip_code_fence(content)
+        try:
+            return json.loads(unfenced)
+        except (json.JSONDecodeError, ValueError):
+            try:
+                return ast.literal_eval(unfenced)
+            except (ValueError, SyntaxError):
+                return content
 
     @staticmethod
     def build_streaming_metadata(
