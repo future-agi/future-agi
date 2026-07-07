@@ -9,7 +9,7 @@ from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.evaluation import Evaluation, StatusChoices
 from model_hub.tasks.user_evaluation import trigger_error_localization_for_standalone
 from sdk.utils.helpers import _get_api_call_type
-from tfc.billing.boundary import get_billing, token_usage_properties, llm_usage_properties
+from tfc.billing.boundary import get_billing, token_usage_properties
 from tfc.constants.api_calls import APICallStatusChoices
 from tracer.utils.inline_evals import trigger_inline_eval
 
@@ -59,12 +59,8 @@ def _log_and_deduct_cost_for_standalone_eval(
         workspace=workspace,
     )
 
-    if api_call_log_row:
-        if not api_call_log_row:
-            raise ValueError("API call not allowed : Error validating the api call.")
-
-        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-            raise ValueError(f"API call not allowed: {api_call_log_row.status}")
+    if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+        raise ValueError(f"API call not allowed: {api_call_log_row.status}")
 
     # NOTE: No pre-eval UsageEvent emission. The cost isn't known until the
     # eval finishes, and UsageEvent.amount defaults to 1 — emitting here

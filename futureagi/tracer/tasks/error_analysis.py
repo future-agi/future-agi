@@ -168,8 +168,8 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
             logger.info(f"Refunding cost for failed trace analysis {trace_id}.")
             try:
                 get_billing().refund(api_call_log_row, config={"error": str(e)})
-            except ImportError:
-                pass
+            except Exception:
+                logger.exception("refund_failed")
             api_call_log_row.status = APICallStatusChoices.ERROR.value
             api_call_log_row.save(update_fields=["status"])
 

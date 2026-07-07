@@ -12,7 +12,7 @@ from tracer.models.external_eval_config import (
     PlatformChoices,
     StatusChoices,
 )
-from tfc.billing.boundary import get_billing, token_usage_properties, llm_usage_properties
+from tfc.billing.boundary import get_billing, token_usage_properties
 from tfc.constants.api_calls import APICallStatusChoices
 
 

@@ -58,7 +58,6 @@ from tracer.tasks import *  # noqa: F401, F403
 from tracer.utils.external_eval import run_external_eval_config
 from tracer.utils.helper import get_default_project_session_config
 from tracer.utils.otel import SpanAttributes, convert_otel_span_to_observation_span
-from tfc.billing.boundary import get_billing, BillingEventType
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 

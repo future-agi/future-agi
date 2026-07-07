@@ -6207,7 +6207,7 @@ class EvalPlayGroundAPIView(APIView):
                     response if response else "Evaluation has been updated."
                 )
             except Exception as e:
-                if UsageLimitExceeded is not None and isinstance(e, UsageLimitExceeded):
+                if isinstance(e, UsageLimitExceeded):
                     logger.warning(f"Eval playground usage limit: {str(e)}")
                     return self._gm.usage_limit_response(e.check_result)
                 logger.error(f"Error in run_eval_func: {str(e)}")

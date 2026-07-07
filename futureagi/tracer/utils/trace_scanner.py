@@ -12,7 +12,7 @@ from typing import List
 import structlog
 
 # Activity-aware stub: used inside Temporal trace-scanner activities.
-from tfc.billing.boundary import get_billing, BillingEventType, token_usage_properties, llm_usage_properties
+from tfc.billing.boundary import get_billing, BillingEventType, token_usage_properties
 from tfc.ee_stub import _ee_activity_stub as _ee_stub
 
 try:

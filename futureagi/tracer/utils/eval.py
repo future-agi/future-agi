@@ -40,7 +40,7 @@ from tracer.utils.helper import (
 
 logger = structlog.get_logger(__name__)
 
-from tfc.billing.boundary import get_billing, token_usage_properties, llm_usage_properties
+from tfc.billing.boundary import get_billing, token_usage_properties
 
 custom_prompt_eval_types = ["CustomPrompt"]
 EXPERIMENT = "experiment"

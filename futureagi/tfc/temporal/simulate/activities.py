@@ -42,7 +42,7 @@ try:
     )
 except ImportError:
     PersonaConfigurator = _ee_stub("PersonaConfigurator")
-from tfc.billing.boundary import get_billing, BillingEventType, token_usage_properties, llm_usage_properties
+from tfc.billing.boundary import get_billing, BillingEventType, token_usage_properties
 from agentic_eval.core.llm.llm import LLM
 from model_hub.models.choices import (
     CellStatus,

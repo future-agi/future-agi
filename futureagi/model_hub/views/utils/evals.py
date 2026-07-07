@@ -224,10 +224,7 @@ def run_eval_func(
         billing = get_billing()
         usage_check = billing.check_usage(str(org.id), api_call_type)
         if not usage_check.allowed:
-            try:
-                raise UsageLimitExceeded(usage_check)
-            except ImportError:
-                raise ValueError(str(usage_check))
+            raise UsageLimitExceeded(usage_check)
 
         api_call_log_row = billing.log_and_deduct(
             organization=org,
