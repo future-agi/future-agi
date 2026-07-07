@@ -22,7 +22,9 @@ Three modes:
 """
 
 import json
+import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import structlog
 from rest_framework.permissions import IsAuthenticated
@@ -515,7 +517,7 @@ def _fetch_dataset_column_values(dataset_id, column_id):
         result = analytics.execute_ch_query(
             sql,
             {"dataset_id": str(dataset_id), "column_id": str(column_id)},
-            timeout_ms=5000,
+            timeout_ms=2500,
         )
         raw = [row["val"] for row in result.data if row.get("val")]
     except Exception as e:
@@ -722,32 +724,53 @@ def _run_smart_agent(query, schema, fetch_values):
     #   - high-cardinality string fields (free-form id/tag/model namespaces
     #     where the value list can grow unboundedly)
     # ------------------------------------------------------------------
+    # Parallelize per-field pre-fetch with a wall-clock budget. Sequential
+    # was ~5s per query for a slow CH cluster, so a schema with 10 columns
+    # blocked the endpoint for 50s+ before the LLM even ran. With a pool
+    # and a total budget we cap the pre-fetch phase; anything that misses
+    # the budget stays marked v_empty so the LLM can still emit a literal
+    # filter (or call `get_field_values` on demand).
     inlined_value_count = 0
-    for entry in compact_fields:
-        fid = entry["f"]
-        if entry["t"] != "string":
-            continue
-        if fid in _HIGH_CARDINALITY_FIELDS:
-            continue
+    prefetch_targets = [
+        entry
+        for entry in compact_fields
+        if entry["t"] == "string" and entry["f"] not in _HIGH_CARDINALITY_FIELDS
+    ]
+    prefetch_budget_s = 4.0
+    if prefetch_targets:
+        deadline = time.monotonic() + prefetch_budget_s
+        results_by_fid: dict[str, list] = {}
+        pool = ThreadPoolExecutor(max_workers=min(8, len(prefetch_targets)))
         try:
-            vals = fetch_values(fid)
-        except Exception:
-            vals = []
-        if not vals:
-            # The field exists in the schema but has no rows in CH yet.
-            # Tell the LLM explicitly so it can still emit a literal-value
-            # filter (the user's intent matters even when the result set
-            # would be empty — e.g. "show voicemails" on a fresh project).
-            entry["v_empty"] = True
-            continue
-        if len(vals) <= _INLINE_VALUE_CAP:
-            entry["v"] = vals
-            inlined_value_count += len(vals)
-        else:
-            # Too many to inline — flag it so the LLM knows to use the
-            # search tool for this field instead of guessing.
-            entry["v_count"] = len(vals)
-            entry["v_searchable"] = True
+            futures = {
+                pool.submit(fetch_values, entry["f"]): entry["f"]
+                for entry in prefetch_targets
+            }
+            try:
+                for future in as_completed(
+                    futures, timeout=max(0.1, deadline - time.monotonic())
+                ):
+                    try:
+                        results_by_fid[futures[future]] = future.result() or []
+                    except Exception:
+                        results_by_fid[futures[future]] = []
+            except TimeoutError:
+                # Budget exhausted — surviving fields get v_empty below and
+                # the LLM can still call get_field_values on demand.
+                pass
+        finally:
+            pool.shutdown(wait=False, cancel_futures=True)
+        for entry in prefetch_targets:
+            vals = results_by_fid.get(entry["f"], [])
+            if not vals:
+                entry["v_empty"] = True
+                continue
+            if len(vals) <= _INLINE_VALUE_CAP:
+                entry["v"] = vals
+                inlined_value_count += len(vals)
+            else:
+                entry["v_count"] = len(vals)
+                entry["v_searchable"] = True
 
     tools = [
         {
