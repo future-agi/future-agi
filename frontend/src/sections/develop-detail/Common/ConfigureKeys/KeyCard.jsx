@@ -15,6 +15,7 @@ import { ShowComponent } from "src/components/show";
 import APIKeyReadOnlyView from "src/components/custom-model-dropdown/APIKeyReadOnlyView";
 import Actions from "./Actions";
 import { LOGO_WITH_BLACK_BACKGROUND } from "src/components/custom-model-dropdown/common";
+import { getRequestErrorMessage } from "src/utils/errorUtils";
 
 const KeyCardComponent = ({ data, onDeleteClick }) => {
   const theme = useTheme();
@@ -97,6 +98,11 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
       setEditMode(false);
       hasClearedOnceRef.current = false;
     },
+    onError: (error) => {
+      enqueueSnackbar(getRequestErrorMessage(error, "Failed to save API key"), {
+        variant: "error",
+      });
+    },
   });
 
   const { mutate: updateApiKey, isPending: isUpdatingApiKey } = useMutation({
@@ -109,6 +115,11 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
       queryClient.invalidateQueries({ queryKey: ["api-key-status"] });
       setEditMode(false);
       hasClearedOnceRef.current = false;
+    },
+    onError: (error) => {
+      enqueueSnackbar(getRequestErrorMessage(error, "Failed to save API key"), {
+        variant: "error",
+      });
     },
   });
   const handleFormSubmit = async (formData) => {
