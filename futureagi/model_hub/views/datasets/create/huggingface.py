@@ -212,20 +212,21 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
                         int(num_rows) if num_rows else int(dataset_info.get("num_rows"))
                     )
                     billing = get_billing()
-                    call_log_row = billing.log_and_deduct(
+                    call_log_row = billing.log_and_deduct_resource(
                         organization=organization,
                         api_call_type=APICallTypeChoices.ROW_ADD.value,
                         config={"total_rows": rows_in_dataset},
                         workspace=request.workspace,
                     )
                     if (
-                        call_log_row is None
-                        or call_log_row.status
+                        call_log_row is not None
+                        and call_log_row.status
                         == APICallStatusChoices.RESOURCE_LIMIT.value
                     ):
                         return self._gm.too_many_requests("Row limit reached")
-                    call_log_row.status = APICallStatusChoices.SUCCESS.value
-                    call_log_row.save()
+                    if call_log_row is not None:
+                        call_log_row.status = APICallStatusChoices.SUCCESS.value
+                        call_log_row.save()
 
                     try:
                         first_row = load_hf_dataset_with_retries(
@@ -251,21 +252,22 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
                         return self._gm.bad_request(
                             get_error_message("FAILED_TO_PREVIEW_DATASET")
                         )
-                    call_log_row_entry = billing.log_and_deduct(
+                    call_log_row_entry = billing.log_and_deduct_resource(
                         organization=organization,
                         api_call_type=APICallTypeChoices.DATASET_ADD.value,
                         workspace=request.workspace,
                     )
                     if (
-                        call_log_row_entry is None
-                        or call_log_row_entry.status
+                        call_log_row_entry is not None
+                        and call_log_row_entry.status
                         == APICallStatusChoices.RESOURCE_LIMIT.value
                     ):
                         return self._gm.too_many_requests(
                             get_error_message("DATASET_CREATE_LIMIT_REACHED")
                         )
-                    call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
-                    call_log_row_entry.save()
+                    if call_log_row_entry is not None:
+                        call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
+                        call_log_row_entry.save()
 
                     columns_to_create = []
                     column_order = []

@@ -114,8 +114,15 @@ class Billing:
         api_call_type: str,
         config: Optional[dict] = None,
         workspace: Any = None,
+        **extra: Any,
     ) -> Any:
-        """Gate resource creation (datasets, rows, KB) and log the attempt.  No-ops in OSS."""
+        """Gate resource creation (datasets, rows, KB) and log the attempt.  No-ops in OSS.
+
+        ``**extra`` is forwarded to the EE implementation so callers can pass
+        the extra kwargs the underlying ee.usage function accepts (e.g.
+        ``sdk_source=True``) without every one of them having to be spelled
+        out on the boundary.
+        """
         raise NotImplementedError
 
     def ai_credits(self, cost_usd: float) -> int:
@@ -215,7 +222,7 @@ class _NoopBilling(Billing):
     def log_and_deduct(self, **kw):
         return None
 
-    def log_and_deduct_resource(self, organization, api_call_type, config=None, workspace=None):
+    def log_and_deduct_resource(self, organization, api_call_type, config=None, workspace=None, **extra):
         return None
 
     def ai_credits(self, cost_usd):
@@ -295,11 +302,11 @@ class _EeBilling(Billing):
 
         return log_and_deduct_cost_for_api_request(**kw)
 
-    def log_and_deduct_resource(self, organization, api_call_type, config=None, workspace=None):
+    def log_and_deduct_resource(self, organization, api_call_type, config=None, workspace=None, **extra):
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
 
         return log_and_deduct_cost_for_resource_request(
-            organization, api_call_type, config=config, workspace=workspace
+            organization, api_call_type, config=config, workspace=workspace, **extra
         )
 
     def ai_credits(self, cost_usd):

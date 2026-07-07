@@ -163,19 +163,20 @@ class AddRowsFromExistingView(APIView):
                 dataset=source_dataset, deleted=False
             ).count()
             billing = get_billing()
-            call_log_row = billing.log_and_deduct(
+            call_log_row = billing.log_and_deduct_resource(
                 organization=getattr(request, "organization", None) or request.user.organization,
                 api_call_type=APICallTypeChoices.ROW_ADD.value,
                 config={"total_rows": new_rows_count + existing_rows_count},
                 workspace=request.workspace,
             )
             if (
-                call_log_row is None
-                or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
+                call_log_row is not None
+                and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
             ):
                 return self._gm.too_many_requests("Row limit reached")
-            call_log_row.status = APICallStatusChoices.SUCCESS.value
-            call_log_row.save()
+            if call_log_row is not None:
+                call_log_row.status = APICallStatusChoices.SUCCESS.value
+                call_log_row.save()
             # --- Row Limit Check End ---
 
             missing_columns = Column.objects.filter(

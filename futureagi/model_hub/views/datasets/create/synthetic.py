@@ -117,36 +117,38 @@ class CreateSyntheticDataset(APIView):
             if validated_data["num_rows"] < 10:
                 return self._gm.bad_request(get_error_message("10_ROWS_REQUIRED"))
 
-            call_log_row_entry = billing.log_and_deduct(
+            call_log_row_entry = billing.log_and_deduct_resource(
                 organization=organization,
                 api_call_type=APICallTypeChoices.DATASET_ADD.value,
                 workspace=request.workspace,
             )
             if (
-                call_log_row_entry is None
-                or call_log_row_entry.status
+                call_log_row_entry is not None
+                and call_log_row_entry.status
                 == APICallStatusChoices.RESOURCE_LIMIT.value
             ):
                 return self._gm.too_many_requests(
                     get_error_message("DATASET_CREATE_LIMIT_REACHED")
                 )
-            call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
-            call_log_row_entry.save()
+            if call_log_row_entry is not None:
+                call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
+                call_log_row_entry.save()
 
             # ------------------- Added Row Check -------------------
-            call_log_row = billing.log_and_deduct(
+            call_log_row = billing.log_and_deduct_resource(
                 organization=organization,
                 api_call_type=APICallTypeChoices.ROW_ADD.value,
                 config={"total_rows": validated_data["num_rows"]},
                 workspace=request.workspace,
             )
             if (
-                call_log_row is None
-                or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
+                call_log_row is not None
+                and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
             ):
                 return self._gm.too_many_requests("Row limit reached")
-            call_log_row.status = APICallStatusChoices.SUCCESS.value
-            call_log_row.save()
+            if call_log_row is not None:
+                call_log_row.status = APICallStatusChoices.SUCCESS.value
+                call_log_row.save()
             # dataset = Dataset.objects.create(name=dataset_name)
             dataset_serializer = DatasetSerializer(
                 data={
@@ -507,19 +509,20 @@ class UpdateSyntheticDatasetConfigView(APIView):
             # or consume row capacity.
             if rows_to_add_count > 0:
                 billing = get_billing()
-                call_log_row = billing.log_and_deduct(
+                call_log_row = billing.log_and_deduct_resource(
                     organization=_request_organization(request),
                     api_call_type=APICallTypeChoices.ROW_ADD.value,
                     config={"total_rows": rows_to_add_count},
                     workspace=request.workspace,
                 )
                 if (
-                    call_log_row is None
-                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
+                    call_log_row is not None
+                    and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
                 ):
                     return self._gm.too_many_requests("Row limit reached")
-                call_log_row.status = APICallStatusChoices.SUCCESS.value
-                call_log_row.save()
+                if call_log_row is not None:
+                    call_log_row.status = APICallStatusChoices.SUCCESS.value
+                    call_log_row.save()
 
             if new_row_count > current_row_count:
                 last_row = existing_rows.order_by("-order").first()

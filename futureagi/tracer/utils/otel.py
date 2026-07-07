@@ -1070,7 +1070,7 @@ def _deduct_project_creation_cost(
     )
 
     billing = get_billing()
-    call_log_row = billing.log_and_deduct(
+    call_log_row = billing.log_and_deduct_resource(
         organization=organization,
         api_call_type=call_type,
         config={"existing": existing, "project_id": project_id},
@@ -1078,8 +1078,8 @@ def _deduct_project_creation_cost(
     )
 
     if (
-        call_log_row is None
-        or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
+        call_log_row is not None
+        and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
     ):
         raise ResourceLimitError(
             "Trace creation not allowed due to plan limits or insufficient credits."

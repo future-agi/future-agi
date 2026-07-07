@@ -61,21 +61,22 @@ class CreateEmptyDatasetView(APIView):
                 return self._gm.bad_request(str(validation_err.detail[0]))
 
             billing = get_billing()
-            call_log_row_entry = billing.log_and_deduct(
+            call_log_row_entry = billing.log_and_deduct_resource(
                 organization=organization,
                 api_call_type=APICallTypeChoices.DATASET_ADD.value,
                 workspace=request.workspace,
             )
             if (
-                call_log_row_entry is None
-                or call_log_row_entry.status
+                call_log_row_entry is not None
+                and call_log_row_entry.status
                 == APICallStatusChoices.RESOURCE_LIMIT.value
             ):
                 return self._gm.too_many_requests(
                     get_error_message("DATASET_CREATE_LIMIT_REACHED")
                 )
-            call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
-            call_log_row_entry.save()
+            if call_log_row_entry is not None:
+                call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
+                call_log_row_entry.save()
 
             dataset_id = uuid.uuid4()
 

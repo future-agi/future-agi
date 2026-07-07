@@ -146,21 +146,22 @@ class CreateDatasetFromExpView(APIView):
                 return self._gm.bad_request(parse_serialized_errors(dataset_serializer))
 
             billing = get_billing()
-            call_log_row_entry = billing.log_and_deduct(
+            call_log_row_entry = billing.log_and_deduct_resource(
                 organization=_org,
                 api_call_type=APICallTypeChoices.DATASET_ADD.value,
                 workspace=getattr(request, "workspace", None),
             )
             if (
-                call_log_row_entry is None
-                or call_log_row_entry.status
+                call_log_row_entry is not None
+                and call_log_row_entry.status
                 == APICallStatusChoices.RESOURCE_LIMIT.value
             ):
                 return self._gm.too_many_requests(
                     get_error_message("DATASET_CREATE_LIMIT_REACHED")
                 )
-            call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
-            call_log_row_entry.save()
+            if call_log_row_entry is not None:
+                call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
+                call_log_row_entry.save()
 
             def handle_run_prompt(source_id, dataset):
                 source_run_prompter = RunPrompter.objects.get(id=source_id)
