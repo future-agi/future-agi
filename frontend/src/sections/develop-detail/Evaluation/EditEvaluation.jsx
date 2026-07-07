@@ -145,20 +145,36 @@ const EditEvaluation = ({
   }, [evalConfig]);
 
   const handleEvalAdded = async (cfg) => {
-    // Build run_config from EvalPickerConfigFull output
+    // Build run_config from EvalPickerConfigFull output. The picker emits
+    // snake_case keys (pass_threshold, agent_mode, ...); read snake first
+    // and keep camelCase as a defensive fallback for any legacy caller.
     const runConfig = {};
-    if (cfg.model) runConfig.model = cfg.model;
-    if (cfg.agentMode) runConfig.agent_mode = cfg.agentMode;
-    if (cfg.checkInternet !== undefined)
-      runConfig.check_internet = !!cfg.checkInternet;
-    if (cfg.summary) runConfig.summary = cfg.summary;
-    if (cfg.dataInjection) runConfig.data_injection = cfg.dataInjection;
-    if (cfg.knowledgeBases) runConfig.knowledge_bases = cfg.knowledgeBases;
-    if (cfg.tools) runConfig.tools = cfg.tools;
-    if (cfg.passThreshold !== undefined)
-      runConfig.pass_threshold = cfg.passThreshold;
-    if (cfg.choiceScores && Object.keys(cfg.choiceScores).length)
-      runConfig.choice_scores = cfg.choiceScores;
+    const model = cfg.model;
+    const agentMode = cfg.agent_mode ?? cfg.agentMode;
+    const checkInternet = cfg.check_internet ?? cfg.checkInternet;
+    const summary = cfg.summary;
+    const dataInjection = cfg.data_injection ?? cfg.dataInjection;
+    const knowledgeBases = cfg.knowledge_bases ?? cfg.knowledgeBases;
+    const tools = cfg.tools;
+    const passThreshold = cfg.pass_threshold ?? cfg.passThreshold;
+    const choiceScores = cfg.choice_scores ?? cfg.choiceScores;
+    const multiChoice = cfg.multi_choice ?? cfg.multiChoice;
+    const errorLocalizerEnabled =
+      cfg.error_localizer_enabled ?? cfg.errorLocalizerEnabled;
+
+    if (model) runConfig.model = model;
+    if (agentMode) runConfig.agent_mode = agentMode;
+    if (checkInternet !== undefined) runConfig.check_internet = !!checkInternet;
+    if (summary) runConfig.summary = summary;
+    if (dataInjection) runConfig.data_injection = dataInjection;
+    if (knowledgeBases) runConfig.knowledge_bases = knowledgeBases;
+    if (tools) runConfig.tools = tools;
+    if (passThreshold !== undefined) runConfig.pass_threshold = passThreshold;
+    if (choiceScores && Object.keys(choiceScores).length)
+      runConfig.choice_scores = choiceScores;
+    if (multiChoice !== undefined) runConfig.multi_choice = !!multiChoice;
+    if (errorLocalizerEnabled !== undefined)
+      runConfig.error_localizer_enabled = !!errorLocalizerEnabled;
 
     const payload = {
       run: false,
