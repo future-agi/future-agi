@@ -47,9 +47,7 @@ const SyntheticSummary = ({ summaryData = {}, onClose, isLoading }) => {
     columns = [],
   } = summaryData;
 
-  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null, {
-    status: true,
-  });
+  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null);
 
   const knowledgeBaseOptions = useMemo(
     () =>
