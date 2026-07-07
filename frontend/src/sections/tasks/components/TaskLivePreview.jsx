@@ -1086,12 +1086,13 @@ const VariableMappingView = ({
 }) => {
   const fieldSet = useMemo(() => new Set(fieldNames), [fieldNames]);
   const hasEvals = evalsDetails.length > 0;
-  // For sessions the lazy fetch only covers `traces[0].spans`, so the
-  // walker over the preview detail can't witness paths into other traces
-  // or beyond the first trace's loaded spans. The `(not in row)` chip
-  // becomes misinformation in that regime — the BE is the authoritative
-  // resolver at test time. Suppress the check entirely for sessions.
-  const skipRowCheck = rowType === "sessions";
+  // Walker paths only line up with the mapping shape for `spans`; for
+  // sessions / traces / voiceCalls the BE is the authoritative resolver
+  // at test time, so the local (not in row) chip would misfire.
+  const skipRowCheck =
+    rowType === "sessions" ||
+    rowType === "traces" ||
+    rowType === "voiceCalls";
 
   if (!hasEvals) return null;
 
