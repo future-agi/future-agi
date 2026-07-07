@@ -145,7 +145,7 @@ async def run_template_async(
                     try:
                         billing.record_usage(
                             str(organization.id),
-                            BillingEventType.AI_PROMPT_CREATION,
+                            APICallTypeChoices.PROMPT_BENCH.value,
                             source="run_prompt_gen",
                             source_id=str(template.id),
                         )

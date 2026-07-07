@@ -211,20 +211,12 @@ def _voice_sim_gate_response(user_organization, gm):
 
     from tfc.billing.boundary import get_billing
     billing = get_billing()
-    if not billing.has_feature(str(user_organization.id), "voice_sim"):
-        message = (
-            "Voice simulation is not available on this deployment. "
-            "Upgrade to cloud or enterprise to run voice calls."
-        )
-        return Response(
-            build_error_envelope(
-                message,
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                code="payment_required",
-                extra={"upgrade_required": True, "feature": "voice_sim"},
-            ),
-            status=status.HTTP_402_PAYMENT_REQUIRED,
-        )
+    if not billing.is_enabled:
+        # OSS handled by voice_sim_oss_gate_response above; nothing more to do.
+        return None
+    gate = billing.check_feature_gate(str(user_organization.id), "has_voice_sim")
+    if not gate.allowed:
+        return gm.forbidden_response(gate.reason)
     return None
 
 
