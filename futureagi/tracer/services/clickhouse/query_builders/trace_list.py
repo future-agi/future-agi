@@ -146,10 +146,15 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if not order_clause:
             order_clause = "ORDER BY start_time DESC"
 
-        # Pagination
+        # Prefix-fetch pagination: read the sorted prefix [0, offset +
+        # 2*page_size) in ONE bounded top-K pass and let the view dedup by
+        # trace id then slice [offset, offset + page_size) — see
+        # tracer/services/clickhouse/page_dedup.py. Preserves the global
+        # dedup `LIMIT 1 BY trace_id` provided (a trace — even a multi-root
+        # one whose roots sort pages apart — can never appear on two pages)
+        # without its O(window) full sort. No SQL OFFSET; slicing in Python.
         offset = self.page_number * self.page_size
-        self.params["limit"] = self.page_size
-        self.params["offset"] = offset
+        self.params["limit"] = offset + 2 * self.page_size
 
         # Build optional filter fragment
         filter_fragment = f"AND {extra_where}" if extra_where else ""
@@ -243,7 +248,6 @@ class TraceListQueryBuilder(BaseQueryBuilder):
           {filter_fragment}
         {order_clause}
         LIMIT %(limit)s
-        OFFSET %(offset)s
         """
         return query, self.params
 

@@ -155,8 +155,10 @@ class TestExistingBehaviorPreserved:
             project_id=project_id, page_number=2, page_size=25
         )
         query, params = builder.build()
-        assert params["limit"] == 25  # page_size (no +1 for has_more)
-        assert params["offset"] == 50  # page_number * page_size
+        # Prefix-fetch pagination: LIMIT covers [0, offset + 2*page_size);
+        # the view dedups by trace_id and slices in Python (page_dedup.py).
+        assert "OFFSET" not in query
+        assert params["limit"] == 100  # offset 50 + 2 * page_size 25
 
     def test_root_span_filter(self, project_id):
         builder = TraceListQueryBuilder(project_id=project_id)

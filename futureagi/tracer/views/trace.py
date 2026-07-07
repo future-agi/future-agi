@@ -75,6 +75,7 @@ from tracer.services.clickhouse.graph_dispatch import (
     fetch_eval_graph_ch,
     fetch_system_metric_graph_ch,
 )
+from tracer.services.clickhouse.page_dedup import paginate_deduped
 from tracer.services.clickhouse.query_builders import (
     AgentGraphQueryBuilder,
 )
@@ -3474,21 +3475,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         query, params = builder.build()
         result = analytics.execute_ch_query(query, params, timeout_ms=10000)
 
-        # De-dup the page by trace id. Phase 1 dropped `LIMIT 1 BY trace_id`
-        # (that clause forced an O(roots-in-window) full sort that OOM-crashed
-        # CH — see TraceListQueryBuilder.build). Duplicate trace rows on a
-        # page (multi-root traces, un-merged ReplacingMergeTree versions) are
-        # rare; keep the first occurrence — the most recent under the query's
-        # `ORDER BY start_time DESC`, i.e. the same row `LIMIT 1 BY` kept.
-        seen_trace_ids: set[str] = set()
-        deduped = []
-        for row in result.data:
-            tid = str(row.get("trace_id", ""))
-            if tid in seen_trace_ids:
-                continue
-            seen_trace_ids.add(tid)
-            deduped.append(row)
-        result.data = deduped[:page_size]
+        # Prefix-dedup pagination: Phase 1 dropped `LIMIT 1 BY trace_id` (its
+        # O(roots-in-window) full sort OOM-crashed CH — see
+        # TraceListQueryBuilder.build) and instead fetched the sorted prefix
+        # [0, offset + 2*page_size). De-dup the prefix by trace id and slice
+        # the page — every page is a disjoint slice of the same globally
+        # de-duplicated stream, so a trace (even a multi-root one whose roots
+        # sort pages apart) can never appear on two pages and none is
+        # skipped. See page_dedup.py.
+        result.data, _has_more = paginate_deduped(
+            result.data, "trace_id", page_number, page_size
+        )
 
         # Count
         count_query, count_params = builder.build_count_query()
@@ -4142,18 +4139,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         query, params = builder.build()
         result = analytics.execute_ch_query(query, params, timeout_ms=10000)
 
-        # De-dup the page by trace id (Phase 1 dropped `LIMIT 1 BY trace_id` —
-        # see TraceListQueryBuilder.build); keep the first occurrence, the
-        # most recent under the query's ordering.
-        seen_trace_ids: set[str] = set()
-        deduped = []
-        for row in result.data:
-            tid = str(row.get("trace_id", ""))
-            if tid in seen_trace_ids:
-                continue
-            seen_trace_ids.add(tid)
-            deduped.append(row)
-        result.data = deduped[:page_size]
+        # Prefix-dedup pagination (Phase 1 fetches the sorted prefix
+        # [0, offset + 2*page_size); dedup by trace id + slice — see
+        # TraceListQueryBuilder.build and page_dedup.py).
+        result.data, _has_more = paginate_deduped(
+            result.data, "trace_id", page_number, page_size
+        )
 
         # Get count
         count_query, count_params = builder.build_count_query()

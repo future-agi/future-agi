@@ -2431,9 +2431,10 @@ class TestTraceListQueryBuilder:
         )
         query, params = builder.build()
         assert "LIMIT" in query
-        assert "OFFSET" in query
+        # Prefix-fetch pagination: no SQL OFFSET (see page_dedup.py).
+        assert "OFFSET" not in query
         assert "parent_span_id IS NULL" in query
-        assert params["limit"] == 10
+        assert params["limit"] == 20  # offset 0 + 2 * page_size 10
 
     def test_build_query_selects_expected_columns(self):
         """Phase-1 query should select trace metadata columns."""
@@ -2566,8 +2567,9 @@ class TestTraceListQueryBuilder:
             page_size=25,
         )
         query, params = builder.build()
-        assert params["offset"] == 75  # 3 * 25
-        assert params["limit"] == 25
+        assert "OFFSET" not in query
+        assert "offset" not in params
+        assert params["limit"] == 125  # offset 75 + 2 * page_size 25
 
     def test_build_user_id_query(self):
         """build_user_id_query() should use enduser_dict for single-query lookup."""
@@ -4616,9 +4618,9 @@ class TestTraceListQueryBuilderComprehensive:
             page_number=0,
             page_size=50,
         )
-        _, params = builder.build()
-        assert params["offset"] == 0
-        assert params["limit"] == 50
+        query, params = builder.build()
+        assert "OFFSET" not in query
+        assert params["limit"] == 100  # offset 0 + 2 * page_size 50
 
     def test_pagination_large_page(self):
         """Large page number should calculate correct offset."""
@@ -4629,9 +4631,9 @@ class TestTraceListQueryBuilderComprehensive:
             page_number=10,
             page_size=100,
         )
-        _, params = builder.build()
-        assert params["offset"] == 1000
-        assert params["limit"] == 100
+        query, params = builder.build()
+        assert "OFFSET" not in query
+        assert params["limit"] == 1200  # offset 1000 + 2 * page_size 100
 
     def test_pagination_small_page_size(self):
         """Small page size should work correctly."""
@@ -4642,9 +4644,9 @@ class TestTraceListQueryBuilderComprehensive:
             page_number=5,
             page_size=10,
         )
-        _, params = builder.build()
-        assert params["offset"] == 50
-        assert params["limit"] == 10
+        query, params = builder.build()
+        assert "OFFSET" not in query
+        assert params["limit"] == 70  # offset 50 + 2 * page_size 10
 
     # ------------------------------------------------------------------
     # Count query
