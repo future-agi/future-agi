@@ -147,6 +147,8 @@ class OTLPTraceView(APIView):
             rl_result = get_billing().check_rate_limit(organization_id, "ingestion")
             if not rl_result.allowed:
                 response = self._error_response(request, rl_result.reason, 429)
+                if rl_result.retry_after is not None:
+                    response["Retry-After"] = str(rl_result.retry_after)
                 return response
 
             user_id = str(user.id)
