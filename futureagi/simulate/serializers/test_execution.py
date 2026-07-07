@@ -1223,6 +1223,14 @@ class TestExecutionDetailResponseSerializer(serializers.Serializer):
     status = serializers.CharField(read_only=True, required=False)
     provider = serializers.CharField(read_only=True, required=False)
     agent_type = serializers.CharField(read_only=True, required=False)
+    # Per-execution timestamps so a rerun detail page can render its own
+    # start time rather than the parent RunTest's created_at.
+    started_at = serializers.DateTimeField(
+        read_only=True, required=False, allow_null=True
+    )
+    created_at = serializers.DateTimeField(
+        read_only=True, required=False, allow_null=True
+    )
 
 
 class RunTestKPIsResponseSerializer(serializers.Serializer):

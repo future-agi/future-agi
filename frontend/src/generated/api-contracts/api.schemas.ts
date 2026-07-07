@@ -17876,6 +17876,8 @@ export interface TestExecutionDetailResponseApi {
   readonly provider?: string;
   /** @minLength 1 */
   readonly agent_type?: string;
+  readonly started_at?: string;
+  readonly created_at?: string;
 }
 
 /**

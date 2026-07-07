@@ -2361,6 +2361,8 @@ class TestExecutionDetailView(APIView):
                         "current_page": page,
                         "column_order": column_order,
                         "error_messages": error_messages,
+                        "started_at": test_execution.started_at,
+                        "created_at": test_execution.created_at,
                     },
                     status=status.HTTP_200_OK,
                 )
@@ -2395,6 +2397,8 @@ class TestExecutionDetailView(APIView):
                         "column_order": column_order,
                         "error_messages": error_messages,
                         "status": test_execution.status,
+                        "started_at": test_execution.started_at,
+                        "created_at": test_execution.created_at,
                     },
                     status=status.HTTP_200_OK,
                 )
@@ -2527,6 +2531,8 @@ class TestExecutionDetailView(APIView):
                 else "prompt"
             )
             response_data["agent_type"] = agent_type
+            response_data["started_at"] = test_execution.started_at
+            response_data["created_at"] = test_execution.created_at
 
             return Response(response_data, status=status.HTTP_200_OK)
 
