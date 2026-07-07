@@ -205,7 +205,7 @@ class AudioProcessor:
         # Calculate token usage
         try:
             billing = get_billing()
-            prompt_tokens = billing.count_tokens(input_text)
+            prompt_tokens = billing.count_tiktoken_tokens(input_text)
         except Exception:
             prompt_tokens = None
 

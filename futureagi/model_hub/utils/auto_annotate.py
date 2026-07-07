@@ -208,9 +208,9 @@ class AutoAnnotation:
                         inputs, input_type, strict=False
                     ):
                         if input_type_item == "image":
-                            tokens = billing.count_tokens("" + input_item)
+                            tokens = billing.count_tiktoken_tokens("", input_item)
                         else:
-                            tokens = billing.count_tokens(input_item)
+                            tokens = billing.count_tiktoken_tokens(input_item)
                         api_call_type = APICallTypeChoices.AUTO_ANNOTATION.value
                         config = {}
                         config["input_tokens"] = tokens

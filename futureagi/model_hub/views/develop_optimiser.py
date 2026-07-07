@@ -96,7 +96,7 @@ class DevelopOptimizer:
 
             input_words_string = " ".join(cell_values_strings)
             billing = get_billing()
-            opt_column_token_count = billing.count_tokens(input_words_string)
+            opt_column_token_count = billing.count_tiktoken_tokens(input_words_string)
 
             # print("optimisation token_count : ", opt_column_token_count)
             reference_id = str(self.optimize_dataset.id)

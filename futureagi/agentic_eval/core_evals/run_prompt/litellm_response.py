@@ -320,7 +320,7 @@ class RunPrompt:
         # Token usage: prompt (text) via tiktoken helper, completion (audio) via 32 tokens/sec
         try:
             billing = get_billing()
-            prompt_tokens = billing.count_tokens(input_text)
+            prompt_tokens = billing.count_tiktoken_tokens(input_text)
         except Exception:
             prompt_tokens = None
         completion_tokens = int(duration_seconds * 32) if duration_seconds else None
@@ -971,8 +971,8 @@ class RunPrompt:
 
                 # Use tiktoken for accurate token counting (handles both text and images)
                 billing = get_billing()
-                estimated_prompt_tokens = billing.count_tokens(prompt_text)
-                estimated_completion_tokens = billing.count_tokens(completion_text)
+                estimated_prompt_tokens = billing.count_tiktoken_tokens(prompt_text, image_urls)
+                estimated_completion_tokens = billing.count_tiktoken_tokens(completion_text)
                 total_tokens = estimated_prompt_tokens + estimated_completion_tokens
 
                 # Use calculate_total_cost with custom model pricing as fallback

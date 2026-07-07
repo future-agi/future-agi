@@ -156,8 +156,8 @@ class CustomModelHandler(BaseModelHandler):
         billing = get_billing()
 
         # Count tokens
-        estimated_prompt_tokens = billing.count_tokens(prompt_text)
-        estimated_completion_tokens = billing.count_tokens(completion_text)
+        estimated_prompt_tokens = billing.count_tiktoken_tokens(prompt_text, image_urls)
+        estimated_completion_tokens = billing.count_tiktoken_tokens(completion_text)
 
         # Prepare usage payload for cost calculation
         token_usage = {

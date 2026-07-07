@@ -2314,7 +2314,7 @@ class EvaluationRunner:
             logger.error(f"unable to retrieve rule prompt for column id : {column_id}")
 
         billing = get_billing()
-        input_token_count = billing.count_tokens(input_words_string)
+        input_token_count = billing.count_tiktoken_tokens(input_words_string, cell_values_image_urls)
         return input_token_count
 
     def _create_eval_instance(
