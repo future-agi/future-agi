@@ -22,6 +22,15 @@ const CallChatSOPOption = ({ control }) => {
     const files = Array.from(acceptedFiles);
     const maxSize = 5 * 1024 * 1024; // 5MB
 
+    const emptyFiles = files.filter((file) => file?.size === 0);
+
+    if (emptyFiles.length > 0) {
+      enqueueSnackbar("File is empty. Please upload a file with content.", {
+        variant: "error",
+      });
+      return;
+    }
+    
     const filesLargerThanMaxSize = files.filter((file) => file?.size > maxSize);
 
     if (filesLargerThanMaxSize.length > 0) {
@@ -31,7 +40,9 @@ const CallChatSOPOption = ({ control }) => {
       return;
     }
 
-    const validFiles = files.filter((file) => file.size <= maxSize);
+    const validFiles = files.filter(
+      (file) => file.size > 0 && file.size <= maxSize
+    );
 
     // Process each file to create preview URLs and metadata
     const processedFiles = validFiles.map((file) => {
