@@ -14,7 +14,7 @@ class TestCosineSimilarity:
     c = CosineSimilarity()
 
     def test_identical(self):
-        assert self.c.compare("hello world", "hello world") == 1.0
+        assert self.c.compare("hello world", "hello world") == pytest.approx(1.0)
 
     def test_partial_overlap(self):
         result = self.c.compare("hello world", "hello there")
@@ -33,7 +33,7 @@ class TestCosineSimilarity:
         assert self.c.compare("   ", "   ") == 0.0
 
     def test_case_insensitive(self):
-        assert self.c.compare("Hello World", "hello world") == 1.0
+        assert self.c.compare("Hello World", "hello world") == pytest.approx(1.0)
 
 
 class TestNormalisedLevenshteinSimilarity:
@@ -70,7 +70,7 @@ class TestJaroWincklerSimilarity:
     j = JaroWincklerSimilarity()
 
     def test_identical(self):
-        assert self.j.compare("hello", "hello") == 1.0
+        assert self.j.compare("hello", "hello") == pytest.approx(1.0)
 
     def test_both_empty(self):
         assert self.j.compare("", "") == 0.0
@@ -80,7 +80,7 @@ class TestJaroWincklerSimilarity:
 
     def test_transposition(self):
         result = self.j.compare("martha", "marhta")
-        assert 0.9 < result < 1.0
+        assert result == pytest.approx(0.9444, abs=1e-3)
 
     def test_different(self):
         result = self.j.compare("abc", "xyz")

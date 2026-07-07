@@ -104,8 +104,8 @@ class JaroWincklerSimilarity(Comparator):
                 while hash_str2[point] == 0:
                     point += 1
                 if str1[i] != str2[point]:
-                    point += 1
                     t += 1
+                point += 1
         t //= 2
         return (match / len1 + match / len2 + (match - t) / match) / 3.0
 
