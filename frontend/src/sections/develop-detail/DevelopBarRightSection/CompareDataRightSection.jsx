@@ -35,12 +35,7 @@ const CompareDataRightSection = ({
   const prevColumnKeyRef = useRef(null);
   const { diffMode, handleToggleDiffMode } = useDevelopDetailContext();
   const { role } = useAuthContext();
-  // Initialize all columns as selected on first mount, or when the
-  // actual set of columns changes (e.g. switching datasets). We compare
-  // a stable signature of column ids rather than the `columns` array
-  // reference, since React Query returns a new reference on every
-  // refetch even when the underlying data is unchanged — otherwise this
-  // would silently wipe out the user's deselections on every refetch.
+   
   useEffect(() => {
     const temp = [];
     for (const col of columns) {
