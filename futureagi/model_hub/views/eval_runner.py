@@ -1174,10 +1174,7 @@ class EvaluationRunner:
 
                 per_run_fee = 0
                 try:
-                    from tfc.billing.boundary import get_billing
-                    billing = get_billing()
-                    _billing_config = billing
-                    per_run_fee = _billing_config.get_eval_per_run_fee()
+                    per_run_fee = get_billing().eval_per_run_fee()
                 except Exception:
                     pass
                 actual_cost = llm_cost + per_run_fee
