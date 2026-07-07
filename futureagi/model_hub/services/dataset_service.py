@@ -27,25 +27,18 @@ class ServiceError:
 def _check_resource_limit(organization, workspace, api_call_type, config=None):
     """Check resource limits. Returns True if allowed, False if limit reached."""
     try:
-        from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
-        try:
-            from tfc.billing.boundary import get_billing
-        except ImportError:
-            log_and_deduct_cost_for_resource_request = None
+        from tfc.billing.boundary import get_billing
+        from tfc.constants.api_calls import APICallStatusChoices
 
-        if log_and_deduct_cost_for_resource_request is None:
-            return True
-
-        call_log = log_and_deduct_cost_for_resource_request(
-            organization,
+        call_log = get_billing().log_and_deduct_resource(
+            organization=organization,
             api_call_type=api_call_type,
             config=config or {},
             workspace=workspace,
         )
-        if (
-            call_log is None
-            or call_log.status == APICallStatusChoices.RESOURCE_LIMIT.value
-        ):
+        if call_log is None:
+            return True
+        if call_log.status == APICallStatusChoices.RESOURCE_LIMIT.value:
             return False
         call_log.status = APICallStatusChoices.SUCCESS.value
         call_log.save()
