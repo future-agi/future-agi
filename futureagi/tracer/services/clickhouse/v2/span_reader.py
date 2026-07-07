@@ -133,9 +133,17 @@ class SpanScope:
 # Stable column ordering for the CH query. JSON columns wrapped in toJSONString
 # so clickhouse-connect can decode them (it cannot yet handle the typed JSON
 # column type in result rows — see DECISIONS #015, #018 of the migration).
+#
+# The toString() id columns are aliased with a ``_str`` suffix, NOT their bare
+# column name. A ``toString(project_id) AS project_id`` alias SHADOWS the real
+# key column, so a ``WHERE project_id = %(pid)s`` in the same query resolves to
+# the alias (a function of the key) and the primary-key index can no longer prune —
+# turning every project/org-scoped read into a full-table scan. Decoding is
+# positional (``_row_to_chspan`` zips _DATA_KEYS), so the alias name is free to
+# differ from the CHSpan field name.
 _READ_COLUMNS: tuple[str, ...] = (
     "id",
-    "toString(project_id) AS project_id",
+    "toString(project_id) AS project_id_str",
     "trace_id",
     "parent_span_id",
     "name",
@@ -152,13 +160,13 @@ _READ_COLUMNS: tuple[str, ...] = (
     "cost",
     "status",
     "status_message",
-    "toString(org_id) AS org_id",
-    "toString(project_version_id) AS project_version_id",
-    "toString(end_user_id) AS end_user_id",
-    "toString(trace_session_id) AS trace_session_id",
-    "toString(prompt_version_id) AS prompt_version_id",
-    "toString(prompt_label_id) AS prompt_label_id",
-    "toString(custom_eval_config_id) AS custom_eval_config_id",
+    "toString(org_id) AS org_id_str",
+    "toString(project_version_id) AS project_version_id_str",
+    "toString(end_user_id) AS end_user_id_str",
+    "toString(trace_session_id) AS trace_session_id_str",
+    "toString(prompt_version_id) AS prompt_version_id_str",
+    "toString(prompt_label_id) AS prompt_label_id_str",
+    "toString(custom_eval_config_id) AS custom_eval_config_id_str",
     "input",
     "output",
     "tags",
@@ -196,6 +204,23 @@ _HEAVY_COLUMNS = {
 _LEAN_SELECT_SQL = ", ".join(
     "''" if col in _HEAVY_COLUMNS else col for col in _READ_COLUMNS
 )
+
+# ClickHouse 25.3 turns skip indexes OFF under FINAL by default. A trace-id-keyed
+# read of this table has no usable primary-key prefilter (trace_id is below the PK),
+# so the ``idx_trace_id`` (and roots' ``parent_span_id``) bloom skip indexes are the
+# only thing that prunes it — without them FINAL does a full in-order merge across
+# every part and the per-part granule buffers blow the memory limit. Re-enable them.
+#
+# Correctness under non-exact FINAL (25.3 has no exact_mode): a skip index is only
+# safe here if it filters a column that is STABLE across a row's ReplacingMergeTree
+# versions — otherwise it could prune the granule holding the latest version and
+# resurrect an older one. ``trace_id`` / ``parent_span_id`` are sorting-key / stable
+# columns, so their bloom indexes are safe. The one hazard is the minmax index on
+# ``is_deleted`` (which DOES change across versions): the caller must therefore NOT
+# pass an ``is_deleted = 0`` predicate alongside this setting — the two-arg
+# ReplacingMergeTree(_version, is_deleted) engine already drops deleted rows under
+# FINAL, so the predicate is redundant and only arms the resurrection bug.
+_FINAL_SKIP_INDEX_SETTINGS = {"use_skip_indexes_if_final": 1}
 
 # Order in which result_rows columns arrive — bare names (no `AS` aliases) for the
 # row→dataclass mapping below.
@@ -568,19 +593,47 @@ class CHSpanReader:
         return [_row_to_chspan(r) for r in rows]
 
     # ─── Bulk fetch by trace ids ──────────────────────────────────────────────
-    def list_by_trace_ids(self, trace_ids: list[str]) -> list[CHSpan]:
+    def list_by_trace_ids(
+        self,
+        trace_ids: list[str],
+        *,
+        project_id: str | None = None,
+        include_heavy: bool = True,
+    ) -> list[CHSpan]:
         """Equivalent to ObservationSpan.objects.filter(trace_id__in=trace_ids).
 
         Returns spans across multiple traces in (trace_id, start_time, id) order.
         Empty input returns empty list.
+
+        ``project_id`` (optional) scopes the read to one tenant. ``trace_id`` sits
+        below ``project_id`` in the sorting key and is absent from the primary key,
+        so an unscoped ``trace_id IN`` read cannot prune parts and a FINAL merge
+        spans the whole table — pass ``project_id`` whenever the caller knows the
+        traces belong to a single project so the primary-key prefix prunes the
+        scan. Omit for prior (cross-project) behavior.
+
+        ``include_heavy`` defaults to True here (unlike ``roots_by_trace_ids``,
+        which defaults to lean) because most callers consume span_events /
+        resource_attrs / attributes_extra and must stay byte-identical. Pass False
+        to stub those three fat columns: under FINAL's in-order read the per-part
+        granule buffers for attributes_extra dominate memory, so a caller that only
+        needs input/output/metadata/attrs_string should read lean.
         """
         if not trace_ids:
             return []
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
+        where = ["trace_id IN %(trace_ids)s"]
+        params: dict[str, Any] = {"trace_ids": tuple(trace_ids)}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
+        select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
         rows = self._client.query(
-            f"SELECT {_SELECT_SQL} FROM spans FINAL "
-            "WHERE trace_id IN %(trace_ids)s AND is_deleted = 0 "
+            f"SELECT {select} FROM spans FINAL "
+            f"WHERE {' AND '.join(where)} "
             "ORDER BY trace_id, start_time, id",
-            parameters={"trace_ids": tuple(trace_ids)},
+            parameters=params,
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
 
@@ -608,9 +661,9 @@ class CHSpanReader:
         if not trace_ids:
             return []
         select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         where = [
             "trace_id IN %(trace_ids)s",
-            "is_deleted = 0",
             "(parent_span_id IS NULL OR parent_span_id = '')",
         ]
         params: dict[str, Any] = {"trace_ids": tuple(trace_ids)}
@@ -625,6 +678,7 @@ class CHSpanReader:
             f"WHERE {' AND '.join(where)} "
             "ORDER BY trace_id, start_time, id",
             parameters=params,
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
 

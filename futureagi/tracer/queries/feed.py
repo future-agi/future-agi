@@ -1065,14 +1065,13 @@ def _project_cluster_inputs_corpus(
     if not all_trace_ids:
         return [], [], {}
 
-    # Was: ObservationSpan.filter(trace_id__in=, parent_span_id IS NULL
-    # OR ="").values_list("trace_id", "span_attributes"). Loaded the
-    # full row set since PG returns one row per matching span; CH
-    # `list_by_trace_ids` does the same in one query then we pick the
-    # first parentless span per trace in Python. attrs_string is the
-    # typed-Map column where string-valued attrs like input.value live.
+    # We only need each trace's first root input.value, so read parentless spans
+    # project-scoped + lean (input.value lives in attrs_string, kept real) rather
+    # than every span with the fat columns — the widest read in the feed.
     with get_reader() as reader:
-        all_spans = reader.list_by_trace_ids(list(all_trace_ids))
+        all_spans = reader.roots_by_trace_ids(
+            list(all_trace_ids), project_id=str(project_id)
+        )
     trace_input: dict[str, str] = {}
     for span in all_spans:
         if span.parent_span_id:  # root = parent_span_id is "" (CHSpan default)
@@ -1721,15 +1720,20 @@ def _highlight_text(text: str, terms: list[str], hl: str) -> object:
     return segments
 
 
-def _attribute_old_key_moments(key_moments: list, trace_id: str) -> list:
+def _attribute_old_key_moments(
+    key_moments: list, trace_id: str, project_id: str
+) -> list:
     """Reconstruct span attribution for old scans whose stored key_moments
     predate it. Deterministic (no LLM): re-match the stored quotes against the
     trace's live spans. Hybrid fast-path — new scans already carry ``role`` and
     never reach here. Returns the moments unchanged if EE/spans are unavailable.
+
+    ``project_id`` scopes the span read to the trace's tenant so the ClickHouse
+    primary-key prefix prunes the scan.
     """
     from tracer.ee_boundary import attribute_key_moments
 
-    return attribute_key_moments(key_moments, trace_id)
+    return attribute_key_moments(key_moments, trace_id, project_id)
 
 
 def _key_moments_to_reel(
@@ -1737,6 +1741,7 @@ def _key_moments_to_reel(
     highlight_terms: list[str] | None = None,
     hl: str = "error",
     trace_id: str | None = None,
+    project_id: str | None = None,
 ) -> list[dict]:
     """
     Map TraceScanResult.key_moments to ReelStep dicts the frontend renders.
@@ -1754,8 +1759,8 @@ def _key_moments_to_reel(
     moments = list(key_moments or [])
     # Hybrid: runtime-reconstruct attribution for old scans only (new scans
     # already have role → zero overhead, no span re-fetch).
-    if trace_id and any(km and not km.get("role") for km in moments):
-        moments = _attribute_old_key_moments(moments, trace_id)
+    if trace_id and project_id and any(km and not km.get("role") for km in moments):
+        moments = _attribute_old_key_moments(moments, trace_id, project_id)
 
     steps: list[dict] = []
     for km in moments:
@@ -2039,7 +2044,11 @@ def _fetch_success_trace_pass_reel(cluster_id: str) -> list[dict]:
     )
     if scan_result:
         steps.extend(
-            _key_moments_to_reel(scan_result.key_moments, trace_id=str(success.id))
+            _key_moments_to_reel(
+                scan_result.key_moments,
+                trace_id=str(success.id),
+                project_id=str(cluster.project_id) if cluster.project_id else None,
+            )
         )
 
     # 3. Final successful output
