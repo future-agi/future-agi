@@ -554,15 +554,17 @@ const SimulationTestMode = React.forwardRef(
 
           // -- Scenario columns: display key `scenario.columns.<name>`,
           // persisted mapping value is the column UUID (backend resolver
-          // accepts UUIDs, not names).
+          // accepts UUIDs, not names). scenario_columns is now keyed by the
+          // column name, so read the UUID from each entry's dataset_column_id
+          // rather than the map key.
           const sc = callData.scenario_columns;
           scenarioKeyMap.current = {};
           if (sc && typeof sc === "object") {
-            for (const [uuid, col] of Object.entries(sc)) {
+            for (const [, col] of Object.entries(sc)) {
               if (col?.column_name && col?.value !== undefined) {
                 flat.scenario.columns[col.column_name] = col.value;
                 scenarioKeyMap.current[`scenario.columns.${col.column_name}`] =
-                  uuid;
+                  col.dataset_column_id;
               }
             }
           }

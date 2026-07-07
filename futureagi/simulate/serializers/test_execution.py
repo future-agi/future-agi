@@ -902,12 +902,17 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                         persona_data = {}
                     cell_value = persona_data
 
-                scenario_data[str(dataset_column.id)] = {
+                canonical_name = (
+                    "Ideal Outcome"
+                    if dataset_column.name == "outcome"
+                    else dataset_column.name
+                )
+                scenario_data[canonical_name] = {
                     "value": cell_value,
                     "visible": True,
                     "dataset_column_id": str(dataset_column.id),
                     "dataset_id": str(row.dataset.id),
-                    "column_name": dataset_column.name,
+                    "column_name": canonical_name,
                     "data_type": dataset_column.data_type,
                 }
         else:

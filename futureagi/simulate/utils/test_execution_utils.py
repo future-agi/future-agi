@@ -141,8 +141,12 @@ class TestExecutionUtils:
             return queryset
 
         def apply_scenario_dataset_column_filter(
-            queryset, dataset_column_id, op, value, filter_type, scenario_id=None
+            queryset, dataset_column_ids, op, value, filter_type, scenario_id=None
         ):
+
+            if not isinstance(dataset_column_ids, (list, tuple)):
+                dataset_column_ids = [dataset_column_ids]
+            dataset_column_ids = [str(cid) for cid in dataset_column_ids if cid]
             base = queryset.filter(row_id__isnull=False)
             if scenario_id:
                 base = base.filter(scenario__id=scenario_id)
@@ -152,13 +156,13 @@ class TestExecutionUtils:
                     where=[
                         "EXISTS ("
                         "SELECT 1 FROM model_hub_cell "
-                        "WHERE model_hub_cell.column_id = %s "
+                        "WHERE model_hub_cell.column_id = ANY(%s::uuid[]) "
                         "AND model_hub_cell.row_id = simulate_call_execution.row_id "
                         "AND model_hub_cell.deleted = false "
                         f"AND {value_sql}"
                         ")"
                     ],
-                    params=[dataset_column_id, *params],
+                    params=[dataset_column_ids, *params],
                 )
 
             def not_exists(value_sql, params):
@@ -166,13 +170,13 @@ class TestExecutionUtils:
                     where=[
                         "NOT EXISTS ("
                         "SELECT 1 FROM model_hub_cell "
-                        "WHERE model_hub_cell.column_id = %s "
+                        "WHERE model_hub_cell.column_id = ANY(%s::uuid[]) "
                         "AND model_hub_cell.row_id = simulate_call_execution.row_id "
                         "AND model_hub_cell.deleted = false "
                         f"AND {value_sql}"
                         ")"
                     ],
-                    params=[dataset_column_id, *params],
+                    params=[dataset_column_ids, *params],
                 )
 
             if filter_type in ("text", "string", "categorical"):
@@ -510,17 +514,28 @@ class TestExecutionUtils:
                     and "dataset" in column_id
                 ):
                     column_meta = scenario_dataset_columns.get(str(column_id), {})
-                    scenario_id = column_meta.get("scenario_id")
-                    dataset_column_id = column_id
-                    if column_id not in scenario_dataset_columns:
-                        scenario_id, dataset_column_id = scenario_column_parts(
-                            column_id
-                        )
+                    # Name-based scenario columns carry every dataset's Column
+                    # UUID in dataset_column_ids; matching ANY of them filters
+                    # across all scenarios, so we do not scope by scenario_id.
+                    dataset_column_ids = list(
+                        column_meta.get("dataset_column_ids") or []
+                    )
+                    scenario_id = None
+                    if not dataset_column_ids:
+                        # Legacy: column_id is a raw Column UUID, or the
+                        # scenario_<id>_dataset_<uuid> form.
+                        legacy_id = column_id
+                        if column_id not in scenario_dataset_columns:
+                            scenario_id, legacy_id = scenario_column_parts(column_id)
+                        else:
+                            scenario_id = column_meta.get("scenario_id")
+                        if legacy_id:
+                            dataset_column_ids = [legacy_id]
 
-                    if dataset_column_id:
+                    if dataset_column_ids:
                         call_executions = apply_scenario_dataset_column_filter(
                             call_executions,
-                            dataset_column_id,
+                            dataset_column_ids,
                             filter_op,
                             filter_value,
                             filter_type,
@@ -918,64 +933,58 @@ class TestExecutionUtils:
                 column_type = column.get("type", "")
 
                 if column_type == "scenario_dataset_column":
-                    # Extract the actual column ID from the prefixed ID
-                    actual_column_id = column.get("id")
-                    if actual_column_id and "_dataset_" in actual_column_id:
-                        # If it's a prefixed ID, extract the actual column ID
-                        parts = actual_column_id.split("_dataset_")
-                        if len(parts) == 2:
-                            actual_column_id = parts[1]
+                    # Name-based scenario columns carry every dataset's Column
+                    # UUID in dataset_column_ids. A row belongs to exactly one
+                    # dataset, so matching cells against ANY of the UUIDs makes
+                    # grouping work regardless of which scenario the row is from.
+                    actual_column_ids = list(column.get("dataset_column_ids") or [])
+                    if not actual_column_ids:
+                        # Legacy: single UUID id, or scenario_<id>_dataset_<uuid>.
+                        legacy_id = column.get("id")
+                        if legacy_id and "_dataset_" in legacy_id:
+                            parts = legacy_id.split("_dataset_")
+                            if len(parts) == 2:
+                                legacy_id = parts[1]
+                        if legacy_id:
+                            actual_column_ids = [legacy_id]
+                    if not actual_column_ids:
+                        continue
 
-                    # Create a safe column alias (replace hyphens with underscores)
-                    safe_alias = column_id.replace("-", "_").replace(".", "_")
-                    dataset_id = column.get("dataset_id")
+                    # Create a safe column alias (identifiers cannot contain
+                    # hyphens, dots or spaces without quoting).
+                    safe_alias = (
+                        str(column_id)
+                        .replace("-", "_")
+                        .replace(".", "_")
+                        .replace(" ", "_")
+                    )
 
-                    # Properly escape SQL string values to prevent SQL injection
-                    # Use connection.cursor().mogrify to safely escape parameters
+                    # Properly escape column UUIDs to prevent SQL injection.
                     cursor = connection.cursor()
                     try:
-                        # Use mogrify to get properly escaped SQL string
-                        escaped_dataset_id = cursor.mogrify("%s", [dataset_id]).decode(
-                            "utf-8"
+                        escaped_column_ids = ", ".join(
+                            cursor.mogrify("%s", [cid]).decode("utf-8")
+                            for cid in actual_column_ids
                         )
-                        escaped_column_id = cursor.mogrify(
-                            "%s", [actual_column_id]
-                        ).decode("utf-8")
                     except AttributeError:
-                        # Fallback for backends that don't support mogrify (like SQLite)
-                        # Escape single quotes by doubling them (SQL standard)
-                        escaped_dataset_id = "'{}'".format(
-                            str(dataset_id).replace("'", "''")
-                        )
-                        escaped_column_id = "'{}'".format(
-                            str(actual_column_id).replace("'", "''")
+                        # Fallback for backends without mogrify (like SQLite).
+                        escaped_column_ids = ", ".join(
+                            "'{}'".format(str(cid).replace("'", "''"))
+                            for cid in actual_column_ids
                         )
                     finally:
                         cursor.close()
 
-                    # Add dataset column value to grouping with properly escaped values
-                    select_fields.append(
-                        f"""
+                    cell_value_subquery = f"""
                         (SELECT model_hub_cell.value
                             FROM model_hub_cell
-                            WHERE model_hub_cell.dataset_id = {escaped_dataset_id}
-                            AND model_hub_cell.column_id = {escaped_column_id}
-                            AND model_hub_cell.row_id = simulate_call_execution.row_id
-                            AND model_hub_cell.deleted = false
-                            LIMIT 1) as {safe_alias}
-                    """
-                    )
-                    group_by_fields.append(
-                        f"""
-                        (SELECT model_hub_cell.value
-                            FROM model_hub_cell
-                            WHERE model_hub_cell.dataset_id = {escaped_dataset_id}
-                            AND model_hub_cell.column_id = {escaped_column_id}
+                            WHERE model_hub_cell.column_id IN ({escaped_column_ids})
                             AND model_hub_cell.row_id = simulate_call_execution.row_id
                             AND model_hub_cell.deleted = false
                             LIMIT 1)
                     """
-                    )
+                    select_fields.append(f'{cell_value_subquery} as "{safe_alias}"')
+                    group_by_fields.append(cell_value_subquery)
 
         for group_field in row_groups:
             # Skip fields that are already included in basic context
