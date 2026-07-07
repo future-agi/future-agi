@@ -1,4 +1,5 @@
 # views.py
+from django.utils.crypto import constant_time_compare
 from datetime import datetime, timedelta
 
 import requests
@@ -55,7 +56,7 @@ def manage_redis_key(request):
     gm = GeneralMethods()
     try:
         # Verify access token
-        access_token_id = request.data.get("access_token_id")
+       if not constant_time_compare(access_token_id or '', settings.SECRET_KEY):
         if access_token_id != settings.SECRET_KEY:
             return gm.bad_request("Invalid or expired token")
 
