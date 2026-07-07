@@ -23,6 +23,7 @@ import {
   FILTER_FOR_HAS_EVAL,
   generateAnnotationColumnsForTracing,
   normalizeConfigKeys,
+  toBackendFilters,
 } from "./common";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
@@ -224,12 +225,14 @@ const TraceGrid = React.forwardRef(
                 ...(projectId ? { project_id: projectId } : {}),
                 page_number: page,
                 page_size: ROWS_LIMIT,
-                filters: JSON.stringify([
-                  ...filters,
-                  ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                  ...(extraFilters || EMPTY_EXTRA_FILTERS),
-                  ...(metricFilters || []),
-                ]),
+                filters: JSON.stringify(
+                  toBackendFilters([
+                    ...filters,
+                    ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                    ...(extraFilters || EMPTY_EXTRA_FILTERS),
+                    ...(metricFilters || []),
+                  ]),
+                ),
                 ...(dateInterval && { interval: dateInterval }),
               });
 

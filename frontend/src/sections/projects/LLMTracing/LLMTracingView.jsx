@@ -154,6 +154,7 @@ import {
   FILTER_FOR_ERRORS,
   FILTER_FOR_NON_ANNOTATED,
   FILTER_FOR_HAS_EVAL,
+  toBackendFilters,
 } from "./common";
 import {
   applySavedColumns,
@@ -4760,12 +4761,14 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 params={{
                   project_id: observeId,
                   remove_simulation_calls: excludeSimulationCalls,
-                  filters: JSON.stringify([
-                    ...primaryCombinedFilters,
-                    ...(extraFilters || []),
-                    ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                    ...(metricFilters || []),
-                  ]),
+                  filters: JSON.stringify(
+                    toBackendFilters([
+                      ...primaryCombinedFilters,
+                      ...(extraFilters || []),
+                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                      ...(metricFilters || []),
+                    ]),
+                  ),
                 }}
                 onRowClicked={handleRowClicked}
                 onConfigLoaded={handleSimulatorConfigLoaded}
@@ -4799,12 +4802,14 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                 params={{
                   project_id: observeId,
                   remove_simulation_calls: excludeSimulationCalls,
-                  filters: JSON.stringify([
-                    ...compareCombinedFilters,
-                    ...(compareExtraFilters || []),
-                    ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                    ...(metricFilters || []),
-                  ]),
+                  filters: JSON.stringify(
+                    toBackendFilters([
+                      ...compareCombinedFilters,
+                      ...(compareExtraFilters || []),
+                      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                      ...(metricFilters || []),
+                    ]),
+                  ),
                 }}
                 onRowClicked={handleRowClicked}
                 onConfigLoaded={handleSimulatorConfigLoaded}
