@@ -44,7 +44,7 @@ from tfc.utils.distributed_locks import distributed_lock_manager
 from tfc.utils.distributed_state import evaluation_tracker
 from tfc.utils.error_codes import get_error_for_api_status
 from tracer.models.observation_span import EvalLogger
-from tfc.billing.boundary import get_billing, BillingEventType
+from tfc.billing.boundary import get_billing, BillingEventType, llm_usage_properties
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 try:
@@ -1180,6 +1180,7 @@ def process_single_error_localization(task_id):
                 source="error_localizer",
                 source_id=str(task.id),
                 raw_cost_usd=str(actual_cost),
+                **llm_usage_properties(getattr(localizer, "error_agent", None)),
             )
         except Exception:
             pass  # Metering failure must not break the action

@@ -31,7 +31,7 @@ from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_error_message
-from tfc.billing.boundary import get_billing, BillingEventType
+from tfc.billing.boundary import get_billing, BillingEventType, llm_usage_properties
 from tfc.constants.api_calls import APICallTypeChoices
 
 # from ee.agenthub.feedback_agent_updated.utils import delete_table
@@ -283,6 +283,7 @@ class AutoAnnotation:
                             annotation_id=str(self.annotation.id),
                             row_id=str(row.id),
                             raw_cost_usd=str(actual_cost),
+                            **llm_usage_properties(agent),
                         )
                     except Exception:
                         pass

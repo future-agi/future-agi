@@ -51,7 +51,7 @@ from tfc.temporal import temporal_activity
 from tfc.utils.storage import (
     delete_compare_folder,
 )
-from tfc.billing.boundary import get_billing, BillingEventType
+from tfc.billing.boundary import get_billing, BillingEventType, llm_usage_properties
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 
@@ -518,6 +518,7 @@ def create_synthetic_dataset(
                     source="synthetic_dataset",
                     source_id=str(dataset.id),
                     raw_cost_usd=str(actual_cost),
+                    **llm_usage_properties(agent),
                 )
             except Exception:
                 pass  # Metering failure must not break the action
