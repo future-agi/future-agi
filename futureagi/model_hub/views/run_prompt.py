@@ -80,6 +80,7 @@ from model_hub.services.column_service import (
 from model_hub.utils.model_provider_update import (
     one_time_model_providers_update,
 )
+from model_hub.utils.provider_key_validation import is_provider_key_valid
 from model_hub.utils.utils import (
     get_model_mode,
     remove_empty_text_from_messages,
@@ -273,6 +274,10 @@ class ApiKeyViewSet(viewsets.ModelViewSet):
         if serializer.is_valid():
             validated_data = serializer.validated_data
 
+            key = validated_data.get("key")
+            if key and not is_provider_key_valid(validated_data.get("provider"), key):
+                return self._gm.bad_request(get_error_message("INVALID_API_KEY"))
+
             # First try to get existing API key
             try:
                 config_json = validated_data.get("config_json")
@@ -330,6 +335,12 @@ class ApiKeyViewSet(viewsets.ModelViewSet):
         payload = self._normalize_provider_key_payload(request.data, instance=instance)
         serializer = self.get_serializer(instance, data=payload, partial=partial)
         serializer.is_valid(raise_exception=True)
+
+        key = serializer.validated_data.get("key")
+        provider = serializer.validated_data.get("provider") or instance.provider
+        if key and not is_provider_key_valid(provider, key):
+            return self._gm.bad_request(get_error_message("INVALID_API_KEY"))
+
         self.perform_update(serializer)
         return Response(serializer.data)
 

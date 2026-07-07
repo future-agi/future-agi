@@ -28,6 +28,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
     reset,
     watch,
     clearErrors,
+    setError,
     handleSubmit,
     setValue,
     formState: { isDirty },
@@ -85,6 +86,19 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
     hasClearedOnceRef.current = false;
   }, [data, reset]);
 
+  // Surface a rejected key inline under the input (matches the AI Providers
+  // design). A 400 from the save endpoint means the provider rejected the key;
+  // anything else is an unexpected failure and gets a generic toast.
+  const handleSaveError = (error) => {
+    const message =
+      error?.message || "Invalid API key, please type in the right one";
+    if (error?.statusCode === 400) {
+      setError("key", { type: "server", message });
+    } else {
+      enqueueSnackbar(message, { variant: "error" });
+    }
+  };
+
   const { mutate: createApiKey, isPending } = useMutation({
     mutationFn: (d) => axios.post(endpoints.develop.apiKey.create, d),
     onSuccess: () => {
@@ -97,6 +111,7 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
       setEditMode(false);
       hasClearedOnceRef.current = false;
     },
+    onError: handleSaveError,
   });
 
   const { mutate: updateApiKey, isPending: isUpdatingApiKey } = useMutation({
@@ -110,11 +125,15 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
       setEditMode(false);
       hasClearedOnceRef.current = false;
     },
+    onError: handleSaveError,
   });
   const handleFormSubmit = async (formData) => {
     // trackEvent(Events.saveApiClicked, {
     //   [PropertyName.click]: formData?.provider,
     // });
+
+    // Clear any prior "invalid key" error before re-submitting.
+    clearErrors("key");
 
     // Add the hasKey property from the original data
     const submitData = {
@@ -130,6 +149,9 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
   };
 
   const handleSubmitData = async (submitData) => {
+    // Clear any prior "invalid key" error before re-submitting.
+    clearErrors("key");
+
     // For JSON keys, ensure provider is included from the component's data
     const dataToSubmit = {
       ...submitData,
