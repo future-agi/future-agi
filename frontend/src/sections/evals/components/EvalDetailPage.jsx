@@ -778,7 +778,7 @@ const EvalDetailPage = () => {
       const tools = build_tools_payload(connectorIds);
       // Update the template first
       const payload = {
-        instructions: evalType === "code" ? "" : instructions,
+        instructions: instructions || undefined,
         code: evalType === "code" ? code : undefined,
         code_language: evalType === "code" ? codeLanguage : undefined,
         model,
@@ -960,7 +960,7 @@ const EvalDetailPage = () => {
             : { type: summaryType };
         const tools = build_tools_payload(connectorIds);
         await updateEval.mutateAsync({
-          instructions: evalType === "code" ? "" : instructions,
+          instructions: instructions || undefined,
           code: evalType === "code" ? code : undefined,
           code_language: evalType === "code" ? codeLanguage : undefined,
           model,
