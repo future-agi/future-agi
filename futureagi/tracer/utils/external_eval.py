@@ -64,10 +64,7 @@ def _log_and_deduct_cost_for_external_eval(
         config=log_config,
         workspace=config.workspace,
     )
-    if not api_call_log_row:
-        raise ValueError("API call not allowed : Error validating the api call.")
-
-    if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+    if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
         raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # Emit usage event for billing

@@ -1342,13 +1342,12 @@ class RunPrompts:
                         error=str(api_err),
                     )
                     raise ValueError("Error in API call validation")  # noqa: B904
-                if not api_call_log_row:
-                    logger.error(
-                        "RunPrompts_process_row_api_call_log_row_none",
+                if api_call_log_row is None:
+                    logger.info(
+                        "RunPrompts_process_row_api_call_log_row_none_oss",
                         run_prompt_id=str(self.run_prompt_id),
                         row_id=row_id,
                     )
-                    raise ValueError("Error in API call validation")
                 elif api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
                     error_message = get_error_for_api_status(
                         api_call_log_row.status

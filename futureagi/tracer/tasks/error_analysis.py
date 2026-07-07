@@ -103,7 +103,7 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
             },
         )
 
-        if not api_call_log_row:
+        if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
             error_message = "Failed to create API call log for trace analysis."
             logger.error(error_message)
             Trace.objects.filter(id=trace_id).update(

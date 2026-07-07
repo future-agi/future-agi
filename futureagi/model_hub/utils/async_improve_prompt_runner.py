@@ -66,8 +66,8 @@ async def improve_prompt_async(
         )
 
         if (
-            call_log_row is None
-            or call_log_row.status != APICallStatusChoices.PROCESSING.value
+            call_log_row is not None
+            and call_log_row.status != APICallStatusChoices.PROCESSING.value
         ):
             await ws_manager.send_improve_prompt_error_message(
                 improve_id=improve_id,

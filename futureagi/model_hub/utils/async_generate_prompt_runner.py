@@ -60,8 +60,8 @@ async def generate_prompt_async(
         )
 
         if (
-            call_log_row is None
-            or call_log_row.status != APICallStatusChoices.PROCESSING.value
+            call_log_row is not None
+            and call_log_row.status != APICallStatusChoices.PROCESSING.value
         ):
             await ws_manager.send_generate_prompt_error_message(
                 generation_id=generation_id,

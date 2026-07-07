@@ -1496,21 +1496,7 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     workspace=workspace,
                 )
 
-                if not api_call_log_row:
-                    logger.error(
-                        f"API call not allowed for tool evaluation: {tool_name} #{idx + 1}"
-                    )
-                    call_execution.tool_outputs[tool_eval_id] = {
-                        "value": "",
-                        "reason": "API call not allowed - cost validation failed",
-                        "type": EvalOutputType.PASS_FAIL.value,
-                        "name": column_name,
-                        "error": True,
-                        "status": "failed",
-                    }
-                    continue
-
-                if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+                if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
                     logger.error(
                         f"API call not allowed - status: {api_call_log_row.status}"
                     )

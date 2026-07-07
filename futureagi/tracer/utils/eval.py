@@ -873,12 +873,7 @@ def _run_evaluation(
             config=source_config,
             workspace=workspace,
         )
-        if not api_call_log_row:
-            raise ValueError(
-                "API call not allowed : Error validating the api call."
-            )
-
-        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+        if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
             raise ValueError("API call not allowed : ", api_call_log_row.status)
 
         # Apply the same empty-input rules the dataset and playground
@@ -1504,9 +1499,7 @@ def _execute_evaluation(
         config=source_config,
         workspace=workspace,
     )
-    if not api_call_log_row:
-        raise ValueError("API call not allowed : Error validating the api call.")
-    if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+    if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
         raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # --- Build context for data_injection support ---
@@ -2815,9 +2808,7 @@ def _execute_evaluation_for_trace(
             config=source_config,
             workspace=workspace,
         )
-        if not api_call_log_row:
-            raise ValueError("API call not allowed : Error validating the api call.")
-        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+        if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
             raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # --- Set workspace context for tools that need org-scoping ---

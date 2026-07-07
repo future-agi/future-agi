@@ -2646,12 +2646,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 workspace=evaluation.prompt_template.workspace,
             )
 
-            if not api_call_log_row:
-                raise ValueError(
-                    "API call not allowed : Error validating the api call."
-                )
-
-            if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+            if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
                 raise ValueError("API call not allowed : ", api_call_log_row.status)
             # Apply the shared empty-input rules so prompt-template evals
             # behave the same as dataset/playground/tracing/SDK paths.
@@ -2697,16 +2692,17 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 result_data=response, eval_template=eval_template
             )
 
-            config_dict = json.loads(api_call_log_row.config)
-            config_dict.update(
-                {"output": {"output": value, "reason": response["reason"]}}
-            )
-            api_call_log_row.input_token_count = (
-                metadata.get("usage", {}).get("prompt_tokens") or 0
-            )
-            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-            api_call_log_row.config = json.dumps(config_dict)
-            api_call_log_row.save()
+            if api_call_log_row is not None:
+                config_dict = json.loads(api_call_log_row.config)
+                config_dict.update(
+                    {"output": {"output": value, "reason": response["reason"]}}
+                )
+                api_call_log_row.input_token_count = (
+                    metadata.get("usage", {}).get("prompt_tokens") or 0
+                )
+                api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+                api_call_log_row.config = json.dumps(config_dict)
+                api_call_log_row.save()
 
             # Dual-write: emit usage event for new billing system
             try:
@@ -2725,11 +2721,12 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
         except Exception as e:
             try:
-                api_call_log_row.status = APICallStatusChoices.ERROR.value
-                config_dict = json.loads(api_call_log_row.config)
-                config_dict.update({"output": {"output": None, "reason": str(e)}})
-                api_call_log_row.config = json.dumps(config_dict)
-                api_call_log_row.save()
+                if api_call_log_row is not None:
+                    api_call_log_row.status = APICallStatusChoices.ERROR.value
+                    config_dict = json.loads(api_call_log_row.config)
+                    config_dict.update({"output": {"output": None, "reason": str(e)}})
+                    api_call_log_row.config = json.dumps(config_dict)
+                    api_call_log_row.save()
             except Exception:
                 pass
             logger.exception(f"{e} error")
@@ -3322,8 +3319,8 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 workspace=request.workspace,
             )
             if (
-                call_log_row is None
-                or call_log_row.status != APICallStatusChoices.PROCESSING.value
+                call_log_row is not None
+                and call_log_row.status != APICallStatusChoices.PROCESSING.value
             ):
                 return self._gm.bad_request(
                     get_error_message("INSUFFICIENT_CREDITS")
@@ -3339,7 +3336,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     str(_org.id),
                     BillingEventType.AI_PROMPT_CREATION,
                     source="run_prompt_gen",
-                    source_id=str(call_log_row.log_id),
+                    source_id=str(call_log_row.log_id) if call_log_row is not None else "",
                     **token_usage_properties(config),
                 )
             except Exception:
@@ -3430,8 +3427,8 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 workspace=request.workspace,
             )
             if (
-                call_log_row is None
-                or call_log_row.status != APICallStatusChoices.PROCESSING.value
+                call_log_row is not None
+                and call_log_row.status != APICallStatusChoices.PROCESSING.value
             ):
                 return self._gm.bad_request(
                     get_error_message("INSUFFICIENT_CREDITS")
@@ -3447,7 +3444,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     str(_org.id),
                     BillingEventType.AI_PROMPT_IMPROVEMENT,
                     source="run_prompt_improve",
-                    source_id=str(call_log_row.log_id),
+                    source_id=str(call_log_row.log_id) if call_log_row is not None else "",
                     **token_usage_properties(config),
                 )
             except Exception:

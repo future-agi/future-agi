@@ -1108,16 +1108,7 @@ def process_single_error_localization(task_id):
             },
         )
 
-        if not api_call_log_row:
-            logger.error("API call not allowed : Error validating the api call.")
-            task.mark_as_failed(
-                "API call not allowed : Error validating the api call."
-            )
-            raise ValueError(
-                "API call not allowed : Error validating the api call."
-            )
-
-        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+        if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
             error_message = get_error_for_api_status(api_call_log_row.status)
             task.mark_as_failed(error_message)
             return
@@ -1168,8 +1159,9 @@ def process_single_error_localization(task_id):
                 "No part of the input could be pinned as the cause of this failure."
             )
             task.save(update_fields=["error_message"])
-        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-        api_call_log_row.save(update_fields=["status"])
+        if api_call_log_row is not None:
+            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+            api_call_log_row.save(update_fields=["status"])
 
         # Emit usage event for billing system (cost-based)
         try:
