@@ -37,6 +37,7 @@ class UsageDecision:
     reason: str = ""
     error_code: str = ""
     upgrade_cta: Optional[dict] = field(default=None)
+    retry_after: Optional[int] = None
 
 
 _ALLOW = UsageDecision(allowed=True)
@@ -78,6 +79,10 @@ class Billing:
 
     Never instantiate directly — use get_billing().
     """
+
+    # True on EE, False on OSS. Callers that need to fail-open a fail-CLOSED
+    # entitlement check (see review_workflow, agreement, KB) branch on this.
+    is_enabled: bool = True
 
     def record_usage(
         self,
@@ -143,6 +148,26 @@ class Billing:
         """Count tokens via tiktoken.  Returns 0 in OSS."""
         raise NotImplementedError
 
+    def count_tiktoken_tokens(
+        self,
+        text: str,
+        image_urls: Optional[list] = None,
+    ) -> int:
+        """Count tokens for a text (+ optional image URLs) via tiktoken.
+
+        Separate from ``count_tokens`` because callers that previously used
+        ``count_tiktoken_tokens`` need the image-aware variant with the same
+        tokenizer they had on dev.  Returns 0 in OSS.
+        """
+        raise NotImplementedError
+
+    def get_tracing_billing_mode(self, org_id: str) -> str:
+        """Return ``events`` or ``storage`` for a tracing org.  Defaults to
+        ``storage`` in OSS to match ee.usage.services.billing_engine's
+        fallback so span-ingest metering stays on the same dimension.
+        """
+        raise NotImplementedError
+
     def get_retention_days(self, org_id: str, data_type: str) -> int:
         """Data retention in days.  Returns 0 (no enforcement) in OSS."""
         raise NotImplementedError
@@ -179,6 +204,8 @@ class Billing:
 class _NoopBilling(Billing):
     """OSS default: metering is silent, entitlements fail-CLOSED."""
 
+    is_enabled = False
+
     def record_usage(self, org_id, event_type, *, amount=1.0, **properties):
         pass
 
@@ -205,6 +232,12 @@ class _NoopBilling(Billing):
 
     def count_tokens(self, text):
         return 0
+
+    def count_tiktoken_tokens(self, text, image_urls=None):
+        return 0
+
+    def get_tracing_billing_mode(self, org_id):
+        return "storage"
 
     def get_retention_days(self, org_id, data_type):
         return 0
@@ -306,6 +339,41 @@ class _EeBilling(Billing):
 
         return count_text_tokens(str(text))
 
+    def count_tiktoken_tokens(self, text, image_urls=None):
+        from ee.usage.utils.usage_entries import count_tiktoken_tokens
+
+        if image_urls is None:
+            return count_tiktoken_tokens(str(text))
+        return count_tiktoken_tokens(str(text), image_urls)
+
+    def get_tracing_billing_mode(self, org_id):
+        from ee.usage.services.emitter import get_redis
+        from ee.usage.models.usage import OrganizationSubscription
+
+        org_id_str = str(org_id)
+        cache_key = f"tracing_billing_mode:{org_id_str}"
+        try:
+            cached = get_redis().get(cache_key)
+            if cached is not None:
+                return cached if isinstance(cached, str) else cached.decode()
+        except Exception:
+            pass
+
+        mode = (
+            OrganizationSubscription.objects.filter(
+                organization_id=org_id_str, deleted=False
+            )
+            .values_list("tracing_billing_mode", flat=True)
+            .first()
+        ) or "storage"
+
+        try:
+            get_redis().setex(cache_key, 300, mode)
+        except Exception:
+            pass
+
+        return mode
+
     def get_retention_days(self, org_id, data_type):
         from ee.usage.services.entitlements import Entitlements
 
@@ -329,6 +397,7 @@ class _EeBilling(Billing):
             allowed=getattr(result, "allowed", True),
             reason=getattr(result, "reason", ""),
             error_code=getattr(result, "error_code", ""),
+            retry_after=getattr(result, "retry_after", None),
         )
 
     def setup_org_subscription(self, organization):
