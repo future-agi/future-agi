@@ -57,12 +57,12 @@ from tracer.serializers.filters import (
 )
 from tracer.serializers.trace import (
     TraceAgentGraphQuerySerializer,
+    TraceDetailResponseSerializer,
     TraceExportQuerySerializer,
     TraceIndexQuerySerializer,
     TraceListQuerySerializer,
     TraceObserveIndexQuerySerializer,
     TraceObserveListQuerySerializer,
-    TraceDetailResponseSerializer,
     TraceSerializer,
     TraceVoiceCallListQuerySerializer,
     UserCodeExampleResponseSerializer,
@@ -104,7 +104,6 @@ ERROR_RESPONSES = {
     400: ApiErrorResponseSerializer,
     500: ApiErrorResponseSerializer,
 }
-
 
 
 class TraceTagsUpdateSerializer(serializers.Serializer):
@@ -1963,7 +1962,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             ):
                                 total_eval_configs[
                                     str(metric["custom_eval_config_id"]) + "**" + choice
-                                ] = metric["custom_eval_config__name"] + " - " + choice
+                                ] = (
+                                    metric["custom_eval_config__name"] + " - " + choice
+                                )
                 else:
                     score = (
                         metric["avg_float_score"]
@@ -3422,24 +3423,34 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             ).select_related("eval_template")
             eval_config_ids = [str(c.id) for c in eval_configs]
         else:
-            eval_table, eval_nd = eval_logger_source()
-            ch_result = analytics.execute_ch_query(
-                "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-                f"FROM {eval_table} FINAL "
-                f"WHERE {eval_nd} "
-                "AND dictGet('trace_dict', 'project_id', "
-                "trace_id) = toUUID(%(pid)s)",
-                {"pid": str(project_id)},
-                timeout_ms=30000,
-            )
-            ch_ids = [r.get("cid", "") for r in ch_result.data if r.get("cid")]
-            if ch_ids:
-                eval_configs = CustomEvalConfig.objects.filter(
-                    id__in=ch_ids, deleted=False
+            # PERF: resolve this project's configs from PG first (indexed by
+            # the project FK), then ask CH which of them have recent data via
+            # a ``custom_eval_config_id IN (…)`` scope — the eval table's
+            # leading sort key, so CH prunes to just those configs. The old
+            # inline query ran ``FINAL`` over the ENTIRE eval table plus a
+            # per-row ``dictGet('trace_dict', 'project_id', …)`` call — a
+            # full-table merge + dictionary lookup per eval row that
+            # OOM-crashed the server at tens of millions of eval rows. See
+            # AnalyticsQueryService.get_eval_config_ids_with_data_ch.
+            project_configs = list(
+                CustomEvalConfig.objects.filter(
+                    project_id=project_id, deleted=False
                 ).select_related("eval_template")
-                eval_config_ids = [str(c.id) for c in eval_configs]
-            else:
-                eval_configs = []
+            )
+            candidate_ids = [str(c.id) for c in project_configs]
+            ids_with_data = (
+                set(
+                    analytics.get_eval_config_ids_with_data_ch(
+                        str(project_id),
+                        timeout_ms=30000,
+                        candidate_config_ids=candidate_ids,
+                    )
+                )
+                if candidate_ids
+                else set()
+            )
+            eval_configs = [c for c in project_configs if str(c.id) in ids_with_data]
+            eval_config_ids = [str(c.id) for c in eval_configs]
 
         # Annotation labels — skip in org-scoped mode (deferred enhancement)
         if org_scope:
@@ -3462,7 +3473,22 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Phase 1: Paginated traces (light columns only — no input/output)
         query, params = builder.build()
         result = analytics.execute_ch_query(query, params, timeout_ms=10000)
-        result.data = result.data[:page_size]
+
+        # De-dup the page by trace id. Phase 1 dropped `LIMIT 1 BY trace_id`
+        # (that clause forced an O(roots-in-window) full sort that OOM-crashed
+        # CH — see TraceListQueryBuilder.build). Duplicate trace rows on a
+        # page (multi-root traces, un-merged ReplacingMergeTree versions) are
+        # rare; keep the first occurrence — the most recent under the query's
+        # `ORDER BY start_time DESC`, i.e. the same row `LIMIT 1 BY` kept.
+        seen_trace_ids: set[str] = set()
+        deduped = []
+        for row in result.data:
+            tid = str(row.get("trace_id", ""))
+            if tid in seen_trace_ids:
+                continue
+            seen_trace_ids.add(tid)
+            deduped.append(row)
+        result.data = deduped[:page_size]
 
         # Count
         count_query, count_params = builder.build_count_query()
@@ -4068,26 +4094,32 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         )
         project_id = str(project_version.project_id)
 
-        # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
-        eval_config_ids = []
-        eval_table, eval_nd = eval_logger_source()
-        ch_result = analytics.execute_ch_query(
-            "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-            f"FROM {eval_table} FINAL "
-            f"WHERE {eval_nd} "
-            "AND dictGet('trace_dict', 'project_id', "
-            "trace_id) = toUUID(%(pid)s)",
-            {"pid": project_id},
-            timeout_ms=30000,
-        )
-        ch_ids = [r.get("cid", "") for r in ch_result.data if r.get("cid")]
-        if ch_ids:
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=ch_ids, deleted=False
+        # PERF: resolve this project's configs from PG first (indexed by the
+        # project FK), then ask CH which of them have recent data via a
+        # ``custom_eval_config_id IN (…)`` scope — the eval table's leading
+        # sort key. The old inline query ran ``FINAL`` over the ENTIRE eval
+        # table plus a per-row ``dictGet('trace_dict', …)`` — a full-table
+        # merge that OOM-crashed the server at tens of millions of eval rows.
+        # See AnalyticsQueryService.get_eval_config_ids_with_data_ch.
+        project_configs = list(
+            CustomEvalConfig.objects.filter(
+                project_id=project_id, deleted=False
             ).select_related("eval_template")
-            eval_config_ids = [str(c.id) for c in eval_configs]
-        else:
-            eval_configs = []
+        )
+        candidate_ids = [str(c.id) for c in project_configs]
+        ids_with_data = (
+            set(
+                analytics.get_eval_config_ids_with_data_ch(
+                    str(project_id),
+                    timeout_ms=30000,
+                    candidate_config_ids=candidate_ids,
+                )
+            )
+            if candidate_ids
+            else set()
+        )
+        eval_configs = [c for c in project_configs if str(c.id) in ids_with_data]
+        eval_config_ids = [str(c.id) for c in eval_configs]
 
         # Get annotation labels that have actual annotations for this project
         annotation_labels = get_annotation_labels_for_project(
@@ -4109,7 +4141,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Phase 1: Get paginated traces
         query, params = builder.build()
         result = analytics.execute_ch_query(query, params, timeout_ms=10000)
-        result.data = result.data[:page_size]
+
+        # De-dup the page by trace id (Phase 1 dropped `LIMIT 1 BY trace_id` —
+        # see TraceListQueryBuilder.build); keep the first occurrence, the
+        # most recent under the query's ordering.
+        seen_trace_ids: set[str] = set()
+        deduped = []
+        for row in result.data:
+            tid = str(row.get("trace_id", ""))
+            if tid in seen_trace_ids:
+                continue
+            seen_trace_ids.add(tid)
+            deduped.append(row)
+        result.data = deduped[:page_size]
 
         # Get count
         count_query, count_params = builder.build_count_query()

@@ -268,6 +268,7 @@ class ClickHouseFilterBuilder:
         project_id: str | None = None,
         project_ids: list[str] | None = None,
         score_date_scope: bool = True,
+        span_date_scope: bool = False,
     ) -> None:
         self.table = table
         self.annotation_label_ids = annotation_label_ids or []
@@ -289,8 +290,28 @@ class ClickHouseFilterBuilder:
         # on s.created_at using ``%(start_date)s`` from the outer params.
         # Callers that don't populate ``%(start_date)s`` must pass False.
         self.score_date_scope = score_date_scope
+        # When True, trace-membership span subqueries (the ``trace_id IN
+        # (SELECT trace_id FROM spans WHERE …)`` wraps emitted in trace-list
+        # mode for system-metric / span-attribute / end-user filters) gain the
+        # same lower-bound ``created_at >= %(start_date)s - INTERVAL 1 DAY``
+        # filter the outer query uses. PERF: without it each filter subquery
+        # scans the project's ENTIRE span history on every request — on
+        # multi-month projects that dwarfs the paginated outer scan and is
+        # the dominant cost of the trace list. The 1-day skew buffer matches
+        # the outer query's (see trace_list.py build()); a trace whose root
+        # is in-window has its children in-window bar ingest skew, so no
+        # legitimately-matching trace is dropped. Opt-in (default False) so
+        # builders that don't bind ``%(start_date)s`` keep byte-identical SQL.
+        self.span_date_scope = span_date_scope
         self._param_counter: int = 0
         self._params: dict[str, Any] = {}
+
+    def _span_membership_date_filter(self) -> str:
+        """Lower-bound ``created_at`` fragment for trace-membership span
+        subqueries; empty unless the caller opted in via ``span_date_scope``."""
+        if not self.span_date_scope:
+            return ""
+        return " AND created_at >= %(start_date)s - INTERVAL 1 DAY"
 
     def _score_date_filter(self, alias: str = "s") -> str:
         """Return a lower-bound ``created_at`` filter for ``model_hub_score``.
@@ -750,7 +771,7 @@ class ClickHouseFilterBuilder:
                 f"trace_id IN ("
                 f"SELECT trace_id FROM {self.table} "
                 f"WHERE end_user_id {comparison_op} toUUID('00000000-0000-0000-0000-000000000000') "
-                f"AND _peerdb_is_deleted = 0)"
+                f"AND _peerdb_is_deleted = 0{self._span_membership_date_filter()})"
             )
 
         if filter_value is None or filter_value == "":
@@ -785,7 +806,7 @@ class ClickHouseFilterBuilder:
             f"SELECT {self._ENDUSER_DIM_ID_COL} FROM {self._ENDUSER_DIM_TABLE} FINAL "
             f"WHERE {inner} "
             f"AND {self._ENDUSER_DIM_NOT_DELETED}"
-            f") AND _peerdb_is_deleted = 0)"
+            f") AND _peerdb_is_deleted = 0{self._span_membership_date_filter()})"
         )
 
     def _build_system_metric_condition(
@@ -863,7 +884,8 @@ class ClickHouseFilterBuilder:
         return (
             f"trace_id IN ("
             f"SELECT trace_id FROM {self.table} "
-            f"WHERE {project_pred} AND _peerdb_is_deleted = 0 "
+            f"WHERE {project_pred} AND _peerdb_is_deleted = 0"
+            f"{self._span_membership_date_filter()} "
             f"{root_clause}"
             f"AND {inner})"
         )
@@ -907,7 +929,8 @@ class ClickHouseFilterBuilder:
             f"trace_id IN ("
             f"SELECT trace_id FROM {self.table} "
             f"WHERE {self._project_scope_predicate()} "
-            f"AND is_deleted = 0 "
+            f"AND is_deleted = 0"
+            f"{self._span_membership_date_filter()} "
             f"AND {inner_predicate})"
         )
 
