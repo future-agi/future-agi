@@ -2097,13 +2097,7 @@ class TestEdgeCases:
 
 @pytest.mark.unit
 class TestResponseFormatterOutputFormat:
-    """format_llm_response must parse output_format into a structured value.
-
-    This is the real call path LLMHandler.execute_sync uses: litellm.completion
-    -> ResponseFormatter.format_llm_response(output_format=...). A caller asking
-    for "array" must get a list; if it gets the raw JSON string, downstream
-    consumers that type-check for list silently drop it (empty cells).
-    """
+    """format_llm_response parses output_format into a structured value."""
 
     def _response(self, content):
         from unittest.mock import Mock
@@ -2134,11 +2128,7 @@ class TestResponseFormatterOutputFormat:
         return formatted
 
     def test_array_output_format_returns_list(self):
-        """A JSON-array response is parsed to a list, not left as a string.
-
-        Red before the fix: the placeholder returned the raw string, so this
-        asserts the exact regression that emptied every Extract Entity cell.
-        """
+        """A JSON-array response is parsed to a list, not left as a string."""
         formatted = self._format('["Paris", "France"]', "array")
         assert formatted == ["Paris", "France"]
         assert isinstance(formatted, list)

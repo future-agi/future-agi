@@ -22,13 +22,6 @@ from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_
 
 logger = structlog.get_logger(__name__)
 
-# Output formats whose raw model text must be parsed into a structured value.
-# "string"/"text" (and anything else) pass through unchanged.
-ARRAY_OUTPUT_FORMAT = "array"
-OBJECT_OUTPUT_FORMAT = "object"
-NUMBER_OUTPUT_FORMAT = "number"
-
-
 @dataclass
 class UsageInfo:
     """
@@ -228,35 +221,16 @@ class ResponseFormatter:
 
     @staticmethod
     def _apply_output_format(response: Any, output_format: str) -> Any:
-        """
-        Parse the raw model text into the requested output format.
-
-        A caller asking for "array" must receive a ``list`` (not the raw JSON
-        text), "object" a ``dict``, and "number" a ``float``; consumers type-
-        check the result and silently drop anything of the wrong type. The
-        legacy handler path did this in ``RunPrompt.get_formatted_output()`` —
-        this restores the same contract for the new handler path.
-
-        Falls back to the raw content whenever the text cannot be parsed into
-        the requested shape, so a malformed model response degrades to a
-        passthrough instead of raising.
-
-        Args:
-            response: LiteLLM response object
-            output_format: Output format specification
-
-        Returns:
-            Parsed response value, or the raw content when it does not match
-        """
+        """Parse `output_format` to a list/dict/float, else return raw content."""
         content = response.choices[0].message.content
 
-        if output_format == ARRAY_OUTPUT_FORMAT:
+        if output_format == "array":
             parsed = ResponseFormatter._parse_structured(content)
             return parsed if isinstance(parsed, list) else content
-        if output_format == OBJECT_OUTPUT_FORMAT:
+        if output_format == "object":
             parsed = ResponseFormatter._parse_structured(content)
             return parsed if isinstance(parsed, dict) else content
-        if output_format == NUMBER_OUTPUT_FORMAT:
+        if output_format == "number":
             try:
                 return float(strip_code_fence(content))
             except (TypeError, ValueError):
@@ -281,6 +255,9 @@ class ResponseFormatter:
             try:
                 return ast.literal_eval(unfenced)
             except (ValueError, SyntaxError):
+                logger.warning(
+                    "response_format_parse_failed", preview=unfenced[:200]
+                )
                 return content
 
     @staticmethod
