@@ -33,9 +33,16 @@ const CallLogsCard = ({ log }) => {
   const audioUrl = log?.audio_url;
   const filteredTranscript = useMemo(() => {
     const originalTranscript = log?.transcript;
-    return originalTranscript?.filter(
+    const filtered = originalTranscript?.filter(
       (item) => item.speaker_role !== "system",
     );
+    // List responses ship an empty `transcript` (payload perf); the BE
+    // ships a single-message `transcript_preview` so the card can still
+    // render a snippet without a follow-up detail fetch.
+    if ((!filtered || filtered.length === 0) && log?.transcript_preview) {
+      return [log.transcript_preview];
+    }
+    return filtered;
   }, [log]);
 
   const audioData = useMemo(() => ({ url: audioUrl }), [audioUrl]);

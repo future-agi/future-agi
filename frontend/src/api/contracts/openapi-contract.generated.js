@@ -47622,6 +47622,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "string",
           "readOnly": true
         },
+        "transcript_preview": {
+          "title": "Transcript preview",
+          "type": "string",
+          "readOnly": true
+        },
         "scenario": {
           "title": "Scenario",
           "type": "string",

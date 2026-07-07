@@ -285,6 +285,9 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
     duration = serializers.SerializerMethodField()
     start_time = serializers.SerializerMethodField()
     transcript = serializers.SerializerMethodField()
+    # First non-system message shipped on list responses so the "Transcript
+    # Preview" card can render without a follow-up detail request.
+    transcript_preview = serializers.SerializerMethodField()
     scenario = serializers.CharField(source="scenario.name", read_only=True)
     overall_score = serializers.SerializerMethodField()
     response_time = serializers.SerializerMethodField()
@@ -367,6 +370,7 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
             "duration_seconds",
             "start_time",
             "transcript",
+            "transcript_preview",
             "scenario",
             "overall_score",
             "response_time",
@@ -660,6 +664,45 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                 is_outbound=SpeakerRoleResolver.detect_is_outbound(obj),
             )
         return []
+
+    def get_transcript_preview(self, obj):
+        """First non-system message on the list view.
+
+        Full `transcript` is skipped when `detail_mode=False` for payload
+        size; the FE card still needs a snippet so the "Transcript
+        Preview" pane can render without a follow-up detail hit.
+        Detail-view responses already ship the full array, so this is
+        only populated on list responses.
+        """
+        if self.context.get("detail_mode", True):
+            return None
+
+        simulation_call_type = getattr(obj, "simulation_call_type", None)
+        if (
+            simulation_call_type is not None
+            and simulation_call_type == CallExecution.SimulationCallType.TEXT
+        ):
+            if hasattr(obj, "chat_messages"):
+                first = obj.chat_messages.order_by("created_at").first()
+                return ChatMessageSerializer(first).data if first else None
+            return None
+
+        if hasattr(obj, "transcripts"):
+            first = (
+                obj.transcripts.exclude(
+                    speaker_role=CallTranscript.SpeakerRole.UNKNOWN
+                )
+                .order_by("created_at")
+                .first()
+            )
+            if not first:
+                return None
+            call_metadata = getattr(obj, "call_metadata", None) or {}
+            offset = call_metadata.get("recording_offset_ms", 0)
+            return CallTranscriptSerializer(
+                first, context={"recording_offset_ms": offset}
+            ).data
+        return None
 
     def get_response_time(self, obj):
         """Convert response_time_ms to seconds"""

@@ -30345,6 +30345,7 @@ export const SimulateCallExecutionsReadResponse = zod.object({
   "duration_seconds": zod.number().min(simulateCallExecutionsReadResponseDurationSecondsMin).max(simulateCallExecutionsReadResponseDurationSecondsMax).optional().describe('Duration of the call in seconds'),
   "start_time": zod.string().optional(),
   "transcript": zod.string().optional(),
+  "transcript_preview": zod.string().optional(),
   "scenario": zod.string().min(1).optional(),
   "overall_score": zod.string().optional(),
   "response_time": zod.string().optional(),
