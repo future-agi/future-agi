@@ -43,7 +43,7 @@ vi.mock("src/utils/Mixpanel", () => ({
   trackEvent: (...args) => mockTrackEvent(...args),
 }));
 
-vi.mock("../../../components/ModalWrapper/ModalWrapper", () => ({
+vi.mock("../../../../components/ModalWrapper/ModalWrapper", () => ({
   default: ({ title, children, onSubmit, isValid }) => (
     <div>
       <h1>{title}</h1>
@@ -56,7 +56,7 @@ vi.mock("../../../components/ModalWrapper/ModalWrapper", () => ({
 }));
 
 vi.mock(
-  "../../../components/FromSearchSelectField/FormSearchSelectFieldState",
+  "../../../../components/FromSearchSelectField/FormSearchSelectFieldState",
   () => ({
     default: ({ value, onChange, options = [], label }) => (
       <label>
@@ -131,8 +131,9 @@ describe("MoveItem", () => {
 
     renderMoveItem(queryClient, { onClose });
 
-    fireEvent.click(screen.getByLabelText("Select folder"));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "Target" }));
+    fireEvent.change(screen.getByLabelText("Select folder"), {
+      target: { value: "target-folder" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Move" }));
 
     await waitFor(() =>

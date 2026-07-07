@@ -14,6 +14,7 @@ const MoveItem = ({ id, open, onClose, name, folderId }) => {
   const [selectedFolder, setSelectedFolder] = useState("");
   const queryClient = useQueryClient();
   const { folder } = useParams();
+  const sourceFolder = folderId || folder;
 
   const { data: folders } = useQuery({
     queryKey: ["prompt-folders"],
@@ -37,7 +38,7 @@ const MoveItem = ({ id, open, onClose, name, folderId }) => {
         variant: "success",
       });
       onClose();
-      const foldersToRefresh = new Set([folder, selectedFolder, "all"]);
+      const foldersToRefresh = new Set([sourceFolder, selectedFolder, "all"]);
 
       foldersToRefresh.forEach((folderKey) => {
         if (!folderKey) return;
@@ -107,7 +108,7 @@ const MoveItem = ({ id, open, onClose, name, folderId }) => {
         size="small"
         label="Select folder"
         value={selectedFolder}
-        options={folders?.filter((f) => f?.value !== folder)}
+        options={folders?.filter((f) => f?.value !== sourceFolder)}
         onChange={(e) => setSelectedFolder(e.target.value)}
       />
     </ModalWrapper>
