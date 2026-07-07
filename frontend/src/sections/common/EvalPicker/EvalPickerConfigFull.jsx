@@ -1124,7 +1124,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           <Typography variant="subtitle1" fontWeight={600} noWrap>
             {fullEval?.name || evalData?.name}
           </Typography>
-          <VersionBadge version={currentVersion} />
+          <ShowComponent condition={!isSystemEval}>
+            <VersionBadge version={currentVersion} />
+          </ShowComponent>
           <EvalTypeBadge type={evalType} />
           {isDirty && (
             <Chip
@@ -1600,7 +1602,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     setPassThreshold(v);
                     setIsDirty(true);
                   }}
-                  disabled={false}
+                  disabled={isSystemEval}
                   categoryLocked={isOutputTypeCategoryLocked}
                 />
               )}
