@@ -38,6 +38,7 @@ import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import axios, { endpoints } from "src/utils/axios";
+import { SpanTypes } from "src/utils/constant";
 import { useDashboardFilterValues } from "src/hooks/useDashboards";
 import { useDebounce } from "src/hooks/use-debounce";
 import { useAIFilter } from "src/hooks/use-ai-filter";
@@ -68,15 +69,7 @@ const BASE_TRACE_FILTER_FIELDS = [
     value: "node_type",
     label: "Node Type",
     type: "enum",
-    choices: [
-      "chain",
-      "retriever",
-      "generation",
-      "llm",
-      "tool",
-      "agent",
-      "embedding",
-    ],
+    choices: SpanTypes.map((s) => s.value),
   },
   { value: "service_name", label: "Service Name", type: "string" },
   { value: "provider", label: "Provider", type: "string" },
