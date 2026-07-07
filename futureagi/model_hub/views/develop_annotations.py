@@ -2016,13 +2016,14 @@ class AnnotationSummaryView(APIView):
             # hardcoded "Feature not available" message. The bool-returning
             # ``has_feature`` drops the reason on the floor.
             billing = get_billing()
-            gate = billing.check_feature_gate(
-                str(organization.id), "has_agreement_metrics"
-            )
-            if not gate.allowed:
-                return self._gm.forbidden_response(
-                    gate.reason or "This feature requires an EE or Cloud plan."
+            if billing.is_enabled:
+                gate = billing.check_feature_gate(
+                    str(organization.id), "has_agreement_metrics"
                 )
+                if not gate.allowed:
+                    return self._gm.forbidden_response(
+                        gate.reason or "This feature requires an EE or Cloud plan."
+                    )
 
             get_object_or_404(Dataset, id=dataset_id, organization=organization)
 

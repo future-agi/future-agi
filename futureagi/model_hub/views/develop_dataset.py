@@ -15139,7 +15139,7 @@ class CreateKnowledgeBaseView(APIView):
             if not ent_check.allowed:
                 return self._gm.forbidden_response(ent_check.reason)
 
-            if not billing.has_feature(str(org.id), "has_knowledge_base"):
+            if billing.is_enabled and not billing.has_feature(str(org.id), "has_knowledge_base"):
                 return self._gm.forbidden_response("This feature requires a higher plan")
 
             call_log_row = billing.log_and_deduct_resource(
@@ -15267,7 +15267,7 @@ class CreateKnowledgeBaseView(APIView):
                 )
 
             billing = get_billing()
-            if not billing.has_feature(str(org.id), "has_knowledge_base"):
+            if billing.is_enabled and not billing.has_feature(str(org.id), "has_knowledge_base"):
                 return self._gm.forbidden_response("This feature requires a higher plan")
 
             file_names = {file.name for file in files}

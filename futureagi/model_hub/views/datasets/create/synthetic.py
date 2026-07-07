@@ -90,8 +90,12 @@ class CreateSyntheticDataset(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
             billing = get_billing()
-            if not billing.has_feature(str(org.id), "has_synthetic_data"):
-                return self._gm.forbidden_response("Synthetic data feature is not available on your plan.")
+            if billing.is_enabled:
+                gate = billing.check_feature_gate(str(org.id), "has_synthetic_data")
+                if not gate.allowed:
+                    return self._gm.forbidden_response(
+                        gate.reason or "Synthetic data feature is not available on your plan."
+                    )
 
             validated_data = request.validated_data
             dataset_name = validated_data["dataset"]["name"]
