@@ -415,7 +415,16 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         initialLoadDone.current = true;
       }
     }
-  }, [selectedVersionId, versions, isDirty, fullEval, normalizedFullEval, normalizedEvalData, isEditMode, evalData]);
+  }, [
+    selectedVersionId,
+    versions,
+    isDirty,
+    fullEval,
+    normalizedFullEval,
+    normalizedEvalData,
+    isEditMode,
+    evalData,
+  ]);
 
   // ── Populate from eval detail (same logic as EvalDetailPage) ──
   const initialLoadDone = useRef(false);
@@ -1963,6 +1972,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
 
         {source !== "composite" &&
           source !== "workbench" &&
+          source !== "create-simulate" &&
           (() => {
             const hasInstructions = !!(instructions || "").trim();
             const hasVariables =
