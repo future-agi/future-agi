@@ -2095,22 +2095,16 @@ class TestExecutionDetailView(APIView):
                 test_execution.execution_metadata["column_order"] = column_order
                 test_execution.save(update_fields=["execution_metadata"])
 
-
-            if (
-                not column_order
-                or not test_execution.execution_metadata.get("Provider", False)
+            if not column_order or not test_execution.execution_metadata.get(
+                "Provider", False
             ):
                 # Create default column order based on agent type
                 if agent_type == AgentDefinition.AgentTypeChoices.VOICE:
                     default_columns = copy.deepcopy(DEFAULT_VOICE_SIM_COL)
-
                 else:
                     # Chat (text) agent type columns with chat metrics from conversation_metrics_data
                     logger.info("Creating default column order for chat agent")
                     default_columns = copy.deepcopy(DEFAULT_CHAT_SIM_COL)
-
-           
-
 
                 for eval_config in eval_configs:
                     default_columns.append(

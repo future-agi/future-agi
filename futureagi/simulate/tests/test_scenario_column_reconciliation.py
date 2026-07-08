@@ -7,6 +7,8 @@ SQL-identifier sanitisation on the grouping alias.
 """
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 from model_hub.models.choices import DatasetSourceChoices, SourceChoices
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
@@ -181,13 +183,17 @@ class TestScenarioDatasetColumnFilter:
             }
         ]
 
-        result = TestExecutionUtils()._apply_filters(
-            CallExecution.objects.filter(test_execution=test_execution),
-            filters,
-            [],
-            {},
-            column_order=column_order,
-        )
+        with CaptureQueriesContext(connection) as ctx:
+            result = list(
+                TestExecutionUtils()._apply_filters(
+                    CallExecution.objects.filter(test_execution=test_execution),
+                    filters,
+                    [],
+                    {},
+                    column_order=column_order,
+                )
+            )
+        assert len(ctx.captured_queries) == 1, ctx.captured_queries
 
         ids = {str(ce.id) for ce in result}
         assert ids == {str(ce1.id), str(ce2.id)}

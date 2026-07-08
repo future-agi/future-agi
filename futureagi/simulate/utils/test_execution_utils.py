@@ -509,10 +509,8 @@ class TestExecutionUtils:
                                 ~models.Q(scenario__name__icontains=filter_value)
                             )
 
-                elif (
-                    column_id in scenario_dataset_columns
-                    or column_id.startswith("scenario_")
-                    and "dataset" in column_id
+                elif column_id in scenario_dataset_columns or (
+                    column_id.startswith("scenario_") and "_dataset_" in column_id
                 ):
                     column_meta = scenario_dataset_columns.get(str(column_id), {})
                     # Name-based scenario columns carry every dataset's Column
