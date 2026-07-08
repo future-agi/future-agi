@@ -1067,3 +1067,62 @@ def test_update_synthetic_invalid_regenerate_does_not_mutate_dataset(
     assert Row.objects.filter(dataset=dataset, deleted=False).count() == 1
     assert Column.objects.filter(dataset=dataset, deleted=False).count() == 1
     assert Cell.objects.filter(dataset=dataset, deleted=False).count() == 1
+
+
+@pytest.mark.django_db
+def test_add_synthetic_data_accepts_columns_without_skip_or_is_new(
+    auth_client, organization, workspace, user, monkeypatch
+):
+    dataset = Dataset.objects.create(
+        name="Minimal Column Payload Dataset",
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        column_order=[],
+        column_config={},
+    )
+    column = Column.objects.create(
+        name="answer",
+        dataset=dataset,
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.OTHERS.value,
+    )
+    dataset.column_order = [str(column.id)]
+    dataset.column_config = {str(column.id): {"is_visible": True, "is_frozen": None}}
+    dataset.save(update_fields=["column_order", "column_config"])
+    queued_tasks = []
+    monkeypatch.setattr(
+        "model_hub.views.datasets.add_rows.synthetic.generate_new_rows.delay",
+        lambda *args, **kwargs: queued_tasks.append(("add_rows", args, kwargs)),
+    )
+    monkeypatch.setattr(
+        "model_hub.views.datasets.add_rows.synthetic.generate_new_columns.delay",
+        lambda *args, **kwargs: queued_tasks.append(("gen_cols", args, kwargs)),
+    )
+
+    payload = {
+        "num_rows": 10,
+        "fill_existing_rows": False,
+        "columns": [
+            {
+                "name": "answer",
+                "data_type": "text",
+                "description": "Answer",
+                "property": "answer",
+            }
+        ],
+        "dataset": {
+            "description": "Dataset",
+            "objective": "Generate rows",
+            "patterns": "",
+        },
+    }
+
+    response = auth_client.post(
+        f"/model-hub/develops/{dataset.id}/add_synthetic_data/",
+        payload,
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.json()
+    assert any(name == "add_rows" for name, _, _ in queued_tasks)
