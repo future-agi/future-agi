@@ -15,8 +15,9 @@ Endpoints covered:
 """
 
 import json
+import time
 import uuid
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from django.urls import reverse
@@ -39,6 +40,7 @@ from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.views.dynamic_columns import (
     AddApiColumnView,
     ExecutePythonCodeView,
+    ExtractEntitiesView,
     ExtractJsonColumnView,
 )
 from tfc.constants.roles import OrganizationRoles
@@ -488,6 +490,64 @@ class TestExtractEntitiesView(DynamicColumnsBaseTestCase):
         assert "new_column_id" in response.json()["result"]
         assert response.json()["result"]["new_column_name"] == "Person Names"
         mock_task.assert_called_once()
+
+    def test_extract_entities_populates_cell_from_array_response(self):
+        """A JSON-array LLM response yields a populated cell value, not None.
+
+        Drives ExtractEntitiesView._extract_entities through the real
+        ResponseFormatter (the live extract_async path). Red before the fix:
+        the formatter returned the raw JSON string, so the isinstance(list)
+        check failed and _extract_entities returned None -> every generated
+        cell was empty.
+        """
+        from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
+        from agentic_eval.core_evals.run_prompt.runprompt_handlers.utils.response_formatter import (  # noqa: E501
+            ResponseFormatter,
+        )
+
+        _, columns, rows = self.create_test_dataset(num_columns=1, num_rows=1)
+        # _extract_entities runs per-thread in production and calls
+        # close_old_connections(); preload the relation chain so no lazy query
+        # fires after the connection is recycled.
+        cell = Cell.objects.select_related(
+            "column__dataset__organization", "column__dataset__workspace"
+        ).get(row=rows[0], column=columns[0])
+
+        def run_real_formatter(run_prompt_self, *args, **kwargs):
+            # The model emits a JSON array as text; let the REAL formatter parse
+            # it exactly as the LLM handler does on the live path.
+            mock_resp = Mock()
+            mock_resp.choices = [Mock()]
+            mock_resp.choices[0].message = Mock()
+            mock_resp.choices[0].message.content = '["Paris", "France"]'
+            mock_resp.choices[0].message.tool_calls = None
+            mock_resp.usage = Mock(
+                prompt_tokens=1, completion_tokens=1, total_tokens=2
+            )
+            mock_resp.model = "gpt-4o"
+            return ResponseFormatter.format_llm_response(
+                response=mock_resp,
+                model=run_prompt_self.model,
+                start_time=time.time(),
+                output_format=run_prompt_self.output_format,
+            )
+
+        # _extract_entities calls close_old_connections() for per-thread
+        # connection hygiene; in this single-thread test that would recycle the
+        # shared test connection, so neutralize it (not what we're asserting).
+        with (
+            patch.object(RunPrompt, "litellm_response", run_real_formatter),
+            patch("model_hub.views.dynamic_columns.close_old_connections"),
+        ):
+            value, value_infos = ExtractEntitiesView()._extract_entities(
+                cell=cell,
+                instruction="Extract the cities and countries",
+                model="gpt-4o",
+            )
+
+        assert value == json.dumps(["Paris", "France"])
+        assert value is not None
+        assert not (value_infos and "reason" in value_infos)
 
 
 # =============================================================================

@@ -416,8 +416,8 @@ ConfigureProject.propTypes = {
 };
 
 function getSamplingRatePercent(projectDetail, module) {
-  if (typeof projectDetail?.samplingRate === "number") {
-    return projectDetail.samplingRate * 100;
+  if (typeof projectDetail?.sampling_rate === "number") {
+    return projectDetail.sampling_rate * 100;
   }
-  return module === "observe" ? 100 : undefined;
+  return module === "observe" ? 0 : undefined;
 }

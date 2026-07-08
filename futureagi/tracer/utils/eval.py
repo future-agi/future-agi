@@ -2478,7 +2478,9 @@ def _find_anchor_span(trace: Trace):
     )
 
     if _read_source() == "clickhouse":
-        spans = filter_observation_spans_by_trace(str(trace.id))
+        spans = filter_observation_spans_by_trace(
+            str(trace.id), project_id=trace.project_id
+        )
         if not spans:
             return None
         spans.sort(
@@ -2644,7 +2646,9 @@ def _resolve_trace_path(trace: Trace, path: str):
 
         if _read_source() == "clickhouse":
             spans = sorted(
-                filter_observation_spans_by_trace(str(trace.id)),
+                filter_observation_spans_by_trace(
+                    str(trace.id), project_id=trace.project_id
+                ),
                 key=lambda s: (s.start_time is None, s.start_time, str(s.id)),
             )
         else:
@@ -2717,7 +2721,11 @@ def _resolve_session_path(trace_session: TraceSession, path: str):
                 traces = []
                 for tid in _trace_ids:
                     try:
-                        traces.append(get_trace(str(tid), reader=reader))
+                        traces.append(
+                            get_trace(
+                                str(tid), reader=reader, project_id=_project_id
+                            )
+                        )
                     except Trace.DoesNotExist:
                         continue
 
