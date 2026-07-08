@@ -2104,11 +2104,28 @@ const TraceFilterPanel = ({
     (sourceRows) => {
       // Hold while a numeric row is mid-edit so partial/invalid values don't
       // auto-fire and a half-filled range doesn't drop the applied filter.
-      if (hasIncompleteNumericRow(sourceRows)) return;
+      if (hasIncompleteNumericRow(sourceRows)) {
+        console.log(
+          "[TH-6624] applyIfChanged skipped (incomplete numeric)",
+          sourceRows,
+        );
+        return;
+      }
       const next = computeValidFilters(sourceRows);
       const serialized = serializeFilterSet(next);
+      console.log("[TH-6624] applyIfChanged called", {
+        sourceRows,
+        next,
+        serialized,
+        lastApplied: lastAppliedRef.current,
+        matches: serialized === lastAppliedRef.current,
+      });
       if (serialized === lastAppliedRef.current) return;
       lastAppliedRef.current = serialized;
+      console.log(
+        "[TH-6624] applyIfChanged FIRING onApply with",
+        next,
+      );
       onApply(next);
     },
     [onApply],
@@ -2131,17 +2148,24 @@ const TraceFilterPanel = ({
   // is a no-op.
   const wasOpenRef = useRef(open);
   useEffect(() => {
+    console.log("[TH-6624] close-flush effect fired", {
+      wasOpen: wasOpenRef.current,
+      openNow: open,
+      rowsAtEffect: rows,
+    });
     if (wasOpenRef.current && !open) {
       if (autoApplyTimerRef.current) {
         clearTimeout(autoApplyTimerRef.current);
         autoApplyTimerRef.current = null;
       }
       const flushed = queryInputRef.current?.flushPartial?.();
+      console.log("[TH-6624] close-flush entering, flushed=", flushed);
       if (flushed && flushed.length) {
         const flushedRows = queryTokensToRows(flushed);
         setRows(flushedRows);
         applyIfChanged(flushedRows);
       } else {
+        console.log("[TH-6624] close-flush -> applyIfChanged(rows)", rows);
         applyIfChanged(rows);
       }
     }
@@ -2149,6 +2173,7 @@ const TraceFilterPanel = ({
   }, [open, rows, applyIfChanged, queryTokensToRows]);
 
   const handleClear = useCallback(() => {
+    console.log("[TH-6624] handleClear invoked -> onApply(null)");
     setRows([{ ...effectiveDefaultRow }]);
     lastAppliedRef.current = serializeFilterSet(null);
     onApply(null);
