@@ -8,6 +8,7 @@ import axios, { endpoints } from "src/utils/axios";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
+import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
 import SkippedLocalizationBanner from "src/sections/common/SkippedLocalizationBanner";
 import { canonicalEntries } from "src/utils/utils";
 
@@ -224,15 +225,24 @@ const EvalErrorLocalization = ({
           >
             Possible Error
           </Typography>
-          {entries.map(([key, value]) => (
-            <ErrorLocalizeCard
-              key={key}
-              value={value}
-              column={selectedInputKey || key}
-              tabValue="raw"
-              datapoint={datapoint}
+          {entries.some(([, value]) =>
+            (Array.isArray(value) ? value : []).some((e) => e?.orgSegment),
+          ) ? (
+            <AudioErrorCard
+              valueInfos={{ errorAnalysis: analysis }}
+              column={selectedInputKey || "input"}
             />
-          ))}
+          ) : (
+            entries.map(([key, value]) => (
+              <ErrorLocalizeCard
+                key={key}
+                value={value}
+                column={selectedInputKey || key}
+                tabValue="raw"
+                datapoint={datapoint}
+              />
+            ))
+          )}
         </Box>
       );
     }
