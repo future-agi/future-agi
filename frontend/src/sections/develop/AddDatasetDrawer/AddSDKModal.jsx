@@ -29,6 +29,7 @@ import { FormCodeEditor } from "src/components/form-code-editor";
 import { trackEvent, Events, PropertyName } from "src/utils/Mixpanel";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
 import { getRequestErrorMessage } from "src/utils/errorUtils";
+import { getCreatedDatasetName } from "./sdkCreateDatasetResponse";
 
 const defaultValues = {
   name: "",
@@ -109,7 +110,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
       onCloseClick();
       //@ts-ignore
       addRowSDK({
-        dataset_name: data?.data?.result?.datasetName,
+        dataset_name: getCreatedDatasetName(data),
       });
       setIsNext(true);
     },
