@@ -1,16 +1,18 @@
 """Dual-write seeding helpers for the eval-task filter integration suite.
 
-Every seeded row lands in BOTH Postgres (Django ORM) and ClickHouse (direct INSERT
-into the CDC landing tables; spans_mv repopulates the denormalized `spans` table).
+Every seeded row lands in BOTH Postgres (Django ORM) and ClickHouse — direct
+inserts into the v2 read tables (`spans` / `traces` / `trace_sessions` via
+``tracer.tests._ch_seed``, plus the v2-shaped eval-logger tables).
 The base corpus is a fixed 24-row span set across 6 traces and 3 sessions, with
 distinct values for every column the FilterCase matrix can filter on.
 """
+
 from __future__ import annotations
 
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from tracer.models.observation_span import (
@@ -27,10 +29,102 @@ from tracer.models.trace_session import TraceSession
 # Each session's first trace's first span is a root conversation span (voice call).
 # Each session has one "high cost" trace and one "low cost" trace.
 
-_NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=timezone.utc)
+_NOW = datetime(2026, 6, 1, 12, 0, 0, tzinfo=UTC)
 _MODELS = ["gpt-4", "gpt-3.5-turbo", "claude-3-opus"]
 _PROVIDERS = ["openai", "openai", "anthropic"]
 CHOICE_OPTIONS = ["good", "bad", "neutral"]
+
+# ---------- Voice-call metric spec (single source of truth) ------------------
+# Drives both the voice-corpus seeding and the voice FilterCase matrix. Each
+# entry: (FE column_id, stored CH attr key, seed formula f(i)->value, display
+# precision, contract_gap). Precision is how the *displayed* value is derived
+# from the stored value; a gap marks a filter that disagrees with the display.
+#   raw  -> value as stored          int  -> round to integer
+#   pct2 -> round(v/(v+1)*100, 2)    (agent-talk-percentage style)
+_V_WPM_GAP = "filter round()s wpm to integer; displayed value is raw"
+_V_STATUS_GAP = "filter matches raw call.status='ended'; UI shows 'completed'"
+_V_TYPE_GAP = "call_type reads raw_log.type (not stored) -> always 'outbound'"
+
+# (col_id, seed_key, formula, precision, gap)
+VOICE_NUM_SPEC: list[tuple] = [
+    # curated + FE aliases (handled) — read the real stored key
+    ("talk_ratio", "call.talk_ratio", lambda i: round(0.2 + i * 0.12, 4), "pct2", None),
+    # wpm carry a fractional .4 (rounds down): the auto-matrix uses the filter's
+    # int precision so it passes; the display-vs-filter mismatch is documented
+    # by the explicit known-bug family instead (avoids XPASS on non-boundary vals).
+    ("bot_wpm", "call.bot_wpm", lambda i: round(120.0 + i * 4 + 0.4, 4), "int", None),
+    ("user_wpm", "call.user_wpm", lambda i: round(110.0 + i * 5 + 0.4, 4), "int", None),
+    ("duration", "call.duration", lambda i: float(20 + i), "raw", None),
+    ("agent_latency", "avg_agent_latency_ms", lambda i: float(500 + i * 25), "int", None),
+    ("ai_interruptions", "ai_interruption_count", lambda i: float(i % 4), "int", None),
+    ("user_interruptions", "user_interruption_count", lambda i: float(i % 5), "int", None),
+    ("ai_interruption_rate", "ai_interruption_rate", lambda i: round((i % 8) / 10.0 + 0.03, 4), "raw", None),
+    ("user_interruption_rate", "user_interruption_rate", lambda i: round((i % 10) / 10.0 + 0.05, 4), "raw", None),
+    ("stop_time_after_interruption", "avg_stop_time_after_interruption_ms", lambda i: float(100 + i * 10), "raw", None),
+    ("total_cost", "cost_breakdown.total", lambda i: round(0.01 * (i + 1), 4), "raw", None),
+    ("customer_cost", "cost_breakdown.total", lambda i: round(0.01 * (i + 1), 4), "raw", None),
+    ("llm_cost", "cost_breakdown.llm", lambda i: round(0.005 * (i + 1), 4), "raw", None),
+    ("stt_cost", "cost_breakdown.stt", lambda i: round(0.002 * (i + 1), 4), "raw", None),
+    ("tts_cost", "cost_breakdown.tts", lambda i: round(0.003 * (i + 1), 4), "raw", None),
+    ("llm_latency", "modelLatencyAverage", lambda i: float(200 + i * 15), "raw", None),
+    ("stt_latency", "transcriberLatencyAverage", lambda i: float(150 + i * 10), "raw", None),
+    ("tts_latency", "voiceLatencyAverage", lambda i: float(180 + i * 12), "raw", None),
+    ("response_time", "turnLatencyAverage", lambda i: float(300 + i * 20), "raw", None),
+    # fallback metrics — seeded under the FE col_id key so the span-attr
+    # fallback path can filter them (as it will once ingestion emits them).
+    ("message_count", "message_count", lambda i: float(2 + (i % 10)), "raw", None),
+    ("overall_score", "overall_score", lambda i: round(0.5 + (i % 6) * 0.08, 4), "raw", None),
+    ("time_to_first_token", "time_to_first_token", lambda i: float(50 + i * 5), "raw", None),
+    ("call_count", "call_count", lambda i: float(1 + (i % 3)), "raw", None),
+    ("session_count", "session_count", lambda i: float(1 + (i % 4)), "raw", None),
+    ("span_count", "span_count", lambda i: float(1 + (i % 6)), "raw", None),
+    ("trace_count", "trace_count", lambda i: float(1 + (i % 5)), "raw", None),
+    ("user_count", "user_count", lambda i: float(1 + (i % 2)), "raw", None),
+    ("error_rate", "error_rate", lambda i: round((i % 5) / 10.0, 4), "raw", None),
+    ("failure_rate", "failure_rate", lambda i: round((i % 4) / 10.0, 4), "raw", None),
+    ("success_rate", "success_rate", lambda i: round(0.5 + (i % 5) / 10.0, 4), "raw", None),
+]
+
+# (col_id, seed_key, formula, gap)
+_PERSONA = ["formal", "casual", "curt"]
+VOICE_STR_SPEC: list[tuple] = [
+    ("ended_reason", "ended_reason", lambda i: "customer-ended-call" if i % 2 == 0 else "exceeded-max-duration", None),
+    # call.status is stored raw ('ended'); the auto-matrix filters that raw value
+    # (passes). The 'ended'->'completed' display normalization gap is documented
+    # by the known-bug family. call_type is omitted (source raw_log.type is not
+    # stored — out of scope; covered as a known bug).
+    ("call_status", "call.status", lambda i: "ended", None),
+    # call_type seeded for the known-bug family's ground truth; the auto-matrix
+    # SKIPS it (its filter reads raw_log.type, not this key).
+    ("call_type", "call_type", lambda i: "inbound" if i % 2 == 0 else "outbound", None),
+    # fallback string metrics — seeded under the FE col_id key.
+    ("scenario", "scenario", lambda i: ["refund", "billing", "support"][i % 3], None),
+    ("scenario_type", "scenario_type", lambda i: "inbound" if i % 2 == 0 else "outbound", None),
+    ("simulation", "simulation", lambda i: f"sim_{i % 3}", None),
+    ("run_test", "run_test", lambda i: f"run_{i % 4}", None),
+    ("test_execution", "test_execution", lambda i: f"exec_{i % 3}", None),
+    ("agent_definition", "agent_definition", lambda i: f"agent_{i % 2}", None),
+    ("agent_version", "agent_version", lambda i: f"v{i % 3}", None),
+    ("dataset", "dataset", lambda i: f"ds_{i % 2}", None),
+    ("eval_source", "eval_source", lambda i: ["observe", "dataset"][i % 2], None),
+    ("prompt_label", "prompt_label", lambda i: f"lbl_{i % 3}", None),
+    ("prompt_name", "prompt_name", lambda i: f"prompt_{i % 2}", None),
+    ("prompt_version", "prompt_version", lambda i: f"pv{i % 3}", None),
+    ("persona", "persona", lambda i: _PERSONA[i % 3], None),
+    ("persona_gender", "persona_gender", lambda i: ["male", "female"][i % 2], None),
+    ("persona_accent", "persona_accent", lambda i: ["us", "uk", "in"][i % 3], None),
+    ("persona_age_group", "persona_age_group", lambda i: ["18-25", "26-40", "40+"][i % 3], None),
+    ("persona_language", "persona_language", lambda i: ["en", "es"][i % 2], None),
+    ("persona_location", "persona_location", lambda i: ["us", "eu"][i % 2], None),
+    ("persona_profession", "persona_profession", lambda i: ["eng", "sales"][i % 2], None),
+    ("persona_personality", "persona_personality", lambda i: _PERSONA[i % 3], None),
+    ("persona_communication_style", "persona_communication_style", lambda i: _PERSONA[i % 3], None),
+    ("persona_conversation_speed", "persona_conversation_speed", lambda i: ["slow", "fast"][i % 2], None),
+]
+
+# stored_key -> formula (deduped) for the seeder.
+_VOICE_NUM_SEED = {k: f for _, k, f, _, _ in VOICE_NUM_SPEC}
+_VOICE_STR_SEED = {k: f for _, k, f, _ in VOICE_STR_SPEC}
 
 
 @dataclass
@@ -59,6 +153,18 @@ class SeededRow:
     annotation_value: float | None
     has_choice_eval: bool
     choice_value: str | None
+    # PASS_FAIL eval (distinct template config {"output": "Pass/Fail"}) on
+    # sp_idx ∈ {1,3}; pf_value True → "Passed", False → "Failed".
+    has_pf_eval: bool = False
+    pf_value: bool | None = None
+    # Text / thumbs / categorical annotations mirrored onto the same sp_idx==2
+    # spans as the numeric label.
+    ann_text: str | None = None
+    ann_thumb: str | None = None
+    ann_selected: list[str] | None = None
+    # Numeric-label Score carries an annotator (the integration user) for
+    # s_idx ∈ {0,1}; None for s_idx==2.
+    ann_annotator_is_user: bool = False
     # Score scope the annotation was created at: "span" (base corpus) or
     # "trace" (voice corpus — mirrors prod, where voice-call annotations are
     # created trace-scoped via the trace-backed voice grid).
@@ -76,6 +182,11 @@ class DualWriter:
     _eval_config_id: uuid.UUID | None = None
     _annotation_label_id: uuid.UUID | None = None
     _choice_eval_config_id: uuid.UUID | None = None
+    _pf_eval_config_id: uuid.UUID | None = None
+    _text_label_id: uuid.UUID | None = None
+    _thumbs_label_id: uuid.UUID | None = None
+    _categorical_label_id: uuid.UUID | None = None
+    _annotator_user_id: uuid.UUID | None = None
 
     @property
     def eval_config_id(self) -> str:
@@ -89,31 +200,71 @@ class DualWriter:
     def choice_eval_config_id(self) -> str:
         return str(self._choice_eval_config_id) if self._choice_eval_config_id else ""
 
+    @property
+    def pf_eval_config_id(self) -> str:
+        return str(self._pf_eval_config_id) if self._pf_eval_config_id else ""
+
+    @property
+    def text_label_id(self) -> str:
+        return str(self._text_label_id) if self._text_label_id else ""
+
+    @property
+    def thumbs_label_id(self) -> str:
+        return str(self._thumbs_label_id) if self._thumbs_label_id else ""
+
+    @property
+    def categorical_label_id(self) -> str:
+        return str(self._categorical_label_id) if self._categorical_label_id else ""
+
+    @property
+    def annotator_user_id(self) -> str:
+        return str(self._annotator_user_id) if self._annotator_user_id else ""
+
     # ------- public ---------------------------------------------------------
 
+    def _setup_shared_configs(self, project) -> dict:
+        """Create the eval templates / configs, annotation labels, and the
+        annotator user shared by every corpus, and cache their ids."""
+        cfg = {
+            "eval_config": self._get_or_create_eval_config(
+                project, self._get_or_create_eval_template(project)
+            ),
+            "choice_eval_config": self._get_or_create_choice_eval_config(
+                project, self._get_or_create_choice_eval_template(project)
+            ),
+            "pf_eval_config": self._get_or_create_pf_eval_config(
+                project, self._get_or_create_pf_eval_template(project)
+            ),
+            "numeric_label": self._get_or_create_annotation_label(project),
+            "text_label": self._get_or_create_text_label(project),
+            "thumbs_label": self._get_or_create_thumbs_label(project),
+            "categorical_label": self._get_or_create_categorical_label(project),
+            "annotator_user": self._get_or_create_annotator_user(project),
+        }
+        self._eval_config_id = cfg["eval_config"].id
+        self._choice_eval_config_id = cfg["choice_eval_config"].id
+        self._pf_eval_config_id = cfg["pf_eval_config"].id
+        self._annotation_label_id = cfg["numeric_label"].id
+        self._text_label_id = cfg["text_label"].id
+        self._thumbs_label_id = cfg["thumbs_label"].id
+        self._categorical_label_id = cfg["categorical_label"].id
+        self._annotator_user_id = cfg["annotator_user"].id
+        return cfg
+
     def seed_base_corpus(self, project) -> dict:
-        """Dual-write the 24-span corpus. Returns counts dict."""
-        # Materialize the eval template + label up front so PG row inserts
-        # have valid FKs.
-        eval_template = self._get_or_create_eval_template(project)
-        eval_config = self._get_or_create_eval_config(project, eval_template)
-        choice_template = self._get_or_create_choice_eval_template(project)
-        choice_eval_config = self._get_or_create_choice_eval_config(
-            project, choice_template
-        )
-        annotation_label = self._get_or_create_annotation_label(project)
-        self._eval_config_id = eval_config.id
-        self._choice_eval_config_id = choice_eval_config.id
-        self._annotation_label_id = annotation_label.id
+        """Dual-write the 25-span corpus. Returns counts dict."""
+        cfg = self._setup_shared_configs(project)
 
         rows: list[SeededRow] = []
         sessions = []
+        traces = []
+        span_objs = []
+        score_objs = []
         for s_idx in range(3):
             sess = TraceSession.objects.create(
                 id=uuid.uuid4(), project=project, name=f"session_{s_idx}"
             )
             sessions.append(sess)
-            self._insert_session_ch(sess)
             for t_idx in range(2):
                 trace = Trace.objects.create(
                     id=uuid.uuid4(),
@@ -121,44 +272,89 @@ class DualWriter:
                     session=sess,
                     name=f"trace_s{s_idx}_t{t_idx}",
                 )
-                self._insert_trace_ch(trace)
+                traces.append(trace)
                 for sp_idx in range(4):
                     row = self._build_row(project, trace, sess, s_idx, t_idx, sp_idx)
-                    self._insert_span_pg(row, trace, project)
-                    self._insert_span_ch(row)
-                    if row.has_eval:
-                        self._insert_eval_pg_ch(row, trace, eval_config)
-                    if row.has_choice_eval:
-                        self._insert_choice_eval_pg_ch(row, trace, choice_eval_config)
+                    span_objs.append(self._insert_span_pg(row, trace, project))
+                    self._insert_evals(row, trace, cfg)
                     if row.has_annotation:
-                        self._insert_annotation_pg_ch(
-                            row, trace, project, annotation_label
+                        score_objs.extend(
+                            self._insert_annotations(row, trace, project, cfg)
                         )
                     rows.append(row)
+        # One extra trace in session 2 (single root span, no evals/annotations)
+        # so traces_count discriminates (2, 2, 3) for session aggregates.
+        extra_trace = Trace.objects.create(
+            id=uuid.uuid4(),
+            project=project,
+            session=sessions[2],
+            name="trace_s2_extra",
+        )
+        traces.append(extra_trace)
+        extra_row = self._build_extra_row(project, extra_trace, sessions[2])
+        span_objs.append(self._insert_span_pg(extra_row, extra_trace, project))
+        rows.append(extra_row)
+
         self.seeded = rows
-        # spans_mv is non-refreshable; INSERT INTO tracer_observation_span fires
-        # the MV write to ``spans`` synchronously. OPTIMIZE FINAL eliminates
-        # any ReplicatedReplacingMergeTree merge lag before the test reads.
-        try:
-            self.ch.command(f"OPTIMIZE TABLE {self.ch_database}.spans FINAL")
-        except Exception:
-            pass
+        self._flush_ch(span_objs, traces, sessions, score_objs)
         return {
             "span_count": len(rows),
             "session_count": len(sessions),
-            "trace_count": len(sessions) * 2,
+            "trace_count": len(traces),
         }
+
+    def _build_extra_row(self, project, trace, sess) -> SeededRow:
+        """A lone root span (cost 0.05, model gpt-4o, 50 tokens) with no
+        evals / annotations, distinguishing session 2's traces_count."""
+        span_id = f"span_root_{trace.id.hex[:12]}"
+        created_at = _NOW + timedelta(days=2, hours=2)
+        return SeededRow(
+            span_id=span_id,
+            trace_id=str(trace.id),
+            session_id=str(sess.id),
+            project_id=str(project.id),
+            observation_type="chain",
+            parent_span_id=None,
+            model="gpt-4o",
+            provider="openai",
+            status="OK",
+            cost=0.05,
+            latency_ms=100,
+            total_tokens=50,
+            prompt_tokens=25,
+            completion_tokens=25,
+            created_at=created_at,
+            span_attr_str={},
+            span_attr_num={},
+            span_attr_bool={},
+            has_eval=False,
+            eval_value=None,
+            has_annotation=False,
+            annotation_value=None,
+            has_choice_eval=False,
+            choice_value=None,
+        )
+
+    def _insert_evals(self, row, trace, cfg) -> None:
+        if row.has_eval:
+            self._insert_eval_pg_ch(row, trace, cfg["eval_config"])
+        if row.has_choice_eval:
+            self._insert_choice_eval_pg_ch(row, trace, cfg["choice_eval_config"])
+        if row.has_pf_eval:
+            self._insert_pf_eval_pg_ch(row, trace, cfg["pf_eval_config"])
 
     # ------- row construction ----------------------------------------------
 
     def _build_row(self, project, trace, sess, s_idx, t_idx, sp_idx) -> SeededRow:
-        is_voice_root = (sp_idx == 0 and t_idx == 0)
-        is_root = (sp_idx == 0)
+        is_voice_root = sp_idx == 0 and t_idx == 0
+        is_root = sp_idx == 0
         parent = None if is_root else f"span_root_{trace.id.hex[:12]}"
         observation_type = (
             "conversation" if is_voice_root else ("llm" if sp_idx > 0 else "chain")
         )
-        model = _MODELS[s_idx]
+        # Empty model on the sp_idx==0 root of each session's second trace so
+        # text is_null / is_not_null / NOT-family ops have non-degenerate rows.
+        model = "" if (sp_idx == 0 and t_idx == 1) else _MODELS[s_idx]
         provider = _PROVIDERS[s_idx]
         status = "ERROR" if (s_idx == 2 and sp_idx == 3) else "OK"
         cost = 0.001 * (s_idx + 1) * (t_idx + 1) * (sp_idx + 1)
@@ -169,20 +365,41 @@ class DualWriter:
             "user_intent": "checkout" if sp_idx % 2 == 0 else "browse",
             "channel": ["web", "mobile", "voice"][s_idx],
         }
+        # coupon present only on sp_idx==1 spans → text is_null / is_not_null
+        # discrimination on a partially-present attribute.
+        if sp_idx == 1:
+            span_attr_str["coupon"] = "SAVE10"
         span_attr_num = {"retries": float(sp_idx), "score": 0.1 * (sp_idx + 1)}
-        span_attr_bool = {"premium": (s_idx == 0)}
+        # premium omitted for s_idx==2 → boolean is_null discrimination.
+        span_attr_bool = {} if s_idx == 2 else {"premium": (s_idx == 0)}
         # Eval: spans at sp_idx ∈ {1,2,3} all get an eval, with three distinct
         # values so range filters (lt / gt / between) have real boundaries.
         _EVAL_VALUE_BY_SP_IDX = {1: 0.3, 2: 0.6, 3: 0.9}
         has_eval = sp_idx in _EVAL_VALUE_BY_SP_IDX
         eval_value = _EVAL_VALUE_BY_SP_IDX.get(sp_idx)
+        # PASS_FAIL eval (distinct template config): sp_idx==1 → Passed,
+        # sp_idx==3 → Failed. Disjoint value axis from the SCORE eval above.
+        has_pf_eval = sp_idx in (1, 3)
+        pf_value = (sp_idx == 1) if has_pf_eval else None
         # Annotation: 6 spans (sp_idx=2 across both traces of all sessions),
         # values 0.2/0.5/0.8 cycled by s_idx for non-trivial range coverage.
         _ANNOTATION_VALUE_BY_S_IDX = {0: 0.2, 1: 0.5, 2: 0.8}
-        has_annotation = (sp_idx == 2)
+        has_annotation = sp_idx == 2
         annotation_value = (
             _ANNOTATION_VALUE_BY_S_IDX.get(s_idx) if has_annotation else None
         )
+        # Text / thumbs / categorical annotations on the same sp_idx==2 spans,
+        # cycled by s_idx so each op discriminates.
+        ann_text = ["helpful", "needs work", "spam"][s_idx] if has_annotation else None
+        ann_thumb = ["up", "up", "down"][s_idx] if has_annotation else None
+        ann_selected = (
+            [["tag_a"], ["tag_b"], ["tag_a", "tag_b"]][s_idx]
+            if has_annotation
+            else None
+        )
+        # Numeric-label Score carries the integration user as annotator for
+        # s_idx ∈ {0,1}; None for s_idx==2.
+        ann_annotator_is_user = has_annotation and s_idx in (0, 1)
         # CHOICE eval: same 18 spans as float eval (sp_idx ∈ {1,2,3}),
         # choice_value cycled by sp_idx so each option discriminates 6 spans.
         _CHOICE_BY_SP_IDX = {1: "good", 2: "bad", 3: "neutral"}
@@ -219,6 +436,12 @@ class DualWriter:
             annotation_value=annotation_value,
             has_choice_eval=has_choice_eval,
             choice_value=choice_value,
+            has_pf_eval=has_pf_eval,
+            pf_value=pf_value,
+            ann_text=ann_text,
+            ann_thumb=ann_thumb,
+            ann_selected=ann_selected,
+            ann_annotator_is_user=ann_annotator_is_user,
         )
 
     # ------- PG insert helpers ---------------------------------------------
@@ -303,13 +526,112 @@ class DualWriter:
         )
         return label
 
-    def _insert_span_pg(self, row: SeededRow, trace, project) -> None:
+    def _get_or_create_pf_eval_template(self, project):
+        from model_hub.models.evals_metric import EvalTemplate
+
+        template, _ = EvalTemplate.objects.get_or_create(
+            name=f"int_test_pf_template_{project.id}",
+            organization=project.organization,
+            workspace=project.workspace,
+            defaults={
+                "description": "integration test PASS_FAIL template",
+                "config": {"type": "pass_fail", "criteria": "x", "output": "Pass/Fail"},
+            },
+        )
+        return template
+
+    def _get_or_create_pf_eval_config(self, project, eval_template):
+        from tracer.models.custom_eval_config import CustomEvalConfig
+
+        cfg, _ = CustomEvalConfig.objects.get_or_create(
+            project=project,
+            name=f"int_test_pf_cfg_{project.id}",
+            defaults={
+                "eval_template": eval_template,
+                "config": {"output": "Pass/Fail"},
+                "mapping": {"input": "input", "output": "output"},
+                "filters": {},
+            },
+        )
+        return cfg
+
+    def _get_or_create_text_label(self, project):
+        from model_hub.models.choices import AnnotationTypeChoices
+        from model_hub.models.develop_annotations import AnnotationsLabels
+
+        label, _ = AnnotationsLabels.objects.get_or_create(
+            name=f"int_test_text_label_{project.id}",
+            type=AnnotationTypeChoices.TEXT.value,
+            organization=project.organization,
+            workspace=project.workspace,
+            project=project,
+            defaults={
+                "settings": {
+                    "placeholder": "note",
+                    "max_length": 500,
+                    "min_length": 0,
+                }
+            },
+        )
+        return label
+
+    def _get_or_create_thumbs_label(self, project):
+        from model_hub.models.choices import AnnotationTypeChoices
+        from model_hub.models.develop_annotations import AnnotationsLabels
+
+        label, _ = AnnotationsLabels.objects.get_or_create(
+            name=f"int_test_thumbs_label_{project.id}",
+            type=AnnotationTypeChoices.THUMBS_UP_DOWN.value,
+            organization=project.organization,
+            workspace=project.workspace,
+            project=project,
+            defaults={"settings": {"display_type": "thumbs"}},
+        )
+        return label
+
+    def _get_or_create_categorical_label(self, project):
+        from model_hub.models.choices import AnnotationTypeChoices
+        from model_hub.models.develop_annotations import AnnotationsLabels
+
+        label, _ = AnnotationsLabels.objects.get_or_create(
+            name=f"int_test_categorical_label_{project.id}",
+            type=AnnotationTypeChoices.CATEGORICAL.value,
+            organization=project.organization,
+            workspace=project.workspace,
+            project=project,
+            defaults={
+                "settings": {
+                    "rule_prompt": "",
+                    "multi_choice": True,
+                    "options": [{"label": "tag_a"}, {"label": "tag_b"}],
+                    "auto_annotate": False,
+                    "strategy": None,
+                }
+            },
+        )
+        return label
+
+    def _get_or_create_annotator_user(self, project):
+        from accounts.models.user import User
+
+        email = f"annotator-{project.id}@futureagi.com"
+        existing = User.objects.filter(email=email).first()
+        if existing:
+            return existing
+        return User.objects.create_user(
+            email=email,
+            password="testpassword123",
+            name="Integration Annotator",
+            organization=project.organization,
+        )
+
+    def _insert_span_pg(self, row: SeededRow, trace, project):
         attrs = {
-            **{k: v for k, v in row.span_attr_str.items()},
-            **{k: v for k, v in row.span_attr_num.items()},
-            **{k: v for k, v in row.span_attr_bool.items()},
+            **row.span_attr_str,
+            **row.span_attr_num,
+            **row.span_attr_bool,
         }
-        ObservationSpan.objects.create(
+        span = ObservationSpan.objects.create(
             id=row.span_id,
             project=project,
             trace=trace,
@@ -329,79 +651,36 @@ class DualWriter:
             span_attributes=attrs,
         )
         # BaseModel.created_at is auto_now_add — override post-create.
-        ObservationSpan.objects.filter(id=row.span_id).update(
-            created_at=row.created_at
+        ObservationSpan.objects.filter(id=row.span_id).update(created_at=row.created_at)
+        span.created_at = row.created_at
+        return span
+
+    def _flush_ch(self, spans, traces, sessions, scores=()) -> None:
+        from tracer.tests._ch_seed import (
+            seed_ch_scores,
+            seed_ch_spans,
+            seed_ch_trace_sessions,
+            seed_ch_traces,
         )
 
-    def _insert_span_ch(self, row: SeededRow) -> None:
-        attrs_json = json.dumps(
-            {
-                **row.span_attr_str,
-                **row.span_attr_num,
-                **{k: bool(v) for k, v in row.span_attr_bool.items()},
-            }
-        ).replace("'", "''")
-        parent_sql = f"'{row.parent_span_id}'" if row.parent_span_id else "NULL"
-        start = row.created_at.strftime("%Y-%m-%d %H:%M:%S")
-        end = (row.created_at + timedelta(milliseconds=row.latency_ms)).strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
-        self.ch.command(
-            f"""
-            INSERT INTO {self.ch_database}.tracer_observation_span
-              (id, trace_id, project_id, name, observation_type, status,
-               parent_span_id, start_time, end_time, latency_ms, model, provider,
-               prompt_tokens, completion_tokens, total_tokens, cost,
-               input, output, span_attributes, resource_attributes,
-               metadata, tags, span_events, created_at, updated_at,
-               _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-              ('{row.span_id}', '{row.trace_id}', '{row.project_id}',
-               '{row.span_id}', '{row.observation_type}', '{row.status}',
-               {parent_sql},
-               '{start}', '{end}',
-               {row.latency_ms}, '{row.model}', '{row.provider}',
-               {row.prompt_tokens}, {row.completion_tokens}, {row.total_tokens}, {row.cost},
-               '', '', '{attrs_json}', '{{}}',
-               '{{}}', '[]', '[]',
-               '{start}', '{start}',
-               now64(), 0, 1)
-            """
-        )
+        seed_ch_spans(spans)
+        seed_ch_traces(traces)
+        seed_ch_trace_sessions(sessions)
+        if scores:
+            seed_ch_scores(scores)
+        # trace_dict / trace_sessions_dict are HASHED dictionaries with a
+        # 30-60s LIFETIME sourced from the tables we just seeded; the voice
+        # endpoints resolve project scope via dictGet. Force a reload so the
+        # fresh rows are visible immediately and deterministically, instead of
+        # racing the refresh cycle (the source of prior timing-based flakiness).
+        for dictionary in ("trace_dict", "trace_sessions_dict"):
+            self.ch.command(f"SYSTEM RELOAD DICTIONARY {dictionary}")
 
-    def _insert_trace_ch(self, trace) -> None:
-        sess_sql = f"'{trace.session_id}'" if trace.session_id else "NULL"
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        self.ch.command(
-            f"""
-            INSERT INTO {self.ch_database}.tracer_trace
-              (id, project_id, name, session_id, external_id, tags,
-               metadata, input, output, error,
-               created_at, updated_at,
-               _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-              ('{trace.id}', '{trace.project_id}', '{trace.name}',
-               {sess_sql}, '', '[]',
-               '{{}}', '{{}}', '{{}}', '{{}}',
-               '{now}', '{now}',
-               now64(), 0, 1)
-            """
-        )
-
-    def _insert_session_ch(self, sess) -> None:
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
-        self.ch.command(
-            f"""
-            INSERT INTO {self.ch_database}.trace_session
-              (id, project_id, name,
-               created_at, updated_at,
-               _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-              ('{sess.id}', '{sess.project_id}', '{sess.name}',
-               '{now}', '{now}',
-               now64(), 0, 1)
-            """
-        )
+    # The filter subqueries hardcode ``tracer_eval_logger``; eval-config
+    # discovery reads ``settings.CH25_EVAL_LOGGER_TABLE`` (tracer_eval_logger_v2
+    # under test settings). Both carry the v2 shape in the test CH (see the
+    # integration conftest's ch_schema) — mirror eval rows to both.
+    _EVAL_LOGGER_TABLES = ("tracer_eval_logger", "tracer_eval_logger_v2")
 
     def _insert_eval_pg_ch(self, row: SeededRow, trace, eval_config) -> None:
         # Span-level eval row mirrors what process_eval_task would create
@@ -415,24 +694,22 @@ class DualWriter:
             output_float=row.eval_value,
             output_bool=(row.eval_value or 0) >= 0.5,
         )
-        ch_id = uuid.uuid4()
         created = row.created_at.strftime("%Y-%m-%d %H:%M:%S")
-        self.ch.command(
-            f"""
-            INSERT INTO {self.ch_database}.tracer_eval_logger
-              (id, observation_span_id, trace_id,
-               custom_eval_config_id, target_type,
-               output_float, output_bool, eval_task_id,
-               created_at, updated_at,
-               _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-              ('{ch_id}', '{row.span_id}', '{row.trace_id}',
-               '{eval_config.id}', 'span',
-               {row.eval_value}, {int((row.eval_value or 0) >= 0.5)}, NULL,
-               '{created}', '{created}',
-               now64(), 0, 1)
-            """
-        )
+        for table in self._EVAL_LOGGER_TABLES:
+            self.ch.command(
+                f"""
+                INSERT INTO {self.ch_database}.{table}
+                  (id, observation_span_id, trace_id,
+                   custom_eval_config_id, target_type,
+                   output_float, output_bool,
+                   created_at, updated_at)
+                VALUES
+                  ('{uuid.uuid4()}', '{row.span_id}', '{row.trace_id}',
+                   '{eval_config.id}', 'span',
+                   {row.eval_value}, {int((row.eval_value or 0) >= 0.5)},
+                   '{created}', '{created}')
+                """
+            )
 
     def _insert_choice_eval_pg_ch(self, row: SeededRow, trace, eval_config) -> None:
         # CHOICE-type EvalLogger: output_str_list set, output_float/_bool null.
@@ -446,36 +723,108 @@ class DualWriter:
             target_type=EvalTargetType.SPAN,
             output_str_list=[row.choice_value],
         )
-        ch_id = uuid.uuid4()
         created = row.created_at.strftime("%Y-%m-%d %H:%M:%S")
-        # CH expects output_str_list as a JSON string ("[\"good\"]").
+        # CH expects output_str_list as a JSON string ("[\"good\"]"). output_str
+        # mirrors the prod dual-write (single canonical value) — the choice
+        # not_contains handler ANDs ``NOT (... OR output_str ILIKE ...)`` and a
+        # NULL output_str collapses the whole predicate to NULL.
         choice_json = json.dumps([row.choice_value])
-        self.ch.command(
-            f"""
-            INSERT INTO {self.ch_database}.tracer_eval_logger
-              (id, observation_span_id, trace_id,
-               custom_eval_config_id, target_type,
-               output_str_list, eval_task_id,
-               created_at, updated_at,
-               _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
-            VALUES
-              ('{ch_id}', '{row.span_id}', '{row.trace_id}',
-               '{eval_config.id}', 'span',
-               '{choice_json}', NULL,
-               '{created}', '{created}',
-               now64(), 0, 1)
-            """
+        for table in self._EVAL_LOGGER_TABLES:
+            self.ch.command(
+                f"""
+                INSERT INTO {self.ch_database}.{table}
+                  (id, observation_span_id, trace_id,
+                   custom_eval_config_id, target_type,
+                   output_str_list, output_str,
+                   created_at, updated_at)
+                VALUES
+                  ('{uuid.uuid4()}', '{row.span_id}', '{row.trace_id}',
+                   '{eval_config.id}', 'span',
+                   '{choice_json}', '{row.choice_value}',
+                   '{created}', '{created}')
+                """
+            )
+
+    def _insert_pf_eval_pg_ch(self, row: SeededRow, trace, eval_config) -> None:
+        """PASS_FAIL EvalLogger: output_bool set (output_float null)."""
+        EvalLogger.objects.create(
+            id=uuid.uuid4(),
+            observation_span_id=row.span_id,
+            trace=trace,
+            custom_eval_config=eval_config,
+            target_type=EvalTargetType.SPAN,
+            output_bool=bool(row.pf_value),
         )
+        created = row.created_at.strftime("%Y-%m-%d %H:%M:%S")
+        for table in self._EVAL_LOGGER_TABLES:
+            self.ch.command(
+                f"""
+                INSERT INTO {self.ch_database}.{table}
+                  (id, observation_span_id, trace_id,
+                   custom_eval_config_id, target_type,
+                   output_bool,
+                   created_at, updated_at)
+                VALUES
+                  ('{uuid.uuid4()}', '{row.span_id}', '{row.trace_id}',
+                   '{eval_config.id}', 'span',
+                   {int(bool(row.pf_value))},
+                   '{created}', '{created}')
+                """
+            )
 
-    def _insert_annotation_pg_ch(
-        self, row: SeededRow, trace, project, annotation_label, scope: str = "span"
-    ) -> None:
-        """Create the per-row Score and mirror to CH.
+    def _insert_annotations(self, row: SeededRow, trace, project, cfg) -> list:
+        """Create the numeric / text / thumbs / categorical Scores for a
+        sp_idx==2 span and return them for CH mirroring. The numeric Score
+        carries the annotator user for s_idx ∈ {0,1}."""
+        annotator = cfg["annotator_user"] if row.ann_annotator_is_user else None
+        scores = [
+            self._create_score(
+                row,
+                trace,
+                project,
+                cfg["numeric_label"],
+                {"value": row.annotation_value},
+                annotator=annotator,
+                scope=row.annotation_scope,
+            ),
+            self._create_score(
+                row,
+                trace,
+                project,
+                cfg["text_label"],
+                {"text": row.ann_text},
+                scope=row.annotation_scope,
+            ),
+            self._create_score(
+                row,
+                trace,
+                project,
+                cfg["thumbs_label"],
+                {"value": row.ann_thumb},
+                scope=row.annotation_scope,
+            ),
+            self._create_score(
+                row,
+                trace,
+                project,
+                cfg["categorical_label"],
+                {"selected": row.ann_selected},
+                scope=row.annotation_scope,
+            ),
+        ]
+        return scores
 
-        Only the PG-side Score is required for the eval-task runner
-        (process_eval_task's per-label annotate subquery reads model_hub.Score).
-        The CH-side mirror is a best-effort: the list endpoints' annotation
-        filter path is exercised against the CH copy.
+    def _create_score(
+        self,
+        row: SeededRow,
+        trace,
+        project,
+        label,
+        value,
+        annotator=None,
+        scope: str = "span",
+    ):
+        """Create one PG Score and return it for CH mirroring.
 
         ``scope`` picks the Score source: "span" attaches to the row's span,
         "trace" attaches to its trace (the shape the voice grid creates).
@@ -483,10 +832,6 @@ class DualWriter:
         from model_hub.models.choices import QueueItemSourceType, ScoreSource
         from model_hub.models.score import Score
 
-        # Per-row distinct annotator user to dodge the unique constraint on
-        # (observation_span, label, annotator) when the same label is reused.
-        # NULL annotator is also fine here since we only have one row per
-        # (span, label) but make it explicit.
         if scope == "trace":
             source_kwargs = {
                 "source_type": QueueItemSourceType.TRACE.value,
@@ -497,19 +842,16 @@ class DualWriter:
                 "source_type": QueueItemSourceType.OBSERVATION_SPAN.value,
                 "observation_span_id": row.span_id,
             }
-        Score.objects.create(
+        score = Score.objects.create(
             **source_kwargs,
-            label=annotation_label,
-            value={"value": row.annotation_value},
+            label=label,
+            value=value,
+            annotator=annotator,
             organization=project.organization,
             workspace=project.workspace,
             score_source=ScoreSource.HUMAN.value,
         )
-        row.annotation_scope = scope
-        # CH mirror is informational only — the list endpoints' annotation
-        # path in CH doesn't currently consume this in the SpanListQueryBuilder
-        # the way PG does. Skipped to avoid coupling tests to a CH schema we
-        # don't drive.
+        return score
 
     # ------- voice corpus ---------------------------------------------------
 
@@ -518,22 +860,15 @@ class DualWriter:
         parent_span_id=NULL) into ``project``. Each call is its own trace;
         per-span attribute variation matches the base corpus so the same
         FilterCase predicates discriminate identically."""
-        eval_template = self._get_or_create_eval_template(project)
-        eval_config = self._get_or_create_eval_config(project, eval_template)
-        choice_template = self._get_or_create_choice_eval_template(project)
-        choice_eval_config = self._get_or_create_choice_eval_config(
-            project, choice_template
-        )
-        annotation_label = self._get_or_create_annotation_label(project)
-        self._eval_config_id = eval_config.id
-        self._choice_eval_config_id = choice_eval_config.id
-        self._annotation_label_id = annotation_label.id
+        cfg = self._setup_shared_configs(project)
 
         rows: list[SeededRow] = []
+        traces = []
+        span_objs = []
+        score_objs = []
         sess = TraceSession.objects.create(
             id=uuid.uuid4(), project=project, name="voice_session"
         )
-        self._insert_session_ch(sess)
 
         for i in range(24):
             # Mirror base corpus variation axes (3 × 2 × 4 = 24 cells).
@@ -547,32 +882,33 @@ class DualWriter:
                 session=sess,
                 name=f"voice_call_{i}",
             )
-            self._insert_trace_ch(trace)
+            traces.append(trace)
 
             row = self._build_row(project, trace, sess, s_idx, t_idx, sp_idx)
             # Force voice-call shape.
             row.observation_type = "conversation"
             row.parent_span_id = None
+            # Voice metric span-attrs from the shared spec. wpm/talk_ratio carry
+            # fractional parts so integer-rounding filters diverge from the
+            # raw/2dp displayed value; fallback metrics are seeded under their FE
+            # col_id key so the span-attr fallback path can filter them.
+            row.span_attr_num["call.total_turns"] = float(1 + (i % 12))
+            for key, fn in _VOICE_NUM_SEED.items():
+                row.span_attr_num[key] = fn(i)
+            for key, fn in _VOICE_STR_SEED.items():
+                row.span_attr_str[key] = fn(i)
 
-            self._insert_span_pg(row, trace, project)
-            self._insert_span_ch(row)
-            if row.has_eval:
-                self._insert_eval_pg_ch(row, trace, eval_config)
-            if row.has_choice_eval:
-                self._insert_choice_eval_pg_ch(row, trace, choice_eval_config)
+            span_objs.append(self._insert_span_pg(row, trace, project))
+            self._insert_evals(row, trace, cfg)
             if row.has_annotation:
                 # Voice annotations land trace-scoped in prod (the voice grid
                 # is trace-backed) — seed the same shape here.
-                self._insert_annotation_pg_ch(
-                    row, trace, project, annotation_label, scope="trace"
-                )
+                row.annotation_scope = "trace"
+                score_objs.extend(self._insert_annotations(row, trace, project, cfg))
             rows.append(row)
 
         self.seeded = rows
-        try:
-            self.ch.command(f"OPTIMIZE TABLE {self.ch_database}.spans FINAL")
-        except Exception:
-            pass
+        self._flush_ch(span_objs, traces, [sess], score_objs)
         return {"span_count": len(rows), "session_count": 1, "trace_count": 24}
 
     # ------- accessors ------------------------------------------------------
