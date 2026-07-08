@@ -211,6 +211,9 @@ const EvalErrorLocalization = ({
       // Empty object — analysis ran but found no segments. Fall through
       // to the "run" card so users can re-trigger if they suspect it.
     } else {
+      const isAudioLocalization = entries.some(([, value]) =>
+        (Array.isArray(value) ? value : []).some((e) => e?.orgSegment),
+      );
       return (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
           <Typography
@@ -225,9 +228,7 @@ const EvalErrorLocalization = ({
           >
             Possible Error
           </Typography>
-          {entries.some(([, value]) =>
-            (Array.isArray(value) ? value : []).some((e) => e?.orgSegment),
-          ) ? (
+          {isAudioLocalization ? (
             <AudioErrorCard
               valueInfos={{ errorAnalysis: analysis }}
               column={selectedInputKey || "input"}
