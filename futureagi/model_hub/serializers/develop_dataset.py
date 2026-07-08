@@ -57,9 +57,7 @@ class SyntheticDatasetColumnSerializer(serializers.Serializer):
 
 
 class SyntheticDatasetPayloadSerializer(serializers.Serializer):
-    # `name` is optional on the nested type so the fill-existing-rows /
-    # config-update flows can reuse it; the create serializer requires it
-    # explicitly in `validate_dataset`.
+    # Optional here; each caller enforces name in `validate_dataset`.
     name = serializers.CharField(required=False, allow_blank=True)
     description = serializers.CharField(allow_blank=True)
     objective = serializers.CharField(allow_blank=True)
@@ -95,37 +93,8 @@ class SyntheticDatasetConfigSerializer(serializers.Serializer):
     regenerate = serializers.BooleanField(required=False, default=False)
 
     def validate_dataset(self, value):
-        if not isinstance(value, dict):
-            raise serializers.ValidationError("dataset must be a JSON object.")
-
-        required_keys = {"name", "description", "objective", "patterns"}
-
-        missing_keys = required_keys - value.keys()
-        if missing_keys:
-            raise serializers.ValidationError(
-                f"dataset must contain the keys: {', '.join(required_keys)}."
-            )
-
-        return value
-
-    def validate_columns(self, value):
-        if not isinstance(value, list):
-            raise serializers.ValidationError("columns must be a list of JSON objects.")
-
-        required_keys = {"name", "data_type", "description", "property"}
-
-        for item in value:
-            if not isinstance(item, dict):
-                raise serializers.ValidationError(
-                    "Each item in columns must be a JSON object."
-                )
-
-            missing_keys = required_keys - item.keys()
-            if missing_keys:
-                raise serializers.ValidationError(
-                    f"Each JSON object in columns must contain the keys: {', '.join(required_keys)}."
-                )
-
+        if not value.get("name"):
+            raise serializers.ValidationError("dataset must contain a 'name'.")
         return value
 
 
