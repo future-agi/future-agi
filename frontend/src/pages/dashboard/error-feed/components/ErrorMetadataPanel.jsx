@@ -28,7 +28,7 @@ import {
   useUpdateErrorFeedIssue,
 } from "src/api/errorFeed/error-feed";
 import { useOrgMembers } from "src/api/annotation-queues/annotation-queues";
-import { useAuthContext } from "src/auth/hooks";
+import { useOrganization } from "src/contexts/OrganizationContext";
 import openExternal from "../openExternal";
 import { useErrorFeedStore } from "../store";
 import PropTypes from "prop-types";
@@ -831,12 +831,15 @@ export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const { enqueueSnackbar } = useSnackbar();
-  const { user } = useAuthContext();
+  // Use the live active org (matches the X-Organization-Id header) instead of
+  // the cached user.organization.id, which can drift and 404 the request
+  // (TH-6156).
+  const { currentOrganizationId } = useOrganization();
   const {
     data: linearData,
     isLoading: teamsLoading,
     isError: teamsError,
-  } = useLinearTeams(user?.organization?.id, { enabled: open });
+  } = useLinearTeams(currentOrganizationId, { enabled: open });
   const createIssue = useCreateLinearIssue();
   const teams = linearData?.teams ?? [];
 
@@ -1085,12 +1088,14 @@ function Integrations({
   externalIssueId,
 }) {
   const navigate = useNavigate();
-  const { user } = useAuthContext();
+  // Live active org (matches the X-Organization-Id header) rather than the
+  // cached user.organization.id, which can drift and 404 the request (TH-6156).
+  const { currentOrganizationId } = useOrganization();
   const {
     data: linearData,
     isLoading: linearLoading,
     isError: linearError,
-  } = useLinearTeams(user?.organization?.id);
+  } = useLinearTeams(currentOrganizationId);
   const linearConnected = linearData?.connected === true;
   const [teamPickerOpen, setTeamPickerOpen] = useState(false);
 
@@ -1168,8 +1173,11 @@ export default function ErrorMetadataPanel({ error }) {
   const isDark = theme.palette.mode === "dark";
   const [severity, setSeverityLocal] = useState(error?.severity ?? "high");
   const [assignee, setAssigneeLocal] = useState(error?.assignees?.[0] ?? null);
-  const { user } = useAuthContext();
-  const { data: orgMembers = [] } = useOrgMembers(user?.organization?.id);
+  // Use the live active org (matches the X-Organization-Id header) instead of
+  // the cached user.organization.id, which can drift and 404 the members
+  // request (TH-6156).
+  const { currentOrganizationId } = useOrganization();
+  const { data: orgMembers = [] } = useOrgMembers(currentOrganizationId);
   const updateIssue = useUpdateErrorFeedIssue();
 
   const setSeverity = (val) => {

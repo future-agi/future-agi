@@ -1731,26 +1731,51 @@ class UserViewSet(viewsets.ModelViewSet):
             detail="Organization user mutations are not supported on this route.",
         )
 
-    def _validate_requested_organization(self, organization_id):
-        request_organization = getattr(self.request, "organization", None)
-        if request_organization and str(request_organization.id) != str(
-            organization_id
-        ):
-            raise NotFound(detail="No users found for the specified organization.")
+    def _resolve_org_access(self, organization_id):
+        """Authorize the requester and return their visibility scope.
 
-        workspace = getattr(self.request, "workspace", None)
-        if workspace and str(workspace.organization_id) != str(organization_id):
-            raise NotFound(detail="No users found for the specified organization.")
+        Returns ``"org"`` when the user has org-wide visibility (an active
+        ``OrganizationMembership``) or ``"workspace"`` when access is granted
+        only through a ``WorkspaceMembership`` (membership drift: some workspace
+        members have no org-membership row). Raises ``NotFound`` (fail-closed)
+        when the user has no access.
 
+        We intentionally do NOT require the URL org to equal the request's
+        *currently-active* org/workspace. That coupling 404s legitimate lookups
+        for another org the user also belongs to (e.g. the annotation annotator
+        picker passing the queue's org while a different org is active) without
+        adding any access control — the membership check below already blocks
+        foreign orgs, so the coupling was pure breakage (TH-6156).
+        """
         from accounts.models.organization_membership import OrganizationMembership
+        from accounts.models.workspace import WorkspaceMembership
 
-        has_membership = OrganizationMembership.no_workspace_objects.filter(
+        # The unique constraint (user, organization) WHERE deleted=False means at
+        # most one non-deleted row. An *inactive* row is a deliberate removal:
+        # fail closed and never let a lingering workspace row re-authorize the
+        # user (a removed member must not regain visibility via drift).
+        org_membership = OrganizationMembership.no_workspace_objects.filter(
             user=self.request.user,
             organization_id=organization_id,
+        ).first()
+        if org_membership is not None:
+            if org_membership.is_active:
+                return "org"
+            raise NotFound(detail="No users found for the specified organization.")
+
+        # No org-membership row at all → genuine drift. Grant workspace-scoped
+        # access only through a *live* workspace (a soft-deleted or deactivated
+        # workspace's stale membership must not authorize).
+        has_live_workspace_membership = WorkspaceMembership.no_workspace_objects.filter(
+            user=self.request.user,
+            workspace__organization_id=organization_id,
+            workspace__deleted=False,
+            workspace__is_active=True,
             is_active=True,
         ).exists()
-        if not has_membership:
+        if not has_live_workspace_membership:
             raise NotFound(detail="No users found for the specified organization.")
+        return "workspace"
 
     def get_queryset(self):
         try:
@@ -1758,12 +1783,16 @@ class UserViewSet(viewsets.ModelViewSet):
             from accounts.models.workspace import WorkspaceMembership
 
             organization_id = self.kwargs["organization_id"]
-            self._validate_requested_organization(organization_id)
+            access_scope = self._resolve_org_access(organization_id)
             is_active_param = self.request.query_params.get("is_active")
 
-            # Prefer workspace-level filtering when workspace context is available
+            # Prefer workspace-level filtering only when the active workspace
+            # actually belongs to the requested org. When a different org is
+            # active, request.workspace is from that other org — using it would
+            # return an empty/admin-only slice of the requested org, so fall back
+            # to the org-wide member list instead (TH-6156).
             workspace = getattr(self.request, "workspace", None)
-            if workspace:
+            if workspace and str(workspace.organization_id) == str(organization_id):
                 explicit_workspace_user_ids = WorkspaceMembership.objects.filter(
                     workspace=workspace,
                     workspace__organization_id=organization_id,
@@ -1783,16 +1812,39 @@ class UserViewSet(viewsets.ModelViewSet):
                 user_ids = list(explicit_workspace_user_ids) + list(
                     auto_access_user_ids
                 )
-            else:
-                # Fallback to org membership
+            elif access_scope == "org":
+                # Org-wide visibility (active org membership) with no matching
+                # active workspace → the full org member list.
                 user_ids = OrganizationMembership.no_workspace_objects.filter(
                     organization_id=organization_id, is_active=True
                 ).values_list("user_id", flat=True)
+            else:
+                # Workspace-only (drift) requester whose active workspace is a
+                # different org. Fail closed against the org-wide list: scope to
+                # the members of the *live* workspaces the requester belongs to in
+                # this org, so drift access never leaks the whole org (TH-6156).
+                requester_workspace_ids = (
+                    WorkspaceMembership.no_workspace_objects.filter(
+                        user=self.request.user,
+                        workspace__organization_id=organization_id,
+                        workspace__deleted=False,
+                        workspace__is_active=True,
+                        is_active=True,
+                    ).values_list("workspace_id", flat=True)
+                )
+                user_ids = WorkspaceMembership.no_workspace_objects.filter(
+                    workspace_id__in=list(requester_workspace_ids),
+                    is_active=True,
+                ).values_list("user_id", flat=True)
 
             user_ids = list(dict.fromkeys(user_ids))
-            if not user_ids:
-                self._gm.not_found(get_error_message("USER_NOT_FOUND_IN_ORG"))
-                raise NotFound(detail="No users found for the specified organization.")
+            # The requesting user passed the access gate above, so they are a
+            # valid annotator for their own queue — always keep them selectable.
+            # This also guarantees a non-empty list for brand-new/empty
+            # workspaces, where the old empty-list 404 surfaced as the misleading
+            # "No users found for the specified organization." error (TH-6156).
+            if self.request.user.id not in user_ids:
+                user_ids.append(self.request.user.id)
 
             queryset = User.objects.filter(id__in=user_ids)
             if is_active_param is not None:

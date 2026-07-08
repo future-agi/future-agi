@@ -92,12 +92,17 @@ def _read_source() -> str:
 
 
 def get_observation_span(
-    span_id: str, *, select_related: tuple[str, ...] = ()
+    span_id: str, *, select_related: tuple[str, ...] = (), project_id: str | None = None
 ) -> ObservationSpan:
     """Return an ObservationSpan instance for the given id.
 
     Mirrors the surface area of `ObservationSpan.objects.select_related(*).get(id=...)`
     so the eval runner can swap call sites mechanically.
+
+    ``project_id`` (the eval config's project) scopes the CH read to one tenant.
+    ``spans`` is sorted by ``project_id`` first, so passing it lets ClickHouse
+    prune by the primary index instead of scanning every project's parts for the
+    span id — the difference between a whole-table read and a pruned one.
 
     Raises `ObservationSpan.DoesNotExist` (same as the Django path) when no
     such span — keeps downstream `except ObservationSpan.DoesNotExist` blocks
@@ -123,11 +128,14 @@ def get_observation_span(
 
     # ── v2 path: read span data from CH, construct partial Django model,
     # let FK descriptors lazy-load from PG on attribute access.
-    return _hybrid_load_from_ch(span_id, select_related)
+    return _hybrid_load_from_ch(span_id, select_related, project_id=project_id)
 
 
 def _hybrid_load_from_ch(
-    span_id: str, select_related: tuple[str, ...]
+    span_id: str,
+    select_related: tuple[str, ...],
+    *,
+    project_id: str | None = None,
 ) -> ObservationSpan:
     """Reads the span row from CH and returns a partially-hydrated Django
     ObservationSpan whose FK descriptors will lazy-load from PG on access.
@@ -140,7 +148,7 @@ def _hybrid_load_from_ch(
 
     try:
         reader = get_reader()
-        ch_row = reader.get(span_id)
+        ch_row = reader.get(span_id, project_id=project_id)
     except Exception as e:  # noqa: BLE001 — CH transient errors → fall back to PG
         logger.warning(
             "eval_span_ch_read_fallback_to_pg", span_id=span_id, err=repr(e)[:200]
@@ -161,12 +169,18 @@ def _hybrid_load_from_ch(
     return _construct_from_chspan(ch_row)
 
 
-def filter_observation_spans_by_trace(trace_id: str, deleted: bool = False):
+def filter_observation_spans_by_trace(
+    trace_id: str, deleted: bool = False, *, project_id: str | None = None
+):
     """v2 equivalent of `ObservationSpan.objects.filter(trace=trace, deleted=False)`.
 
     Returns a list of ObservationSpan instances (NOT a QuerySet). Eval-runner
     aggregate sites that iterate the result work unchanged; sites that chain
     additional `.filter()` calls need explicit porting.
+
+    ``project_id`` scopes the CH read so ClickHouse can prune ``spans`` by the
+    ``project_id`` sort-key prefix instead of scanning all projects for the
+    trace's spans.
     """
     from tracer.models.observation_span import ObservationSpan
 
@@ -178,7 +192,7 @@ def filter_observation_spans_by_trace(trace_id: str, deleted: bool = False):
         from tracer.services.clickhouse.v2 import get_reader
 
         reader = get_reader()
-        ch_rows = reader.list_by_trace(trace_id)
+        ch_rows = reader.list_by_trace(trace_id, project_id=project_id)
     except Exception as e:  # noqa: BLE001
         if _forced_clickhouse():
             raise
@@ -267,13 +281,18 @@ def get_trace(
     *,
     select_related: tuple[str, ...] = (),
     reader: CHSpanReader | None = None,
+    project_id: str | None = None,
 ) -> Trace:
     """Return a Trace instance for the id. CH mode hydrates it from the CH
     ``traces`` table (the same store the trace list endpoints read), so
     trace-level fields (input/output/tags/metadata/error) match the UI; PG mode
     keeps the Django path. Raises Trace.DoesNotExist when forced-CH and the
     trace isn't in ClickHouse. Pass ``reader`` to reuse an open CHSpanReader
-    across a loop of traces instead of opening (and leaking) one per call."""
+    across a loop of traces instead of opening (and leaking) one per call.
+
+    ``project_id`` scopes the CH read; ``traces`` is sorted ``(project_id, id)``
+    and has no bloom on ``id``, so without it a lone-id lookup scans every
+    project's parts — passing it enables the sort-key prefix prune."""
     import json as _json
 
     from tracer.models.trace import Trace
@@ -287,10 +306,10 @@ def get_trace(
 
     try:
         if reader is not None:
-            row = reader.get_trace_row(str(trace_id))
+            row = reader.get_trace_row(str(trace_id), project_id=project_id)
         else:
             with get_reader() as _reader:
-                row = _reader.get_trace_row(str(trace_id))
+                row = _reader.get_trace_row(str(trace_id), project_id=project_id)
     except Exception as e:  # noqa: BLE001 — CH transient errors → fall back to PG
         logger.warning(
             "eval_trace_ch_read_fallback", trace_id=str(trace_id), err=repr(e)[:200]

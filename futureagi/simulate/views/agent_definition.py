@@ -533,6 +533,7 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
                     workspace=getattr(request, "workspace", None),
                     agent_id=validated.get("agent_id"),
                     assistant_id=assistant_id,
+                    masked_value=api_key,
                 )
                 if not api_key:
                     msg = "Cannot sync with a masked API key. Please paste the actual key."

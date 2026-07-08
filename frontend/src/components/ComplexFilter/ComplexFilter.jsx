@@ -55,6 +55,7 @@ const ComplexFilter = ({
   setFilters,
   filterDefinition,
   onClose,
+  className,
 }) => {
   const addFilter = useCallback(() => {
     setFilters(() => [...filters, { ...defaultFilter, id: getRandomId() }]);
@@ -141,6 +142,7 @@ const ComplexFilter = ({
 
   return (
     <Box
+      className={className}
       sx={{
         display: "flex",
         flexDirection: "column",
@@ -159,6 +161,7 @@ const ComplexFilter = ({
         </Typography>
       </Box> */}
       <Box
+        className="cf-rows"
         sx={{
           border: "1px solid",
           borderRadius: "8px",
@@ -181,6 +184,7 @@ ComplexFilter.propTypes = {
   setFilters: PropTypes.func,
   filterDefinition: PropTypes.array,
   onClose: PropTypes.func,
+  className: PropTypes.string,
 };
 
 export default ComplexFilter;

@@ -401,17 +401,15 @@ def get_trace_input_data(trace_ids: List[str], project_id: str) -> List[TraceInp
     if not scanned_trace_ids:
         return []
 
-    # Get root span input.value for the scanned traces only — was
-    # ObservationSpan.objects.filter(trace_id__in=, parent_span_id IS NULL
-    # OR parent_span_id="").values_list("trace_id", "span_attributes").
-    # CH `list_by_trace_ids` returns spans across all the requested
-    # traces in (trace_id, start_time, id) order; we pick the first
-    # parentless span per trace in Python — the same "first root span"
-    # semantics PG returns (.first() with parentless filter).
-    # `span_attributes` is reconstructed from CHSpan's typed Map columns
-    # (attrs_string is where string-valued attrs like input.value live).
+    # First root span's input.value per scanned trace. roots_by_trace_ids returns
+    # one parentless row per trace in (trace_id, start_time, id) order (first root
+    # wins, matching PG); project-scoped + lean since only input.value is needed
+    # (it lives in attrs_string, kept real). Reading every span here would repeat
+    # the wide read that OOMs the scan step.
     with get_reader() as reader:
-        ch_spans = reader.list_by_trace_ids(scanned_trace_ids)
+        ch_spans = reader.roots_by_trace_ids(
+            scanned_trace_ids, project_id=str(project_id)
+        )
 
     input_texts: dict[str, str] = {}
     for span in ch_spans:

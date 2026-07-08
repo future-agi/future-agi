@@ -82,17 +82,13 @@ import DatasetLoader from "../../develop/loaders/DatasetLoader";
 import { useEditSyntheticDataStore } from "src/sections/develop/AddRowDrawer/EditSyntheticData/state";
 import RunningSkeletonRenderer from "src/sections/common/DevelopCellRenderer/CellRenderers/RunningSkeletonRenderer";
 import { APP_CONSTANTS } from "src/utils/constants";
-import { OutputTypes } from "../../common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
+import {
+  OutputTypes,
+  RefreshStatus,
+} from "../../common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 import { useAuthContext } from "src/auth/hooks";
 import { ROLES } from "src/utils/rolePermissionMapping";
 const PdfPreviewDrawer = lazy(() => import("src/components/PdfPreviewDrawer"));
-const RefreshStatus = [
-  "Running",
-  "NotStarted",
-  "Editing",
-  "ExperimentEvaluation",
-  "PartialRun",
-];
 
 const getResultColumnConfig = (result) => result?.column_config ?? [];
 const getResultIsProcessingData = (result) =>

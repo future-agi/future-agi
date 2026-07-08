@@ -431,6 +431,228 @@ class TestGetOrCreateSitesSetOrgFK:
 
 
 @pytest.mark.django_db
+class TestEnsureOrgMembershipInvariant:
+    """TH-6156: a workspace member must belong to the org. The single create path
+    creates a minimal Viewer org membership when none exists, and never
+    resurrects a deliberately removed (inactive) one."""
+
+    def test_factory_creates_viewer_org_membership_when_absent(
+        self, organization, workspace
+    ):
+        from accounts.services.workspace_membership import create_workspace_membership
+
+        set_workspace_context(organization=organization)
+        member = User.objects.create_user(
+            email="no-org@futureagi.com",
+            password="pass123",
+            name="No Org",
+            organization=None,
+        )
+        assert not OrganizationMembership.no_workspace_objects.filter(
+            user=member, organization=organization
+        ).exists()
+
+        ws_mem = create_workspace_membership(
+            workspace=workspace,
+            user=member,
+            role="workspace_member",
+            level=Level.WORKSPACE_MEMBER,
+        )
+
+        om = OrganizationMembership.no_workspace_objects.get(
+            user=member, organization=organization, is_active=True
+        )
+        # Minimal access only — Viewer, not global-workspace (>= ADMIN).
+        assert om.level == Level.VIEWER
+        ws_mem.refresh_from_db()
+        assert ws_mem.organization_membership_id == om.id
+
+    def test_factory_does_not_resurrect_inactive_org_membership(
+        self, organization, workspace
+    ):
+        from accounts.services.workspace_membership import create_workspace_membership
+
+        member, om = _make_member(organization, "removed@futureagi.com")
+        # Deliberately removed from the org.
+        OrganizationMembership.objects.filter(pk=om.pk).update(is_active=False)
+
+        ws_mem = create_workspace_membership(
+            workspace=workspace,
+            user=member,
+            role="workspace_member",
+            level=Level.WORKSPACE_MEMBER,
+        )
+
+        # Fail-closed: no new active membership, FK stays NULL.
+        assert not OrganizationMembership.no_workspace_objects.filter(
+            user=member, organization=organization, is_active=True
+        ).exists()
+        ws_mem.refresh_from_db()
+        assert ws_mem.organization_membership_id is None
+
+    def test_ensure_org_membership_returns_existing_active(self, organization):
+        from accounts.services.workspace_membership import ensure_org_membership
+
+        member, om = _make_member(organization, "existing-active@futureagi.com")
+        assert ensure_org_membership(member, organization).id == om.id
+
+    def test_ensure_org_membership_is_idempotent(self, organization):
+        """A second call resolves to the same row instead of racing to a second
+        INSERT (get_or_create closes the concurrent-create hole)."""
+        from accounts.services.workspace_membership import ensure_org_membership
+
+        set_workspace_context(organization=organization)
+        member = User.objects.create_user(
+            email="ensure-idem@futureagi.com",
+            password="pass123",
+            name="Ensure Idem",
+            organization=None,
+        )
+
+        first = ensure_org_membership(member, organization)
+        second = ensure_org_membership(member, organization)
+
+        assert first.id == second.id
+        assert (
+            OrganizationMembership.no_workspace_objects.filter(
+                user=member, organization=organization
+            ).count()
+            == 1
+        )
+
+
+@pytest.mark.django_db
+class TestCreateMissingOrgMembershipsMigration:
+    """0023 creates the missing Viewer org membership for active workspace
+    members that have none, then links the FK — fail-closed for removed members,
+    and idempotent."""
+
+    def _run(self):
+        import importlib
+
+        from django.apps import apps as global_apps
+        from django.db import connection
+
+        migration = importlib.import_module(
+            "accounts.migrations.0023_create_missing_org_memberships"
+        )
+        shim = type("_SchemaEditorShim", (), {})()
+        shim.connection = connection
+        clear_workspace_context()
+        migration.create_missing_org_memberships(global_apps, shim)
+
+    def test_creates_viewer_membership_and_links_fk_for_drifted_member(
+        self, organization, workspace
+    ):
+        set_workspace_context(organization=organization)
+        member = User.objects.create_user(
+            email="drift-heal@futureagi.com",
+            password="pass123",
+            name="Drift Heal",
+            organization=None,
+        )
+        ws_mem = WorkspaceMembership.objects.create(
+            workspace=workspace,
+            user=member,
+            role="workspace_member",
+            level=Level.WORKSPACE_MEMBER,
+            is_active=True,
+            organization_membership=None,
+        )
+
+        self._run()
+
+        om = OrganizationMembership.no_workspace_objects.get(
+            user=member, organization=organization, is_active=True
+        )
+        assert om.level == Level.VIEWER
+        ws_mem.refresh_from_db()
+        assert ws_mem.organization_membership_id == om.id
+
+    def test_does_not_create_for_removed_member(self, organization, workspace):
+        member, om = _make_member(organization, "drift-removed@futureagi.com")
+        ws_mem = _add_to_workspace(workspace, member, om)
+        _null_the_fk(ws_mem)
+        OrganizationMembership.objects.filter(pk=om.pk).update(is_active=False)
+
+        self._run()
+
+        # A non-deleted (inactive) row exists -> NOT EXISTS excludes the pair ->
+        # no new row created, FK stays NULL.
+        assert (
+            OrganizationMembership.no_workspace_objects.filter(
+                user=member, organization=organization
+            ).count()
+            == 1
+        )
+        ws_mem.refresh_from_db()
+        assert ws_mem.organization_membership_id is None
+
+    def test_does_not_create_for_member_of_dead_workspace(self, organization, user):
+        """A membership in a soft-deleted / deactivated workspace must not mint a
+        fresh org Viewer membership — that would expand access from stale
+        workspace data (TH-6156)."""
+        from accounts.models.workspace import Workspace
+
+        set_workspace_context(organization=organization)
+        dead_ws = Workspace.objects.create(
+            name="Dead WS Migration",
+            organization=organization,
+            is_active=True,
+            created_by=user,
+        )
+        member = User.objects.create_user(
+            email="dead-ws-drift@futureagi.com",
+            password="pass123",
+            name="Dead WS Drift",
+            organization=None,
+        )
+        WorkspaceMembership.objects.create(
+            workspace=dead_ws,
+            user=member,
+            role="workspace_member",
+            level=Level.WORKSPACE_MEMBER,
+            is_active=True,
+            organization_membership=None,
+        )
+        # Soft-delete the workspace after seeding the membership.
+        Workspace.objects.filter(pk=dead_ws.pk).update(deleted=True)
+
+        self._run()
+
+        assert not OrganizationMembership.no_workspace_objects.filter(
+            user=member, organization=organization
+        ).exists()
+
+    def test_idempotent(self, organization, workspace):
+        set_workspace_context(organization=organization)
+        member = User.objects.create_user(
+            email="drift-idem@futureagi.com",
+            password="pass123",
+            name="Drift Idem",
+            organization=None,
+        )
+        WorkspaceMembership.objects.create(
+            workspace=workspace,
+            user=member,
+            role="workspace_member",
+            level=Level.WORKSPACE_MEMBER,
+            is_active=True,
+            organization_membership=None,
+        )
+
+        self._run()
+        self._run()
+
+        assert (
+            OrganizationMembership.no_workspace_objects.filter(
+                user=member, organization=organization, is_active=True
+            ).count()
+            == 1
+        )
+
+
+@pytest.mark.django_db
 class TestBackfillMigration:
     """Exercises the 0022 data migration that heals already-drifted NULL FKs.
 

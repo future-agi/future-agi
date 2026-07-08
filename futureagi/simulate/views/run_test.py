@@ -1822,9 +1822,7 @@ class RunTestCallExecutionsView(APIView):
                 if item_type == "call_execution":
                     call_exec = call_executions_dict.get(str(item_id))
                     if call_exec:
-                        serializer = CallExecutionDetailSerializer(
-                            call_exec, context={"detail_mode": False}
-                        )
+                        serializer = CallExecutionDetailSerializer(call_exec)
                         call_data = serializer.data
                         call_data["is_snapshot"] = False
                         # Remove rerun_snapshots since we're flattening
@@ -1837,9 +1835,7 @@ class RunTestCallExecutionsView(APIView):
                     if snapshot:
                         # Get the original call execution for context
                         original_call_exec = snapshot.call_execution
-                        serializer = CallExecutionDetailSerializer(
-                            original_call_exec, context={"detail_mode": False}
-                        )
+                        serializer = CallExecutionDetailSerializer(original_call_exec)
                         original_data = serializer.data
 
                         # Convert snapshot to call execution format
@@ -4116,7 +4112,9 @@ class RunTestComponentsUpdateView(APIView):
                             not agent_type
                             or agent_type == AgentDefinition.AgentTypeChoices.VOICE
                         ):
-                            api_key = resolve_api_key_for_version(agent_version_to_check)
+                            api_key = resolve_api_key_for_version(
+                                agent_version_to_check
+                            )
                             assistant_id = None
                             try:
                                 creds = agent_version_to_check.credentials
@@ -4125,7 +4123,13 @@ class RunTestComponentsUpdateView(APIView):
                             except AgentVersion.credentials.RelatedObjectDoesNotExist:
                                 pass
                             if not assistant_id:
-                                assistant_id = agent_version_to_check.configuration_snapshot.get("assistant_id") if agent_version_to_check.configuration_snapshot else None
+                                assistant_id = (
+                                    agent_version_to_check.configuration_snapshot.get(
+                                        "assistant_id"
+                                    )
+                                    if agent_version_to_check.configuration_snapshot
+                                    else None
+                                )
 
                             missing_fields = []
                             if not api_key:
@@ -4726,16 +4730,55 @@ class UpdateEvalConfigView(APIView):
 
             run = validated.get("run", False)
 
+            # Resolve new template if provided so config normalization uses the
+            # right template schema.
+            new_template = None
+            if "template_id" in validated:
+                template_id = validated.get("template_id")
+                try:
+                    new_template = EvalTemplate.no_workspace_objects.get(
+                        _visible_eval_template_query(
+                            user_organization,
+                            getattr(request, "workspace", None),
+                        ),
+                        id=template_id,
+                    )
+                except EvalTemplate.DoesNotExist:
+                    return self._gm.bad_request("Evaluation template not found")
+
             # Update config if provided (similar to EditAndRunUserEvalView)
             new_config = validated.get("config")
             if new_config:
-                eval_config.config = normalize_eval_runtime_config(
-                    eval_config.eval_template.config, new_config
+                template_config = (
+                    new_template.config
+                    if new_template
+                    else eval_config.eval_template.config
                 )
+                try:
+                    eval_config.config = normalize_eval_runtime_config(
+                        template_config, new_config
+                    )
+                except ValueError as e:
+                    return self._gm.bad_request(str(e))
+            elif new_template:
+                # Template changed without new config: re-normalize existing config
+                # against the new template's schema so it stays valid after the switch.
+                try:
+                    eval_config.config = normalize_eval_runtime_config(
+                        new_template.config, eval_config.config
+                    )
+                except ValueError as e:
+                    return self._gm.bad_request(
+                        f"Cannot switch template: existing config is incompatible with new template. {str(e)}"
+                    )
 
             # Update mapping if provided at top level
             if "mapping" in validated:
                 eval_config.mapping = validated.get("mapping")
+
+            # Update filters if provided
+            if "filters" in validated:
+                eval_config.filters = validated.get("filters") or []
 
             # Update other fields if provided
             if "name" in validated:
@@ -4771,6 +4814,31 @@ class UpdateEvalConfigView(APIView):
                 else:
                     eval_config.kb_id = None
 
+            # Re-validate mapping against the new template's input variables.
+            # When template switches without an explicit mapping, the old
+            # mapping keys can diverge from what the new template expects.
+            if new_template and "mapping" not in validated and eval_config.mapping:
+                template_config = new_template.config or {}
+                required_keys = template_config.get("required_keys", []) or []
+                optional_keys = template_config.get("optional_keys", []) or []
+                valid_keys = set(required_keys) | set(optional_keys)
+                invalid_keys = set(eval_config.mapping.keys()) - valid_keys
+                if invalid_keys:
+                    return self._gm.bad_request(
+                        f"Keys {sorted(invalid_keys)} are not valid input variables for the selected template. Valid keys: {sorted(valid_keys)}"
+                    )
+
+            # Re-validate kb_id: clear it on template switch when not
+            # explicitly provided, since the new template may not be
+            # compatible with the old knowledge base.
+            if new_template and "kb_id" not in validated:
+                eval_config.kb_id = None
+
+            # Switch template after config normalization so the existing config
+            # is validated against the new template's schema.
+            if new_template:
+                eval_config.eval_template = new_template
+
             # Save the eval config
             eval_config.save()
 
@@ -4802,13 +4870,16 @@ class UpdateEvalConfigView(APIView):
                 )
 
                 if not call_executions.exists():
-                    return self._gm.success_response(
-                        {
-                            "message": "Evaluation config updated successfully. No call executions found to rerun.",
-                            "eval_config_id": str(eval_config.id),
-                            "run_test_id": str(run_test_id),
-                            "test_execution_id": str(test_execution_id),
-                        }
+                    return Response(
+                        EvalConfigUpdateResponseSerializer(
+                            {
+                                "message": "Evaluation config updated successfully. No call executions found to rerun.",
+                                "eval_config_id": str(eval_config.id),
+                                "run_test_id": str(run_test_id),
+                                "test_execution_id": str(test_execution_id),
+                            }
+                        ).data,
+                        status=status.HTTP_200_OK,
                     )
 
                 call_execution_ids = [str(ce.id) for ce in call_executions]
