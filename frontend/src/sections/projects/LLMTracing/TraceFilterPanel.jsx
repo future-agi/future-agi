@@ -1913,9 +1913,7 @@ const TraceFilterPanel = ({
   const effectiveDefaultRow = defaultRowOverride || DEFAULT_ROW;
   const [activeTab, setActiveTab] = useState("basic");
   const [aiQuery, setAiQuery] = useState("");
-  // Set when the last AI query returned an empty filter list so the user
-  // gets an inline hint instead of a silent no-op. Cleared on next edit
-  // or next submit.
+  // True when the last AI query returned zero filters (shows inline hint).
   const [aiEmpty, setAiEmpty] = useState(false);
   // AI filter schema: exclude `attribute` category — those are typically
   // 100s–1000s of free-form keys that aren't referenced by name in natural
@@ -2127,15 +2125,7 @@ const TraceFilterPanel = ({
     };
   }, [rows, open, applyIfChanged]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Flush on close: if a value was entered then the popover closed before the
-  // 350ms debounce fired, run the pending apply immediately so the filter
-  // isn't dropped. On the Query tab a value can be typed but not committed
-  // (no Enter) — it lives only in QueryInput's internal state, so flush that
-  // partial token to rows first. applyIfChanged dedups, so an unchanged set
-  // is a no-op. bypassNextCloseFlushRef lets a path that already applied
-  // programmatically (AI-filter) skip the safety net — Zustand's onClose
-  // update can propagate before the accompanying React setRows commits,
-  // which would otherwise clobber the just-applied filter with null.
+  // Flush pending apply on close; bypass ref lets programmatic applies skip it.
   const wasOpenRef = useRef(open);
   const bypassNextCloseFlushRef = useRef(false);
   useEffect(() => {
@@ -2189,27 +2179,16 @@ const TraceFilterPanel = ({
           value: Array.isArray(f.value) ? f.value : [f.value],
         };
       });
-      // Append to the already-applied rows so a second AI query adds to
-      // the existing set instead of wiping it. Empty / invalid rows are
-      // dropped; no dedup — repeated constraints stack as separate rows
-      // so the user can see and remove them individually.
-      const existingValid = computeValidFilters(rows) || [];
-      const merged = [...existingValid, ...aiRows];
-      // Apply the same normalized/valid-filtered shape every other path sends,
-      // and seed lastAppliedRef with it so dedup matches what we actually sent.
+      // Additive: append AI rows to existing valid filters, no dedup.
+      const merged = [...(computeValidFilters(rows) || []), ...aiRows];
       const validFilters = computeValidFilters(merged);
       setRows(merged);
       lastAppliedRef.current = serializeFilterSet(validFilters);
       onApply(validFilters);
       setAiQuery("");
-      // The close-flush effect's applyIfChanged(rows) can fire against
-      // stale rows before setRows commits, wiping the just-applied filter
-      // with null. Skip the safety net for this programmatic close.
       bypassNextCloseFlushRef.current = true;
       onClose();
     } else {
-      // Model returned no filters — keep the popover open, keep the user's
-      // query intact, and surface the inline hint under the query input.
       setAiEmpty(true);
     }
   }, [

@@ -45,8 +45,7 @@ class AIFilterRequestSerializer(serializers.Serializer):
 class AIFilterConditionSerializer(serializers.Serializer):
     field = serializers.CharField()
     operator = serializers.CharField()
-    # Genuinely open-shape: string / number / boolean / list / null depending
-    # on operator (contains → string, between → [number, number], is_null → null).
+    # Shape varies by operator: string, number, bool, list, or null.
     value = JsonValueField(required=False, allow_null=True)
 
 

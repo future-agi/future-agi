@@ -469,42 +469,55 @@ def _char_ngrams(s, n):
 
 
 def _fetch_dataset_column_values(dataset_id, column_id):
-    """Distinct cell values for a (dataset, column) pair from Postgres.
+    """Distinct cell values for a (dataset, column) pair from ClickHouse.
 
-    Datasets are primary in PG; the CH `model_hub_cell` mirror lags on
-    dev and its `FINAL` scans time out at 5s per column, which starved
-    the smart-mode pre-fetch of grounding and left the endpoint hanging
-    until gunicorn timed out. Point-lookup on `Cell` by
-    `(dataset_id, column_id)` uses the FK indexes and returns instantly.
-
-    For array / json columns the raw cell blob is parsed and its
-    elements are emitted so the LLM can ground against e.g. "English"
-    instead of '["English","French"]'. Returns up to 100 strings.
+    Mirrors `_fetch_trace_field_values` but reads `model_hub_cell`. For
+    array / json columns the raw cell blob is parsed and its elements
+    are emitted so the LLM can ground against e.g. "English" instead of
+    '["English","French"]'. Returns up to 100 strings.
 
     NOTE: ownership is validated by the caller (which resolves the
     dataset against the workspace before calling this).
     """
     import json as _json
 
-    if not dataset_id or not column_id:
+    from tracer.services.clickhouse.client import is_clickhouse_enabled
+    from tracer.services.clickhouse.query_service import (
+        AnalyticsQueryService,
+    )
+
+    if not is_clickhouse_enabled() or not dataset_id or not column_id:
         return []
 
+    # Look up the column's data_type so we know whether to flatten.
     try:
-        from model_hub.models.develop_dataset import Cell, Column
+        from model_hub.models.develop_dataset import Column
 
         column = Column.objects.only("data_type").get(
             id=column_id, dataset_id=dataset_id, deleted=False
         )
         data_type = column.data_type
+    except Exception:
+        data_type = "text"
 
-        raw = list(
-            Cell.objects.filter(dataset_id=dataset_id, column_id=column_id)
-            .exclude(value__isnull=True)
-            .exclude(value="")
-            .values_list("value", flat=True)
-            .distinct()
-            .order_by("value")[:200]
+    analytics = AnalyticsQueryService()
+    try:
+        sql = (
+            "SELECT DISTINCT value AS val "
+            "FROM model_hub_cell FINAL "
+            "WHERE _peerdb_is_deleted = 0 "
+            "AND dataset_id = toUUID(%(dataset_id)s) "
+            "AND column_id = toUUID(%(column_id)s) "
+            "AND value != '' "
+            "ORDER BY val "
+            "LIMIT 200"
         )
+        result = analytics.execute_ch_query(
+            sql,
+            {"dataset_id": str(dataset_id), "column_id": str(column_id)},
+            timeout_ms=5000,
+        )
+        raw = [row["val"] for row in result.data if row.get("val")]
     except Exception as e:
         logger.warning(
             "dataset_column_values_query_failed",
