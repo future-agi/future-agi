@@ -2184,17 +2184,12 @@ const TraceFilterPanel = ({
           value: Array.isArray(f.value) ? f.value : [f.value],
         };
       });
-      // Merge with the already-applied rows so a second AI query refines
+      // Append to the already-applied rows so a second AI query adds to
       // the existing set instead of wiping it. Empty / invalid rows are
-      // dropped; duplicates on the same (field, operator) are replaced by
-      // the new AI value so restating a constraint updates it in place.
+      // dropped; no dedup — repeated constraints stack as separate rows
+      // so the user can see and remove them individually.
       const existingValid = computeValidFilters(rows) || [];
-      const key = (r) => `${r.field}::${r.operator}`;
-      const aiKeys = new Set(aiRows.map(key));
-      const merged = [
-        ...existingValid.filter((r) => !aiKeys.has(key(r))),
-        ...aiRows,
-      ];
+      const merged = [...existingValid, ...aiRows];
       // Apply the same normalized/valid-filtered shape every other path sends,
       // and seed lastAppliedRef with it so dedup matches what we actually sent.
       const validFilters = computeValidFilters(merged);
