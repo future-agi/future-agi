@@ -60,7 +60,10 @@ const DevelopBarLeftSection = ({
         ? f.filterConfig.filterValue.length > 0
         : f.filterConfig.filterValue !== "",
     );
-
+    console.log("[TH-6624] BarLeftSection recompute isFilterApplied", {
+      hasActiveFilter,
+      filters,
+    });
     return hasActiveFilter;
   }, [filters]);
 

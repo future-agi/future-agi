@@ -2157,11 +2157,23 @@ const TraceFilterPanel = ({
 
   const handleAiFilter = useCallback(async () => {
     if (!aiQuery.trim()) return;
+    console.log("[TH-6624] AI query submit", {
+      aiQuery,
+      source,
+      observeId,
+      propertyCount: properties.length,
+      propertyIds: properties.slice(0, 5).map((p) => ({
+        id: p.id,
+        category: p.category,
+        type: p.type,
+      })),
+    });
     const aiFilters = await aiParseQuery(aiQuery, {
       smart: true,
       projectId: observeId,
       source,
     });
+    console.log("[TH-6624] BE returned aiFilters", aiFilters);
     if (aiFilters.length > 0) {
       const converted = aiFilters.map((f) => {
         const prop = properties.find((p) => p.id === f.field);
@@ -2175,14 +2187,25 @@ const TraceFilterPanel = ({
           value: Array.isArray(f.value) ? f.value : [f.value],
         };
       });
+      console.log("[TH-6624] converted rows", converted);
       // Apply the same normalized/valid-filtered shape every other path sends,
       // and seed lastAppliedRef with it so dedup matches what we actually sent.
       const validFilters = computeValidFilters(converted);
+      console.log("[TH-6624] computeValidFilters returned", validFilters);
       setRows(converted);
       lastAppliedRef.current = serializeFilterSet(validFilters);
+      console.log(
+        "[TH-6624] calling onApply with validFilters",
+        validFilters,
+        "onApply typeof:",
+        typeof onApply,
+      );
       onApply(validFilters);
+      console.log("[TH-6624] onApply returned");
       setAiQuery("");
       onClose();
+    } else {
+      console.log("[TH-6624] aiFilters empty, bailed out");
     }
   }, [aiQuery, aiParseQuery, observeId, source, properties, onApply, onClose]);
 

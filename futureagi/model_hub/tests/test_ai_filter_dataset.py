@@ -1,11 +1,10 @@
 """Unit tests for dataset-source support in the AI filter smart agent.
 
-TH-4400 follow-up. The trace AI filter grounds values against the real
-column values in ClickHouse; previously the dataset filter path fell
-through to schema-agnostic ``build_filters`` (no grounding). These
-tests lock in the refactor:
+TH-4400 followup + TH-6624. Dataset column values are grounded against
+Postgres (source of truth), not the CH mirror — CH lag on dev used to
+stall the endpoint until gunicorn timed out. These tests lock in:
 
-  * ``_run_smart_agent`` now takes a generic ``fetch_values(field_id)``
+  * ``_run_smart_agent`` takes a generic ``fetch_values(field_id)``
     callable so trace and dataset paths share the loop.
   * ``_fetch_dataset_column_values`` returns distinct Cell.value strings
     for a (dataset, column) pair, flattening list / dict JSON blobs for
@@ -13,8 +12,8 @@ tests lock in the refactor:
   * ``_resolve_dataset_id`` rejects datasets outside the caller's
     workspace.
 
-The CH + LLM dependencies are mocked — we're testing plumbing, not
-the model or the query engine.
+The ORM + LLM dependencies are mocked — we're testing plumbing, not
+the model or the DB.
 """
 
 import json
@@ -25,91 +24,86 @@ from types import SimpleNamespace
 from rest_framework.test import APIRequestFactory, force_authenticate
 
 
+class _CellQS:
+    """Minimal chainable stand-in for `Cell.objects.filter(...).exclude(...)...`."""
+
+    def __init__(self, values):
+        self._values = values
+
+    def filter(self, **_):
+        return self
+
+    def exclude(self, **_):
+        return self
+
+    def values_list(self, *_, **__):
+        return self
+
+    def distinct(self):
+        return self
+
+    def order_by(self, *_):
+        return self
+
+    def __getitem__(self, _slice):
+        return list(self._values)
+
+
+def _patch_cell_and_column(cell_values, data_type):
+    """Patch `Cell` and `Column` at the ai_filter module boundary.
+
+    `_fetch_dataset_column_values` imports both from
+    `model_hub.models.develop_dataset` inside the function, so we patch
+    the source module and the helper picks the mocks up on next call.
+    """
+    col = mock.Mock(data_type=data_type)
+    col_manager = mock.Mock()
+    col_manager.only.return_value.get.return_value = col
+    return mock.patch.multiple(
+        "model_hub.models.develop_dataset",
+        Cell=mock.Mock(objects=_CellQS(cell_values)),
+        Column=mock.Mock(objects=col_manager),
+    )
+
+
 class FetchDatasetColumnValuesTests(unittest.TestCase):
     """``_fetch_dataset_column_values`` parses array/json cells correctly."""
-
-    def _patch_ch(self, values):
-        """Patch CH + Column lookup so the helper sees `values` as raw rows."""
-
-        class _Result:
-            def __init__(self, rows):
-                self.data = [{"val": v} for v in rows]
-
-        class _Col:
-            data_type = "text"
-
-        return mock.patch.multiple(
-            "model_hub.views.ai_filter",
-            is_clickhouse_enabled=mock.DEFAULT,
-            AnalyticsQueryService=mock.DEFAULT,
-        ), _Result(values), _Col
 
     def test_text_column_returns_raw_values(self):
         from model_hub.views import ai_filter
 
-        with mock.patch(
-            "tracer.services.clickhouse.client.is_clickhouse_enabled",
-            return_value=True,
-        ), mock.patch(
-            "tracer.services.clickhouse.query_service.AnalyticsQueryService"
-        ) as aq, mock.patch(
-            "model_hub.models.develop_dataset.Column.objects"
-        ) as cols:
-            aq.return_value.execute_ch_query.return_value = mock.Mock(
-                data=[{"val": "English"}, {"val": "Spanish"}, {"val": "French"}]
-            )
-            cols.only.return_value.get.return_value = mock.Mock(data_type="text")
-
-            vals = ai_filter._fetch_dataset_column_values(
-                "ds-1", "col-1"
-            )
+        with _patch_cell_and_column(
+            ["English", "Spanish", "French"], data_type="text"
+        ):
+            vals = ai_filter._fetch_dataset_column_values("ds-1", "col-1")
             self.assertEqual(vals, ["English", "Spanish", "French"])
 
     def test_array_column_flattens_list_elements(self):
         """Array cells stored as JSON lists should surface their elements."""
         from model_hub.views import ai_filter
 
-        with mock.patch(
-            "tracer.services.clickhouse.client.is_clickhouse_enabled",
-            return_value=True,
-        ), mock.patch(
-            "tracer.services.clickhouse.query_service.AnalyticsQueryService"
-        ) as aq, mock.patch(
-            "model_hub.models.develop_dataset.Column.objects"
-        ) as cols:
-            aq.return_value.execute_ch_query.return_value = mock.Mock(
-                data=[
-                    {"val": json.dumps(["English", "French"])},
-                    {"val": json.dumps(["Spanish"])},
-                    {"val": json.dumps(["English", "Spanish"])},
-                ]
-            )
-            cols.only.return_value.get.return_value = mock.Mock(data_type="array")
-
+        with _patch_cell_and_column(
+            [
+                json.dumps(["English", "French"]),
+                json.dumps(["Spanish"]),
+                json.dumps(["English", "Spanish"]),
+            ],
+            data_type="array",
+        ):
             vals = ai_filter._fetch_dataset_column_values("ds-1", "col-1")
-            # Dedup + order-preserving
             self.assertEqual(sorted(vals), sorted(["English", "French", "Spanish"]))
             self.assertNotIn('["English", "French"]', vals)
 
     def test_json_column_dict_extracts_leaf_strings(self):
         from model_hub.views import ai_filter
 
-        with mock.patch(
-            "tracer.services.clickhouse.client.is_clickhouse_enabled",
-            return_value=True,
-        ), mock.patch(
-            "tracer.services.clickhouse.query_service.AnalyticsQueryService"
-        ) as aq, mock.patch(
-            "model_hub.models.develop_dataset.Column.objects"
-        ) as cols:
-            aq.return_value.execute_ch_query.return_value = mock.Mock(
-                data=[
-                    {"val": json.dumps({"name": "Arthur", "role": "admin"})},
-                    {"val": json.dumps({"name": "Betty", "role": "admin"})},
-                ]
-            )
-            cols.only.return_value.get.return_value = mock.Mock(data_type="json")
-
+        with _patch_cell_and_column(
+            [
+                json.dumps({"name": "Arthur", "role": "admin"}),
+                json.dumps({"name": "Betty", "role": "admin"}),
+            ],
+            data_type="json",
+        ):
             vals = ai_filter._fetch_dataset_column_values("ds-1", "col-1")
             self.assertIn("Arthur", vals)
             self.assertIn("Betty", vals)
@@ -119,32 +113,11 @@ class FetchDatasetColumnValuesTests(unittest.TestCase):
         """A cell that isn't valid JSON should still contribute a value."""
         from model_hub.views import ai_filter
 
-        with mock.patch(
-            "tracer.services.clickhouse.client.is_clickhouse_enabled",
-            return_value=True,
-        ), mock.patch(
-            "tracer.services.clickhouse.query_service.AnalyticsQueryService"
-        ) as aq, mock.patch(
-            "model_hub.models.develop_dataset.Column.objects"
-        ) as cols:
-            aq.return_value.execute_ch_query.return_value = mock.Mock(
-                data=[{"val": "not-json,just,text"}]
-            )
-            cols.only.return_value.get.return_value = mock.Mock(data_type="array")
-
+        with _patch_cell_and_column(
+            ["not-json,just,text"], data_type="array"
+        ):
             vals = ai_filter._fetch_dataset_column_values("ds-1", "col-1")
             self.assertEqual(vals, ["not-json,just,text"])
-
-    def test_ch_disabled_returns_empty(self):
-        from model_hub.views import ai_filter
-
-        with mock.patch(
-            "tracer.services.clickhouse.client.is_clickhouse_enabled",
-            return_value=False,
-        ):
-            self.assertEqual(
-                ai_filter._fetch_dataset_column_values("ds-1", "col-1"), []
-            )
 
     def test_missing_ids_return_empty(self):
         from model_hub.views import ai_filter
