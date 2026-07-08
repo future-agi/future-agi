@@ -134,11 +134,7 @@ const valuePanelToStore = (val, panelType, operator) => {
     return val;
   }
   if (isNullish(val)) return "";
-  // Free-text entry (usesFreeTextValue → the plain "Enter text…" input) emits a
-  // bare scalar, but the canonical list operators `in`/`not_in` require a list
-  // value — both `validateFilter` and the backend `_apply_filters` text branch
-  // reject a scalar there, silently dropping the filter so the grid never
-  // updates (TH-6621). Wrap the scalar so a single typed value still applies.
+  // in/not_in require a list value; wrap a single typed scalar so it still applies.
   if (operator === "in" || operator === "not_in") {
     return val === "" ? "" : [val];
   }
