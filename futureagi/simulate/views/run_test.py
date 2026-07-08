@@ -162,7 +162,10 @@ from simulate.utils.test_execution import (
     DEFAULT_VOICE_SIM_COL,
     LEGACY_SIM_COLUMN_ID_MAP,
 )
-from simulate.utils.test_execution_utils import TestExecutionUtils
+from simulate.utils.test_execution_utils import (
+    TestExecutionUtils,
+    reconcile_scenario_column_order,
+)
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.ee_gates import strip_turing_from_config_options
 from tfc.settings import settings as app_settings
@@ -2126,135 +2129,12 @@ class TestExecutionDetailView(APIView):
                 test_execution.save(update_fields=["execution_metadata"])
                 column_order = default_columns
 
-            def _canonical_scenario_name(raw_name):
-                return "Ideal Outcome" if raw_name == "outcome" else raw_name
-
-            existing_scenario_visibility = {}
-            first_scenario_idx = None
-            for idx, col in enumerate(column_order):
-                if not isinstance(col, dict):
-                    continue
-                if col.get("type") == "scenario_dataset_column":
-                    if first_scenario_idx is None:
-                        first_scenario_idx = idx
-                    vis_key = _canonical_scenario_name(
-                        col.get("column_name") or str(col.get("id"))
-                    )
-                    existing_scenario_visibility[vis_key] = col.get("visible", True)
-
-            norm_scenarios = scenarios
-            norm_all_col_ids = set()
-            for scenario in norm_scenarios:
-                if scenario.dataset and scenario.dataset.column_order:
-                    norm_all_col_ids.update(scenario.dataset.column_order)
-
-            ordered_names = []
-            scenario_cols_by_name = {}
-
-            def _register_scenario_column(col_obj, scenario_id, dataset_id):
-                name = _canonical_scenario_name(col_obj.name)
-                entry = scenario_cols_by_name.get(name)
-                if entry is None:
-                    ordered_names.append(name)
-                    scenario_cols_by_name[name] = {
-                        "id": name,
-                        "column_name": name,
-                        "visible": existing_scenario_visibility.get(name, True),
-                        "data_type": col_obj.data_type,
-                        "type": "scenario_dataset_column",
-                        "scenario_id": scenario_id,
-                        "dataset_id": dataset_id,
-                        "dataset_column_ids": [str(col_obj.id)],
-                    }
-                else:
-                    cid = str(col_obj.id)
-                    if cid not in entry["dataset_column_ids"]:
-                        entry["dataset_column_ids"].append(cid)
-
-            if norm_all_col_ids:
-                norm_columns_by_id = {
-                    str(col.id): col
-                    for col in Column.objects.filter(
-                        id__in=norm_all_col_ids, deleted=False
-                    )
-                }
-                for scenario in norm_scenarios:
-                    if not (scenario.dataset and scenario.dataset.column_order):
-                        continue
-                    for col_id in scenario.dataset.column_order:
-                        col_obj = norm_columns_by_id.get(str(col_id))
-                        if col_obj:
-                            _register_scenario_column(
-                                col_obj,
-                                str(scenario.id),
-                                str(scenario.dataset.id),
-                            )
-
-
-            if not ordered_names:
-                fb_first_call = call_executions.first()
-                fb_row_id = (
-                    fb_first_call.call_metadata.get("row_id")
-                    if fb_first_call and fb_first_call.call_metadata
-                    else None
-                )
-                if fb_row_id:
-                    fb_row = (
-                        Row.all_objects.filter(id=fb_row_id)
-                        .select_related("dataset")
-                        .first()
-                    )
-                    if fb_row and fb_row.dataset and fb_row.dataset.column_order:
-                        for col_obj in Column.all_objects.filter(
-                            id__in=fb_row.dataset.column_order, deleted=False
-                        ):
-                            _register_scenario_column(
-                                col_obj, None, str(fb_row.dataset.id)
-                            )
-
-            new_scenario_columns = [
-                scenario_cols_by_name[name] for name in ordered_names
-            ]
-
-            non_scenario_columns = [
-                col
-                for col in column_order
-                if not (
-                    isinstance(col, dict)
-                    and col.get("type") == "scenario_dataset_column"
-                )
-            ]
-            if first_scenario_idx is None:
-                # No scenario columns yet: place them before the first
-                # evaluation column, else at the end.
-                insert_idx = next(
-                    (
-                        i
-                        for i, col in enumerate(non_scenario_columns)
-                        if isinstance(col, dict)
-                        and col.get("type") == "evaluation"
-                    ),
-                    len(non_scenario_columns),
-                )
-            else:
-                # Preserve the original position of the scenario column block.
-                insert_idx = sum(
-                    1
-                    for col in column_order[:first_scenario_idx]
-                    if not (
-                        isinstance(col, dict)
-                        and col.get("type") == "scenario_dataset_column"
-                    )
-                )
-
-            rebuilt_column_order = (
-                non_scenario_columns[:insert_idx]
-                + new_scenario_columns
-                + non_scenario_columns[insert_idx:]
+            column_order, scenario_columns_changed = reconcile_scenario_column_order(
+                scenarios=scenarios,
+                call_executions=call_executions,
+                column_order=column_order,
             )
-
-            if rebuilt_column_order != column_order:
-                column_order = rebuilt_column_order
+            if scenario_columns_changed:
                 test_execution.execution_metadata["column_order"] = column_order
                 test_execution.save(update_fields=["execution_metadata"])
 

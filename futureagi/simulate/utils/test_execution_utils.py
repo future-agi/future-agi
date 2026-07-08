@@ -7,6 +7,7 @@ from datetime import datetime
 
 from django.db import connection, models
 
+from model_hub.models.develop_dataset import Column, Row
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.agent_version import AgentVersion
 from simulate.utils.persona_filtering import (
@@ -941,7 +942,11 @@ class TestExecutionUtils:
                     if not actual_column_ids:
                         # Legacy: single UUID id, or scenario_<id>_dataset_<uuid>.
                         legacy_id = column.get("id")
-                        if legacy_id and "_dataset_" in legacy_id:
+                        if (
+                            legacy_id
+                            and legacy_id.startswith("scenario_")
+                            and "_dataset_" in legacy_id
+                        ):
                             parts = legacy_id.split("_dataset_")
                             if len(parts) == 2:
                                 legacy_id = parts[1]
@@ -950,14 +955,7 @@ class TestExecutionUtils:
                     if not actual_column_ids:
                         continue
 
-                    # Create a safe column alias (identifiers cannot contain
-                    # hyphens, dots or spaces without quoting).
-                    safe_alias = (
-                        str(column_id)
-                        .replace("-", "_")
-                        .replace(".", "_")
-                        .replace(" ", "_")
-                    )
+                    safe_alias = re.sub(r"[^A-Za-z0-9_]", "_", str(column_id))
 
                     # Properly escape column UUIDs to prevent SQL injection.
                     cursor = connection.cursor()
@@ -1253,3 +1251,152 @@ def generate_simulator_agent_prompt(
         "Please respond naturally and stay consistent with your persona throughout the conversation."
         f"{end_call_instruction}"
     )
+
+
+def canonical_scenario_column_name(raw_name):
+    """Canonical display name for a scenario dataset column."""
+    return "Ideal Outcome" if raw_name == "outcome" else raw_name
+
+
+def reconcile_scenario_column_order(*, scenarios, call_executions, column_order):
+    """Collapse per-dataset scenario columns into one entry per canonical name.
+
+    Each scenario has its own dataset, and each dataset has its own ``Column``
+    rows with distinct UUIDs, so a field like ``outcome`` exists once per
+    dataset. This collapses those per-dataset columns into a single entry keyed
+    by the canonical column name, carrying every dataset's matching ``Column``
+    UUID in ``dataset_column_ids`` so the filter/grouping paths can match a cell
+    against any of them.
+
+    Kept here - alongside the filter/grouping logic that consumes
+    ``dataset_column_ids`` - so requests, celery jobs and Temporal activities
+    can share the same computation. The caller persists ``column_order`` when
+    ``changed`` is True.
+
+    Args:
+        scenarios: iterable of ``Scenarios`` (dataset select_related recommended).
+        call_executions: ``CallExecution`` queryset, used only for the fallback
+            that recovers columns from the first call's dataset row.
+        column_order: the current persisted column order (list of dicts).
+
+    Returns:
+        ``(column_order, changed)`` - the reconciled order and whether it
+        differs from the input.
+    """
+    existing_scenario_visibility = {}
+    first_scenario_idx = None
+    for idx, col in enumerate(column_order):
+        if not isinstance(col, dict):
+            continue
+        if col.get("type") == "scenario_dataset_column":
+            if first_scenario_idx is None:
+                first_scenario_idx = idx
+            vis_key = canonical_scenario_column_name(
+                col.get("column_name") or str(col.get("id"))
+            )
+            existing_scenario_visibility[vis_key] = col.get("visible", True)
+
+    norm_all_col_ids = set()
+    for scenario in scenarios:
+        if scenario.dataset and scenario.dataset.column_order:
+            norm_all_col_ids.update(scenario.dataset.column_order)
+
+    ordered_names = []
+    scenario_cols_by_name = {}
+
+    def _register_scenario_column(col_obj, scenario_id, dataset_id):
+        name = canonical_scenario_column_name(col_obj.name)
+        entry = scenario_cols_by_name.get(name)
+        if entry is None:
+            ordered_names.append(name)
+            scenario_cols_by_name[name] = {
+                "id": name,
+                "column_name": name,
+                "visible": existing_scenario_visibility.get(name, True),
+                "data_type": col_obj.data_type,
+                "type": "scenario_dataset_column",
+                "scenario_id": scenario_id,
+                "dataset_id": dataset_id,
+                "dataset_column_ids": [str(col_obj.id)],
+            }
+        else:
+            cid = str(col_obj.id)
+            if cid not in entry["dataset_column_ids"]:
+                entry["dataset_column_ids"].append(cid)
+
+    if norm_all_col_ids:
+        norm_columns_by_id = {
+            str(col.id): col
+            for col in Column.objects.filter(id__in=norm_all_col_ids, deleted=False)
+        }
+        for scenario in scenarios:
+            if not (scenario.dataset and scenario.dataset.column_order):
+                continue
+            for col_id in scenario.dataset.column_order:
+                col_obj = norm_columns_by_id.get(str(col_id))
+                if col_obj:
+                    _register_scenario_column(
+                        col_obj,
+                        str(scenario.id),
+                        str(scenario.dataset.id),
+                    )
+
+    if not ordered_names:
+        fb_first_call = call_executions.first()
+        fb_row_id = (
+            fb_first_call.call_metadata.get("row_id")
+            if fb_first_call and fb_first_call.call_metadata
+            else None
+        )
+        if fb_row_id:
+            fb_row = (
+                Row.all_objects.filter(id=fb_row_id)
+                .select_related("dataset")
+                .first()
+            )
+            if fb_row and fb_row.dataset and fb_row.dataset.column_order:
+                for col_obj in Column.all_objects.filter(
+                    id__in=fb_row.dataset.column_order, deleted=False
+                ):
+                    _register_scenario_column(col_obj, None, str(fb_row.dataset.id))
+
+    new_scenario_columns = [scenario_cols_by_name[name] for name in ordered_names]
+
+    non_scenario_columns = [
+        col
+        for col in column_order
+        if not (
+            isinstance(col, dict)
+            and col.get("type") == "scenario_dataset_column"
+        )
+    ]
+    if first_scenario_idx is None:
+        # No scenario columns yet: place them before the first evaluation
+        # column, else at the end.
+        insert_idx = next(
+            (
+                i
+                for i, col in enumerate(non_scenario_columns)
+                if isinstance(col, dict) and col.get("type") == "evaluation"
+            ),
+            len(non_scenario_columns),
+        )
+    else:
+        # Preserve the original position of the scenario column block.
+        insert_idx = sum(
+            1
+            for col in column_order[:first_scenario_idx]
+            if not (
+                isinstance(col, dict)
+                and col.get("type") == "scenario_dataset_column"
+            )
+        )
+
+    rebuilt_column_order = (
+        non_scenario_columns[:insert_idx]
+        + new_scenario_columns
+        + non_scenario_columns[insert_idx:]
+    )
+
+    changed = rebuilt_column_order != column_order
+    return rebuilt_column_order, changed
