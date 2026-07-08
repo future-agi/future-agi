@@ -171,7 +171,7 @@ const DatasetsSelectRow = ({
 
     if (shouldHideDevelopBar) {
       const datasetId = currentPath.split("/")[3];
-      navigate(`/dashboard/develop/${datasetId}?tab=annotations`);
+      navigate(`/dashboard/develop/${datasetId}?tab=data`);
       return;
     }
 

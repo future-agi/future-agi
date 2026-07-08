@@ -25,9 +25,9 @@ import { isJsonColumn } from "./columnFilterUtils";
 
 const getDefaultValue = () => {
   return {
-    columnId: "",
-    jsonKey: "",
-    newColumnName: "",
+    column_id: "",
+    json_key: "",
+    new_column_name: "",
     concurrency: "",
   };
 };
@@ -41,12 +41,7 @@ export const ExtractJsonKeyChild = ({
   const { refreshGrid } = useDevelopDetailContext();
 
   const { control, handleSubmit, reset } = useForm({
-    defaultValues: {
-      columnId: "",
-      jsonKey: "",
-      newColumnName: "",
-      concurrency: "",
-    },
+    defaultValues: getDefaultValue(),
     resolver: zodResolver(
       ExtractJsonKeyValidationSchema(!!onFormSubmit, !!editId),
     ),
@@ -127,20 +122,10 @@ export const ExtractJsonKeyChild = ({
     },
   });
 
-  const transformFormToApi = (formValues) => {
-    const { columnId, newColumnName, jsonKey, ...rest } = formValues;
-    return {
-      ...rest,
-      column_id: columnId,
-      new_column_name: newColumnName,
-      json_key: jsonKey,
-    };
-  };
-
   const onSubmit = (formValues) => {
     if (editId) {
       updateColumn({
-        config: transformFormToApi(formValues),
+        config: formValues,
         operation_type: "extract_json",
       });
       return;
@@ -148,13 +133,13 @@ export const ExtractJsonKeyChild = ({
     if (onFormSubmit) {
       onFormSubmit({ ...formValues, type: "extract_json" });
     } else {
-      addColumn(transformFormToApi(formValues));
+      addColumn(formValues);
     }
   };
 
   const handlePreview = handleSubmit((formValues) => {
     if (!onFormSubmit) {
-      preview(transformFormToApi(formValues));
+      preview(formValues);
     }
   });
 
@@ -212,7 +197,7 @@ export const ExtractJsonKeyChild = ({
               size="small"
               placeholder="Enter column name"
               control={control}
-              fieldName="newColumnName"
+              fieldName="new_column_name"
             />
           )}
           <FormSearchSelectFieldControl
@@ -220,7 +205,7 @@ export const ExtractJsonKeyChild = ({
             label="Column"
             size="small"
             control={control}
-            fieldName="columnId"
+            fieldName="column_id"
             options={columnOptions}
             noOptions={"No suitable column"}
           />
@@ -228,7 +213,7 @@ export const ExtractJsonKeyChild = ({
             label="JSON Key"
             size="small"
             control={control}
-            fieldName="jsonKey"
+            fieldName="json_key"
             placeholder="Enter JSON Path of the key (to be extracted)"
           />
 

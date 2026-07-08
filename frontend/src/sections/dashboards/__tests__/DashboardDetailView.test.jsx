@@ -1,11 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "src/utils/test-utils";
 import DashboardDetailView from "../DashboardDetailView";
+import { DATE_PRESETS } from "../constants";
 
-// Controlled mutation stubs (hoisted so the vi.mock factory can see them).
+// Controlled stubs (hoisted so the vi.mock factory can see them). `widgets` is
+// per-test controllable so we can drive both the empty and populated dashboard.
 const h = vi.hoisted(() => ({
   deleteWidget: { mutate: vi.fn(), isPending: false },
   deleteDashboard: { mutate: vi.fn(), isPending: false },
+  widgets: [{ id: "w-1", name: "Tokens", position: 0, width: 12 }],
 }));
 
 vi.mock("src/hooks/useDashboards", () => ({
@@ -13,7 +16,7 @@ vi.mock("src/hooks/useDashboards", () => ({
     data: {
       id: "dash-1",
       name: "My Dash",
-      widgets: [{ id: "w-1", name: "Tokens", position: 0, width: 12 }],
+      widgets: h.widgets,
     },
     isLoading: false,
   }),
@@ -51,6 +54,7 @@ describe("DashboardDetailView — delete confirmation", () => {
     vi.clearAllMocks();
     h.deleteWidget.isPending = false;
     h.deleteDashboard.isPending = false;
+    h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
   });
 
   it("widget delete: opens the keyed dialog with the widget's name", () => {
@@ -83,7 +87,9 @@ describe("DashboardDetailView — delete confirmation", () => {
   it("dashboard delete: deletes the dashboard by id, closing on settle", () => {
     render(<DashboardDetailView />);
     fireEvent.click(screen.getByRole("button", { name: /dashboard options/i }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /delete dashboard/i }));
+    fireEvent.click(
+      screen.getByRole("menuitem", { name: /delete dashboard/i }),
+    );
     expect(
       screen.getByText(/Are you sure you want to delete "My Dash"/),
     ).toBeInTheDocument();
@@ -93,5 +99,31 @@ describe("DashboardDetailView — delete confirmation", () => {
       expect.objectContaining({ onSettled: expect.any(Function) }),
     );
     expect(h.deleteWidget.mutate).not.toHaveBeenCalled();
+  });
+});
+
+describe("DashboardDetailView — time filter bar visibility", () => {
+  // A chip label unique to the global time-filter bar, read from the real
+  // preset source (not hand-authored) so the assertion tracks what renders.
+  const presetLabel = DATE_PRESETS.find((p) => p.value === "30D").label;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("hides the time filter bar on an empty (0-widget) dashboard", () => {
+    h.widgets = [];
+    render(<DashboardDetailView />);
+    // The empty-state CTA is what should greet the user instead...
+    expect(screen.getByText(/no widgets yet/i)).toBeInTheDocument();
+    // ...and the interactive-but-inert time filter is not in the DOM.
+    expect(screen.queryByText(presetLabel)).not.toBeInTheDocument();
+  });
+
+  it("shows the time filter bar once the dashboard has a widget", () => {
+    h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
+    render(<DashboardDetailView />);
+    expect(screen.getByText(presetLabel)).toBeInTheDocument();
+    expect(screen.queryByText(/no widgets yet/i)).not.toBeInTheDocument();
   });
 });

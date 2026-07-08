@@ -43,7 +43,7 @@ function HelpCard({ title, description, imageSrc }) {
             width: "90%",
             bottom: 0,
             right: 0,
-            bgcolor: "background.paper",
+            bgcolor: "common.white",
             borderRadius: 1,
             padding: theme.spacing(1.5, 0, 0, 1.5),
             "& img": {

@@ -214,6 +214,7 @@ class TriggerErrorLocalizationTool(BaseTool):
             value=eval_result,
             mapping=mappings,
             eval_explanation=eval_explanation,
+            eval_config=config,
         )
         if not task:
             return ToolResult.error(
