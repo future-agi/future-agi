@@ -5,6 +5,7 @@ from datetime import datetime
 
 import structlog
 
+from model_hub.constants import MAX_FILE_SIZE_BYTES
 from model_hub.utils.json_path_resolver import parse_json_safely
 
 logger = structlog.get_logger(__name__)
@@ -28,7 +29,6 @@ NON_EDITABLE_SOURCE_TYPES = [
 
 MAX_CELL_VALUE_LENGTH = 100_000
 MAX_EMPTY_ROWS_PER_REQUEST = 100
-MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB
 MAX_PAGE_SIZE = 500
 MAX_DUPLICATE_COPIES = 100
 

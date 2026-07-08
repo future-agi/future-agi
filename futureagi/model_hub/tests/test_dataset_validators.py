@@ -265,7 +265,7 @@ class TestConstants:
         assert MAX_CELL_VALUE_LENGTH == 100_000
 
     def test_max_file_size(self):
-        assert MAX_FILE_SIZE_BYTES == 10 * 1024 * 1024
+        assert MAX_FILE_SIZE_BYTES == 25 * 1024 * 1024
 
     def test_max_empty_rows(self):
         assert MAX_EMPTY_ROWS_PER_REQUEST == 100
