@@ -433,7 +433,7 @@ const getDefaultColDefs = () => {
   ];
 };
 
-const getAverageColumnConfig = (columns, tableRows) => {
+export const getAverageColumnConfig = (columns, tableRows) => {
   if (!columns?.length) {
     return [];
   }
@@ -546,6 +546,12 @@ const getAverageColumnConfig = (columns, tableRows) => {
             : `Average : ${eachCol?.averageScore}%`
           : "";
     }
+  }
+
+  // Skip the pinned summary row when no column has a value to show; otherwise
+  // every cell is "" and AG Grid renders a blank placeholder row at the bottom.
+  if (!Object.values(bottomRow).some(Boolean)) {
+    return [];
   }
 
   return [
