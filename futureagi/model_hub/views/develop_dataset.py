@@ -808,6 +808,21 @@ class AddRowsFromFile(CreateAPIView):
             else:
                 max_order = -1
 
+            # Per-import validation budget. SSRF is still enforced downstream
+            # at actual GET time by _ssrf_safe_get inside upload_*_to_s3; the
+            # HEAD is only a pre-flight nicety, so we skip it after N calls or
+            # when the URL points at our own S3 (upload_*_to_s3 no-op-links).
+            _MAX_VALIDATIONS = 100
+            validations_used = [0]
+
+            def _maybe_validate(url_value, file_type):
+                if DatatypeConverter._is_own_s3_url(url_value):
+                    return
+                if validations_used[0] >= _MAX_VALIDATIONS:
+                    return
+                validate_file_url(url_value, file_type)
+                validations_used[0] += 1
+
             for index, row in data.iterrows():
                 new_row = Row.objects.create(
                     id=str(uuid.uuid4()), dataset=dataset, order=max_order + 1 + index
@@ -821,7 +836,7 @@ class AddRowsFromFile(CreateAPIView):
 
                     if column.data_type == DataTypeChoices.IMAGE.value and value:
                         try:
-                            validate_file_url(str(value), "image")
+                            _maybe_validate(str(value), "image")
 
                             # Generate a unique image key using dataset_id
                             image_key = f"images/{dataset_id}/{uuid.uuid4()}"
@@ -836,7 +851,7 @@ class AddRowsFromFile(CreateAPIView):
 
                     elif column.data_type == DataTypeChoices.AUDIO.value and value:
                         try:
-                            validate_file_url(str(value), "audio")
+                            _maybe_validate(str(value), "audio")
 
                             audio_key = f"audio/{dataset_id}/{uuid.uuid4()}"
                             audio_url = upload_audio_to_s3(
