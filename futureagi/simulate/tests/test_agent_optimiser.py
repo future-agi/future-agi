@@ -426,10 +426,13 @@ class TestGetCallExecutionsWithDetailsDB:
             run_test=run_test,
         )
 
-        # get_call_executions_with_details: 1 query for TestExecution,
-        # 1 query for eval configs with select_related, 1 query for call_executions.
-        # No per-call eval config queries.
-        with django_assert_num_queries(3):
+        # get_call_executions_with_details:
+        # 1 - TestExecution.objects.get (no select_related("run_test"))
+        # 1 - run_test lazy load on test_execution.run_test
+        # 1 - eval configs with select_related("eval_template")
+        # 1 - call_executions with select_related("scenario")
+        # No per-call eval config queries (N+1 guard).
+        with django_assert_num_queries(4):
             result = get_call_executions_with_details(str(test_execution.id))
 
         assert result is not None
