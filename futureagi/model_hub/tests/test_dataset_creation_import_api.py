@@ -52,7 +52,7 @@ def _synthetic_create_payload(name, num_rows=10, columns=None, regenerate=None):
             "name": name,
             "description": "Dataset",
             "objective": "Generate rows",
-            "patterns": [],
+            "patterns": "",
         },
     }
     if regenerate is not None:
@@ -77,7 +77,7 @@ def _synthetic_add_rows_payload(num_rows=10):
         "dataset": {
             "description": "Dataset",
             "objective": "Generate rows",
-            "patterns": [],
+            "patterns": "",
         },
     }
 
