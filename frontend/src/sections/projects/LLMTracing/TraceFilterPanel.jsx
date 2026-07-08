@@ -2172,7 +2172,7 @@ const TraceFilterPanel = ({
       source,
     });
     if (aiFilters.length > 0) {
-      const converted = aiFilters.map((f) => {
+      const aiRows = aiFilters.map((f) => {
         const prop = properties.find((p) => p.id === f.field);
         const fieldType = prop?.type || "string";
         return {
@@ -2184,20 +2184,40 @@ const TraceFilterPanel = ({
           value: Array.isArray(f.value) ? f.value : [f.value],
         };
       });
+      // Merge with the already-applied rows so a second AI query refines
+      // the existing set instead of wiping it. Empty / invalid rows are
+      // dropped; duplicates on the same (field, operator) are replaced by
+      // the new AI value so restating a constraint updates it in place.
+      const existingValid = computeValidFilters(rows) || [];
+      const key = (r) => `${r.field}::${r.operator}`;
+      const aiKeys = new Set(aiRows.map(key));
+      const merged = [
+        ...existingValid.filter((r) => !aiKeys.has(key(r))),
+        ...aiRows,
+      ];
       // Apply the same normalized/valid-filtered shape every other path sends,
       // and seed lastAppliedRef with it so dedup matches what we actually sent.
-      const validFilters = computeValidFilters(converted);
-      setRows(converted);
+      const validFilters = computeValidFilters(merged);
+      setRows(merged);
       lastAppliedRef.current = serializeFilterSet(validFilters);
       onApply(validFilters);
       setAiQuery("");
       // The close-flush effect's applyIfChanged(rows) can fire against
-      // stale rows before setRows(converted) commits, wiping the just-
-      // applied filter with null. Skip the safety net for this close.
+      // stale rows before setRows commits, wiping the just-applied filter
+      // with null. Skip the safety net for this programmatic close.
       bypassNextCloseFlushRef.current = true;
       onClose();
     }
-  }, [aiQuery, aiParseQuery, observeId, source, properties, onApply, onClose]);
+  }, [
+    aiQuery,
+    aiParseQuery,
+    observeId,
+    source,
+    properties,
+    rows,
+    onApply,
+    onClose,
+  ]);
 
   return (
     <Popover
