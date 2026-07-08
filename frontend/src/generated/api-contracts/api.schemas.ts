@@ -8876,8 +8876,6 @@ export interface DatasetTableMetadataApi {
   status?: DatasetTableMetadataApiStatus;
 }
 
-export type DatasetTableColumnApiEvalTag = { [key: string]: unknown };
-
 export type DatasetTableColumnApiMetadata = { [key: string]: unknown };
 
 export type DatasetTableColumnApiChoicesMap = { [key: string]: unknown };
@@ -8903,7 +8901,7 @@ export interface DatasetTableColumnApi {
   reason_column: boolean;
   is_numeric_eval: boolean;
   is_numeric_eval_percentage: boolean;
-  eval_tag: DatasetTableColumnApiEvalTag;
+  eval_tag?: string[];
   metadata: DatasetTableColumnApiMetadata;
   choices_map: DatasetTableColumnApiChoicesMap;
 }
