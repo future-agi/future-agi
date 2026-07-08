@@ -708,9 +708,16 @@ def trigger_error_localization_for_column(
     response: dict,
     cell: Cell,
     log_id: str | None = None,
+    eval_config: dict | None = None,
 ) -> None:
     """
     Helper function to create ErrorLocalizerTask records for cells.
+
+    `config` is the per-evaluator prepared config (used for input variables
+    and rule_prompt fallback). `eval_config` is the caller's runtime config
+    (typically ``UserEvalMetric.config``) so the pass_threshold resolver can
+    honour ``run_config`` overrides instead of the template default the
+    prepared config carries.
     """
     input_data_dict = {}
     required_keys = []
@@ -754,7 +761,7 @@ def trigger_error_localization_for_column(
         rule_prompt, input_data_dict, eval_result
     )
 
-    pass_threshold = resolve_pass_threshold(eval_template, config)
+    pass_threshold = resolve_pass_threshold(eval_template, eval_config)
 
     if task_exists:
         task = ErrorLocalizerTask.objects.get(source_id=cell.id)

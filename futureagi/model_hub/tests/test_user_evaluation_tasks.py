@@ -1519,7 +1519,11 @@ class TestTriggerMetadataSnapshot:
         mock_cell.objects.select_related.return_value.get.return_value = cell
         eval_template = MagicMock()
         eval_template.name = "some-template"
-        config = {"rule_prompt": "r", "run_config": {"pass_threshold": 0.9}}
+        # `config` is the per-evaluator prepared dict (holds template-stamped
+        # pass_threshold); `eval_config` is the caller's runtime config where
+        # the run_config override lives. The resolver must read the latter.
+        config = {"rule_prompt": "r", "pass_threshold": 0.5}
+        eval_config = {"run_config": {"pass_threshold": 0.9}}
 
         trigger_error_localization_for_column(
             eval_template=eval_template,
@@ -1530,9 +1534,10 @@ class TestTriggerMetadataSnapshot:
             response={"reason": ""},
             cell=cell,
             log_id="log-1",
+            eval_config=eval_config,
         )
 
-        mock_resolve.assert_called_once_with(eval_template, config)
+        mock_resolve.assert_called_once_with(eval_template, eval_config)
         construct_kwargs = mock_task.call_args.kwargs
         assert construct_kwargs["metadata"]["pass_threshold"] == self._SENTINEL
 
