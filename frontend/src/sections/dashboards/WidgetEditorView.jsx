@@ -79,6 +79,7 @@ import {
   getAutoDecimals,
   getSeriesAverage,
   getSuggestedUnitConfig,
+  getUnitRendering,
   getYAxisRangeWarning,
 } from "./widgetUtils";
 import {
@@ -2069,6 +2070,7 @@ export default function WidgetEditorView() {
         }
         allSeries.push({
           name: seriesLabel,
+          unit: metric.unit ?? "",
           data: (s.data || []).map((point) => ({
             x: new Date(point.timestamp).getTime(),
             y: point.value != null ? Number(point.value) : null,
@@ -2147,15 +2149,20 @@ export default function WidgetEditorView() {
   );
   const leftAxisFormatConfig = useMemo(() => {
     const leftAxis = axisConfig.leftY || {};
+    const metricUnits = (previewResult?.metrics || [])
+      .map((m) => m?.unit ?? "");
+    const isMixedUnits = new Set(metricUnits).size > 1;
+    const effectiveUnit = isMixedUnits
+      ? ""
+      : leftAxis.unit || suggestedLeftAxisUnit.unit;
     return {
       ...leftAxis,
-      unit: leftAxis.unit || suggestedLeftAxisUnit.unit,
-      prefixSuffix:
-        leftAxis.unit || !suggestedLeftAxisUnit.unit
-          ? leftAxis.prefixSuffix || "prefix"
-          : suggestedLeftAxisUnit.prefixSuffix,
+      unit: effectiveUnit,
+      prefixSuffix: effectiveUnit
+        ? leftAxis.prefixSuffix || suggestedLeftAxisUnit.prefixSuffix || "prefix"
+        : suggestedLeftAxisUnit.prefixSuffix,
     };
-  }, [axisConfig.leftY, suggestedLeftAxisUnit]);
+  }, [axisConfig.leftY, suggestedLeftAxisUnit, previewResult?.metrics]);
 
   useEffect(() => {
     const currentUnit = axisConfig.leftY.unit;
@@ -4457,7 +4464,18 @@ export default function WidgetEditorView() {
                                     borderLeft: `1px solid ${theme.palette.divider}`,
                                   }}
                                 >
-                                  {avg == null ? "—" : formatValFn(avg)}
+                                  {avg == null
+                                    ? "—"
+                                    : formatValueWithConfig(
+                                        avg,
+                                        s.unit
+                                          ? {
+                                              ...leftAxisFormatConfig,
+                                              ...getUnitRendering(s.unit),
+                                            }
+                                          : leftAxisFormatConfig,
+                                        { fallbackDecimals: autoDecimals },
+                                      )}
                                 </td>
                                 {s.data.map((pt, ci) => {
                                   if (!displayIndicesSet.has(ci)) return null;

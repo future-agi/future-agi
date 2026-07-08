@@ -13,6 +13,7 @@ import {
   getAutoDecimals,
   getSeriesAverage,
   getSuggestedUnitConfig,
+  getUnitRendering,
   getYAxisRangeWarning,
 } from "./widgetUtils";
 import { toTimeRangePayload } from "./dashboardDateRange";
@@ -118,6 +119,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
           }
           s.push({
             name: label,
+            unit: metric.unit ?? "",
             data: (ms.data || []).map((point) => ({
               x: new Date(point.timestamp).getTime(),
               y: point.value != null ? Number(point.value) : null,
@@ -177,13 +179,18 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const leftAxisFormatConfig = useMemo(() => {
     const suggested = getSuggestedUnitConfig(result?.metrics || []);
     const leftAxis = axisConfig?.leftY || {};
+    const metricUnits = (result?.metrics || [])
+      .map((m) => m?.unit ?? "");
+    const isMixedUnits = new Set(metricUnits).size > 1;
+    const effectiveUnit = isMixedUnits
+      ? ""
+      : leftAxis.unit || suggested.unit;
     return {
       ...leftAxis,
-      unit: leftAxis.unit || suggested.unit,
-      prefixSuffix:
-        leftAxis.unit || !suggested.unit
-          ? leftAxis.prefixSuffix || "prefix"
-          : suggested.prefixSuffix,
+      unit: effectiveUnit,
+      prefixSuffix: effectiveUnit
+        ? leftAxis.prefixSuffix || suggested.prefixSuffix || "prefix"
+        : suggested.prefixSuffix,
     };
   }, [axisConfig?.leftY, result?.metrics]);
 
@@ -433,7 +440,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
                             queryConfig?.metrics?.[0]?.name ||
                             "Total"
                           : s.name;
-                      const unit = leftAxisFormatConfig?.unit;
+                      const unit = s.unit || leftAxisFormatConfig?.unit;
                       return unit ? `${label} (${unit})` : label;
                     })()}
                   </span>
@@ -471,6 +478,9 @@ export default function WidgetChart({ widget, globalDateRange }) {
                   </td>
                   {series.map((s, si) => {
                     const val = s.data[ri]?.y;
+                    const cellConfig = s.unit
+                      ? { ...leftAxisFormatConfig, ...getUnitRendering(s.unit) }
+                      : leftAxisFormatConfig;
                     return (
                       <td
                         key={si}
@@ -486,7 +496,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
                         }}
                       >
                         {val != null
-                          ? formatValueWithConfig(val, leftAxisFormatConfig, {
+                          ? formatValueWithConfig(val, cellConfig, {
                               fallbackDecimals: autoDecimals,
                             })
                           : "-"}
