@@ -546,9 +546,7 @@ const DevelopFilterBox = () => {
 
   const handleApply = useCallback(
     (newPanelFilters) => {
-      console.log("[TH-6624] handleApply received", newPanelFilters);
       const next = (newPanelFilters || []).map(panelFilterToStore);
-      console.log("[TH-6624] after panelFilterToStore", next);
       const safeNext = next.length
         ? next
         : [
@@ -566,25 +564,9 @@ const DevelopFilterBox = () => {
 
       const oldValid = filters.filter(validateFilter).map(transformFilter);
       const newValid = safeNext.filter(validateFilter).map(transformFilter);
-      console.log("[TH-6624] validated", {
-        oldValid,
-        newValid,
-        oldFiltersRaw: filters,
-        safeNext,
-      });
       setFilters(() => safeNext);
-      console.log(
-        "[TH-6624] setFilters called; Zustand should now hold",
-        safeNext,
-      );
       if (!isEqual(oldValid, newValid) && gridApi?.current?.onFilterChanged) {
-        console.log("[TH-6624] triggering grid onFilterChanged");
         gridApi.current.onFilterChanged();
-      } else {
-        console.log("[TH-6624] grid onFilterChanged NOT triggered", {
-          equal: isEqual(oldValid, newValid),
-          hasGridApi: !!gridApi?.current?.onFilterChanged,
-        });
       }
     },
     [filters, setFilters, gridApi],
