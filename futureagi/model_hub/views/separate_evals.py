@@ -2125,12 +2125,26 @@ class EvalTemplateCreateV2View(APIView):
                 choices_map = {}
 
             if req.eval_type == "code":
+                from model_hub.utils.code_eval_signature import (
+                    build_function_params_schema,
+                    parse_evaluate_params,
+                )
+
+                mapping_vars, config_params = parse_evaluate_params(
+                    req.code or "", req.code_language or "python"
+                )
                 config = {
                     "output": output_value,
                     "eval_type_id": "CustomCodeEval",
                     "code": req.code,
                     "language": req.code_language or "python",
-                    "required_keys": [],
+                    # Signature-derived: standard names bind to dataset row
+                    # fields, everything else becomes a config constant. Matches
+                    # how system YAML code evals declare params.
+                    "required_keys": mapping_vars,
+                    "function_params_schema": build_function_params_schema(
+                        config_params
+                    ),
                     "custom_eval": True,
                     # Keep cross-type restore from leaking stale FE state.
                     "few_shot_examples": [],
@@ -2648,6 +2662,25 @@ class EvalTemplateUpdateView(APIView):
                 if template.config is None:
                     template.config = {}
                 template.config["language"] = req.code_language
+
+            # Re-derive mapping vars + config params whenever the code OR
+            # language changes so the binding UI stays in sync with the
+            # signature the user just edited.
+            if req.code is not None or req.code_language is not None:
+                from model_hub.utils.code_eval_signature import (
+                    build_function_params_schema,
+                    parse_evaluate_params,
+                )
+
+                if template.config is None:
+                    template.config = {}
+                _code = template.config.get("code", "")
+                _lang = template.config.get("language", "python")
+                _mapping_vars, _config_params = parse_evaluate_params(_code, _lang)
+                template.config["required_keys"] = _mapping_vars
+                template.config["function_params_schema"] = (
+                    build_function_params_schema(_config_params)
+                )
 
             # LLM-as-a-judge fields
             if req.messages is not None:

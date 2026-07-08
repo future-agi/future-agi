@@ -37,7 +37,10 @@ export const buildDataInjection = (contextOptions = []) => {
   return Object.keys(flags).length > 0 ? flags : { full_row: true };
 };
 
-export { extractCodeEvaluateParams } from "src/utils/codeEvalParams";
+export {
+  extractCodeEvaluateParams,
+  splitCodeEvaluateParams,
+} from "src/utils/codeEvalParams";
 
 export const hasNonEmptyPromptMessage = (messages = []) =>
   messages.some((message) => {

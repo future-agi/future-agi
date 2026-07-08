@@ -26,7 +26,10 @@ import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
 import { useCreditExhaustion } from "src/hooks/use-credit-exhaustion";
 import axios, { endpoints } from "src/utils/axios";
-import { extractCodeEvaluateParams } from "src/utils/codeEvalParams";
+import {
+  extractCodeEvaluateParams,
+  splitCodeEvaluateParams,
+} from "src/utils/codeEvalParams";
 import { extractJinjaVariables } from "src/utils/jinjaVariables";
 import logger from "src/utils/logger";
 import { canonicalEntries } from "src/utils/utils";
@@ -781,8 +784,11 @@ const TestPlayground = React.forwardRef(
       // For code evals: system evals always have the canonical signature
       // `evaluate(input, output, expected, context, **kwargs)` and store
       // the real keys in YAML required_keys - use those directly.
-      // User-authored code is live-parsed so newly typed kwargs surface
-      // as mapping rows. Standard trio is the last-resort fallback.
+      // User-authored code is live-parsed and split so the standard row
+      // names (input/output/expected) become mapping variables here and
+      // custom-named params fall through to the config-values section
+      // below. Fallback keeps the standard trio visible until the parser
+      // succeeds on freshly-typed code.
       let codeStdVars = [];
       if (evalType === "code") {
         if (isSystemEval) {
@@ -791,10 +797,10 @@ const TestPlayground = React.forwardRef(
               ? requiredKeys
               : ["input", "output", "expected"];
         } else {
-          const liveParams = extractCodeEvaluateParams(code, codeLanguage);
+          const { mappingVars } = splitCodeEvaluateParams(code, codeLanguage);
           codeStdVars =
-            liveParams.length > 0
-              ? liveParams
+            mappingVars.length > 0
+              ? mappingVars
               : ["input", "output", "expected"];
         }
       }
@@ -852,13 +858,35 @@ const TestPlayground = React.forwardRef(
       [onCodeParamsChange],
     );
 
+    // Effective schema for the config-values section. For system evals the
+    // BE ships the schema up-front. For user code evals we synthesize one
+    // from live-parsed config params so custom-named signature args
+    // (`max_words_length`, `threshold`, ...) surface immediately as text
+    // inputs, before the draft's first BE round-trip.
+    const effectiveFunctionParamsSchema = React.useMemo(() => {
+      if (functionParamsSchema) return functionParamsSchema;
+      if (evalType !== "code" || isSystemEval) return null;
+      const { configParams } = splitCodeEvaluateParams(code, codeLanguage);
+      if (!configParams.length) return null;
+      const synthesized = {};
+      for (const name of configParams) {
+        synthesized[name] = {
+          type: "string",
+          default: null,
+          nullable: true,
+          required: false,
+        };
+      }
+      return synthesized;
+    }, [functionParamsSchema, evalType, isSystemEval, code, codeLanguage]);
+
     const visibleFunctionParamEntries = React.useMemo(() => {
-      if (!functionParamsSchema) return [];
+      if (!effectiveFunctionParamsSchema) return [];
       const variableSet = new Set(Array.isArray(variables) ? variables : []);
-      return canonicalEntries(functionParamsSchema).filter(
+      return canonicalEntries(effectiveFunctionParamsSchema).filter(
         ([key]) => !variableSet.has(key),
       );
-    }, [functionParamsSchema, variables]);
+    }, [effectiveFunctionParamsSchema, variables]);
 
     // Per-tab readiness - Custom always allows running (empty strings are
     // a valid input for exploratory testing); Dataset/Tracing/Simulation

@@ -6,6 +6,7 @@ import {
   contextOptionsForRowType,
   extractCodeEvaluateParams,
   getSourceModeVariables,
+  splitCodeEvaluateParams,
 } from "./evalPickerConfigUtils";
 
 describe("contextOptionsForRowType", () => {
@@ -321,5 +322,49 @@ describe("getSourceModeVariables", () => {
         compositeUnionKeys: ["child_input", "child_output"],
       }),
     ).toEqual(["child_input", "child_output"]);
+  });
+});
+
+describe("splitCodeEvaluateParams", () => {
+  it("splits the ticket-case signature so max_words_length lands in configParams", () => {
+    const code =
+      "def evaluate(max_words_length, input):\n" +
+      "    text = str(input).strip()\n" +
+      "    return {'score': 1.0}\n";
+    expect(splitCodeEvaluateParams(code, "python")).toEqual({
+      mappingVars: ["input"],
+      configParams: ["max_words_length"],
+    });
+  });
+
+  it("separates the standard row-derived names from custom params", () => {
+    const code =
+      "def evaluate(input, output, expected, threshold): pass\n";
+    expect(splitCodeEvaluateParams(code, "python")).toEqual({
+      mappingVars: ["input", "output", "expected"],
+      configParams: ["threshold"],
+    });
+  });
+
+  it("returns empty arrays for empty / unparseable code so callers can fall back", () => {
+    expect(splitCodeEvaluateParams("", "python")).toEqual({
+      mappingVars: [],
+      configParams: [],
+    });
+    expect(splitCodeEvaluateParams(null, "python")).toEqual({
+      mappingVars: [],
+      configParams: [],
+    });
+  });
+
+  it("handles the JS destructured signature form the code-editor emits", () => {
+    const code =
+      "function evaluate({ input, output, threshold, max_length = 5 }) {\n" +
+      "  return { score: 1.0 };\n" +
+      "}\n";
+    expect(splitCodeEvaluateParams(code, "javascript")).toEqual({
+      mappingVars: ["input", "output"],
+      configParams: ["threshold", "max_length"],
+    });
   });
 });

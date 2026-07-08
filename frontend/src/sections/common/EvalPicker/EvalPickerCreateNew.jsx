@@ -55,6 +55,7 @@ import { buildCompositeChildConfigs } from "src/sections/evals/Helpers/composite
 import {
   contextOptionsForRowType,
   extractCodeEvaluateParams,
+  splitCodeEvaluateParams,
 } from "./evalPickerConfigUtils";
 import { useParams } from "react-router";
 
@@ -137,6 +138,13 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const [instructions, setInstructions] = useState("");
   const [code, setCode] = useState(PYTHON_CODE_TEMPLATE);
   const [codeLanguage, setCodeLanguage] = useState("python");
+  // Config-value inputs for user code eval params that are not row-derived
+  // (e.g. `max_words_length`). Mirrors the state EvalPickerConfigFull owns
+  // for saved templates so both flows produce the same binding payload.
+  const [codeParams, setCodeParams] = useState({});
+  const handleCodeParamChange = useCallback((key, value) => {
+    setCodeParams((prev) => ({ ...prev, [key]: value }));
+  }, []);
   const [model, setModel] = useState("turing_large");
   const [outputType, setOutputType] = useState("pass_fail");
   const [passThreshold, setPassThreshold] = useState(0.5);
@@ -519,6 +527,9 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         name: name.trim(),
         model,
         mapping: sourceMapping,
+        // Constants for the user-defined code eval params; ignored by
+        // non-code evals so it's safe to always pass.
+        params: evalType === "code" ? codeParams : {},
         evalType,
         outputType,
         instructions,
@@ -671,8 +682,12 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     if (evalType === "code") {
       // Live-parse the user's `def evaluate(...)` signature so adding /
       // renaming a parameter immediately surfaces a new mapping row.
-      const liveParams = extractCodeEvaluateParams(code, codeLanguage);
-      if (liveParams.length > 0) return [...new Set(liveParams)];
+      // Only the standard row-derived names (`input`, `output`,
+      // `expected`) land in the mapping panel; custom-named params surface
+      // as text inputs in the Parameters (function_params_schema) section
+      // instead of demanding a dataset column.
+      const { mappingVars } = splitCodeEvaluateParams(code, codeLanguage);
+      if (mappingVars.length > 0) return [...new Set(mappingVars)];
       return ["input", "output", "expected"];
     }
     if (!instructions) return [];
@@ -686,6 +701,15 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     }
     return [...new Set(vars)];
   }, [instructions, evalType, templateFormat, code, codeLanguage]);
+
+  // Non-standard params that need a constant value (e.g. thresholds). Only
+  // surfaces for user code evals — system evals declare these in YAML and
+  // arrive with `function_params_schema` already populated on the fetched
+  // template.
+  const configParamKeys = useMemo(() => {
+    if (evalType !== "code") return [];
+    return splitCodeEvaluateParams(code, codeLanguage).configParams;
+  }, [evalType, code, codeLanguage]);
 
   return (
     <Box
@@ -1175,6 +1199,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     ref={sourceRef}
                     templateId={draftId}
                     variables={isComposite ? compositeUnionKeys : variables}
+                    codeParams={evalType === "code" ? codeParams : undefined}
                     model={model}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
@@ -1192,6 +1217,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     ref={sourceRef}
                     templateId={draftId}
                     variables={isComposite ? compositeUnionKeys : variables}
+                    codeParams={evalType === "code" ? codeParams : undefined}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
@@ -1208,6 +1234,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     ref={sourceRef}
                     templateId={draftId}
                     variables={isComposite ? compositeUnionKeys : variables}
+                    codeParams={evalType === "code" ? codeParams : undefined}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
@@ -1224,6 +1251,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                     ref={sourceRef}
                     templateId={draftId}
                     variables={isComposite ? compositeUnionKeys : variables}
+                    codeParams={evalType === "code" ? codeParams : undefined}
                     onTestResult={handleTestResult}
                     onColumnsLoaded={handleColumnsLoaded}
                     onReadyChange={handleSourceReadyChange}
@@ -1261,6 +1289,29 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                       onTestResult={handleTestResult}
                       onColumnsLoaded={handleColumnsLoaded}
                     />
+                  )}
+                {!isComposite &&
+                  evalType === "code" &&
+                  configParamKeys.length > 0 && (
+                    <Box sx={{ mt: 2 }}>
+                      <Typography variant="subtitle2" sx={{ mb: 1 }}>
+                        Parameters
+                      </Typography>
+                      {configParamKeys.map((key) => (
+                        <TextField
+                          key={key}
+                          fullWidth
+                          size="small"
+                          label={key}
+                          value={codeParams[key] ?? ""}
+                          onChange={(e) =>
+                            handleCodeParamChange(key, e.target.value)
+                          }
+                          placeholder="optional"
+                          sx={{ mb: 1 }}
+                        />
+                      ))}
+                    </Box>
                   )}
               </Box>
             </Box>

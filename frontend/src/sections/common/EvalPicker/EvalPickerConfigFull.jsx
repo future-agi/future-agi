@@ -75,6 +75,7 @@ import {
   extractCodeEvaluateParams,
   getSourceModeVariables,
   hasNonEmptyPromptMessage,
+  splitCodeEvaluateParams,
 } from "./evalPickerConfigUtils";
 
 const build_tools_payload = (selected_tools) =>
@@ -298,11 +299,14 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
 
       // User-authored code: live-parse the `def evaluate(...)` signature
       // so adding / renaming a param immediately surfaces a mapping row.
-      // Fall back to saved mapping + template required_keys when the code
-      // can't be parsed (non-python language, no `def evaluate`).
-      const liveParams = extractCodeEvaluateParams(code, codeLanguage);
-      if (liveParams.length > 0) {
-        return [...new Set([...liveParams, ...requiredKeys])];
+      // Only the standard row-derived names (`input`, `output`, `expected`)
+      // land in the mapping panel; other named params flow through to the
+      // Parameters (function_params_schema) section instead of demanding
+      // a dataset column. Fall back to saved mapping + template
+      // required_keys when the code can't be parsed.
+      const { mappingVars } = splitCodeEvaluateParams(code, codeLanguage);
+      if (mappingVars.length > 0) {
+        return [...new Set([...mappingVars, ...requiredKeys])];
       }
       return [...new Set([...savedStdvars, ...requiredKeys])];
     }

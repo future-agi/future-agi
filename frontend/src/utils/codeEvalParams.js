@@ -3,6 +3,16 @@
 
 const RESERVED_CODE_PARAMS = new Set(["context", "self", "cls"]);
 
+// Standard names the sandbox binds from the dataset row; must stay in sync
+// with `STANDARD_MAPPING_VARS` in model_hub/utils/code_eval_signature.py.
+// `context` is deliberately excluded from mapping variables because the
+// sandbox always synthesises it from the row.
+export const STANDARD_MAPPING_VARS = new Set([
+  "input",
+  "output",
+  "expected",
+]);
+
 // Depth-aware split on `,` so generics like `Dict[str, int]` and nested
 // destructuring patterns survive intact.
 const splitTopLevelCommas = (raw) => {
@@ -61,4 +71,22 @@ export const extractCodeEvaluateParams = (code, language) => {
     names.push(name);
   }
   return names;
+};
+
+// Split an `evaluate(...)` signature into the two groups the binding UI
+// cares about:
+//   * `mappingVars` — bind to dataset columns (standard row-derived names).
+//   * `configParams` — constant values the user supplies once at eval
+//     creation time (surfaced as text inputs, mirroring how system YAML
+//     evals declare `function_params_schema`).
+// Must stay aligned with `model_hub/utils/code_eval_signature.py`.
+export const splitCodeEvaluateParams = (code, language) => {
+  const names = extractCodeEvaluateParams(code, language);
+  const mappingVars = [];
+  const configParams = [];
+  for (const name of names) {
+    if (STANDARD_MAPPING_VARS.has(name)) mappingVars.push(name);
+    else configParams.push(name);
+  }
+  return { mappingVars, configParams };
 };
