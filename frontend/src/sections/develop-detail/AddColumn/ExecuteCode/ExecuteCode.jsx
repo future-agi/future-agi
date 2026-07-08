@@ -50,14 +50,7 @@ export const ExecuteCodeChild = ({
   const { refreshGrid } = useDevelopDetailContext();
 
   const { control, handleSubmit, reset } = useForm({
-    defaultValues: {
-      code: `# Function name should be main only. You can access any column of the row using the kwargs.
-def main(**kwargs):
-    return kwargs.get("column_name")
-`,
-      new_column_name: "",
-      concurrency: "",
-    },
+    defaultValues: getDefaultValue(),
     resolver: zodResolver(ExecuteCodeValidation(!!onFormSubmit, !!editId)),
   });
 
