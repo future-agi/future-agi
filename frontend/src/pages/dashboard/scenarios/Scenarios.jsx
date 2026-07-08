@@ -1,5 +1,12 @@
 /* eslint-disable react/prop-types */
-import { Box, Button, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  MenuItem,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import React, { useCallback, useMemo, useState } from "react";
@@ -16,6 +23,7 @@ import ScenarioActionMenu from "src/components/scenarios/ScenariosActionMenu";
 import { getChipConfig } from "src/components/scenarios/CustomCellRenderers/ChipCellRenderer";
 
 import { useAuthContext } from "src/auth/hooks";
+import { AGENT_TYPES } from "src/sections/agents/constants";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
@@ -83,6 +91,7 @@ function Scenarios() {
   const queryClient = useQueryClient();
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState(""); // "" = All types
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
 
@@ -94,13 +103,14 @@ function Scenarios() {
   const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["scenarios", page, pageSize, debouncedSearchQuery],
+    queryKey: ["scenarios", page, pageSize, debouncedSearchQuery, typeFilter],
     queryFn: () =>
       axios.get(endpoints.scenarios.list, {
         params: {
           page: page + 1,
           limit: pageSize,
           search: debouncedSearchQuery,
+          ...(typeFilter && { agent_type: typeFilter }),
         },
       }),
     select: (d) => d.data,
@@ -111,7 +121,11 @@ function Scenarios() {
   const total = data?.count ?? 0;
 
   const showEmptyScreen =
-    !isLoading && data && total === 0 && debouncedSearchQuery === "";
+    !isLoading &&
+    data &&
+    total === 0 &&
+    debouncedSearchQuery === "" &&
+    !typeFilter;
 
   const handleRowClick = useCallback(
     (row) => {
@@ -324,19 +338,39 @@ function Scenarios() {
                 alignItems: "center",
               }}
             >
-              <FormSearchField
-                size="small"
-                placeholder="Search"
-                sx={{
-                  minWidth: "250px",
-                  "& .MuiOutlinedInput-root": { height: "30px" },
-                }}
-                searchQuery={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setPage(0);
-                }}
-              />
+              <Stack direction="row" spacing={1.5} alignItems="center">
+                <FormSearchField
+                  size="small"
+                  placeholder="Search"
+                  sx={{
+                    minWidth: "250px",
+                    "& .MuiOutlinedInput-root": { height: "30px" },
+                  }}
+                  searchQuery={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setPage(0);
+                  }}
+                />
+                <TextField
+                  select
+                  size="small"
+                  value={typeFilter}
+                  onChange={(e) => {
+                    setTypeFilter(e.target.value);
+                    setPage(0); // reset to first page when the filter changes
+                  }}
+                  SelectProps={{ displayEmpty: true }}
+                  sx={{
+                    minWidth: 140,
+                    "& .MuiOutlinedInput-root": { height: "30px" },
+                  }}
+                >
+                  <MenuItem value="">All types</MenuItem>
+                  <MenuItem value={AGENT_TYPES.VOICE}>Voice</MenuItem>
+                  <MenuItem value={AGENT_TYPES.CHAT}>Chat</MenuItem>
+                </TextField>
+              </Stack>
             </Box>
 
             {/* Table */}
