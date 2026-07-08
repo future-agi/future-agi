@@ -463,8 +463,16 @@ class CHSpanReader:
         """Equivalent to ObservationSpan.objects.get(id=span_id), returns None
         if absent (matches the pattern most callers wrap with try/except).
 
-        ``project_id`` (optional) scopes to one tenant; omit for prior behavior."""
-        where = ["id = %(span_id)s", "is_deleted = 0"]
+        ``project_id`` (optional) scopes to one tenant; omit for prior behavior.
+
+        ``id`` is below the primary-key prefix, so a bare ``id =`` read prunes
+        only via the ``idx_id`` bloom — which CH 25.3 disables under FINAL by
+        default. Without it a point-read does a full in-order merge over every
+        part and the fat ``attributes_extra`` granule buffers blow the memory
+        limit on a wide (voice) span. Re-enable skip indexes; ``id`` is stable
+        across a row's ReplacingMergeTree versions, so the bloom is safe."""
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
+        where = ["id = %(span_id)s"]
         params: dict[str, Any] = {"span_id": span_id}
         if project_id:
             where.append("project_id = %(pid)s")
@@ -473,6 +481,7 @@ class CHSpanReader:
             f"SELECT {_SELECT_SQL} FROM spans FINAL "
             f"WHERE {' AND '.join(where)} LIMIT 1",
             parameters=params,
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         if not rows:
             return None
@@ -536,8 +545,14 @@ class CHSpanReader:
         Returned in start_time, id order so the eval runner's trace-walking
         logic sees spans in a deterministic chronological order. ``project_id``
         (optional) scopes the read to one tenant; omit for prior behavior.
+
+        ``trace_id`` sits below the primary-key prefix, so this prunes only via
+        the ``idx_trace_id`` bloom — off under FINAL on CH 25.3 by default,
+        leaving a full merge that OOMs on a fat (voice) trace's spans. Re-enable
+        skip indexes (``trace_id`` is a stable sorting-key column, so safe).
         """
-        where = ["trace_id = %(trace_id)s", "is_deleted = 0"]
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
+        where = ["trace_id = %(trace_id)s"]
         params: dict[str, Any] = {"trace_id": trace_id}
         if project_id:
             where.append("project_id = %(pid)s")
@@ -547,6 +562,7 @@ class CHSpanReader:
             f"WHERE {' AND '.join(where)} "
             "ORDER BY start_time, id",
             parameters=params,
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
 
@@ -556,12 +572,15 @@ class CHSpanReader:
         Single-row CH read — replaces listing every span in a trace just to
         find the first LLM/TOOL/etc. span.
         """
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS. Prunes via
+        # the ``idx_trace_id`` bloom (off under FINAL without the setting).
         rows = self._client.query(
             f"SELECT {_LEAN_SELECT_SQL} FROM spans FINAL "
-            "WHERE trace_id = %(trace_id)s AND is_deleted = 0 "
+            "WHERE trace_id = %(trace_id)s "
             "AND lower(observation_type) = %(otype)s "
             "ORDER BY start_time, id LIMIT 1",
             parameters={"trace_id": trace_id, "otype": observation_type.lower()},
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         return _row_to_chspan(rows[0]) if rows else None
 
@@ -719,11 +738,15 @@ class CHSpanReader:
         ordered by start_time, id. `limit` caps the result for display-list paths
         (e.g. `[:20]` slices that the AI-tools `get_span` does)."""
         lim_clause = f" LIMIT {int(limit)}" if limit else ""
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS. Prunes via
+        # the ``idx_parent_span_id`` bloom (off under FINAL without the setting);
+        # parent_span_id is stable across versions, so the bloom is safe.
         rows = self._client.query(
             f"SELECT {_SELECT_SQL} FROM spans FINAL "
-            "WHERE parent_span_id = %(parent)s AND is_deleted = 0 "
+            "WHERE parent_span_id = %(parent)s "
             f"ORDER BY start_time, id{lim_clause}",
             parameters={"parent": parent_span_id},
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
 
@@ -749,7 +772,10 @@ class CHSpanReader:
         if not span_ids:
             return []
         select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
-        where = ["id IN %(ids)s", "is_deleted = 0"]
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS. Prunes via
+        # the ``idx_id`` bloom (off under FINAL without the setting); a fat
+        # (voice) span in the batch otherwise OOMs the full in-order merge.
+        where = ["id IN %(ids)s"]
         params: dict[str, Any] = {"ids": tuple(span_ids)}
         if project_id:
             where.append("project_id = %(pid)s")
@@ -760,6 +786,7 @@ class CHSpanReader:
         rows = self._client.query(
             f"SELECT {select} FROM spans FINAL WHERE {' AND '.join(where)} ORDER BY id",
             parameters=params,
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
 
