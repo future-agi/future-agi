@@ -18098,6 +18098,7 @@ export const ModelHubDevelopsGetDatasetTableListQueryParams = zod.object({
 
 
 
+export const modelHubDevelopsGetDatasetTableListResponseResultColumnConfigItemEvalTagDefault = [];
 
 export const ModelHubDevelopsGetDatasetTableListResponse = zod.object({
   "status": zod.boolean(),
@@ -18128,9 +18129,7 @@ export const ModelHubDevelopsGetDatasetTableListResponse = zod.object({
   "reason_column": zod.boolean(),
   "is_numeric_eval": zod.boolean(),
   "is_numeric_eval_percentage": zod.boolean(),
-  "eval_tag": zod.object({
-
-}).passthrough(),
+  "eval_tag": zod.array(zod.string().min(1)).default(modelHubDevelopsGetDatasetTableListResponseResultColumnConfigItemEvalTagDefault),
   "metadata": zod.object({
 
 }).passthrough(),
@@ -18528,6 +18527,7 @@ export const ModelHubDevelopsGetExperimentDatasetTableListParams = zod.object({
 
 
 
+export const modelHubDevelopsGetExperimentDatasetTableListResponseResultColumnConfigItemEvalTagDefault = [];
 
 export const ModelHubDevelopsGetExperimentDatasetTableListResponse = zod.object({
   "status": zod.boolean(),
@@ -18558,9 +18558,7 @@ export const ModelHubDevelopsGetExperimentDatasetTableListResponse = zod.object(
   "reason_column": zod.boolean(),
   "is_numeric_eval": zod.boolean(),
   "is_numeric_eval_percentage": zod.boolean(),
-  "eval_tag": zod.object({
-
-}).passthrough(),
+  "eval_tag": zod.array(zod.string().min(1)).default(modelHubDevelopsGetExperimentDatasetTableListResponseResultColumnConfigItemEvalTagDefault),
   "metadata": zod.object({
 
 }).passthrough(),

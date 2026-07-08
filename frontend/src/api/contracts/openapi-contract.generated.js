@@ -92284,7 +92284,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "reason_column",
         "is_numeric_eval",
         "is_numeric_eval_percentage",
-        "eval_tag",
         "metadata",
         "choices_map"
       ],
@@ -92359,8 +92358,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "boolean"
         },
         "eval_tag": {
-          "title": "Eval tag",
-          "type": "object"
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": []
         },
         "metadata": {
           "title": "Metadata",

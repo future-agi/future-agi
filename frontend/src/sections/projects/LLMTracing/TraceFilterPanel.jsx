@@ -1913,6 +1913,10 @@ const TraceFilterPanel = ({
   const effectiveDefaultRow = defaultRowOverride || DEFAULT_ROW;
   const [activeTab, setActiveTab] = useState("basic");
   const [aiQuery, setAiQuery] = useState("");
+  // Set when the last AI query returned an empty filter list so the user
+  // gets an inline hint instead of a silent no-op. Cleared on next edit
+  // or next submit.
+  const [aiEmpty, setAiEmpty] = useState(false);
   // AI filter schema: exclude `attribute` category — those are typically
   // 100s–1000s of free-form keys that aren't referenced by name in natural
   // language and only slow step-1 field selection down without helping.
@@ -2166,6 +2170,7 @@ const TraceFilterPanel = ({
 
   const handleAiFilter = useCallback(async () => {
     if (!aiQuery.trim()) return;
+    setAiEmpty(false);
     const aiFilters = await aiParseQuery(aiQuery, {
       smart: true,
       projectId: observeId,
@@ -2202,6 +2207,10 @@ const TraceFilterPanel = ({
       // with null. Skip the safety net for this programmatic close.
       bypassNextCloseFlushRef.current = true;
       onClose();
+    } else {
+      // Model returned no filters — keep the popover open, keep the user's
+      // query intact, and surface the inline hint under the query input.
+      setAiEmpty(true);
     }
   }, [
     aiQuery,
@@ -2247,7 +2256,10 @@ const TraceFilterPanel = ({
                   : "Ask AI — e.g. 'show traces with errors on gpt-4'"
               }
               value={aiQuery}
-              onChange={(e) => setAiQuery(e.target.value)}
+              onChange={(e) => {
+                setAiQuery(e.target.value);
+                setAiEmpty(false);
+              }}
               disabled={aiLoading}
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleAiFilter();
@@ -2294,6 +2306,15 @@ const TraceFilterPanel = ({
                 sx={{ fontSize: 11, color: "text.secondary", px: 0.5 }}
               >
                 AI unavailable, use filters below
+              </Typography>
+            )}
+            {aiEmpty && !aiError && !aiLoading && (
+              <Typography
+                variant="caption"
+                sx={{ fontSize: 11, color: "text.secondary", px: 0.5 }}
+              >
+                Could not derive filters from that query. Try rephrasing or
+                add a filter manually below.
               </Typography>
             )}
           </>
