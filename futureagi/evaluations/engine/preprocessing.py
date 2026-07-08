@@ -11,39 +11,15 @@ network access or ML models inside the sandbox.
 import base64
 import json
 import os
-from urllib.parse import urlparse
 
-import requests
 import structlog
+
+from tfc.utils.ssrf_guard import _safe_get
 
 logger = structlog.get_logger(__name__)
 
 # Eval types that need preprocessing
 PREPROCESSORS = {}
-
-
-# Hosts that user-supplied URLs must never reach from the API server.
-# Mirrors the SSRF guard in agentic_eval/core/utils/functions.py so the
-# image-preprocessing path can't be turned into a port-scanner either.
-_BLOCKED_HOST_PREFIXES = (
-    "localhost",
-    "127.",
-    "10.",
-    "169.254.",
-    "192.168.",
-    "0.0.0.0",
-    "::1",
-    "metadata.google.internal",
-)
-_BLOCKED_HOST_172 = tuple(f"172.{i}." for i in range(16, 32))
-
-
-def _host_is_blocked(host: str) -> bool:
-    host = (host or "").lower().strip()
-    if not host:
-        return True
-    return host.startswith(_BLOCKED_HOST_PREFIXES) or host.startswith(_BLOCKED_HOST_172)
-
 
 # Browser-like UA so public hosts that block default `python-requests/X.X`
 # (Wikipedia, many CDNs) return 200 instead of 403.
@@ -55,49 +31,29 @@ _BROWSER_UA = (
 
 
 def _fetch_url_bytes(url):
-    """Fetch a user-supplied URL with SSRF guard + bounded body.
+    """Fetch a user-supplied URL with SSRF guard + bounded body via `_safe_get` (TH-5648 follow-up: this used to have its own weaker, prefix-based host blocklist that a raw `requests.get` could still redirect through).
 
     Returns (bytes, content_type) on success, None on any failure so the
-    caller can fall back. SSRF guard refuses private / loopback / metadata
-    hosts. 25 MB ceiling so this can never blow up gunicorn workers.
+    caller can fall back.
     """
     if not isinstance(url, str):
         return None
     stripped = url.strip()
     if not stripped or not stripped.startswith(("http://", "https://")):
         return None
-    host = urlparse(stripped).hostname or ""
-    if _host_is_blocked(host):
-        logger.warning("image_preprocess_blocked_host", host=host)
-        return None
     try:
-        with requests.get(
+        status, headers, body, _final_url = _safe_get(
             stripped,
-            timeout=(2, 5),
-            stream=True,
-            allow_redirects=True,
-            headers={"User-Agent": _BROWSER_UA},
-        ) as resp:
-            if resp.status_code != 200:
-                logger.warning(
-                    "image_preprocess_bad_status",
-                    status=resp.status_code,
-                    url=stripped[:120],
-                )
-                return None
-            chunks = []
-            total = 0
-            for chunk in resp.iter_content(chunk_size=64 * 1024):
-                if not chunk:
-                    continue
-                total += len(chunk)
-                if total > 25 * 1024 * 1024:
-                    logger.warning("image_preprocess_oversize", url=stripped[:120])
-                    return None
-                chunks.append(chunk)
-            data = b"".join(chunks)
-            ct = (resp.headers.get("Content-Type", "") or "").split(";")[0].strip().lower()
-        return data, ct or "application/octet-stream"
+            file_type="image",
+            extra_headers={"User-Agent": _BROWSER_UA},
+        )
+        if status != 200:
+            logger.warning(
+                "image_preprocess_bad_status", status=status, url=stripped[:120]
+            )
+            return None
+        ct = (headers.get("Content-Type", "") or "").split(";")[0].strip().lower()
+        return body, ct or "application/octet-stream"
     except Exception as e:
         logger.warning("image_preprocess_fetch_failed", url=stripped[:120], error=str(e))
         return None

@@ -22,6 +22,7 @@ from agentic_eval.core_evals.fi_evals.eval_type import (
     GroundedEvalTypeId,
     LlmEvalTypeId,
 )
+from tfc.utils.ssrf_guard import _safe_head
 
 
 class ModalityType(str, Enum):
@@ -568,14 +569,7 @@ def is_document_url(url):
             if not parsed_url.netloc:  # No domain/host
                 return False
 
-            # SSRF guard: this runs during column-type inference on *any*
-            # uploaded file whose values look like URLs, independent of
-            # whether the column is ever typed as Document -- a raw
-            # requests.head() here let a plain CSV upload make the server
-            # probe arbitrary internal/private addresses (TH-5648 follow-up).
-            # Import locally to avoid a models -> views import cycle.
-            from model_hub.views.utils.utils import _safe_head
-
+            # SSRF guard via the shared tfc.utils.ssrf_guard primitive -- a raw requests.head() here let a plain CSV upload probe internal addresses (TH-5648).
             try:
                 status_code, response_headers, _final_url = _safe_head(
                     url, file_type="document"
@@ -1155,22 +1149,24 @@ def _check_media_strings(str_values, media_type):
     return True
 
 
+# is_document_url is the only network-bound check below; cap how many values it ever runs against so a big column can't cost hundreds of blocking HEAD requests (TH-5648 follow-up).
+_MAX_DOCUMENT_CHECK_SAMPLES = 20
+
+
 def _classify_url_column(str_values):
     """
     Classify a column of URLs by checking if all are of the same media type.
     """
-    all_audio_urls = all(is_audio_url(url) for url in str_values)
-    all_image_urls = all(is_image_url(url) for url in str_values)
-    all_document_urls = all(is_document_url(url) for url in str_values)
-
-    if all_audio_urls:
+    if all(is_audio_url(url) for url in str_values):
         return DataTypeChoices.AUDIO.value
-    elif all_image_urls:
+    if all(is_image_url(url) for url in str_values):
         return DataTypeChoices.IMAGE.value
-    elif all_document_urls:
+
+    sample = str_values[:_MAX_DOCUMENT_CHECK_SAMPLES]
+    if sample and all(is_document_url(url) for url in sample):
         return DataTypeChoices.DOCUMENT.value
-    else:
-        return DataTypeChoices.TEXT.value
+
+    return DataTypeChoices.TEXT.value
 
 
 def determine_data_type(column_values):

@@ -15,7 +15,6 @@ from urllib.parse import urlparse
 
 import av
 import numpy as np
-import requests
 import soundfile as sf
 import structlog
 from PIL import Image
@@ -26,7 +25,50 @@ from requests.exceptions import ChunkedEncodingError, ConnectionError, RequestEx
 logger = structlog.get_logger(__name__)
 from tfc.settings.settings import MINIO_URL, UPLOAD_BUCKET_NAME
 from tfc.utils.error_codes import get_error_message
+from tfc.utils.ssrf_guard import _safe_get
 from tfc.utils.storage_client import ensure_bucket, get_object_url, get_storage_client
+
+MAX_VIDEO_FILE_SIZE = 200 * 1024 * 1024
+
+
+class _SSRFSafeResponse:
+    """Minimal requests.Response-like shim around `_safe_get`'s tuple return, so the URL-download helpers below need minimal changes to route through the SSRF guard."""
+
+    def __init__(self, status_code, headers, body):
+        self.status_code = status_code
+        self.headers = headers
+        self.content = body
+
+    def iter_content(self, chunk_size=8192):
+        for i in range(0, len(self.content), chunk_size):
+            yield self.content[i : i + chunk_size]
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RequestException(f"HTTP {self.status_code}")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+
+def _ssrf_safe_get(url, *, file_type, headers=None, timeout=20, max_bytes=None):
+    """SSRF-safe stand-in for `requests.get(url, ...)` (TH-5648 follow-up): every helper below used to fetch a user-supplied URL with a raw, unguarded `requests.get`, even when a caller had already run it through `validate_file_url` -- a HEAD-only pre-flight check doesn't protect a GET that goes through this separate, unpinned code path. Delegates to the shared, IP-pinned `tfc.utils.ssrf_guard._safe_get`.
+
+    Raises `RequestException` (not `ValueError`) on guard rejection so it's
+    caught by this file's existing `except RequestException` retry blocks
+    exactly like a normal connection failure would be.
+    """
+    kwargs = {"file_type": file_type, "timeout": timeout, "extra_headers": headers}
+    if max_bytes is not None:
+        kwargs["max_bytes"] = max_bytes
+    try:
+        status, resp_headers, body, _final_url = _safe_get(url, **kwargs)
+    except ValueError as e:
+        raise RequestException(str(e)) from e
+    return _SSRFSafeResponse(status, resp_headers, body)
 
 
 def get_compare_local_root():
@@ -264,7 +306,9 @@ def download_document_from_url(doc_url, max_retries=5, timeout=20):
 
     for attempt in range(max_retries):
         try:
-            response = requests.get(doc_url, headers=headers, timeout=timeout)
+            response = _ssrf_safe_get(
+                doc_url, file_type="document", headers=headers, timeout=timeout
+            )
 
             if response.status_code == 200:
                 # Get the content
@@ -898,7 +942,9 @@ def download_image_from_url(image_url, max_retries=5, timeout=20):
             logger.info(
                 f"[DEBUG] Attempt {attempt + 1}/{max_retries} for URL: {image_url}"
             )
-            with requests.get(image_url, headers=headers, timeout=timeout) as response:
+            with _ssrf_safe_get(
+                image_url, file_type="image", headers=headers, timeout=timeout
+            ) as response:
                 logger.info(
                     f"[DEBUG] Response status: {response.status_code}, URL: {image_url}"
                 )
@@ -945,7 +991,7 @@ def download_image_from_url(image_url, max_retries=5, timeout=20):
 def convert_image_from_url_to_base64(image_url, max_retries=5, timeout=120):
     for attempt in range(max_retries):
         try:
-            response = requests.get(image_url, timeout=timeout)
+            response = _ssrf_safe_get(image_url, file_type="image", timeout=timeout)
 
             if response.status_code == 200:
                 # Attempt to verify if the response is an image by using Pillow
@@ -1334,7 +1380,12 @@ def download_audio_from_url(
     for attempt in range(max_retries):
         audio_data = b""  # Reset audio_data for each attempt
         try:
-            with requests.get(audio_url, timeout=timeout, stream=True) as response:
+            with _ssrf_safe_get(
+                audio_url,
+                file_type="audio",
+                timeout=timeout,
+                max_bytes=MAX_AUDIO_FILE_SIZE,
+            ) as response:
                 if response.status_code == 200:
                     # Stream the content in chunks to handle large files and avoid IncompleteRead errors
                     try:
@@ -1861,7 +1912,12 @@ def upload_video_to_s3(
             video_bytes = video_data
             content_type = "video/mp4"
         elif is_valid_url(video_data):
-            response = requests.get(video_data, stream=True, timeout=30)
+            response = _ssrf_safe_get(
+                video_data,
+                file_type="video",
+                timeout=30,
+                max_bytes=MAX_VIDEO_FILE_SIZE,
+            )
             response.raise_for_status()
             video_bytes = response.content
             content_type = response.headers.get("Content-Type", "video/mp4")

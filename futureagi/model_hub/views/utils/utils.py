@@ -1,14 +1,15 @@
-import ipaddress
 import re
-import socket
 from typing import Literal, Union
-from urllib.parse import urljoin, urlparse
 
-import certifi
 import structlog
-import urllib3
 
 from tfc.ee_stub import _ee_stub
+from tfc.utils.ssrf_guard import (
+    _reject_unsafe_ip,
+    _resolve_pinned_ip,
+    _safe_head,
+    is_valid_url,
+)
 
 try:
     from ee.agenthub.eval_recommendation.eval_recommendation import (
@@ -160,6 +161,7 @@ def replace_uuids_in_messages(messages: list, uuid_to_name: dict) -> list:
 # File type configurations
 FILE_TYPE_CONFIG = {
     "image": {
+        # .svg intentionally excluded -- SVG can embed <script>, so it's a stored-XSS vector once rendered inline (TH-5648 follow-up).
         "extensions": (
             ".jpg",
             ".jpeg",
@@ -167,11 +169,11 @@ FILE_TYPE_CONFIG = {
             ".gif",
             ".bmp",
             ".webp",
-            ".svg",
             ".ico",
         ),
         "content_type_prefix": "image/",
         "check_content_type": True,
+        "rejected_content_types": {"image/svg+xml"},
     },
     "document": {
         "extensions": (
@@ -189,6 +191,7 @@ FILE_TYPE_CONFIG = {
         ),
         "content_type_prefix": None,
         "check_content_type": False,
+        "rejected_content_types": set(),
     },
     "audio": {
         "extensions": (
@@ -204,168 +207,12 @@ FILE_TYPE_CONFIG = {
         ),
         "content_type_prefix": "audio/",
         "check_content_type": True,
+        "rejected_content_types": set(),
     },
 }
 
 
-def is_valid_url(url_string: str) -> bool:
-    """Check if string is a valid URL"""
-    try:
-        url_pattern = re.compile(
-            r"^https?://"  # http:// or https://
-            r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|"  # domain
-            r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"  # or IP
-            r"(?::\d+)?"  # optional port
-            r"(?:/?|[/?]\S+)$",
-            re.IGNORECASE,
-        )
-        return bool(url_pattern.match(url_string))
-    except Exception:
-        return False
-
-
-# --- SSRF-safe fetch helpers -------------------------------------------------
-#
-# validate_file_url() has to make a real network request to a user-supplied
-# URL. That's an SSRF surface: naively using `requests.get/head(url)` lets a
-# caller point the server at cloud metadata endpoints (169.254.169.254),
-# loopback, or internal services, and — if redirects are involved — even a
-# URL that *looks* external can 30x into something internal.
-#
-# The guard below closes the two ways that kind of check is usually
-# bypassed:
-#   1. Every redirect hop is re-resolved and re-validated (not just the
-#      original URL) — otherwise an attacker just needs one public URL that
-#      redirects to an internal target.
-#   2. The IP we validate is the *exact* IP we connect to (we build the
-#      urllib3 connection pool directly against that IP, with the real
-#      hostname only used for the Host header / TLS SNI+cert check). This
-#      closes the DNS-rebinding/TOCTOU gap where a "validate hostname, then
-#      let requests independently re-resolve it" approach can validate one
-#      IP and connect to a different one if the attacker's DNS answers
-#      differently a few milliseconds later.
-_MAX_REDIRECTS = 5
-_FETCH_TIMEOUT_SECONDS = 5
-
-
-def _reject_unsafe_ip(ip_str: str, *, file_type: str, host: str) -> None:
-    ip = ipaddress.ip_address(ip_str)
-    if (
-        ip.is_private
-        or ip.is_loopback
-        or ip.is_link_local  # covers the 169.254.169.254 cloud metadata address
-        or ip.is_multicast
-        or ip.is_reserved
-        or ip.is_unspecified
-    ):
-        raise ValueError(
-            f"{file_type.capitalize()} URL host '{host}' resolves to a "
-            f"private/internal address and cannot be used."
-        )
-
-
-def _resolve_pinned_ip(host: str, *, file_type: str) -> str:
-    """Resolve `host` to a single IP, validated as public/routable.
-
-    Callers MUST connect to the returned IP directly rather than letting the
-    HTTP client re-resolve `host` itself — that second, independent lookup is
-    exactly the gap DNS-rebinding attacks exploit.
-    """
-    try:
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror as e:
-        raise ValueError(
-            f"Cannot resolve {file_type} URL host '{host}': {e}"
-        ) from None
-
-    resolved_ips = sorted({info[4][0] for info in infos})
-    if not resolved_ips:
-        raise ValueError(f"Cannot resolve {file_type} URL host '{host}'.")
-
-    # Validate every A/AAAA record, not just the one we'll use — a host that
-    # advertises both a public and a private address is still a hole.
-    for ip_str in resolved_ips:
-        _reject_unsafe_ip(ip_str, file_type=file_type, host=host)
-
-    return resolved_ips[0]
-
-
-def _safe_head(url: str, *, file_type: str):
-    """SSRF-safe HEAD request with manual, re-validated redirect handling.
-
-    Returns (status_code, headers, final_url). `final_url` is the URL after
-    following any redirects — callers must use it (not the original `url`)
-    for any further inspection (e.g. extension fallback), since checking the
-    pre-redirect URL while acting on the post-redirect response is its own
-    bypass.
-    """
-    current_url = url
-    for _ in range(_MAX_REDIRECTS):
-        parsed = urlparse(current_url)
-        if parsed.scheme not in ("http", "https"):
-            raise ValueError(
-                f"Unsupported scheme for {file_type} URL: '{parsed.scheme}'."
-            )
-        host = parsed.hostname
-        if not host:
-            raise ValueError(f"Invalid {file_type} URL: missing host.")
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-
-        pinned_ip = _resolve_pinned_ip(host, file_type=file_type)
-
-        path = parsed.path or "/"
-        if parsed.query:
-            path = f"{path}?{parsed.query}"
-
-        pool = None
-        try:
-            if parsed.scheme == "https":
-                pool = urllib3.HTTPSConnectionPool(
-                    pinned_ip,
-                    port=port,
-                    timeout=_FETCH_TIMEOUT_SECONDS,
-                    retries=False,
-                    assert_hostname=host,
-                    server_hostname=host,
-                    cert_reqs="CERT_REQUIRED",
-                    ca_certs=certifi.where(),
-                )
-            else:
-                pool = urllib3.HTTPConnectionPool(
-                    pinned_ip,
-                    port=port,
-                    timeout=_FETCH_TIMEOUT_SECONDS,
-                    retries=False,
-                )
-            response = pool.request(
-                "HEAD",
-                path,
-                headers={"Host": host},
-                redirect=False,
-                preload_content=False,
-            )
-        except urllib3.exceptions.HTTPError as e:
-            raise ValueError(f"Cannot access {file_type} URL: {e}") from None
-        finally:
-            if pool is not None:
-                pool.close()
-
-        if response.status in (301, 302, 303, 307, 308):
-            location = response.headers.get("Location")
-            if not location:
-                raise ValueError(
-                    f"{file_type.capitalize()} URL redirected with no Location header."
-                )
-            current_url = urljoin(current_url, location)
-            if not is_valid_url(current_url):
-                raise ValueError(
-                    f"{file_type.capitalize()} URL redirected to an invalid URL."
-                )
-            continue
-
-        return response.status, response.headers, current_url
-
-    raise ValueError(f"Too many redirects while validating {file_type} URL.")
+# SSRF-safe fetch primitives (is_valid_url, _reject_unsafe_ip, _resolve_pinned_ip, _safe_head) now live in tfc.utils.ssrf_guard, imported above.
 
 
 def validate_file_url(
@@ -418,7 +265,11 @@ def validate_file_url(
         expected_prefix = config["content_type_prefix"]
         valid_extensions = config["extensions"]
 
-        if content_type.startswith(expected_prefix):
+        if content_type in config["rejected_content_types"]:
+            raise ValueError(
+                f"URL content-type '{content_type}' is not an allowed {file_type} type."
+            )
+        elif content_type.startswith(expected_prefix):
             pass  # explicit content-type match — accept
         elif not content_type or content_type in _GENERIC_CONTENT_TYPES:
             # Server returned no useful type signal (empty, octet-stream, etc.).

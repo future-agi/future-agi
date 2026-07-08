@@ -18,12 +18,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from model_hub.views.utils.utils import (
-    _reject_unsafe_ip,
-    _resolve_pinned_ip,
-    _safe_head,
-    validate_file_url,
-)
+from model_hub.views.utils.utils import validate_file_url
+from tfc.utils.ssrf_guard import _reject_unsafe_ip, _resolve_pinned_ip, _safe_head
 
 
 def _fake_response(status, headers=None):
@@ -47,6 +43,9 @@ def _fake_response(status, headers=None):
         "192.168.1.1",  # private
         "0.0.0.0",  # unspecified
         "224.0.0.1",  # multicast
+        "100.64.0.1",  # CGNAT (RFC 6598) -- not covered by ipaddress.is_private
+        "::ffff:169.254.169.254",  # IPv4-mapped IPv6 form of the metadata address
+        "fd12:3456:789a::1",  # IPv6 unique local address
     ],
 )
 def test_reject_unsafe_ip_blocks_internal_ranges(ip_str):
@@ -63,7 +62,7 @@ def test_resolve_pinned_ip_rejects_if_any_record_is_private(monkeypatch):
     rejected — otherwise a multi-record host hides the private one.
     """
     monkeypatch.setattr(
-        "model_hub.views.utils.utils.socket.getaddrinfo",
+        "tfc.utils.ssrf_guard.socket.getaddrinfo",
         lambda host, port: [
             (None, None, None, None, ("8.8.8.8", 0)),
             (None, None, None, None, ("10.0.0.5", 0)),
@@ -75,7 +74,7 @@ def test_resolve_pinned_ip_rejects_if_any_record_is_private(monkeypatch):
 
 def test_resolve_pinned_ip_returns_public_ip(monkeypatch):
     monkeypatch.setattr(
-        "model_hub.views.utils.utils.socket.getaddrinfo",
+        "tfc.utils.ssrf_guard.socket.getaddrinfo",
         lambda host, port: [(None, None, None, None, ("8.8.8.8", 0))],
     )
     assert _resolve_pinned_ip("example.com", file_type="image") == "8.8.8.8"
@@ -87,7 +86,7 @@ def test_resolve_pinned_ip_raises_on_dns_failure(monkeypatch):
     def _raise(*a, **kw):
         raise socket.gaierror("nope")
 
-    monkeypatch.setattr("model_hub.views.utils.utils.socket.getaddrinfo", _raise)
+    monkeypatch.setattr("tfc.utils.ssrf_guard.socket.getaddrinfo", _raise)
     with pytest.raises(ValueError):
         _resolve_pinned_ip("nonexistent.example.com", file_type="image")
 
@@ -109,15 +108,13 @@ def test_safe_head_rejects_redirect_to_private_ip(monkeypatch):
             return [(None, None, None, None, ("169.254.169.254", 0))]
         raise AssertionError(f"unexpected host {host}")
 
-    monkeypatch.setattr(
-        "model_hub.views.utils.utils.socket.getaddrinfo", fake_getaddrinfo
-    )
+    monkeypatch.setattr("tfc.utils.ssrf_guard.socket.getaddrinfo", fake_getaddrinfo)
 
     redirect_response = _fake_response(
         302, {"Location": "http://internal.example.com/meta"}
     )
 
-    with patch("model_hub.views.utils.utils.urllib3.HTTPConnectionPool") as pool_cls:
+    with patch("tfc.utils.ssrf_guard.urllib3.HTTPConnectionPool") as pool_cls:
         pool_cls.return_value.request.return_value = redirect_response
         with pytest.raises(ValueError):
             _safe_head("http://public.example.com/redirect", file_type="image")
@@ -125,7 +122,7 @@ def test_safe_head_rejects_redirect_to_private_ip(monkeypatch):
 
 def test_safe_head_follows_valid_redirect_and_returns_final_url(monkeypatch):
     monkeypatch.setattr(
-        "model_hub.views.utils.utils.socket.getaddrinfo",
+        "tfc.utils.ssrf_guard.socket.getaddrinfo",
         lambda host, port: [(None, None, None, None, ("8.8.8.8", 0))],
     )
 
@@ -134,7 +131,7 @@ def test_safe_head_follows_valid_redirect_and_returns_final_url(monkeypatch):
     )
     final_response = _fake_response(200, {"Content-Type": "image/jpeg"})
 
-    with patch("model_hub.views.utils.utils.urllib3.HTTPConnectionPool") as pool_cls:
+    with patch("tfc.utils.ssrf_guard.urllib3.HTTPConnectionPool") as pool_cls:
         pool_cls.return_value.request.side_effect = [redirect_response, final_response]
         status, headers, final_url = _safe_head(
             "http://public.example.com/redirect", file_type="image"
@@ -147,14 +144,14 @@ def test_safe_head_follows_valid_redirect_and_returns_final_url(monkeypatch):
 
 def test_safe_head_caps_redirect_chain(monkeypatch):
     monkeypatch.setattr(
-        "model_hub.views.utils.utils.socket.getaddrinfo",
+        "tfc.utils.ssrf_guard.socket.getaddrinfo",
         lambda host, port: [(None, None, None, None, ("8.8.8.8", 0))],
     )
 
     def always_redirect(*args, **kwargs):
         return _fake_response(302, {"Location": "http://public.example.com/next"})
 
-    with patch("model_hub.views.utils.utils.urllib3.HTTPConnectionPool") as pool_cls:
+    with patch("tfc.utils.ssrf_guard.urllib3.HTTPConnectionPool") as pool_cls:
         pool_cls.return_value.request.side_effect = always_redirect
         with pytest.raises(ValueError, match="Too many redirects"):
             _safe_head("http://public.example.com/start", file_type="image")
@@ -162,10 +159,10 @@ def test_safe_head_caps_redirect_chain(monkeypatch):
 
 def test_safe_head_rejects_redirect_with_no_location(monkeypatch):
     monkeypatch.setattr(
-        "model_hub.views.utils.utils.socket.getaddrinfo",
+        "tfc.utils.ssrf_guard.socket.getaddrinfo",
         lambda host, port: [(None, None, None, None, ("8.8.8.8", 0))],
     )
-    with patch("model_hub.views.utils.utils.urllib3.HTTPConnectionPool") as pool_cls:
+    with patch("tfc.utils.ssrf_guard.urllib3.HTTPConnectionPool") as pool_cls:
         pool_cls.return_value.request.return_value = _fake_response(302, {})
         with pytest.raises(ValueError):
             _safe_head("http://public.example.com/x", file_type="image")
@@ -252,3 +249,28 @@ def test_validate_file_url_rejects_bad_status_code(monkeypatch):
     )
     with pytest.raises(ValueError):
         validate_file_url("https://public.example.com/missing.png", "image")
+
+
+# ---------------------------------------------------------------------------
+# SVG stored-XSS rejection (review comment: SVG can embed <script>)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_file_url_rejects_svg_content_type(monkeypatch):
+    monkeypatch.setattr(
+        "model_hub.views.utils.utils._safe_head",
+        lambda url, file_type: (200, {"Content-Type": "image/svg+xml"}, url),
+    )
+    with pytest.raises(ValueError):
+        validate_file_url("https://public.example.com/pic.svg", "image")
+
+
+def test_validate_file_url_rejects_svg_extension_with_generic_content_type(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        "model_hub.views.utils.utils._safe_head",
+        lambda url, file_type: (200, {}, url),
+    )
+    with pytest.raises(ValueError):
+        validate_file_url("https://public.example.com/pic.svg", "image")

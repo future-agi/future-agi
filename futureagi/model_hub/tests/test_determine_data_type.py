@@ -657,7 +657,7 @@ class TestIsDocumentUrlSSRF:
         `_safe_head` (IP-pinned, redirect-revalidated) rather than a raw
         `requests.head()` call.
         """
-        from model_hub.views.utils import utils as utils_module
+        import model_hub.models.choices as choices_module
 
         calls = []
 
@@ -665,11 +665,9 @@ class TestIsDocumentUrlSSRF:
             calls.append((url, file_type))
             return 200, {"content-type": "application/pdf"}, url
 
-        monkeypatch.setattr(utils_module, "_safe_head", fake_safe_head)
+        monkeypatch.setattr(choices_module, "_safe_head", fake_safe_head)
 
-        from model_hub.models.choices import is_document_url
-
-        assert is_document_url("https://example.com/report.pdf") is True
+        assert choices_module.is_document_url("https://example.com/report.pdf") is True
         assert calls == [("https://example.com/report.pdf", "document")]
 
     def test_safe_head_rejection_yields_false_not_exception(self, monkeypatch):
@@ -677,13 +675,56 @@ class TestIsDocumentUrlSSRF:
         `is_document_url` must degrade to False rather than propagating --
         callers use it as a boolean classifier during column-type inference.
         """
-        from model_hub.views.utils import utils as utils_module
+        import model_hub.models.choices as choices_module
 
         def raising_safe_head(url, *, file_type):
             raise ValueError("blocked")
 
-        monkeypatch.setattr(utils_module, "_safe_head", raising_safe_head)
+        monkeypatch.setattr(choices_module, "_safe_head", raising_safe_head)
 
-        from model_hub.models.choices import is_document_url
+        assert choices_module.is_document_url("https://example.com/report.pdf") is False
 
-        assert is_document_url("https://example.com/report.pdf") is False
+
+class TestClassifyUrlColumnSampling:
+    """TH-5648 follow-up: `is_document_url` is the only network-bound check in
+    `_classify_url_column`, so a large URL-like column used to cost one
+    blocking HEAD request per row. It must now only be run against a bounded
+    sample.
+    """
+
+    def test_document_check_is_capped_to_sample_size(self, monkeypatch):
+        import model_hub.models.choices as choices_module
+
+        calls = []
+
+        def fake_is_document_url(url):
+            calls.append(url)
+            return True
+
+        monkeypatch.setattr(choices_module, "is_document_url", fake_is_document_url)
+        monkeypatch.setattr(choices_module, "is_audio_url", lambda url: False)
+        monkeypatch.setattr(choices_module, "is_image_url", lambda url: False)
+
+        urls = [f"https://example.com/{i}.pdf" for i in range(100)]
+        result = choices_module._classify_url_column(urls)
+
+        assert result == choices_module.DataTypeChoices.DOCUMENT.value
+        assert len(calls) == choices_module._MAX_DOCUMENT_CHECK_SAMPLES
+
+    def test_skips_document_check_entirely_once_audio_or_image_matches(
+        self, monkeypatch
+    ):
+        import model_hub.models.choices as choices_module
+
+        calls = []
+        monkeypatch.setattr(
+            choices_module, "is_document_url", lambda url: calls.append(url) or True
+        )
+        monkeypatch.setattr(choices_module, "is_audio_url", lambda url: False)
+        monkeypatch.setattr(choices_module, "is_image_url", lambda url: True)
+
+        urls = [f"https://example.com/{i}.png" for i in range(5)]
+        result = choices_module._classify_url_column(urls)
+
+        assert result == choices_module.DataTypeChoices.IMAGE.value
+        assert calls == []
