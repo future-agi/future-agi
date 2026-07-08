@@ -40,6 +40,12 @@ export const existingDatasetValidationSchema = (datasetId, checkboxHandle) =>
       }),
     value: z.string().min(1, "Value is required"),
     dataType: z.string().min(1, "Data type is required"),
+    num_rows: z
+      .union([
+        z.coerce.number().int().min(1, { message: "Must be at least 1" }),
+        z.literal(""),
+      ])
+      .optional(),
     config: z.object({
       mapping: z
         .record(z.string())
