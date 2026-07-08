@@ -1267,6 +1267,22 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     enabled: Boolean(observeId),
   });
 
+  // The "Add custom columns" dialog promotes span attributes to table columns,
+  // so its picker must be sourced from span-attribute-keys — not the
+  // eval-attributes list above, which is empty for any project without
+  // configured evals and left the picker blank even when spans carry
+  // attributes (issue #1380).
+  const { data: spanAttributes } = useQuery({
+    queryKey: ["span-attribute-keys", observeId],
+    queryFn: () =>
+      axios.get(endpoints.project.spanAttributeKeys(), {
+        params: { project_id: observeId },
+      }),
+    select: (data) => data.data?.result || [],
+    enabled: Boolean(observeId),
+  });
+
+  // Shared node click handler for agent graph/path views
   const handleAgentNodeClick = useCallback(
     (nodeData) => {
       if (!nodeData?.type) return;
@@ -4547,7 +4563,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
             <CustomColumnDialog
               open={openCustomColumn}
               onClose={() => setOpenCustomColumn(false)}
-              attributes={attributes}
+              attributes={spanAttributes}
               existingColumns={columns[columnKey]}
               onAddColumns={handleAddCustomColumns}
               onRemoveColumns={handleRemoveCustomColumns}
