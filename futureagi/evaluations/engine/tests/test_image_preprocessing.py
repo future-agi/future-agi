@@ -58,7 +58,7 @@ def test_image_preprocessors_registered():
     ],
 )
 def test_resolver_does_not_touch_non_url_inputs(value):
-    with patch("evaluations.engine.preprocessing._safe_get") as mock_get:
+    with patch("evaluations.engine.preprocessing.safe_fetch") as mock_get:
         out = _resolve_image_input(value)
         mock_get.assert_not_called()
         assert out == value
@@ -94,13 +94,14 @@ def test_blocked_urls_never_fetch(url):
 
 
 def _safe_get_result(*, status=200, body=b"\x89PNG\r\n\x1a\n" + b"\x00" * 64, content_type="image/png", url="https://example.com/img.png"):
-    return status, {"Content-Type": content_type}, body, url
+    from tfc.utils.ssrf_guard import SsrfResponse
+    return SsrfResponse(status, {"Content-Type": content_type}, body, url)
 
 
 def test_successful_fetch_returns_base64():
     body = b"\x89PNG\r\n\x1a\n" + b"\x00" * 128
     with patch(
-        "evaluations.engine.preprocessing._safe_get",
+        "evaluations.engine.preprocessing.safe_fetch",
         return_value=_safe_get_result(body=body),
     ):
         out = _resolve_image_input("https://example.com/img.png")
@@ -111,7 +112,7 @@ def test_successful_fetch_returns_base64():
 def test_non_200_returns_original_url():
     url = "https://example.com/missing.png"
     with patch(
-        "evaluations.engine.preprocessing._safe_get",
+        "evaluations.engine.preprocessing.safe_fetch",
         return_value=_safe_get_result(status=404, body=b"", url=url),
     ):
         assert _resolve_image_input(url) == url
@@ -120,7 +121,7 @@ def test_non_200_returns_original_url():
 def test_fetch_exception_returns_original_url():
     url = "https://example.com/img.png"
     with patch(
-        "evaluations.engine.preprocessing._safe_get",
+        "evaluations.engine.preprocessing.safe_fetch",
         side_effect=Exception("connection refused"),
     ):
         assert _resolve_image_input(url) == url
@@ -131,7 +132,7 @@ def test_oversize_response_rejected_by_safe_get_returns_original_url():
     a ValueError which `_fetch_url_bytes` must catch and fall back on."""
     url = "https://example.com/huge.png"
     with patch(
-        "evaluations.engine.preprocessing._safe_get",
+        "evaluations.engine.preprocessing.safe_fetch",
         side_effect=ValueError("Image URL body exceeds byte limit."),
     ):
         out = _resolve_image_input(url)
@@ -145,7 +146,7 @@ def test_oversize_response_rejected_by_safe_get_returns_original_url():
 
 def test_image_properties_replaces_text_kwarg():
     with patch(
-        "evaluations.engine.preprocessing._safe_get",
+        "evaluations.engine.preprocessing.safe_fetch",
         return_value=_safe_get_result(),
     ):
         out = preprocess_inputs("image_properties", {"text": "https://example.com/x.png"})
@@ -155,7 +156,7 @@ def test_image_properties_replaces_text_kwarg():
 
 def test_psnr_replaces_both_kwargs():
     with patch(
-        "evaluations.engine.preprocessing._safe_get",
+        "evaluations.engine.preprocessing.safe_fetch",
         return_value=_safe_get_result(),
     ):
         out = preprocess_inputs(
@@ -171,7 +172,7 @@ def test_psnr_replaces_both_kwargs():
 
 def test_ssim_replaces_both_kwargs():
     with patch(
-        "evaluations.engine.preprocessing._safe_get",
+        "evaluations.engine.preprocessing.safe_fetch",
         return_value=_safe_get_result(),
     ):
         out = preprocess_inputs(
@@ -193,7 +194,7 @@ def test_ssim_replaces_both_kwargs():
 def test_data_uri_resolver_returns_data_uri_for_url():
     body = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
     with patch(
-        "evaluations.engine.preprocessing._safe_get",
+        "evaluations.engine.preprocessing.safe_fetch",
         return_value=_safe_get_result(body=body, content_type="image/png"),
     ):
         out = _resolve_image_input_as_data_uri("https://example.com/x.png")
@@ -206,7 +207,7 @@ def test_data_uri_resolver_forces_image_mime_when_octet_stream():
     rely on the `data:image/...` prefix to route — force it."""
     body = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
     with patch(
-        "evaluations.engine.preprocessing._safe_get",
+        "evaluations.engine.preprocessing.safe_fetch",
         return_value=_safe_get_result(body=body, content_type="application/octet-stream"),
     ):
         out = _resolve_image_input_as_data_uri("https://example.com/key-no-extension")
@@ -232,7 +233,7 @@ def test_data_uri_resolver_blocks_private_hosts():
 def test_fid_resolver_json_list_in_json_list_out():
     body = b"\x89PNG\r\n\x1a\n"
     with patch(
-        "evaluations.engine.preprocessing._safe_get",
+        "evaluations.engine.preprocessing.safe_fetch",
         return_value=_safe_get_result(body=body, content_type="image/png"),
     ):
         out = _resolve_fid_input(
@@ -246,7 +247,7 @@ def test_fid_resolver_json_list_in_json_list_out():
 def test_fid_resolver_python_list_passthrough_shape():
     body = b"\x89PNG\r\n\x1a\n"
     with patch(
-        "evaluations.engine.preprocessing._safe_get",
+        "evaluations.engine.preprocessing.safe_fetch",
         return_value=_safe_get_result(body=body, content_type="image/png"),
     ):
         out = _resolve_fid_input(["https://example.com/a.png"])

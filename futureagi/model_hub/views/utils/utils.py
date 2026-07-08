@@ -4,12 +4,7 @@ from typing import Literal, Union
 import structlog
 
 from tfc.ee_stub import _ee_stub
-from tfc.utils.ssrf_guard import (
-    _reject_unsafe_ip,
-    _resolve_pinned_ip,
-    _safe_head,
-    is_valid_url,
-)
+from tfc.utils.ssrf_guard import is_valid_url, safe_fetch
 
 try:
     from ee.agenthub.eval_recommendation.eval_recommendation import (
@@ -212,97 +207,75 @@ FILE_TYPE_CONFIG = {
 }
 
 
-# SSRF-safe fetch primitives (is_valid_url, _reject_unsafe_ip, _resolve_pinned_ip, _safe_head) now live in tfc.utils.ssrf_guard, imported above.
+_GENERIC_CONTENT_TYPES = {"application/octet-stream", "binary/octet-stream"}
+
+
+def _url_has_valid_extension(url: str, valid_extensions: tuple) -> bool:
+    path = url.lower().split("?")[0]
+    return any(path.endswith(ext) for ext in valid_extensions)
+
+
+def _url_has_any_extension(url: str) -> bool:
+    return "." in url.lower().split("?")[0].rsplit("/", 1)[-1]
 
 
 def validate_file_url(
     url: str, file_type: Union[Literal["image"], Literal["document"], Literal["audio"]]
 ) -> None:
-    """
-    Generic validation for file URLs (image, document, audio).
+    """Validate a user-supplied file URL is reachable and of the expected type.
 
-    Args:
-        url: The URL to validate
-        file_type: Type of file - "image", "document", or "audio"
-
-    Raises:
-        ValueError: If URL is invalid, inaccessible, or not the expected file type
+    Raises ValueError on any failure (invalid URL, unreachable, wrong type,
+    SSRF-blocked host).
     """
     if file_type not in FILE_TYPE_CONFIG:
-        raise ValueError(
-            f"Unsupported file_type: {file_type}. Must be one of {list(FILE_TYPE_CONFIG.keys())}"
-        )
-
+        raise ValueError(f"Unsupported file_type: {file_type}")
     if not url or not isinstance(url, str):
         raise ValueError(f"{file_type.capitalize()} URL cannot be empty")
 
     url = url.strip()
-
-    # Check if it's a valid URL format
     if not is_valid_url(url):
         raise ValueError(f"Invalid {file_type} URL format: '{url}'")
 
-    # Get configuration for this file type
     config = FILE_TYPE_CONFIG[file_type]
+    valid_extensions = config["extensions"]
 
-    # Generic types that carry no useful file-type signal.
-    _GENERIC_CONTENT_TYPES = {"application/octet-stream", "binary/octet-stream"}
-
-    status_code, headers, final_url = _safe_head(url, file_type=file_type)
-
-    if status_code >= 400:
+    response = safe_fetch(url, method="HEAD")
+    if response.status_code >= 400:
         raise ValueError(
-            f"{file_type.capitalize()} URL returned status code {status_code}"
+            f"{file_type.capitalize()} URL returned status code {response.status_code}"
         )
 
-    # From here on, use `final_url` (post-redirect) — not the original `url` —
-    # for any path/extension inspection.
-    if config["check_content_type"]:
-        # Content-Type is the primary signal. Extensions are used as a
-        # fallback only when the server returns a generic or missing type.
-        raw_ct = headers.get("Content-Type", "")
-        content_type = raw_ct.lower().split(";")[0].strip()
-        expected_prefix = config["content_type_prefix"]
-        valid_extensions = config["extensions"]
-
-        if content_type in config["rejected_content_types"]:
-            raise ValueError(
-                f"URL content-type '{content_type}' is not an allowed {file_type} type."
-            )
-        elif content_type.startswith(expected_prefix):
-            pass  # explicit content-type match — accept
-        elif not content_type or content_type in _GENERIC_CONTENT_TYPES:
-            # Server returned no useful type signal (empty, octet-stream, etc.).
-            # Use extension as the signal:
-            #   - known good extension → accept
-            #   - no extension at all  → accept (S3/CDN URLs; magic-byte check downstream)
-            #   - explicit bad extension (.exe, .txt …) → reject
-            url_path_lower = final_url.lower().split("?")[0]
-            has_any_ext = "." in url_path_lower.rsplit("/", 1)[-1]
-            if has_any_ext and not any(
-                url_path_lower.endswith(ext) for ext in valid_extensions
-            ):
-                raise ValueError(
-                    f"URL has a non-{file_type} extension and no content-type signal."
-                )
-        else:
-            # Server returned an explicit, non-generic content-type that
-            # doesn't match — reject outright, no extension fallback.
-            raise ValueError(
-                f"URL does not appear to be a {file_type}: "
-                f"content-type '{content_type}' is not '{expected_prefix}*'"
-            )
-    else:
-        # No content-type check available for this file type (e.g. documents).
-        # Validate by extension instead — without this an arbitrary reachable
-        # URL would pass.
-        valid_extensions = config["extensions"]
-        url_path = final_url.lower().split("?")[0]
-        if not any(url_path.endswith(ext) for ext in valid_extensions):
+    if not config["check_content_type"]:
+        # No content-type signal available (e.g. documents) — extension is the only check.
+        if not _url_has_valid_extension(response.final_url, valid_extensions):
             raise ValueError(
                 f"URL does not appear to be a {file_type}. "
                 f"Expected extensions: {', '.join(valid_extensions)}"
             )
+        return
+
+    content_type = response.headers.get("Content-Type", "").lower().split(";")[0].strip()
+    if content_type in config["rejected_content_types"]:
+        raise ValueError(
+            f"URL content-type '{content_type}' is not an allowed {file_type} type."
+        )
+    if content_type.startswith(config["content_type_prefix"]):
+        return
+
+    # Server gave no useful type signal — fall back to extension.
+    if not content_type or content_type in _GENERIC_CONTENT_TYPES:
+        if _url_has_any_extension(response.final_url) and not _url_has_valid_extension(
+            response.final_url, valid_extensions
+        ):
+            raise ValueError(
+                f"URL has a non-{file_type} extension and no content-type signal."
+            )
+        return
+
+    raise ValueError(
+        f"URL does not appear to be a {file_type}: content-type '{content_type}' "
+        f"is not '{config['content_type_prefix']}*'"
+    )
 
 
 def get_recommendations(new_dataset):

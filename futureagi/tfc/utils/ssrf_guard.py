@@ -1,7 +1,10 @@
-"""Shared SSRF-safe URL fetch primitives (TH-5648). Every redirect hop is re-validated and the IP that gets validated is the exact IP that gets connected to (no DNS-rebinding/TOCTOU gap). Lives in tfc.utils (not model_hub.views) so model_hub.models and evaluations can use it without depending on model_hub.views. See PR #962 review."""
+"""SSRF-safe URL fetch primitive.
+
+The IP that gets validated is the exact IP that gets connected to (no
+DNS-rebinding TOCTOU gap), and every redirect hop is re-validated.
+"""
 
 import ipaddress
-import re
 import socket
 from urllib.parse import urljoin, urlparse
 
@@ -9,76 +12,88 @@ import certifi
 import urllib3
 
 _MAX_REDIRECTS = 5
-_FETCH_TIMEOUT_SECONDS = 5
-
-# 100.64.0.0/10 (RFC 6598 carrier-grade NAT, used internally by several cloud providers/Tailscale) isn't covered by ipaddress.is_private/is_reserved -- blocked explicitly below.
-_EXTRA_BLOCKED_NETWORKS = (ipaddress.ip_network("100.64.0.0/10"),)
-
-# Default cap on bytes _safe_get will buffer; callers can override via `max_bytes`.
+_DEFAULT_TIMEOUT_SECONDS = 5
 _DEFAULT_MAX_BODY_BYTES = 25 * 1024 * 1024
 
-_URL_PATTERN = re.compile(
-    r"^https?://"  # http:// or https://
-    r"(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+[A-Z]{2,6}\.?|"  # domain
-    r"\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})"  # or IP
-    r"(?::\d+)?"  # optional port
-    r"(?:/?|[/?]\S+)$",
-    re.IGNORECASE,
-)
+# 100.64.0.0/10 is RFC 6598 carrier-grade NAT (used by some cloud providers,
+# Tailscale). Not covered by ipaddress.is_private/is_reserved.
+_EXTRA_BLOCKED_NETWORKS = (ipaddress.ip_network("100.64.0.0/10"),)
+
+
+class SsrfResponse:
+    """Small requests.Response-like object returned by safe_fetch.
+
+    `content` is fully buffered in memory (bounded by max_bytes). `iter_content`
+    yields chunks of that already-loaded buffer — it does NOT stream; keeping
+    the method for drop-in compatibility with callers migrated off requests.
+    """
+
+    __slots__ = ("status_code", "headers", "content", "final_url")
+
+    def __init__(self, status_code, headers, content, final_url):
+        self.status_code = status_code
+        self.headers = headers
+        self.content = content
+        self.final_url = final_url
+
+    def iter_content(self, chunk_size=8192):
+        for i in range(0, len(self.content), chunk_size):
+            yield self.content[i : i + chunk_size]
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise urllib3.exceptions.HTTPError(f"HTTP {self.status_code}")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
 
 
 def is_valid_url(url_string: str) -> bool:
     """Cheap syntactic URL check (no network). Does not imply safety."""
     try:
-        return bool(_URL_PATTERN.match(url_string))
+        parsed = urlparse(url_string)
     except Exception:
         return False
+    return parsed.scheme in ("http", "https") and bool(parsed.hostname)
 
 
-def _reject_unsafe_ip(ip_str: str, *, file_type: str, host: str) -> None:
+def _reject_unsafe_ip(ip_str: str, host: str) -> None:
     ip = ipaddress.ip_address(ip_str)
     if (
         ip.is_private
         or ip.is_loopback
-        or ip.is_link_local  # covers the 169.254.169.254 cloud metadata address
+        or ip.is_link_local  # covers 169.254.169.254 metadata endpoint
         or ip.is_multicast
         or ip.is_reserved
         or ip.is_unspecified
         or any(ip in net for net in _EXTRA_BLOCKED_NETWORKS)
     ):
         raise ValueError(
-            f"{file_type.capitalize()} URL host '{host}' resolves to a "
-            f"private/internal address and cannot be used."
+            f"URL host '{host}' resolves to a private/internal address."
         )
 
 
-def _resolve_pinned_ip(host: str, *, file_type: str) -> str:
-    """Resolve `host` to a single IP, validated as public/routable.
-
-    Callers MUST connect to the returned IP directly rather than letting the
-    HTTP client re-resolve `host` itself -- that second, independent lookup
-    is exactly the gap DNS-rebinding attacks exploit.
-    """
+def _resolve_pinned_ip(host: str) -> str:
+    """Resolve `host` and validate every A/AAAA record. Returns one pinned IP."""
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror as e:
-        raise ValueError(
-            f"Cannot resolve {file_type} URL host '{host}': {e}"
-        ) from None
+        raise ValueError(f"Cannot resolve URL host '{host}': {e}") from None
 
     resolved_ips = sorted({info[4][0] for info in infos})
     if not resolved_ips:
-        raise ValueError(f"Cannot resolve {file_type} URL host '{host}'.")
+        raise ValueError(f"Cannot resolve URL host '{host}'.")
 
-    # Validate every A/AAAA record, not just the one we'll use -- a multi-record host could hide a private one.
     for ip_str in resolved_ips:
-        _reject_unsafe_ip(ip_str, file_type=file_type, host=host)
-
+        _reject_unsafe_ip(ip_str, host)
     return resolved_ips[0]
 
 
-def _open_pinned_pool(parsed, pinned_ip, host, port, timeout):
-    if parsed.scheme == "https":
+def _open_pinned_pool(scheme, pinned_ip, host, port, timeout):
+    if scheme == "https":
         return urllib3.HTTPSConnectionPool(
             pinned_ip,
             port=port,
@@ -90,125 +105,46 @@ def _open_pinned_pool(parsed, pinned_ip, host, port, timeout):
             ca_certs=certifi.where(),
         )
     return urllib3.HTTPConnectionPool(
-        pinned_ip,
-        port=port,
-        timeout=timeout,
-        retries=False,
+        pinned_ip, port=port, timeout=timeout, retries=False
     )
 
 
-def _safe_head(url: str, *, file_type: str):
-    """SSRF-safe HEAD request with manual, re-validated redirect handling.
-
-    Returns (status_code, headers, final_url). `final_url` is the URL after
-    following any redirects -- callers must use it (not the original `url`)
-    for any further inspection (e.g. extension fallback), since checking the
-    pre-redirect URL while acting on the post-redirect response is its own
-    bypass.
-    """
-    current_url = url
-    for _ in range(_MAX_REDIRECTS):
-        parsed = urlparse(current_url)
-        if parsed.scheme not in ("http", "https"):
-            raise ValueError(
-                f"Unsupported scheme for {file_type} URL: '{parsed.scheme}'."
-            )
-        host = parsed.hostname
-        if not host:
-            raise ValueError(f"Invalid {file_type} URL: missing host.")
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-
-        pinned_ip = _resolve_pinned_ip(host, file_type=file_type)
-
-        path = parsed.path or "/"
-        if parsed.query:
-            path = f"{path}?{parsed.query}"
-
-        pool = None
-        try:
-            pool = _open_pinned_pool(
-                parsed, pinned_ip, host, port, _FETCH_TIMEOUT_SECONDS
-            )
-            response = pool.request(
-                "HEAD",
-                path,
-                headers={"Host": host},
-                redirect=False,
-                preload_content=False,
-            )
-        except urllib3.exceptions.HTTPError as e:
-            raise ValueError(f"Cannot access {file_type} URL: {e}") from None
-        finally:
-            if pool is not None:
-                pool.close()
-
-        if response.status in (301, 302, 303, 307, 308):
-            location = response.headers.get("Location")
-            if not location:
-                raise ValueError(
-                    f"{file_type.capitalize()} URL redirected with no Location header."
-                )
-            current_url = urljoin(current_url, location)
-            if not is_valid_url(current_url):
-                raise ValueError(
-                    f"{file_type.capitalize()} URL redirected to an invalid URL."
-                )
-            continue
-
-        return response.status, response.headers, current_url
-
-    raise ValueError(f"Too many redirects while validating {file_type} URL.")
-
-
-def _safe_get(
+def safe_fetch(
     url: str,
     *,
-    file_type: str,
+    method: str = "HEAD",
+    timeout: float = _DEFAULT_TIMEOUT_SECONDS,
     max_bytes: int = _DEFAULT_MAX_BODY_BYTES,
-    timeout: float = _FETCH_TIMEOUT_SECONDS,
-    extra_headers: dict = None,
-):
-    """SSRF-safe GET with manual, re-validated redirect handling + a body cap.
+    headers: dict = None,
+) -> SsrfResponse:
+    """Fetch `url` with SSRF protection.
 
-    Same IP-pinning and per-hop redirect re-validation as `_safe_head`, but
-    performs a real GET and returns the (size-capped) response body. Use
-    this -- not a raw `requests.get` -- anywhere that needs the actual bytes
-    of a user-supplied URL (e.g. downloading an image for eval input
-    preprocessing). A HEAD-only pre-flight check does not protect a
-    downstream byte-fetch that goes through a different code path; this is
-    the primitive that does.
-
-    Returns (status_code, headers, body_bytes, final_url) on success.
-    Raises ValueError for any SSRF-relevant rejection (unsafe host, too many
-    redirects, oversized body, bad scheme, etc).
+    Method: HEAD or GET. For GET, the body is buffered up to `max_bytes`.
+    Redirects are followed manually (5 hops max), re-validating each hop.
+    Raises ValueError on any SSRF-relevant rejection.
     """
     current_url = url
     for _ in range(_MAX_REDIRECTS):
         parsed = urlparse(current_url)
         if parsed.scheme not in ("http", "https"):
-            raise ValueError(
-                f"Unsupported scheme for {file_type} URL: '{parsed.scheme}'."
-            )
+            raise ValueError(f"Unsupported URL scheme: '{parsed.scheme}'.")
         host = parsed.hostname
         if not host:
-            raise ValueError(f"Invalid {file_type} URL: missing host.")
+            raise ValueError("Invalid URL: missing host.")
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
-
-        pinned_ip = _resolve_pinned_ip(host, file_type=file_type)
+        pinned_ip = _resolve_pinned_ip(host)
 
         path = parsed.path or "/"
         if parsed.query:
             path = f"{path}?{parsed.query}"
 
-        pool = None
+        pool = _open_pinned_pool(parsed.scheme, pinned_ip, host, port, timeout)
         response = None
         try:
-            pool = _open_pinned_pool(parsed, pinned_ip, host, port, timeout)
-            request_headers = {"Host": host, **(extra_headers or {})}
             response = pool.request(
-                "GET",
+                method,
                 path,
-                headers=request_headers,
+                headers={"Host": host, **(headers or {})},
                 redirect=False,
                 preload_content=False,
             )
@@ -216,36 +152,34 @@ def _safe_get(
             if response.status in (301, 302, 303, 307, 308):
                 location = response.headers.get("Location")
                 if not location:
-                    raise ValueError(
-                        f"{file_type.capitalize()} URL redirected with no "
-                        f"Location header."
-                    )
+                    raise ValueError("Redirect with no Location header.")
                 current_url = urljoin(current_url, location)
                 if not is_valid_url(current_url):
-                    raise ValueError(
-                        f"{file_type.capitalize()} URL redirected to an "
-                        f"invalid URL."
-                    )
+                    raise ValueError("Redirect target is not a valid URL.")
                 continue
 
-            if response.status != 200:
-                return response.status, response.headers, b"", current_url
+            content = b""
+            if method == "GET" and response.status == 200:
+                body = bytearray()
+                for chunk in response.stream(64 * 1024):
+                    body.extend(chunk)
+                    if len(body) > max_bytes:
+                        raise ValueError(
+                            f"URL body exceeds {max_bytes} byte limit."
+                        )
+                content = bytes(body)
 
-            body = bytearray()
-            for chunk in response.stream(64 * 1024):
-                body.extend(chunk)
-                if len(body) > max_bytes:
-                    raise ValueError(
-                        f"{file_type.capitalize()} URL body exceeds "
-                        f"{max_bytes} byte limit."
-                    )
-            return response.status, dict(response.headers), bytes(body), current_url
+            return SsrfResponse(
+                status_code=response.status,
+                headers=dict(response.headers),
+                content=content,
+                final_url=current_url,
+            )
         except urllib3.exceptions.HTTPError as e:
-            raise ValueError(f"Cannot access {file_type} URL: {e}") from None
+            raise ValueError(f"Cannot access URL: {e}") from None
         finally:
             if response is not None:
                 response.release_conn()
-            if pool is not None:
-                pool.close()
+            pool.close()
 
-    raise ValueError(f"Too many redirects while fetching {file_type} URL.")
+    raise ValueError("Too many redirects.")

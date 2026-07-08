@@ -652,35 +652,30 @@ class TestIsDocumentUrlSSRF:
 
         assert is_document_url("http://10.0.0.5/internal") is False
 
-    def test_uses_safe_head_not_raw_requests(self, monkeypatch):
-        """Pin the implementation detail: classification must go through
-        `_safe_head` (IP-pinned, redirect-revalidated) rather than a raw
-        `requests.head()` call.
-        """
+    def test_uses_safe_fetch_not_raw_requests(self, monkeypatch):
+        """Classification must go through the SSRF guard, not `requests.head`."""
         import model_hub.models.choices as choices_module
+        from tfc.utils.ssrf_guard import SsrfResponse
 
         calls = []
 
-        def fake_safe_head(url, *, file_type):
-            calls.append((url, file_type))
-            return 200, {"content-type": "application/pdf"}, url
+        def fake_safe_fetch(url, **kwargs):
+            calls.append((url, kwargs.get("method")))
+            return SsrfResponse(200, {"content-type": "application/pdf"}, b"", url)
 
-        monkeypatch.setattr(choices_module, "_safe_head", fake_safe_head)
+        monkeypatch.setattr(choices_module, "safe_fetch", fake_safe_fetch)
 
         assert choices_module.is_document_url("https://example.com/report.pdf") is True
-        assert calls == [("https://example.com/report.pdf", "document")]
+        assert calls == [("https://example.com/report.pdf", "HEAD")]
 
-    def test_safe_head_rejection_yields_false_not_exception(self, monkeypatch):
-        """If `_safe_head` raises (e.g. SSRF target, timeout, bad redirect),
-        `is_document_url` must degrade to False rather than propagating --
-        callers use it as a boolean classifier during column-type inference.
-        """
+    def test_safe_fetch_rejection_yields_false_not_exception(self, monkeypatch):
+        """SSRF rejection must degrade to False (best-effort classifier)."""
         import model_hub.models.choices as choices_module
 
-        def raising_safe_head(url, *, file_type):
+        def raising_safe_fetch(url, **kwargs):
             raise ValueError("blocked")
 
-        monkeypatch.setattr(choices_module, "_safe_head", raising_safe_head)
+        monkeypatch.setattr(choices_module, "safe_fetch", raising_safe_fetch)
 
         assert choices_module.is_document_url("https://example.com/report.pdf") is False
 

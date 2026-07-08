@@ -6382,13 +6382,25 @@ class DatatypeConverter:
             # Catch any other unexpected errors
             raise ValueError(f"Failed to convert to JSON: {str(e)}") from e
 
-    # Buckets we already host content in. A URL pointing at any of these is
-    # ours and should be linked, not re-downloaded and re-uploaded. Exported
-    # CSVs carry URLs from both — `fi-customer-data*` (customer uploads) and
-    # `fi-content-dev` (platform-generated/exported content) — so both must
-    # be checked (TH-5648: only the first was covered, so re-exported
-    # `fi-content-dev` images were needlessly round-tripped).
-    _OWN_S3_BUCKET_MARKERS = ("fi-customer-data", "fi-content-dev")
+    _OWN_S3_BUCKET_MARKERS = tuple(
+        m.strip()
+        for m in os.getenv(
+            "OWN_S3_BUCKET_MARKERS", "fi-customer-data,fi-content-dev"
+        ).split(",")
+        if m.strip()
+    )
+
+    @classmethod
+    def _is_own_s3_url(cls, value):
+        if not isinstance(value, str):
+            return False
+        try:
+            from urllib.parse import urlparse
+
+            host = (urlparse(value).hostname or "").lower()
+        except Exception:
+            return False
+        return any(marker in host for marker in cls._OWN_S3_BUCKET_MARKERS)
 
     def _convert_cell_to_image(self, cell):
         """Convert to image - uploads to S3"""
@@ -6405,10 +6417,7 @@ class DatatypeConverter:
                     parsed = json.loads(image_value)
                     if isinstance(parsed, list) and len(parsed) == 1:
                         image_value = parsed[0]
-                        is_s3_url = isinstance(image_value, str) and any(
-                            marker in image_value
-                            for marker in self._OWN_S3_BUCKET_MARKERS
-                        )
+                        is_s3_url = self._is_own_s3_url(image_value)
                 except (json.JSONDecodeError, TypeError):
                     pass
 

@@ -14,7 +14,7 @@ import os
 
 import structlog
 
-from tfc.utils.ssrf_guard import _safe_get
+from tfc.utils.ssrf_guard import safe_fetch
 
 logger = structlog.get_logger(__name__)
 
@@ -31,29 +31,25 @@ _BROWSER_UA = (
 
 
 def _fetch_url_bytes(url):
-    """Fetch a user-supplied URL with SSRF guard + bounded body via `_safe_get` (TH-5648 follow-up: this used to have its own weaker, prefix-based host blocklist that a raw `requests.get` could still redirect through).
-
-    Returns (bytes, content_type) on success, None on any failure so the
-    caller can fall back.
-    """
+    """SSRF-guarded fetch. Returns (bytes, content_type) or None on any failure."""
     if not isinstance(url, str):
         return None
     stripped = url.strip()
     if not stripped or not stripped.startswith(("http://", "https://")):
         return None
     try:
-        status, headers, body, _final_url = _safe_get(
-            stripped,
-            file_type="image",
-            extra_headers={"User-Agent": _BROWSER_UA},
+        response = safe_fetch(
+            stripped, method="GET", headers={"User-Agent": _BROWSER_UA}
         )
-        if status != 200:
+        if response.status_code != 200:
             logger.warning(
-                "image_preprocess_bad_status", status=status, url=stripped[:120]
+                "image_preprocess_bad_status",
+                status=response.status_code,
+                url=stripped[:120],
             )
             return None
-        ct = (headers.get("Content-Type", "") or "").split(";")[0].strip().lower()
-        return body, ct or "application/octet-stream"
+        ct = (response.headers.get("Content-Type", "") or "").split(";")[0].strip().lower()
+        return response.content, ct or "application/octet-stream"
     except Exception as e:
         logger.warning("image_preprocess_fetch_failed", url=stripped[:120], error=str(e))
         return None

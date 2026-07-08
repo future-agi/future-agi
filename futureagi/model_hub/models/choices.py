@@ -22,7 +22,7 @@ from agentic_eval.core_evals.fi_evals.eval_type import (
     GroundedEvalTypeId,
     LlmEvalTypeId,
 )
-from tfc.utils.ssrf_guard import _safe_head
+from tfc.utils.ssrf_guard import safe_fetch
 
 
 class ModalityType(str, Enum):
@@ -569,20 +569,16 @@ def is_document_url(url):
             if not parsed_url.netloc:  # No domain/host
                 return False
 
-            # SSRF guard via the shared tfc.utils.ssrf_guard primitive -- a raw requests.head() here let a plain CSV upload probe internal addresses (TH-5648).
             try:
-                status_code, response_headers, _final_url = _safe_head(
-                    url, file_type="document"
-                )
+                response = safe_fetch(url, method="HEAD")
             except ValueError:
                 return False
 
-            if status_code != 200:
+            if response.status_code != 200:
                 return False
 
-            # Check if the response indicates it's a downloadable document
-            content_type = response_headers.get("content-type", "").lower()
-            content_length = response_headers.get("content-length")
+            content_type = response.headers.get("content-type", "").lower()
+            content_length = response.headers.get("content-length")
 
             # If content-length is 0 or very small, it's probably not a real file
             if content_length and int(content_length) < 100:
