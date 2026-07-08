@@ -1,9 +1,5 @@
 import { z } from "zod";
 
-// Field names match the snake_case shape the backend returns from
-// `GET /model-hub/columns/{id}/operation-config/` → `result.metadata`, so
-// `reset(initialData)` on edit hydrates the form directly without a
-// snake↔camel transform. Same pattern PR #1309 established for extract_json.
 export const ExtractEntitiesValidationSchema = (
   isConditioalNode = false,
   isEdit,

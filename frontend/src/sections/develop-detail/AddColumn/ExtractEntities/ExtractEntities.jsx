@@ -40,16 +40,7 @@ export const ExtractEntitiesChild = ({
   const { refreshGrid } = useDevelopDetailContext();
 
   const { control, handleSubmit, reset } = useForm({
-    // snake_case fields match the backend metadata shape directly, so
-    // `reset(initialData)` populates on edit without a transform. See
-    // validation.js for the contract note. (Fix follows PR #1309.)
-    defaultValues: {
-      column_id: "",
-      instruction: "",
-      language_model_id: "",
-      concurrency: undefined,
-      new_column_name: "",
-    },
+    defaultValues: getDefaultValue(),
     resolver: zodResolver(
       ExtractEntitiesValidationSchema(!!onFormSubmit, !!editId),
     ),
@@ -116,8 +107,6 @@ export const ExtractEntitiesChild = ({
     },
   });
 
-  // Form fields are already snake_case (see defaultValues above), so we
-  // pass formValues straight through to the API — no snake↔camel remap.
   const onSubmit = (formValues) => {
     if (editId) {
       updateColumn({

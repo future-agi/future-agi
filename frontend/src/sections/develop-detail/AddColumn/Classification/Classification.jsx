@@ -47,15 +47,7 @@ export const ClassificationChild = ({
   const { refreshGrid } = useDevelopDetailContext();
 
   const { control, handleSubmit, reset } = useForm({
-    // snake_case fields match backend metadata → `reset(initialData)`
-    // populates directly on edit (fix pattern from PR #1309).
-    defaultValues: {
-      column_id: "",
-      labels: [],
-      language_model_id: "",
-      concurrency: "",
-      new_column_name: "",
-    },
+    defaultValues: getDefaultValue(),
     resolver: zodResolver(
       ClassificationValidationSchema(!!onFormSubmit, !!editId),
     ),
@@ -122,8 +114,6 @@ export const ClassificationChild = ({
     },
   });
 
-  // Form fields are already snake_case (see defaultValues above), so we pass
-  // formValues straight through — no snake↔camel remap.
   const onSubmit = (formValues) => {
     if (editId) {
       updateColumn({

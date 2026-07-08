@@ -56,6 +56,50 @@ const FORM_COMPONENTS = {
   api_call: AddColumnApiCallChild,
 };
 
+const getEmptyBranchConfig = () => ({
+  column_id: "",
+  instruction: "",
+  language_model_id: "",
+  column_name: "",
+  url: "",
+  method: "POST",
+  params: {},
+  headers: {},
+  body: "",
+  output_type: "string",
+  concurrency: "",
+  json_key: "",
+  code: `# Function name should be main only. You can access any column of the row using the kwargs.
+def main(**kwargs):
+    return kwargs.get("column_name")
+`,
+  new_column_name: "",
+  labels: [],
+  subType: "",
+  apiKey: "",
+  indexName: "",
+  namespace: "",
+  topK: "",
+  queryKey: "",
+  embeddingConfig: { model: "", type: "" },
+  collectionName: "",
+  searchType: "",
+  key: "",
+  vectorLength: "",
+  name: "",
+  model: "",
+  outputFormat: "string",
+  messages: [{ id: getRandomId(), role: "user", content: "" }],
+  responseFormat: null,
+  temperature: 0.5,
+  topP: 1,
+  maxTokens: 4085,
+  presencePenalty: 1,
+  frequencyPenalty: 1,
+  toolChoice: "none",
+  tools: [],
+});
+
 const defaultValues = {
   new_column_name: "",
   type: "conditional",
@@ -65,56 +109,7 @@ const defaultValues = {
       condition: "",
       branch_node_config: {
         type: "",
-        config: {
-          column_id: "",
-          instruction: "",
-          language_model_id: "",
-          columnName: "",
-          url: "",
-          method: "POST",
-          params: {},
-          headers: {},
-          body: "",
-          outputType: "",
-          concurrency: "",
-          jsonKey: "",
-          code: `# Function name should be main only. You can access any column of the row using the kwargs.
-def main(**kwargs):
-    return kwargs.get("column_name")
-`,
-          newColumnName: "",
-          labels: [],
-          subType: "",
-          apiKey: "",
-          indexName: "", // For Pinecone
-          namespace: "", // For Pinecone
-          topK: "", // Common across retrieval types
-          queryKey: "", // For Pinecone
-          embeddingConfig: { model: "", type: "" },
-          collectionName: "", // For Qdrant and Weaviate
-          searchType: "", // For Weaviate
-          key: "",
-          vectorLength: "",
-          name: "",
-          model: "",
-          outputFormat: "string",
-          messages: [
-            {
-              id: getRandomId(),
-              role: "user",
-              content: "",
-            },
-          ],
-          responseFormat: null,
-          temperature: 0.5,
-          topP: 1,
-          maxTokens: 4085,
-          presencePenalty: 1,
-          frequencyPenalty: 1,
-          toolChoice: "none",
-          tools: [],
-          // runType: "",
-        },
+        config: getEmptyBranchConfig(),
       },
     },
   ],
@@ -194,56 +189,7 @@ const ConditionalNodeChild = ({ editId }) => {
       condition: currentConfig.condition,
       branch_node_config: {
         type: value,
-        config: {
-          column_id: "",
-          instruction: "",
-          language_model_id: "",
-          columnName: "",
-          url: "",
-          method: "POST",
-          params: {},
-          headers: {},
-          body: "",
-          outputType: "string",
-          concurrency: "",
-          jsonKey: "",
-          newColumnName: "",
-          code: `# Function name should be main only. You can access any column of the row using the kwargs.
-def main(**kwargs):
-    return kwargs.get("column_name")
-`,
-          labels: [],
-          subType: "",
-          columnId: "",
-          apiKey: "",
-          indexName: "",
-          namespace: "",
-          topK: "",
-          queryKey: "",
-          embeddingConfig: { model: "", type: "" },
-          collectionName: "",
-          searchType: "",
-          key: "",
-          vectorLength: "",
-          name: "",
-          model: "",
-          outputFormat: "string",
-          messages: [
-            {
-              id: getRandomId(),
-              role: "user",
-              content: "",
-            },
-          ],
-          responseFormat: null,
-          temperature: 0.5,
-          topP: 1,
-          maxTokens: 4085,
-          presencePenalty: 1,
-          frequencyPenalty: 1,
-          toolChoice: "none",
-          tools: [],
-        },
+        config: getEmptyBranchConfig(),
       },
     };
 
@@ -282,56 +228,7 @@ def main(**kwargs):
       condition: "",
       branch_node_config: {
         type: "",
-        config: {
-          column_id: "",
-          instruction: "",
-          language_model_id: "",
-          columnName: "",
-          url: "",
-          method: "POST",
-          params: {},
-          headers: {},
-          body: "",
-          outputType: "string",
-          concurrency: "",
-          jsonKey: "",
-          newColumnName: "",
-          code: `# Function name should be main only. You can access any column of the row using the kwargs.
-def main(**kwargs):
-    return kwargs.get("column_name")
-`,
-          labels: [],
-          subType: "",
-          columnId: "",
-          apiKey: "",
-          indexName: "", // For Pinecone
-          namespace: "", // For Pinecone
-          topK: "", // Common across retrieval types
-          queryKey: "", // For Pinecone
-          embeddingConfig: { model: "", type: "" },
-          collectionName: "", // For Qdrant and Weaviate
-          searchType: "", // For Weaviate
-          key: "",
-          vectorLength: "",
-          name: "",
-          model: "",
-          outputFormat: "string",
-          messages: [
-            {
-              id: getRandomId(),
-              role: "user",
-              content: "",
-            },
-          ],
-          responseFormat: null,
-          temperature: 0.5,
-          topP: 1,
-          maxTokens: 4085,
-          presencePenalty: 1,
-          frequencyPenalty: 1,
-          toolChoice: "none",
-          tools: [], // runType: ""
-        },
+        config: getEmptyBranchConfig(),
       },
     });
   };
@@ -423,11 +320,6 @@ def main(**kwargs):
         };
         break;
       case "classification":
-        // Child form now writes snake_case fields (column_id,
-        // language_model_id, new_column_name) natively — see PR #1309 +
-        // TH-6543 refactor — so ...formData already carries the right
-        // shape. The explicit camelCase remaps that used to live here
-        // would now overwrite the real values with `undefined`.
         updateConfig = {
           ...currentConfig,
           branch_node_config: {
@@ -463,8 +355,6 @@ def main(**kwargs):
       case "extract_entities":
       case "extract_json":
       case "extract_code":
-        // Child forms now write snake_case natively (PR #1309 + TH-6543);
-        // ...formData carries the correct shape without a remap.
         updateConfig = {
           ...currentConfig,
           branch_node_config: {
@@ -554,10 +444,6 @@ def main(**kwargs):
         switch (data.branch_node_config.type) {
           case "api_call":
             {
-              // New branches (post-TH-6543) persist `column_name` and
-              // `output_type` snake-side. Legacy branches saved before
-              // this PR still have `columnName` / `outputType` (camel).
-              // Read snake first, fall back to camel — no migration needed.
               const cfg = data.branch_node_config.config || {};
               const configData = {
                 branch_type: data.branch_type,
@@ -570,8 +456,8 @@ def main(**kwargs):
                     params: cfg.params,
                     headers: cfg.headers,
                     body: body.length ? JSON.parse(body) : {},
-                    column_name: cfg.column_name ?? cfg.columnName,
-                    output_type: cfg.output_type ?? cfg.outputType,
+                    column_name: cfg.column_name,
+                    output_type: cfg.output_type,
                     concurrency: cfg.concurrency,
                   },
                 },
@@ -653,55 +539,37 @@ def main(**kwargs):
           case "extract_json":
           case "extract_code":
             {
-              // New branches (post-PR #1309 + TH-6543) are stored in
-              // snake_case. Old branches persisted before those PRs kept
-              // camelCase (jsonKey, newColumnName). Read new first, fall
-              // back to legacy — no data migration needed.
               const cfg = data.branch_node_config.config || {};
+              const branchType = data.branch_node_config.type;
+              const config = {
+                new_column_name: cfg.new_column_name,
+                concurrency: cfg.concurrency,
+              };
+              if (branchType === "extract_entities" || branchType === "extract_json") {
+                config.column_id = cfg.column_id;
+              }
+              if (branchType === "extract_json") {
+                config.json_key = cfg.json_key;
+              }
+              if (branchType === "extract_entities") {
+                config.language_model_id = cfg.language_model_id;
+                config.instruction = cfg.instruction;
+              }
+              if (branchType === "extract_code") {
+                config.code = cfg.code;
+              }
               const configData = {
                 branch_type: data.branch_type,
                 condition: transformCondition(data.condition, allColumns),
                 branch_node_config: {
-                  type: cfg.type,
-                  config: {
-                    ...cfg,
-                    // Legacy-camel → snake fallbacks (harmless if already
-                    // snake, since ...cfg above set the snake key first).
-                    // extract_code has no `column_id` on either shape, so
-                    // skip that key entirely for that type to avoid
-                    // polluting the payload with `column_id: undefined`.
-                    ...((data.branch_node_config.type === "extract_json" ||
-                      data.branch_node_config.type === "extract_entities") && {
-                      column_id: cfg.column_id ?? cfg.columnId,
-                    }),
-                    ...(data.branch_node_config.type === "extract_json" && {
-                      json_key: cfg.json_key ?? cfg.jsonKey,
-                    }),
-                    ...(data.branch_node_config.type ===
-                      "extract_entities" && {
-                      language_model_id:
-                        cfg.language_model_id ?? cfg.languageModelId,
-                    }),
-                    new_column_name:
-                      cfg.new_column_name ?? cfg.newColumnName,
-                    concurrency: cfg.concurrency,
-                  },
+                  type: branchType,
+                  config,
                 },
               };
               formattedData.config.push(configData);
             }
             break;
           case "classification": {
-            // New branches (post-TH-6543) persist snake_case throughout.
-            // Legacy branches saved before this PR have `newColumnName`
-            // / `columnId` / `languageModelId`. Read snake first, fall
-            // back to camel — no migration needed.
-            //
-            // Labels: the child's zod schema `.transform((t) => t.map((e) => e.value))`
-            // already reduces `[{id,value}]` to `[value,value]` at submit
-            // time, so `cfg.labels` here is already the string-array the
-            // backend wants. Guard against the legacy object-array shape
-            // too in case a mid-session state slipped through.
             const cfg = data.branch_node_config.config || {};
             const labels = Array.isArray(cfg.labels)
               ? cfg.labels.map((item) =>
@@ -714,12 +582,11 @@ def main(**kwargs):
               branch_node_config: {
                 type: data.branch_node_config.config.type,
                 config: {
-                  column_id: cfg.column_id ?? cfg.columnId,
+                  column_id: cfg.column_id,
                   labels,
-                  new_column_name: cfg.new_column_name ?? cfg.newColumnName,
+                  new_column_name: cfg.new_column_name,
                   concurrency: cfg.concurrency,
-                  language_model_id:
-                    cfg.language_model_id ?? cfg.languageModelId,
+                  language_model_id: cfg.language_model_id,
                 },
               },
             };

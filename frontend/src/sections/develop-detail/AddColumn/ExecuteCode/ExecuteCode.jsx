@@ -104,8 +104,6 @@ def main(**kwargs):
     },
   });
 
-  // Form fields are already snake_case (see defaultValues above), so we pass
-  // formValues straight through — no snake↔camel remap.
   const onSubmit = (formValues) => {
     if (editId) {
       updateColumn({
