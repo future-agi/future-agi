@@ -39,6 +39,8 @@ import {
   getTypeDefinitions,
   onCellValueChangedWrapper,
   postProcessPopup,
+  RefreshStatus,
+  withPendingColumnLoadingState,
 } from "./common";
 import JsonCellEditor from "./DoubleClickEditCell/JsonCellEditor";
 import { defaultRowHeightMapping } from "src/utils/constants";
@@ -86,13 +88,6 @@ import { OutputTypes } from "../../common/DevelopCellRenderer/CellRenderers/cell
 import { useAuthContext } from "src/auth/hooks";
 import { ROLES } from "src/utils/rolePermissionMapping";
 const PdfPreviewDrawer = lazy(() => import("src/components/PdfPreviewDrawer"));
-const RefreshStatus = [
-  "Running",
-  "NotStarted",
-  "Editing",
-  "ExperimentEvaluation",
-  "PartialRun",
-];
 
 const getResultColumnConfig = (result) => result?.column_config ?? [];
 const getResultIsProcessingData = (result) =>
@@ -291,7 +286,10 @@ const getDataSource = (
           if (getResultIsSyntheticDataset(result)) {
             updateProcessingSyntheticData(false);
           }
-          const fetchedRows = rows || [];
+          const fetchedRows = withPendingColumnLoadingState(
+            rows || [],
+            columnConfig,
+          );
           const isLastPage = fetchedRows.length < DATASET_ROWS_LIMIT;
 
           params.success({
@@ -1029,7 +1027,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
             });
           }
           const transaction = {
-            update: rows,
+            update: withPendingColumnLoadingState(rows, columnConfig),
           };
 
           // if we are getting processing percentage for synthetic data we don't to put data in the grid hence returning early

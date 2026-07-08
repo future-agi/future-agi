@@ -41,6 +41,51 @@ const STATUS = {
   FAILED: "Failed",
 };
 
+// Column-level statuses that mean the column's cells are still being
+// (re)computed server-side. Single source of truth shared by the grid poll
+// (DevelopDataV2) and the optimistic loading helper below so they never drift.
+export const RefreshStatus = [
+  "Running",
+  "NotStarted",
+  "Editing",
+  "ExperimentEvaluation",
+  "PartialRun",
+];
+
+// A just-added column carries a refreshing column-status before the async
+// worker flips its cells to "running", so those cells render blank instead of a
+// loading skeleton. For every refreshing column, mark its not-yet-populated
+// cells as running so the skeleton shows immediately; cells that already have a
+// value/error/running status are left for the next server poll to replace.
+export const withPendingColumnLoadingState = (rows, columnConfig) => {
+  if (!Array.isArray(rows) || !Array.isArray(columnConfig)) return rows;
+  const pendingColumnIds = columnConfig
+    .filter((column) => RefreshStatus.includes(column?.status))
+    .map((column) => column?.id);
+  if (pendingColumnIds.length === 0) return rows;
+
+  return rows.map((row) => {
+    let nextRow = row;
+    for (const columnId of pendingColumnIds) {
+      const cell = row?.[columnId];
+      const cellValue = cell?.cell_value ?? cell?.cellValue;
+      const hasValue =
+        cellValue !== undefined && cellValue !== null && cellValue !== "";
+      const cellStatus = cell?.status?.toLowerCase?.();
+      if (
+        hasValue ||
+        cellStatus === StatusTypes.RUNNING ||
+        cellStatus === StatusTypes.ERROR
+      ) {
+        continue;
+      }
+      if (nextRow === row) nextRow = { ...row };
+      nextRow[columnId] = { ...(cell ?? {}), status: StatusTypes.RUNNING };
+    }
+    return nextRow;
+  });
+};
+
 const DEFAULT_MIN_WIDTH = 300;
 
 const NonEditableColumns = [

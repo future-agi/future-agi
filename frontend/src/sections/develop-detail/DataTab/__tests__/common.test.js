@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from "vitest";
-import { enhanceCol, getColumnConfig } from "../common";
+import {
+  enhanceCol,
+  getColumnConfig,
+  RefreshStatus,
+  withPendingColumnLoadingState,
+} from "../common";
+import { StatusTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 
 describe("enhanceCol", () => {
   it("preserves null data_type from snake_case input", () => {
@@ -88,5 +94,58 @@ describe("getColumnConfig valueGetter", () => {
       data: {},
     });
     expect(result).toBe(undefined);
+  });
+});
+
+describe("withPendingColumnLoadingState", () => {
+  // A just-added eval-prompt/dynamic column: column status is a refreshing
+  // value while the async worker has not yet flipped the cells to "running".
+  const refreshingConfig = [
+    { id: "colDone", status: "Completed" },
+    { id: "colPending", status: "NotStarted" },
+  ];
+  const mkRows = () => [
+    { rowId: 1, colDone: { cell_value: "answer", status: "pass" } },
+    { rowId: 2, colDone: { cell_value: "answer", status: "pass" } },
+  ];
+
+  it("marks blank cells of a refreshing column as running so they load", () => {
+    const rows = mkRows();
+    const result = withPendingColumnLoadingState(rows, refreshingConfig);
+    // The pending column had no cell at all in the row -> now a running cell.
+    expect(result[0].colPending.status).toBe(StatusTypes.RUNNING);
+    expect(result[1].colPending.status).toBe(StatusTypes.RUNNING);
+  });
+
+  it("NotStarted is one of the statuses that triggers loading", () => {
+    // Guards against the constant drifting away from the render behaviour.
+    expect(RefreshStatus).toContain("NotStarted");
+    expect(RefreshStatus).toContain("Running");
+  });
+
+  it("leaves cells that already have a value untouched", () => {
+    const result = withPendingColumnLoadingState(mkRows(), refreshingConfig);
+    expect(result[0].colDone.cell_value).toBe("answer");
+    expect(result[0].colDone.status).toBe("pass");
+  });
+
+  it("does not mark cells when the column has finished (Completed)", () => {
+    const rows = [{ rowId: 1, colDone: { cell_value: "", status: "pass" } }];
+    const config = [{ id: "colDone", status: "Completed" }];
+    const result = withPendingColumnLoadingState(rows, config);
+    expect(result[0].colDone.status).toBe("pass");
+  });
+
+  it("preserves an existing error status on a refreshing column", () => {
+    const rows = [{ rowId: 1, colPending: { status: "error" } }];
+    const config = [{ id: "colPending", status: "Running" }];
+    const result = withPendingColumnLoadingState(rows, config);
+    expect(result[0].colPending.status).toBe("error");
+  });
+
+  it("returns rows unchanged when no column is refreshing", () => {
+    const rows = mkRows();
+    const config = [{ id: "colDone", status: "Completed" }];
+    expect(withPendingColumnLoadingState(rows, config)).toBe(rows);
   });
 });
