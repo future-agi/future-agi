@@ -153,8 +153,10 @@ def test_execute_template_rejects_template_from_a_different_org(monkeypatch):
     consumer = _make_consumer(workspace_id="00000000-0000-0000-0000-000000000000")
     consumer.user.can_access_workspace = MagicMock(return_value=True)
 
-    workspace_obj = MagicMock(organization_id="org-a")
-    template_obj = MagicMock(organization_id="org-b")  # different org
+    workspace_obj = MagicMock(id="ws-a", organization_id="org-a")
+    # workspace_id=None so this exercises the org-fallback branch, not the
+    # workspace-match branch below.
+    template_obj = MagicMock(workspace_id=None, organization_id="org-b")
 
     monkeypatch.setattr(
         "sockets.prompt_stream_consumer.Workspace.objects.get",
@@ -173,6 +175,70 @@ def test_execute_template_rejects_template_from_a_different_org(monkeypatch):
     # An error frame explaining the mismatch was sent before the close.
     frame_payloads = [c.args[0] for c in consumer.send_json.await_args_list]
     assert any(
-        p.get("type") == "error" and "workspace" in p.get("message", "").lower()
+        p.get("type") == "error" and "organization" in p.get("message", "").lower()
         for p in frame_payloads
     )
+
+
+def test_execute_template_rejects_template_from_a_different_workspace_same_org(
+    monkeypatch,
+):
+    """Same org, different workspace must ALSO be rejected once the template
+    has a workspace_id — org-only scoping let this leak through pre-fix.
+    """
+    consumer = _make_consumer(workspace_id="ws-b")
+    consumer.user.can_access_workspace = MagicMock(return_value=True)
+
+    workspace_obj = MagicMock(id="ws-b", organization_id="org-a")
+    template_obj = MagicMock(workspace_id="ws-a", organization_id="org-a")
+
+    monkeypatch.setattr(
+        "sockets.prompt_stream_consumer.Workspace.objects.get",
+        lambda **kw: workspace_obj,
+    )
+    monkeypatch.setattr(
+        "sockets.prompt_stream_consumer.PromptTemplate.objects.get",
+        lambda **kw: template_obj,
+    )
+
+    asyncio.run(
+        consumer.execute_template_async(content={"version": 1}, template_id="tmpl-1")
+    )
+
+    consumer.close.assert_awaited_with(code=WS_CLOSE_CODE_PERMISSION_DENIED)
+    frame_payloads = [c.args[0] for c in consumer.send_json.await_args_list]
+    assert any(
+        p.get("type") == "error"
+        and "does not belong to the selected workspace" in p.get("message", "")
+        for p in frame_payloads
+    )
+
+
+def test_execute_template_allows_null_workspace_template_in_same_org(monkeypatch):
+    """A legacy/org-wide template (workspace_id=None) should run from any
+    workspace within its own org — only the org-level check applies.
+    """
+    consumer = _make_consumer(workspace_id="ws-b")
+    consumer.user.can_access_workspace = MagicMock(return_value=True)
+
+    workspace_obj = MagicMock(id="ws-b", organization_id="org-a")
+    template_obj = MagicMock(workspace_id=None, organization_id="org-a")
+
+    monkeypatch.setattr(
+        "sockets.prompt_stream_consumer.Workspace.objects.get",
+        lambda **kw: workspace_obj,
+    )
+    monkeypatch.setattr(
+        "sockets.prompt_stream_consumer.PromptTemplate.objects.get",
+        lambda **kw: template_obj,
+    )
+
+    asyncio.run(
+        consumer.execute_template_async(content={"version": 1}, template_id="tmpl-1")
+    )
+
+    # Should proceed past the access checks (it'll fail later on PromptVersion
+    # lookup since that isn't mocked here, but it must NOT be closed for
+    # permission reasons).
+    for call in consumer.close.await_args_list:
+        assert call.kwargs.get("code") != WS_CLOSE_CODE_PERMISSION_DENIED

@@ -196,7 +196,20 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
                 await self.close(code=WS_CLOSE_CODE_NOT_FOUND)
                 return
 
-            if template.organization_id != org_id:
+            if template.workspace_id:
+                # Template is scoped to a specific workspace — the connected
+                # workspace must match exactly. Same-org-different-workspace
+                # is a leak too (TH-5944 only closed the cross-org hole).
+                if template.workspace_id != workspace.id:
+                    await self._send_ws_error(
+                        "Template does not belong to the selected workspace.",
+                        correlation={"template_id": template_id},
+                    )
+                    await self.close(code=WS_CLOSE_CODE_PERMISSION_DENIED)
+                    return
+            elif template.organization_id != org_id:
+                # Legacy/org-wide template (no workspace_id) — fall back to
+                # the looser org-level check.
                 await self._send_ws_error(
                     "Template does not belong to the selected workspace's organization.",
                     correlation={"template_id": template_id},
