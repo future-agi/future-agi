@@ -1882,6 +1882,13 @@ POST_DDL_ALTERS: List[str] = [
     "idx_trace_session_id trace_session_id TYPE bloom_filter GRANULARITY 1",
     "ALTER TABLE tracer_eval_logger ADD INDEX IF NOT EXISTS "
     "idx_target_type target_type TYPE bloom_filter GRANULARITY 1",
+    # PR#1192: add trace/span lineage columns to model_hub_row for existing
+    # deployments (CREATE TABLE IF NOT EXISTS is a no-op on already-created
+    # tables, so only fresh installs see the columns without these ALTERs).
+    "ALTER TABLE model_hub_row ADD COLUMN IF NOT EXISTS "
+    "source_trace_id Nullable(UUID)",
+    "ALTER TABLE model_hub_row ADD COLUMN IF NOT EXISTS "
+    "source_span_id Nullable(String)",
 ]
 
 
