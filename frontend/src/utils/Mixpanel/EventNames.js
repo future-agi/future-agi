@@ -256,6 +256,7 @@ export const Events = {
   expRowReRunSuccess: "Dataset_experiment_row_re-run_successful",
   expWinnerClick: "Dataset_experiment_winner_clicked",
   expWinnerSelect: "Dataset_experiment_winner_selected",
+  expDownloadClick: "Dataset_experiment_download_clicked",
 
   //summary
   summaryViewed: "Dataset_summarypage_loaded",
