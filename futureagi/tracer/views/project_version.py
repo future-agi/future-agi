@@ -58,8 +58,6 @@ from tracer.utils.sql_queries import SQL_query_handler
 
 logger = structlog.get_logger(__name__)
 
-## TODO: need a major revamp. queries are wrong.
-
 
 class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
     _gm = GeneralMethods()
@@ -77,7 +75,10 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
 
         project_id = self.request.query_params.get("project_id")
         search_name = self.request.query_params.get("search_name", "")
-        deleted = self.request.query_params.get("deleted", False)
+        deleted_param = self.request.query_params.get("deleted", "false")
+
+        # Explicitly evaluate boolean string
+        is_deleted = str(deleted_param).lower() == "true"
 
         if search_name:
             query_Set = query_Set.filter(name__icontains=search_name)
@@ -85,8 +86,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
         if project_id:
             query_Set = query_Set.filter(project_id=project_id)
 
-        if deleted:
-            query_Set = query_Set.filter(deleted=deleted)
+        query_Set = query_Set.filter(deleted=is_deleted)
 
         return query_Set
 
@@ -140,6 +140,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             # Build the base query with all necessary annotations
             base_query = (
                 ObservationSpan.objects.filter(project_id=project_id)
+                .exclude(project_version_id__isnull=True)
                 .values("project_version_id")
                 .annotate(
                     avg_latency_ms=Coalesce(
@@ -279,6 +280,8 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                     }
                 )
 
+            project_versions_to_update = []
+
             for obj in base_query:
                 sum = 0
                 for key, value in parsed_config.items():
@@ -307,13 +310,13 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
                             ):
                                 sum += req_obj["score"] * value
 
-                # Update the project version with the calculated sum
-                project_version = ProjectVersion.objects.get(
-                    id=obj["project_version_id"]
+                result[obj["project_version_id"]] = sum
+                project_versions_to_update.append(
+                    ProjectVersion(id=obj["project_version_id"], avg_eval_score=sum)
                 )
-                project_version.avg_eval_score = sum
-                project_version.save(update_fields=["avg_eval_score"])
-                result[project_version.id] = sum
+
+            if project_versions_to_update:
+                ProjectVersion.objects.bulk_update(project_versions_to_update, ["avg_eval_score"])
 
             # Create dict with project version scores and ranks
             version_scores = {
@@ -399,7 +402,7 @@ class ProjectVersionView(BaseModelViewSetMixin, ModelViewSet):
             # Build the base query with all necessary annotations
             base_query = ObservationSpan.objects.filter(
                 project_id=project_id,
-            )
+            ).exclude(project_version_id__isnull=True)
 
             if project_version_ids:
                 base_query = base_query.filter(
