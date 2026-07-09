@@ -17200,12 +17200,28 @@ export const ModelHubDevelopsCreateEmptyDatasetCreateResponse = zod.object({
 })
 
 
+
+
+
+
 export const ModelHubDevelopsCreateSyntheticDatasetCreateBody = zod.object({
   "num_rows": zod.number(),
-  "columns": zod.array(zod.string()),
-  "dataset": zod.object({
+  "columns": zod.array(zod.object({
+  "name": zod.string().min(1),
+  "data_type": zod.string().min(1),
+  "description": zod.string(),
+  "property": zod.object({
 
 }).passthrough(),
+  "skip": zod.boolean().optional(),
+  "is_new": zod.boolean().optional()
+})),
+  "dataset": zod.object({
+  "name": zod.string().optional(),
+  "description": zod.string(),
+  "objective": zod.string(),
+  "patterns": zod.string()
+}),
   "kb_id": zod.string().uuid().optional()
 })
 
@@ -17872,14 +17888,28 @@ export const ModelHubDevelopsAddSyntheticDataCreateParams = zod.object({
   "dataset_id": zod.string()
 })
 
+
+
 export const modelHubDevelopsAddSyntheticDataCreateBodyFillExistingRowsDefault = false;
 
 export const ModelHubDevelopsAddSyntheticDataCreateBody = zod.object({
   "num_rows": zod.number(),
-  "columns": zod.array(zod.string()),
-  "dataset": zod.object({
+  "columns": zod.array(zod.object({
+  "name": zod.string().min(1),
+  "data_type": zod.string().min(1),
+  "description": zod.string(),
+  "property": zod.object({
 
 }).passthrough(),
+  "skip": zod.boolean().optional(),
+  "is_new": zod.boolean().optional()
+})),
+  "dataset": zod.object({
+  "name": zod.string().optional(),
+  "description": zod.string(),
+  "objective": zod.string(),
+  "patterns": zod.string()
+}),
   "kb_id": zod.string().uuid().optional(),
   "fill_existing_rows": zod.boolean().default(modelHubDevelopsAddSyntheticDataCreateBodyFillExistingRowsDefault)
 })
@@ -18385,16 +18415,28 @@ export const ModelHubDevelopsUpdateSyntheticConfigUpdateParams = zod.object({
   "dataset_id": zod.string()
 })
 
+
+
 export const modelHubDevelopsUpdateSyntheticConfigUpdateBodyRegenerateDefault = false;
 
 export const ModelHubDevelopsUpdateSyntheticConfigUpdateBody = zod.object({
   "num_rows": zod.number(),
   "columns": zod.array(zod.object({
-
-}).passthrough()),
-  "dataset": zod.object({
+  "name": zod.string().min(1),
+  "data_type": zod.string().min(1),
+  "description": zod.string(),
+  "property": zod.object({
 
 }).passthrough(),
+  "skip": zod.boolean().optional(),
+  "is_new": zod.boolean().optional()
+})),
+  "dataset": zod.object({
+  "name": zod.string().optional(),
+  "description": zod.string(),
+  "objective": zod.string(),
+  "patterns": zod.string()
+}),
   "kb_id": zod.string().uuid().optional(),
   "regenerate": zod.boolean().default(modelHubDevelopsUpdateSyntheticConfigUpdateBodyRegenerateDefault)
 })
