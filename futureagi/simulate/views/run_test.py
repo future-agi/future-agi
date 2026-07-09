@@ -162,7 +162,10 @@ from simulate.utils.test_execution import (
     DEFAULT_VOICE_SIM_COL,
     LEGACY_SIM_COLUMN_ID_MAP,
 )
-from simulate.utils.test_execution_utils import TestExecutionUtils
+from simulate.utils.test_execution_utils import (
+    TestExecutionUtils,
+    reconcile_scenario_column_order,
+)
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.ee_gates import strip_turing_from_config_options
 from tfc.settings import settings as app_settings
@@ -2026,8 +2029,12 @@ class TestExecutionDetailView(APIView):
             eval_configs_map = {str(config.id): config for config in eval_configs}
 
             # Get scenarios for dynamic columns
-            scenarios = Scenarios.objects.filter(
-                id__in=test_execution.scenario_ids, deleted=False
+            scenarios = list(
+                Scenarios.objects.filter(
+                    id__in=test_execution.scenario_ids, deleted=False
+                )
+                .select_related("dataset")
+                .order_by("name")
             )
             scenarios_map = {str(scenario.id): scenario for scenario in scenarios}
 
@@ -2084,119 +2091,17 @@ class TestExecutionDetailView(APIView):
                 test_execution.execution_metadata["column_order"] = column_order
                 test_execution.save(update_fields=["execution_metadata"])
 
-            # Check if column_order has any scenario columns
-            has_scenario_columns = any(
-                col.get("type") == "scenario_dataset_column" for col in column_order
-            )
-
-            if (
-                not column_order
-                or not test_execution.execution_metadata.get("Provider", False)
-                or not has_scenario_columns
+            if not column_order or not test_execution.execution_metadata.get(
+                "Provider", False
             ):
                 # Create default column order based on agent type
                 if agent_type == AgentDefinition.AgentTypeChoices.VOICE:
                     default_columns = copy.deepcopy(DEFAULT_VOICE_SIM_COL)
-
                 else:
                     # Chat (text) agent type columns with chat metrics from conversation_metrics_data
                     logger.info("Creating default column order for chat agent")
                     default_columns = copy.deepcopy(DEFAULT_CHAT_SIM_COL)
 
-                # Get all scenarios used in this test execution
-                scenarios = (
-                    Scenarios.objects.filter(
-                        id__in=test_execution.scenario_ids, deleted=False
-                    )
-                    .select_related("dataset")
-                    .order_by("name")
-                )
-
-                # Collect all column IDs from all scenarios first (batch fetch)
-                all_column_ids = set()
-                scenario_column_map = {}  # scenario_id -> (dataset_id, column_order)
-                for scenario in scenarios:
-                    if scenario.dataset and scenario.dataset.column_order:
-                        all_column_ids.update(scenario.dataset.column_order)
-                        scenario_column_map[scenario.id] = (
-                            scenario.dataset.id,
-                            scenario.dataset.column_order,
-                        )
-
-                # Fetch all columns in a single query
-                columns_by_id = {}
-                if all_column_ids:
-                    columns_by_id = {
-                        col.id: col
-                        for col in Column.objects.filter(
-                            id__in=all_column_ids, deleted=False
-                        )
-                    }
-
-                # Add scenario columns based on source type
-                added_column_ids = set()
-                for scenario in scenarios:
-                    if scenario.id in scenario_column_map:
-                        dataset_id, column_order = scenario_column_map[scenario.id]
-                        for col_id in column_order:
-                            dataset_column = columns_by_id.get(col_id)
-                            if not dataset_column:
-                                continue
-                            # Skip columns that have already been added to avoid duplicates
-                            if dataset_column.id in added_column_ids:
-                                continue
-                            added_column_ids.add(dataset_column.id)
-                            default_columns.append(
-                                {
-                                    "id": str(dataset_column.id),
-                                    "column_name": (
-                                        "Ideal Outcome"
-                                        if dataset_column.name == "outcome"
-                                        else f"{dataset_column.name}"
-                                    ),
-                                    "visible": True,
-                                    "data_type": dataset_column.data_type,
-                                    "type": "scenario_dataset_column",
-                                    "scenario_id": str(scenario.id),
-                                    "dataset_id": str(dataset_id),
-                                }
-                            )
-
-                # If no columns from scenarios, get from call executions' row datasets
-                if not added_column_ids:
-                    first_call = call_executions.first()
-                    row_id = (
-                        first_call.call_metadata.get("row_id")
-                        if first_call and first_call.call_metadata
-                        else None
-                    )
-                    if row_id:
-                        row = (
-                            Row.all_objects.filter(id=row_id)
-                            .select_related("dataset")
-                            .first()
-                        )
-                        if row and row.dataset and row.dataset.column_order:
-                            row_columns = Column.all_objects.filter(
-                                id__in=row.dataset.column_order, deleted=False
-                            )
-                            for col in row_columns:
-                                default_columns.append(
-                                    {
-                                        "id": str(col.id),
-                                        "column_name": (
-                                            "Ideal Outcome"
-                                            if col.name == "outcome"
-                                            else col.name
-                                        ),
-                                        "visible": True,
-                                        "data_type": col.data_type,
-                                        "type": "scenario_dataset_column",
-                                        "dataset_id": str(row.dataset.id),
-                                    }
-                                )
-
-                # Add evaluation metrics columns
                 for eval_config in eval_configs:
                     default_columns.append(
                         {
@@ -2213,6 +2118,15 @@ class TestExecutionDetailView(APIView):
                 test_execution.execution_metadata["Provider"] = True
                 test_execution.save(update_fields=["execution_metadata"])
                 column_order = default_columns
+
+            column_order, scenario_columns_changed = reconcile_scenario_column_order(
+                scenarios=scenarios,
+                call_executions=call_executions,
+                column_order=column_order,
+            )
+            if scenario_columns_changed:
+                test_execution.execution_metadata["column_order"] = column_order
+                test_execution.save(update_fields=["execution_metadata"])
 
             # Collect any missing tool evaluation columns from call executions' evaluation_data
             # This ensures that tool columns that were added during execution are included
