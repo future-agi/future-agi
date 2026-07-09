@@ -6,6 +6,7 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
+from tfc.permissions.rbac import IsOrganizationAdminOrWorkspaceAdmin
 from tfc.routers import uses_db
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
@@ -329,9 +330,13 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
     def destroy(self, request, *args, **kwargs):
         try:
             instance = self.get_object()
-            if instance.created_by_id != request.user.id:
+            is_owner = instance.created_by_id == request.user.id
+            is_admin = IsOrganizationAdminOrWorkspaceAdmin().has_permission(
+                request, self
+            )
+            if not (is_owner or is_admin):
                 return self._gm.forbidden_response(
-                    "Only the dashboard owner can delete this dashboard."
+                    "Only the dashboard owner or a workspace admin can delete this dashboard."
                 )
             deleted_at = timezone.now()
             DashboardWidget.objects.filter(

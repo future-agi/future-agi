@@ -114,6 +114,39 @@ def other_auth_client(other_user, workspace):
 
 
 @pytest.fixture
+def admin_user(db, organization):
+    """A second user in the same org, granted Org Admin — not the dashboard owner."""
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from tfc.constants.levels import Level
+
+    admin = User.objects.create_user(
+        email="admin@futureagi.com",
+        password="testpassword123",
+        name="Admin User",
+        organization=organization,
+    )
+    OrganizationMembership.no_workspace_objects.get_or_create(
+        user=admin,
+        organization=organization,
+        defaults={"role": "Admin", "level": Level.ADMIN, "is_active": True},
+    )
+    return admin
+
+
+@pytest.fixture
+def admin_auth_client(admin_user, workspace):
+    """Authenticated client for an org admin who did not create the dashboard."""
+    from conftest import WorkspaceAwareAPIClient
+
+    client = WorkspaceAwareAPIClient()
+    client.force_authenticate(user=admin_user)
+    client.set_workspace(workspace)
+    yield client
+    client.stop_workspace_injection()
+
+
+@pytest.fixture
 def sample_query_config():
     return {
         "project_ids": [str(uuid.uuid4())],
@@ -226,6 +259,49 @@ class TestDashboardCRUD:
         dashboard_widget.refresh_from_db()
         assert dashboard.deleted is False
         assert dashboard_widget.deleted is False
+
+    @pytest.mark.django_db
+    def test_delete_dashboard_allowed_for_org_admin_non_owner(
+        self, admin_auth_client, dashboard, dashboard_widget
+    ):
+        # scenario: an org admin who did NOT create the dashboard deletes it
+        # (e.g. cleaning up a departed teammate's content).
+        # red if the admin bypass is missing: 403, nothing deleted.
+        response = admin_auth_client.delete(f"/tracer/dashboard/{dashboard.id}/")
+        assert response.status_code == 200
+        dashboard.refresh_from_db()
+        dashboard_widget.refresh_from_db()
+        assert dashboard.deleted is True
+        assert dashboard_widget.deleted is True
+
+    @pytest.mark.django_db
+    def test_delete_dashboard_with_null_owner_allowed_for_admin(
+        self, admin_auth_client, dashboard, dashboard_widget
+    ):
+        # scenario: the creating user was offboarded — created_by_id is now
+        # NULL (Dashboard.created_by is on_delete=SET_NULL). Without an admin
+        # bypass this dashboard becomes permanently undeletable by anyone,
+        # since `None == request.user.id` is never true.
+        # red if the null-owner lockout isn't fixed: 403, nothing deleted.
+        dashboard.created_by = None
+        dashboard.save(update_fields=["created_by"])
+        response = admin_auth_client.delete(f"/tracer/dashboard/{dashboard.id}/")
+        assert response.status_code == 200
+        dashboard.refresh_from_db()
+        assert dashboard.deleted is True
+
+    @pytest.mark.django_db
+    def test_delete_dashboard_with_null_owner_rejected_for_non_admin(
+        self, other_auth_client, dashboard, dashboard_widget
+    ):
+        # same null-owner dashboard, but the requester is neither the
+        # (now-gone) owner nor an admin — still correctly blocked.
+        dashboard.created_by = None
+        dashboard.save(update_fields=["created_by"])
+        response = other_auth_client.delete(f"/tracer/dashboard/{dashboard.id}/")
+        assert response.status_code == 403
+        dashboard.refresh_from_db()
+        assert dashboard.deleted is False
 
     @pytest.mark.django_db
     def test_deleted_dashboard_not_in_list(self, auth_client, dashboard):
