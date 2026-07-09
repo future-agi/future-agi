@@ -134,12 +134,17 @@ func TestPreset_ExplicitAPIFormatPreserved(t *testing.T) {
 
 func TestPreset_KnownProvidersComplete(t *testing.T) {
 	expected := map[string]ProviderPreset{
+		"openai":      {BaseURL: "https://api.openai.com", APIFormat: "openai"},
+		"anthropic":   {BaseURL: "https://api.anthropic.com", APIFormat: "anthropic"},
+		"gemini":      {BaseURL: "https://generativelanguage.googleapis.com", APIFormat: "gemini"},
+		"cohere":      {BaseURL: "https://api.cohere.ai/compatibility/v1", APIFormat: "cohere"},
 		"groq":        {BaseURL: "https://api.groq.com/openai", APIFormat: "openai"},
 		"mistral":     {BaseURL: "https://api.mistral.ai", APIFormat: "openai"},
 		"together":    {BaseURL: "https://api.together.xyz", APIFormat: "openai"},
+		"deepseek":    {BaseURL: "https://api.deepseek.com", APIFormat: "openai"},
+		"perplexity":  {BaseURL: "https://api.perplexity.ai", APIFormat: "openai"},
 		"fireworks":   {BaseURL: "https://api.fireworks.ai/inference", APIFormat: "openai"},
 		"deepinfra":   {BaseURL: "https://api.deepinfra.com", APIFormat: "openai"},
-		"perplexity":  {BaseURL: "https://api.perplexity.ai", APIFormat: "openai"},
 		"cerebras":    {BaseURL: "https://api.cerebras.ai", APIFormat: "openai"},
 		"xai":         {BaseURL: "https://api.x.ai", APIFormat: "openai"},
 		"huggingface": {BaseURL: "https://api-inference.huggingface.co", APIFormat: "openai"},
@@ -207,6 +212,26 @@ func TestPreset_AllKnownProviders_ApplyDefaults(t *testing.T) {
 			// For non-azure providers, BaseURL must be non-empty.
 			if name != "azure" && cfg.BaseURL == "" {
 				t.Errorf("BaseURL is empty after applying preset for %q (expected non-empty)", name)
+			}
+
+			// Core providers with native API formats must use their own format.
+			switch name {
+			case "openai":
+				if cfg.APIFormat != "openai" {
+					t.Errorf("openai APIFormat = %q, want %q", cfg.APIFormat, "openai")
+				}
+			case "anthropic":
+				if cfg.APIFormat != "anthropic" {
+					t.Errorf("anthropic APIFormat = %q, want %q", cfg.APIFormat, "anthropic")
+				}
+			case "gemini":
+				if cfg.APIFormat != "gemini" {
+					t.Errorf("gemini APIFormat = %q, want %q", cfg.APIFormat, "gemini")
+				}
+			case "cohere":
+				if cfg.APIFormat != "cohere" {
+					t.Errorf("cohere APIFormat = %q, want %q", cfg.APIFormat, "cohere")
+				}
 			}
 		})
 	}
