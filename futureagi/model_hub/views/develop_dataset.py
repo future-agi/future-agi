@@ -692,11 +692,10 @@ class AddRowsFromFile(CreateAPIView):
             if not dataset:
                 return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
-            # Check file size (10 MB limit, matching UI constraint)
-            from model_hub.services.dataset_validators import MAX_FILE_SIZE_BYTES
+            from model_hub.constants import MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB
 
             if file.size > MAX_FILE_SIZE_BYTES:
-                return self._gm.bad_request("File size exceeds the 10 MB limit")
+                return self._gm.bad_request(f"File size exceeds the {MAX_FILE_SIZE_MB} MB limit")
 
             # Process the file
             data, error = FileProcessor.process_file(file_obj=file)
