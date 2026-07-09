@@ -1774,6 +1774,7 @@ def _execute_evaluation(
                 eval_explanation=logger_kwargs.get("eval_explanation", ""),
                 value=value,
                 log_id=str(log_id),
+                eval_config=getattr(custom_eval_config, "config", None),
             )
 
         if type == EXPERIMENT:

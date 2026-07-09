@@ -165,9 +165,7 @@ const CreateSyntheticDataView = ({
       : navigate("/dashboard/develop");
   };
 
-  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null, {
-    status: true,
-  });
+  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null);
 
   const knowledgeBaseOptions = useMemo(
     () =>

@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from tfc.utils.serializer_fields import JsonValueField
+
 
 class AIFilterSchemaFieldSerializer(serializers.Serializer):
     field = serializers.CharField()
@@ -43,7 +45,8 @@ class AIFilterRequestSerializer(serializers.Serializer):
 class AIFilterConditionSerializer(serializers.Serializer):
     field = serializers.CharField()
     operator = serializers.CharField()
-    value = serializers.JSONField(required=False, allow_null=True)
+    # Shape varies by operator: string, number, bool, list, or null.
+    value = JsonValueField(required=False, allow_null=True)
 
 
 class AIFilterResultSerializer(serializers.Serializer):

@@ -85,6 +85,10 @@ from tracer.services.clickhouse.graph_dispatch import (
     fetch_system_metric_graph_ch,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.v2.span_selectors import (
+    flatten_span_attributes_into_entry,
+    merge_content_rows,
+)
 from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.create_otel_span import create_single_otel_span
 from tracer.utils.eval import (
@@ -1540,12 +1544,19 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 content_result = analytics.execute_ch_query(
                     content_query, content_params, timeout_ms=10000
                 )
-                content_map = {str(r.get("id", "")): r for r in content_result.data}
-                for row in result.data:
-                    c = content_map.get(str(row.get("id", "")), {})
-                    row["input"] = c.get("input", "")
-                    row["output"] = c.get("output", "")
-                    row["attributes_extra"] = c.get("attributes_extra", "{}")
+                merge_content_rows(
+                    result.data,
+                    content_result.data,
+                    id_key="id",
+                    keys=(
+                        "input",
+                        "output",
+                        "attributes_extra",
+                        "attrs_string",
+                        "attrs_number",
+                        "attrs_bool",
+                    ),
+                )
 
         # Count
         count_query, count_params = builder.build_count_query()
@@ -1727,29 +1738,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 if label_id in span_annotations:
                     entry[label_id] = span_annotations[label_id]
 
-            # Include span attributes for custom columns
-            raw_attrs = row.get("attributes_extra", "{}")
-            try:
-                attrs = (
-                    json.loads(raw_attrs)
-                    if isinstance(raw_attrs, str)
-                    else (raw_attrs or {})
-                )
-            except (json.JSONDecodeError, TypeError):
-                attrs = {}
-            _SKIP_ATTR_PREFIXES = (
-                "raw.",
-                "llm.input_messages",
-                "llm.output_messages",
-                "input.value",
-                "output.value",
-            )
-            for key, value in attrs.items():
-                if key not in entry and not key.startswith(_SKIP_ATTR_PREFIXES):
-                    if isinstance(value, str) and len(value) > 500:
-                        entry[key] = value[:500] + "..."
-                    else:
-                        entry[key] = value
+            # Include span attributes (typed maps + attributes_extra) for custom columns
+            flatten_span_attributes_into_entry(entry, row)
 
             table_data.append(entry)
 

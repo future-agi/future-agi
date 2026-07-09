@@ -352,14 +352,17 @@ class ScoreViewSet(viewsets.ModelViewSet):
         if not fk_field:
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
+        # Collector traces/spans have no PG row, so resolve from CH instead of
+        # 404ing. Trace uses the standard project-scoped CH resolver (returns a
+        # duck-typed source); observation_span keeps its dedicated org_id-scoped
+        # fallback below.
         source_obj = resolve_source_object(
             source_type,
             source_id,
             organization=request.organization,
             workspace=getattr(request, "workspace", None),
+            allow_ch_fallback=(source_type == "trace"),
         )
-        # CDC-off fallback: collector-only spans have no PG row, so resolve from CH
-        # instead of 404ing. CHSpan duck-types as a source object for the writes below.
         if not source_obj and source_type == "observation_span":
             source_obj = resolve_ch_span_source(
                 source_id,
@@ -467,13 +470,15 @@ class ScoreViewSet(viewsets.ModelViewSet):
         if not fk_field:
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
+        # Collector traces/spans have no PG row (see create()): trace resolves
+        # from CH via the standard resolver, observation_span via its fallback.
         source_obj = resolve_source_object(
             source_type,
             source_id,
             organization=request.organization,
             workspace=getattr(request, "workspace", None),
+            allow_ch_fallback=(source_type == "trace"),
         )
-        # CDC-off fallback: collector-only spans live only in CH (see create()).
         if not source_obj and source_type == "observation_span":
             source_obj = resolve_ch_span_source(
                 source_id,

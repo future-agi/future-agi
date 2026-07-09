@@ -42,14 +42,12 @@ const SyntheticSummary = ({ summaryData = {}, onClose, isLoading }) => {
   const theme = useTheme();
   const {
     dataset = {},
-    numRows: rowNumber = "",
-    kbId = "",
+    num_rows: rowNumber = "",
+    kb_id: kbId = "",
     columns = [],
   } = summaryData;
 
-  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null, {
-    status: true,
-  });
+  const { data: knowledgeBaseList } = useKnowledgeBaseList("", null);
 
   const knowledgeBaseOptions = useMemo(
     () =>
@@ -261,11 +259,11 @@ export default function SyntheticSummaryDrawer() {
   const { data, isLoading } = useQuery({
     queryKey: [
       dataset,
-      tableData?.data?.result?.syntheticDataset,
+      tableData?.data?.result?.synthetic_dataset,
       openSummaryDrawer,
     ],
     queryFn: () => axios.get(endpoints.develop.getSyntheticConfig(dataset)),
-    enabled: !!dataset && !!tableData?.data?.result?.syntheticDataset,
+    enabled: !!dataset && !!tableData?.data?.result?.synthetic_dataset,
     select: (d) => d.data?.result?.data,
   });
 

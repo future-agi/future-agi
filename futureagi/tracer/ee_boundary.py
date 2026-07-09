@@ -74,15 +74,20 @@ def distill_eval_failure_phrases(
     return results
 
 
-def attribute_key_moments(key_moments: list[dict], trace_id: str) -> list[dict]:
+def attribute_key_moments(
+    key_moments: list[dict], trace_id: str, project_id: str
+) -> list[dict]:
     """Reconstruct span attribution for old scans whose stored key_moments
-    predate role attribution. No-op on OSS or when spans are unavailable."""
+    predate role attribution. No-op on OSS or when spans are unavailable.
+
+    ``project_id`` scopes the span read to the trace's tenant so the ClickHouse
+    primary-key prefix prunes the scan."""
     if not _ee_available:
         return key_moments
     try:
         from tracer.queries.trace_scanner import fetch_trace_data
 
-        traces = fetch_trace_data([trace_id])
+        traces = fetch_trace_data([trace_id], project_id)
         if not traces:
             return key_moments
         trace_dict = traces[0].to_dict()

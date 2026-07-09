@@ -31,6 +31,34 @@ vi.mock("src/hooks/useDashboards", () => ({
   }),
 }));
 
+function renderPanel({
+  currentFilters = [],
+  properties,
+  onApply = vi.fn(),
+  onClose = vi.fn(),
+  open = true,
+}) {
+  const anchorEl = document.createElement("button");
+  document.body.appendChild(anchorEl);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const utils = render(
+    <QueryClientProvider client={queryClient}>
+      <TraceFilterPanel
+        anchorEl={anchorEl}
+        open={open}
+        onClose={onClose}
+        onApply={onApply}
+        currentFilters={currentFilters}
+        properties={properties}
+        showQueryTab={false}
+      />
+    </QueryClientProvider>,
+  );
+  return { anchorEl, onApply, onClose, ...utils };
+}
+
 describe("TraceFilterPanel AI apply (#577)", () => {
   beforeEach(() => {
     parseQueryMock.mockReset();
@@ -95,6 +123,117 @@ describe("TraceFilterPanel AI apply (#577)", () => {
       },
     ]);
     expect(onClose).toHaveBeenCalled();
+
+    document.body.removeChild(anchorEl);
+  });
+});
+
+describe("TraceFilterPanel AI apply: additive, empty, single-call", () => {
+  const properties = [
+    { id: "status", name: "Status", category: "system", type: "string" },
+    { id: "language", name: "Language", category: "system", type: "string" },
+  ];
+
+  beforeEach(() => {
+    parseQueryMock.mockReset();
+  });
+
+  it("merges the AI-returned filter with the already-applied filter set", async () => {
+    parseQueryMock.mockResolvedValue([
+      { field: "language", operator: "equals", value: "english" },
+    ]);
+    const { anchorEl, onApply } = renderPanel({
+      currentFilters: [
+        {
+          field: "status",
+          fieldCategory: "system",
+          fieldType: "string",
+          operator: "in",
+          value: ["ERROR"],
+        },
+      ],
+      properties,
+    });
+
+    const aiInput = screen.getByPlaceholderText(/Ask AI/i);
+    fireEvent.change(aiInput, { target: { value: "language is english" } });
+    fireEvent.keyDown(aiInput, { key: "Enter" });
+
+    await waitFor(() => expect(parseQueryMock).toHaveBeenCalled());
+    await waitFor(() => expect(onApply).toHaveBeenCalled());
+
+    const lastCall = onApply.mock.calls[onApply.mock.calls.length - 1][0];
+    expect(lastCall).toHaveLength(2);
+    expect(lastCall[0]).toMatchObject({ field: "status", value: ["ERROR"] });
+    expect(lastCall[1]).toMatchObject({
+      field: "language",
+      value: ["english"],
+    });
+
+    document.body.removeChild(anchorEl);
+  });
+
+  it("shows an inline caption when the AI returns an empty filter list", async () => {
+    parseQueryMock.mockResolvedValue([]);
+    const { anchorEl, onApply, onClose } = renderPanel({
+      properties,
+    });
+
+    const aiInput = screen.getByPlaceholderText(/Ask AI/i);
+    fireEvent.change(aiInput, { target: { value: "gibberish" } });
+    fireEvent.keyDown(aiInput, { key: "Enter" });
+
+    await waitFor(() => expect(parseQueryMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Could not derive filters from that query/i),
+      ).toBeInTheDocument(),
+    );
+
+    expect(onApply).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(aiInput.value).toBe("gibberish");
+
+    document.body.removeChild(anchorEl);
+  });
+
+  it("clears the empty-result caption when the user edits the query", async () => {
+    parseQueryMock.mockResolvedValue([]);
+    const { anchorEl } = renderPanel({ properties });
+
+    const aiInput = screen.getByPlaceholderText(/Ask AI/i);
+    fireEvent.change(aiInput, { target: { value: "gibberish" } });
+    fireEvent.keyDown(aiInput, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Could not derive filters from that query/i),
+      ).toBeInTheDocument(),
+    );
+
+    fireEvent.change(aiInput, { target: { value: "gibberish typing more" } });
+
+    expect(
+      screen.queryByText(/Could not derive filters from that query/i),
+    ).not.toBeInTheDocument();
+
+    document.body.removeChild(anchorEl);
+  });
+
+  it("only calls onApply once with the AI filter set on a successful apply", async () => {
+    parseQueryMock.mockResolvedValue([
+      { field: "status", operator: "equals", value: "ERROR" },
+    ]);
+    const { anchorEl, onApply } = renderPanel({ properties });
+
+    const aiInput = screen.getByPlaceholderText(/Ask AI/i);
+    fireEvent.change(aiInput, { target: { value: "show errors" } });
+    fireEvent.keyDown(aiInput, { key: "Enter" });
+
+    await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
+    const [applied] = onApply.mock.calls[0];
+    expect(applied).not.toBeNull();
+    expect(applied[0]).toMatchObject({ field: "status" });
 
     document.body.removeChild(anchorEl);
   });

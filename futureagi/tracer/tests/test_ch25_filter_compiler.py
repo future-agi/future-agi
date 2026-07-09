@@ -275,6 +275,49 @@ class TestEndUserDimensionSource:
         assert "_peerdb_is_deleted" not in sql
 
 
+class TestNumericIsNullNoEmptyStringCast:
+    """is_null / is_not_null on numeric SYSTEM_METRIC columns must emit `IS NULL`,
+    never `= ''` — comparing a non-nullable Float64/Int32 (cost/tokens/latency) to
+    '' raises a ClickHouse cast error. Text columns keep the empty-string fallback.
+    """
+
+    @staticmethod
+    def _filter(col_id: str, filter_op: str, filter_type: str) -> list[dict]:
+        return [
+            {
+                "column_id": col_id,
+                "filter_config": {
+                    "col_type": "SYSTEM_METRIC",
+                    "filter_type": filter_type,
+                    "filter_op": filter_op,
+                },
+            }
+        ]
+
+    def _span_sql(self, col_id: str, filter_op: str, filter_type: str) -> str:
+        b = ClickHouseFilterBuilderV2(
+            table="spans", query_mode=ClickHouseFilterBuilderV2.QUERY_MODE_SPAN
+        )
+        sql, _ = b.translate(self._filter(col_id, filter_op, filter_type))
+        return sql
+
+    def test_numeric_is_null_uses_is_null_not_empty_string(self):
+        sql = self._span_sql("cost", "is_null", "number")
+        assert "IS NULL" in sql
+        assert "= ''" not in sql
+        assert "= 0" not in sql  # 0 is a legitimate value, not "null"
+
+    def test_numeric_is_not_null_uses_is_not_null_not_empty_string(self):
+        sql = self._span_sql("cost", "is_not_null", "number")
+        assert "IS NOT NULL" in sql
+        assert "!= ''" not in sql
+
+    def test_text_is_null_keeps_empty_string_fallback(self):
+        sql = self._span_sql("model", "is_null", "text")
+        assert "IS NULL" in sql
+        assert "= ''" in sql
+
+
 class TestFilterBuilderWiring:
     """The in-scope v2 list builders must construct the v2 filter compiler so
     the user filter reads `end_users`; the v1 builders keep the v1 compiler.

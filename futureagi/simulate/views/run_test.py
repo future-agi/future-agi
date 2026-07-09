@@ -1822,9 +1822,7 @@ class RunTestCallExecutionsView(APIView):
                 if item_type == "call_execution":
                     call_exec = call_executions_dict.get(str(item_id))
                     if call_exec:
-                        serializer = CallExecutionDetailSerializer(
-                            call_exec, context={"detail_mode": False}
-                        )
+                        serializer = CallExecutionDetailSerializer(call_exec)
                         call_data = serializer.data
                         call_data["is_snapshot"] = False
                         # Remove rerun_snapshots since we're flattening
@@ -1837,9 +1835,7 @@ class RunTestCallExecutionsView(APIView):
                     if snapshot:
                         # Get the original call execution for context
                         original_call_exec = snapshot.call_execution
-                        serializer = CallExecutionDetailSerializer(
-                            original_call_exec, context={"detail_mode": False}
-                        )
+                        serializer = CallExecutionDetailSerializer(original_call_exec)
                         original_data = serializer.data
 
                         # Convert snapshot to call execution format

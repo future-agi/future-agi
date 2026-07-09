@@ -238,6 +238,7 @@ const buildFilterChips = (filtersApplied) => {
     observationTypes.forEach((t) => chips.push(`Type: ${t}`));
   }
   const spanAttributeFilters =
+    filtersApplied.filters ||
     filtersApplied.span_attributes_filters ||
     filtersApplied.spanAttributesFilters;
   if (spanAttributeFilters?.length) {

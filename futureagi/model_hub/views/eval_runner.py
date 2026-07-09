@@ -1295,6 +1295,11 @@ class EvaluationRunner:
                     response=response,
                     cell=cell,
                     log_id=str(api_call_log_row.log_id) if api_call_log_row else None,
+                    eval_config=(
+                        self.user_eval_metric.config
+                        if self.user_eval_metric
+                        else None
+                    ),
                 )
 
         except Exception as e:
