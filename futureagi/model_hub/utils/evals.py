@@ -1,3 +1,6 @@
+import ast
+import re
+
 import structlog
 
 logger = structlog.get_logger(__name__)
@@ -7,6 +10,149 @@ from model_hub.utils.function_eval_params import (
     has_function_params_schema,
     normalize_function_params,
 )
+
+
+# ---------------------------------------------------------------------------
+# Code-eval save-time helpers: signature parsing and template config assembly
+# ---------------------------------------------------------------------------
+
+# Keep in sync with ``frontend/src/utils/codeEvalParams.js``. ``context`` is
+# NOT a mapping var because the sandbox synthesises it from the row.
+STANDARD_MAPPING_VARS: frozenset[str] = frozenset({"input", "output", "expected"})
+
+# The sandbox owns ``context`` end-to-end, so it never enters either list.
+_RESERVED_CODE_PARAMS: frozenset[str] = frozenset({"context"})
+
+_JS_EVALUATE_RE = re.compile(r"function\s+evaluate\s*\(\s*\{([\s\S]*?)\}\s*\)")
+_JS_COMMENT_RE = re.compile(r"/\*[\s\S]*?\*/|//[^\n]*")
+
+
+def parse_evaluate_params(
+    code: str | None,
+    language: str | None = "python",
+) -> tuple[list[str], list[str]]:
+    """Return ``(mapping_vars, config_params)`` extracted from ``code``.
+
+    Fails open to ``([], [])`` on missing input or an unparseable signature
+    so save/update paths degrade to the pre-existing "no params declared"
+    behaviour rather than raising.
+    """
+    if not code:
+        return [], []
+    lang = (language or "python").lower()
+    if lang == "python":
+        names = _python_params(code)
+    elif lang == "javascript":
+        names = _javascript_params(code)
+    else:
+        return [], []
+    mapping_vars: list[str] = []
+    config_params: list[str] = []
+    for name in names:
+        if name in _RESERVED_CODE_PARAMS:
+            continue
+        if name in STANDARD_MAPPING_VARS:
+            mapping_vars.append(name)
+        else:
+            config_params.append(name)
+    return mapping_vars, config_params
+
+
+def _python_params(code: str) -> list[str]:
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        logger.debug("code_eval_signature_python_parse_failed", exc_info=True)
+        return []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "evaluate":
+            names: list[str] = []
+            for arg in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs):
+                if arg.arg not in names:
+                    names.append(arg.arg)
+            return names
+    return []
+
+
+def _javascript_params(code: str) -> list[str]:
+    match = _JS_EVALUATE_RE.search(code)
+    if not match:
+        return []
+    raw = _JS_COMMENT_RE.sub("", match.group(1))
+    names: list[str] = []
+    depth = 0
+    buf = ""
+    for ch in raw:
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        if ch == "," and depth == 0:
+            _push_js_name(buf, names)
+            buf = ""
+        else:
+            buf += ch
+    _push_js_name(buf, names)
+    return names
+
+
+def _push_js_name(part: str, out: list[str]) -> None:
+    token = part.strip()
+    if not token or token.startswith("..."):
+        return
+    # `foo: bar` in a destructure renames; the bound name is on the right.
+    if ":" in token:
+        token = token.split(":", 1)[1]
+    # Default value: `foo = 1`.
+    token = token.split("=", 1)[0].strip()
+    if not token:
+        return
+    if token not in out:
+        out.append(token)
+
+
+def build_function_params_schema(config_params: list[str]) -> dict[str, dict]:
+    """Wrap each param in the optional-nullable-string entry the runtime consumes."""
+    return {
+        name: {
+            "type": "string",
+            "default": None,
+            "nullable": True,
+            "required": False,
+        }
+        for name in config_params
+    }
+
+
+def build_code_eval_config(
+    code: str | None,
+    language: str | None,
+    output_value: str,
+) -> dict:
+    """Assemble the ``CustomCodeEval`` template config."""
+    mapping_vars, config_params = parse_evaluate_params(
+        code or "", language or "python"
+    )
+    return {
+        "output": output_value,
+        "eval_type_id": "CustomCodeEval",
+        "code": code,
+        "language": language or "python",
+        "required_keys": mapping_vars,
+        "function_params_schema": build_function_params_schema(config_params),
+        "custom_eval": True,
+        # Keep cross-type restore from leaking stale FE state.
+        "few_shot_examples": [],
+    }
+
+
+def refresh_code_eval_schema(config: dict | None, code: str, language: str) -> None:
+    """Refresh ``required_keys`` + ``function_params_schema`` in place."""
+    if config is None:
+        return
+    mapping_vars, config_params = parse_evaluate_params(code or "", language or "python")
+    config["required_keys"] = mapping_vars
+    config["function_params_schema"] = build_function_params_schema(config_params)
 
 model_manager = LiteLLMModelManager("gpt", exclude_providers="custom")
 model_list = model_manager.get_model_by_provider("openai")

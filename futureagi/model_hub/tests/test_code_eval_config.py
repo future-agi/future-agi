@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from model_hub.utils.code_eval_signature import (
+from model_hub.utils.evals import (
     STANDARD_MAPPING_VARS,
     build_function_params_schema,
     parse_evaluate_params,
