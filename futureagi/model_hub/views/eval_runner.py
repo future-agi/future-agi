@@ -87,7 +87,7 @@ from tfc.utils.functions import get_eval_stats
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
 
-from tfc.billing.boundary import BillingEventType, get_billing, token_usage_properties, llm_usage_properties
+from tfc.billing.boundary import BillingEventType, get_billing, token_usage_properties
 
 
 def _request_organization(request):

@@ -312,15 +312,27 @@ class _EeBilling(Billing):
     def ai_credits(self, cost_usd):
         from ee.usage.services.config import BillingConfig
 
-        return int(BillingConfig.get().calculate_ai_credits(cost_usd))
+        # calculate_ai_credits returns fractional credits — do NOT truncate,
+        # billing events are charged with the fractional amount.
+        return BillingConfig.get().calculate_ai_credits(cost_usd)
 
     def has_feature(self, org_id, feature):
-        from ee.usage.services.entitlements import Entitlements
+        # ee present but entitlements broken → allow by default, mirroring
+        # tfc.ee_gating.check_ee_feature's ImportError policy.
+        try:
+            from ee.usage.services.entitlements import Entitlements
+        except ImportError:
+            _log_entitlements_import_failure()
+            return True
 
         return Entitlements.has_feature_unified(str(org_id), feature)
 
     def check_feature_gate(self, org_id, feature):
-        from ee.usage.services.entitlements import Entitlements
+        try:
+            from ee.usage.services.entitlements import Entitlements
+        except ImportError:
+            _log_entitlements_import_failure()
+            return _ALLOW
 
         result = Entitlements.check_feature(str(org_id), feature)
         return UsageDecision(
@@ -331,7 +343,11 @@ class _EeBilling(Billing):
         )
 
     def can_create(self, org_id, resource, current_count=0):
-        from ee.usage.services.entitlements import Entitlements
+        try:
+            from ee.usage.services.entitlements import Entitlements
+        except ImportError:
+            _log_entitlements_import_failure()
+            return _ALLOW
 
         result = Entitlements.can_create(str(org_id), resource, current_count)
         return UsageDecision(
@@ -426,6 +442,14 @@ class _EeBilling(Billing):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _log_entitlements_import_failure() -> None:
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "ee.usage.services.entitlements import failed; allowing by default"
+    )
+
 
 def _cta_dict(cta: Any) -> Optional[dict]:
     if cta is None:

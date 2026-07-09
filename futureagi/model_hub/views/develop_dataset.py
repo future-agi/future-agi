@@ -15139,25 +15139,33 @@ class CreateKnowledgeBaseView(APIView):
             if not ent_check.allowed:
                 return self._gm.forbidden_response(ent_check.reason)
 
-            if billing.is_enabled and not billing.has_feature(str(org.id), "has_knowledge_base"):
-                return self._gm.forbidden_response("This feature requires a higher plan")
-
-            call_log_row = billing.log_and_deduct_resource(
-                organization=org,
-                api_call_type=APICallTypeChoices.KNOWLEDGE_BASE.value,
-                workspace=request.workspace,
-            )
-            if (
-                call_log_row is not None
-                and call_log_row.status
-                == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
-                return self._gm.too_many_requests(
-                    get_error_message("KB_CREATION_LIMIT_REACHED")
+            if billing.is_enabled:
+                feat_check = billing.check_feature_gate(
+                    str(org.id), "has_knowledge_base"
                 )
-            if call_log_row is not None:
-                call_log_row.status = APICallStatusChoices.SUCCESS.value
-                call_log_row.save()
+                if not feat_check.allowed:
+                    return self._gm.forbidden_response(feat_check.reason)
+
+            # Legacy resource-limit deduct only applies when entitlements did
+            # not gate the request above (mirrors the pre-boundary behavior
+            # where EE skipped this block once Entitlements ran).
+            if not billing.is_enabled:
+                call_log_row = billing.log_and_deduct_resource(
+                    organization=org,
+                    api_call_type=APICallTypeChoices.KNOWLEDGE_BASE.value,
+                    workspace=request.workspace,
+                )
+                if (
+                    call_log_row is not None
+                    and call_log_row.status
+                    == APICallStatusChoices.RESOURCE_LIMIT.value
+                ):
+                    return self._gm.too_many_requests(
+                        get_error_message("KB_CREATION_LIMIT_REACHED")
+                    )
+                if call_log_row is not None:
+                    call_log_row.status = APICallStatusChoices.SUCCESS.value
+                    call_log_row.save()
 
             # Validate ALL files FIRST (before creating KB)
             # Uses is_file_readable for full validation (password check, content parsing)
@@ -15267,8 +15275,12 @@ class CreateKnowledgeBaseView(APIView):
                 )
 
             billing = get_billing()
-            if billing.is_enabled and not billing.has_feature(str(org.id), "has_knowledge_base"):
-                return self._gm.forbidden_response("This feature requires a higher plan")
+            if billing.is_enabled:
+                feat_check = billing.check_feature_gate(
+                    str(org.id), "has_knowledge_base"
+                )
+                if not feat_check.allowed:
+                    return self._gm.forbidden_response(feat_check.reason)
 
             file_names = {file.name for file in files}
             if len(file_names) != len(files):

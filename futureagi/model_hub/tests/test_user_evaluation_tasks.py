@@ -445,7 +445,7 @@ class TestProcessSingleErrorLocalization:
     """Tests for process_single_error_localization Temporal activity."""
 
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
-    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    @patch("tfc.billing.boundary._EeBilling.log_and_deduct")
     @patch("model_hub.tasks.user_evaluation.Workspace")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizerTask")
     @patch("model_hub.tasks.user_evaluation.close_old_connections")
@@ -504,7 +504,7 @@ class TestProcessSingleErrorLocalization:
             "error_analysis", "selected_key"
         )
 
-    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    @patch("tfc.billing.boundary._EeBilling.log_and_deduct")
     @patch("model_hub.tasks.user_evaluation.Workspace")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizerTask")
     @patch("model_hub.tasks.user_evaluation.close_old_connections")
@@ -815,7 +815,7 @@ class TestErrorLocalizerGateE2E:
 
     @patch("model_hub.tasks.user_evaluation.close_old_connections")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
-    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    @patch("tfc.billing.boundary._EeBilling.log_and_deduct")
     def test_failing_eval_passes_gate_and_runs_localizer(
         self, mock_log_cost, mock_localizer, _mock_close, organization, workspace
     ):
@@ -862,7 +862,7 @@ class TestErrorLocalizerGateE2E:
 
     @patch("model_hub.tasks.user_evaluation.close_old_connections")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
-    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    @patch("tfc.billing.boundary._EeBilling.log_and_deduct")
     def test_empty_segments_completes_with_friendly_message(
         self, mock_log_cost, mock_localizer, _mock_close, organization, workspace
     ):
@@ -982,7 +982,7 @@ class TestErrorLocalizerGateE2E:
 
     @patch("model_hub.tasks.user_evaluation.close_old_connections")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
-    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    @patch("tfc.billing.boundary._EeBilling.log_and_deduct")
     def test_agent_type_failing_eval_passes_gate(
         self, mock_log_cost, mock_localizer, _mock_close, organization, workspace
     ):
@@ -1037,7 +1037,7 @@ class TestErrorLocalizerGateE2E:
     )
     @patch("model_hub.tasks.user_evaluation.close_old_connections")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
-    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    @patch("tfc.billing.boundary._EeBilling.log_and_deduct")
     def test_dict_shaped_eval_results_normalize_correctly(
         self,
         mock_log_cost,
@@ -1121,7 +1121,7 @@ class TestErrorLocalizerGateE2E:
     )
     @patch("model_hub.tasks.user_evaluation.close_old_connections")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
-    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    @patch("tfc.billing.boundary._EeBilling.log_and_deduct")
     def test_el_post_selection_skip_when_selected_type_unsupported(
         self,
         mock_log_cost,
@@ -1179,7 +1179,7 @@ class TestErrorLocalizerGateE2E:
 
     @patch("model_hub.tasks.user_evaluation.close_old_connections")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
-    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    @patch("tfc.billing.boundary._EeBilling.log_and_deduct")
     def test_mixed_inputs_el_picks_supported_post_selection_completes(
         self, mock_log_cost, mock_localizer, _mock_close, organization, workspace
     ):

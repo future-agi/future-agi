@@ -3893,8 +3893,15 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         """Calculate inter-annotator agreement metrics."""
         org = getattr(request, "organization", None) or request.user.organization
         billing = get_billing()
-        if billing.is_enabled and not billing.has_feature(str(org.id), "has_agreement_metrics"):
-            return self._gm.forbidden_response("Agreement metrics are not available on your plan.")
+        if billing.is_enabled:
+            feat_check = billing.check_feature_gate(
+                str(org.id), "has_agreement_metrics"
+            )
+            if not feat_check.allowed:
+                return self._gm.forbidden_response(
+                    feat_check.reason
+                    or "Agreement metrics are not available on your plan."
+                )
 
         queue = self.get_object()
         result = calculate_agreement(queue)

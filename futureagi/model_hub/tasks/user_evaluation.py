@@ -1108,6 +1108,16 @@ def process_single_error_localization(task_id):
             },
         )
 
+        if api_call_log_row is None and billing.is_enabled:
+            # EE returned None → billing errored; fail closed (OSS None is fine).
+            logger.error("API call not allowed : Error validating the api call.")
+            task.mark_as_failed(
+                "API call not allowed : Error validating the api call."
+            )
+            raise ValueError(
+                "API call not allowed : Error validating the api call."
+            )
+
         if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
             error_message = get_error_for_api_status(api_call_log_row.status)
             task.mark_as_failed(error_message)

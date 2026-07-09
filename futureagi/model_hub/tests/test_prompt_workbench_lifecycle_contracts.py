@@ -797,7 +797,8 @@ def test_prompt_assistant_helpers_validate_required_fields_before_agent(
         "model_hub.views.prompt_template.SyntheticDataAgent", fail_agent
     )
     monkeypatch.setattr(
-        "model_hub.views.prompt_template.log_and_deduct_cost_for_api_request", None
+        "tfc.billing.boundary._EeBilling.log_and_deduct",
+        lambda self, **_kwargs: None,
     )
     monkeypatch.setattr(
         "model_hub.views.prompt_template.submit_with_retry",
@@ -884,7 +885,8 @@ def test_prompt_assistant_helpers_submit_scoped_payloads(
         )
 
     monkeypatch.setattr(
-        "model_hub.views.prompt_template.log_and_deduct_cost_for_api_request", None
+        "tfc.billing.boundary._EeBilling.log_and_deduct",
+        lambda self, **_kwargs: None,
     )
     monkeypatch.setattr(
         "model_hub.views.prompt_template.PromptGenerator", FakePromptGenerator

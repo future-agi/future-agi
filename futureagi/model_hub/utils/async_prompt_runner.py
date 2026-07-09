@@ -11,7 +11,7 @@ from model_hub.services.derived_variable_service import (
     extract_derived_variables_from_output,
 )
 from model_hub.utils.column_utils import is_json_response_format
-from tfc.billing.boundary import get_billing, BillingEventType
+from tfc.billing.boundary import get_billing
 from tfc.constants.api_calls import APICallTypeChoices
 
 

@@ -371,7 +371,6 @@ class TestGetBillingFactory:
         _reset_for_testing()
         with patch.dict("sys.modules", {"ee.usage": None}):
             # Patching sys.modules with None makes ``import ee.usage`` raise ImportError.
-            import importlib
             import tfc.billing.boundary as boundary_mod
             # Force re-detect
             boundary_mod._instance = None

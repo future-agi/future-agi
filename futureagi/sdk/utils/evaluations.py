@@ -59,6 +59,10 @@ def _log_and_deduct_cost_for_standalone_eval(
         workspace=workspace,
     )
 
+    if api_call_log_row is None and billing.is_enabled:
+        # EE returned None → billing errored; fail closed (OSS None is fine).
+        raise ValueError("API call not allowed")
+
     if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
         raise ValueError(f"API call not allowed: {api_call_log_row.status}")
 

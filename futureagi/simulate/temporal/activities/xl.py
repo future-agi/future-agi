@@ -1254,7 +1254,6 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
     from tfc.utils.error_codes import get_specific_error_message
     from tracer.models.observability_provider import ProviderChoices
     from tfc.billing.boundary import (
-        BillingEventType,
         get_billing,
         llm_usage_properties,
     )

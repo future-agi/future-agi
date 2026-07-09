@@ -173,7 +173,7 @@ def _safe_background_task(func, *args, **kwargs):
     return wrapped
 
 
-from tfc.billing.boundary import BillingEventType, get_billing, token_usage_properties, llm_usage_properties
+from tfc.billing.boundary import BillingEventType, get_billing, token_usage_properties
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 MIME_TO_EXT = {

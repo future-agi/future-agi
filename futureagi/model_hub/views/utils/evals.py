@@ -22,7 +22,7 @@ from model_hub.views.eval_runner import (
     process_mapping,
 )
 from sdk.utils.helpers import _get_api_call_type
-from tfc.billing.boundary import BillingEventType, get_billing, token_usage_properties, llm_usage_properties, UsageLimitExceeded
+from tfc.billing.boundary import BillingEventType, get_billing, token_usage_properties, UsageLimitExceeded
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal import temporal_activity
@@ -380,7 +380,6 @@ def run_eval_func(
 
             per_run_fee = 0
             try:
-                from tfc.billing.boundary import get_billing
                 per_run_fee = get_billing().eval_per_run_fee()
             except Exception:
                 pass

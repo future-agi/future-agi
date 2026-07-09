@@ -230,7 +230,7 @@ def test_duplicate_dataset_rejects_other_workspace_before_usage_charge(
         return _SuccessfulResourceCallLog()
 
     monkeypatch.setattr(
-        "model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request",
+        "tfc.billing.boundary._EeBilling.log_and_deduct_resource",
         record_usage,
     )
 
@@ -263,7 +263,7 @@ def test_duplicate_dataset_rejects_rows_outside_source_before_usage_or_creation(
         return _SuccessfulResourceCallLog()
 
     monkeypatch.setattr(
-        "model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request",
+        "tfc.billing.boundary._EeBilling.log_and_deduct_resource",
         record_usage,
     )
 
@@ -307,7 +307,7 @@ def test_clone_dataset_rejects_other_workspace_before_usage_charge(
         return _SuccessfulResourceCallLog()
 
     monkeypatch.setattr(
-        "model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request",
+        "tfc.billing.boundary._EeBilling.log_and_deduct_resource",
         record_usage,
     )
 
@@ -342,7 +342,7 @@ def test_add_as_new_rejects_other_workspace_before_usage_charge(
         return _SuccessfulResourceCallLog()
 
     monkeypatch.setattr(
-        "model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request",
+        "tfc.billing.boundary._EeBilling.log_and_deduct_resource",
         record_usage,
     )
 
@@ -373,7 +373,7 @@ def test_add_as_new_rejects_duplicate_name_before_usage_charge(
         return _SuccessfulResourceCallLog()
 
     monkeypatch.setattr(
-        "model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request",
+        "tfc.billing.boundary._EeBilling.log_and_deduct_resource",
         record_usage,
     )
 
@@ -416,7 +416,7 @@ def test_add_as_new_rejects_columns_outside_source_before_usage_or_creation(
         return _SuccessfulResourceCallLog()
 
     monkeypatch.setattr(
-        "model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request",
+        "tfc.billing.boundary._EeBilling.log_and_deduct_resource",
         record_usage,
     )
 

@@ -23,14 +23,17 @@ def _csv_file(name="rows.csv", content=b"input,output\nhello,world\n"):
 
 
 def _patch_usage(monkeypatch, module_path):
+    # module_path kept for call-site readability; resource deducts now all go
+    # through the billing boundary instead of per-module imports (TH-5971).
+    del module_path
     calls = []
 
-    def record_usage(*args, **kwargs):
+    def record_usage(self, *args, **kwargs):
         calls.append((args, kwargs))
         return _SuccessfulResourceCallLog()
 
     monkeypatch.setattr(
-        f"{module_path}.log_and_deduct_cost_for_resource_request",
+        "tfc.billing.boundary._EeBilling.log_and_deduct_resource",
         record_usage,
     )
     return calls
