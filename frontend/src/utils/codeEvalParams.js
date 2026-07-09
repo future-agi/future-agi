@@ -73,13 +73,8 @@ export const extractCodeEvaluateParams = (code, language) => {
   return names;
 };
 
-// Split an `evaluate(...)` signature into the two groups the binding UI
-// cares about:
-//   * `mappingVars` — bind to dataset columns (standard row-derived names).
-//   * `configParams` — constant values the user supplies once at eval
-//     creation time (surfaced as text inputs, mirroring how system YAML
-//     evals declare `function_params_schema`).
-// Must stay aligned with `model_hub/utils/code_eval_signature.py`.
+// Split an `evaluate(...)` signature into { mappingVars, configParams }.
+// Keep aligned with `model_hub/utils/code_eval_signature.py`.
 export const splitCodeEvaluateParams = (code, language) => {
   const names = extractCodeEvaluateParams(code, language);
   const mappingVars = [];

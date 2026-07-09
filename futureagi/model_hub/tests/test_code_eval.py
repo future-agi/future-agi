@@ -76,11 +76,7 @@ class TestCodeEvalCreateAPI:
         assert response.status_code == 400
 
     def test_create_code_eval_derives_required_keys_from_signature(self, auth_client):
-        """A user's `evaluate(input, output, ...)` signature drives
-        ``required_keys`` on the saved template. Standard row-derived
-        names (input/output/expected) land there so the binding UI can
-        map them to dataset columns; nothing else does.
-        """
+        """Standard row-derived names land in required_keys; nothing else."""
         response = auth_client.post(
             self.url,
             {
@@ -100,14 +96,10 @@ class TestCodeEvalCreateAPI:
         template = EvalTemplate.objects.get(id=response.data["result"]["id"])
         assert template.config["required_keys"] == ["input", "output", "expected"]
 
-    def test_create_code_eval_ticket_case_populates_function_params_schema(
+    def test_create_code_eval_custom_param_populates_function_params_schema(
         self, auth_client
     ):
-        """TH-6671 exact repro. ``max_words_length`` is a config constant,
-        not a mapping variable, so it must appear in
-        ``function_params_schema`` (which drives the FE Parameters text
-        input) and stay out of ``required_keys``.
-        """
+        """A custom-named param lands in function_params_schema, not required_keys."""
         response = auth_client.post(
             self.url,
             {
@@ -137,12 +129,7 @@ class TestCodeEvalCreateAPI:
         }
 
     def test_update_code_eval_re_derives_when_code_changes(self, auth_client):
-        """Editing the code (e.g. adding a new param) after the first save
-        must refresh ``required_keys`` and ``function_params_schema`` so
-        the binding UI reflects the new signature. Without this the FE
-        would keep asking for a mapping for a param the user just removed
-        or silently hide a new one.
-        """
+        """Editing code refreshes required_keys + function_params_schema."""
         create_res = auth_client.post(
             self.url,
             {

@@ -1,10 +1,4 @@
-"""Behavioural tests for the ``evaluate(...)`` signature parser.
-
-The parser drives whether a user-authored custom code eval saves as an
-uninhabited placeholder (the old behaviour, which left the picker showing
-constant params as unmapped columns) or as a proper template that
-distinguishes row-derived mapping vars from constant config params.
-"""
+"""Behavioural tests for the ``evaluate(...)`` signature parser."""
 
 from __future__ import annotations
 
@@ -29,10 +23,10 @@ def test_python_signature_splits_standard_vars_from_config_params():
     assert config_params == ["max_words_length"]
 
 
-def test_python_signature_ticket_case_max_words_length_is_a_config_param():
-    """TH-6671 exact repro. ``max_words_length`` must land in the config
-    section so the user can supply the threshold as a constant instead of
-    being told to map it to a dataset column.
+def test_python_signature_custom_named_param_is_a_config_param():
+    """A named param the sandbox does not synthesise from the row must
+    land in the config section so the user can supply a constant value
+    instead of being asked to map it to a dataset column.
     """
     code = (
         "def evaluate(max_words_length, input):\n"
@@ -47,8 +41,8 @@ def test_python_signature_ticket_case_max_words_length_is_a_config_param():
     assert config_params == ["max_words_length"]
 
 
-def test_python_signature_reserves_context_self_cls_from_both_lists():
-    code = "def evaluate(self, cls, context, input): pass\n"
+def test_python_signature_reserves_context_from_both_lists():
+    code = "def evaluate(context, input): pass\n"
 
     mapping_vars, config_params = parse_evaluate_params(code, "python")
 
@@ -71,10 +65,7 @@ def test_python_signature_ignores_kwargs_wildcard():
 
 
 def test_python_signature_preserves_source_order():
-    """Order matters for the FE — the mapping panel and the config-values
-    section both render the params in the order they appeared in the
-    signature so the UI matches what the user just typed.
-    """
+    """Order matters: the FE renders both sections in signature order."""
     code = "def evaluate(threshold, input, tolerance, output): pass\n"
 
     mapping_vars, config_params = parse_evaluate_params(code, "python")

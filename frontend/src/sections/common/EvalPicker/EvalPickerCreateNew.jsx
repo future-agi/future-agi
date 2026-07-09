@@ -702,14 +702,30 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     return [...new Set(vars)];
   }, [instructions, evalType, templateFormat, code, codeLanguage]);
 
-  // Non-standard params that need a constant value (e.g. thresholds). Only
-  // surfaces for user code evals — system evals declare these in YAML and
-  // arrive with `function_params_schema` already populated on the fetched
-  // template.
+  // Constant-value params (thresholds, tolerances) surfaced as text
+  // inputs. System evals declare these in YAML; user code evals derive
+  // them live from the signature.
   const configParamKeys = useMemo(() => {
     if (evalType !== "code") return [];
     return splitCodeEvaluateParams(code, codeLanguage).configParams;
   }, [evalType, code, codeLanguage]);
+
+  // Drop any codeParams entry whose key no longer appears in the current
+  // signature so a rename or deletion doesn't leak a stale value into the
+  // save-and-add payload.
+  useEffect(() => {
+    if (evalType !== "code") return;
+    setCodeParams((prev) => {
+      const allowed = new Set(configParamKeys);
+      const next = {};
+      let changed = false;
+      for (const [k, v] of Object.entries(prev)) {
+        if (allowed.has(k)) next[k] = v;
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [evalType, configParamKeys]);
 
   return (
     <Box
