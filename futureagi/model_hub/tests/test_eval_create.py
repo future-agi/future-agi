@@ -219,6 +219,60 @@ class TestEvalTemplateCreateV2API:
         )
         assert response.status_code == 400
 
+    def test_create_variable_only_in_user_message_accepted(self, auth_client):
+        """LLM eval with the variable in a User turn (plain-text System) is
+        accepted. The old gate scanned only req.instructions (mirrored the
+        System turn) and rejected this payload."""
+        response = auth_client.post(
+            self.url,
+            self._valid_payload(
+                name="var-in-user-turn-eval",
+                instructions="Judge the answer.",
+                messages=[
+                    {"role": "system", "content": "Judge the answer."},
+                    {"role": "user", "content": "Input: {{input}}"},
+                ],
+            ),
+            format="json",
+        )
+        assert response.status_code == 200, response.data
+
+    def test_create_variable_only_in_assistant_message_accepted(self, auth_client):
+        """Same widened-gate coverage for a variable that lives in the
+        Assistant turn only."""
+        response = auth_client.post(
+            self.url,
+            self._valid_payload(
+                name="var-in-assistant-turn-eval",
+                instructions="Judge the answer.",
+                messages=[
+                    {"role": "system", "content": "Judge the answer."},
+                    {"role": "user", "content": "See the reply."},
+                    {"role": "assistant", "content": "Expected: {{expected}}"},
+                ],
+            ),
+            format="json",
+        )
+        assert response.status_code == 200, response.data
+
+    def test_create_no_variables_in_any_turn_still_rejected(self, auth_client):
+        """Widening the scan must not open a hole: an LLM eval with no
+        template variable anywhere (instructions or messages) still fails."""
+        response = auth_client.post(
+            self.url,
+            self._valid_payload(
+                name="no-vars-any-turn-eval",
+                instructions="Judge the answer.",
+                messages=[
+                    {"role": "system", "content": "Judge the answer."},
+                    {"role": "user", "content": "Plain text with no braces."},
+                ],
+            ),
+            format="json",
+        )
+        assert response.status_code == 400
+        assert "template variable" in str(response.data["result"]).lower()
+
     # --- Validation: Scoring ---
 
     def test_create_deterministic_without_choices_rejected(self, auth_client):
