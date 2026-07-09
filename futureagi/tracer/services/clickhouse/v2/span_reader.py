@@ -32,8 +32,9 @@ read-only.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import clickhouse_connect
@@ -110,13 +111,39 @@ class CHSpan:
     semconv_source: str = ""
     is_deleted: int = 0
 
+    # Denormalized onto every span row so a caller gets trace context (e.g. the
+    # cluster-RCA agent) without a separate PG read.
+    trace_name: str = ""
+
+    @property
+    def pk(self):
+        """Django-model parity so callers reading ``.pk`` work on a CHSpan."""
+        return self.id
+
+
+@dataclass(frozen=True)
+class SpanScope:
+    """Minimal span fields for org/project/trace scope checks — read WITHOUT the
+    wide JSON columns. See ``CHSpanReader.scope_by_ids``."""
+
+    project_id: str | None
+    trace_id: str | None
+
 
 # Stable column ordering for the CH query. JSON columns wrapped in toJSONString
 # so clickhouse-connect can decode them (it cannot yet handle the typed JSON
 # column type in result rows — see DECISIONS #015, #018 of the migration).
+#
+# The toString() id columns are aliased with a ``_str`` suffix, NOT their bare
+# column name. A ``toString(project_id) AS project_id`` alias SHADOWS the real
+# key column, so a ``WHERE project_id = %(pid)s`` in the same query resolves to
+# the alias (a function of the key) and the primary-key index can no longer prune —
+# turning every project/org-scoped read into a full-table scan. Decoding is
+# positional (``_row_to_chspan`` zips _DATA_KEYS), so the alias name is free to
+# differ from the CHSpan field name.
 _READ_COLUMNS: tuple[str, ...] = (
     "id",
-    "toString(project_id) AS project_id",
+    "toString(project_id) AS project_id_str",
     "trace_id",
     "parent_span_id",
     "name",
@@ -133,13 +160,13 @@ _READ_COLUMNS: tuple[str, ...] = (
     "cost",
     "status",
     "status_message",
-    "toString(org_id) AS org_id",
-    "toString(project_version_id) AS project_version_id",
-    "toString(end_user_id) AS end_user_id",
-    "toString(trace_session_id) AS trace_session_id",
-    "toString(prompt_version_id) AS prompt_version_id",
-    "toString(prompt_label_id) AS prompt_label_id",
-    "toString(custom_eval_config_id) AS custom_eval_config_id",
+    "toString(org_id) AS org_id_str",
+    "toString(project_version_id) AS project_version_id_str",
+    "toString(end_user_id) AS end_user_id_str",
+    "toString(trace_session_id) AS trace_session_id_str",
+    "toString(prompt_version_id) AS prompt_version_id_str",
+    "toString(prompt_label_id) AS prompt_label_id_str",
+    "toString(custom_eval_config_id) AS custom_eval_config_id_str",
     "input",
     "output",
     "tags",
@@ -160,9 +187,40 @@ _READ_COLUMNS: tuple[str, ...] = (
     "eval_status",
     "semconv_source",
     "is_deleted",
+    "trace_name",
 )
 
 _SELECT_SQL = ", ".join(_READ_COLUMNS)
+
+# Same positional shape with the heavy JSON columns stubbed to '' — decoding
+# attributes_extra/span_events/resource_attrs dominates wide reads (a voice
+# conversation root carries its whole raw_log there). _row_to_chspan works
+# unchanged; the stubbed fields just come back empty.
+_HEAVY_COLUMNS = {
+    "span_events",
+    "toJSONString(resource_attrs) AS resource_attrs",
+    "toJSONString(attributes_extra) AS attributes_extra",
+}
+_LEAN_SELECT_SQL = ", ".join(
+    "''" if col in _HEAVY_COLUMNS else col for col in _READ_COLUMNS
+)
+
+# ClickHouse 25.3 turns skip indexes OFF under FINAL by default. A trace-id-keyed
+# read of this table has no usable primary-key prefilter (trace_id is below the PK),
+# so the ``idx_trace_id`` (and roots' ``parent_span_id``) bloom skip indexes are the
+# only thing that prunes it — without them FINAL does a full in-order merge across
+# every part and the per-part granule buffers blow the memory limit. Re-enable them.
+#
+# Correctness under non-exact FINAL (25.3 has no exact_mode): a skip index is only
+# safe here if it filters a column that is STABLE across a row's ReplacingMergeTree
+# versions — otherwise it could prune the granule holding the latest version and
+# resurrect an older one. ``trace_id`` / ``parent_span_id`` are sorting-key / stable
+# columns, so their bloom indexes are safe. The one hazard is the minmax index on
+# ``is_deleted`` (which DOES change across versions): the caller must therefore NOT
+# pass an ``is_deleted = 0`` predicate alongside this setting — the two-arg
+# ReplacingMergeTree(_version, is_deleted) engine already drops deleted rows under
+# FINAL, so the predicate is redundant and only arms the resurrection bug.
+_FINAL_SKIP_INDEX_SETTINGS = {"use_skip_indexes_if_final": 1}
 
 # Order in which result_rows columns arrive — bare names (no `AS` aliases) for the
 # row→dataclass mapping below.
@@ -212,7 +270,89 @@ _DATA_KEYS: tuple[str, ...] = (
     "eval_status",
     "semconv_source",
     "is_deleted",
+    "trace_name",
 )
+
+_EXPORT_COLUMN_SQL: dict[str, str] = {
+    "project_id": "toString(project_id)",
+    "trace_id": "trace_id",
+    "parent_span_id": "parent_span_id",
+    "name": "name",
+    "observation_type": "observation_type",
+    "operation_name": "operation_name",
+    "start_time": "start_time",
+    "end_time": "end_time",
+    "latency_ms": "latency_ms",
+    "model": "model",
+    "provider": "provider",
+    "prompt_tokens": "prompt_tokens",
+    "completion_tokens": "completion_tokens",
+    "total_tokens": "total_tokens",
+    "cost": "cost",
+    "status": "status",
+    "status_message": "status_message",
+    "tags": "tags",
+    "metadata": "toJSONString(metadata)",
+    "span_events": "span_events",
+    "resource_attrs": "toJSONString(resource_attrs)",
+    "input": "input",
+    "output": "output",
+    "attrs_string": "attrs_string",
+    "attrs_number": "attrs_number",
+    "attrs_bool": "attrs_bool",
+    "attributes_extra": "attributes_extra",
+    "eval_status": "eval_status",
+    "semconv_source": "semconv_source",
+}
+
+_EXPORT_FIELD_COLUMNS: dict[str, set[str]] = {
+    "project": {"project_id"},
+    "project_id": {"project_id"},
+    "trace": {"trace_id"},
+    "trace_id": {"trace_id"},
+    "parent_span_id": {"parent_span_id"},
+    "id": set(),
+    "name": {"name"},
+    "observation_type": {"observation_type"},
+    "operation_name": {"operation_name"},
+    "start_time": {"start_time"},
+    "end_time": {"end_time"},
+    "latency_ms": {"latency_ms"},
+    "model": {"model"},
+    "provider": {"provider"},
+    "prompt_tokens": {"prompt_tokens"},
+    "completion_tokens": {"completion_tokens"},
+    "total_tokens": {"total_tokens"},
+    "cost": {"cost"},
+    "status": {"status"},
+    "status_message": {"status_message"},
+    "tags": {"tags"},
+    "metadata": {"metadata"},
+    "span_events": {"span_events"},
+    "resource_attributes": {"resource_attrs"},
+    "resource_attrs": {"resource_attrs"},
+    "input": {"input"},
+    "output": {"output"},
+    "span_attributes": {
+        "attrs_string",
+        "attrs_number",
+        "attrs_bool",
+        "attributes_extra",
+    },
+    "model_parameters": {"attributes_extra"},
+    "input_images": {"attributes_extra"},
+    "eval_input": {"attributes_extra"},
+    "eval_attributes": {"attributes_extra"},
+    "eval_status": {"eval_status"},
+    "semconv_source": {"semconv_source"},
+}
+
+
+def _export_columns_for_fields(field_names: set[str]) -> set[str]:
+    columns: set[str] = set()
+    for field_name in field_names:
+        columns.update(_EXPORT_FIELD_COLUMNS.get(field_name, {field_name}))
+    return {column for column in columns if column in _EXPORT_COLUMN_SQL}
 
 
 def _row_to_chspan(row: tuple) -> CHSpan:
@@ -319,32 +459,130 @@ class CHSpanReader:
         return join, predicate
 
     # ─── Single-row by id ────────────────────────────────────────────────────
-    def get(self, span_id: str) -> CHSpan | None:
+    def get(self, span_id: str, *, project_id: str | None = None) -> CHSpan | None:
         """Equivalent to ObservationSpan.objects.get(id=span_id), returns None
-        if absent (matches the pattern most callers wrap with try/except)."""
+        if absent (matches the pattern most callers wrap with try/except).
+
+        ``project_id`` (optional) scopes to one tenant; omit for prior behavior.
+
+        ``id`` is below the primary-key prefix, so a bare ``id =`` read prunes
+        only via the ``idx_id`` bloom — which CH 25.3 disables under FINAL by
+        default. Without it a point-read does a full in-order merge over every
+        part and the fat ``attributes_extra`` granule buffers blow the memory
+        limit on a wide (voice) span. Re-enable skip indexes; ``id`` is stable
+        across a row's ReplacingMergeTree versions, so the bloom is safe."""
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
+        where = ["id = %(span_id)s"]
+        params: dict[str, Any] = {"span_id": span_id}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
         rows = self._client.query(
             f"SELECT {_SELECT_SQL} FROM spans FINAL "
-            "WHERE id = %(span_id)s AND is_deleted = 0 LIMIT 1",
-            parameters={"span_id": span_id},
+            f"WHERE {' AND '.join(where)} LIMIT 1",
+            parameters=params,
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         if not rows:
             return None
         return _row_to_chspan(rows[0])
 
+    # ─── One trace's curated fields (the `traces` store the list endpoints read)
+    def get_trace_row(
+        self, trace_id: str, *, project_id: str | None = None
+    ) -> dict | None:
+        """Read one trace's curated fields from the CH ``traces`` table by id."""
+        where = ["id = %(tid)s", "is_deleted = 0"]
+        params: dict[str, Any] = {"tid": str(trace_id)}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
+        keys = (
+            "id",
+            "project_id",
+            "project_version_id",
+            "name",
+            "session_id",
+            "external_id",
+            "tags",
+            "metadata",
+            "input",
+            "output",
+            "error",
+            "error_analysis_status",
+            "created_at",
+        )
+        cols = (
+            "toString(id)",
+            "toString(project_id)",
+            "toString(project_version_id)",
+            "name",
+            "toString(session_id)",
+            "external_id",
+            "tags",
+            "metadata",
+            "input",
+            "output",
+            "error",
+            "error_analysis_status",
+            "created_at",
+        )
+        rows = self._client.query(
+            f"SELECT {', '.join(cols)} FROM traces FINAL "
+            f"WHERE {' AND '.join(where)} LIMIT 1",
+            parameters=params,
+        ).result_rows
+        if not rows:
+            return None
+        return dict(zip(keys, rows[0], strict=False))
+
     # ─── All spans in a trace ────────────────────────────────────────────────
-    def list_by_trace(self, trace_id: str) -> list[CHSpan]:
+    def list_by_trace(
+        self, trace_id: str, *, project_id: str | None = None
+    ) -> list[CHSpan]:
         """Equivalent to ObservationSpan.objects.filter(trace=trace, deleted=False).
 
         Returned in start_time, id order so the eval runner's trace-walking
-        logic sees spans in a deterministic chronological order.
+        logic sees spans in a deterministic chronological order. ``project_id``
+        (optional) scopes the read to one tenant; omit for prior behavior.
+
+        ``trace_id`` sits below the primary-key prefix, so this prunes only via
+        the ``idx_trace_id`` bloom — off under FINAL on CH 25.3 by default,
+        leaving a full merge that OOMs on a fat (voice) trace's spans. Re-enable
+        skip indexes (``trace_id`` is a stable sorting-key column, so safe).
         """
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
+        where = ["trace_id = %(trace_id)s"]
+        params: dict[str, Any] = {"trace_id": trace_id}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
         rows = self._client.query(
             f"SELECT {_SELECT_SQL} FROM spans FINAL "
-            "WHERE trace_id = %(trace_id)s AND is_deleted = 0 "
+            f"WHERE {' AND '.join(where)} "
             "ORDER BY start_time, id",
-            parameters={"trace_id": trace_id},
+            parameters=params,
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
+
+    def first_span_by_type(self, trace_id: str, observation_type: str) -> CHSpan | None:
+        """First span of a given type in a trace, ordered by start_time.
+
+        Single-row CH read — replaces listing every span in a trace just to
+        find the first LLM/TOOL/etc. span.
+        """
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS. Prunes via
+        # the ``idx_trace_id`` bloom (off under FINAL without the setting).
+        rows = self._client.query(
+            f"SELECT {_LEAN_SELECT_SQL} FROM spans FINAL "
+            "WHERE trace_id = %(trace_id)s "
+            "AND lower(observation_type) = %(otype)s "
+            "ORDER BY start_time, id LIMIT 1",
+            parameters={"trace_id": trace_id, "otype": observation_type.lower()},
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
+        ).result_rows
+        return _row_to_chspan(rows[0]) if rows else None
 
     # ─── All spans in a session ──────────────────────────────────────────────
     def list_by_session(self, session_id: str) -> list[CHSpan]:
@@ -374,21 +612,123 @@ class CHSpanReader:
         return [_row_to_chspan(r) for r in rows]
 
     # ─── Bulk fetch by trace ids ──────────────────────────────────────────────
-    def list_by_trace_ids(self, trace_ids: list[str]) -> list[CHSpan]:
+    def list_by_trace_ids(
+        self,
+        trace_ids: list[str],
+        *,
+        project_id: str | None = None,
+        include_heavy: bool = True,
+    ) -> list[CHSpan]:
         """Equivalent to ObservationSpan.objects.filter(trace_id__in=trace_ids).
 
         Returns spans across multiple traces in (trace_id, start_time, id) order.
         Empty input returns empty list.
+
+        ``project_id`` (optional) scopes the read to one tenant. ``trace_id`` sits
+        below ``project_id`` in the sorting key and is absent from the primary key,
+        so an unscoped ``trace_id IN`` read cannot prune parts and a FINAL merge
+        spans the whole table — pass ``project_id`` whenever the caller knows the
+        traces belong to a single project so the primary-key prefix prunes the
+        scan. Omit for prior (cross-project) behavior.
+
+        ``include_heavy`` defaults to True here (unlike ``roots_by_trace_ids``,
+        which defaults to lean) because most callers consume span_events /
+        resource_attrs / attributes_extra and must stay byte-identical. Pass False
+        to stub those three fat columns: under FINAL's in-order read the per-part
+        granule buffers for attributes_extra dominate memory, so a caller that only
+        needs input/output/metadata/attrs_string should read lean.
         """
         if not trace_ids:
             return []
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
+        where = ["trace_id IN %(trace_ids)s"]
+        params: dict[str, Any] = {"trace_ids": tuple(trace_ids)}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
+        select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
         rows = self._client.query(
-            f"SELECT {_SELECT_SQL} FROM spans FINAL "
-            "WHERE trace_id IN %(trace_ids)s AND is_deleted = 0 "
+            f"SELECT {select} FROM spans FINAL "
+            f"WHERE {' AND '.join(where)} "
             "ORDER BY trace_id, start_time, id",
-            parameters={"trace_ids": tuple(trace_ids)},
+            parameters=params,
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
+
+    # ─── Root spans only (parentless) across many traces ─────────────────────
+    def roots_by_trace_ids(
+        self,
+        trace_ids: list[str],
+        *,
+        include_heavy: bool = False,
+        project_id: str | None = None,
+        org_id: str | None = None,
+    ) -> list[CHSpan]:
+        """Parentless spans for the given traces, same shape/order as
+        list_by_trace_ids. Fetches one row per root instead of every span.
+
+        Unless ``include_heavy``, attributes_extra / span_events /
+        resource_attrs come back as '' — decoding them dominates the read
+        (a voice conversation root carries its whole raw_log in
+        attributes_extra). input/output/attrs_string stay real. ``project_id``
+        (optional) scopes the read to one tenant; omit for prior behavior.
+
+        NOTE: structural root (parentless span), NOT the cluster-RCA agent's
+        argMin "representative trace" — deliberately different reads.
+        """
+        if not trace_ids:
+            return []
+        select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
+        where = [
+            "trace_id IN %(trace_ids)s",
+            "(parent_span_id IS NULL OR parent_span_id = '')",
+        ]
+        params: dict[str, Any] = {"trace_ids": tuple(trace_ids)}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
+        if org_id:
+            where.append("org_id = %(oid)s")
+            params["oid"] = str(org_id)
+        rows = self._client.query(
+            f"SELECT {select} FROM spans FINAL "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY trace_id, start_time, id",
+            parameters=params,
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
+        ).result_rows
+        return [_row_to_chspan(r) for r in rows]
+
+    # ─── Per-trace rollups (latency / tokens) ─────────────────────────────────
+    def totals_by_trace_ids(
+        self, trace_ids: list[str]
+    ) -> dict[str, tuple[int | None, int | None, int | None]]:
+        """{trace_id: (latency_ms, prompt_tokens, completion_tokens)} summed
+        in CH — replaces materializing every span just to add three ints.
+
+        No FINAL: analytics-aggregate convention (matches the dashboard query
+        builders) — an unmerged duplicate inflates a sum until the merge runs,
+        acceptable for summary stats and far cheaper on fat-row tables."""
+        if not trace_ids:
+            return {}
+        rows = self._client.query(
+            "SELECT trace_id, sum(latency_ms) AS lat, "
+            "sum(prompt_tokens) AS pt, sum(completion_tokens) AS ct "
+            "FROM spans "
+            "WHERE trace_id IN %(trace_ids)s AND is_deleted = 0 "
+            "GROUP BY trace_id",
+            parameters={"trace_ids": tuple(trace_ids)},
+        ).result_rows
+        return {
+            str(tid): (
+                int(lat) if lat else None,
+                int(pt) if pt else None,
+                int(ct) if ct else None,
+            )
+            for tid, lat, pt, ct in rows
+        }
 
     # ─── Children of a parent span ────────────────────────────────────────────
     def list_by_parent(
@@ -398,31 +738,338 @@ class CHSpanReader:
         ordered by start_time, id. `limit` caps the result for display-list paths
         (e.g. `[:20]` slices that the AI-tools `get_span` does)."""
         lim_clause = f" LIMIT {int(limit)}" if limit else ""
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS. Prunes via
+        # the ``idx_parent_span_id`` bloom (off under FINAL without the setting);
+        # parent_span_id is stable across versions, so the bloom is safe.
         rows = self._client.query(
             f"SELECT {_SELECT_SQL} FROM spans FINAL "
-            "WHERE parent_span_id = %(parent)s AND is_deleted = 0 "
+            "WHERE parent_span_id = %(parent)s "
             f"ORDER BY start_time, id{lim_clause}",
             parameters={"parent": parent_span_id},
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
 
     # ─── Spans by id batch ────────────────────────────────────────────────────
-    def list_by_ids(self, span_ids: list[str]) -> list[CHSpan]:
+    def list_by_ids(
+        self,
+        span_ids: list[str],
+        *,
+        include_heavy: bool = True,
+        project_id: str | None = None,
+        org_id: str | None = None,
+    ) -> list[CHSpan]:
         """Equivalent to ObservationSpan.objects.filter(id__in=span_ids).
 
         Result order is NOT preserved relative to the input list (CH orders
         by id for determinism). Callers that need a specific order should
         sort the result themselves.
+
+        With ``include_heavy=False`` the fat JSON columns (attributes_extra /
+        span_events / resource_attrs) come back as '' — opt out when only
+        id/scalar columns are needed.
         """
         if not span_ids:
             return []
+        select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS. Prunes via
+        # the ``idx_id`` bloom (off under FINAL without the setting); a fat
+        # (voice) span in the batch otherwise OOMs the full in-order merge.
+        where = ["id IN %(ids)s"]
+        params: dict[str, Any] = {"ids": tuple(span_ids)}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
+        if org_id:
+            where.append("org_id = %(oid)s")
+            params["oid"] = str(org_id)
         rows = self._client.query(
-            f"SELECT {_SELECT_SQL} FROM spans FINAL "
-            "WHERE id IN %(ids)s AND is_deleted = 0 "
-            "ORDER BY id",
-            parameters={"ids": tuple(span_ids)},
+            f"SELECT {select} FROM spans FINAL WHERE {' AND '.join(where)} ORDER BY id",
+            parameters=params,
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
+
+    def export_fields_by_ids(
+        self,
+        span_ids: list[str],
+        field_names: set[str],
+        *,
+        project_id: str | None = None,
+        org_id: str | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """Fetch only the span columns needed for dataset export cells.
+
+        Dataset export can map a handful of fields across hundreds of spans.
+        Using ``list_by_ids`` here hydrates every CHSpan column, including fat
+        payload columns like ``attributes_extra`` and ``span_events``. This
+        method keeps the read on canonical CH25 ``spans`` while avoiding
+        ``FINAL`` and selecting only the columns implied by the requested
+        mapping.
+        """
+        if not span_ids:
+            return {}
+
+        columns = _export_columns_for_fields(field_names)
+        select_exprs = ["id"]
+        aliases = ["id"]
+        for alias in sorted(columns):
+            select_exprs.append(
+                f"argMax({_EXPORT_COLUMN_SQL[alias]}, _version) AS {alias}"
+            )
+            aliases.append(alias)
+
+        where = ["id IN %(ids)s"]
+        params: dict[str, Any] = {"ids": tuple(str(span_id) for span_id in span_ids)}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
+        if org_id:
+            where.append("org_id = %(oid)s")
+            params["oid"] = str(org_id)
+
+        rows = self._client.query(
+            "SELECT "
+            f"{', '.join(select_exprs)} "
+            "FROM spans "
+            f"PREWHERE {' AND '.join(where)} "
+            "GROUP BY id "
+            "HAVING argMax(is_deleted, _version) = 0",
+            parameters=params,
+            settings={
+                "max_threads": 1,
+                "max_bytes_before_external_group_by": 256 * 1024 * 1024,
+            },
+        ).result_rows
+
+        return {str(row[0]): dict(zip(aliases, row, strict=False)) for row in rows}
+
+    # ─── Batch helpers for dataset child-tree export ─────────────────────────
+
+    def trace_ids_for_span_ids(
+        self,
+        span_ids: list[str],
+        *,
+        project_id: str | None = None,
+    ) -> dict[str, str]:
+        """Return {span_id: trace_id} for the given span IDs.
+
+        Lightweight query: selects only (id, trace_id), avoids FINAL by using
+        argMax dedup. Used to batch-resolve trace membership before fetching
+        full trace trees.
+        """
+        if not span_ids:
+            return {}
+        where = ["id IN %(ids)s"]
+        params: dict[str, Any] = {"ids": tuple(span_ids)}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
+
+        rows = self._client.query(
+            "SELECT id, argMax(trace_id, _version) AS trace_id "
+            "FROM spans "
+            f"PREWHERE {' AND '.join(where)} "
+            "GROUP BY id "
+            "HAVING argMax(is_deleted, _version) = 0",
+            parameters=params,
+            settings={"max_threads": 2},
+        ).result_rows
+        return {str(r[0]): str(r[1]) for r in rows}
+
+    _CHILD_TREE_COLUMNS: tuple[tuple[str, str], ...] = (
+        ("parent_span_id", "parent_span_id"),
+        ("name", "name"),
+        ("observation_type", "observation_type"),
+        ("operation_name", "operation_name"),
+        ("status", "status"),
+        ("status_message", "status_message"),
+        ("model", "model"),
+        ("provider", "provider"),
+        ("input", "input"),
+        ("output", "output"),
+        ("toJSONString(metadata)", "metadata"),
+        ("attrs_string", "attrs_string"),
+        ("attrs_number", "attrs_number"),
+        ("attrs_bool", "attrs_bool"),
+        ("toJSONString(attributes_extra)", "attributes_extra"),
+        ("prompt_tokens", "prompt_tokens"),
+        ("completion_tokens", "completion_tokens"),
+        ("total_tokens", "total_tokens"),
+        ("latency_ms", "latency_ms"),
+        ("cost", "cost"),
+        ("tags", "tags"),
+        ("span_events", "span_events"),
+        ("start_time", "start_time"),
+    )
+
+    _CHILD_TREE_ALIASES: tuple[str, ...] = (
+        "id",
+        "trace_id",
+        "parent_span_id",
+        "name",
+        "observation_type",
+        "operation_name",
+        "status",
+        "status_message",
+        "model",
+        "provider",
+        "input",
+        "output",
+        "metadata",
+        "attrs_string",
+        "attrs_number",
+        "attrs_bool",
+        "attributes_extra",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "latency_ms",
+        "cost",
+        "tags",
+        "span_events",
+        "start_time",
+    )
+
+    def child_tree_spans_by_trace_ids(
+        self,
+        trace_ids: list[str],
+        *,
+        project_id: str | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Fetch all spans for the given traces, returning only columns needed
+        for child-tree serialization (excludes resource_attrs).
+
+        Uses argMax dedup (no FINAL) with external GROUP BY spill to avoid OOM.
+        Returns {trace_id: [row_dict, ...]} ordered by start_time DESC within
+        each trace (matching legacy ObservationSpan.Meta.ordering).
+        """
+        if not trace_ids:
+            return {}
+
+        select_exprs = ["id", "trace_id"]
+        for expr, alias in self._CHILD_TREE_COLUMNS:
+            select_exprs.append(f"argMax({expr}, _version) AS {alias}")
+
+        where = ["trace_id IN %(tids)s"]
+        params: dict[str, Any] = {"tids": tuple(trace_ids)}
+        if project_id:
+            where.append("project_id = %(pid)s")
+            params["pid"] = str(project_id)
+
+        rows = self._client.query(
+            f"SELECT {', '.join(select_exprs)} "
+            "FROM spans "
+            f"PREWHERE {' AND '.join(where)} "
+            "GROUP BY id, trace_id "
+            "HAVING argMax(is_deleted, _version) = 0",
+            parameters=params,
+            settings={
+                "max_threads": 2,
+                "max_bytes_before_external_group_by": 512 * 1024 * 1024,
+            },
+        ).result_rows
+
+        result: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            d = dict(zip(self._CHILD_TREE_ALIASES, row, strict=False))
+            tid = str(d["trace_id"])
+            result.setdefault(tid, []).append(d)
+
+        # Sort each trace's spans by start_time DESC (matching legacy ordering)
+        for spans in result.values():
+            spans.sort(key=lambda s: s.get("start_time") or "", reverse=True)
+
+        return result
+
+    def root_ids_by_project(
+        self,
+        project_id: str,
+        *,
+        org_id: str | None = None,
+        exclude_trace_ids: list[str] | None = None,
+    ) -> list[str]:
+        if not project_id:
+            return []
+        where = [
+            "project_id = %(pid)s",
+            "is_deleted = 0",
+            "(parent_span_id IS NULL OR parent_span_id = '')",
+        ]
+        params: dict[str, Any] = {"pid": str(project_id)}
+        if org_id:
+            where.append("org_id = %(oid)s")
+            params["oid"] = str(org_id)
+        if exclude_trace_ids:
+            where.append("trace_id NOT IN %(exclude_trace_ids)s")
+            params["exclude_trace_ids"] = tuple(exclude_trace_ids)
+        rows = self._client.query(
+            "SELECT id FROM spans FINAL "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY trace_id, start_time, id",
+            parameters=params,
+        ).result_rows
+        return [str(row[0]) for row in rows]
+
+    def ids_by_project(
+        self,
+        project_id: str,
+        *,
+        org_id: str | None = None,
+        exclude_ids: list[str] | None = None,
+    ) -> list[str]:
+        if not project_id:
+            return []
+        where = ["project_id = %(pid)s", "is_deleted = 0"]
+        params: dict[str, Any] = {"pid": str(project_id)}
+        if org_id:
+            where.append("org_id = %(oid)s")
+            params["oid"] = str(org_id)
+        if exclude_ids:
+            where.append("id NOT IN %(exclude_ids)s")
+            params["exclude_ids"] = tuple(exclude_ids)
+        rows = self._client.query(
+            "SELECT id FROM spans FINAL "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY start_time, id",
+            parameters=params,
+        ).result_rows
+        return [str(row[0]) for row in rows]
+
+    def scope_by_ids(self, span_ids: list[str]) -> dict[str, SpanScope]:
+        """Map ``span_id -> SpanScope(project_id, trace_id)``, reading ONLY those
+        two columns instead of the full span row.
+
+        The full-row reads (``get`` / ``list_by_ids``) pull the wide JSON
+        columns — ``attributes_extra`` / ``input`` / ``output`` / ``metadata`` /
+        ``attrs_string`` — which on a fat span (a voice root carrying its whole
+        raw log) blow the shared ClickHouse memory limit (code 241). The
+        annotation ``for-source`` scope checks only need each span's project
+        (and, for the scores panel, its trace), so read just those: a single
+        panel-open must not OOM the shared cluster. ``FINAL`` is kept —
+        project/trace are stable across versions and a two-column ``FINAL`` read
+        stays well under the limit.
+        """
+        if not span_ids:
+            return {}
+        rows = self._client.query(
+            "SELECT id, toString(project_id) AS project_id, "
+            "toString(trace_id) AS trace_id FROM spans FINAL "
+            "WHERE id IN %(ids)s AND is_deleted = 0",
+            parameters={"ids": tuple(span_ids)},
+        ).result_rows
+
+        def _norm(v: Any) -> str | None:
+            return (
+                None
+                if v in (None, "", "NULL", "00000000-0000-0000-0000-000000000000")
+                else str(v)
+            )
+
+        return {
+            str(sid): SpanScope(project_id=_norm(pid), trace_id=_norm(tid))
+            for sid, pid, tid in rows
+        }
 
     # ─── Aggregations across many traces ──────────────────────────────────────
     def aggregate_by_trace_ids(self, trace_ids: list[str]) -> dict[str, Any]:
@@ -648,6 +1295,57 @@ class CHSpanReader:
         for tid, st in rows:
             result[tid] = st
         return result
+
+    # ─── Scan-sweep: completed-trace candidates since a watermark ────────────
+    def ch_now(self) -> datetime:
+        """ClickHouse server clock as tz-aware UTC — the sweep bounds its window
+        off this so the watermark is a real CH timestamp (clock-skew-proof).
+        tz-aware so it compares against Django's tz-aware ``last_swept_at``."""
+        dt = self._client.query("SELECT now64(6, 'UTC')").result_rows[0][0]
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+    # created_at is unindexed, but spans is PARTITION BY toDate(start_time) /
+    # PK toStartOfHour(start_time). A trace's start_time precedes its created_at,
+    # so flooring start_time at (lower - this) prunes old partitions while still
+    # catching exports up to this late. No start_time UPPER bound: created_at is
+    # server-set and skew-proof, start_time is producer-set and may run ahead, so
+    # an upper bound would silently drop valid in-window traces.
+    _CANDIDATE_START_FLOOR = timedelta(days=7)
+
+    def root_trace_candidates(
+        self, project_id: str, lower: datetime, upper: datetime
+    ) -> list[tuple[str, datetime]]:
+        """``(trace_id, created_at)`` for distinct roots (``parent_span_id = ''``)
+        with ``lower <= created_at <= upper`` — the scan sweep's candidates.
+
+        Cursor is ``created_at`` (CH ingest time), not ``start_time``, so long-
+        running / late-exported traces can't slip behind the watermark. The
+        lower bound is INCLUSIVE: the caller parks its watermark on the oldest
+        still-unscanned created_at and must re-see that trace next tick. No
+        ``FINAL``: dedup via ``GROUP BY`` (min created_at per trace), and the
+        caller's anti-join makes a redundant dispatch a no-op.
+        """
+        if lower > upper:
+            return []
+        start_floor = lower - self._CANDIDATE_START_FLOOR
+        rows = self._client.query(
+            "SELECT toString(trace_id) AS tid, min(created_at) AS ca FROM spans "
+            "WHERE project_id = %(p)s AND parent_span_id = '' "
+            "  AND is_deleted = 0 "
+            "  AND start_time >= %(start_floor)s "
+            "  AND created_at >= %(lower)s AND created_at <= %(upper)s "
+            "GROUP BY tid",
+            parameters={
+                "p": str(project_id),
+                "lower": lower,
+                "upper": upper,
+                "start_floor": start_floor,
+            },
+        ).result_rows
+        # CH hands back created_at tz-naive even for a DateTime64(_, 'UTC')
+        # column; force UTC (as ch_now does) so the caller can compare it
+        # against the tz-aware watermark without a naive/aware TypeError.
+        return [(r[0], r[1] if r[1].tzinfo else r[1].replace(tzinfo=UTC)) for r in rows]
 
     # ─── Distinct end_users per trace (feed user-count rollup) ────────────────
     def distinct_end_users_by_trace_ids(
@@ -1194,6 +1892,29 @@ class CHSpanReader:
         # caller's responsibility; this helper stays narrow.
         return out
 
+    def stream_query(
+        self,
+        sql: str,
+        params: dict[str, Any] | None = None,
+        *,
+        batch_size: int = 10_000,
+    ) -> Iterator[list[str]]:
+        """Stream a query's first column as strings, re-chunked to ``batch_size``
+        so neither the client nor the caller holds the full result in memory — a
+        large historical scan can be consumed in waves."""
+        batch: list[str] = []
+        with self._client.query_row_block_stream(
+            sql, parameters=params or {}
+        ) as stream:
+            for block in stream:
+                for row in block:
+                    batch.append(str(row[0]))
+                    if len(batch) >= batch_size:
+                        yield batch
+                        batch = []
+        if batch:
+            yield batch
+
     # ─── Wave-3 reader extensions (commit 2f7d55e14 follow-up) ────────────────
 
     def time_bucket_aggregate_with_filters(
@@ -1365,6 +2086,7 @@ class CHSpanReader:
         self,
         trace_ids: list[str],
         *,
+        include_heavy: bool = True,
         observation_type: str | None = None,
     ) -> dict[str, CHSpan]:
         """For each trace_id, return the root span (parent_span_id = '').
@@ -1379,9 +2101,14 @@ class CHSpanReader:
 
         Used by model_hub/services/bulk_selection.py for per-trace root
         lookups + annotation_queues.py default-queue resolution.
+
+        With ``include_heavy=False`` the fat JSON columns (attributes_extra /
+        span_events / resource_attrs) come back as '' — opt out when only
+        id/scalar columns are needed.
         """
         if not trace_ids:
             return {}
+        select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
         where = [
             "is_deleted = 0",
             "trace_id IN %(tids)s",
@@ -1394,7 +2121,7 @@ class CHSpanReader:
         # Single CH query; ORDER BY trace_id, start_time, id; then dedupe by
         # trace_id in Python keeping the first per trace_id (= earliest).
         rows = self._client.query(
-            f"SELECT {_SELECT_SQL} FROM spans FINAL "
+            f"SELECT {select} FROM spans FINAL "
             f"WHERE {' AND '.join(where)} "
             "ORDER BY trace_id, start_time, id",
             parameters=params,
@@ -1810,17 +2537,8 @@ class CHSpanReader:
             metadata_parsed = {}
         # span_attributes is the legacy serializer field that flattens
         # attrs_string/number/bool + attributes_extra into one dict — the
-        # shape v1 consumers expect.
-        span_attributes: dict[str, Any] = {}
-        span_attributes.update(span.attrs_string or {})
-        span_attributes.update(span.attrs_number or {})
-        span_attributes.update(span.attrs_bool or {})
-        try:
-            extra = json.loads(span.attributes_extra) if span.attributes_extra else {}
-            if isinstance(extra, dict):
-                span_attributes.update(extra)
-        except json.JSONDecodeError:
-            pass
+        # shape v1 consumers expect. Single source of truth: _ch_span_attributes.
+        span_attributes = _ch_span_attributes(span)
         # tags / span_events come from CH as JSON strings; the serializer
         # returns them as Python objects.
         try:
@@ -1868,6 +2586,93 @@ class CHSpanReader:
             "eval_status": span.eval_status,
             "prompt_version": span.prompt_version_id,
         }
+
+
+def merge_span_attributes(
+    attrs_string: dict[str, Any] | None,
+    attrs_number: dict[str, Any] | None,
+    attrs_bool: dict[str, Any] | None,
+    attributes_extra: Any,
+) -> dict[str, Any]:
+    """Merge typed maps + ``attributes_extra`` into one ``span_attributes`` dict.
+
+    Single source of truth. Maps first, ``attributes_extra`` (str or dict)
+    overrides; bad JSON skipped; ``attrs_bool`` coerced to real booleans.
+    """
+    out: dict[str, Any] = {}
+    out.update(attrs_string or {})
+    out.update(attrs_number or {})
+    out.update({k: bool(v) for k, v in (attrs_bool or {}).items()})
+    extra = attributes_extra
+    if isinstance(extra, str):
+        try:
+            extra = json.loads(extra) if extra else {}
+        except json.JSONDecodeError:
+            extra = {}
+    if isinstance(extra, dict):
+        out.update(extra)
+    return out
+
+
+def _ch_span_attributes(span: CHSpan) -> dict[str, Any]:
+    """CHSpan adapter for :func:`merge_span_attributes`."""
+    return merge_span_attributes(
+        span.attrs_string, span.attrs_number, span.attrs_bool, span.attributes_extra
+    )
+
+
+def _ch_json_obj(raw: str, *, default: Any) -> Any:
+    """``json.loads`` a CH JSON-string column, returning *default* (``{}`` / ``[]``)
+    on null/empty/malformed input rather than raising — so one bad span row does
+    not 500 the annotate-detail render. Parse failures are the caller's to log."""
+    if not raw:
+        return default
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return default
+    return parsed
+
+
+def chspan_to_annotation_source_dict(span: CHSpan) -> dict[str, Any]:
+    """Map a :class:`CHSpan` to the ``observation_span`` content/preview dict the
+    annotation selectors emit for a PG ``ObservationSpan`` — the single place that
+    owns the CHSpan field renames (attrs_* merge, json.loads of the string columns,
+    latency→response_time, start/end→created/updated, eval_attributes={}) so the
+    preview and content branches never diverge. Pure (no IO)."""
+    metadata = _ch_json_obj(span.metadata, default={})
+    return {
+        "type": "observation_span",
+        "span_id": str(span.id),
+        "trace_id": str(span.trace_id) if span.trace_id else None,
+        "name": span.name or "",
+        "observation_type": span.observation_type or "",
+        "project_id": str(span.project_id) if span.project_id else None,
+        "created_at": span.start_time,
+        "updated_at": span.end_time,
+        "start_time": span.start_time,
+        "end_time": span.end_time,
+        "input": _maybe_json(span.input),
+        "output": _maybe_json(span.output),
+        "metadata": metadata if isinstance(metadata, dict) else {},
+        "events": _ch_json_obj(span.span_events, default=[]),
+        "latency_ms": span.latency_ms,
+        # CH has no response_time column; latency_ms is the only timing signal.
+        "response_time_ms": span.latency_ms,
+        "model": span.model or None,
+        "provider": span.provider or None,
+        "cost": span.cost,
+        "prompt_tokens": span.prompt_tokens,
+        "completion_tokens": span.completion_tokens,
+        "total_tokens": span.total_tokens,
+        "status": span.status or None,
+        "status_message": span.status_message or None,
+        "tags": _ch_json_obj(span.tags, default=[]),
+        "span_attributes": _ch_span_attributes(span),
+        "resource_attributes": _ch_json_obj(span.resource_attrs, default={}),
+        # empty (not omitted) for PG-branch shape parity — CH has no per-eval dict
+        "eval_attributes": {},
+    }
 
 
 # Provider → logo URL map. Mirrors what the serializer's get_provider_logo() does

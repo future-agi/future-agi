@@ -72,20 +72,20 @@ const OptimizationDetailComponent = ({
             color="text.primary"
           />
           <Typography typography="s1" fontWeight="fontWeightMedium">
-            {trailPromptData?.trialName}
+            {trailPromptData?.trial_name}
           </Typography>
         </Box>
       </ShowComponent>
       <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
         <Typography typography="m3" fontWeight="fontWeightSemiBold">
-          {trailPromptData?.trialName}
+          {trailPromptData?.trial_name}
         </Typography>
         <Box sx={{ display: "flex", gap: 1 }}>
           <Typography typography="s1">
-            Optimization Name: {trailPromptData?.optimisationName}
+            Optimization Name: {trailPromptData?.optimisation_name}
           </Typography>
           <Growth
-            value={trailPromptData?.scorePercentageChange}
+            value={trailPromptData?.score_percentage_change}
             getText={(value) => {
               if (value > 0) {
                 return `+${value}% improved from baseline prompt`;

@@ -21,6 +21,7 @@ from agentic_eval.core.utils.functions import detect_input_type
 import structlog
 
 logger = structlog.get_logger(__name__)
+
 from analytics.utils import mixpanel_slack_notfy
 from model_hub.models.choices import DataTypeChoices
 from model_hub.models.develop_dataset import Cell
@@ -33,6 +34,11 @@ from tfc.utils.storage import (
 # Thread-local storage for models
 _thread_local = threading.local()
 FEEDBACK_TABLE_NAME = "feedbacks"
+GROUND_TRUTH_TABLE_NAME = "ground_truths"
+_TENANT_SCOPED_TABLES = (FEEDBACK_TABLE_NAME, GROUND_TRUTH_TABLE_NAME)
+
+# Default DB-layer cosine-distance cap for tenant tables when caller passes none.
+_TENANT_DEFAULT_COLUMN_THRESHOLD = 0.35
 
 def log_performance(func):
     @wraps(func)
@@ -188,7 +194,6 @@ class ModelManager:
         logger.info("Accessing audio model")
         if self._use_serving and self.serving_client:
             logger.info("Using serving client for audio embeddings")
-            # Return a function that uses the serving client
             def audio_embedding(audio_data):
                 logger.info("Getting audio embedding from serving client")
                 return self.serving_client.embed_audio(audio_data)
@@ -332,8 +337,9 @@ class EmbeddingManager:
             if model_manager._use_serving:
                 try:
                     embedding_vector = model(query)
-                except:
-                    embedding_vector = []   
+                except Exception as exc:
+                    logger.warning("audio_embedding_failed", error=str(exc))
+                    embedding_vector = []
                 return embedding_vector
             else:
                 return []
@@ -473,8 +479,10 @@ class EmbeddingManager:
         workspace_id=None,
     ):
         try:
-            if table_name == FEEDBACK_TABLE_NAME and not organization_id:
-                raise ValueError("organization_id is required for feedback embeddings")
+            if table_name in _TENANT_SCOPED_TABLES and not organization_id:
+                raise ValueError(
+                    f"organization_id is required for {table_name} embeddings"
+                )
 
             # Check inputs using input_checker
             input_dict = self.input_checker(row_dict)
@@ -525,7 +533,7 @@ class EmbeddingManager:
                         f"Warning: {inp} not in input_dict, skipping index_col_type append"
                     )
 
-                if table_name == FEEDBACK_TABLE_NAME:
+                if table_name in _TENANT_SCOPED_TABLES:
                     if organization_id:
                         row_dict["organization_id"] = str(organization_id)
                     if workspace_id:
@@ -534,10 +542,17 @@ class EmbeddingManager:
                 mod_dict = row_dict.copy()
 
                 for inp2 in inputs_formater:
-                    if "http" in mod_dict[str(inp2)] and table_name == FEEDBACK_TABLE_NAME:
-                        mod_dict[inp2] = self.encode_path(mod_dict[str(inp2)])
+                    val = mod_dict.get(str(inp2))
+                    if (
+                        isinstance(val, str)
+                        and "http" in val
+                        and table_name in _TENANT_SCOPED_TABLES
+                    ):
+                        mod_dict[inp2] = self.encode_path(val)
 
                 mod_dict["input_type"] = input_dict[inp]
+                if table_name == GROUND_TRUTH_TABLE_NAME:
+                    mod_dict["column_name"] = str(inp)
 
                 # Get embedding for this input
                 try:
@@ -562,6 +577,7 @@ class EmbeddingManager:
                             embedding_vector = embedding_vector.tolist()
 
                     vectors.append(embedding_vector)
+
                     metadata_list.append(mod_dict)
 
                 except IndexError:
@@ -588,7 +604,7 @@ class EmbeddingManager:
 
                 except Exception:
                     traceback.print_exc()
-                    
+
                     raise
 
             return vectors, metadata_list
@@ -609,6 +625,7 @@ class EmbeddingManager:
         batch_size=50,
         organization_id=None,
         workspace_id=None,
+        progress_callback=None,
     ):
         if table_name == FEEDBACK_TABLE_NAME:
             db_client = ClickHouseVectorDB()
@@ -623,34 +640,79 @@ class EmbeddingManager:
                 workspace_id=workspace_id,
             )
         else:
+            progress_lock = threading.Lock()
+            rows_done = [0]
+
+            def _bump_progress(n_rows):
+                if not progress_callback:
+                    return
+                with progress_lock:
+                    rows_done[0] += n_rows
+                    snapshot = rows_done[0]
+                try:
+                    progress_callback(snapshot)
+                except Exception as cb_exc:
+                    logger.warning(
+                        "embedding_progress_callback_failed",
+                        rows_done=snapshot,
+                        error=str(cb_exc),
+                    )
+
             def process_batch(batch):
-                vectors_batch = []
-                metadata_batch = []
+                # Per-row commits so partial progress survives mid-batch failures.
+                inserted_ids = []
                 db_client = ClickHouseVectorDB()
 
                 try:
                     db_client.create_table(table_name)
                     for metadata in batch:
-                        vectors, metadata_list = self.data_formatter(
-                            row_dict=metadata,
-                            inputs_formater=inputs_formater,
-                            table_name=table_name,
-                        )
-                        if vectors and metadata_list:
-                            vectors_batch.extend(vectors)
-                            metadata_batch.extend(metadata_list)
+                        try:
+                            vectors, metadata_list = self.data_formatter(
+                                row_dict=metadata,
+                                inputs_formater=inputs_formater,
+                                table_name=table_name,
+                                eval_id=eval_id,
+                                organization_id=organization_id,
+                                workspace_id=workspace_id,
+                            )
+                        except Exception as row_exc:
+                            logger.error(
+                                "embedding_row_format_failed",
+                                table_name=table_name,
+                                eval_id=eval_id,
+                                error=str(row_exc),
+                            )
+                            continue
 
-                    if vectors_batch and metadata_batch:
-                        return db_client.bulk_upsert_vectors(
-                            table_name=table_name,
-                            eval_id=eval_id,
-                            vectors=vectors_batch,
-                            metadata_list=metadata_batch,
-                            unique_keys=["item_id"],
-                        )
+                        if not (vectors and metadata_list):
+                            continue
+
+                        try:
+                            new_ids = db_client.bulk_upsert_vectors(
+                                table_name=table_name,
+                                eval_id=eval_id,
+                                vectors=vectors,
+                                metadata_list=metadata_list,
+                                unique_keys=["item_id"],
+                            )
+                        except Exception as upsert_exc:
+                            logger.error(
+                                "embedding_row_upsert_failed",
+                                table_name=table_name,
+                                eval_id=eval_id,
+                                error=str(upsert_exc),
+                            )
+                            continue
+
+                        inserted_ids.extend(new_ids or [])
+                        _bump_progress(1)
                 finally:
                     db_client.close()
-                return []
+                return inserted_ids
+
+            # Cap worker count to match server-side admission. Going higher
+            # just queues threads at the semaphore for no throughput win.
+            max_workers = int(os.getenv("EMBED_WORKER_POOL_SIZE", "10"))
 
             # Split metadatas into batches
             batches = [
@@ -663,7 +725,7 @@ class EmbeddingManager:
             # Wrap function with OTel context propagation for thread safety
             wrapped_process_batch = wrap_for_thread(process_batch)
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 future_to_batch = {
                     executor.submit(wrapped_process_batch, batch): batch for batch in batches
                 }
@@ -800,7 +862,8 @@ class EmbeddingManager:
         ]
 
         # Sort by average similarity in descending order
-        common_items.sort(key=lambda x: x["avg_similarity"], reverse=True)
+        # avg_similarity holds cosineDistance; sort ascending (closest first).
+        common_items.sort(key=lambda x: x["avg_similarity"])
 
         # Extract the full items for the top_k common items
         top_items = [
@@ -857,7 +920,9 @@ class EmbeddingManager:
                         "image-text", query
                     )
                 elif input_type == "audio":
-                    query_embedding = self.get_audio_query_embedding("audio", query)
+                    query_embedding = self.get_audio_query_embedding(
+                        "audio", query
+                    )
                 else:
                     model = model_manager.text_model
                     if model_manager._use_serving:
@@ -869,7 +934,7 @@ class EmbeddingManager:
             db_client = self.db_client
             filter_by["input_type"] = input_type
 
-            if table_name == FEEDBACK_TABLE_NAME:
+            if table_name in _TENANT_SCOPED_TABLES:
                 if organization_id:
                     filter_by["organization_id"] = str(organization_id)
                 if workspace_id:
@@ -939,6 +1004,14 @@ class EmbeddingManager:
 
         self.input_types = self.inputs_type_list(inputs)
 
+        # Tenant tables always go through common-items; threshold only caps the DB query.
+        tenant_scoped = table_name in _TENANT_SCOPED_TABLES
+        effective_threshold = (
+            threshold
+            if threshold is not None
+            else (_TENANT_DEFAULT_COLUMN_THRESHOLD if tenant_scoped else None)
+        )
+
         results = {}
         start_time = datetime.now()
         for n, inp in enumerate(inputs):
@@ -946,30 +1019,47 @@ class EmbeddingManager:
                 if n >= len(input_cols) or n >= len(self.input_types):
                     logger.warning(f"Skipping input {n} due to mismatch in column names or types")
                     continue
-                    
-                # print(f"[FEEDBACK AVG_RAG] input[{n}]: col={input_cols[n]} type={self.input_types[n]} query={str(inp)[:100]} eval_id={eval_id} org={organization_id} ws={workspace_id}", flush=True)
+                if table_name == GROUND_TRUTH_TABLE_NAME:
+                    meta_col = "column_name"
+                    per_input_filter = {"column_name": input_cols[n]}
+                else:
+                    meta_col = input_cols[n]
+                    per_input_filter = {}
+                # Tenant tables span modalities with differing vector dims
+                # (text=384, image=512, audio=768). vector_similarity_search_with_threshold
+                # adds `distance <= threshold` to WHERE, which makes CH compute
+                # cosineDistance before the input_type filter prunes mismatched
+                # rows, raising "arrayCosineDistance must have equal sizes".
+                # Run the no-threshold SQL and cap by distance in Python.
+                sql_threshold = None if tenant_scoped else effective_threshold
                 x = self.retrieve_rag_based_examples(
                     inp,
                     table_name,
                     eval_id,
-                    input_cols[n],
+                    meta_col,
                     input_type=self.input_types[n],
-                    filter_by={},
+                    filter_by=per_input_filter,
                     top_k=20,
-                    threshold=threshold,
+                    threshold=sql_threshold,
                     syn_data_flag=syn_data_flag,
                     organization_id=organization_id,
                     workspace_id=workspace_id,
                 )
-                # print(f"[FEEDBACK AVG_RAG] input[{n}]: got {len(x) if x else 0} raw results", flush=True)
-                if threshold and x:
-                    # Sort items by similarity score and get top 4
-                    results[inp] = [{"similarity": i['similarity'] ,"chunk_text": i['metadata']['chunk_text'] } for i in x]
-                elif x:
+                if tenant_scoped and x and effective_threshold is not None:
+                    x = [i for i in x if (i[-1] if not isinstance(i, dict) else i["similarity"]) <= effective_threshold]
+                if not x:
+                    continue
+                if tenant_scoped:
                     results[inp] = {i[-2]["item_id"]: i for i in x}
-                    # print(f"[FEEDBACK AVG_RAG] input[{n}]: {len(results[inp])} unique items by item_id", flush=True)
-            except:
-                traceback.print_exc()
+                elif effective_threshold:
+                    results[inp] = [
+                        {"similarity": i["similarity"], "chunk_text": i["metadata"]["chunk_text"]}
+                        for i in x
+                    ]
+                else:
+                    results[inp] = {i[-2]["item_id"]: i for i in x}
+            except Exception as exc:
+                logger.exception("retrieve_rag_based_examples_per_input_failed", error=str(exc))
         end_time = datetime.now()
         elapsed_time = (end_time - start_time).total_seconds()
         logger.info(
@@ -977,20 +1067,15 @@ class EmbeddingManager:
         )
         start_time = datetime.now()
         top_results = []
-        if threshold and results.values():
-            # Flatten the results into a single list of items
+        if tenant_scoped:
+            top_results = self.get_top_common_items(results, top_k)
+        elif effective_threshold and results.values():
             all_items = []
             for _input_key, items in results.items():
                 all_items.extend(items)
-
-            # Sort by similarity and get top k
-            top_results = sorted(all_items, key=lambda x: x['similarity'], reverse=True)[:top_k]
+            top_results = sorted(all_items, key=lambda x: x["similarity"], reverse=True)[:top_k]
         else:
-            top_results = (
-                self.get_top_common_items(results, top_k)
-                if table_name == FEEDBACK_TABLE_NAME
-                else self.get_top_union_items(results, top_k)
-            )
+            top_results = self.get_top_union_items(results, top_k)
         end_time = datetime.now()
         elapsed_time = (end_time - start_time).total_seconds()
         logger.info(
@@ -1146,10 +1231,10 @@ class EmbeddingManager:
         padding = len(encoded_path) % 4
         if padding:
             encoded_path += "=" * (4 - padding)
-        return base64.b64decode(encoded_path.encode()).decode()
+        return base64.urlsafe_b64decode(encoded_path.encode()).decode()
 
     def encode_path(self, path: str) -> str:
-        return base64.b64encode(str(path).encode()).decode()
+        return base64.urlsafe_b64encode(str(path).encode()).decode()
 
     def process_examples(
         self, dpp_examples, inputs, feedback_col_name, corrected_label_col_name
@@ -1244,6 +1329,57 @@ class EmbeddingManager:
             db_client = self.db_client
 
             db_client.drop_table(f"{table_name}_{i}")
+
+    def soft_delete_vectors(
+        self,
+        table_name: str,
+        eval_id: str,
+        organization_id: str,
+        workspace_id: str | None = None,
+    ) -> None:
+        """Mark vectors as deleted. Waits for the mutation to settle on the
+        local replica so a re-embed (insert-after-delete) does not race the
+        soft-delete and leave the prior rows readable.
+        """
+        table_exists = self.db_client.client.execute(
+            f"EXISTS TABLE {table_name}"
+        )[0][0]
+        if not table_exists:
+            logger.info(
+                "vectors_soft_delete_skipped_table_missing",
+                table_name=table_name,
+                eval_id=eval_id,
+            )
+            return
+
+        clauses = [
+            "eval_id = %(eval_id)s",
+            "has(metadata.key, 'organization_id')",
+            "metadata.value[indexOf(metadata.key, 'organization_id')] = %(organization_id)s",
+        ]
+        params: dict[str, str] = {
+            "eval_id": str(eval_id),
+            "organization_id": str(organization_id),
+        }
+        if workspace_id:
+            clauses.append("has(metadata.key, 'workspace_id')")
+            clauses.append(
+                "metadata.value[indexOf(metadata.key, 'workspace_id')] = %(workspace_id)s"
+            )
+            params["workspace_id"] = str(workspace_id)
+        where = " AND ".join(clauses)
+        self.db_client.client.execute(
+            f"ALTER TABLE {table_name} UPDATE deleted = 1 WHERE {where} "
+            "SETTINGS mutations_sync = 2",
+            params,
+        )
+        logger.info(
+            "vectors_soft_deleted",
+            table_name=table_name,
+            eval_id=eval_id,
+            organization_id=organization_id,
+            workspace_id=workspace_id,
+        )
 
     def delete_chunks(
         self, file_id: str, kb_id: str, table_name: str, organization_id: str

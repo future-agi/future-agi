@@ -59,6 +59,10 @@ class SeededRow:
     annotation_value: float | None
     has_choice_eval: bool
     choice_value: str | None
+    # Score scope the annotation was created at: "span" (base corpus) or
+    # "trace" (voice corpus — mirrors prod, where voice-call annotations are
+    # created trace-scoped via the trace-backed voice grid).
+    annotation_scope: str = "span"
 
 
 @dataclass
@@ -464,7 +468,7 @@ class DualWriter:
         )
 
     def _insert_annotation_pg_ch(
-        self, row: SeededRow, trace, project, annotation_label
+        self, row: SeededRow, trace, project, annotation_label, scope: str = "span"
     ) -> None:
         """Create the per-row Score and mirror to CH.
 
@@ -472,6 +476,9 @@ class DualWriter:
         (process_eval_task's per-label annotate subquery reads model_hub.Score).
         The CH-side mirror is a best-effort: the list endpoints' annotation
         filter path is exercised against the CH copy.
+
+        ``scope`` picks the Score source: "span" attaches to the row's span,
+        "trace" attaches to its trace (the shape the voice grid creates).
         """
         from model_hub.models.choices import QueueItemSourceType, ScoreSource
         from model_hub.models.score import Score
@@ -480,15 +487,25 @@ class DualWriter:
         # (observation_span, label, annotator) when the same label is reused.
         # NULL annotator is also fine here since we only have one row per
         # (span, label) but make it explicit.
+        if scope == "trace":
+            source_kwargs = {
+                "source_type": QueueItemSourceType.TRACE.value,
+                "trace_id": row.trace_id,
+            }
+        else:
+            source_kwargs = {
+                "source_type": QueueItemSourceType.OBSERVATION_SPAN.value,
+                "observation_span_id": row.span_id,
+            }
         Score.objects.create(
-            source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
-            observation_span_id=row.span_id,
+            **source_kwargs,
             label=annotation_label,
             value={"value": row.annotation_value},
             organization=project.organization,
             workspace=project.workspace,
             score_source=ScoreSource.HUMAN.value,
         )
+        row.annotation_scope = scope
         # CH mirror is informational only — the list endpoints' annotation
         # path in CH doesn't currently consume this in the SpanListQueryBuilder
         # the way PG does. Skipped to avoid coupling tests to a CH schema we
@@ -544,7 +561,11 @@ class DualWriter:
             if row.has_choice_eval:
                 self._insert_choice_eval_pg_ch(row, trace, choice_eval_config)
             if row.has_annotation:
-                self._insert_annotation_pg_ch(row, trace, project, annotation_label)
+                # Voice annotations land trace-scoped in prod (the voice grid
+                # is trace-backed) — seed the same shape here.
+                self._insert_annotation_pg_ch(
+                    row, trace, project, annotation_label, scope="trace"
+                )
             rows.append(row)
 
         self.seeded = rows

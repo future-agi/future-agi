@@ -29,7 +29,7 @@ import { formatYAxisValue, getYAxisUnit, getLineSeriesName } from "./common";
 import SVGColor from "src/components/svg-color";
 import { useLLMTracingStoreShallow } from "../states";
 import { logger } from "src/utils/logger";
-import { FILTER_FOR_HAS_EVAL } from "../common";
+import { FILTER_FOR_HAS_EVAL, toBackendFilters } from "../common";
 
 const deltaObject = {
   hour: { hours: 1 },
@@ -174,7 +174,7 @@ const GraphSection = ({
     queryFn: () =>
       axios.post(endpoints.project.getTraceGraphData(), {
         interval: selectedInterval,
-        filters: combinedFilters,
+        filters: toBackendFilters(combinedFilters),
         property: "average",
         req_data_config: selectedGraphConfig,
         project_id: observeId,
@@ -202,7 +202,7 @@ const GraphSection = ({
     queryFn: () =>
       axios.post(endpoints.project.getSpanGraphData(), {
         interval: selectedInterval,
-        filters: combinedFilters,
+        filters: toBackendFilters(combinedFilters),
         property: "average",
         req_data_config: selectedGraphConfig,
         project_id: observeId,

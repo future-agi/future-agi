@@ -8,6 +8,13 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { formatDate } from "src/utils/report-utils";
 import { canonicalEntries } from "src/utils/utils";
+import { NULL_OPERATORS } from "src/components/ComplexFilter/common";
+
+// Operator categories shared by the task filter wire builders (validation.js,
+// TaskLivePreview) and TaskFilterBar.
+export const RANGE_OPS = new Set(["between", "not_between"]);
+export const LIST_OPS = new Set(["in", "not_in"]);
+export const NO_VALUE_OPS = new Set(NULL_OPERATORS);
 
 export const getEvalsTaskColumnConfig = (observeId) => {
   const columns = [
@@ -215,22 +222,23 @@ const FILTER_KEY_ALIAS = {
 export const formatTaskFilters = (filters_applied) => {
   if (!filters_applied) return [];
 
-  // Attribute filters carry a {columnId, filterConfig} shape. Prefer the
-  // canonical `filters` key; fall back to legacy `span_attributes_filters`.
-  // `colType` round-trips as `apiColType` so the panel picks the right chip.
+  // Attribute filters are stored on the wire as {column_id, filter_config}
+  // (snake_case — see extractAttributeFilters). Prefer the canonical `filters`
+  // key; fall back to legacy `span_attributes_filters`. `col_type` round-trips
+  // as `apiColType` so the panel picks the right chip.
   const span_attributes_filters = (
     filters_applied.filters ||
     filters_applied.span_attributes_filters ||
     []
   ).map((i) => ({
     property: "attributes",
-    propertyId: i?.columnId,
-    apiColType: i?.filterConfig?.colType,
+    propertyId: i?.column_id,
+    apiColType: i?.filter_config?.col_type,
     filterConfig: {
-      filterType: i?.filterConfig?.filterType,
-      filterOp: i?.filterConfig?.filterOp,
-      filterValue: i?.filterConfig?.filterValue,
-      colType: i?.filterConfig?.colType,
+      filterType: i?.filter_config?.filter_type,
+      filterOp: i?.filter_config?.filter_op,
+      filterValue: i?.filter_config?.filter_value,
+      colType: i?.filter_config?.col_type,
     },
   }));
 

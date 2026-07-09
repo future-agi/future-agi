@@ -25,6 +25,7 @@ from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
 from tracer.models.trace_scan import TraceScanConfig
 from tracer.models.trace_session import TraceSession
+from tracer.queries.projects import apply_project_list_filters
 from tracer.serializers.project import (
     ProjectDetailResponseSerializer,
     ProjectGraphDataQuerySerializer,
@@ -46,6 +47,9 @@ from tracer.services.clickhouse.query_builders import (
     UserListQueryBuilder,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.v2.query_builders.user_list import (
+    UserListQueryBuilderV2,
+)
 from tracer.utils.constants import (
     INSTALLATION_GUIDE,
     INSTRUMENTORS,
@@ -436,13 +440,19 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 .only("id", "name", "created_at", "updated_at", "tags")
             )
 
-            # Tag filtering
+            # Tag filtering (legacy flat param: ?tags=a,b -> exact-tag AND)
             tags_param = self.request.query_params.get("tags")
             if tags_param:
                 for tag in tags_param.split(","):
                     tag = tag.strip()
                     if tag:
                         queryset = queryset.filter(tags__contains=[tag])
+
+            # Operator-based name/tag filters (equals/contains/not_*) from the
+            # `filters` JSON array — the trace/span list convention.
+            queryset = apply_project_list_filters(
+                queryset, self.request.query_params.get("filters")
+            )
 
             ALLOWED_SORT_FIELDS = {"name", "created_at", "updated_at"}
             raw_sort = self.request.query_params.get("sort_by", "created_at")
@@ -587,6 +597,23 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 except Exception as e:
                     logger.warning(f"Run count query failed: {e}")
 
+            # Alert counts — number of alert monitors configured per project
+            # (drives the "Alerts" column). Same shape/scoping as run_count.
+            alert_count_map = {}
+            if project_ids:
+                try:
+                    alert_counts = (
+                        UserAlertMonitor.objects.db_manager(DATABASE_FOR_PROJECT_LIST)
+                        .filter(project_id__in=project_ids, deleted=False)
+                        .values("project_id")
+                        .annotate(count=Count("id"))
+                    )
+                    alert_count_map = {
+                        str(c["project_id"]): c["count"] for c in alert_counts
+                    }
+                except Exception as e:
+                    logger.warning(f"Alert count query failed: {e}")
+
             result = [
                 {
                     "name": project["name"],
@@ -596,7 +623,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     "updated_at": project["updated_at"],
                     "last_active": last_active_map.get(str(project["id"])),
                     "run_count": run_count_map.get(str(project["id"]), 0),
-                    "issues": 0,
+                    "issues": alert_count_map.get(str(project["id"]), 0),
                     "tags": project.get("tags") or [],
                     "id": project["id"],
                 }
@@ -683,7 +710,7 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             _org = get_request_organization(request) or request.user.organization
             _org_id = str(_org.id)
             analytics = AnalyticsQueryService()
-            builder = UserListQueryBuilder(
+            builder = UserListQueryBuilderV2(
                 organization_id=_org_id,
                 workspace_id=str(request.workspace.id),
                 project_id=project_id,

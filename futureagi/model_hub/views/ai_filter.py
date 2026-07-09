@@ -15,7 +15,7 @@ Three modes:
   - select_fields: returns just the relevant field ids for the query.
     Used as step 1 of frontend-orchestrated multi-step flows.
   - smart: agentic. Caller passes schema + project_id + source. Backend
-    runs a Haiku tool-use loop where the LLM autonomously calls
+    runs a Gemini tool-use loop where the LLM autonomously calls
     `get_field_values(field_id)` for the fields it needs to ground its
     answer, then submits the final filter via `submit_filter`. One HTTP
     round trip — LLM does the orchestration. Used by the trace filter.
@@ -28,6 +28,7 @@ import structlog
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from agentic_eval.core.utils.json_utils import strip_code_fence
 from model_hub.serializers.ai_filter import (
     AIFilterRequestSerializer,
     AIFilterResponseSerializer,
@@ -540,15 +541,15 @@ def _fetch_dataset_column_values(dataset_id, column_id):
         candidates = []
         if isinstance(parsed, list):
             for elem in parsed:
-                if isinstance(elem, (str, int, float, bool)):
+                if isinstance(elem, str | int | float | bool):
                     candidates.append(str(elem))
                 elif isinstance(elem, dict):
                     for v in elem.values():
-                        if isinstance(v, (str, int, float)):
+                        if isinstance(v, str | int | float):
                             candidates.append(str(v))
         elif isinstance(parsed, dict):
             for v in parsed.values():
-                if isinstance(v, (str, int, float)):
+                if isinstance(v, str | int | float):
                     candidates.append(str(v))
         else:
             candidates.append(blob)
@@ -679,10 +680,10 @@ def _run_smart_agent(query, schema, fetch_values):
     from agentic_eval.core.llm.llm import LLM
     from agentic_eval.core.utils.model_config import ModelConfigs
 
-    haiku_cfg = ModelConfigs.HAIKU_4_5_BEDROCK_ARN
+    cfg = ModelConfigs.VERTEX_GEMINI_2_5_FLASH
     llm = LLM(
-        provider=haiku_cfg.provider,
-        model_name=haiku_cfg.model_name,
+        provider=cfg.provider,
+        model_name=cfg.model_name,
         temperature=0.0,
         max_tokens=800,
     )
@@ -1088,14 +1089,14 @@ class AIFilterView(APIView):
             )
 
             # Route through the in-house LLM wrapper (Agentcc gateway with
-            # litellm fallback) so we don't talk to Bedrock directly.
+            # litellm fallback).
             from agentic_eval.core.llm.llm import LLM
             from agentic_eval.core.utils.model_config import ModelConfigs
 
-            haiku_cfg = ModelConfigs.HAIKU_4_5_BEDROCK_ARN
+            cfg = ModelConfigs.VERTEX_GEMINI_2_5_FLASH
             llm = LLM(
-                provider=haiku_cfg.provider,
-                model_name=haiku_cfg.model_name,
+                provider=cfg.provider,
+                model_name=cfg.model_name,
                 temperature=0.0,
                 max_tokens=500,
             )
@@ -1106,15 +1107,8 @@ class AIFilterView(APIView):
                 ],
             ).strip()
 
-            # Parse the JSON response
-            # Handle cases where the model wraps in ```json ... ```
-            if raw_text.startswith("```"):
-                raw_text = raw_text.split("```")[1]
-                if raw_text.startswith("json"):
-                    raw_text = raw_text[4:]
-                raw_text = raw_text.strip()
-
-            parsed = json.loads(raw_text)
+            # Unwrap any ```json ... ``` fence the model added, then parse.
+            parsed = json.loads(strip_code_fence(raw_text))
 
             if mode == "select_fields":
                 fields_out = []

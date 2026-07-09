@@ -3,10 +3,12 @@ Utility functions for generating dynamic prompts for SimulatorAgent based on age
 """
 
 import re
+import uuid
 from datetime import datetime
 
 from django.db import connection, models
 
+from model_hub.models.develop_dataset import Column, Row
 from simulate.models.agent_definition import AgentDefinition
 from simulate.models.agent_version import AgentVersion
 from simulate.utils.persona_filtering import (
@@ -141,8 +143,12 @@ class TestExecutionUtils:
             return queryset
 
         def apply_scenario_dataset_column_filter(
-            queryset, dataset_column_id, op, value, filter_type, scenario_id=None
+            queryset, dataset_column_ids, op, value, filter_type, scenario_id=None
         ):
+
+            if not isinstance(dataset_column_ids, (list, tuple)):
+                dataset_column_ids = [dataset_column_ids]
+            dataset_column_ids = [str(cid) for cid in dataset_column_ids if cid]
             base = queryset.filter(row_id__isnull=False)
             if scenario_id:
                 base = base.filter(scenario__id=scenario_id)
@@ -152,13 +158,13 @@ class TestExecutionUtils:
                     where=[
                         "EXISTS ("
                         "SELECT 1 FROM model_hub_cell "
-                        "WHERE model_hub_cell.column_id = %s "
+                        "WHERE model_hub_cell.column_id = ANY(%s::uuid[]) "
                         "AND model_hub_cell.row_id = simulate_call_execution.row_id "
                         "AND model_hub_cell.deleted = false "
                         f"AND {value_sql}"
                         ")"
                     ],
-                    params=[dataset_column_id, *params],
+                    params=[dataset_column_ids, *params],
                 )
 
             def not_exists(value_sql, params):
@@ -166,13 +172,13 @@ class TestExecutionUtils:
                     where=[
                         "NOT EXISTS ("
                         "SELECT 1 FROM model_hub_cell "
-                        "WHERE model_hub_cell.column_id = %s "
+                        "WHERE model_hub_cell.column_id = ANY(%s::uuid[]) "
                         "AND model_hub_cell.row_id = simulate_call_execution.row_id "
                         "AND model_hub_cell.deleted = false "
                         f"AND {value_sql}"
                         ")"
                     ],
-                    params=[dataset_column_id, *params],
+                    params=[dataset_column_ids, *params],
                 )
 
             if filter_type in ("text", "string", "categorical"):
@@ -348,7 +354,7 @@ class TestExecutionUtils:
 
                 elif column_id == "call_execution_id":
                     # Filter by call execution IDs
-                    if filter_type == "list" and isinstance(filter_value, list):
+                    if filter_type == "categorical" and isinstance(filter_value, list):
                         # Handle list of IDs
                         if filter_op == "in":
                             call_executions = call_executions.filter(
@@ -504,23 +510,32 @@ class TestExecutionUtils:
                                 ~models.Q(scenario__name__icontains=filter_value)
                             )
 
-                elif (
-                    column_id in scenario_dataset_columns
-                    or column_id.startswith("scenario_")
-                    and "dataset" in column_id
+                elif column_id in scenario_dataset_columns or (
+                    column_id.startswith("scenario_") and "_dataset_" in column_id
                 ):
                     column_meta = scenario_dataset_columns.get(str(column_id), {})
-                    scenario_id = column_meta.get("scenario_id")
-                    dataset_column_id = column_id
-                    if column_id not in scenario_dataset_columns:
-                        scenario_id, dataset_column_id = scenario_column_parts(
-                            column_id
-                        )
+                    # Name-based scenario columns carry every dataset's Column
+                    # UUID in dataset_column_ids; matching ANY of them filters
+                    # across all scenarios, so we do not scope by scenario_id.
+                    dataset_column_ids = list(
+                        column_meta.get("dataset_column_ids") or []
+                    )
+                    scenario_id = None
+                    if not dataset_column_ids:
+                        # Legacy: column_id is a raw Column UUID, or the
+                        # scenario_<id>_dataset_<uuid> form.
+                        legacy_id = column_id
+                        if column_id not in scenario_dataset_columns:
+                            scenario_id, legacy_id = scenario_column_parts(column_id)
+                        else:
+                            scenario_id = column_meta.get("scenario_id")
+                        if legacy_id:
+                            dataset_column_ids = [legacy_id]
 
-                    if dataset_column_id:
+                    if dataset_column_ids:
                         call_executions = apply_scenario_dataset_column_filter(
                             call_executions,
-                            dataset_column_id,
+                            dataset_column_ids,
                             filter_op,
                             filter_value,
                             filter_type,
@@ -918,64 +933,55 @@ class TestExecutionUtils:
                 column_type = column.get("type", "")
 
                 if column_type == "scenario_dataset_column":
-                    # Extract the actual column ID from the prefixed ID
-                    actual_column_id = column.get("id")
-                    if actual_column_id and "_dataset_" in actual_column_id:
-                        # If it's a prefixed ID, extract the actual column ID
-                        parts = actual_column_id.split("_dataset_")
-                        if len(parts) == 2:
-                            actual_column_id = parts[1]
+                    # Name-based scenario columns carry every dataset's Column
+                    # UUID in dataset_column_ids. A row belongs to exactly one
+                    # dataset, so matching cells against ANY of the UUIDs makes
+                    # grouping work regardless of which scenario the row is from.
+                    actual_column_ids = list(column.get("dataset_column_ids") or [])
+                    if not actual_column_ids:
+                        # Legacy: single UUID id, or scenario_<id>_dataset_<uuid>.
+                        legacy_id = column.get("id")
+                        if (
+                            legacy_id
+                            and legacy_id.startswith("scenario_")
+                            and "_dataset_" in legacy_id
+                        ):
+                            parts = legacy_id.split("_dataset_")
+                            if len(parts) == 2:
+                                legacy_id = parts[1]
+                        if legacy_id:
+                            actual_column_ids = [legacy_id]
+                    if not actual_column_ids:
+                        continue
 
-                    # Create a safe column alias (replace hyphens with underscores)
-                    safe_alias = column_id.replace("-", "_").replace(".", "_")
-                    dataset_id = column.get("dataset_id")
+                    safe_alias = re.sub(r"[^A-Za-z0-9_]", "_", str(column_id))
 
-                    # Properly escape SQL string values to prevent SQL injection
-                    # Use connection.cursor().mogrify to safely escape parameters
+                    # Properly escape column UUIDs to prevent SQL injection.
                     cursor = connection.cursor()
                     try:
-                        # Use mogrify to get properly escaped SQL string
-                        escaped_dataset_id = cursor.mogrify("%s", [dataset_id]).decode(
-                            "utf-8"
+                        escaped_column_ids = ", ".join(
+                            cursor.mogrify("%s", [cid]).decode("utf-8")
+                            for cid in actual_column_ids
                         )
-                        escaped_column_id = cursor.mogrify(
-                            "%s", [actual_column_id]
-                        ).decode("utf-8")
                     except AttributeError:
-                        # Fallback for backends that don't support mogrify (like SQLite)
-                        # Escape single quotes by doubling them (SQL standard)
-                        escaped_dataset_id = "'{}'".format(
-                            str(dataset_id).replace("'", "''")
-                        )
-                        escaped_column_id = "'{}'".format(
-                            str(actual_column_id).replace("'", "''")
+                        # Fallback for backends without mogrify (like SQLite).
+                        escaped_column_ids = ", ".join(
+                            "'{}'".format(str(cid).replace("'", "''"))
+                            for cid in actual_column_ids
                         )
                     finally:
                         cursor.close()
 
-                    # Add dataset column value to grouping with properly escaped values
-                    select_fields.append(
-                        f"""
+                    cell_value_subquery = f"""
                         (SELECT model_hub_cell.value
                             FROM model_hub_cell
-                            WHERE model_hub_cell.dataset_id = {escaped_dataset_id}
-                            AND model_hub_cell.column_id = {escaped_column_id}
-                            AND model_hub_cell.row_id = simulate_call_execution.row_id
-                            AND model_hub_cell.deleted = false
-                            LIMIT 1) as {safe_alias}
-                    """
-                    )
-                    group_by_fields.append(
-                        f"""
-                        (SELECT model_hub_cell.value
-                            FROM model_hub_cell
-                            WHERE model_hub_cell.dataset_id = {escaped_dataset_id}
-                            AND model_hub_cell.column_id = {escaped_column_id}
+                            WHERE model_hub_cell.column_id IN ({escaped_column_ids})
                             AND model_hub_cell.row_id = simulate_call_execution.row_id
                             AND model_hub_cell.deleted = false
                             LIMIT 1)
                     """
-                    )
+                    select_fields.append(f'{cell_value_subquery} as "{safe_alias}"')
+                    group_by_fields.append(cell_value_subquery)
 
         for group_field in row_groups:
             # Skip fields that are already included in basic context
@@ -1002,16 +1008,38 @@ class TestExecutionUtils:
                         scenario_id = parts[0].replace("scenario_", "")
                         dataset_column_id = parts[1]
 
-                        # Create a safe column alias (replace hyphens with underscores)
-                        safe_alias = group_field.replace("-", "_")
+                        try:
+                            uuid.UUID(str(scenario_id))
+                            uuid.UUID(str(dataset_column_id))
+                        except (ValueError, AttributeError, TypeError):
+                            continue
 
-                        # Add dataset column value to grouping
+                        safe_alias = re.sub(r"[^A-Za-z0-9_]", "_", group_field)
+
+                        cursor = connection.cursor()
+                        try:
+                            escaped_scenario_id = cursor.mogrify(
+                                "%s", [scenario_id]
+                            ).decode("utf-8")
+                            escaped_dataset_column_id = cursor.mogrify(
+                                "%s", [dataset_column_id]
+                            ).decode("utf-8")
+                        except AttributeError:
+                            escaped_scenario_id = "'{}'".format(
+                                str(scenario_id).replace("'", "''")
+                            )
+                            escaped_dataset_column_id = "'{}'".format(
+                                str(dataset_column_id).replace("'", "''")
+                            )
+                        finally:
+                            cursor.close()
+
                         select_fields.append(
                             f"""
                             (SELECT model_hub_cell.value
                                 FROM model_hub_cell
-                                WHERE model_hub_cell.dataset_id = (SELECT dataset_id FROM simulate_scenarios WHERE id = '{scenario_id}')
-                                AND model_hub_cell.column_id = '{dataset_column_id}'
+                                WHERE model_hub_cell.dataset_id = (SELECT dataset_id FROM simulate_scenarios WHERE id = {escaped_scenario_id})
+                                AND model_hub_cell.column_id = {escaped_dataset_column_id}
                                 AND model_hub_cell.row_id = simulate_call_execution.row_id
                                 AND model_hub_cell.deleted = false
                                 LIMIT 1) as {safe_alias}
@@ -1021,8 +1049,8 @@ class TestExecutionUtils:
                             f"""
                             (SELECT model_hub_cell.value
                                 FROM model_hub_cell
-                                WHERE model_hub_cell.dataset_id = (SELECT dataset_id FROM simulate_scenarios WHERE id = '{scenario_id}')
-                                AND model_hub_cell.column_id = '{dataset_column_id}'
+                                WHERE model_hub_cell.dataset_id = (SELECT dataset_id FROM simulate_scenarios WHERE id = {escaped_scenario_id})
+                                AND model_hub_cell.column_id = {escaped_dataset_column_id}
                                 AND model_hub_cell.row_id = simulate_call_execution.row_id
                                 AND model_hub_cell.deleted = false
                                 LIMIT 1)
@@ -1039,42 +1067,54 @@ class TestExecutionUtils:
         # Add group_keys filtering if provided
         where_conditions = ["simulate_call_execution.deleted = false"]
         if group_keys:
-            for i, group_key in enumerate(group_keys):
-                if i < len(row_groups):
-                    group_field = row_groups[i]
+            cursor = connection.cursor()
+            try:
 
-                    if group_field == "timestamp":
-                        where_conditions.append(
-                            f"DATE(simulate_call_execution.created_at) = '{group_key}'"
-                        )
-                    elif group_field == "status":
-                        where_conditions.append(
-                            f"simulate_call_execution.status = '{group_key}'"
-                        )
-                    elif group_field in ("call_type", "callType"):
-                        where_conditions.append(
-                            f"LOWER(simulate_call_execution.call_type) LIKE '%{group_key.lower()}%'"
-                        )
-                    elif group_field == "scenario":
-                        where_conditions.append(
-                            f"simulate_scenarios.name = '{group_key}'"
-                        )
-                    elif group_field in ("overall_score", "overallScore"):
-                        try:
-                            numeric_key = float(group_key)
+                def _lit(value):
+                    try:
+                        return cursor.mogrify("%s", [value]).decode("utf-8")
+                    except AttributeError:
+                        return "'{}'".format(str(value).replace("'", "''"))
+
+                for i, group_key in enumerate(group_keys):
+                    if i < len(row_groups):
+                        group_field = row_groups[i]
+
+                        if group_field == "timestamp":
                             where_conditions.append(
-                                f"simulate_call_execution.overall_score = {numeric_key}"
+                                f"DATE(simulate_call_execution.created_at) = {_lit(group_key)}"
                             )
-                        except (ValueError, TypeError):
-                            pass
-                    elif group_field in ("response_time", "responseTime"):
-                        try:
-                            numeric_key = float(group_key)
+                        elif group_field == "status":
                             where_conditions.append(
-                                f"simulate_call_execution.response_time_ms = {numeric_key}"
+                                f"simulate_call_execution.status = {_lit(group_key)}"
                             )
-                        except (ValueError, TypeError):
-                            pass
+                        elif group_field in ("call_type", "callType"):
+                            where_conditions.append(
+                                "LOWER(simulate_call_execution.call_type) LIKE "
+                                f"{_lit('%' + str(group_key).lower() + '%')}"
+                            )
+                        elif group_field == "scenario":
+                            where_conditions.append(
+                                f"simulate_scenarios.name = {_lit(group_key)}"
+                            )
+                        elif group_field in ("overall_score", "overallScore"):
+                            try:
+                                numeric_key = float(group_key)
+                                where_conditions.append(
+                                    f"simulate_call_execution.overall_score = {numeric_key}"
+                                )
+                            except (ValueError, TypeError):
+                                pass
+                        elif group_field in ("response_time", "responseTime"):
+                            try:
+                                numeric_key = float(group_key)
+                                where_conditions.append(
+                                    f"simulate_call_execution.response_time_ms = {numeric_key}"
+                                )
+                            except (ValueError, TypeError):
+                                pass
+            finally:
+                cursor.close()
 
         where_clause = " AND ".join(where_conditions)
 
@@ -1244,3 +1284,152 @@ def generate_simulator_agent_prompt(
         "Please respond naturally and stay consistent with your persona throughout the conversation."
         f"{end_call_instruction}"
     )
+
+
+def canonical_scenario_column_name(raw_name):
+    """Canonical display name for a scenario dataset column."""
+    return "Ideal Outcome" if raw_name == "outcome" else raw_name
+
+
+def reconcile_scenario_column_order(*, scenarios, call_executions, column_order):
+    """Collapse per-dataset scenario columns into one entry per canonical name.
+
+    Each scenario has its own dataset, and each dataset has its own ``Column``
+    rows with distinct UUIDs, so a field like ``outcome`` exists once per
+    dataset. This collapses those per-dataset columns into a single entry keyed
+    by the canonical column name, carrying every dataset's matching ``Column``
+    UUID in ``dataset_column_ids`` so the filter/grouping paths can match a cell
+    against any of them.
+
+    Kept here - alongside the filter/grouping logic that consumes
+    ``dataset_column_ids`` - so requests, celery jobs and Temporal activities
+    can share the same computation. The caller persists ``column_order`` when
+    ``changed`` is True.
+
+    Args:
+        scenarios: iterable of ``Scenarios`` (dataset select_related recommended).
+        call_executions: ``CallExecution`` queryset, used only for the fallback
+            that recovers columns from the first call's dataset row.
+        column_order: the current persisted column order (list of dicts).
+
+    Returns:
+        ``(column_order, changed)`` - the reconciled order and whether it
+        differs from the input.
+    """
+    existing_scenario_visibility = {}
+    first_scenario_idx = None
+    for idx, col in enumerate(column_order):
+        if not isinstance(col, dict):
+            continue
+        if col.get("type") == "scenario_dataset_column":
+            if first_scenario_idx is None:
+                first_scenario_idx = idx
+            vis_key = canonical_scenario_column_name(
+                col.get("column_name") or str(col.get("id"))
+            )
+            existing_scenario_visibility[vis_key] = col.get("visible", True)
+
+    norm_all_col_ids = set()
+    for scenario in scenarios:
+        if scenario.dataset and scenario.dataset.column_order:
+            norm_all_col_ids.update(scenario.dataset.column_order)
+
+    ordered_names = []
+    scenario_cols_by_name = {}
+
+    def _register_scenario_column(col_obj, scenario_id, dataset_id):
+        name = canonical_scenario_column_name(col_obj.name)
+        entry = scenario_cols_by_name.get(name)
+        if entry is None:
+            ordered_names.append(name)
+            scenario_cols_by_name[name] = {
+                "id": name,
+                "column_name": name,
+                "visible": existing_scenario_visibility.get(name, True),
+                "data_type": col_obj.data_type,
+                "type": "scenario_dataset_column",
+                "scenario_id": scenario_id,
+                "dataset_id": dataset_id,
+                "dataset_column_ids": [str(col_obj.id)],
+            }
+        else:
+            cid = str(col_obj.id)
+            if cid not in entry["dataset_column_ids"]:
+                entry["dataset_column_ids"].append(cid)
+
+    if norm_all_col_ids:
+        norm_columns_by_id = {
+            str(col.id): col
+            for col in Column.objects.filter(id__in=norm_all_col_ids, deleted=False)
+        }
+        for scenario in scenarios:
+            if not (scenario.dataset and scenario.dataset.column_order):
+                continue
+            for col_id in scenario.dataset.column_order:
+                col_obj = norm_columns_by_id.get(str(col_id))
+                if col_obj:
+                    _register_scenario_column(
+                        col_obj,
+                        str(scenario.id),
+                        str(scenario.dataset.id),
+                    )
+
+    if not ordered_names:
+        fb_first_call = call_executions.first()
+        fb_row_id = (
+            fb_first_call.call_metadata.get("row_id")
+            if fb_first_call and fb_first_call.call_metadata
+            else None
+        )
+        if fb_row_id:
+            fb_row = (
+                Row.all_objects.filter(id=fb_row_id)
+                .select_related("dataset")
+                .first()
+            )
+            if fb_row and fb_row.dataset and fb_row.dataset.column_order:
+                for col_obj in Column.all_objects.filter(
+                    id__in=fb_row.dataset.column_order, deleted=False
+                ):
+                    _register_scenario_column(col_obj, None, str(fb_row.dataset.id))
+
+    new_scenario_columns = [scenario_cols_by_name[name] for name in ordered_names]
+
+    non_scenario_columns = [
+        col
+        for col in column_order
+        if not (
+            isinstance(col, dict)
+            and col.get("type") == "scenario_dataset_column"
+        )
+    ]
+    if first_scenario_idx is None:
+        # No scenario columns yet: place them before the first evaluation
+        # column, else at the end.
+        insert_idx = next(
+            (
+                i
+                for i, col in enumerate(non_scenario_columns)
+                if isinstance(col, dict) and col.get("type") == "evaluation"
+            ),
+            len(non_scenario_columns),
+        )
+    else:
+        # Preserve the original position of the scenario column block.
+        insert_idx = sum(
+            1
+            for col in column_order[:first_scenario_idx]
+            if not (
+                isinstance(col, dict)
+                and col.get("type") == "scenario_dataset_column"
+            )
+        )
+
+    rebuilt_column_order = (
+        non_scenario_columns[:insert_idx]
+        + new_scenario_columns
+        + non_scenario_columns[insert_idx:]
+    )
+
+    changed = rebuilt_column_order != column_order
+    return rebuilt_column_order, changed

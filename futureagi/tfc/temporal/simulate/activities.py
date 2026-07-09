@@ -56,7 +56,6 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from simulate.models import Scenarios
-from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal.simulate.types import (  # Scenario Generation; Scenario Creation; Graph Scenario Sub-Activity Types (v2+v3)
     AddScenarioColumnsInput,
     CategorizeAndValidateInput,
@@ -1294,12 +1293,13 @@ def _create_dataset_scenario_sync(
         except Exception:
             logger.warning("usage_precheck_failed", exc_info=True)
 
-        # Get the source dataset
+        # Scope by scenario.organization: the workspace-context thread-local is
+        # unset inside Temporal workers, and user.organization can differ from it.
         source_dataset = get_object_or_404(
             Dataset,
             id=validated_data["dataset_id"],
             deleted=False,
-            organization=get_current_organization() or user.organization,
+            organization=scenario.organization,
         )
 
         # Determine simulation mode
@@ -2522,7 +2522,6 @@ def _create_graph_scenario_sync(
                     name=f"{scenario.name} - Graph",
                     description=f"Graph for {scenario.name}",
                     organization=scenario.organization,
-                    workspace=scenario.workspace,
                     graph_config={"graph_data": graph_data, "source": "user_provided"},
                 )
 
@@ -2961,7 +2960,6 @@ def _setup_graph_scenario_sync(
                         name=f"{scenario.name} - Graph",
                         description=f"Graph for {scenario.name}",
                         organization=scenario.organization,
-                        workspace=scenario.workspace,
                         graph_config={
                             "graph_data": graph_data,
                             "source": "user_provided",

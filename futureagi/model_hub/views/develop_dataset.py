@@ -154,6 +154,7 @@ from model_hub.serializers.contracts import (
     EmbeddingsResponseSerializer,
     EvalConfigQuerySerializer,
     EvalStructureQuerySerializer,
+    FeedbackDetailsResponseSerializer,
     HuggingFaceDatasetDetailRequestSerializer,
     HuggingFaceDatasetDetailResponseSerializer,
     HuggingFaceDatasetListRequestSerializer,
@@ -691,11 +692,10 @@ class AddRowsFromFile(CreateAPIView):
             if not dataset:
                 return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
-            # Check file size (10 MB limit, matching UI constraint)
-            from model_hub.services.dataset_validators import MAX_FILE_SIZE_BYTES
+            from model_hub.constants import MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB
 
             if file.size > MAX_FILE_SIZE_BYTES:
-                return self._gm.bad_request("File size exceeds the 10 MB limit")
+                return self._gm.bad_request(f"File size exceeds the {MAX_FILE_SIZE_MB} MB limit")
 
             # Process the file
             data, error = FileProcessor.process_file(file_obj=file)
@@ -4299,49 +4299,15 @@ class DeleteColumnView(APIView):
                     annotation.save()
                     dataset.save()
 
-            # delete all cells associated with the column
-            Cell.objects.filter(column=column).update(deleted=True, deleted_at=now)
-            # Delete cells where source_id starts with column.id
-            Cell.objects.filter(column__source_id__startswith=f"{column.id}").update(
-                deleted=True, deleted_at=now
+            from model_hub.services.column_service import (
+                delete_eval_column_and_dependents,
             )
 
-            # Remove deleted columns from dataset ordering/config.
-            columns_to_delete = Column.objects.filter(
-                Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
-            ).values_list("id", flat=True)
-            col_ids_to_remove = {str(c) for c in columns_to_delete}
-            update_fields = []
-            if dataset.column_order:
-                dataset.column_order = [
-                    col_id
-                    for col_id in dataset.column_order
-                    if col_id not in col_ids_to_remove
-                ]
-                update_fields.append("column_order")
-            if dataset.column_config:
-                for col_id in col_ids_to_remove:
-                    dataset.column_config.pop(col_id, None)
-                update_fields.append("column_config")
-            if update_fields:
-                dataset.save(update_fields=update_fields)
-
-            # Update metrics BEFORE deleting columns — get_metrics_using_column
-            # scopes by dataset via the Column row, which must still be
-            # visible (deleted=False) for BaseModelManager to find it.
-            metrics = UserEvalMetric.get_metrics_using_column(
-                getattr(request, "organization", None) or request.user.organization.id,
-                column_id,
-            )
-            if metrics:
-                UserEvalMetric.objects.filter(id__in=[m.id for m in metrics]).update(
-                    column_deleted=True
-                )
-
-            # Now safe to delete columns
-            Column.objects.filter(
-                Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
-            ).update(deleted=True, deleted_at=now)
+            organization_id = (
+                getattr(request, "organization", None) or request.user.organization
+            ).id
+            with transaction.atomic():
+                delete_eval_column_and_dependents(column, organization_id)
 
             return self._gm.success_response("Column deleted successfully")
 
@@ -7509,6 +7475,7 @@ class GetEvalStructureView(APIView):
                 template.config.get("config_params_option", {})
             ),
             "run_config": eval.config.get("run_config", {}),
+            "pinned_version_id": str(eval.pinned_version_id) if eval.pinned_version_id else None,
         }
 
         return self._gm.success_response({"eval": eval_data})
@@ -7640,8 +7607,11 @@ class StartEvalsProcess(APIView):
                         deleted=False,
                     ).first()
                     if reason_col and str(reason_col.id) not in column_order:
-                        eval_idx = column_order.index(str(column.id))
-                        column_order.insert(eval_idx + 1, str(reason_col.id))
+                        if str(column.id) in column_order:
+                            eval_idx = column_order.index(str(column.id))
+                            column_order.insert(eval_idx + 1, str(reason_col.id))
+                        else:
+                            column_order.extend([str(column.id), str(reason_col.id)])
                         column_order_changed = True
 
                 Cell.objects.filter(
@@ -7674,6 +7644,7 @@ class DeleteEvalsView(APIView):
         try:
             delete_column = request.data.get("delete_column", False)
             experiment_id = request.data.get("experiment_id")
+            organization = _request_organization(request)
             dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
             if not dataset:
                 return self._gm.not_found("Dataset not found")
@@ -7745,84 +7716,62 @@ class DeleteEvalsView(APIView):
                             deleted=False,
                         )
                     )
-                    if per_edt_cols:
-                        col_ids = [c.id for c in per_edt_cols]
-                        snapshot_dataset = per_edt_cols[0].dataset
-                        Cell.objects.filter(
-                            column_id__in=col_ids, deleted=False
-                        ).update(deleted=True, deleted_at=now)
-                        Column.objects.filter(id__in=col_ids).update(
-                            deleted=True, deleted_at=now
-                        )
-                        if snapshot_dataset.column_order:
-                            col_id_strs = {str(cid) for cid in col_ids}
-                            snapshot_dataset.column_order = [
-                                cid
-                                for cid in snapshot_dataset.column_order
-                                if cid not in col_id_strs
-                            ]
-                            snapshot_dataset.save(update_fields=["column_order"])
-                else:
-                    # Check if column exists before attempting deletion
-                    column = Column.objects.filter(
-                        source_id=eval_metric.id,
-                        dataset=dataset,
-                        deleted=False,
-                    ).first()
-                    if column:
-                        # Delete all cells associated with the column and its dependent columns
-                        Cell.objects.filter(
-                            Q(column=column)
-                            | Q(column__source_id__startswith=f"{column.id}-sourceid-"),
-                            deleted=False,
-                        ).update(deleted=True, deleted_at=now)
+                    # Soft-delete the metric alongside the per-EDT columns/cells.
+                    # Previously this branch only cleaned up columns + cells and
+                    # left eval_metric.deleted=False — the eval lived on as a
+                    # ghost record (still in the sidebar, broken on rerun).
+                    #
+                    # We can't call ``delete_eval_column_and_dependents`` here
+                    # because that service collects related columns by
+                    # ``source_id__startswith=f"{column.id}-sourceid-"`` —
+                    # experiment columns live under a different shape
+                    # (``source_id__endswith=f"-sourceid-{metric.id}"`` across
+                    # multiple sources). So we hand-roll the cell/column delete
+                    # but share ``prune_dataset_columns`` for the dataset config
+                    # update — that way ``column_order`` and ``column_config``
+                    # stay in sync on both delete paths (TH-5508 round-7 ask).
+                    from model_hub.services.column_service import (
+                        prune_dataset_columns,
+                    )
 
-                        dataset = column.dataset
-
-                        # Remove columns from column_order
-                        if dataset.column_order:
-                            # Get all columns to delete (including those with source_id starting with column.id)
-                            columns_to_delete = Column.objects.filter(
-                                Q(id=column.id)
-                                | Q(source_id__startswith=f"{column.id}-sourceid-"),
-                                deleted=False,
-                            ).values_list("id", flat=True)
-
-                            col_ids_to_remove = {str(c) for c in columns_to_delete}
-                            new_column_order = [
-                                col_id
-                                for col_id in dataset.column_order
-                                if col_id not in col_ids_to_remove
-                            ]
-                            Dataset.objects.filter(id=dataset.id).update(
-                                column_order=new_column_order
+                    with transaction.atomic():
+                        if per_edt_cols:
+                            col_ids = [c.id for c in per_edt_cols]
+                            snapshot_dataset = per_edt_cols[0].dataset
+                            Cell.objects.filter(
+                                column_id__in=col_ids, deleted=False
+                            ).update(deleted=True, deleted_at=now)
+                            Column.objects.filter(id__in=col_ids).update(
+                                deleted=True, deleted_at=now
                             )
-
-                        # Update metrics BEFORE deleting columns — the
-                        # lookup scopes by dataset via the Column row, which
-                        # must still be visible (deleted=False) for
-                        # BaseModelManager to find it.
-                        metrics = UserEvalMetric.get_metrics_using_column(
-                            getattr(request, "organization", None)
-                            or request.user.organization.id,
-                            column.id,
-                        )
-                        if metrics:
-                            UserEvalMetric.objects.filter(
-                                id__in=[m.id for m in metrics]
-                            ).update(column_deleted=True)
-
-                        # Delete all related columns
-                        Column.objects.filter(
-                            Q(id=column.id)
-                            | Q(source_id__startswith=f"{column.id}-sourceid-"),
+                            prune_dataset_columns(snapshot_dataset, col_ids)
+                        eval_metric.deleted = True
+                        eval_metric.deleted_at = now
+                        eval_metric.save(update_fields=["deleted", "deleted_at"])
+                else:
+                    # SELECT + service call + metric soft-delete all in one
+                    # atomic. If the column got deleted between the SELECT and
+                    # the service call, the service's inner queryset filters
+                    # deleted=False and no-ops — safe either way.
+                    from model_hub.services.column_service import (
+                        delete_eval_column_and_dependents,
+                    )
+                    with transaction.atomic():
+                        column = Column.objects.filter(
+                            source_id=eval_metric.id,
+                            dataset=dataset,
                             deleted=False,
-                        ).update(deleted=True, deleted_at=now)
-
-                # Delete the eval_metric itself when delete_column is True
-                eval_metric.deleted = True
-                eval_metric.deleted_at = now
-                eval_metric.save(update_fields=["deleted", "deleted_at"])
+                        ).first()
+                        if column:
+                            # delete_eval_column_and_dependents flags ALL metrics
+                            # referencing this column with column_deleted=True,
+                            # including eval_metric. That flag is immediately
+                            # superseded by deleted=True below, so it is never
+                            # visible — this is deliberate behaviour.
+                            delete_eval_column_and_dependents(column, organization.id)
+                        eval_metric.deleted = True
+                        eval_metric.deleted_at = now
+                        eval_metric.save(update_fields=["deleted", "deleted_at"])
             else:
                 # Only hide from sidebar if delete_column is False
                 eval_metric.show_in_sidebar = False
@@ -7901,261 +7850,310 @@ class EditAndRunUserEvalView(APIView):
             return gate
 
         try:
-            run = request_data.get("run", False)
-            save_as_template = request_data.get("save_as_template", False)
-            experiment_id = request_data.get("experiment_id")
-            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
-            if not dataset:
-                return self._gm.not_found("Dataset not found")
+            with transaction.atomic():
+                run = request_data.get("run", False)
+                save_as_template = request_data.get("save_as_template", False)
+                experiment_id = request_data.get("experiment_id")
+                dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+                if not dataset:
+                    return self._gm.not_found("Dataset not found")
 
-            # When editing an eval attached to an experiment, retain the
-            # source_id=experiment_id discriminator, but keep the lookup bound to
-            # the active workspace dataset from the URL.
-            eval_queryset = _request_user_eval_metric_queryset(request, dataset_id)
-            if experiment_id:
-                eval_queryset = eval_queryset.filter(source_id=str(experiment_id))
-            eval_metric = (
-                eval_queryset.filter(id=eval_id)
-                .select_related("dataset", "template")
-                .first()
-            )
-            if not eval_metric:
-                return self._gm.not_found("Eval not found")
-            if eval_metric.column_deleted:
-                return self._gm.bad_request(
-                    f"{get_error_message('COLUMN_DELETED')} {eval_metric.name}"
+                # When editing an eval attached to an experiment, retain the
+                # source_id=experiment_id discriminator, but keep the lookup bound to
+                # the active workspace dataset from the URL.
+                eval_queryset = _request_user_eval_metric_queryset(request, dataset_id)
+                if experiment_id:
+                    eval_queryset = eval_queryset.filter(source_id=str(experiment_id))
+                eval_metric = (
+                    eval_queryset.filter(id=eval_id)
+                    .select_related("dataset", "template")
+                    .first()
                 )
+                if not eval_metric:
+                    return self._gm.not_found("Eval not found")
+                if eval_metric.column_deleted:
+                    return self._gm.bad_request(
+                        f"{get_error_message('COLUMN_DELETED')} {eval_metric.name}"
+                    )
 
-            if save_as_template:
-                template = eval_metric.template
+                if save_as_template:
+                    template = eval_metric.template
 
-                # Validate name format
-                from model_hub.utils.eval_validators import validate_eval_name
+                    # Validate name format
+                    from model_hub.utils.eval_validators import validate_eval_name
 
-                try:
-                    template_name = validate_eval_name(request_data.get("name", ""))
-                except ValueError as e:
-                    return self._gm.bad_request(str(e))
+                    try:
+                        template_name = validate_eval_name(request_data.get("name", ""))
+                    except ValueError as e:
+                        return self._gm.bad_request(str(e))
 
-                if (
-                    EvalTemplate.objects.filter(
+                    if (
+                        EvalTemplate.objects.filter(
+                            name=template_name,
+                            organization=getattr(request, "organization", None)
+                            or request.user.organization,
+                            deleted=False,
+                        ).exists()
+                        or EvalTemplate.no_workspace_objects.filter(
+                            name=template_name,
+                            owner=OwnerChoices.SYSTEM.value,
+                            deleted=False,
+                        ).exists()
+                    ):
+                        return self._gm.bad_request(get_error_message("EVAL_NAME_EXISTS"))
+
+                    new_template = EvalTemplate(
                         name=template_name,
+                        description=template.description,
+                        config=template.config,
+                        eval_tags=template.eval_tags,
                         organization=getattr(request, "organization", None)
                         or request.user.organization,
-                        deleted=False,
-                    ).exists()
-                    or EvalTemplate.no_workspace_objects.filter(
-                        name=template_name,
-                        owner=OwnerChoices.SYSTEM.value,
-                        deleted=False,
-                    ).exists()
-                ):
-                    return self._gm.bad_request(get_error_message("EVAL_NAME_EXISTS"))
-
-                new_template = EvalTemplate(
-                    name=template_name,
-                    description=template.description,
-                    config=template.config,
-                    eval_tags=template.eval_tags,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    workspace=getattr(request, "workspace", None),
-                    owner=OwnerChoices.USER.value,
-                    criteria=template.criteria,
-                    choices=template.choices,
-                    multi_choice=template.multi_choice,
-                    error_localizer_enabled=template.error_localizer_enabled,
-                )
-                new_config = template.config
-                runtime_config = normalize_eval_runtime_config(
-                    template.config, request_data.get("config", {})
-                )
-                input_config = runtime_config.get("config", {})
-                input_params = runtime_config.get("params", {})
-                for key in input_config:
-                    if key in new_config.get("config", {}):
-                        new_config["config"][key]["default"] = input_config[key]
-                if has_function_params_schema(new_config):
-                    for key, value in input_params.items():
-                        if key in new_config.get("function_params_schema", {}):
-                            new_config["function_params_schema"][key]["default"] = value
-                new_template.config = new_config
-                new_template.save()
-                eval_metric.template_id = new_template.id
-                eval_metric.save()
-
-            # Update the config if provided in request
-            new_config = request_data.get("config")
-            if new_config:
-                new_config = normalize_eval_runtime_config(
-                    eval_metric.template.config, new_config
-                )
-                from model_hub.utils.eval_validators import (
-                    get_required_mapping_keys_for_template,
-                    validate_required_key_mapping,
-                )
-
-                missing_keys = validate_required_key_mapping(
-                    new_config.get("mapping", {}),
-                    get_required_mapping_keys_for_template(eval_metric.template),
-                )
-                if missing_keys:
-                    return self._gm.bad_request(
-                        f"Missing required mapping keys: {', '.join(missing_keys)}"
+                        workspace=getattr(request, "workspace", None),
+                        owner=OwnerChoices.USER.value,
+                        criteria=template.criteria,
+                        choices=template.choices,
+                        multi_choice=template.multi_choice,
+                        error_localizer_enabled=template.error_localizer_enabled,
                     )
-                # Default reason_column to True if not specified by caller, so
-                # editing an eval never silently strips the reason column.
-                if "reason_column" not in new_config:
-                    new_config["reason_column"] = True
-                eval_metric.config = new_config
-            eval_metric.kb_id = request_data.get("kb_id") or eval_metric.kb_id
-            if "error_localizer" in request.data:
-                eval_metric.error_localizer = self._coerce_bool(
-                    request_data.get("error_localizer")
-                )
-            elif (
-                isinstance(request_data.get("config"), dict)
-                and request_data["config"]
-                .get("run_config", {})
-                .get("error_localizer_enabled")
-                is not None
-            ):
-                # Fallback: some callers (e.g. EvalPickerDrawer non-workbench
-                # path) nest the flag inside config.run_config instead of
-                # surfacing it at the top level.
-                eval_metric.error_localizer = bool(
-                    request_data["config"]["run_config"]["error_localizer_enabled"]
-                )
-            eval_metric.model = request_data.get("model") or eval_metric.model
-
-            # Reason-column reconciliation differs by scope:
-            #  * dataset: exactly one EVALUATION column (source_id == eval_metric.id)
-            #  * experiment: one EXPERIMENT_EVALUATION column per EDT, source_id
-            #    "{edt_id}-{col_id}-sourceid-{metric_id}" — doing a single
-            #    Column.objects.get(source_id=eval_metric.id) here crashes.
-            if new_config.get("reason_column"):
-                if experiment_id:
-                    per_edt_cols = Column.objects.filter(
-                        source__in=[
-                            SourceChoices.EXPERIMENT_EVALUATION.value,
-                            SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
-                        ],
-                        source_id__endswith=f"-sourceid-{eval_metric.id}",
-                        deleted=False,
+                    new_config = template.config
+                    runtime_config = normalize_eval_runtime_config(
+                        template.config, request_data.get("config", {})
                     )
-                    for col in per_edt_cols:
-                        Column.objects.get_or_create(
-                            name=f"{eval_metric.name}-{col.name}-reason",
-                            data_type=DataTypeChoices.TEXT.value,
-                            source=SourceChoices.EVALUATION_REASON.value,
-                            dataset=col.dataset,
-                            source_id=f"{col.id}-sourceid-{eval_metric.id}",
-                        )
-                    # Rebuild snapshot_dataset.column_order so new reason cols
-                    # surface in the grid.
-                    try:
-                        from model_hub.views.experiments import (
-                            _build_and_save_v2_column_order,
+                    input_config = runtime_config.get("config", {})
+                    input_params = runtime_config.get("params", {})
+                    for key in input_config:
+                        if key in new_config.get("config", {}):
+                            new_config["config"][key]["default"] = input_config[key]
+                    if has_function_params_schema(new_config):
+                        for key, value in input_params.items():
+                            if key in new_config.get("function_params_schema", {}):
+                                new_config["function_params_schema"][key]["default"] = value
+                    new_template.config = new_config
+                    new_template.save()
+                    # Assign the full object (not just _id) so the FK cache
+                    # reflects the new template when maybe_pin_new_version
+                    # reads eval_metric.template.owner below.
+                    eval_metric.template = new_template
+                    eval_metric.save()
+
+                # Validate config before creating a version to avoid orphans
+                new_config = request_data.get("config")
+                if new_config:
+                    new_config = normalize_eval_runtime_config(
+                        eval_metric.template.config, new_config
+                    )
+                    from model_hub.utils.eval_validators import (
+                        get_required_mapping_keys_for_template,
+                        validate_required_key_mapping,
+                    )
+                    missing_keys = validate_required_key_mapping(
+                        new_config.get("mapping", {}),
+                        get_required_mapping_keys_for_template(eval_metric.template),
+                    )
+                    if missing_keys:
+                        return self._gm.bad_request(
+                            f"Missing required mapping keys: {', '.join(missing_keys)}"
                         )
 
-                        experiment = ExperimentsTable.objects.filter(
-                            id=experiment_id
-                        ).first()
-                        if experiment and experiment.snapshot_dataset_id:
-                            _build_and_save_v2_column_order(
-                                experiment, experiment.snapshot_dataset
-                            )
-                    except Exception:
-                        logger.exception(
-                            "Failed to rebuild column_order after edit-eval"
-                        )
-                else:
-                    column = Column.objects.filter(
-                        source_id=eval_metric.id,
-                        dataset=eval_metric.dataset,
-                        deleted=False,
+                # If the user explicitly switched to a DIFFERENT version, set it
+                # as the dedup baseline before calling maybe_pin_new_version.
+                # This means:
+                #   - user selects V1 with no config changes → snap matches V1 →
+                #     dedup fires → V1 stays pinned (no new version)
+                #   - user selects V1 and also edits config → snap differs from V1 →
+                #     new version created with the edited config
+                # Both paths keep eval_metric.config and pinned_version.config_snapshot
+                # in lockstep (the invariant).
+                explicit_version_id = request_data.get("pinned_version_id")
+                version_switched = (
+                    explicit_version_id
+                    and str(explicit_version_id) != str(eval_metric.pinned_version_id or "")
+                )
+                if version_switched:
+                    from model_hub.models.evals_metric import EvalTemplateVersion as ETV
+                    selected_ver = ETV.objects.filter(
+                        id=explicit_version_id,
+                        eval_template=eval_metric.template,
                     ).first()
-                    if not column:
-                        # Column doesn't exist yet (eval was added with run=false
-                        # and never run). Skip reason-column creation — it will
-                        # be created when the eval actually runs for the first time.
-                        pass
-                    else:
-                        reason_column, created = Column.objects.get_or_create(
-                            name=f"{eval_metric.name}-reason",
-                            data_type=DataTypeChoices.TEXT.value,
-                            source=SourceChoices.EVALUATION_REASON.value,
-                            dataset=eval_metric.dataset,
-                            source_id=f"{column.id}-sourceid-{eval_metric.id}",
-                        )
-                        if created:
-                            column_order = eval_metric.dataset.column_order
-                            column_order.append(str(reason_column.id))
-                            eval_metric.dataset.column_order = column_order
-                            eval_metric.dataset.save()
+                    if not selected_ver:
+                        return self._gm.bad_request("Selected version not found")
+                    # Use the selected version as the dedup baseline.
+                    eval_metric.pinned_version = selected_ver
 
-            # Eval columns live under different source types depending on scope:
-            # dataset evals → SourceChoices.EVALUATION
-            # experiment evals → SourceChoices.EXPERIMENT_EVALUATION
-            column_source = (
-                SourceChoices.EXPERIMENT_EVALUATION.value
-                if experiment_id
-                else SourceChoices.EVALUATION.value
-            )
-            if experiment_id:
-                corresponding_column_ids = list(
-                    Column.objects.filter(
-                        source=column_source,
-                        source_id__endswith=f"-sourceid-{eval_id}",
-                        dataset=eval_metric.dataset,
-                        deleted=False,
-                    ).values_list("id", flat=True)
-                )
-            else:
-                corresponding_column_ids = list(
-                    Column.objects.filter(
-                        source=column_source,
-                        source_id=str(eval_id),
-                        dataset=eval_metric.dataset,
-                        deleted=False,
-                    ).values_list("id", flat=True)
-                )
-            eval_metric.replace_column_id = (
-                corresponding_column_ids[0] if corresponding_column_ids else None
-            )
+                # Version creation on edit — business logic lives in the service.
+                # Runs whether or not the user switched versions: if config
+                # matches the baseline snapshot, dedup skips creation; if it
+                # differs (including after a version switch with edits), a new
+                # version is created and pinned.
+                from model_hub.services.eval_version_pinning import maybe_pin_new_version
 
-            # Set status to NOT_STARTED
-            if run:
-                eval_metric.status = StatusType.NOT_STARTED.value
-                # Reset eval cells + their reason cells across all matching
-                # columns (one per EDT for experiments, one for datasets).
-                if corresponding_column_ids:
-                    Cell.objects.filter(
-                        column_id__in=corresponding_column_ids,
-                        column__dataset=eval_metric.dataset,
-                        deleted=False,
-                    ).update(status=CellStatus.RUNNING.value)
-                    reason_source_ids = [
-                        f"{cid}-sourceid-{eval_metric.id}"
-                        for cid in corresponding_column_ids
+                maybe_pin_new_version(
+                    eval_metric,
+                    request_data,
+                    user=request.user,
+                    organization=getattr(request, "organization", None) or request.user.organization,
+                    workspace=getattr(request, "workspace", None),
+                )
+
+                # Update the config (already validated above)
+                if new_config:
+                    if "reason_column" not in new_config:
+                        new_config["reason_column"] = True
+                    eval_metric.config = new_config
+                eval_metric.kb_id = request_data.get("kb_id") or eval_metric.kb_id
+                if "error_localizer" in request.data:
+                    eval_metric.error_localizer = self._coerce_bool(
+                        request_data.get("error_localizer")
+                    )
+                elif (
+                    isinstance(request_data.get("config"), dict)
+                    and request_data["config"]
+                    .get("run_config", {})
+                    .get("error_localizer_enabled")
+                    is not None
+                ):
+                    # Fallback: some callers (e.g. EvalPickerDrawer non-workbench
+                    # path) nest the flag inside config.run_config instead of
+                    # surfacing it at the top level.
+                    eval_metric.error_localizer = bool(
+                        request_data["config"]["run_config"]["error_localizer_enabled"]
+                    )
+                eval_metric.model = request_data.get("model") or eval_metric.model
+                # Persist composite weight overrides when provided
+                if request_data.get("composite_weight_overrides") is not None:
+                    eval_metric.composite_weight_overrides = request_data[
+                        "composite_weight_overrides"
                     ]
-                    Cell.objects.filter(
-                        column__source_id__in=reason_source_ids,
-                        column__dataset=eval_metric.dataset,
-                        deleted=False,
-                    ).update(status=CellStatus.RUNNING.value)
-                else:
-                    # Dataset fallback: reset cells under the base source_id
-                    Cell.objects.filter(
-                        column__source_id=str(eval_id),
-                        column__dataset=eval_metric.dataset,
-                        deleted=False,
-                    ).update(status=CellStatus.RUNNING.value)
 
-            eval_metric.save()
-            return self._gm.success_response(
-                "Column evaluation updated and queued for processing"
-            )
+                # Reason-column reconciliation differs by scope:
+                #  * dataset: exactly one EVALUATION column (source_id == eval_metric.id)
+                #  * experiment: one EXPERIMENT_EVALUATION column per EDT, source_id
+                #    "{edt_id}-{col_id}-sourceid-{metric_id}" — doing a single
+                #    Column.objects.get(source_id=eval_metric.id) here crashes.
+                if new_config.get("reason_column"):
+                    if experiment_id:
+                        per_edt_cols = Column.objects.filter(
+                            source__in=[
+                                SourceChoices.EXPERIMENT_EVALUATION.value,
+                                SourceChoices.EXPERIMENT_EVALUATION_TAGS.value,
+                            ],
+                            source_id__endswith=f"-sourceid-{eval_metric.id}",
+                            deleted=False,
+                        )
+                        for col in per_edt_cols:
+                            Column.objects.get_or_create(
+                                name=f"{eval_metric.name}-{col.name}-reason",
+                                data_type=DataTypeChoices.TEXT.value,
+                                source=SourceChoices.EVALUATION_REASON.value,
+                                dataset=col.dataset,
+                                source_id=f"{col.id}-sourceid-{eval_metric.id}",
+                            )
+                        # Rebuild snapshot_dataset.column_order so new reason cols
+                        # surface in the grid.
+                        try:
+                            from model_hub.views.experiments import (
+                                _build_and_save_v2_column_order,
+                            )
+
+                            experiment = ExperimentsTable.objects.filter(
+                                id=experiment_id
+                            ).first()
+                            if experiment and experiment.snapshot_dataset_id:
+                                _build_and_save_v2_column_order(
+                                    experiment, experiment.snapshot_dataset
+                                )
+                        except Exception:
+                            logger.exception(
+                                "Failed to rebuild column_order after edit-eval"
+                            )
+                    else:
+                        column = Column.objects.filter(
+                            source_id=eval_metric.id,
+                            dataset=eval_metric.dataset,
+                            deleted=False,
+                        ).first()
+                        if not column:
+                            # Column doesn't exist yet (eval was added with run=false
+                            # and never run). Skip reason-column creation — it will
+                            # be created when the eval actually runs for the first time.
+                            pass
+                        else:
+                            reason_column, created = Column.objects.get_or_create(
+                                name=f"{eval_metric.name}-reason",
+                                data_type=DataTypeChoices.TEXT.value,
+                                source=SourceChoices.EVALUATION_REASON.value,
+                                dataset=eval_metric.dataset,
+                                source_id=f"{column.id}-sourceid-{eval_metric.id}",
+                            )
+                            if created:
+                                column_order = eval_metric.dataset.column_order
+                                column_order.append(str(reason_column.id))
+                                eval_metric.dataset.column_order = column_order
+                                eval_metric.dataset.save()
+
+                # Eval columns live under different source types depending on scope:
+                # dataset evals → SourceChoices.EVALUATION
+                # experiment evals → SourceChoices.EXPERIMENT_EVALUATION
+                column_source = (
+                    SourceChoices.EXPERIMENT_EVALUATION.value
+                    if experiment_id
+                    else SourceChoices.EVALUATION.value
+                )
+                if experiment_id:
+                    corresponding_column_ids = list(
+                        Column.objects.filter(
+                            source=column_source,
+                            source_id__endswith=f"-sourceid-{eval_id}",
+                            dataset=eval_metric.dataset,
+                            deleted=False,
+                        ).values_list("id", flat=True)
+                    )
+                else:
+                    corresponding_column_ids = list(
+                        Column.objects.filter(
+                            source=column_source,
+                            source_id=str(eval_id),
+                            dataset=eval_metric.dataset,
+                            deleted=False,
+                        ).values_list("id", flat=True)
+                    )
+                eval_metric.replace_column_id = (
+                    corresponding_column_ids[0] if corresponding_column_ids else None
+                )
+
+                # Set status to NOT_STARTED
+                if run:
+                    eval_metric.status = StatusType.NOT_STARTED.value
+                    # Reset eval cells + their reason cells across all matching
+                    # columns (one per EDT for experiments, one for datasets).
+                    if corresponding_column_ids:
+                        Cell.objects.filter(
+                            column_id__in=corresponding_column_ids,
+                            column__dataset=eval_metric.dataset,
+                            deleted=False,
+                        ).update(status=CellStatus.RUNNING.value)
+                        reason_source_ids = [
+                            f"{cid}-sourceid-{eval_metric.id}"
+                            for cid in corresponding_column_ids
+                        ]
+                        Cell.objects.filter(
+                            column__source_id__in=reason_source_ids,
+                            column__dataset=eval_metric.dataset,
+                            deleted=False,
+                        ).update(status=CellStatus.RUNNING.value)
+                    else:
+                        # Dataset fallback: reset cells under the base source_id
+                        Cell.objects.filter(
+                            column__source_id=str(eval_id),
+                            column__dataset=eval_metric.dataset,
+                            deleted=False,
+                        ).update(status=CellStatus.RUNNING.value)
+
+                eval_metric.save()
+                return self._gm.success_response(
+                    "Column evaluation updated and queued for processing"
+                )
 
         except Http404:
             return self._gm.not_found("Eval not found")
@@ -8962,11 +8960,14 @@ class ExtractJsonColumnView(APIView):
         try:
             close_old_connections()
             if cell.value:
-                # Parse the string as a Python literal
-                python_obj = ast.literal_eval(cell.value)
-                # Convert Python object to JSON
-                json_data = json.dumps(python_obj)
-                json_data = json.loads(json_data)
+                # Try standard JSON first (handles true/false/null correctly).
+                # Fall back to ast.literal_eval for Python-dict-style strings
+                # (single-quoted keys, True/False/None literals).
+                try:
+                    json_data = json.loads(cell.value)
+                except (ValueError, TypeError):
+                    python_obj = ast.literal_eval(cell.value)
+                    json_data = json.loads(json.dumps(python_obj))
 
                 # Parse back to Python object if needed
                 # print(cell.value,"cell.value*****")
@@ -11297,6 +11298,8 @@ class FeedbackViewSet(viewsets.ModelViewSet):
                 column_id = str(cell.column.id)
                 if column_id != str(eval_column.id):
                     row_dict[column_id] = cell.value
+                    if cell.column.name:
+                        row_dict[cell.column.name] = cell.value
 
             # Add feedback information
             row_dict["feedback_comment"] = feedback.explanation
@@ -11409,6 +11412,9 @@ class FeedbackViewSet(viewsets.ModelViewSet):
                 get_error_message("FAILED_TO_CREATE_FEEDBACK")
             )
 
+    @swagger_auto_schema(
+        responses={200: FeedbackDetailsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     @action(detail=False, methods=["GET"], url_path="get-feedback-details")
     def get_feedback_details(self, request):
         """

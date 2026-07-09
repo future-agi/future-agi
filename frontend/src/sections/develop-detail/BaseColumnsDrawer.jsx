@@ -58,7 +58,7 @@ const BaseColumnDrawer = ({
       });
     },
     onSuccess: (data) => {
-      const baseColumns = data?.data?.result?.baseColumns || [];
+      const baseColumns = data?.data?.result?.base_columns || [];
       setBaseColumnsData(baseColumns);
       setIsDataLoaded(true);
       setLoading(false);

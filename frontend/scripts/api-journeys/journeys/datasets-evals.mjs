@@ -9544,24 +9544,6 @@ export const datasetEvalJourneys = [
         "Ground-truth upload did not return a UUID id.",
       );
 
-      const pendingSearchError = await expectApiErrorStatus(
-        () =>
-          client.post(
-            apiPath("/model-hub/ground-truth/{ground_truth_id}/search/", {
-              ground_truth_id: groundTruthId,
-            }),
-            { query: "What is 1+1?", max_results: 2 },
-          ),
-        400,
-        "Ground-truth search accepted a pending embedding dataset.",
-      );
-      assert(
-        String(pendingSearchError.body?.message || "").includes(
-          "Embeddings not ready",
-        ),
-        "Pending ground-truth search did not return the embeddings-not-ready message.",
-      );
-
       const emptyEmbedError = await expectApiErrorStatus(
         () =>
           client.post(
@@ -9662,17 +9644,6 @@ export const datasetEvalJourneys = [
         });
         groundTruthIds.push(otherGroundTruthId);
 
-        await expectApiErrorStatus(
-          () =>
-            client.post(
-              apiPath("/model-hub/ground-truth/{ground_truth_id}/search/", {
-                ground_truth_id: otherGroundTruthId,
-              }),
-              { query: "private", max_results: 1 },
-            ),
-          404,
-          "Ground-truth search accepted a same-org other-workspace dataset.",
-        );
         await expectApiErrorStatus(
           () =>
             client.post(

@@ -211,6 +211,47 @@ def _create_workspace_viewer_user(organization, workspace, *, email_prefix):
     return viewer
 
 
+def _create_workspace_admin_user(organization, workspace, *, email_prefix):
+    """Create a workspace admin who is NOT an org admin (org role = Member).
+
+    This isolates the ``WorkspaceMembership.level_or_legacy >= WORKSPACE_ADMIN``
+    branch of ``user_has_annotation_queue_admin_access`` from the org-admin path.
+    """
+    from accounts.models.organization_membership import OrganizationMembership
+    from accounts.models.user import User
+    from accounts.models.workspace import WorkspaceMembership
+    from tfc.constants.levels import Level
+    from tfc.constants.roles import OrganizationRoles
+
+    admin = User.objects.create_user(
+        email=f"{email_prefix}-{uuid.uuid4().hex[:8]}@futureagi.com",
+        password="testpassword123",
+        name="Workspace Admin",
+        organization=organization,
+        organization_role=OrganizationRoles.MEMBER,
+    )
+    org_membership, _ = OrganizationMembership.no_workspace_objects.update_or_create(
+        user=admin,
+        organization=organization,
+        defaults={
+            "role": OrganizationRoles.MEMBER,
+            "level": Level.MEMBER,
+            "is_active": True,
+        },
+    )
+    WorkspaceMembership.no_workspace_objects.update_or_create(
+        user=admin,
+        workspace=workspace,
+        defaults={
+            "role": OrganizationRoles.WORKSPACE_ADMIN,
+            "level": Level.WORKSPACE_ADMIN,
+            "organization_membership": org_membership,
+            "is_active": True,
+        },
+    )
+    return admin
+
+
 def _jwt_workspace_client(user, organization, workspace):
     """Authenticate through the real auth class so workspace write checks run."""
     from rest_framework.test import APIClient
@@ -260,9 +301,18 @@ def allow_queue_creation_entitlement():
 
 
 @pytest.fixture
-def queue_id(auth_client):
-    """Create a queue and return its UUID."""
-    resp = auth_client.post(QUEUE_URL, {"name": "Workflow Test Queue"}, format="json")
+def queue_id(auth_client, label):
+    """Create a queue and return its UUID.
+
+    A queue must have at least one label (serializer-enforced). Use the shared
+    `label` fixture so the queue carries exactly the label the workflow tests
+    annotate — otherwise an extra (required) label would block item completion.
+    """
+    resp = auth_client.post(
+        QUEUE_URL,
+        {"name": "Workflow Test Queue", "label_ids": [str(label.id)]},
+        format="json",
+    )
     return resp.data["id"]
 
 
@@ -324,14 +374,8 @@ def queue_with_items(auth_client, queue_id, dataset_rows, label, organization):
     ``status == ACTIVE``) work without each test having to opt in.
     """
     ds, rows = dataset_rows
-    # Attach label to queue
-    queue = AnnotationQueue.objects.get(pk=queue_id)
-    AnnotationQueueLabel.objects.create(
-        queue=queue,
-        label=label,
-        order=0,
-        required=True,
-    )
+    # The queue already has `label` attached (via the queue_id fixture), so
+    # don't re-attach it here (would violate unique_active_queue_label).
     # Add 3 items
     items_payload = [
         {"source_type": "dataset_row", "source_id": str(r.id)} for r in rows[:3]
@@ -682,6 +726,119 @@ class TestSubmitAnnotations:
             deleted=False,
         ).exists()
         annotator_client.stop_workspace_injection()
+
+    def test_submit_allows_org_admin_with_reviewer_role_to_annotate(
+        self, auth_client, dataset_rows, organization, workspace, user, label
+    ):
+        """Org/workspace admins can annotate even with a non-annotator queue role.
+
+        ``auth_client`` is the org owner. On a queue created by someone else
+        where the owner is only a reviewer, admin access grants
+        manager-equivalent rights so they may submit annotations on an
+        unassigned manual item.
+        """
+        from accounts.models.user import User
+        from tfc.constants.roles import OrganizationRoles
+
+        dataset, rows = dataset_rows
+        creator = User.objects.create_user(
+            email=f"admin-annotate-owner-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Admin Annotate Owner",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        queue = AnnotationQueue.objects.create(
+            name="Admin Annotate Queue",
+            dataset=dataset,
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+            created_by=creator,
+            organization=organization,
+            workspace=workspace,
+        )
+        AnnotationQueueLabel.objects.create(
+            queue=queue,
+            label=label,
+            order=0,
+            required=True,
+        )
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue=queue,
+            user=creator,
+            deleted=False,
+            defaults={
+                "role": AnnotatorRole.MANAGER.value,
+                "roles": [AnnotatorRole.MANAGER.value],
+            },
+        )
+        # auth_client's org-owner user is only a reviewer on this queue.
+        admin_user = user
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue=queue,
+            user=admin_user,
+            deleted=False,
+            defaults={
+                "role": AnnotatorRole.REVIEWER.value,
+                "roles": [AnnotatorRole.REVIEWER.value],
+            },
+        )
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.DATASET_ROW.value,
+            dataset_row=rows[0],
+            organization=organization,
+            workspace=workspace,
+        )
+
+        resp = auth_client.post(
+            submit_annotations_url(queue.id, item.id),
+            {"annotations": [{"label_id": str(label.id), "value": "positive"}]},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert _result(resp)["submitted"] == 1
+        assert Score.objects.filter(
+            queue_item_id=item.id,
+            annotator=admin_user,
+            deleted=False,
+        ).exists()
+
+    def test_submit_allows_manager_unassigned_item_when_queue_has_assignments(
+        self, auth_client, queue_with_items, user, second_user, organization
+    ):
+        """Managers can annotate an unassigned manual item even once other items
+        in the queue are assigned to someone else."""
+        queue_id, item_ids, label = queue_with_items
+        AnnotationQueue.objects.filter(pk=queue_id).update(auto_assign=False)
+        AnnotationQueueAnnotator.objects.get_or_create(
+            queue_id=queue_id,
+            user=second_user,
+            defaults={
+                "role": AnnotatorRole.ANNOTATOR.value,
+                "roles": [AnnotatorRole.ANNOTATOR.value],
+            },
+        )
+        # Assign a different item so the queue has at least one assignment.
+        QueueItemAssignment.objects.create(
+            queue_item=QueueItem.objects.get(pk=item_ids[1]),
+            user=second_user,
+        )
+
+        # The first item stays unassigned; the manager (queue creator) submits.
+        resp = auth_client.post(
+            submit_annotations_url(queue_id, item_ids[0]),
+            {"annotations": [{"label_id": str(label.id), "value": "positive"}]},
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        assert _result(resp)["submitted"] == 1
+        assert Score.objects.filter(
+            queue_item_id=item_ids[0],
+            annotator=user,
+            deleted=False,
+        ).exists()
 
     def test_reviewer_assigned_item_can_add_missing_annotation_during_review(
         self,
@@ -1396,18 +1553,14 @@ class TestCompleteItem:
 
         queue_2_resp = auth_client.post(
             QUEUE_URL,
-            {"name": "Second queue with same source"},
+            {
+                "name": "Second queue with same source",
+                "label_ids": [str(label.id)],
+            },
             format="json",
         )
         assert queue_2_resp.status_code == status.HTTP_201_CREATED, queue_2_resp.data
         queue_2_id = queue_2_resp.data["id"]
-        queue_2 = AnnotationQueue.objects.get(pk=queue_2_id)
-        AnnotationQueueLabel.objects.create(
-            queue=queue_2,
-            label=label,
-            order=0,
-            required=True,
-        )
         add_resp = auth_client.post(
             add_items_url(queue_2_id),
             {
@@ -5062,7 +5215,7 @@ class TestReleaseReservation:
 
 @pytest.mark.django_db
 class TestReservationConflict:
-    def test_reserve_true_conflict_returns_400(
+    def test_reserve_true_conflict_returns_409(
         self,
         auth_client,
         queue_with_items,
@@ -5092,7 +5245,8 @@ class TestReservationConflict:
             annotate_detail_url(queue_id, item_ids[0]),
             {"reserve": "true"},
         )
-        assert resp2.status_code == status.HTTP_400_BAD_REQUEST
+        assert resp2.status_code == status.HTTP_409_CONFLICT
+        assert resp2.json().get("code") == "item_reserved"
         item = QueueItem.objects.get(pk=item_ids[0])
         assert item.reserved_by == user
         assert item.reserved_at is not None
@@ -5517,10 +5671,15 @@ class TestAssignItems:
 
         assert denied.status_code == status.HTTP_403_FORBIDDEN
 
-    def test_custom_queue_assignment_rejects_admin_without_queue_membership(
+    def test_custom_queue_assignment_allows_org_admin_without_queue_membership(
         self, auth_client, dataset_rows, organization, workspace
     ):
-        """Workspace/org admins cannot manage custom queue assignments by default."""
+        """Org/workspace admins can manage custom queue assignments via admin access.
+
+        ``auth_client`` is the org owner. Even without an explicit queue
+        membership row, admin access grants manager-equivalent rights, so they
+        may assign items on a queue created by someone else.
+        """
         from accounts.models.user import User
         from tfc.constants.roles import OrganizationRoles
 
@@ -5567,10 +5726,145 @@ class TestAssignItems:
             format="json",
         )
 
+        assert resp.status_code == status.HTTP_200_OK
+        item.refresh_from_db()
+        assert item.assigned_to_id == manager.id
+
+    def test_custom_queue_assignment_allows_workspace_admin_without_queue_membership(
+        self, dataset_rows, organization, workspace
+    ):
+        """Workspace admins (not org admins) can manage assignments via admin access.
+
+        The acting user is only an org Member but a workspace admin, with no
+        explicit queue membership. This exercises the
+        ``WorkspaceMembership.level_or_legacy >= WORKSPACE_ADMIN`` branch of
+        ``user_has_annotation_queue_admin_access``.
+        """
+        from accounts.models.user import User
+        from conftest import WorkspaceAwareAPIClient
+        from tfc.constants.roles import OrganizationRoles
+
+        dataset, rows = dataset_rows
+        manager = User.objects.create_user(
+            email=f"ws-admin-assign-owner-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Assignment Queue Owner",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        workspace_admin = _create_workspace_admin_user(
+            organization, workspace, email_prefix="ws-admin-assign"
+        )
+        queue = AnnotationQueue.objects.create(
+            name="Workspace Admin Assignment Queue",
+            dataset=dataset,
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+            created_by=manager,
+            organization=organization,
+            workspace=workspace,
+        )
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue=queue,
+            user=manager,
+            deleted=False,
+            defaults={
+                "role": AnnotatorRole.MANAGER.value,
+                "roles": [AnnotatorRole.MANAGER.value],
+            },
+        )
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.DATASET_ROW.value,
+            dataset_row=rows[0],
+            organization=organization,
+            workspace=workspace,
+        )
+
+        admin_client = WorkspaceAwareAPIClient()
+        admin_client.force_authenticate(user=workspace_admin)
+        admin_client.set_workspace(workspace)
+        resp = admin_client.post(
+            assign_url(queue.id),
+            {
+                "item_ids": [str(item.id)],
+                "user_ids": [str(manager.id)],
+                "action": "set",
+            },
+            format="json",
+        )
+
+        assert resp.status_code == status.HTTP_200_OK
+        item.refresh_from_db()
+        assert item.assigned_to_id == manager.id
+        admin_client.stop_workspace_injection()
+
+    def test_custom_queue_assignment_rejects_non_admin_non_member(
+        self, dataset_rows, organization, workspace
+    ):
+        """Plain members without admin access or a queue manager role cannot assign."""
+        from accounts.models.user import User
+        from conftest import WorkspaceAwareAPIClient
+        from tfc.constants.roles import OrganizationRoles
+
+        dataset, rows = dataset_rows
+        manager = User.objects.create_user(
+            email=f"assignment-owner-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Assignment Queue Owner",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        outsider = User.objects.create_user(
+            email=f"assignment-outsider-{uuid.uuid4().hex[:8]}@futureagi.com",
+            password="testpassword123",
+            name="Assignment Queue Outsider",
+            organization=organization,
+            organization_role=OrganizationRoles.MEMBER,
+        )
+        queue = AnnotationQueue.objects.create(
+            name="Non Member Assignment Queue",
+            dataset=dataset,
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+            created_by=manager,
+            organization=organization,
+            workspace=workspace,
+        )
+        AnnotationQueueAnnotator.objects.update_or_create(
+            queue=queue,
+            user=manager,
+            deleted=False,
+            defaults={
+                "role": AnnotatorRole.MANAGER.value,
+                "roles": [AnnotatorRole.MANAGER.value],
+            },
+        )
+        item = QueueItem.objects.create(
+            queue=queue,
+            source_type=QueueItemSourceType.DATASET_ROW.value,
+            dataset_row=rows[0],
+            organization=organization,
+            workspace=workspace,
+        )
+
+        outsider_client = WorkspaceAwareAPIClient()
+        outsider_client.force_authenticate(user=outsider)
+        outsider_client.set_workspace(workspace)
+        resp = outsider_client.post(
+            assign_url(queue.id),
+            {
+                "item_ids": [str(item.id)],
+                "user_ids": [str(manager.id)],
+                "action": "set",
+            },
+            format="json",
+        )
+
         assert resp.status_code == status.HTTP_403_FORBIDDEN
-        assert "Only queue managers can manage queue item assignments" in str(resp.data)
+        assert resp.data["type"] == "permission_error"
+        assert resp.data["code"] == "permission_denied"
         item.refresh_from_db()
         assert item.assigned_to_id is None
+        outsider_client.stop_workspace_injection()
 
     def test_assign_empty_item_ids(self, auth_client, queue_with_items):
         """Empty item_ids returns 400."""
@@ -5947,7 +6241,6 @@ class TestAutoCompleteQueue:
         """Queue auto-completes when all items are completed."""
         queue_id = active_queue_id
         queue = AnnotationQueue.objects.get(pk=queue_id)
-        AnnotationQueueLabel.objects.create(queue=queue, label=label, order=0)
 
         _, rows = dataset_rows
         items = [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]
@@ -5971,7 +6264,6 @@ class TestAutoCompleteQueue:
         """Queue stays active when pending items remain."""
         queue_id = active_queue_id
         queue = AnnotationQueue.objects.get(pk=queue_id)
-        AnnotationQueueLabel.objects.create(queue=queue, label=label, order=0)
 
         _, rows = dataset_rows
         items = [
@@ -6116,7 +6408,11 @@ class TestRoundRobinAssignment:
         """Create a round-robin queue with 2 annotators."""
         resp = auth_client.post(
             QUEUE_URL,
-            {"name": "RR Queue", "assignment_strategy": "round_robin"},
+            {
+                "name": "RR Queue",
+                "assignment_strategy": "round_robin",
+                "label_ids": [str(label.id)],
+            },
             format="json",
         )
         queue_id = resp.data["id"]
@@ -6124,7 +6420,6 @@ class TestRoundRobinAssignment:
             queue_status_url(queue_id), {"status": "active"}, format="json"
         )
         queue = AnnotationQueue.objects.get(pk=queue_id)
-        AnnotationQueueLabel.objects.create(queue=queue, label=label, order=0)
         # Creator (user) is auto-added as manager by the queue-create serializer.
         # Use get_or_create to avoid violating unique_active_queue_annotator.
         AnnotationQueueAnnotator.objects.get_or_create(queue=queue, user=user)
@@ -6194,7 +6489,6 @@ class TestRoundRobinAssignment:
         queue = AnnotationQueue.objects.get(pk=queue_id)
         queue.assignment_strategy = "manual"
         queue.save(update_fields=["assignment_strategy"])
-        AnnotationQueueLabel.objects.create(queue=queue, label=label, order=0)
         # Creator (user) is auto-added as manager by the queue-create serializer.
         AnnotationQueueAnnotator.objects.get_or_create(queue=queue, user=user)
 
@@ -6213,7 +6507,11 @@ class TestLoadBalancedAssignment:
         """Create a load-balanced queue with 3 annotators."""
         resp = auth_client.post(
             QUEUE_URL,
-            {"name": "LB Queue", "assignment_strategy": "load_balanced"},
+            {
+                "name": "LB Queue",
+                "assignment_strategy": "load_balanced",
+                "label_ids": [str(label.id)],
+            },
             format="json",
         )
         queue_id = resp.data["id"]
@@ -6221,7 +6519,6 @@ class TestLoadBalancedAssignment:
             queue_status_url(queue_id), {"status": "active"}, format="json"
         )
         queue = AnnotationQueue.objects.get(pk=queue_id)
-        AnnotationQueueLabel.objects.create(queue=queue, label=label, order=0)
         # Creator (user) is auto-added as manager by the queue-create serializer.
         AnnotationQueueAnnotator.objects.get_or_create(queue=queue, user=user)
         AnnotationQueueAnnotator.objects.get_or_create(queue=queue, user=second_user)

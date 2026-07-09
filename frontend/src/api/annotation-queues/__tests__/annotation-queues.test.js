@@ -29,6 +29,7 @@ import {
   useQueueItemsForSource,
   useSkipItem,
   useReopenDiscussionThread,
+  useRestoreAnnotationQueue,
   useReviewItem,
   useResolveDiscussionThread,
   useSubmitAnnotations,
@@ -223,6 +224,25 @@ describe("Annotation Queues API", () => {
         "/model-hub/annotation-queues/get-or-create-default/",
         { project_id: "project-1" },
       );
+    });
+  });
+
+  describe("useRestoreAnnotationQueue", () => {
+    it("posts an explicit empty body so the backend accepts the restore", async () => {
+      axios.post.mockResolvedValueOnce({ data: { status: true } });
+
+      const { result } = renderHook(() => useRestoreAnnotationQueue(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate("queue-1");
+
+      await waitFor(() => {
+        expect(axios.post).toHaveBeenCalledWith(
+          annotationQueueEndpoints.restore("queue-1"),
+          {},
+        );
+      });
     });
   });
 
@@ -896,6 +916,37 @@ describe("Annotation Queues API", () => {
         queryClient.getQueryData(annotateKeys.detail("queue-1", "item-1")).data
           .result.item.assigned_users,
       ).toEqual([{ id: "user-2", name: "Nikhil" }]);
+    });
+
+    it("surfaces the backend's specific message as the sole error toast", async () => {
+      // Regression: the old onError showed a hardcoded "Failed to assign items"
+      // beside the global handler's specific message, so two toasts stacked. The
+      // mutation now sets meta.errorHandled (global handler stays out) and its
+      // onError surfaces the backend's specific message as the single toast.
+      enqueueSnackbar.mockClear();
+      axios.post.mockRejectedValueOnce({
+        result: "Only queue managers can manage queue item assignments.",
+        statusCode: 403,
+      });
+
+      const { result } = renderHook(() => useAssignQueueItems(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        itemIds: ["item-1"],
+        userIds: ["user-1"],
+        action: "set",
+      });
+
+      await waitFor(() => {
+        expect(result.current.isError).toBe(true);
+      });
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Only queue managers can manage queue item assignments.",
+        { variant: "error" },
+      );
     });
   });
 

@@ -178,7 +178,11 @@ class ModelServingClient:
             logger.error(f"Image embedding failed: {e}")
             raise
 
-    def embed_audio(self, audio_data: str | bytes, model_name: str = "audio_embedding") -> list[float]:
+    def embed_audio(
+        self,
+        audio_data: str | bytes,
+        model_name: str = "audio_embedding",
+    ) -> list[float]:
         """
         ✅ IMPROVED: Get audio embeddings from the serving service with input validation.
         """
@@ -186,10 +190,10 @@ class ModelServingClient:
             raise ValueError("Audio input cannot be None")
 
         processed_audio = self._process_audio_input(audio_data)
-        
+
         data = {
             "audio": processed_audio,
-            "input_type": "audio"
+            "input_type": "audio",
         }
 
         try:

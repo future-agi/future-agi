@@ -32,6 +32,15 @@ export const useGetAllModelList = (options) => {
   return { mergedData, ..._queryParams };
 };
 
+export const modelCatalogQuery = (search) => ({
+  queryKey: ["model-catalog", search ?? ""],
+  queryFn: () =>
+    axios
+      .get(endpoints.develop.modelList, { params: { search } })
+      .then((res) => res.data),
+  staleTime: 30 * 60 * 1000,
+});
+
 export const useGetModelDetail = (id, options) => {
   return useQuery({
     ...options,

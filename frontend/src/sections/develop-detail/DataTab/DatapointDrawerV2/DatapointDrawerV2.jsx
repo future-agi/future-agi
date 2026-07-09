@@ -32,6 +32,7 @@ import Iconify from "src/components/iconify";
 import { LoadingButton } from "@mui/lab";
 import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
+import SkippedLocalizationBanner from "src/sections/common/SkippedLocalizationBanner";
 import { useDatasetColumnConfig } from "src/api/develop/develop-detail";
 import { useParams } from "react-router";
 import CellMarkdown from "src/sections/common/CellMarkdown";
@@ -297,7 +298,6 @@ const DatapointDrawerChild = () => {
     evalMetaBySourceId[column?.col?.sourceId || column?.col?.source_id]
       ?.templateType === "composite";
 
-
   const runEvalData = useMemo(() => {
     const evalColumns = allColumns.filter((i) => i.originType === "evaluation");
     const currentRowData = datapoint?.rowData ? datapoint?.rowData : [];
@@ -306,15 +306,8 @@ const DatapointDrawerChild = () => {
       const columnId = column.field;
       const rowDataForColumn = currentRowData?.[columnId];
 
-      // The axios snake→camel response interceptor was removed
-      // (2026-04-12) so backend payloads land as snake_case in JS.
-      // Read both shapes for compatibility with any cached/stale data
-      // and re-emit as snake_case for downstream consumers.
-      const cellValue =
-        rowDataForColumn?.cell_value ?? rowDataForColumn?.cellValue ?? null;
-      const valueInfosOutput =
-        rowDataForColumn?.value_infos?.output ??
-        rowDataForColumn?.valueInfos?.output;
+      const cellValue = rowDataForColumn?.cell_value ?? null;
+      const valueInfosOutput = rowDataForColumn?.value_infos?.output;
       const baseData = {
         data: {
           column: {
@@ -368,7 +361,9 @@ const DatapointDrawerChild = () => {
       return null;
     }
   });
-  const evalOutput = evalOpen?.valueInfos?.output;
+  const evalValueInfos = evalOpen?.value_infos
+  const evalCellValue = evalOpen?.cell_value 
+  const evalOutput = evalValueInfos?.output;
 
   const loading = false;
 
@@ -454,9 +449,9 @@ const DatapointDrawerChild = () => {
   };
 
   const finalArray = useMemo(() => {
-    const v = normalizeEvalCellValue(evalOpen?.cellValue);
+    const v = normalizeEvalCellValue(evalCellValue);
     return Array.isArray(v) ? v : undefined;
-  }, [evalOpen?.cellValue]);
+  }, [evalCellValue]);
 
   const onNavigate = async (direction) => {
     isNavigatingRef.current = true;
@@ -468,7 +463,7 @@ const DatapointDrawerChild = () => {
         setDatapoint({
           index: nextIndex,
           rowData: rowData,
-          valueInfos: rows[nextIndex]?.rowData?.valueInfos,
+          value_infos: rows[nextIndex]?.rowData?.value_infos,
         });
         if (evalOpen) {
           const column = allColumns.find(
@@ -494,7 +489,7 @@ const DatapointDrawerChild = () => {
             setDatapoint({
               index: nextIndex,
               rowData: nextCellData,
-              valueInfos: nextCellData?.valueInfos,
+              value_infos: nextCellData?.value_infos,
             });
             setRows((prev) => {
               const newRows = [...prev];
@@ -554,7 +549,7 @@ const DatapointDrawerChild = () => {
           setDatapoint({
             index: nextIndex,
             rowData: nextCellData,
-            valueInfos: nextCellData?.valueInfos,
+            value_infos: nextCellData?.value_infos,
           });
           if (evalOpen) {
             const column = allColumns.find(
@@ -576,7 +571,7 @@ const DatapointDrawerChild = () => {
       setDatapoint({
         index: datapoint.index - 1,
         rowData,
-        valueInfos: rows[datapoint.index - 1]?.rowData?.valueInfos,
+        value_infos: rows[datapoint.index - 1]?.rowData?.value_infos,
       });
       if (evalOpen) {
         const column = allColumns.find(
@@ -774,19 +769,19 @@ const DatapointDrawerChild = () => {
                         Error
                       </Box>
                     ) : (
-                      hasRenderableCellValue(evalOpen?.cellValue) && (
+                      hasRenderableCellValue(evalCellValue) && (
                         <>
                           <ShowComponent condition={!Array.isArray(finalArray)}>
                             <Chip
                               variant="soft"
-                              label={getLabel(evalOpen?.cellValue)}
+                              label={getLabel(evalCellValue)}
                               size="small"
                               sx={{
-                                ...getStatusColor(evalOpen?.cellValue, theme),
+                                ...getStatusColor(evalCellValue, theme),
                                 transition: "none",
                                 "&:hover": {
                                   backgroundColor: getStatusColor(
-                                    evalOpen?.cellValue,
+                                    evalCellValue,
                                     theme,
                                   ).backgroundColor,
                                   boxShadow: "none",
@@ -823,14 +818,14 @@ const DatapointDrawerChild = () => {
                                   size="small"
                                   sx={{
                                     ...getStatusColor(
-                                      evalOpen?.cellValue,
+                                      evalCellValue,
                                       theme,
                                     ),
                                     marginRight: theme.spacing(1),
                                     transition: "none",
                                     "&:hover": {
                                       backgroundColor: getStatusColor(
-                                        evalOpen?.cellValue,
+                                        evalCellValue,
                                         theme,
                                       ).backgroundColor,
                                       boxShadow: "none",
@@ -869,26 +864,26 @@ const DatapointDrawerChild = () => {
                       borderRadius: "4px",
                     }}
                   >
-                    {Array.isArray(evalOpen?.valueInfos?.children) &&
-                    evalOpen.valueInfos.children.length > 0 ? (
+                    {Array.isArray(evalValueInfos?.children) &&
+                    evalValueInfos.children.length > 0 ? (
                       (() => {
                         /** @type {any[]} */
                         const compositeChildren =
-                          evalOpen.valueInfos.children || [];
+                          evalValueInfos.children || [];
                         return (
                           <CompositeResultView
                             compositeResult={{
-                              ...evalOpen.valueInfos,
+                              ...evalValueInfos,
                               total_children:
-                                evalOpen.valueInfos.total_children ??
+                                evalValueInfos.total_children ??
                                 compositeChildren.length,
                               completed_children:
-                                evalOpen.valueInfos.completed_children ??
+                                evalValueInfos.completed_children ??
                                 compositeChildren.filter(
                                   (child) => child.status === "completed",
                                 ).length,
                               failed_children:
-                                evalOpen.valueInfos.failed_children ??
+                                evalValueInfos.failed_children ??
                                 compositeChildren.filter(
                                   (child) => child.status === "failed",
                                 ).length,
@@ -896,13 +891,13 @@ const DatapointDrawerChild = () => {
                           />
                         );
                       })()
-                    ) : evalOpen?.valueInfos?.reason?.trim() ||
-                      evalOpen?.valueInfos?.summary ? (
+                    ) : evalValueInfos?.reason?.trim() ||
+                      evalValueInfos?.summary ? (
                       <CellMarkdown
                         spacing={0}
                         text={
-                          evalOpen?.valueInfos?.reason ||
-                          evalOpen?.valueInfos?.summary
+                          evalValueInfos?.reason ||
+                          evalValueInfos?.summary
                         }
                       />
                     ) : (
@@ -910,7 +905,7 @@ const DatapointDrawerChild = () => {
                     )}
                   </Box>
                 </Box>
-               
+
                 {!evalOpenIsCode && !isCompositeEval && (
                   <ErrorLocalizationCellSection
                     evalOpen={evalOpen}
@@ -925,8 +920,8 @@ const DatapointDrawerChild = () => {
                         prev
                           ? {
                               ...prev,
-                              valueInfos: {
-                                ...(prev.valueInfos || {}),
+                              value_infos: {
+                                ...(prev.value_infos ?? prev.valueInfos ?? {}),
                                 errorAnalysis: details?.error_analysis,
                                 input_data: details?.input_data,
                                 input_types: details?.input_types,
@@ -981,10 +976,22 @@ const DatapointDrawerChild = () => {
                     fullWidth
                     size="small"
                     onClick={() => {
+                      // Capture the currently-open eval (not the cell that
+                      // opened the datapoint drawer), so the feedback panel
+                      // shows this eval's reason and posts the matching eval
+                      // column / metric.
+                      const evalColumn =
+                        allColumns.find(
+                          (c) => c?.col?.sourceId === evalOpen?.evalMetricId,
+                        )?.col ?? column?.col;
                       setAddEvaluationFeeback({
-                        ...column?.col,
+                        ...evalColumn,
                         ...datapoint,
                         rowData: datapoint?.rowData,
+                        valueInfos:
+                          evalOpen?.value_infos ??
+                          evalOpen?.valueInfos ??
+                          datapoint?.valueInfos,
                       });
                       setEvalOpen(null);
                       trackEvent(Events.datasetAddFeedbackClicked, {
@@ -1131,7 +1138,7 @@ const DatapointDrawerChild = () => {
                     }}
                   >
                     {isAudioColumn ? (
-                      value?.cellValue ? (
+                      value?.cell_value ? (
                         <AudioDatapointCard value={value} column={col} />
                       ) : (
                         <DatapointCard
@@ -1149,7 +1156,7 @@ const DatapointDrawerChild = () => {
                         />
                       )
                     ) : isImageColumn ? (
-                      value?.cellValue ? (
+                      value?.cell_value ? (
                         <ImageDatapointCard value={value} column={col} />
                       ) : (
                         <DatapointCard
@@ -1167,7 +1174,7 @@ const DatapointDrawerChild = () => {
                         />
                       )
                     ) : isImagesColumn ? (
-                      value?.cellValue ? (
+                      value?.cell_value ? (
                         <ImagesDatapointCard value={value} column={col} />
                       ) : (
                         <DatapointCard
@@ -1185,7 +1192,7 @@ const DatapointDrawerChild = () => {
                         />
                       )
                     ) : isDocumentColumn ? (
-                      value?.cellValue ? (
+                      value?.cell_value ? (
                         <DocumentDatapointCard value={value} column={col} />
                       ) : (
                         <DatapointCard
@@ -1296,8 +1303,8 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
   useEffect(() => {
     onAnalysisLoadedRef.current = onAnalysisLoaded;
   }, [onAnalysisLoaded]);
-  const valueInfos = evalOpen?.valueInfos;
-  const inlineAnalysis = valueInfos?.errorAnalysis;
+  const valueInfos = evalOpen?.value_infos 
+  const inlineAnalysis = valueInfos?.error_analysis;
   const hasInlineAnalysis = !!(
     inlineAnalysis &&
     typeof inlineAnalysis === "object" &&
@@ -1556,10 +1563,7 @@ const ErrorLocalizationCellSection = ({ evalOpen, onAnalysisLoaded }) => {
           </Box>
         </Box>
       ) : isSkipped ? (
-        <Typography variant="caption" color="text.secondary">
-          Error localization was skipped — input data isn&apos;t available to
-          localize on.
-        </Typography>
+        <SkippedLocalizationBanner message={pollData?.error_message} />
       ) : (
         <Box
           sx={{

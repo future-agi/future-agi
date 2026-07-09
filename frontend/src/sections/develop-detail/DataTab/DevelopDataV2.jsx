@@ -82,17 +82,13 @@ import DatasetLoader from "../../develop/loaders/DatasetLoader";
 import { useEditSyntheticDataStore } from "src/sections/develop/AddRowDrawer/EditSyntheticData/state";
 import RunningSkeletonRenderer from "src/sections/common/DevelopCellRenderer/CellRenderers/RunningSkeletonRenderer";
 import { APP_CONSTANTS } from "src/utils/constants";
-import { OutputTypes } from "../../common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
+import {
+  OutputTypes,
+  RefreshStatus,
+} from "../../common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 import { useAuthContext } from "src/auth/hooks";
 import { ROLES } from "src/utils/rolePermissionMapping";
 const PdfPreviewDrawer = lazy(() => import("src/components/PdfPreviewDrawer"));
-const RefreshStatus = [
-  "Running",
-  "NotStarted",
-  "Editing",
-  "ExperimentEvaluation",
-  "PartialRun",
-];
 
 const getResultColumnConfig = (result) => result?.column_config ?? [];
 const getResultIsProcessingData = (result) =>
@@ -104,11 +100,14 @@ const getResultSyntheticPercentage = (result) =>
 const getResultIsSyntheticRegenerate = (result) =>
   Boolean(result?.synthetic_regenerate);
 const getRowId = (row) => row?.row_id ?? row?.rowId;
-const getColumnSourceId = (column) => column?.source_id ?? column?.sourceId;
+const getColumnSourceId = (column) =>
+  column?.source_id !== undefined ? column.source_id : column?.sourceId;
 const getColumnOriginType = (column) =>
-  column?.origin_type ?? column?.originType;
-const getColumnIsFrozen = (column) => column?.is_frozen ?? column?.isFrozen;
-const getColumnIsVisible = (column) => column?.is_visible ?? column?.isVisible;
+  column?.origin_type !== undefined ? column.origin_type : column?.originType;
+const getColumnIsFrozen = (column) =>
+  column?.is_frozen !== undefined ? column.is_frozen : column?.isFrozen;
+const getColumnIsVisible = (column) =>
+  column?.is_visible !== undefined ? column.is_visible : column?.isVisible;
 const SkeletonHeader = () => {
   return <Skeleton width="60%" />;
 };
@@ -288,16 +287,12 @@ const getDataSource = (
           if (getResultIsSyntheticDataset(result)) {
             updateProcessingSyntheticData(false);
           }
-          // Infinite-scroll: don't expose total upfront
           const fetchedRows = rows || [];
           const isLastPage = fetchedRows.length < DATASET_ROWS_LIMIT;
-          const lastRow = isLastPage
-            ? request.startRow + fetchedRows.length
-            : -1;
 
           params.success({
             rowData: fetchedRows,
-            rowCount: lastRow,
+            rowCount: totalRows,
           });
 
           // Prefetch the next two pages so scrolling stays ahead of the
@@ -438,7 +433,7 @@ const getDefaultColDefs = () => {
   ];
 };
 
-const getAverageColumnConfig = (columns, tableRows) => {
+export const getAverageColumnConfig = (columns, tableRows) => {
   if (!columns?.length) {
     return [];
   }
@@ -553,6 +548,12 @@ const getAverageColumnConfig = (columns, tableRows) => {
     }
   }
 
+  // Skip the pinned summary row when no column has a value to show; otherwise
+  // every cell is "" and AG Grid renders a blank placeholder row at the bottom.
+  if (!Object.values(bottomRow).some(Boolean)) {
+    return [];
+  }
+
   return [
     {
       checkbox: "",
@@ -579,7 +580,11 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
   // (CustomCellRender) and the datapoint drawer can synchronously look up
   // the eval_type for an eval column. This is the same query key the
   // EvaluationDrawer uses, so the request is deduped.
-  useEvalsList(dataset, { eval_type: "user" }, "dataset");
+  useEvalsList(
+    _viewOptions.showEvals ? dataset : undefined,
+    { eval_type: "user" },
+    "dataset",
+  );
   const isRefreshingColumns = useRef(false);
   const { setGridApi, setRefetchTable } = useDevelopDetailContext();
   const setEditCell = useEditCellStoreShallow((s) => s.setEditCell);
@@ -1327,10 +1332,8 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
                         const datapointValue = {
                           index: params.rowIndex,
                           rowData: params.data,
-                          valueInfos:
-                            params?.data[params?.colDef?.col?.id]
-                              ?.value_infos ??
-                            params?.data[params?.colDef?.col?.id]?.valueInfos,
+                          value_infos:
+                            params?.data[params?.colDef?.col?.id]?.value_infos,
                         };
                         useDatapointDrawerStore
                           .getState()

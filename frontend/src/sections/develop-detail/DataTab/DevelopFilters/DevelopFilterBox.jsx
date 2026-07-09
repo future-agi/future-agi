@@ -134,6 +134,10 @@ const valuePanelToStore = (val, panelType, operator) => {
     return val;
   }
   if (isNullish(val)) return "";
+  // in/not_in require a list value; wrap a single typed scalar so it still applies.
+  if (operator === "in" || operator === "not_in") {
+    return val === "" ? "" : [val];
+  }
   return val;
 };
 
@@ -407,7 +411,7 @@ export const buildProperties = (allColumns) => {
   return allColumns
     .map((column) => {
       const colData = column?.col;
-      const dataType = colData?.data_type ?? colData?.dataType;
+      const dataType = colData?.data_type;
       if (!ALLOWED_DATA_TYPES.has(dataType)) return null;
       const panelType = DATA_TYPE_TO_PANEL_TYPE[dataType] || "string";
       const originType = colData?.origin_type;

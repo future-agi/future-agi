@@ -24,10 +24,16 @@ import { useAuthContext } from "src/auth/hooks";
 import {
   useCreateAnnotationQueue,
   useUpdateAnnotationQueue,
+  useUpdateAnnotationQueueStatus,
 } from "src/api/annotation-queues/annotation-queues";
 import LabelPicker from "./components/label-picker";
 import AnnotatorPicker from "./components/annotator-picker";
-import { QUEUE_ROLES, isQueueAnnotatorRole, queueRoleList } from "./constants";
+import {
+  QUEUE_ROLES,
+  QUEUE_STATUS_TRANSITIONS,
+  isQueueAnnotatorRole,
+  queueRoleList,
+} from "./constants";
 
 const STATUS_OPTIONS = [
   { value: "draft", label: "Draft" },
@@ -121,14 +127,26 @@ export default function CreateQueueDrawer({
     useCreateAnnotationQueue();
   const { mutate: updateQueue, isPending: isUpdating } =
     useUpdateAnnotationQueue();
-  const isPending = isCreating || isUpdating;
+  const { mutate: updateStatus, isPending: isStatusUpdating } =
+    useUpdateAnnotationQueueStatus();
+  const isPending = isCreating || isUpdating || isStatusUpdating;
   const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  // Status lives behind its own state-machine endpoint, so only offer targets
+  // the backend will accept from the queue's current status (plus the current
+  // status itself, so the select can show where it stands). Offering an
+  // unreachable target like "draft" just produces a guaranteed error.
+  const currentStatus = editQueue?.status || "draft";
+  const statusOptions = STATUS_OPTIONS.filter(
+    (opt) =>
+      opt.value === currentStatus ||
+      (QUEUE_STATUS_TRANSITIONS[currentStatus] || []).includes(opt.value),
+  );
 
   const { control, handleSubmit, reset, setValue, watch, trigger } = useForm({
     defaultValues: DEFAULT_VALUES,
   });
 
-  const labelIds = watch("label_ids");
   const annotators = watch("annotators");
   const autoAssign = watch("autoAssign");
   const annotatorCount = annotators.filter(isQueueAnnotatorRole).length;
@@ -207,9 +225,29 @@ export default function CreateQueueDrawer({
     };
 
     if (isEdit) {
+      // `status` is read-only on the queue serializer; it only moves through the
+      // dedicated state-machine endpoint. Save settings first, then transition
+      // status separately (and only when it actually changed — a no-op
+      // same-status transition is rejected by the state machine).
+      const statusChanged = formData.status !== currentStatus;
       updateQueue(
-        { id: editQueue.id, ...payload, status: formData.status },
-        { onSuccess: () => onClose() },
+        { id: editQueue.id, ...payload },
+        {
+          onSuccess: () => {
+            if (!statusChanged) {
+              onClose();
+              return;
+            }
+            updateStatus(
+              { id: editQueue.id, status: formData.status },
+              {
+                onSuccess: () => onClose(),
+                // Keep the drawer open on failure so the user can pick a valid
+                // target; the status hook surfaces the backend reason.
+              },
+            );
+          },
+        },
       );
     } else {
       createQueue(payload, {
@@ -278,7 +316,7 @@ export default function CreateQueueDrawer({
                 <Controller
                   name="name"
                   control={control}
-                  rules={{ required: "Queue name is required" }}
+                  rules={{ required: "Please enter a name for this queue" }}
                   render={({ field, fieldState }) => (
                     <TextField
                       {...field}
@@ -290,7 +328,7 @@ export default function CreateQueueDrawer({
                       error={!!fieldState.error}
                       helperText={
                         fieldState.error?.message ||
-                        "Enter annotation queue name"
+                        "A short, descriptive name annotators will recognize"
                       }
                       inputProps={{ maxLength: 255 }}
                       FormHelperTextProps={{
@@ -333,7 +371,7 @@ export default function CreateQueueDrawer({
                           "& .MuiOutlinedInput-root": { borderRadius: 0.5 },
                         }}
                       >
-                        {STATUS_OPTIONS.map((opt) => (
+                        {statusOptions.map((opt) => (
                           <MenuItem key={opt.value} value={opt.value}>
                             {opt.label}
                           </MenuItem>
@@ -350,9 +388,32 @@ export default function CreateQueueDrawer({
               title="Annotation Labels"
               subtitle="Choose labels that annotators will assign to items in this queue."
             >
-              <LabelPicker
-                selectedIds={labelIds}
-                onChange={(ids) => setValue("label_ids", ids)}
+              <Controller
+                name="label_ids"
+                control={control}
+                rules={{
+                  validate: (value) =>
+                    (Array.isArray(value) && value.length > 0) ||
+                    "At least one label is required",
+                }}
+                render={({ field, fieldState }) => (
+                  <>
+                    <LabelPicker
+                      selectedIds={field.value}
+                      onChange={(ids) => field.onChange(ids)}
+                      lockLastSelected={isEdit}
+                    />
+                    {fieldState.error && (
+                      <Typography
+                        variant="caption"
+                        color="error.main"
+                        sx={{ mt: 0.75, display: "block" }}
+                      >
+                        {fieldState.error.message}
+                      </Typography>
+                    )}
+                  </>
+                )}
               />
             </Section>
 
@@ -410,10 +471,11 @@ export default function CreateQueueDrawer({
                   rules={{
                     validate: (value) => {
                       const n = Number(value);
-                      if (!value && value !== 0) return "Required";
-                      if (n < 1) return "Must be at least 1";
+                      if (!value && value !== 0)
+                        return "Enter how many submissions each item needs";
+                      if (n < 1) return "Each item needs at least 1 submission";
                       if (annotatorCount > 0 && n > annotatorCount)
-                        return `Cannot exceed annotator count (${annotatorCount})`;
+                        return `Can't be more than the number of annotators added (${annotatorCount})`;
                       return true;
                     },
                   }}
@@ -432,7 +494,7 @@ export default function CreateQueueDrawer({
                       inputProps={{ min: 1, max: 10 }}
                       helperText={
                         fieldState.error?.message ||
-                        "Number of responses should be less than or equal to added annotators"
+                        "How many annotators must label each item — at most the number you've added"
                       }
                       FormHelperTextProps={{
                         sx: { ml: 0, color: "text.disabled" },

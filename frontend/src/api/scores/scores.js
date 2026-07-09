@@ -1,12 +1,32 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { enqueueSnackbar } from "notistack";
 import { apiPath } from "src/api/contracts/api-surface";
+import { selectContractedList } from "src/api/contract-validation";
 import {
   modelHubScoresBulkCreate,
   modelHubScoresCreate,
   modelHubScoresDelete,
   modelHubScoresForSource,
 } from "src/generated/api-contracts/api";
+import { ModelHubScoresForSourceResponse } from "src/generated/api-contracts/api.zod";
+
+export const SCORE_ITEM_CONSUMED_FIELDS = [
+  "id",
+  "source_type",
+  "source_id",
+  "label_id",
+  "label_name",
+  "label_type",
+  "label_settings",
+  "value",
+  "score_source",
+  "notes",
+  "annotator_name",
+  "annotator_email",
+  "updated_at",
+  "queue_id",
+  "queue_item",
+];
 
 export const scoreEndpoints = {
   list: apiPath("/model-hub/scores/"),
@@ -35,7 +55,12 @@ export const useScoresForSource = (sourceType, sourceId, options = {}) => {
     queryKey: scoreKeys.forSource(sourceType, sourceId),
     queryFn: () =>
       modelHubScoresForSource({ source_type: sourceType, source_id: sourceId }),
-    select: (d) => d?.data?.result || d?.result || d,
+    select: (d) =>
+      selectContractedList(d, {
+        schema: ModelHubScoresForSourceResponse,
+        requiredItemKeys: SCORE_ITEM_CONSUMED_FIELDS,
+        label: "scores/for-source",
+      }),
     enabled: !!sourceType && !!sourceId,
     staleTime: 1000 * 60,
     ...options,
@@ -131,9 +156,11 @@ export const useBulkCreateScores = () => {
       const payload = {
         source_type: sourceType,
         source_id: sourceId,
-        scores,
+        scores: scores.map((s) => ({
+          ...s,
+          score_source: s.score_source ?? scoreSource ?? "human",
+        })),
         notes: notes || "",
-        score_source: scoreSource || "human",
       };
       // queue_item_id is the queue review context the caller wants the
       // scores attributed to. Required for per-queue scoring (one score

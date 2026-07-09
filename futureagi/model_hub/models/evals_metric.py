@@ -399,6 +399,15 @@ class UserEvalMetric(ModelBaseModel):
         ),
     )
 
+    pinned_version = models.ForeignKey(
+        "model_hub.EvalTemplateVersion",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="pinned_user_metrics",
+        help_text="Pin to a specific template version for runtime.",
+    )
+
     def clean(self):
         super().clean()
         # try:
@@ -569,16 +578,29 @@ class EvalTemplateVersionManager(models.Manager):
             eval_tags = list(eval_template.eval_tags or [])
 
         with transaction.atomic():
-            # Lock the template row to prevent concurrent version creation
+            # Lock the parent template row to serialize concurrent create_version
+            # calls. select_for_update on the versions queryset alone locks the
+            # existing rows, but locks NOTHING when the template has zero
+            # versions yet — two racing first-creates would both proceed and
+            # both flag v1 as default. Locking the template row closes that.
+            # Use no_workspace_objects to avoid the LEFT JOIN that
+            # BaseModelManager adds (Postgres rejects SELECT FOR UPDATE on the
+            # nullable side of an outer join).
+            EvalTemplate.no_workspace_objects.select_for_update().filter(
+                pk=eval_template.pk
+            ).first()
+
             last_version = (
                 self.filter(eval_template=eval_template)
-                .select_for_update()
                 .order_by("-version_number")
                 .values_list("version_number", flat=True)
                 .first()
             )
             next_version = (last_version or 0) + 1
-            is_first = next_version == 1
+
+            self.filter(
+                eval_template=eval_template, is_default=True
+            ).update(is_default=False)
 
             version = self.create(
                 eval_template=eval_template,
@@ -587,7 +609,7 @@ class EvalTemplateVersionManager(models.Manager):
                 config_snapshot=config_snapshot or {},
                 criteria=criteria or "",
                 model=model or "",
-                is_default=is_first,
+                is_default=True,
                 created_by=user,
                 organization=organization,
                 workspace=workspace,
@@ -729,6 +751,11 @@ class EvalTemplateVersion(ModelBaseModel):
                 condition=Q(deleted=False),
                 name="unique_version_per_template",
             ),
+            models.UniqueConstraint(
+                fields=["eval_template"],
+                condition=Q(is_default=True, deleted=False),
+                name="unique_default_version_per_template",
+            ),
         ]
         indexes = [
             models.Index(fields=["eval_template", "is_default"]),
@@ -814,12 +841,13 @@ class EvalGroundTruth(ModelBaseModel):
     Embeddings are generated asynchronously for similarity-based retrieval.
     """
 
-    EMBEDDING_STATUS_CHOICES = [
-        ("pending", "Pending"),
-        ("processing", "Processing"),
-        ("completed", "Completed"),
-        ("failed", "Failed"),
-    ]
+    class EmbeddingStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        PROCESSING = "processing", "Processing"
+        COMPLETED = "completed", "Completed"
+        FAILED = "failed", "Failed"
+
+    EMBEDDING_STATUS_CHOICES = EmbeddingStatus.choices
 
     STORAGE_TYPE_CHOICES = [
         ("db", "Database"),
@@ -873,8 +901,8 @@ class EvalGroundTruth(ModelBaseModel):
     # Embedding fields
     embedding_status = models.CharField(
         max_length=20,
-        choices=EMBEDDING_STATUS_CHOICES,
-        default="pending",
+        choices=EmbeddingStatus.choices,
+        default=EmbeddingStatus.PENDING,
         help_text="Status of embedding generation for this dataset",
     )
     embedding_model = models.CharField(
@@ -916,11 +944,25 @@ class EvalGroundTruth(ModelBaseModel):
         related_name="eval_ground_truths",
     )
 
+    is_active = models.BooleanField(default=False)
+    enabled = models.BooleanField(default=False)
+    max_examples = models.PositiveSmallIntegerField(default=3)
+    similarity_threshold = models.FloatField(default=0.7)
+
     class Meta:
         db_table = "model_hub_eval_ground_truth"
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["eval_template", "created_at"]),
+        ]
+        constraints = [
+            # nulls_distinct=False so NULL workspace rows still collide on (template, org).
+            models.UniqueConstraint(
+                fields=["eval_template", "organization", "workspace"],
+                condition=Q(deleted=False, is_active=True),
+                name="uniq_active_gt_per_tenant_template",
+                nulls_distinct=False,
+            ),
         ]
 
     def __str__(self):

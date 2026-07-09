@@ -83,18 +83,23 @@ const PersonaListView = ({
   onToggleSelect,
   onCreatePersona,
   personaCreateEditType = null,
+  lockedFilters = null,
 }) => {
   const { role } = useAuthContext();
   const canCreate = RolePermission.SIMULATION_AGENT[PERMISSIONS.CREATE][role];
+
+  const pickLockedValue = (v) => (Array.isArray(v) ? v[0] : v) ?? null;
+  const lockedSimulationType =
+    pickLockedValue(lockedFilters?.simulation_type) ??
+    (isSelectable ? personaCreateEditType : null);
+  const lockedType = pickLockedValue(lockedFilters?.type);
 
   // State
   const [searchQuery, setSearchQuery] = useState("");
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
-  const [typeFilter, setTypeFilter] = useState(null);
-  const [simulationFilter, setSimulationFilter] = useState(
-    isSelectable ? personaCreateEditType : null,
-  );
+  const [typeFilter, setTypeFilter] = useState(lockedType);
+  const [simulationFilter, setSimulationFilter] = useState(lockedSimulationType);
   const [rowSelection, setRowSelection] = useState({});
   const [columnVisibility, setColumnVisibility] = useState({});
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -118,8 +123,8 @@ const PersonaListView = ({
     page: page + 1,
     pageSize,
     search: debouncedSearch || null,
-    type: typeFilter,
-    simulationType: simulationFilter,
+    type: lockedType ?? typeFilter,
+    simulationType: lockedSimulationType ?? simulationFilter,
   });
 
   const items = useMemo(() => data?.results || [], [data]);
@@ -434,47 +439,51 @@ const PersonaListView = ({
   );
 
   const filterFields = useMemo(() => {
-    const fields = [
-      {
+    const fields = [];
+    if (!lockedType) {
+      fields.push({
         value: "type",
         label: "Category",
         type: "enum",
         choices: ["prebuilt", "custom"],
-      },
-    ];
-    if (!(isSelectable && personaCreateEditType)) {
+        operators: ["is"],
+        single: true,
+      });
+    }
+    if (!lockedSimulationType) {
       fields.push({
         value: "simulation_type",
         label: "Agent Type",
         type: "enum",
         choices: [AGENT_TYPES.VOICE, AGENT_TYPES.CHAT],
-        // Bridge the legacy API value "text" to the user-facing label
-        // "Chat" so the AI filter can resolve "chat personas" → text.
         choiceLabels: {
           [AGENT_TYPES.VOICE]: "Voice",
           [AGENT_TYPES.CHAT]: "Chat",
         },
+        operators: ["is"],
+        single: true,
       });
     }
     return fields;
-  }, [isSelectable, personaCreateEditType]);
+  }, [lockedType, lockedSimulationType]);
 
   const currentFilters = useMemo(() => {
     const f = {};
-    if (typeFilter) f.type = [typeFilter];
-    if (simulationFilter) f.simulation_type = [simulationFilter];
+    if (!lockedType && typeFilter) f.type = [typeFilter];
+    if (!lockedSimulationType && simulationFilter)
+      f.simulation_type = [simulationFilter];
     return Object.keys(f).length ? f : null;
-  }, [typeFilter, simulationFilter]);
+  }, [typeFilter, simulationFilter, lockedType, lockedSimulationType]);
 
-  const activeFilterCount = (typeFilter ? 1 : 0) + (simulationFilter ? 1 : 0);
+  const activeFilterCount =
+    (lockedType ? 0 : typeFilter ? 1 : 0) +
+    (lockedSimulationType ? 0 : simulationFilter ? 1 : 0);
 
   const handleFilterApply = useCallback(
     (result) => {
-      const lockedSim =
-        isSelectable && personaCreateEditType ? personaCreateEditType : null;
       if (!result) {
-        setTypeFilter(null);
-        setSimulationFilter(lockedSim);
+        setTypeFilter(lockedType ?? null);
+        setSimulationFilter(lockedSimulationType ?? null);
         setPage(0);
         return;
       }
@@ -489,15 +498,19 @@ const PersonaListView = ({
               : [];
           if (val.length) flat[t.field] = val;
         }
-        setTypeFilter(pickFirst(flat.type));
-        setSimulationFilter(lockedSim ?? pickFirst(flat.simulation_type));
+        setTypeFilter(lockedType ?? pickFirst(flat.type));
+        setSimulationFilter(
+          lockedSimulationType ?? pickFirst(flat.simulation_type),
+        );
       } else {
-        setTypeFilter(pickFirst(result.type));
-        setSimulationFilter(lockedSim ?? pickFirst(result.simulation_type));
+        setTypeFilter(lockedType ?? pickFirst(result.type));
+        setSimulationFilter(
+          lockedSimulationType ?? pickFirst(result.simulation_type),
+        );
       }
       setPage(0);
     },
-    [isSelectable, personaCreateEditType],
+    [lockedType, lockedSimulationType],
   );
 
   const handleToggleColumn = useCallback((field) => {
@@ -618,26 +631,27 @@ const PersonaListView = ({
           alignItems: "center",
         }}
       >
-        {QUICK_FILTERS.map((f) => {
-          const isActive = typeFilter === f.value;
-          return (
-            <Chip
-              key={f.label}
-              icon={<Iconify icon={f.icon} width={14} />}
-              label={f.label}
-              size="small"
-              variant={isActive ? "filled" : "outlined"}
-              color={isActive ? "primary" : "default"}
-              onClick={() => {
-                setTypeFilter(f.value);
-                setPage(0);
-              }}
-              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
-            />
-          );
-        })}
+        {!lockedType &&
+          QUICK_FILTERS.map((f) => {
+            const isActive = typeFilter === f.value;
+            return (
+              <Chip
+                key={f.label}
+                icon={<Iconify icon={f.icon} width={14} />}
+                label={f.label}
+                size="small"
+                variant={isActive ? "filled" : "outlined"}
+                color={isActive ? "primary" : "default"}
+                onClick={() => {
+                  setTypeFilter(f.value);
+                  setPage(0);
+                }}
+                sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
+              />
+            );
+          })}
 
-        {!(isSelectable && personaCreateEditType) && (
+        {!lockedSimulationType && (
           <>
             <Box
               sx={{
@@ -778,6 +792,7 @@ const PersonaListView = ({
 
 PersonaListView.propTypes = {
   isSelectable: PropTypes.bool,
+  lockedFilters: PropTypes.object,
   selectedPersonas: PropTypes.array,
   onToggleSelect: PropTypes.func,
   onCreatePersona: PropTypes.func,

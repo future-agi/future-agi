@@ -60,7 +60,7 @@ func TestConvertMinimalGenAISpan(t *testing.T) {
 
 	expect := map[string]any{
 		"project_id":       "11111111-1111-4111-8111-111111111111",
-		"observation_type": "LLM",
+		"observation_type": "llm",
 		"service_name":     "my-llm-app",
 		// trace_id is emitted as the 36-char DASHED UUID (not 32-char hex) so it
 		// matches PG tracer_trace.id + the migration backfill and resolves via
@@ -146,6 +146,197 @@ func TestConvertParentSpan(t *testing.T) {
 	rows, _ := Convert(traces)
 	if rows[0]["parent_span_id"] != "0a0b0c0d0e0f0102" {
 		t.Errorf("parent_span_id: got %q", rows[0]["parent_span_id"])
+	}
+}
+
+// traces: collector derives a CH `traces` row from the ROOT span so trace_dict
+// resolves project_id/name for direct-to-collector SDK traffic. The app's OTLP
+// ingest (the only other `traces` writer) is disabled CDC-off, so no double-write.
+
+func TestConvertWithIdentities_TraceFromRootSpan(t *testing.T) {
+	rows, ids, err := ConvertWithIdentities(buildOTLPSpan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := ids.Traces()
+	if len(ts) != 1 {
+		t.Fatalf("root span must yield exactly 1 trace; got %d", len(ts))
+	}
+	tr := ts[0]
+	r := rows[0]
+	// Trace columns are byte-identical to the span's; no second derivation.
+	if tr.ID != r["trace_id"] {
+		t.Errorf("trace.ID=%q want span trace_id=%q", tr.ID, r["trace_id"])
+	}
+	if tr.ProjectID != r["project_id"] {
+		t.Errorf("trace.ProjectID=%q want span project_id=%q", tr.ProjectID, r["project_id"])
+	}
+	if tr.Name != r["name"] {
+		t.Errorf("trace.Name=%q want span name=%q", tr.Name, r["name"])
+	}
+	if tr.Input != r["input"] || tr.Output != r["output"] {
+		t.Errorf("trace input/output mismatch: %q/%q vs %q/%q", tr.Input, tr.Output, r["input"], r["output"])
+	}
+	if tr.CreatedAt != r["start_time"] {
+		t.Errorf("trace.CreatedAt=%q want span start_time=%q", tr.CreatedAt, r["start_time"])
+	}
+	if tr.Version != r["_version"].(uint64) {
+		t.Errorf("trace.Version=%d want span _version=%d (so the app mirror's later ts wins)", tr.Version, r["_version"])
+	}
+	// No session.id on the fixture → empty (→ NULL on write).
+	if tr.SessionID != "" {
+		t.Errorf("trace.SessionID must be empty without session.id, got %q", tr.SessionID)
+	}
+}
+
+func TestConvertWithIdentities_NoTraceFromChildSpan(t *testing.T) {
+	traces := buildOTLPSpan()
+	traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).
+		SetParentSpanID([8]byte{0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x1, 0x2})
+	_, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(ids.Traces()); got != 0 {
+		t.Errorf("a non-root span must NOT produce a trace row; got %d", got)
+	}
+}
+
+func TestConvertWithIdentities_NoTraceWhenTraceIDZero(t *testing.T) {
+	traces := buildOTLPSpan()
+	// Zero trace id formats to all-zeros UUID (never ""); skip it, else every
+	// malformed trace collapses onto one all-zeros trace_dict row (wrong project).
+	traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).
+		SetTraceID(pcommon.NewTraceIDEmpty())
+	rows, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0]["trace_id"] != "00000000-0000-0000-0000-000000000000" {
+		t.Fatalf("precondition: zero trace id should format all-zeros, got %v", rows[0]["trace_id"])
+	}
+	if got := len(ids.Traces()); got != 0 {
+		t.Errorf("a zero-trace-id root span must NOT produce a trace row; got %d", got)
+	}
+}
+
+func TestConvertWithIdentities_NoTraceWhenProjectInvalid(t *testing.T) {
+	traces := buildOTLPSpan()
+	// No fi.project_id → coalesceUUID stamps a RANDOM project; skip (trace would
+	// key on a meaningless project).
+	traces.ResourceSpans().At(0).Resource().Attributes().Remove("fi.project_id")
+	_, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(ids.Traces()); got != 0 {
+		t.Errorf("orphan (no valid project) span must NOT produce a trace row; got %d", got)
+	}
+}
+
+func TestConvertWithIdentities_NoTraceWhenStartTimeZero(t *testing.T) {
+	traces := buildOTLPSpan()
+	// No StartTimestamp → _version 0 + 1970 created_at; that row partitions to
+	// 197001 and never merges with the app's real-month row (poisons trace_dict). Skip.
+	traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).
+		SetStartTimestamp(pcommon.Timestamp(0))
+	rows, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rows[0]["_version"].(uint64) != 0 {
+		t.Fatalf("precondition: zero start should yield _version 0, got %v", rows[0]["_version"])
+	}
+	if got := len(ids.Traces()); got != 0 {
+		t.Errorf("a zero-start-time root span must NOT produce a trace row; got %d", got)
+	}
+}
+
+func TestConvertWithIdentities_VersionIsIngestTimeNotFutureStart(t *testing.T) {
+	traces := buildOTLPSpan()
+	// Producer clock skewed 24h ahead: _version is ingest wall-clock, not the
+	// span start, so a future start can't outrank the app mirror's time.time_ns().
+	future := time.Now().Add(24 * time.Hour)
+	traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).
+		SetStartTimestamp(pcommon.NewTimestampFromTime(future))
+	before := uint64(time.Now().UTC().UnixNano())
+	rows, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids.Traces()) != 1 {
+		t.Fatalf("expected 1 trace, got %d", len(ids.Traces()))
+	}
+	version := rows[0]["_version"].(uint64)
+	futureNs := uint64(future.UTC().UnixNano())
+	if version >= futureNs {
+		t.Errorf("_version=%d must be ingest wall-clock, not the future start=%d", version, futureNs)
+	}
+	if version < before {
+		t.Errorf("_version=%d must be >= ingest time captured before convert (%d)", version, before)
+	}
+	if ts := ids.Traces(); ts[0].Version != version {
+		t.Errorf("trace.Version=%d must equal span _version=%d", ts[0].Version, version)
+	}
+}
+
+func TestConvertWithIdentities_VersionAdvancesAcrossRePolls(t *testing.T) {
+	// Same deterministic id re-polled later must get a STRICTLY newer _version so
+	// the completed / recording-bearing row wins RMT dedup over the earlier poll.
+	convertOnce := func() uint64 {
+		rows, _, err := ConvertWithIdentities(buildOTLPSpan())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return rows[0]["_version"].(uint64)
+	}
+	first := convertOnce()
+	time.Sleep(time.Millisecond)
+	second := convertOnce()
+	if second <= first {
+		t.Errorf("re-poll _version must advance: first=%d second=%d", first, second)
+	}
+}
+
+func TestConvertWithIdentities_TraceProjectCanonicalized(t *testing.T) {
+	traces := buildOTLPSpan()
+	// Uppercase project id must land canonical (lowercase-dashed), matching the
+	// app mirror, else co-owned traces split to two keys. UUID needs hex LETTERS
+	// so ToUpper isn't a no-op (all-digit would make the assertion vacuous).
+	canonical := "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+	upper := strings.ToUpper(canonical)
+	if upper == canonical {
+		t.Fatal("test fixture bug: uppercase form must differ from canonical")
+	}
+	traces.ResourceSpans().At(0).Resource().Attributes().PutStr("fi.project_id", upper)
+	_, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids.Traces()[0].ProjectID; got != canonical {
+		t.Errorf("trace.ProjectID must be canonical lowercase-dashed; got %q", got)
+	}
+}
+
+func TestConvertWithIdentities_RootAndChild_OneTrace(t *testing.T) {
+	traces := buildOTLPSpan() // span[0] is the root
+	// Append a child span sharing the same trace_id with a parent set.
+	child := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().AppendEmpty()
+	child.SetTraceID(traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).TraceID())
+	child.SetSpanID([8]byte{1, 1, 1, 1, 1, 1, 1, 1})
+	child.SetParentSpanID([8]byte{9, 8, 7, 6, 5, 4, 3, 2}) // == root's span id
+	child.SetName("child.tool.call")
+	child.SetStartTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000000, 200_000_000)))
+	_, ids, err := ConvertWithIdentities(traces)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := ids.Traces()
+	if len(ts) != 1 {
+		t.Fatalf("root+child of ONE trace must yield exactly 1 trace row; got %d", len(ts))
+	}
+	if ts[0].Name != "llm.chat.completion" {
+		t.Errorf("the trace row must come from the ROOT span; got name %q", ts[0].Name)
 	}
 }
 
@@ -575,5 +766,35 @@ func TestConvertWithIdentities_MetadataHTMLNotEscaped(t *testing.T) {
 	got := ids.EndUsers()[0].Metadata
 	if got != `{"html":"<a>&</a>"}` {
 		t.Errorf("metadata must keep <,>,& literal (no HTML escaping); got %q", got)
+	}
+}
+
+// TestResolveObservationType pins multi-convention span-kind resolution (mirror
+// of Python get_observation_type ∘ normalize_span_kind). Regression guard:
+// OTEL-GenAI / OpenLLMetry spans used to land "unknown" because the converter
+// only read openinference/fi span.kind.
+func TestResolveObservationType(t *testing.T) {
+	cases := []struct {
+		name  string
+		attrs map[string]string
+		want  string
+	}{
+		{"fi.span.kind", map[string]string{"fi.span.kind": "LLM"}, "llm"},
+		{"openinference.span.kind", map[string]string{"openinference.span.kind": "Retriever"}, "retriever"},
+		{"otel_genai gen_ai.span.kind", map[string]string{"gen_ai.span.kind": "LLM"}, "llm"},
+		{"otel_genai operation chat", map[string]string{"gen_ai.operation.name": "chat"}, "llm"},
+		{"otel_genai operation embeddings", map[string]string{"gen_ai.operation.name": "embeddings"}, "embedding"},
+		{"openllmetry llm.request.type chat", map[string]string{"llm.request.type": "chat"}, "llm"},
+		{"synonym execute_tool", map[string]string{"fi.span.kind": "execute_tool"}, "tool"},
+		{"synonym invoke", map[string]string{"gen_ai.operation.name": "invoke"}, "chain"},
+		{"conversation passes through", map[string]string{"fi.span.kind": "conversation"}, "conversation"},
+		{"span-kind wins over operation", map[string]string{"fi.span.kind": "tool", "gen_ai.operation.name": "chat"}, "tool"},
+		{"unmapped value -> unknown", map[string]string{"llm.request.type": "completion"}, "unknown"},
+		{"empty -> unknown", map[string]string{}, "unknown"},
+	}
+	for _, c := range cases {
+		if got := resolveObservationType(c.attrs); got != c.want {
+			t.Errorf("%s: resolveObservationType=%q want %q", c.name, got, c.want)
+		}
 	}
 }

@@ -300,6 +300,17 @@ class EvalTargetType(models.TextChoices):
     SESSION = "session", "Session"
 
 
+class EvalEntryStatus(models.TextChoices):
+    """Lifecycle of one (task, row, eval) work-item: pending -> running ->
+    completed | errored | skipped."""
+
+    PENDING = "pending", "Pending"
+    RUNNING = "running", "Running"
+    COMPLETED = "completed", "Completed"
+    ERRORED = "errored", "Errored"
+    SKIPPED = "skipped", "Skipped"
+
+
 class EvalLogger(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     # Nullable for ``target_type='session'`` rows; populated otherwise.
@@ -361,6 +372,16 @@ class EvalLogger(BaseModel):
     # attribute was absent. Distinct from `error` so read paths render
     # "Skipped" and drop these rows from failure-rate metrics.
     skipped_reason = models.TextField(null=True, blank=True)
+    # Defaults to a terminal state; the engine sets it explicitly on each run.
+    status = models.CharField(
+        max_length=16,
+        choices=EvalEntryStatus.choices,
+        default=EvalEntryStatus.COMPLETED,
+    )
+    # sha256 of the resolved eval definition that produced this result.
+    config_hash = models.CharField(max_length=64, null=True, blank=True)
+    # Reaper reclaim count; capped so a poison item can't block completion.
+    attempts = models.IntegerField(default=0)
 
     def __str__(self):
         return f"Eval Log {self.id}"
@@ -402,7 +423,10 @@ class EvalLogger(BaseModel):
         # writes via ``.save()`` get this validation; ``bulk_create`` / raw
         # inserts rely on the DB CHECK constraint instead (Django skips
         # ``clean()`` for ``bulk_create`` by design).
-        self.full_clean()
+        # The target FKs are ``db_constraint=False`` and may reference rows that
+        # live only in ClickHouse (the eval engine reads spans/traces from CH),
+        # so they're excluded from full_clean's non-PG existence check.
+        self.full_clean(exclude=["observation_span", "trace", "trace_session"])
         super().save(*args, **kwargs)
 
     class Meta:
@@ -423,6 +447,10 @@ class EvalLogger(BaseModel):
             models.Index(
                 fields=["eval_task_id", "target_type", "custom_eval_config"],
                 name="eval_logger_task_target_idx",
+            ),
+            models.Index(
+                fields=["eval_task_id", "status"],
+                name="eval_logger_task_status_idx",
             ),
         ]
         constraints = [
@@ -450,5 +478,30 @@ class EvalLogger(BaseModel):
                     )
                 ),
                 name="eval_logger_target_type_fks",
+            ),
+            # §3.2: one live entry per (task, row, eval), keyed per target_type
+            # on the row's identity column. Scoped to work-items (non-null
+            # task); inline evals are exempt. Built CONCURRENTLY in the
+            # migration. voiceCalls ride the span index (target_type='span').
+            models.UniqueConstraint(
+                fields=["eval_task_id", "observation_span", "custom_eval_config"],
+                condition=models.Q(
+                    target_type="span", deleted=False, eval_task_id__isnull=False
+                ),
+                name="eval_logger_live_span_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["eval_task_id", "trace", "custom_eval_config"],
+                condition=models.Q(
+                    target_type="trace", deleted=False, eval_task_id__isnull=False
+                ),
+                name="eval_logger_live_trace_uniq",
+            ),
+            models.UniqueConstraint(
+                fields=["eval_task_id", "trace_session", "custom_eval_config"],
+                condition=models.Q(
+                    target_type="session", deleted=False, eval_task_id__isnull=False
+                ),
+                name="eval_logger_live_session_uniq",
             ),
         ]

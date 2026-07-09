@@ -29,7 +29,7 @@ import {
   Typography,
   useTheme,
 } from "@mui/material";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { paths } from "src/routes/paths";
 import {
   useDashboardDetail,
@@ -41,8 +41,20 @@ import {
   useDuplicateWidget,
   useCreateWidget,
 } from "src/hooks/useDashboards";
+import { format } from "date-fns";
 import Iconify from "src/components/iconify";
+import {
+  DATE_PRESETS,
+  WIDTH_OPTIONS,
+  MIN_WIDGET_HEIGHT,
+  DEFAULT_WIDGET_HEIGHT,
+  DATE_CHIP_SX,
+} from "./constants";
+import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
+import { ConfirmDialog } from "src/components/custom-dialog";
+import { useSnackbar } from "src/components/snackbar";
 import WidgetChart from "./WidgetChart";
+import { resolveGlobalDateRange } from "./dashboardDateRange";
 import {
   DndContext,
   DragOverlay,
@@ -53,67 +65,6 @@ import {
   useDraggable,
   useDroppable,
 } from "@dnd-kit/core";
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-const DATE_PRESETS = [
-  { label: "Custom", value: "custom" },
-  { label: "Today", value: "today" },
-  { label: "Yesterday", value: "yesterday" },
-  { label: "7D", value: "7D" },
-  { label: "30D", value: "30D" },
-  { label: "3M", value: "3M" },
-  { label: "6M", value: "6M" },
-  { label: "12M", value: "12M" },
-];
-
-const WIDTH_OPTIONS = [
-  { label: "1/4 width", value: 3, icon: "mdi:view-column-outline" },
-  { label: "1/3 width", value: 4, icon: "mdi:view-column-outline" },
-  { label: "1/2 width", value: 6, icon: "mdi:view-split-vertical" },
-  { label: "Full width", value: 12, icon: "mdi:view-sequential-outline" },
-];
-
-const MIN_WIDGET_HEIGHT = 120;
-const DEFAULT_WIDGET_HEIGHT = 320;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-function getDateRange(preset) {
-  const now = new Date();
-  const start = new Date();
-  switch (preset) {
-    case "today":
-      start.setHours(0, 0, 0, 0);
-      break;
-    case "yesterday":
-      start.setDate(start.getDate() - 1);
-      start.setHours(0, 0, 0, 0);
-      now.setDate(now.getDate() - 1);
-      now.setHours(23, 59, 59, 999);
-      break;
-    case "7D":
-      start.setDate(start.getDate() - 7);
-      break;
-    case "30D":
-      start.setDate(start.getDate() - 30);
-      break;
-    case "3M":
-      start.setMonth(start.getMonth() - 3);
-      break;
-    case "6M":
-      start.setMonth(start.getMonth() - 6);
-      break;
-    case "12M":
-      start.setMonth(start.getMonth() - 12);
-      break;
-    default:
-      return null;
-  }
-  return { start: start.toISOString(), end: now.toISOString() };
-}
 
 /** Group a flat sorted widget list into rows based on cumulative widths.
  *  Widgets in each row are normalized so their widths sum to exactly 12. */
@@ -598,7 +549,11 @@ function DraggableWidgetCard({
                 </IconButton>
               </Tooltip>
               <Tooltip title="More">
-                <IconButton size="small" onClick={(e) => onMenuOpen(e, widget)}>
+                <IconButton
+                  size="small"
+                  aria-label="Widget options"
+                  onClick={(e) => onMenuOpen(e, widget)}
+                >
                   <Iconify icon="mdi:dots-vertical" width={16} />
                 </IconButton>
               </Tooltip>
@@ -608,7 +563,11 @@ function DraggableWidgetCard({
           {/* Chart */}
           <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
             <WidgetChart
-              key={`${widget.id}:${datePreset || "default"}`}
+              key={`${widget.id}:${datePreset || "default"}${
+                globalDateRange
+                  ? `:${globalDateRange.start}:${globalDateRange.end}`
+                  : ""
+              }`}
               widget={widget}
               globalDateRange={globalDateRange}
             />
@@ -671,6 +630,7 @@ function DragOverlayCard({ widget }) {
 export default function DashboardDetailView() {
   const navigate = useNavigate();
   const { dashboardId } = useParams();
+  const { enqueueSnackbar } = useSnackbar();
 
   const { data: dashboard, isLoading } = useDashboardDetail(dashboardId);
   const updateDashboard = useUpdateDashboard();
@@ -681,11 +641,18 @@ export default function DashboardDetailView() {
   const duplicateWidget = useDuplicateWidget();
   const createWidget = useCreateWidget();
 
-  // Global date filter
-  const [datePreset, setDatePreset] = useState(null);
+  // Global date filter — restore from URL so returning from widget editor
+  // preserves the previously selected preset.
+  const [searchParams] = useSearchParams();
+  const [datePreset, setDatePreset] = useState(
+    () => searchParams.get("timePreset") || null,
+  );
+  const [customDateRange, setCustomDateRange] = useState(null); // [start, end]
+  const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
+  const customDateAnchorRef = useRef(null);
   const globalDateRange = useMemo(
-    () => (datePreset ? getDateRange(datePreset) : null),
-    [datePreset],
+    () => resolveGlobalDateRange(datePreset, customDateRange),
+    [datePreset, customDateRange],
   );
 
   // Widget context menu
@@ -698,6 +665,12 @@ export default function DashboardDetailView() {
 
   // Dashboard more menu
   const [dashMenuAnchor, setDashMenuAnchor] = useState(null);
+
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const lastConfirmDeleteRef = useRef(null);
+
+  if (confirmDelete) lastConfirmDeleteRef.current = confirmDelete;
+  const confirmDeleteView = confirmDelete ?? lastConfirmDeleteRef.current;
 
   // Grid container ref (for measuring column widths during resize)
   const gridContainerRef = useRef(null);
@@ -719,6 +692,10 @@ export default function DashboardDetailView() {
   );
 
   const rows = useMemo(() => computeRows(widgets), [widgets]);
+
+  // The time filter only acts on widgets — hide the bar until one exists
+  // (an interactive-but-inert bar on an empty dashboard reads as broken).
+  const hasWidgets = widgets.length > 0;
 
   // --- Handlers ---
 
@@ -889,9 +866,7 @@ export default function DashboardDetailView() {
   };
 
   const handleDeleteWidget = () => {
-    if (menuWidget) {
-      deleteWidget.mutate({ dashboardId, widgetId: menuWidget.id });
-    }
+    setConfirmDelete({ type: "widget", target: menuWidget });
     closeWidgetMenu();
   };
 
@@ -915,9 +890,31 @@ export default function DashboardDetailView() {
 
   const handleDeleteDashboard = () => {
     setDashMenuAnchor(null);
-    deleteDashboard.mutate(dashboardId, {
-      onSuccess: () => navigate(paths.dashboard.dashboards.root),
-    });
+    setConfirmDelete({ type: "dashboard" });
+  };
+
+  // Single confirm handler for both delete dialogs; branches on the key.
+  // Closes only once the request settles (not synchronously mid-flight).
+  const handleConfirmDelete = () => {
+    if (confirmDelete?.type === "widget") {
+      if (!confirmDelete.target) return;
+      deleteWidget.mutate(
+        { dashboardId, widgetId: confirmDelete.target.id },
+        {
+          onSuccess: () =>
+            enqueueSnackbar("Widget deleted", { variant: "success" }),
+          onSettled: () => setConfirmDelete(null),
+        },
+      );
+    } else if (confirmDelete?.type === "dashboard") {
+      deleteDashboard.mutate(dashboardId, {
+        onSuccess: () => {
+          enqueueSnackbar("Dashboard deleted", { variant: "success" });
+          navigate(paths.dashboard.dashboards.root);
+        },
+        onSettled: () => setConfirmDelete(null),
+      });
+    }
   };
 
   const handleRowResize = useCallback(
@@ -1102,6 +1099,7 @@ export default function DashboardDetailView() {
           <Tooltip title="More options">
             <IconButton
               size="small"
+              aria-label="Dashboard options"
               onClick={(e) => setDashMenuAnchor(e.currentTarget)}
             >
               <Iconify icon="mdi:dots-horizontal" width={20} />
@@ -1110,57 +1108,80 @@ export default function DashboardDetailView() {
         </Stack>
       </Stack>
 
-      {/* ---- Global date filter bar ---- */}
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={0.5}
-        sx={{
-          px: 3,
-          py: 1.5,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          flexWrap: "wrap",
-          gap: 0.5,
-        }}
-      >
-        <Iconify
-          icon="mdi:calendar-outline"
-          width={18}
-          sx={{ color: "text.secondary", mr: 0.5 }}
-        />
-        {DATE_PRESETS.filter((p) => p.value !== "custom").map((preset) => (
-          <Chip
-            key={preset.value}
-            label={preset.label}
-            size="small"
-            variant={datePreset === preset.value ? "filled" : "outlined"}
-            color={datePreset === preset.value ? "primary" : "default"}
-            onClick={() =>
-              setDatePreset(datePreset === preset.value ? null : preset.value)
-            }
+      {/* ---- Global date filter bar (hidden until the dashboard has widgets) ---- */}
+      {hasWidgets && (
+        <>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.5}
             sx={{
-              fontWeight: 500,
-              fontSize: "12px",
-              height: 28,
-              borderRadius: "6px",
+              px: 3,
+              py: 1.5,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              flexWrap: "wrap",
+              gap: 0.5,
             }}
+          >
+            <Chip
+              ref={customDateAnchorRef}
+              icon={
+                <Iconify
+                  icon="mdi:calendar-outline"
+                  width={15}
+                  sx={{ color: "inherit !important" }}
+                />
+              }
+              label={
+                datePreset === "custom" && customDateRange
+                  ? `${format(customDateRange[0], "MMM dd")} - ${format(customDateRange[1], "MMM dd")}`
+                  : "Custom"
+              }
+              size="small"
+              variant={datePreset === "custom" ? "filled" : "outlined"}
+              color={datePreset === "custom" ? "primary" : "default"}
+              onClick={() => setIsDatePickerOpen(true)}
+              sx={DATE_CHIP_SX}
+            />
+            {DATE_PRESETS.filter((p) => p.value !== "custom").map((preset) => (
+              <Chip
+                key={preset.value}
+                label={preset.label}
+                size="small"
+                variant={datePreset === preset.value ? "filled" : "outlined"}
+                color={datePreset === preset.value ? "primary" : "default"}
+                onClick={() =>
+                  setDatePreset(
+                    datePreset === preset.value ? null : preset.value,
+                  )
+                }
+                sx={DATE_CHIP_SX}
+              />
+            ))}
+            <Chip
+              label="Default"
+              size="small"
+              variant={!datePreset ? "filled" : "outlined"}
+              color={!datePreset ? "primary" : "default"}
+              onClick={() => setDatePreset(null)}
+              sx={DATE_CHIP_SX}
+            />
+          </Stack>
+
+          <CustomDateRangePicker
+            open={isDatePickerOpen}
+            onClose={() => setIsDatePickerOpen(false)}
+            anchorEl={customDateAnchorRef.current}
+            setDateFilter={(filter) => {
+              if (filter && filter[0] && filter[1]) {
+                setCustomDateRange([new Date(filter[0]), new Date(filter[1])]);
+              }
+            }}
+            setDateOption={() => setDatePreset("custom")}
           />
-        ))}
-        <Chip
-          label="Default"
-          size="small"
-          variant={!datePreset ? "filled" : "outlined"}
-          color={!datePreset ? "primary" : "default"}
-          onClick={() => setDatePreset(null)}
-          sx={{
-            fontWeight: 500,
-            fontSize: "12px",
-            height: 28,
-            borderRadius: "6px",
-          }}
-        />
-      </Stack>
+        </>
+      )}
 
       {/* ---- Dashboard title & description (inline editable) ---- */}
       <Box sx={{ px: 3, pt: 2 }}>
@@ -1200,7 +1221,7 @@ export default function DashboardDetailView() {
         ref={gridContainerRef}
         sx={{ px: 3, pt: 2, pb: 4, flex: 1, overflow: "visible" }}
       >
-        {widgets.length === 0 ? (
+        {!hasWidgets ? (
           <Box
             sx={{
               display: "flex",
@@ -1513,6 +1534,32 @@ export default function DashboardDetailView() {
           <ListItemText>Delete Dashboard</ListItemText>
         </MenuItem>
       </Menu>
+
+      <ConfirmDialog
+        open={!!confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        title={
+          confirmDeleteView?.type === "widget"
+            ? "Delete Widget"
+            : "Delete Dashboard"
+        }
+        content={
+          confirmDeleteView?.type === "widget"
+            ? `Are you sure you want to delete "${confirmDeleteView.target?.name}"? This action cannot be undone.`
+            : `Are you sure you want to delete "${dashboard?.name}"? This action cannot be undone.`
+        }
+        action={
+          <Button
+            variant="contained"
+            color="error"
+            size="small"
+            onClick={handleConfirmDelete}
+            disabled={deleteWidget.isPending || deleteDashboard.isPending}
+          >
+            Delete
+          </Button>
+        }
+      />
     </Box>
   );
 }

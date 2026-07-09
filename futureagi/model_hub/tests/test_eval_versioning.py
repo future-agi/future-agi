@@ -143,8 +143,10 @@ class TestVersionCreateAPI:
         assert r2.status_code == 200
         assert r1.data["result"]["version_number"] == 1
         assert r2.data["result"]["version_number"] == 2
+        # Default rotates to the newly-created version — v1 was default at
+        # create-time but got demoted by v2's create_version transaction.
         assert r1.data["result"]["is_default"] is True
-        assert r2.data["result"]["is_default"] is False
+        assert r2.data["result"]["is_default"] is True
 
     def test_create_version_with_overrides(self, auth_client, user_template):
         response = auth_client.post(
@@ -157,7 +159,10 @@ class TestVersionCreateAPI:
         assert v.criteria == "New instructions {{var}}"
         assert v.model == "turing_flash"
 
-    def test_create_version_keeps_existing_default(self, auth_client, user_template):
+    def test_create_version_rotates_default(self, auth_client, user_template):
+        """Creating a new version demotes the previous default and flags the
+        new version as default in the same transaction.
+        """
         r1 = auth_client.post(self._url(user_template.id), {}, format="json")
         r2 = auth_client.post(self._url(user_template.id), {}, format="json")
 
@@ -166,8 +171,23 @@ class TestVersionCreateAPI:
 
         v1.refresh_from_db()
         v2.refresh_from_db()
-        assert v1.is_default is True
-        assert v2.is_default is False
+        assert v1.is_default is False
+        assert v2.is_default is True
+
+    def test_only_one_default_after_multiple_creates(self, auth_client, user_template):
+        """Invariant: after any number of create_version calls, exactly one
+        version per template carries is_default=True. Enforced at the DB
+        level by the `unique_default_version_per_template` partial unique
+        constraint (migration 0114).
+        """
+        for _ in range(5):
+            auth_client.post(self._url(user_template.id), {}, format="json")
+
+        defaults = EvalTemplateVersion.objects.filter(
+            eval_template=user_template, is_default=True, deleted=False
+        )
+        assert defaults.count() == 1
+        assert defaults.first().version_number == 5
 
     def test_create_version_nonexistent_template(self, auth_client):
         response = auth_client.post(
@@ -1613,3 +1633,248 @@ class TestEvalTypeColumnAlignmentAfterRestore:
         # Column and config must agree after restore
         assert template.config["eval_type_id"] == "CustomPromptEvaluator"
         assert template.eval_type == "llm"
+
+
+# =============================================================================
+# Unit: maybe_pin_new_version service (TH-5173 / PR #772)
+# =============================================================================
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestMaybePinNewVersion:
+    """Regression tests for the version-pinning service.
+
+    Covers the three cases Nikhil asked for:
+    1. Editing system_prompt creates a new version and pins it with a snapshot
+       that matches the saved config.
+    2. Bare rerun (no config in request) skips version creation.
+    3. prepare_eval_config prefers config over template when key is present,
+       even if the value is empty string.
+    """
+
+    def _make_uem(self, organization, workspace, user, template, config=None):
+        from model_hub.models.evals_metric import UserEvalMetric
+        from model_hub.models.develop_dataset import Dataset
+        ds = Dataset.no_workspace_objects.create(
+            name="test-ds",
+            organization=organization,
+            workspace=workspace,
+        )
+        return UserEvalMetric.objects.create(
+            name="test-binding",
+            template=template,
+            dataset=ds,
+            organization=organization,
+            workspace=workspace,
+            config=config or {},
+        )
+
+    def test_system_prompt_edit_creates_version_with_matching_snapshot(
+        self, organization, workspace, user, user_template
+    ):
+        """Editing system_prompt must create a new version whose snapshot
+        matches the config that will be persisted to the binding."""
+        from model_hub.services.eval_version_pinning import maybe_pin_new_version
+
+        uem = self._make_uem(organization, workspace, user, user_template)
+
+        request_data = {
+            "config": {
+                "config": {"system_prompt": "new system prompt"},
+            }
+        }
+        maybe_pin_new_version(
+            uem, request_data, user=user,
+            organization=organization, workspace=workspace,
+        )
+
+        assert uem.pinned_version is not None
+        snapshot = uem.pinned_version.config_snapshot or {}
+        assert snapshot.get("system_prompt") == "new system prompt"
+
+    def test_bare_rerun_skips_version_creation(
+        self, organization, workspace, user, user_template
+    ):
+        """A bare rerun request (no config changes) must not create a version."""
+        from model_hub.services.eval_version_pinning import maybe_pin_new_version
+
+        uem = self._make_uem(organization, workspace, user, user_template)
+        before = uem.pinned_version
+
+        maybe_pin_new_version(
+            uem, {"run": True},  # no "config" key
+            user=user, organization=organization, workspace=workspace,
+        )
+
+        assert uem.pinned_version == before  # unchanged
+
+    def test_explicit_version_switch_pins_target_version(
+        self, organization, workspace, user, user_template
+    ):
+        """Passing a different pinned_version_id must pin that version directly
+        without creating a new one."""
+        from model_hub.services.eval_version_pinning import maybe_pin_new_version
+        from model_hub.models.evals_metric import EvalTemplateVersion
+
+        uem = self._make_uem(organization, workspace, user, user_template)
+
+        # Create two versions manually
+        v1 = EvalTemplateVersion.objects.create_version(
+            eval_template=user_template,
+            criteria="v1 criteria",
+            model="turing_large",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        v2 = EvalTemplateVersion.objects.create_version(
+            eval_template=user_template,
+            criteria="v2 criteria",
+            model="turing_large",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        uem.pinned_version = v2
+        uem.save()
+
+        # Simulate FE sending a different pinned_version_id (v1) — user switched back
+        # The view sets pinned_version directly and skips maybe_pin_new_version.
+        # Here we test the service is NOT called (no new version beyond v2 exists).
+        version_count_before = EvalTemplateVersion.objects.filter(
+            eval_template=user_template
+        ).count()
+        uem.pinned_version = v1  # view sets this directly on explicit switch
+        uem.save()
+
+        assert uem.pinned_version_id == v1.id
+        assert EvalTemplateVersion.objects.filter(
+            eval_template=user_template
+        ).count() == version_count_before, "Explicit version switch must not create a new version"
+
+    def test_same_version_id_still_runs_maybe_pin(
+        self, organization, workspace, user, user_template
+    ):
+        """When FE echoes the current pinned_version_id unchanged, a config edit
+        must still go through maybe_pin_new_version and create a new version."""
+        from model_hub.services.eval_version_pinning import maybe_pin_new_version
+        from model_hub.models.evals_metric import EvalTemplateVersion
+
+        uem = self._make_uem(organization, workspace, user, user_template)
+
+        # Simulate an existing pinned version
+        v1 = EvalTemplateVersion.objects.create_version(
+            eval_template=user_template,
+            criteria="original",
+            model="turing_large",
+            user=user,
+            organization=organization,
+            workspace=workspace,
+        )
+        uem.pinned_version = v1
+        uem.save()
+
+        # FE sends same pinned_version_id back (unchanged dropdown) + new config
+        request_data = {
+            "config": {"config": {"rule_prompt": "updated prompt"}},
+            "pinned_version_id": str(v1.id),  # same as current — not a switch
+        }
+        # View logic: version_switched = (v1.id != eval_metric.pinned_version_id) = False
+        # So maybe_pin_new_version runs. It should create a new version.
+        maybe_pin_new_version(
+            uem, request_data, user=user,
+            organization=organization, workspace=workspace,
+        )
+
+        assert uem.pinned_version_id != v1.id, "Config change must create a new version"
+        assert uem.pinned_version is not None
+
+    def test_prepare_eval_config_preserves_empty_rule_prompt(
+        self, organization, workspace, user, user_template
+    ):
+        """Clearing rule_prompt to '' must not fall back to the template prompt."""
+        from evaluations.engine.instance import prepare_eval_config
+        import types
+
+        # Template has a real prompt
+        user_template.config["eval_type_id"] = "AgentEvaluator"
+        user_template.config["rule_prompt"] = "original template prompt"
+        user_template.save()
+
+        # User explicitly clears the prompt to ""
+        config = {"rule_prompt": "", "eval_type_id": "AgentEvaluator"}
+        result_config, _ = prepare_eval_config(
+            user_template, config, model="turing_large",
+            organization_id=str(organization.id),
+        )
+
+        assert result_config.get("rule_prompt") == "", (
+            "Empty string should be preserved, not replaced with template prompt"
+        )
+
+    def test_config_and_snapshot_agree_after_edit(
+        self, organization, workspace, user, user_template
+    ):
+        """Invariant: after any edit, eval_metric.config and
+        pinned_version.config_snapshot must reflect the same rule_prompt.
+        This is the contract Nikhil asked for — the two sources of truth
+        must stay in lockstep."""
+        from model_hub.services.eval_version_pinning import maybe_pin_new_version
+
+        uem = self._make_uem(organization, workspace, user, user_template)
+
+        request_data = {
+            "config": {
+                "config": {"rule_prompt": "lockstep prompt"},
+                "run_config": {"model": "turing_large"},
+            }
+        }
+        # Simulate the view: first pin, then save config
+        maybe_pin_new_version(
+            uem, request_data, user=user,
+            organization=organization, workspace=workspace,
+        )
+        # Simulate eval_metric.config = normalize_eval_runtime_config(...)
+        uem.config = request_data["config"]
+        uem.save()
+
+        # Reload from DB to confirm both are persisted
+        uem.refresh_from_db()
+        assert uem.pinned_version_id is not None
+        snapshot = uem.pinned_version.config_snapshot or {}
+        config_rule_prompt = uem.config.get("config", {}).get("rule_prompt")
+        snapshot_rule_prompt = snapshot.get("rule_prompt")
+        assert config_rule_prompt == snapshot_rule_prompt == "lockstep prompt", (
+            f"config has {config_rule_prompt!r} but snapshot has {snapshot_rule_prompt!r}"
+        )
+
+    def test_version_switch_with_no_config_change_keeps_selected_version(
+        self, organization, workspace, user, user_template
+    ):
+        """Switching to an older version with the same config should keep
+        that version pinned (dedup fires). No new version created."""
+        from model_hub.services.eval_version_pinning import maybe_pin_new_version
+        from model_hub.models.evals_metric import EvalTemplateVersion
+
+        uem = self._make_uem(organization, workspace, user, user_template)
+
+        # Create v1 with a specific rule_prompt
+        v1_request = {"config": {"config": {"rule_prompt": "v1 prompt"}, "run_config": {}}}
+        maybe_pin_new_version(uem, v1_request, user=user, organization=organization, workspace=workspace)
+        uem.save()
+        v1 = uem.pinned_version
+
+        # Create v2 with a different prompt
+        v2_request = {"config": {"config": {"rule_prompt": "v2 prompt"}, "run_config": {}}}
+        maybe_pin_new_version(uem, v2_request, user=user, organization=organization, workspace=workspace)
+        uem.save()
+        assert uem.pinned_version_id != v1.id
+
+        # Simulate "switch back to v1 with no changes": set v1 as baseline, send v1's config
+        uem.pinned_version = v1
+        maybe_pin_new_version(uem, v1_request, user=user, organization=organization, workspace=workspace)
+
+        # Dedup should fire — snap matches v1 → still pinned to v1
+        assert uem.pinned_version_id == v1.id, "Switching back to v1 with same config should keep v1 pinned"
+        version_count = EvalTemplateVersion.objects.filter(eval_template=user_template).count()
+        assert version_count == 2, f"No new version should be created, found {version_count}"

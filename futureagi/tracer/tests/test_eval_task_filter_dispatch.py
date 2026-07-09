@@ -17,11 +17,17 @@ The bug this guards against: until 2026-06-04 the dispatcher only handled
 """
 
 import uuid
+from unittest import mock
 
 import pytest
-from django.db.models import Q
+from django.db.models import OuterRef, Q
 
-from tracer.utils.eval_tasks import parsing_evaltask_filters
+from tracer.models.eval_task import RowType
+from tracer.utils.eval_tasks import (
+    annotation_source_q_for_row_type,
+    parsing_evaltask_filters,
+)
+from tracer.utils.filters import FilterEngine
 
 
 # ---------------------------------------------------------------------------
@@ -104,17 +110,17 @@ def _eval_metric_item(eval_template_id, op="greater_than", value=0.8):
 @pytest.mark.unit
 class TestEmpty:
     def test_none_returns_empty_tuple(self):
-        q, anns = parsing_evaltask_filters(None)
+        q, anns = parsing_evaltask_filters(None, row_type=RowType.SPANS)
         assert q == Q()
         assert anns == {}
 
     def test_empty_dict_returns_empty_tuple(self):
-        q, anns = parsing_evaltask_filters({})
+        q, anns = parsing_evaltask_filters({}, row_type=RowType.SPANS)
         assert q == Q()
         assert anns == {}
 
     def test_empty_filters_list_returns_empty_tuple(self):
-        q, anns = parsing_evaltask_filters({"filters": []})
+        q, anns = parsing_evaltask_filters({"filters": []}, row_type=RowType.SPANS)
         assert q == Q()
         assert anns == {}
 
@@ -129,10 +135,12 @@ class TestLegacyKey:
     def test_legacy_key_with_span_attribute_filter(self):
         items = [_span_attr_item()]
         q, anns = parsing_evaltask_filters(
-            _wrap(items, key="span_attributes_filters")
+            _wrap(items, key="span_attributes_filters"), row_type=RowType.SPANS
         )
         # Legacy key produces the same Q as the canonical key.
-        q_canonical, _ = parsing_evaltask_filters(_wrap(items, key="filters"))
+        q_canonical, _ = parsing_evaltask_filters(
+            _wrap(items, key="filters"), row_type=RowType.SPANS
+        )
         assert repr(q) == repr(q_canonical)
         assert anns == {}
 
@@ -140,7 +148,7 @@ class TestLegacyKey:
         # The specific shape that motivated the fix: prod task f8481965.
         items = [_annotator_item()]
         q, anns = parsing_evaltask_filters(
-            _wrap(items, key="span_attributes_filters")
+            _wrap(items, key="span_attributes_filters"), row_type=RowType.SPANS
         )
         assert q != Q()
         assert "Exists" in repr(q)  # routed through the voice annotation handler
@@ -154,7 +162,9 @@ class TestLegacyKey:
 @pytest.mark.unit
 class TestSpanAttribute:
     def test_span_attribute_only(self):
-        q, anns = parsing_evaltask_filters(_wrap([_span_attr_item()]))
+        q, anns = parsing_evaltask_filters(
+            _wrap([_span_attr_item()]), row_type=RowType.SPANS
+        )
         assert q != Q()
         # SPAN_ATTRIBUTE filters resolve via the span_attributes JSONB
         # (`has_key` + `contains`) — verify by string match on the Q repr.
@@ -171,7 +181,7 @@ class TestSpanAttribute:
 class TestAnnotation:
     def test_annotator_filter_produces_exists_clause(self):
         items = [_annotator_item()]
-        q, anns = parsing_evaltask_filters(_wrap(items))
+        q, anns = parsing_evaltask_filters(_wrap(items), row_type=RowType.SPANS)
         assert q != Q()
         # The annotator branch builds an Exists(Score.objects...) subquery.
         assert "Exists" in repr(q)
@@ -182,15 +192,13 @@ class TestAnnotation:
         # A per-label ANNOTATION filter (e.g. "quality > 3") builds a Q
         # referencing the `annotation_<uuid>__score` field. The actual
         # `.annotate(annotation_<uuid>=...)` step is contributed by
-        # `build_annotation_subqueries` (observation_span.py:1167-1169),
-        # which `process_eval_task` does not yet call — see the dispatcher
-        # docstring. So `extra_anns` remains empty here; this test guards
-        # the Q shape only. When `build_annotation_subqueries` is wired in
-        # for eval tasks, replace this with an integration test that asserts
-        # the queryset actually returns the right rows.
+        # `build_annotation_subqueries`, which `process_eval_task` applies
+        # with the row_type's source Q. So `extra_anns` remains empty here;
+        # this test guards the Q shape only — row-level behaviour lives in
+        # the integration suite (test_eval_task_annotation_scope.py).
         label_uuid = str(uuid.uuid4())
         items = [_label_value_item(label_uuid, 3.0)]
-        q, anns = parsing_evaltask_filters(_wrap(items))
+        q, anns = parsing_evaltask_filters(_wrap(items), row_type=RowType.SPANS)
         assert q != Q()
         assert f"annotation_{label_uuid}__score" in repr(q)
         assert anns == {}
@@ -204,7 +212,7 @@ class TestAnnotation:
             _annotator_item(),
             _eval_metric_item(str(uuid.uuid4())),
         ]
-        q, anns = parsing_evaltask_filters(_wrap(items))
+        q, anns = parsing_evaltask_filters(_wrap(items), row_type=RowType.SPANS)
         assert q != Q()
 
 
@@ -217,7 +225,7 @@ class TestAnnotation:
 class TestSystemMetric:
     def test_system_metric_filter(self):
         items = [_system_metric_item("cost", "greater_than", 0.1)]
-        q, anns = parsing_evaltask_filters(_wrap(items))
+        q, anns = parsing_evaltask_filters(_wrap(items), row_type=RowType.SPANS)
         # The system-metrics handler maps `cost` to `row_avg_cost`
         # (FilterEngine.DEFAULT_FIELD_MAP) and emits a Q referencing it.
         assert q != Q()
@@ -233,7 +241,7 @@ class TestSystemMetric:
 class TestEvalMetric:
     def test_eval_metric_filter(self):
         items = [_eval_metric_item(str(uuid.uuid4()), "greater_than", 0.8)]
-        q, anns = parsing_evaltask_filters(_wrap(items))
+        q, anns = parsing_evaltask_filters(_wrap(items), row_type=RowType.SPANS)
         assert q != Q()
 
 
@@ -251,7 +259,7 @@ class TestMixed:
             _eval_metric_item(str(uuid.uuid4())),
             _annotator_item(),
         ]
-        q, anns = parsing_evaltask_filters(_wrap(items))
+        q, anns = parsing_evaltask_filters(_wrap(items), row_type=RowType.SPANS)
         assert q != Q()
         # Each handler contributes its own clause; combined Q should reference
         # all the underlying mechanisms.
@@ -269,20 +277,127 @@ class TestMixed:
 class TestSiblingKeys:
     def test_date_range_still_applied(self):
         q, _ = parsing_evaltask_filters(
-            {"date_range": ["2026-01-01T00:00:00Z", "2026-06-01T00:00:00Z"]}
+            {"date_range": ["2026-01-01T00:00:00Z", "2026-06-01T00:00:00Z"]},
+            row_type=RowType.SPANS,
         )
         assert q != Q()
         assert "created_at" in repr(q)
 
     def test_project_id_still_applied(self):
-        q, _ = parsing_evaltask_filters({"project_id": str(uuid.uuid4())})
+        q, _ = parsing_evaltask_filters(
+            {"project_id": str(uuid.uuid4())}, row_type=RowType.SPANS
+        )
         assert q != Q()
         assert "project_id" in repr(q)
 
     def test_observation_type_still_applied(self):
-        q, _ = parsing_evaltask_filters({"observation_type": ["llm", "tool"]})
+        q, _ = parsing_evaltask_filters(
+            {"observation_type": ["llm", "tool"]}, row_type=RowType.SPANS
+        )
         assert q != Q()
         assert "observation_type" in repr(q)
+
+
+# ---------------------------------------------------------------------------
+# RowType → annotation source Q mapping
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestRowTypeSourceMapping:
+    def test_spans_is_span_scoped(self):
+        assert annotation_source_q_for_row_type(RowType.SPANS) == Q(
+            observation_span_id=OuterRef("id")
+        )
+
+    def test_voice_calls_bridges_trace_and_span_scopes(self):
+        expected = Q(trace_id=OuterRef("trace_id")) | Q(
+            observation_span__trace_id=OuterRef("trace_id")
+        )
+        assert annotation_source_q_for_row_type(RowType.VOICE_CALLS) == expected
+
+    def test_traces_matches_voice_calls_mapping(self):
+        assert annotation_source_q_for_row_type(
+            RowType.TRACES
+        ) == annotation_source_q_for_row_type(RowType.VOICE_CALLS)
+
+    def test_sessions_is_session_scoped(self):
+        assert annotation_source_q_for_row_type(RowType.SESSIONS) == Q(
+            trace_session_id=OuterRef("trace__session_id")
+        )
+
+    def test_accepts_stored_string_values(self):
+        assert annotation_source_q_for_row_type(
+            "voiceCalls"
+        ) == annotation_source_q_for_row_type(RowType.VOICE_CALLS)
+
+    def test_unknown_row_type_raises(self):
+        with pytest.raises(ValueError):
+            annotation_source_q_for_row_type("bogus")
+
+
+# ---------------------------------------------------------------------------
+# Dispatcher threads the row_type source Q into the annotation handlers
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestRowTypeDispatch:
+    @pytest.mark.parametrize(
+        "row_type",
+        [RowType.SPANS, RowType.TRACES, RowType.SESSIONS, RowType.VOICE_CALLS],
+    )
+    def test_annotation_handlers_receive_row_type_source_q(self, row_type):
+        items = [
+            _annotator_item(),
+            {
+                "column_id": "has_annotation",
+                "filter_config": {
+                    "filter_type": "boolean",
+                    "filter_op": "equals",
+                    "filter_value": True,
+                },
+            },
+        ]
+        with mock.patch.object(
+            FilterEngine,
+            "get_filter_conditions_for_voice_call_annotations",
+            return_value=(Q(), {}),
+        ) as anno_mock, mock.patch.object(
+            FilterEngine,
+            "get_filter_conditions_for_has_annotation",
+            return_value=Q(),
+        ) as has_anno_mock:
+            parsing_evaltask_filters(_wrap(items), row_type=row_type)
+
+        expected_source_q = annotation_source_q_for_row_type(row_type)
+        assert anno_mock.call_args.kwargs["source_q"] == expected_source_q
+        assert anno_mock.call_args.kwargs["user_id"] is None
+        assert has_anno_mock.call_args.kwargs["source_q"] == expected_source_q
+
+    @pytest.mark.parametrize(
+        "row_type",
+        [RowType.SPANS, RowType.TRACES, RowType.SESSIONS, RowType.VOICE_CALLS],
+    )
+    def test_has_eval_stays_span_scoped(self, row_type):
+        items = [
+            {
+                "column_id": "has_eval",
+                "filter_config": {
+                    "filter_type": "boolean",
+                    "filter_op": "equals",
+                    "filter_value": True,
+                },
+            }
+        ]
+        with mock.patch.object(
+            FilterEngine,
+            "get_filter_conditions_for_has_eval",
+            return_value=Q(),
+        ) as has_eval_mock:
+            parsing_evaltask_filters(_wrap(items), row_type=row_type)
+
+        assert has_eval_mock.call_args.kwargs["observe_type"] == "span"
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +421,6 @@ class TestUnrecognisedColType:
         ]
         # Must not raise. The handlers' own col_type gates skip items they
         # don't recognise; the dispatcher itself doesn't enumerate types.
-        q, anns = parsing_evaltask_filters(_wrap(items))
+        q, anns = parsing_evaltask_filters(_wrap(items), row_type=RowType.SPANS)
         assert isinstance(q, Q)
         assert anns == {}

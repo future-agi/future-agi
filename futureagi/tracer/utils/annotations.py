@@ -31,7 +31,7 @@ from tracer.utils.aggregates import JSONBObjectAgg
 
 
 def build_annotation_subqueries(
-    base_query, annotation_labels, organization, span_filter_kwargs=None
+    base_query, annotation_labels, organization, span_filter_kwargs=None, source_q=None
 ):
     """
     Annotate *base_query* with aggregated annotation subqueries for every
@@ -51,6 +51,8 @@ def build_annotation_subqueries(
             created directly on traces OR on observation spans belonging to
             the trace.  For span-level queries pass
             ``{"observation_span_id": OuterRef("id")}``.
+        source_q: Optional prebuilt Q matching scores to the outer row.
+            Takes precedence over ``span_filter_kwargs`` (allows OR scopes).
 
     Returns:
         The annotated *base_query*.
@@ -62,7 +64,16 @@ def build_annotation_subqueries(
     )
 
     for label in annotation_labels:
-        if span_filter_kwargs is not None:
+        if source_q is not None:
+            base_ann_q = (
+                Q(
+                    label_id=label.id,
+                    organization=organization,
+                    deleted=False,
+                )
+                & source_q
+            )
+        elif span_filter_kwargs is not None:
             base_ann_q = Q(
                 **span_filter_kwargs,
                 label_id=label.id,

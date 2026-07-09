@@ -19,6 +19,8 @@ from tracer.queries.eval_clustering import (
 )
 from tracer.types.eval_cluster_types import EvalClusteringSummary
 
+from tracer.ee_boundary import distill_eval_failure_phrases
+
 logger = structlog.get_logger(__name__)
 
 # Max eval rows clustered per activity invocation. Bounds the work unit so
@@ -43,6 +45,12 @@ def cluster_eval_results(project_id: str) -> EvalClusteringSummary:
         logger.info("no_unclustered_eval_results", project_id=project_id)
         return EvalClusteringSummary()
 
+    # Distill each explanation to a canonical failure phrase before
+    # embedding — raw explanations carry trace-specific noise (names,
+    # numbers, quotes) that fragments clusters. Best-effort: a failed
+    # batch leaves ``distilled`` None and the raw text is embedded.
+    distill_eval_failure_phrases(results)
+
     texts = [r.embedding_text for r in results]
     embeddings = embed_texts(texts)
 
@@ -50,7 +58,9 @@ def cluster_eval_results(project_id: str) -> EvalClusteringSummary:
 
     for result, embedding in zip(results, embeddings):
         try:
-            match = find_nearest_centroid(embedding, project_id, result.eval_name)
+            match = find_nearest_centroid(
+                embedding, project_id, result.eval_name, result.target_type
+            )
 
             if match:
                 cluster_id, distance = match

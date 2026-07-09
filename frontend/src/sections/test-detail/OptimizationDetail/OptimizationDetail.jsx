@@ -44,7 +44,7 @@ const OptimizationDetail = () => {
               href: `/dashboard/simulate/test/${testId}/${executionId}/optimization_runs`,
             },
             {
-              label: optimizationData?.optimiserName ?? optimizationId,
+              label: optimizationData?.optimiser_name ?? optimizationId,
               isLoading: isLoading,
             },
           ]}

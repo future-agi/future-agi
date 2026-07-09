@@ -66,6 +66,7 @@ def resolve_version(eval_template, version_number=None, organization=None):
     """
     try:
         from django.db import models
+        from django.db.utils import DatabaseError, ProgrammingError
 
         from model_hub.models.evals_metric import EvalTemplateVersion
 
@@ -89,9 +90,16 @@ def resolve_version(eval_template, version_number=None, organization=None):
             resolved = EvalTemplateVersion.objects.get_default(eval_template)
 
         if resolved:
-            EvalTemplateVersion.all_objects.filter(id=resolved.id).update(
-                usage_count=models.F("usage_count") + 1
-            )
+            try:
+                EvalTemplateVersion.all_objects.filter(id=resolved.id).update(
+                    usage_count=models.F("usage_count") + 1
+                )
+            except (DatabaseError, ProgrammingError):
+                logger.warning(
+                    "usage_count_update_failed",
+                    version_id=str(resolved.id),
+                    exc_info=True,
+                )
 
         return resolved
 
@@ -132,6 +140,31 @@ def apply_version_overrides(config, resolved_version, criteria=None):
         config["model"] = resolved_version.model
 
     return config, criteria
+
+
+def resolve_pass_threshold(
+    eval_template,
+    runtime_config: dict | None = None,
+    resolved_version=None,
+) -> float:
+    """Priority: runtime_config[run_config][pass_threshold] > runtime_config[pass_threshold] > resolved_version.pass_threshold > eval_template.pass_threshold > 0.5."""
+    if isinstance(runtime_config, dict):
+        run_config = runtime_config.get("run_config") or {}
+        if isinstance(run_config, dict) and run_config.get("pass_threshold") is not None:
+            return float(run_config["pass_threshold"])
+        if runtime_config.get("pass_threshold") is not None:
+            return float(runtime_config["pass_threshold"])
+
+    if resolved_version is not None:
+        version_threshold = getattr(resolved_version, "pass_threshold", None)
+        if version_threshold is not None:
+            return float(version_threshold)
+
+    template_threshold = getattr(eval_template, "pass_threshold", None)
+    if template_threshold is not None:
+        return float(template_threshold)
+
+    return 0.5
 
 
 def _get_api_key(model, organization_id, workspace_id=None):
@@ -248,7 +281,9 @@ def prepare_eval_config(
 
     # AgentEvaluator — multi-turn reasoning via Falcon AI AgentLoop
     if eval_type_id == "AgentEvaluator":
-        config["rule_prompt"] = eval_template.config.get("rule_prompt")
+        config["rule_prompt"] = config["rule_prompt"] if "rule_prompt" in config else eval_template.config.get(
+            "rule_prompt"
+        )
         config["model"] = model or eval_template.config.get("model")
         raw_output = eval_template.config.get("output")
         if eval_template.choice_scores and raw_output != "Pass/Fail":
@@ -290,8 +325,12 @@ def prepare_eval_config(
     # CustomPromptEvaluator — LLM-as-judge
     elif eval_type_id == "CustomPromptEvaluator":
         config["provider"] = eval_template.config.get("provider")
-        config["rule_prompt"] = eval_template.config.get("rule_prompt")
-        config["system_prompt"] = eval_template.config.get("system_prompt")
+        config["rule_prompt"] = config["rule_prompt"] if "rule_prompt" in config else eval_template.config.get(
+            "rule_prompt"
+        )
+        config["system_prompt"] = config["system_prompt"] if "system_prompt" in config else eval_template.config.get(
+            "system_prompt"
+        )
         raw_output = eval_template.config.get("output")
         if eval_template.choice_scores and raw_output != "Pass/Fail":
             config["output_type"] = "choices"
@@ -413,6 +452,11 @@ def create_eval_instance(
 
     # Apply version overrides
     config, criteria = apply_version_overrides(config, resolved_version, criteria)
+
+    if not (eval_template.config or {}).get("function_eval"):
+        config["pass_threshold"] = resolve_pass_threshold(
+            eval_template, runtime_config, resolved_version
+        )
 
     # Runtime override merge.
     #

@@ -387,10 +387,11 @@ function QueueAnnotationSection({
     queue,
     item,
     labels,
-    existingScores,
-    existingNotes,
-    existingLabelNotes,
+    existing_scores: existingScores,
+    existing_notes: existingNotes,
+    existing_label_notes: existingLabelNotes,
   } = queueEntry;
+
   const [values, setValues] = useState({});
   const [notes, setNotes] = useState("");
   const [notesTouched, setNotesTouched] = useState(false);
@@ -785,9 +786,9 @@ QueueAnnotationSection.propTypes = {
     queue: PropTypes.object,
     item: PropTypes.object,
     labels: PropTypes.array,
-    existingScores: PropTypes.object,
-    existingNotes: PropTypes.string,
-    existingLabelNotes: PropTypes.object,
+    existing_scores: PropTypes.object,
+    existing_notes: PropTypes.string,
+    existing_label_notes: PropTypes.object,
     spanNotesSourceId: PropTypes.string,
     span_notes_source_id: PropTypes.string,
   }).isRequired,

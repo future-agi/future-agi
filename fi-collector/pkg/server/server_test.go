@@ -26,11 +26,18 @@ import (
 func TestServerEnd2End(t *testing.T) {
 	var seen int32
 	var seenBody string
+	var seenMu sync.Mutex
 	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&seen, 1)
 		b := make([]byte, 1<<14)
 		n, _ := r.Body.Read(b)
-		seenBody = string(b[:n])
+		// Scope to the `spans` insert so the span-contract checks stay exact; the
+		// `traces` insert has its own test (TestServerEnd2End_WritesTraceRow).
+		if insertTable(r) == "spans" {
+			atomic.AddInt32(&seen, 1)
+			seenMu.Lock()
+			seenBody = string(b[:n])
+			seenMu.Unlock()
+		}
 		w.WriteHeader(200)
 	}))
 	defer chSrv.Close()
@@ -46,7 +53,7 @@ func TestServerEnd2End(t *testing.T) {
 		DeadLetterFile: t.TempDir() + "/dl.jsonl",
 	})
 
-	s := New(Config{GRPCAddr: "127.0.0.1:0", BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w)
+	s := New(Config{GRPCAddr: "127.0.0.1:0", BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil)
 	// We need a known listen address to dial; replicate Run's bind step.
 	// Easier: use a non-zero port — pick one that's likely free.
 	addr := "127.0.0.1:24317"
@@ -90,11 +97,97 @@ func TestServerEnd2End(t *testing.T) {
 	if atomic.LoadInt32(&seen) != 1 {
 		t.Fatalf("CH not POST'd; seen=%d", seen)
 	}
-	if !strings.Contains(seenBody, "e2e-test-span") {
-		t.Errorf("CH body missing span name: %q", seenBody)
+	seenMu.Lock()
+	body := seenBody
+	seenMu.Unlock()
+	if !strings.Contains(body, "e2e-test-span") {
+		t.Errorf("CH body missing span name: %q", body)
 	}
 	if !strings.Contains(seenBody, "33333333-3333-4333-8333-333333333333") {
 		t.Errorf("CH body missing project_id: %q", seenBody)
+	}
+}
+
+// insertTable extracts the target table from a CH HTTP insert request's
+// `query=INSERT INTO <table> ...` param, so a stub CH can distinguish the `spans`
+// insert from the curated / `traces` inserts.
+func insertTable(r *http.Request) string {
+	q := r.URL.Query().Get("query")
+	for _, tbl := range []string{"spans", "traces", "end_users", "trace_sessions"} {
+		if strings.Contains(q, "INTO "+tbl+" ") {
+			return tbl
+		}
+	}
+	return ""
+}
+
+// TestServerEnd2End_WritesTraceRow: an OTLP root span through the real converter
+// + curatedwriter must produce a `traces` insert (so trace_dict resolves the
+// trace's project_id / name for evals & annotations) in addition to the spans one.
+func TestServerEnd2End_WritesTraceRow(t *testing.T) {
+	var traceBody string
+	var traceSeen int32
+	var mu sync.Mutex
+	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b := make([]byte, 1<<14)
+		n, _ := r.Body.Read(b)
+		if insertTable(r) == "traces" {
+			atomic.AddInt32(&traceSeen, 1)
+			mu.Lock()
+			traceBody = string(b[:n])
+			mu.Unlock()
+		}
+		w.WriteHeader(200)
+	}))
+	defer chSrv.Close()
+
+	w, _ := chwriter.New(chwriter.Config{
+		URL:            chSrv.URL,
+		Database:       "default",
+		Table:          "spans",
+		MaxRetries:     1,
+		InitialBackoff: time.Millisecond,
+		MaxBackoff:     time.Millisecond,
+		RequestTimeout: 2 * time.Second,
+		DeadLetterFile: t.TempDir() + "/dl.jsonl",
+	})
+
+	// curatedwriter over the SAME chwriter (as production: server.New wires it).
+	s := New(Config{GRPCAddr: "127.0.0.1:24320", BatchMaxRows: 1, BatchMaxAge: 50 * time.Millisecond}, w, nil, nil, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() { _ = s.Run(ctx) }()
+	if !waitPort("127.0.0.1:24320", 2*time.Second) {
+		t.Fatal("server didn't listen")
+	}
+
+	conn, err := grpc.NewClient("127.0.0.1:24320", grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	traces := makeTraces("agent.run", "77777777-7777-4777-8777-777777777777") // root span (no parent)
+	req := ptraceotlp.NewExportRequestFromTraces(traces)
+	if _, err := ptraceotlp.NewGRPCClient(conn).Export(context.Background(), req); err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && atomic.LoadInt32(&traceSeen) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if atomic.LoadInt32(&traceSeen) != 1 {
+		t.Fatalf("expected exactly 1 traces insert, got %d", traceSeen)
+	}
+	mu.Lock()
+	body := traceBody
+	mu.Unlock()
+	if !strings.Contains(body, "77777777-7777-4777-8777-777777777777") {
+		t.Errorf("traces row missing project_id: %q", body)
+	}
+	if !strings.Contains(body, "agent.run") {
+		t.Errorf("traces row missing root-span-derived name: %q", body)
 	}
 }
 
@@ -106,11 +199,18 @@ func startServerWithHTTP(t *testing.T) (httpAddr, grpcAddr string, sawCH func() 
 	t.Helper()
 	var seen int32
 	var seenBody string
+	var seenMu sync.Mutex
 	chSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&seen, 1)
 		b := make([]byte, 1<<14)
 		n, _ := r.Body.Read(b)
-		seenBody = string(b[:n])
+		// Scope to the pinned `spans` insert; the root-span `traces` insert is
+		// covered separately (TestServerEnd2End_WritesTraceRow).
+		if insertTable(r) == "spans" {
+			atomic.AddInt32(&seen, 1)
+			seenMu.Lock()
+			seenBody = string(b[:n])
+			seenMu.Unlock()
+		}
 		w.WriteHeader(200)
 	}))
 
@@ -135,7 +235,7 @@ func startServerWithHTTP(t *testing.T) (httpAddr, grpcAddr string, sawCH func() 
 		HTTPAddr:     httpAddr,
 		BatchMaxRows: 1,
 		BatchMaxAge:  50 * time.Millisecond,
-	}, w)
+	}, w, nil, nil, nil)
 
 	ctx, cancelFn := context.WithCancel(context.Background())
 	go func() { _ = s.Run(ctx) }()
@@ -151,7 +251,12 @@ func startServerWithHTTP(t *testing.T) (httpAddr, grpcAddr string, sawCH func() 
 		time.Sleep(20 * time.Millisecond)
 	}
 
-	return httpAddr, grpcAddr, func() (int32, string) { return atomic.LoadInt32(&seen), seenBody },
+	return httpAddr, grpcAddr, func() (int32, string) {
+			seenMu.Lock()
+			b := seenBody
+			seenMu.Unlock()
+			return atomic.LoadInt32(&seen), b
+		},
 		func() {
 			cancelFn()
 			chSrv.Close()
@@ -442,7 +547,7 @@ func TestDrainAggregatesCuratedAcrossPayloads(t *testing.T) {
 	}
 	// Big batch threshold + no flusher goroutine: we drive enqueue/drainNow
 	// directly so the test is deterministic (no timing).
-	s := New(Config{GRPCAddr: "", HTTPAddr: "", BatchMaxRows: 1_000_000, BatchMaxAge: time.Hour}, w)
+	s := New(Config{GRPCAddr: "", HTTPAddr: "", BatchMaxRows: 1_000_000, BatchMaxAge: time.Hour}, w, nil, nil, nil)
 
 	// Payload 1: userA / sessX.  Payload 2: userA again (dup) + userB / sessY.
 	r1, ids1, err := chexp.ConvertWithIdentities(makeObserveTraces(proj, org, "userA", "sessX", 0x01))

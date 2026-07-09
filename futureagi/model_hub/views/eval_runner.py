@@ -912,7 +912,9 @@ class EvaluationRunner:
 
     def _initialize_eval_metric(self):
         """Initialize and set status of user eval metric"""
-        self.user_eval_metric = UserEvalMetric.objects.get(id=self.user_eval_metric_id)
+        self.user_eval_metric = UserEvalMetric.objects.select_related(
+            "pinned_version",
+        ).get(id=self.user_eval_metric_id)
         self.dataset = self.user_eval_metric.dataset
 
         if not self.organization_id and self.dataset:
@@ -920,6 +922,9 @@ class EvaluationRunner:
             self.workspace_id = (
                 self.dataset.workspace.id if self.dataset.workspace else None
             )
+
+        if self.version_number is None and self.user_eval_metric.pinned_version_id:
+            self.version_number = self.user_eval_metric.pinned_version.version_number
 
         self.user_eval_metric.status = StatusType.RUNNING.value
         self.user_eval_metric.save(update_fields=["status"])
@@ -1274,27 +1279,28 @@ class EvaluationRunner:
             )
             if should_run_error_localizer:
                 from model_hub.tasks.user_evaluation import (
-                    _eval_passed,
                     trigger_error_localization_for_column,
                 )
 
-                if not _eval_passed(value):
-                    cell = Cell.objects.filter(
-                        column__id=self.replace_column_id, row=row, deleted=False
-                    ).first()
+                cell = Cell.objects.filter(
+                    column__id=self.replace_column_id, row=row, deleted=False
+                ).first()
 
-                    trigger_error_localization_for_column(
-                        eval_template=self.user_eval_metric.template,
-                        config=config_error,
-                        required_field=required_field_error,
-                        mapping=mapping_error,
-                        eval_result=value,
-                        response=response,
-                        cell=cell,
-                        log_id=(
-                            str(api_call_log_row.log_id) if api_call_log_row else None
-                        ),
-                    )
+                trigger_error_localization_for_column(
+                    eval_template=self.user_eval_metric.template,
+                    config=config_error,
+                    required_field=required_field_error,
+                    mapping=mapping_error,
+                    eval_result=value,
+                    response=response,
+                    cell=cell,
+                    log_id=str(api_call_log_row.log_id) if api_call_log_row else None,
+                    eval_config=(
+                        self.user_eval_metric.config
+                        if self.user_eval_metric
+                        else None
+                    ),
+                )
 
         except Exception as e:
             # Expected, handled validation failures (a required input was not
@@ -1965,10 +1971,17 @@ class EvaluationRunner:
                 and isinstance(choice_result, list)
                 and choice_result
             ):
-                first = str(choice_result[0])
-                mapped = apply_choice_scores(first, self.eval_template.choice_scores)
+                picked_scores = [
+                    s
+                    for s in (
+                        apply_choice_scores(str(c), self.eval_template.choice_scores)
+                        for c in choice_result
+                    )
+                    if s is not None
+                ]
+                mean = sum(picked_scores) / len(picked_scores) if picked_scores else 0.0
                 value = {
-                    "score": mapped if mapped is not None else 0.0,
+                    "score": mean,
                     "choices": choice_result,
                 }
             else:
@@ -2146,52 +2159,15 @@ class EvaluationRunner:
             required_field=required_field, mapping=mapping, config=config
         )
 
-        # Inject ground truth config if enabled on the template
         if getattr(self.eval_template, "config", None):
-            gt_config_in_template = self.eval_template.config.get("ground_truth")
-            if gt_config_in_template and gt_config_in_template.get("enabled"):
-                from model_hub.utils.ground_truth_retrieval import (
-                    format_few_shot_examples,
-                    get_ground_truth_few_shot_examples,
-                    load_ground_truth_config,
-                )
+            from model_hub.services.ground_truth_service import GroundTruthService
 
-                gt_config = load_ground_truth_config(self.eval_template)
-                if gt_config:
-                    try:
-                        from model_hub.models.evals_metric import EvalGroundTruth
-
-                        gt_obj = EvalGroundTruth.objects.filter(
-                            id=gt_config["ground_truth_id"], deleted=False
-                        ).first()
-                        if gt_obj:
-                            gt_config["embedding_status"] = gt_obj.embedding_status
-                    except Exception:
-                        gt_obj = None
-
-                    template_eval_type_id = self.eval_template.config.get(
-                        "eval_type_id", ""
-                    )
-                    if (
-                        template_eval_type_id == "CustomPromptEvaluator"
-                        and gt_obj
-                        and gt_obj.embedding_status == "completed"
-                    ):
-                        gt_examples = get_ground_truth_few_shot_examples(
-                            gt_config, _mapped
-                        )
-                        if gt_examples:
-                            injection_format = gt_config.get(
-                                "injection_format", "structured"
-                            )
-                            formatted = format_few_shot_examples(
-                                gt_examples,
-                                gt_obj.role_mapping,
-                                injection_format,
-                            )
-                            _mapped["ground_truth_few_shot"] = formatted
-                    else:
-                        _mapped["ground_truth_config"] = gt_config
+            GroundTruthService.inject_context(
+                _mapped,
+                self.eval_template,
+                organization_id=self.organization_id,
+                workspace_id=self.workspace_id,
+            )
 
         # For code evals, inject static user-defined params stored in the
         # UserEvalMetric config so they reach evaluate() as **kwargs.
@@ -2396,87 +2372,6 @@ class EvaluationRunner:
             else 0
         )
         return input_token_count
-
-    def _resolve_version(self):
-        """Resolve the eval template version to use. Sets self._resolved_version."""
-        if self._resolved_version is not None or not self.eval_template:
-            return
-
-        try:
-            from model_hub.models.evals_metric import EvalTemplateVersion
-
-            organization = None
-            if self.organization_id:
-                organization = Organization.objects.filter(
-                    id=self.organization_id
-                ).first()
-            elif self.user_eval_metric and self.user_eval_metric.organization:
-                organization = self.user_eval_metric.organization
-            elif self.eval_template and self.eval_template.organization:
-                organization = self.eval_template.organization
-
-            if self.version_number is not None:
-                # Look up specific version
-                self._resolved_version = (
-                    EvalTemplateVersion.all_objects.filter(
-                        eval_template=self.eval_template,
-                        version_number=self.version_number,
-                        deleted=False,
-                    )
-                    .filter(
-                        models.Q(organization__isnull=True)
-                        | models.Q(organization=organization)
-                    )
-                    .first()
-                )
-            else:
-                # Use default version
-                self._resolved_version = EvalTemplateVersion.objects.get_default(
-                    self.eval_template, organization
-                )
-
-            # Increment usage count
-            if self._resolved_version:
-                EvalTemplateVersion.all_objects.filter(
-                    id=self._resolved_version.id
-                ).update(usage_count=models.F("usage_count") + 1)
-        except Exception:
-            # Backward compatibility — don't break if versions don't exist yet
-            logger.debug("Version resolution skipped — no versions found")
-            self._resolved_version = None
-
-    def _apply_version_overrides(self, config):
-        """Apply prompt overrides from the resolved version to the config."""
-        if not self._resolved_version:
-            return config
-
-        from model_hub.utils.prompt_migration import prompt_messages_to_flat_config
-
-        flat = prompt_messages_to_flat_config(
-            self._resolved_version.prompt_messages or []
-        )
-
-        # Override prompt fields if version has them
-        if flat.get("system_prompt") is not None:
-            config["system_prompt"] = flat["system_prompt"]
-        if flat.get("rule_prompt") is not None:
-            config["rule_prompt"] = flat["rule_prompt"]
-        if flat.get("criteria") is not None and self.criteria is None:
-            criteria_text = flat["criteria"]
-            # Convert named variables ({{input}}, {{output}}) back to
-            # {{variable_N}} format expected by the deterministic evaluator.
-            required_keys = config.get("required_keys", [])
-            for i, key in enumerate(required_keys):
-                criteria_text = criteria_text.replace(
-                    f"{{{{{key}}}}}", f"{{{{variable_{i + 1}}}}}"
-                )
-            self.criteria = criteria_text
-
-        # Override model if version specifies one
-        if self._resolved_version.model:
-            config["model"] = self._resolved_version.model
-
-        return config
 
     def _create_eval_instance(
         self,
