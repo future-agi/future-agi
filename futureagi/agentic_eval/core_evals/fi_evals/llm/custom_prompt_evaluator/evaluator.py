@@ -1,10 +1,11 @@
 import json
 import os
+import re
 import time
 
 from django.conf import settings
 import jinja2
-from jinja2 import Environment
+from jinja2.sandbox import SandboxedEnvironment
 
 from agentic_eval.core.llm.llm import LLM
 from agentic_eval.core.utils.jinja_utils import nest_dotted_value
@@ -64,9 +65,15 @@ class CustomPromptEvaluator(LLM):
         # Multi-message support: full message chain from the LLM-as-a-judge editor
         self._messages = kwargs.get("messages")
         self._few_shot_examples = kwargs.get("few_shot_examples")
-        # Configure Jinja2 environment with explicit {{ }} delimiters (Handlebars-compatible)
-        # PreserveUndefined keeps undefined variables as {{ variable }} instead of raising errors
-        self.env = Environment(
+        # Sandboxed Jinja2 environment: eval templates are user-authored and
+        # rendered server-side, so a plain Environment would allow SSTI via
+        # attribute-walking (e.g. `{{ ''.__class__.__mro__[1].__subclasses__() }}`
+        # reaches subprocess/os and enables RCE / secret-read). Sandbox blocks
+        # access to dunders, callables of unsafe types, and other escape routes
+        # while still allowing filters, `{% if %}` / `{% for %}`, and plain
+        # variable substitution.
+        # `PreserveUndefined` keeps unmapped `{{ var }}` as literal text.
+        self.env = SandboxedEnvironment(
             variable_start_string="{{",
             variable_end_string="}}",
             undefined=PreserveUndefined,
@@ -164,9 +171,15 @@ class CustomPromptEvaluator(LLM):
         TemplateSyntaxError falls back to plain string replacement.
         Called from every message-rendering site so System / User /
         Assistant turns get the same behaviour as rule_prompt.
-        """
-        import re
 
+        NOTE: the spaces / dotted-key preprocessing below mutates
+        `safe_context` via `.pop(...)`. When the same dict is threaded
+        through consecutive turns (rule_prompt -> system -> multi-turn),
+        a key consumed by an earlier turn is no longer present here.
+        `fallback_kwargs` (usually `_evaluate`'s original `**kwargs`) is
+        the recovery source that keeps the variable resolving across
+        every turn.
+        """
         if not template_str:
             return template_str
         fallback_kwargs = fallback_kwargs or {}
@@ -191,7 +204,12 @@ class CustomPromptEvaluator(LLM):
 
         try:
             return self.env.from_string(to_render).render(**safe_context)
-        except jinja2.TemplateSyntaxError:
+        except (jinja2.TemplateSyntaxError, jinja2.exceptions.SecurityError):
+            # SecurityError: hostile template (SSTI attempt via dunder walk,
+            # `__globals__`, etc.) rejected by the sandbox. Fall back to
+            # plain str.replace so the eval runs on the raw template text -
+            # the attack payload reaches the LLM as literal characters, not
+            # executed, and known context keys still get substituted.
             rendered = to_render
             for key, value in safe_context.items():
                 rendered = rendered.replace("{{" + key + "}}", str(value))
@@ -243,8 +261,6 @@ class CustomPromptEvaluator(LLM):
             # Pre-process: handle variable names with spaces (e.g., {{TTS Testing}})
             # Jinja2 doesn't allow spaces in variable names, so we do simple string
             # replacement for these before Jinja2 parsing.
-            import re
-
             prompt_to_render = self.rule_prompt
             safe_context = dict(template_context)
 
@@ -289,9 +305,11 @@ class CustomPromptEvaluator(LLM):
             try:
                 template = self.env.from_string(prompt_to_render)
                 rendered_prompt = template.render(**safe_context)
-            except jinja2.TemplateSyntaxError:
+            except (jinja2.TemplateSyntaxError, jinja2.exceptions.SecurityError):
                 # Fallback: simple string replacement when Jinja2 can't parse
-                # the template (e.g. variable names with spaces).
+                # the template (e.g. variable names with spaces) or the sandbox
+                # rejects it (SSTI attempt via dunder walk / `__globals__`).
+                # The attack payload reaches the LLM as literal text.
                 rendered_prompt = prompt_to_render
                 for key, value in safe_context.items():
                     rendered_prompt = rendered_prompt.replace("{{" + key + "}}", str(value))

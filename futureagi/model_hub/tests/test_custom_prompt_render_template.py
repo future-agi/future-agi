@@ -8,7 +8,7 @@ multi-turn variable-substitution feature.
 """
 
 import pytest
-from jinja2 import Environment
+from jinja2.sandbox import SandboxedEnvironment
 
 from agentic_eval.core_evals.fi_evals.llm.custom_prompt_evaluator.evaluator import (
     CustomPromptEvaluator,
@@ -19,11 +19,12 @@ from agentic_eval.core_evals.fi_utils.utils import PreserveUndefined
 @pytest.fixture
 def stub_evaluator():
     """Build the minimum evaluator surface _render_template reads: just
-    self.env. Avoids the full __init__ (which requires model, provider,
-    LLM base setup) since the helper only depends on the Jinja env.
+    self.env. Mirrors production exactly - SandboxedEnvironment, same
+    delimiters, same undefined policy - so the SSTI regression tests
+    below actually exercise what production would see.
     """
     inst = CustomPromptEvaluator.__new__(CustomPromptEvaluator)
-    inst.env = Environment(
+    inst.env = SandboxedEnvironment(
         variable_start_string="{{",
         variable_end_string="}}",
         undefined=PreserveUndefined,
@@ -179,3 +180,73 @@ class TestRenderTemplateContextMutation:
         assert "obj.field" not in ctx
         assert isinstance(ctx.get("obj"), dict)
         assert ctx["obj"].get("field") == "world"
+
+
+class TestRenderTemplateSSTIProtection:
+    """SSTI / RCE regression: eval templates are user-authored, so the
+    Jinja environment MUST reject attribute-walking payloads that reach
+    Python internals (subprocess, os.environ, ...). Sandbox catches
+    these; a plain Environment does not. Pin every well-known escape
+    route so a future switch back to Environment turns these red."""
+
+    def test_class_mro_subclasses_walk_is_blocked(self, stub_evaluator):
+        """The classic SSTI payload: `''.__class__.__mro__[1].__subclasses__()`
+        walks up to `object` and lists every subclass, from which the
+        attacker can pick `subprocess.Popen` or similar. Sandbox raises
+        SecurityError on `.__class__`, the helper catches it as a
+        TemplateSyntaxError-shaped fallback, and the raw payload stays
+        as literal text - no Python internals leaked."""
+        payload = "{{ ''.__class__.__mro__[1].__subclasses__() }}"
+        out = stub_evaluator._render_template(payload, {})
+        # No subclass name should have been rendered into the output.
+        assert "subprocess" not in out.lower()
+        assert "popen" not in out.lower()
+        assert "<class " not in out
+
+    def test_globals_walk_is_blocked(self, stub_evaluator):
+        """A different escape route: `x.__globals__` on any function
+        reaches module-level bindings including `os`, `__builtins__`,
+        etc. Sandbox rejects `.__globals__` access."""
+        payload = "{{ ''.__class__.__init__.__globals__ }}"
+        out = stub_evaluator._render_template(payload, {})
+        assert "__builtins__" not in out
+        assert "'os'" not in out
+        assert "posix" not in out.lower()
+
+    def test_getattr_via_pipe_is_blocked(self, stub_evaluator):
+        """`{{ obj|attr('__class__') }}` is the filter-syntax variant
+        of the same escape. Sandbox's default `is_safe_attribute`
+        rejects dunders here too."""
+        payload = "{{ '' | attr('__class__') | attr('__mro__') }}"
+        out = stub_evaluator._render_template(payload, {})
+        assert "<class " not in out
+        assert "type '" not in out
+
+    def test_dict_class_walk_is_blocked(self, stub_evaluator):
+        """Dict variant: `{}.__class__.__base__.__subclasses__()`.
+        Same intent, different starting object."""
+        payload = "{{ {}.__class__.__base__.__subclasses__() }}"
+        out = stub_evaluator._render_template(payload, {})
+        assert "subprocess" not in out.lower()
+        assert "popen" not in out.lower()
+
+    def test_config_object_walk_is_blocked(self, stub_evaluator):
+        """Even when a user-supplied context value is a Python object,
+        Jinja shouldn't hand out its `__class__`. This regression pin
+        assumes future changes to the sandbox class don't accidentally
+        loosen `is_safe_attribute` for context objects."""
+
+        class Marker:
+            secret = "should-not-leak"
+
+        payload = "{{ obj.__class__.__name__ }}"
+        out = stub_evaluator._render_template(payload, {"obj": Marker()})
+        assert "Marker" not in out
+
+    def test_plain_variable_still_works_under_sandbox(self, stub_evaluator):
+        """Sanity: locking down the environment mustn't break the ordinary
+        substitution the entire feature is built on."""
+        out = stub_evaluator._render_template(
+            "Hello {{ name }}", {"name": "Karthik"}
+        )
+        assert out == "Hello Karthik"
