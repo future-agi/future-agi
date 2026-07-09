@@ -29,7 +29,6 @@ import {
 import { enqueueSnackbar } from "src/components/snackbar";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import TaskSchedulingSection from "./TaskSchedulingSection";
-import { getNewTaskFilters } from "src/sections/tasks/schema";
 import { useGetProjectDetails } from "src/api/project/project-detail";
 import { PROJECT_SOURCE } from "src/utils/constants";
 import TaskFilterBar from "./TaskFilterBar";
@@ -370,13 +369,6 @@ const TaskConfigPanel = ({
 
   const evalsDetailsErrorMessage = _.get(errors, "evalsDetails")?.message || "";
 
-  const formValues = useWatch({ control });
-
-  const filtersWithoutDate = useMemo(
-    () => getNewTaskFilters(formValues, project, true).filters || [],
-    [formValues, project],
-  );
-
   // Projects list — only fetch in create mode (not locked)
   const { data: projectsList } = useQuery({
     queryKey: ["project-list"],
@@ -387,33 +379,6 @@ const TaskConfigPanel = ({
     select: (data) => data.data?.result?.projects,
     enabled: !projectLocked,
   });
-
-  // Eval attributes for variable mapping. Includes rowType so the picker
-  // shows the right paths per target type — span attribute keys for spans,
-  // trace fields + spans.first/last.<key> for traces, session fields +
-  // traces.{first,last}.spans.{first,last}.<key> for sessions.
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", project, rowType, filtersWithoutDate],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          project_id: project,
-          row_type: rowType,
-          filters: JSON.stringify(filtersWithoutDate),
-        },
-      }),
-    select: (data) => data.data?.result,
-    enabled: isProjectSelected,
-  });
-
-  const sourceColumns = useMemo(() => {
-    if (!evalAttributes) return [];
-    return evalAttributes.map((attr) => ({
-      headerName: attr,
-      field: attr,
-      name: attr,
-    }));
-  }, [evalAttributes]);
 
   const handleEvalAdded = useCallback(
     async (evalConfig) => {
@@ -827,7 +792,6 @@ const TaskConfigPanel = ({
         source="task"
         sourceId={project}
         sourceRowType={rowType}
-        sourceColumns={sourceColumns}
         onEvalAdded={handleEvalAdded}
         existingEvals={configuredEvals}
         initialEval={editingEval}
