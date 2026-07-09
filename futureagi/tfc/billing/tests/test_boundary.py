@@ -155,6 +155,15 @@ class TestNoopBillingMetering:
         assert self.b.count_tokens("") == 0
         assert self.b.count_tokens("hello world" * 100) == 0
 
+    def test_count_tiktoken_tokens_returns_zero(self):
+        # OSS: image-aware variant is also zero, with or without image URLs.
+        assert self.b.count_tiktoken_tokens("hello") == 0
+        assert self.b.count_tiktoken_tokens("hello", image_urls=["http://x/a.png"]) == 0
+
+    def test_get_tracing_billing_mode_returns_storage(self):
+        # OSS default must match ee billing_engine's fallback dimension.
+        assert self.b.get_tracing_billing_mode("org-1") == "storage"
+
     def test_get_retention_days_returns_zero(self):
         # OSS: no retention enforcement.
         assert self.b.get_retention_days("org-1", "traces") == 0
@@ -397,7 +406,8 @@ class TestBillingProtocolCompleteness:
     _protocol_methods = [
         "record_usage", "check_usage", "log_and_deduct", "log_and_deduct_resource",
         "ai_credits", "has_feature", "check_feature_gate", "can_create",
-        "count_tokens", "get_retention_days", "eval_per_run_fee",
+        "count_tokens", "count_tiktoken_tokens", "get_tracing_billing_mode",
+        "get_retention_days", "eval_per_run_fee",
         "refund", "check_rate_limit", "setup_org_subscription",
         "get_gateway_client", "get_async_gateway_client",
     ]
@@ -419,6 +429,55 @@ class TestBillingProtocolCompleteness:
         assert ee_method is not parent_method, (
             f"_EeBilling.{method} still inherits from Billing base"
         )
+
+
+# ── Guard helpers: deduct_denied / resource_denied ───────────────────────────
+
+
+class TestGuardHelpers:
+    """Shared deny-guards on the Billing base class.
+
+    ``None`` from a deduct call means "billing errored" on EE (fail-closed)
+    but "no billing" on OSS (allowed). A non-None row is judged by status:
+    ``deduct_denied`` denies on anything but PROCESSING, ``resource_denied``
+    denies only on RESOURCE_LIMIT. These lock the exact semantics dev had
+    inline at every call site.
+    """
+
+    def _row(self, status):
+        return MagicMock(status=status)
+
+    def test_none_is_allowed_in_oss(self):
+        b = _NoopBilling()
+        assert b.deduct_denied(None) is False
+        assert b.resource_denied(None) is False
+
+    def test_none_is_denied_in_ee(self):
+        b = _EeBilling()
+        assert b.deduct_denied(None) is True
+        assert b.resource_denied(None) is True
+
+    def test_deduct_denied_by_status(self):
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        b = _EeBilling()
+        assert b.deduct_denied(self._row(APICallStatusChoices.PROCESSING.value)) is False
+        assert b.deduct_denied(self._row(APICallStatusChoices.RESOURCE_LIMIT.value)) is True
+        assert b.deduct_denied(self._row("insufficient_credits")) is True
+
+    def test_resource_denied_only_on_resource_limit(self):
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        b = _EeBilling()
+        assert b.resource_denied(self._row(APICallStatusChoices.RESOURCE_LIMIT.value)) is True
+        assert b.resource_denied(self._row(APICallStatusChoices.PROCESSING.value)) is False
+
+    def test_helpers_shared_not_overridden(self):
+        # Both impls must use the SAME logic — the guard lives on the base.
+        assert _NoopBilling.deduct_denied is Billing.deduct_denied
+        assert _EeBilling.deduct_denied is Billing.deduct_denied
+        assert _NoopBilling.resource_denied is Billing.resource_denied
+        assert _EeBilling.resource_denied is Billing.resource_denied
 
 
 # ── Re-exports (token_usage_properties, llm_usage_properties) ────────────────

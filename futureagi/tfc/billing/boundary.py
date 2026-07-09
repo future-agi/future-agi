@@ -203,6 +203,33 @@ class Billing:
         """Return async gateway LLM client.  Raises ImportError in OSS."""
         raise NotImplementedError
 
+    # -- shared guard helpers (same logic for EE and OSS) -------------------
+
+    def deduct_denied(self, call_log_row: Any) -> bool:
+        """True when a ``log_and_deduct`` result means the action must be blocked.
+
+        EE ``None`` → billing errored; fail closed (dev raised inside the ee
+        function).  OSS ``None`` → allowed (there is no billing).  A non-None
+        row denies unless its status is PROCESSING.
+        """
+        if call_log_row is None:
+            return self.is_enabled
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        return call_log_row.status != APICallStatusChoices.PROCESSING.value
+
+    def resource_denied(self, call_log_row: Any) -> bool:
+        """True when a ``log_and_deduct_resource`` result means the resource limit was hit.
+
+        EE ``None`` → billing errored; fail closed.  OSS ``None`` → allowed.
+        A non-None row denies only on RESOURCE_LIMIT (mirrors dev's checks).
+        """
+        if call_log_row is None:
+            return self.is_enabled
+        from tfc.constants.api_calls import APICallStatusChoices
+
+        return call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
+
 
 # ---------------------------------------------------------------------------
 # _NoopBilling — OSS fallback

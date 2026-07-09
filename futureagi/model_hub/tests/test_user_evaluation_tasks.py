@@ -1162,12 +1162,13 @@ class TestErrorLocalizerGateE2E:
         mock_api_log.status = APICallStatusChoices.PROCESSING.value
         mock_log_cost.return_value = mock_api_log
 
-        mock_localizer.return_value.skip_reason = (
-            f"The input '{selected_key}' is of type '{expected_type}', "
-            f"which is not supported by error localization."
-        )
         mock_localizer.return_value.localize_errors.return_value = LocalizerResult(
-            analysis={}, selected_key=selected_key,
+            analysis={},
+            selected_key=selected_key,
+            skip_reason=(
+                f"The input '{selected_key}' is of type '{expected_type}', "
+                f"which is not supported by error localization."
+            ),
         )
 
         process_single_error_localization._original_func(str(task.id))

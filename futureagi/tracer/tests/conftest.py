@@ -419,9 +419,10 @@ def stub_cost_log(monkeypatch):
     ):
         return _StubCostLog(config)
 
+    # Patch the boundary method (tracer.utils.eval now calls billing.log_and_deduct).
     monkeypatch.setattr(
-        "tracer.utils.eval.log_and_deduct_cost_for_api_request",
-        _stub,
+        "tfc.billing.boundary._EeBilling.log_and_deduct",
+        lambda self, **kwargs: _stub(**kwargs),
     )
     return _stub
 

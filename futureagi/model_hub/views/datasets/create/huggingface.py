@@ -218,11 +218,7 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
                         config={"total_rows": rows_in_dataset},
                         workspace=request.workspace,
                     )
-                    if (
-                        call_log_row is not None
-                        and call_log_row.status
-                        == APICallStatusChoices.RESOURCE_LIMIT.value
-                    ):
+                    if billing.resource_denied(call_log_row):
                         return self._gm.too_many_requests("Row limit reached")
                     if call_log_row is not None:
                         call_log_row.status = APICallStatusChoices.SUCCESS.value
@@ -257,11 +253,7 @@ class CreateDatasetFromHuggingFaceView(CreateAPIView):
                         api_call_type=APICallTypeChoices.DATASET_ADD.value,
                         workspace=request.workspace,
                     )
-                    if (
-                        call_log_row_entry is not None
-                        and call_log_row_entry.status
-                        == APICallStatusChoices.RESOURCE_LIMIT.value
-                    ):
+                    if billing.resource_denied(call_log_row_entry):
                         return self._gm.too_many_requests(
                             get_error_message("DATASET_CREATE_LIMIT_REACHED")
                         )

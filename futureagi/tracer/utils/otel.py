@@ -1077,10 +1077,7 @@ def _deduct_project_creation_cost(
         workspace=workspace,
     )
 
-    if (
-        call_log_row is not None
-        and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-    ):
+    if billing.resource_denied(call_log_row):
         raise ResourceLimitError(
             "Trace creation not allowed due to plan limits or insufficient credits."
         )

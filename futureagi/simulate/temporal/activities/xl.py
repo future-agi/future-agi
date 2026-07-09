@@ -1250,7 +1250,6 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
     from model_hub.models.choices import EvalOutputType
     from sdk.utils.helpers import _get_api_call_type
     from simulate.models import AgentDefinition
-    from tfc.constants.api_calls import APICallStatusChoices
     from tfc.utils.error_codes import get_specific_error_message
     from tracer.models.observability_provider import ProviderChoices
     from tfc.billing.boundary import (
@@ -1495,13 +1494,14 @@ def _run_tool_evaluation_standalone(call_execution, test_execution):
                     workspace=workspace,
                 )
 
-                if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+                if billing.deduct_denied(api_call_log_row):
+                    _deny_status = api_call_log_row.status if api_call_log_row else "billing_error"
                     logger.error(
-                        f"API call not allowed - status: {api_call_log_row.status}"
+                        f"API call not allowed - status: {_deny_status}"
                     )
                     call_execution.tool_outputs[tool_eval_id] = {
                         "value": "",
-                        "reason": f"API call not allowed - status: {api_call_log_row.status}",
+                        "reason": f"API call not allowed - status: {_deny_status}",
                         "type": EvalOutputType.PASS_FAIL.value,
                         "name": column_name,
                         "error": True,

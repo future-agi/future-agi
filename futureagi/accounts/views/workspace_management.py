@@ -74,7 +74,7 @@ from analytics.utils import (
     get_mixpanel_properties,
     track_mixpanel_event,
 )
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+from tfc.constants.api_calls import APICallTypeChoices
 from tfc.constants.levels import Level
 from tfc.constants.roles import RoleMapping, RolePermissions
 from tfc.middleware.workspace_context import get_current_workspace
@@ -2044,9 +2044,11 @@ class ManageTeamView(APIView):
                 config={"user_count": user_count, "extra_users": len(members_data)},
                 workspace=workspace,
             )
-            if call_log_row is not None and (
-                call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
+            if billing.resource_denied(call_log_row):
+                if call_log_row is None:
+                    return self._gm.too_many_requests(
+                        {"errors": [{"error": "Could not verify member limits. Please try again."}]}
+                    )
                 config = json.loads(call_log_row.config)
                 return self._gm.too_many_requests(
                     {

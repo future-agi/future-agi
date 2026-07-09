@@ -1009,11 +1009,10 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
                 sdk_source=True if source == DatasetSourceChoices.SDK.value else False,
                 workspace=request.workspace,
             )
-            if (
-                call_log_row_entry is not None
-                and call_log_row_entry.status
-                == APICallStatusChoices.RESOURCE_LIMIT.value
-                and source != DatasetSourceChoices.SDK.value
+            # SDK uploads are exempt from the dataset limit (not from billing errors).
+            if billing.resource_denied(call_log_row_entry) and (
+                call_log_row_entry is None
+                or source != DatasetSourceChoices.SDK.value
             ):
                 return self._gm.too_many_requests(
                     get_error_message("DATASET_CREATE_LIMIT_REACHED")
@@ -1028,10 +1027,7 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
                 config={"total_rows": rows_in_dataset},
                 workspace=request.workspace,
             )
-            if (
-                call_log_row is not None
-                and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
+            if billing.resource_denied(call_log_row):
                 return self._gm.too_many_requests("Row limit reached")
             if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value

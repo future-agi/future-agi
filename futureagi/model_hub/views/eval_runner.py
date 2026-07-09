@@ -1380,9 +1380,10 @@ class EvaluationRunner:
             workspace=row.dataset.workspace,
         )
 
-        if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-            error_message = get_error_for_api_status(api_call_log_row.status)
-            raise ValueError(error_message)
+        if billing.deduct_denied(api_call_log_row):
+            if api_call_log_row is None:
+                raise ValueError("API call not allowed : Error validating the api call.")
+            raise ValueError(get_error_for_api_status(api_call_log_row.status))
 
         return api_call_log_row
 

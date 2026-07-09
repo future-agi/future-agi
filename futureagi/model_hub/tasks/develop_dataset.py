@@ -52,7 +52,7 @@ from tfc.utils.storage import (
     delete_compare_folder,
 )
 from tfc.billing.boundary import get_billing, BillingEventType, llm_usage_properties
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+from tfc.constants.api_calls import APICallTypeChoices
 
 
 def run_generate_new_rows_test(
@@ -502,7 +502,9 @@ def create_synthetic_dataset(
                 workspace=dataset.workspace,
             )
 
-            if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+            if billing.deduct_denied(api_call_log_row):
+                if api_call_log_row is None:
+                    raise ValueError("API call not allowed : Error validating the api call.")
                 raise ValueError("API call not allowed : ", api_call_log_row.status)
 
             # Emit usage event for billing system (cost-based)

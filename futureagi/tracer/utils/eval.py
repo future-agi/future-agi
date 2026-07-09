@@ -873,7 +873,9 @@ def _run_evaluation(
             config=source_config,
             workspace=workspace,
         )
-        if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+        if billing.deduct_denied(api_call_log_row):
+            if api_call_log_row is None:
+                raise ValueError("API call not allowed : Error validating the api call.")
             raise ValueError("API call not allowed : ", api_call_log_row.status)
 
         # Apply the same empty-input rules the dataset and playground
@@ -1499,7 +1501,9 @@ def _execute_evaluation(
         config=source_config,
         workspace=workspace,
     )
-    if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+    if billing.deduct_denied(api_call_log_row):
+        if api_call_log_row is None:
+            raise ValueError("API call not allowed : Error validating the api call.")
         raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # --- Build context for data_injection support ---
@@ -2798,18 +2802,19 @@ def _execute_evaluation_for_trace(
         source_config["feedback_id"] = str(feedback_id)
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
-    api_call_log_row = None
-    if log_and_deduct_cost_for_api_request is not None:
-        api_call_log_row = log_and_deduct_cost_for_api_request(
-            organization=trace.project.organization,
-            api_call_type=api_call_type,
-            source="tracer" if not feedback_id else "feedback",
-            source_id=eval_template.id,
-            config=source_config,
-            workspace=workspace,
-        )
-        if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-            raise ValueError("API call not allowed : ", api_call_log_row.status)
+    billing = get_billing()
+    api_call_log_row = billing.log_and_deduct(
+        organization=trace.project.organization,
+        api_call_type=api_call_type,
+        source="tracer" if not feedback_id else "feedback",
+        source_id=eval_template.id,
+        config=source_config,
+        workspace=workspace,
+    )
+    if billing.deduct_denied(api_call_log_row):
+        if api_call_log_row is None:
+            raise ValueError("API call not allowed : Error validating the api call.")
+        raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # --- Set workspace context for tools that need org-scoping ---
     # See _execute_evaluation_for_session for rationale; same applies here.
@@ -3030,20 +3035,19 @@ def _execute_evaluation_for_session(
         source_config["feedback_id"] = str(feedback_id)
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
-    api_call_log_row = None
-    if log_and_deduct_cost_for_api_request is not None:
-        api_call_log_row = log_and_deduct_cost_for_api_request(
-            organization=trace_session.project.organization,
-            api_call_type=api_call_type,
-            source="tracer" if not feedback_id else "feedback",
-            source_id=eval_template.id,
-            config=source_config,
-            workspace=workspace,
-        )
-        if not api_call_log_row:
+    billing = get_billing()
+    api_call_log_row = billing.log_and_deduct(
+        organization=trace_session.project.organization,
+        api_call_type=api_call_type,
+        source="tracer" if not feedback_id else "feedback",
+        source_id=eval_template.id,
+        config=source_config,
+        workspace=workspace,
+    )
+    if billing.deduct_denied(api_call_log_row):
+        if api_call_log_row is None:
             raise ValueError("API call not allowed : Error validating the api call.")
-        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-            raise ValueError("API call not allowed : ", api_call_log_row.status)
+        raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # --- Set workspace context for tools that need org-scoping ---
     # The explore_trace tool's live DB actions (list_trace_spans, span_detail)

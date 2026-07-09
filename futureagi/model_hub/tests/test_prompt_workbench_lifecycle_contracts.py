@@ -6,6 +6,7 @@ from accounts.models.organization import Organization
 from accounts.models.user import User
 from accounts.models.workspace import Workspace
 from model_hub.models.choices import OwnerChoices, StatusType
+from tfc.constants.api_calls import APICallStatusChoices
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.prompt_folders import PromptFolder
 from model_hub.models.run_prompt import (
@@ -884,9 +885,13 @@ def test_prompt_assistant_helpers_submit_scoped_payloads(
             }
         )
 
+    class FakeCallLogRow:
+        status = APICallStatusChoices.PROCESSING.value
+
+    # EE None now means "billing errored → deny", so an allowed call must return a PROCESSING row.
     monkeypatch.setattr(
         "tfc.billing.boundary._EeBilling.log_and_deduct",
-        lambda self, **_kwargs: None,
+        lambda self, **_kwargs: FakeCallLogRow(),
     )
     monkeypatch.setattr(
         "model_hub.views.prompt_template.PromptGenerator", FakePromptGenerator

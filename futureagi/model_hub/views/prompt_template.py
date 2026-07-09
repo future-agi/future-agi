@@ -2646,7 +2646,9 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 workspace=evaluation.prompt_template.workspace,
             )
 
-            if api_call_log_row is not None and api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
+            if billing.deduct_denied(api_call_log_row):
+                if api_call_log_row is None:
+                    raise ValueError("API call not allowed : Error validating the api call.")
                 raise ValueError("API call not allowed : ", api_call_log_row.status)
             # Apply the shared empty-input rules so prompt-template evals
             # behave the same as dataset/playground/tracing/SDK paths.
@@ -3318,10 +3320,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 source="run_prompt_gen",
                 workspace=request.workspace,
             )
-            if (
-                call_log_row is not None
-                and call_log_row.status != APICallStatusChoices.PROCESSING.value
-            ):
+            if billing.deduct_denied(call_log_row):
                 return self._gm.bad_request(
                     get_error_message("INSUFFICIENT_CREDITS")
                 )
@@ -3426,10 +3425,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 source="run_prompt_improve",
                 workspace=request.workspace,
             )
-            if (
-                call_log_row is not None
-                and call_log_row.status != APICallStatusChoices.PROCESSING.value
-            ):
+            if billing.deduct_denied(call_log_row):
                 return self._gm.bad_request(
                     get_error_message("INSUFFICIENT_CREDITS")
                 )

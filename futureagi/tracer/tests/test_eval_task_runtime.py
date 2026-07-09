@@ -1200,12 +1200,12 @@ class TestCompositeEvalOnTrace:
         """The composite path does not call the parent cost-log; children log their own."""
         calls = []
 
-        def _spy(**kwargs):
+        def _spy(self, **kwargs):
             calls.append(kwargs)
             return None  # would normally short-circuit downstream; never reached for composite
 
         monkeypatch.setattr(
-            "tracer.utils.eval.log_and_deduct_cost_for_api_request", _spy
+            "tfc.billing.boundary._EeBilling.log_and_deduct", _spy
         )
         task = composite_trace_task["task"]
         process_eval_task._original_func(str(task.id))
@@ -1385,12 +1385,12 @@ class TestCompositeEvalOnSession:
     ):
         calls = []
 
-        def _spy(**kwargs):
+        def _spy(self, **kwargs):
             calls.append(kwargs)
             return None
 
         monkeypatch.setattr(
-            "tracer.utils.eval.log_and_deduct_cost_for_api_request", _spy
+            "tfc.billing.boundary._EeBilling.log_and_deduct", _spy
         )
         task = composite_session_task["task"]
         process_eval_task._original_func(str(task.id))

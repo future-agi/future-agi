@@ -30,18 +30,18 @@ def _check_resource_limit(organization, workspace, api_call_type, config=None):
         from tfc.billing.boundary import get_billing
         from tfc.constants.api_calls import APICallStatusChoices
 
-        call_log = get_billing().log_and_deduct_resource(
+        billing = get_billing()
+        call_log = billing.log_and_deduct_resource(
             organization=organization,
             api_call_type=api_call_type,
             config=config or {},
             workspace=workspace,
         )
-        if call_log is None:
-            return True
-        if call_log.status == APICallStatusChoices.RESOURCE_LIMIT.value:
+        if billing.resource_denied(call_log):
             return False
-        call_log.status = APICallStatusChoices.SUCCESS.value
-        call_log.save()
+        if call_log is not None:
+            call_log.status = APICallStatusChoices.SUCCESS.value
+            call_log.save()
         return True
     except Exception as e:
         logger.warning(f"Resource limit check failed, allowing: {e}")

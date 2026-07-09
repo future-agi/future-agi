@@ -235,9 +235,10 @@ def run_eval_func(
             workspace=workspace,
         )
 
-        if api_call_log_row:
-            if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-                raise ValueError("API call not allowed : ", api_call_log_row.status)
+        if billing.deduct_denied(api_call_log_row):
+            if api_call_log_row is None:
+                raise ValueError("API call not allowed : Error validating the api call.")
+            raise ValueError("API call not allowed : ", api_call_log_row.status)
 
         start_time = time.time()
         # Layer in auto-context kwargs alongside the mapped variables. Any

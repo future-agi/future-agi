@@ -169,10 +169,7 @@ class AddRowsFromExistingView(APIView):
                 config={"total_rows": new_rows_count + existing_rows_count},
                 workspace=request.workspace,
             )
-            if (
-                call_log_row is not None
-                and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
+            if billing.resource_denied(call_log_row):
                 return self._gm.too_many_requests("Row limit reached")
             if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value

@@ -716,10 +716,7 @@ class AddRowsFromFile(CreateAPIView):
                 config={"total_rows": existing_rows_count + new_rows_count},
                 workspace=request.workspace,
             )
-            if (
-                call_log_row is not None
-                and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
+            if billing.resource_denied(call_log_row):
                 return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
             if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
@@ -896,11 +893,7 @@ class CloneDatasetView(APIView):
                 api_call_type=APICallTypeChoices.DATASET_ADD.value,
                 workspace=request.workspace,
             )
-            if (
-                call_log_row_entry is not None
-                and call_log_row_entry.status
-                == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
+            if billing.resource_denied(call_log_row_entry):
                 return self._gm.too_many_requests(
                     get_error_message("DATASET_CREATE_LIMIT_REACHED")
                 )
@@ -934,10 +927,7 @@ class CloneDatasetView(APIView):
                 config={"total_rows": row_count},
                 workspace=request.workspace,
             )
-            if (
-                call_log_row is not None
-                and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
+            if billing.resource_denied(call_log_row):
                 return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
             if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
@@ -1134,11 +1124,7 @@ class AddAsNewDataset(APIView):
                 api_call_type=APICallTypeChoices.DATASET_ADD.value,
                 workspace=request.workspace,
             )
-            if (
-                call_log_row_entry is not None
-                and call_log_row_entry.status
-                == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
+            if billing.resource_denied(call_log_row_entry):
                 return self._gm.too_many_requests(
                     get_error_message("DATASET_CREATE_LIMIT_REACHED")
                 )
@@ -1160,11 +1146,7 @@ class AddAsNewDataset(APIView):
                     config={"total_rows": row_count},
                     workspace=request.workspace,
                 )
-                if (
-                    call_log_row is not None
-                    and call_log_row.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
+                if billing.resource_denied(call_log_row):
                     return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
                 if call_log_row is not None:
                     call_log_row.status = APICallStatusChoices.SUCCESS.value
@@ -4459,10 +4441,7 @@ class AddEmptyRowsView(APIView):
                 config={"total_rows": prospective_total},
                 workspace=request.workspace,
             )
-            if (
-                call_log_row is not None
-                and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
+            if billing.resource_denied(call_log_row):
                 return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
             if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
@@ -4558,10 +4537,7 @@ class AddSDKRowsView(APIView):
                 config={"total_rows": existing_rows_count},
                 workspace=request.workspace,
             )
-            if (
-                call_log_row is not None
-                and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
+            if billing.resource_denied(call_log_row):
                 return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
             if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
@@ -4670,11 +4646,7 @@ class ManuallyCreateDatasetView(APIView):
                 api_call_type=APICallTypeChoices.DATASET_ADD.value,
                 workspace=request.workspace,
             )
-            if (
-                call_log_row_entry is not None
-                and call_log_row_entry.status
-                == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
+            if billing.resource_denied(call_log_row_entry):
                 return self._gm.too_many_requests(
                     get_error_message("DATASET_CREATE_LIMIT_REACHED")
                 )
@@ -4690,10 +4662,7 @@ class ManuallyCreateDatasetView(APIView):
                 config={"total_rows": number_of_rows},
                 workspace=request.workspace,
             )
-            if (
-                call_log_row is not None
-                and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
+            if billing.resource_denied(call_log_row):
                 return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
             if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
@@ -4816,10 +4785,7 @@ class AddDataRowsView(APIView):
                 config={"total_rows": prospective_total},
                 workspace=request.workspace,
             )
-            if (
-                call_log_row is not None
-                and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
+            if billing.resource_denied(call_log_row):
                 return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
             if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
@@ -11948,10 +11914,7 @@ class DuplicateRowsView(APIView):
                 config={"total_rows": source_rows.count() * num_copies},
                 workspace=request.workspace,
             )
-            if (
-                call_log_row is not None
-                and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
+            if billing.resource_denied(call_log_row):
                 return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
             if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
@@ -12069,11 +12032,7 @@ class DuplicateDatasetView(APIView):
                 api_call_type=APICallTypeChoices.DATASET_ADD.value,
                 workspace=request.workspace,
             )
-            if (
-                call_log_row_entry is not None
-                and call_log_row_entry.status
-                == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
+            if billing.resource_denied(call_log_row_entry):
                 return self._gm.too_many_requests(
                     get_error_message("DATASET_CREATE_LIMIT_REACHED")
                 )
@@ -12158,10 +12117,7 @@ class DuplicateDatasetView(APIView):
                 config={"total_rows": source_row_count},
                 workspace=request.workspace,
             )
-            if (
-                call_log_row is not None
-                and call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
+            if billing.resource_denied(call_log_row):
                 return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
             if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
@@ -15155,11 +15111,7 @@ class CreateKnowledgeBaseView(APIView):
                     api_call_type=APICallTypeChoices.KNOWLEDGE_BASE.value,
                     workspace=request.workspace,
                 )
-                if (
-                    call_log_row is not None
-                    and call_log_row.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
+                if billing.resource_denied(call_log_row):
                     return self._gm.too_many_requests(
                         get_error_message("KB_CREATION_LIMIT_REACHED")
                     )
