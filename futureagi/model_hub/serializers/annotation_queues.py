@@ -752,7 +752,9 @@ class QueueDefaultRequestSerializer(StrictInputSerializer):
 
 class QueueLabelRequestSerializer(StrictInputSerializer):
     label_id = serializers.UUIDField()
-    required = serializers.BooleanField(required=False, default=True)
+    # Default off: adding a label makes it available to annotate with, not
+    # required. Required labels are a gated feature the caller opts into.
+    required = serializers.BooleanField(required=False, default=False)
 
 
 class QueueExportColumnMappingSerializer(StrictInputSerializer):

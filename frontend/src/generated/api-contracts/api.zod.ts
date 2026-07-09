@@ -12121,7 +12121,7 @@ export const ModelHubAnnotationQueuesAddLabelParams = zod.object({
   "id": zod.string().uuid().describe('A UUID string identifying this annotation queue.')
 })
 
-export const modelHubAnnotationQueuesAddLabelBodyRequiredDefault = true;
+export const modelHubAnnotationQueuesAddLabelBodyRequiredDefault = false;
 
 export const ModelHubAnnotationQueuesAddLabelBody = zod.object({
   "label_id": zod.string().uuid(),
@@ -12410,7 +12410,7 @@ export const ModelHubAnnotationQueuesRemoveLabelParams = zod.object({
   "id": zod.string().uuid().describe('A UUID string identifying this annotation queue.')
 })
 
-export const modelHubAnnotationQueuesRemoveLabelBodyRequiredDefault = true;
+export const modelHubAnnotationQueuesRemoveLabelBodyRequiredDefault = false;
 
 export const ModelHubAnnotationQueuesRemoveLabelBody = zod.object({
   "label_id": zod.string().uuid(),

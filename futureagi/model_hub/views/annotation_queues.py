@@ -4079,8 +4079,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         queue = self.get_object()
         data = request.validated_data
         label_id = data.get("label_id")
-        required = _is_truthy(data.get("required", True))
+        required = _is_truthy(data.get("required", False))
 
+        # Only marking a label *required* is the gated feature; a plain add
+        # (required omitted/false) must never trip the entitlement gate.
         if required:
             from tfc.ee_gating import EEFeature, check_ee_feature
 

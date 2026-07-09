@@ -65195,7 +65195,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "required": {
           "title": "Required",
           "type": "boolean",
-          "default": true
+          "default": false
         }
       }
     },

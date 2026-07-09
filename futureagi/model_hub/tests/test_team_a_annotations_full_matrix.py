@@ -1289,6 +1289,23 @@ class TestQueueLabelManagement:
         assert bindings.count() == 1
         assert bindings.first().required is False
 
+    def test_add_label_without_required_defaults_to_optional(
+        self, auth_client, queue, star_label
+    ):
+        """Omitting `required` (the trace "Add label" drawer payload) must add
+        an optional label, not trip the required-labels entitlement gate. On a
+        non-entitled plan the pre-fix default of True would 402 here."""
+        resp = auth_client.post(
+            _add_label_url(queue),
+            {"label_id": str(star_label.id)},
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        binding = AnnotationQueueLabel.objects.get(
+            queue_id=queue, label=star_label, deleted=False
+        )
+        assert binding.required is False
+
     def test_add_required_label_blocked_by_entitlement(
         self, auth_client, queue, star_label
     ):
