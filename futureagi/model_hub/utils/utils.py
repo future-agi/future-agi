@@ -47,7 +47,7 @@ try:
     if hasattr(_hf_features, "_FEATURE_TYPES") and hasattr(_hf_features, "LargeList"):
         _hf_features._FEATURE_TYPES.setdefault("List", _hf_features.LargeList)
 except Exception:  # defensive: datasets internals moved
-    pass
+    logger.warning("hf List feature-type shim did not install", exc_info=True)
 
 
 class MyCustomLLM(CustomLLM):
