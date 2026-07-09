@@ -215,6 +215,52 @@ def validate_pass_threshold(threshold) -> list[str]:
     return []
 
 
+def _coerce_threshold(value: Any) -> float | None:
+    """Return a valid pass_threshold in [0, 1] or ``None`` if the input is
+    non-numeric or out of range. Guards every source ``resolve_pass_threshold``
+    consults so a malformed override falls through to the next one instead of
+    raising."""
+    if value is None or isinstance(value, bool):
+        return None
+    if not isinstance(value, (int, float)):
+        return None
+    v = float(value)
+    if v < 0.0 or v > 1.0:
+        return None
+    return v
+
+
+def resolve_pass_threshold(
+    eval_template,
+    runtime_config: dict | None = None,
+    resolved_version=None,
+) -> float:
+    """Priority: ``runtime_config[run_config][pass_threshold]`` >
+    ``runtime_config[pass_threshold]`` > ``resolved_version.pass_threshold`` >
+    ``eval_template.pass_threshold`` > ``0.5``. Non-numeric or out-of-range
+    values from any source are skipped."""
+    if isinstance(runtime_config, dict):
+        run_config = runtime_config.get("run_config") or {}
+        if isinstance(run_config, dict):
+            v = _coerce_threshold(run_config.get("pass_threshold"))
+            if v is not None:
+                return v
+        v = _coerce_threshold(runtime_config.get("pass_threshold"))
+        if v is not None:
+            return v
+
+    if resolved_version is not None:
+        v = _coerce_threshold(getattr(resolved_version, "pass_threshold", None))
+        if v is not None:
+            return v
+
+    v = _coerce_threshold(getattr(eval_template, "pass_threshold", None))
+    if v is not None:
+        return v
+
+    return 0.5
+
+
 def score_eval_output(
     value_or_result: Any,
     eval_template: Any,
