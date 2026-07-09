@@ -2600,9 +2600,10 @@ class EvaluationRunner:
                 api_call_log_row.status = APICallStatusChoices.ERROR.value
                 api_call_log_row.save(update_fields=["status"])
 
-                refund_config = {"evaluation_id": str(self.user_eval_metric_id)}
-                if refund_cost_for_api_call is not None:
-                    refund_cost_for_api_call(api_call_log_row, config=refund_config)
+                get_billing().refund(
+                    api_call_log_row,
+                    evaluation_id=str(self.user_eval_metric_id),
+                )
             except Exception as e:
                 logger.error(f"Error refunding cost for api call: {str(e)}")
         elif value == CellStatus.PASS.value and api_call_log_row:

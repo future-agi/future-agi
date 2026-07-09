@@ -1258,7 +1258,7 @@ class TestErrorLocalizerGateE2E:
 
     @patch("model_hub.tasks.user_evaluation.close_old_connections")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
-    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    @patch("tfc.billing.boundary._EeBilling.log_and_deduct")
     def test_metadata_override_flips_gate_from_skip_to_run(
         self, mock_log_cost, mock_localizer, _mock_close, organization, workspace
     ):
@@ -1357,7 +1357,7 @@ class TestErrorLocalizerGateE2E:
 
     @patch("model_hub.tasks.user_evaluation.close_old_connections")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
-    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    @patch("tfc.billing.boundary._EeBilling.log_and_deduct")
     def test_missing_metadata_key_falls_back_to_template_threshold(
         self, mock_log_cost, mock_localizer, _mock_close, organization, workspace
     ):
@@ -1399,7 +1399,7 @@ class TestErrorLocalizerGateE2E:
 
     @patch("model_hub.tasks.user_evaluation.close_old_connections")
     @patch("model_hub.tasks.user_evaluation.ErrorLocalizer")
-    @patch("model_hub.tasks.user_evaluation.log_and_deduct_cost_for_api_request")
+    @patch("tfc.billing.boundary._EeBilling.log_and_deduct")
     def test_explicit_null_metadata_falls_back_to_template_threshold(
         self, mock_log_cost, mock_localizer, _mock_close, organization, workspace
     ):
