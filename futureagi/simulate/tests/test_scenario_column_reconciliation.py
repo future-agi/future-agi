@@ -298,3 +298,26 @@ class TestScenarioDatasetGrouping:
 
         assert isinstance(results, list)
         assert CallExecution.objects.filter(id=ce1.id).exists()
+
+    def test_legacy_grouping_rejects_sql_injection(
+        self, organization, workspace, user, test_execution
+    ):
+        s1, ds1, c1 = _make_scenario(organization, workspace, user, "scenario-a")
+        r1 = _make_row_with_cell(ds1, c1, "win")
+        ce1 = CallExecution.objects.create(
+            test_execution=test_execution, scenario=s1, row_id=r1.id
+        )
+
+        hostile_group_field = (
+            f"scenario_{s1.id}_dataset_"
+            "b'; DROP TABLE simulate_call_execution; --"
+        )
+
+        TestExecutionUtils()._apply_scenario_dataset_grouping(
+            CallExecution.objects.filter(test_execution=test_execution),
+            row_groups=[hostile_group_field],
+            group_keys=[],
+            default_columns=None,
+        )
+
+        assert CallExecution.objects.filter(id=ce1.id).exists()

@@ -3,6 +3,7 @@ Utility functions for generating dynamic prompts for SimulatorAgent based on age
 """
 
 import re
+import uuid
 from datetime import datetime
 
 from django.db import connection, models
@@ -1007,16 +1008,38 @@ class TestExecutionUtils:
                         scenario_id = parts[0].replace("scenario_", "")
                         dataset_column_id = parts[1]
 
-                        # Create a safe column alias (replace hyphens with underscores)
-                        safe_alias = group_field.replace("-", "_")
+                        try:
+                            uuid.UUID(str(scenario_id))
+                            uuid.UUID(str(dataset_column_id))
+                        except (ValueError, AttributeError, TypeError):
+                            continue
 
-                        # Add dataset column value to grouping
+                        safe_alias = re.sub(r"[^A-Za-z0-9_]", "_", group_field)
+
+                        cursor = connection.cursor()
+                        try:
+                            escaped_scenario_id = cursor.mogrify(
+                                "%s", [scenario_id]
+                            ).decode("utf-8")
+                            escaped_dataset_column_id = cursor.mogrify(
+                                "%s", [dataset_column_id]
+                            ).decode("utf-8")
+                        except AttributeError:
+                            escaped_scenario_id = "'{}'".format(
+                                str(scenario_id).replace("'", "''")
+                            )
+                            escaped_dataset_column_id = "'{}'".format(
+                                str(dataset_column_id).replace("'", "''")
+                            )
+                        finally:
+                            cursor.close()
+
                         select_fields.append(
                             f"""
                             (SELECT model_hub_cell.value
                                 FROM model_hub_cell
-                                WHERE model_hub_cell.dataset_id = (SELECT dataset_id FROM simulate_scenarios WHERE id = '{scenario_id}')
-                                AND model_hub_cell.column_id = '{dataset_column_id}'
+                                WHERE model_hub_cell.dataset_id = (SELECT dataset_id FROM simulate_scenarios WHERE id = {escaped_scenario_id})
+                                AND model_hub_cell.column_id = {escaped_dataset_column_id}
                                 AND model_hub_cell.row_id = simulate_call_execution.row_id
                                 AND model_hub_cell.deleted = false
                                 LIMIT 1) as {safe_alias}
@@ -1026,8 +1049,8 @@ class TestExecutionUtils:
                             f"""
                             (SELECT model_hub_cell.value
                                 FROM model_hub_cell
-                                WHERE model_hub_cell.dataset_id = (SELECT dataset_id FROM simulate_scenarios WHERE id = '{scenario_id}')
-                                AND model_hub_cell.column_id = '{dataset_column_id}'
+                                WHERE model_hub_cell.dataset_id = (SELECT dataset_id FROM simulate_scenarios WHERE id = {escaped_scenario_id})
+                                AND model_hub_cell.column_id = {escaped_dataset_column_id}
                                 AND model_hub_cell.row_id = simulate_call_execution.row_id
                                 AND model_hub_cell.deleted = false
                                 LIMIT 1)
