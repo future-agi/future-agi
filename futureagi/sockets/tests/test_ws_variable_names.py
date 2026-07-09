@@ -1,12 +1,9 @@
 """
-Test for TH-6410: Verify variable_names from WS message persist to execution.
+Test that variable_names from WS message persist to prompt execution.
 
-Bug: prompt run ignores variable_names sent over WebSocket. The WS consumer's
-execute_template_async method never extracted variable_names from the content
-and never persisted them to the execution before calling run_template_async.
-
-The REST path (prompt_template.py:1503-1504) does this correctly. This test
-validates the WS path mirrors that behavior.
+The WS consumer's execute_template_async method must extract variable_names
+from the content and persist them to the execution before calling
+run_template_async — mirroring the REST path behaviour.
 """
 
 import pytest
