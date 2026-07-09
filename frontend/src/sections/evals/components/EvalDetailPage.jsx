@@ -274,8 +274,8 @@ const EvalDetailPage = () => {
     if (byFlag) return byFlag;
     return [...list].sort(
       (a, b) =>
-        (a.version_number ?? Number.MAX_SAFE_INTEGER) -
-        (b.version_number ?? Number.MAX_SAFE_INTEGER),
+        (b.version_number ?? b.versionNumber ?? Number.MIN_SAFE_INTEGER) -
+        (a.version_number ?? a.versionNumber ?? Number.MIN_SAFE_INTEGER),
     )[0];
   }, [versionsData]);
 

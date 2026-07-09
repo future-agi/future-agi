@@ -1293,7 +1293,7 @@ def _span_notes_target_for_queue_item(item):
     #       deleted=False).filter(Q(parent_span_id__isnull=True) |
     #       Q(parent_span_id=""))
     #   conversation root → start_time root → None
-    # CHSpanReader.list_by_trace already filters is_deleted=0 and orders by
+    # CHSpanReader.list_by_trace drops deleted rows (via FINAL) and orders by
     # (start_time, id). Root spans have empty parent_span_id (CH stores it
     # as a non-nullable String — see schema 001), so we filter in Python.
     from tracer.services.clickhouse.v2 import get_reader

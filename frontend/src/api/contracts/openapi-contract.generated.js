@@ -69411,13 +69411,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "columns": {
           "type": "array",
           "items": {
-            "type": "string",
-            "x-nullable": true
+            "$ref": "#/definitions/SyntheticDatasetColumn"
           }
         },
         "dataset": {
-          "title": "Dataset",
-          "type": "object"
+          "$ref": "#/definitions/SyntheticDatasetPayload"
         },
         "kb_id": {
           "title": "Kb id",
@@ -69446,12 +69444,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "columns": {
           "type": "array",
           "items": {
-            "type": "object"
+            "$ref": "#/definitions/SyntheticDatasetColumn"
           }
         },
         "dataset": {
-          "title": "Dataset",
-          "type": "object"
+          "$ref": "#/definitions/SyntheticDatasetPayload"
         },
         "kb_id": {
           "title": "Kb id",
@@ -69513,13 +69510,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "columns": {
           "type": "array",
           "items": {
-            "type": "string",
-            "x-nullable": true
+            "$ref": "#/definitions/SyntheticDatasetColumn"
           }
         },
         "dataset": {
-          "title": "Dataset",
-          "type": "object"
+          "$ref": "#/definitions/SyntheticDatasetPayload"
         },
         "kb_id": {
           "title": "Kb id",
@@ -88851,6 +88846,69 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "$ref": "#/definitions/SyncLog"
           }
+        }
+      }
+    },
+    "SyntheticDatasetColumn": {
+      "required": [
+        "name",
+        "data_type",
+        "description",
+        "property"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "data_type": {
+          "title": "Data type",
+          "type": "string",
+          "minLength": 1
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "property": {
+          "title": "Property",
+          "type": "object"
+        },
+        "skip": {
+          "title": "Skip",
+          "type": "boolean"
+        },
+        "is_new": {
+          "title": "Is new",
+          "type": "boolean"
+        }
+      }
+    },
+    "SyntheticDatasetPayload": {
+      "required": [
+        "description",
+        "objective",
+        "patterns"
+      ],
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "objective": {
+          "title": "Objective",
+          "type": "string"
+        },
+        "patterns": {
+          "title": "Patterns",
+          "type": "string"
         }
       }
     },

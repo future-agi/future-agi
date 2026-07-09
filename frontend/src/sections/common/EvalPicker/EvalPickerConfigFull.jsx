@@ -172,6 +172,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [evalName, setEvalName] = useState("");
   const [dataReady, setDataReady] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+  useEffect(() => {
+    const pinned = evalData?.pinned_version_id ?? evalData?.pinnedVersionId ?? null;
+    if (pinned && !selectedVersionId && !isDirty) {
+      setSelectedVersionId(pinned);
+    }
+  }, [evalData?.pinned_version_id, evalData?.pinnedVersionId, selectedVersionId, isDirty]);
   const [isTesting, setIsTesting] = useState(false);
   const [testPassed, setTestPassed] = useState(false);
   const [testError, setTestError] = useState(null);
@@ -384,51 +390,65 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     () => evalType !== "llm" || hasNonEmptyPromptMessage(messages),
     [evalType, messages],
   );
-  // ── Load pinned version content on mount (edit mode) ──
-  const pinnedVersionLoadDone = useRef(false);
   useEffect(() => {
-    if (
-      selectedVersionId &&
-      versions.length > 0 &&
-      !pinnedVersionLoadDone.current &&
-      !isDirty
-    ) {
-      const version = versions.find((v) => v.id === selectedVersionId);
-      if (version) {
-        pinnedVersionLoadDone.current = true;
-        const config = version.config_snapshot || version.configSnapshot || {};
-        const promptText = config.rule_prompt || version.criteria || "";
-        const _type =
-          normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
-        if (_type === "code") {
-          setInstructions("");
-          setCode(config.code || "");
-        } else {
-          setInstructions(promptText);
-          setCode("");
-        }
-        setModel(config.model || fullEval?.model || "turing_large");
-        if (config.messages?.length > 0) {
-          setMessages(config.messages);
-        } else if (_type === "llm" && promptText) {
-          setMessages([{ role: "system", content: promptText }]);
-        }
-        if (isEditMode) setEvalName(evalData?.name || fullEval?.name || "");
-        setIsDirty(false);
-        setDataReady(true);
-        initialLoadDone.current = true;
-      }
+    if (!selectedVersionId || !versions.length || isDirty) return;
+    const version = versions.find((v) => v.id === selectedVersionId);
+    if (!version) return;
+
+    const config = version.config_snapshot || version.configSnapshot || {};
+    const promptText = config.rule_prompt || version.criteria || "";
+    const _type =
+      normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
+
+    if (_type === "code") {
+      setInstructions("");
+      setCode(config.code || "");
+    } else {
+      setInstructions(promptText);
+      setCode("");
     }
-  }, [
-    selectedVersionId,
-    versions,
-    isDirty,
-    fullEval,
-    normalizedFullEval,
-    normalizedEvalData,
-    isEditMode,
-    evalData,
-  ]);
+    if (config.messages?.length > 0) {
+      setMessages(config.messages);
+    } else if (_type === "llm" && promptText) {
+      setMessages([{ role: "system", content: promptText }]);
+    }
+
+    setModel(config.model || fullEval?.model || "turing_large");
+    if (config.output) setOutputType(config.output);
+    if (config.pass_threshold != null) setPassThreshold(config.pass_threshold);
+    if (config.choice_scores) setChoiceScores(config.choice_scores);
+    if (config.multi_choice != null) setMultiChoice(!!config.multi_choice);
+    if (config.template_format) setTemplateFormat(config.template_format);
+    if (Array.isArray(config.few_shot_examples))
+      setFewShotExamples(config.few_shot_examples);
+
+    if (config.agent_mode) setAgentMode(config.agent_mode);
+    if (config.check_internet != null) setUseInternet(!!config.check_internet);
+    const summaryVal =
+      typeof config.summary === "object"
+        ? config.summary?.type
+        : config.summary;
+    if (summaryVal) setSummaryType(summaryVal);
+    if (Array.isArray(config.tools)) setConnectorIds(config.tools);
+    else if (config.tools && typeof config.tools === "object")
+      setConnectorIds(Object.keys(config.tools));
+    if (Array.isArray(config.knowledge_bases))
+      setKnowledgeBaseIds(config.knowledge_bases);
+    if (config.data_injection && typeof config.data_injection === "object") {
+      const opts = Object.entries(config.data_injection)
+        .filter(([, v]) => v)
+        .map(([k]) => k);
+      setContextOptions(opts.length ? opts : ["variables_only"]);
+    }
+    if (config.error_localizer_enabled != null) {
+      setErrorLocalizerEnabled(!!config.error_localizer_enabled);
+    }
+
+    if (isEditMode) setEvalName(evalData?.name || fullEval?.name || "");
+    setIsDirty(false);
+    setDataReady(true);
+    initialLoadDone.current = true;
+  }, [selectedVersionId, versions, isDirty, fullEval, normalizedFullEval, normalizedEvalData, isEditMode, evalData]);
 
   // ── Populate from eval detail (same logic as EvalDetailPage) ──
   const initialLoadDone = useRef(false);

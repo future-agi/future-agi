@@ -8313,12 +8313,30 @@ export interface CreateEmptyDatasetRequestApi {
   row?: number;
 }
 
-export type SyntheticDatasetCreationApiDataset = { [key: string]: unknown };
+export type SyntheticDatasetColumnApiProperty = { [key: string]: unknown };
+
+export interface SyntheticDatasetColumnApi {
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  data_type: string;
+  description: string;
+  property: SyntheticDatasetColumnApiProperty;
+  skip?: boolean;
+  is_new?: boolean;
+}
+
+export interface SyntheticDatasetPayloadApi {
+  name?: string;
+  description: string;
+  objective: string;
+  patterns: string;
+}
 
 export interface SyntheticDatasetCreationApi {
   num_rows: number;
-  columns: string[];
-  dataset: SyntheticDatasetCreationApiDataset;
+  columns: SyntheticDatasetColumnApi[];
+  dataset: SyntheticDatasetPayloadApi;
   kb_id?: string;
 }
 
@@ -8772,12 +8790,10 @@ export interface DatasetStaticColumnRequestApi {
   source?: string;
 }
 
-export type SyntheticDataApiDataset = { [key: string]: unknown };
-
 export interface SyntheticDataApi {
   num_rows: number;
-  columns: string[];
-  dataset: SyntheticDataApiDataset;
+  columns: SyntheticDatasetColumnApi[];
+  dataset: SyntheticDatasetPayloadApi;
   kb_id?: string;
   fill_existing_rows?: boolean;
 }
@@ -9090,14 +9106,10 @@ export interface SyntheticDatasetConfigResponseApi {
   result: SyntheticDatasetConfigResultApi;
 }
 
-export type SyntheticDatasetConfigApiColumnsItem = { [key: string]: unknown };
-
-export type SyntheticDatasetConfigApiDataset = { [key: string]: unknown };
-
 export interface SyntheticDatasetConfigApi {
   num_rows: number;
-  columns: SyntheticDatasetConfigApiColumnsItem[];
-  dataset: SyntheticDatasetConfigApiDataset;
+  columns: SyntheticDatasetColumnApi[];
+  dataset: SyntheticDatasetPayloadApi;
   kb_id?: string;
   regenerate?: boolean;
 }
