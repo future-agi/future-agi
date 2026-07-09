@@ -16,10 +16,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from model_hub.services.error_localizer_service import (
-    _is_numerically_scorable,
-    should_run_error_localizer,
-)
+from model_hub.services.error_localizer_service import should_run_error_localizer
+from model_hub.utils.scoring import is_numerically_scorable
 
 
 def _template(**overrides):
@@ -69,7 +67,7 @@ class TestFailClosedForUnscorableValues:
         assert "not eligible for localization" in reason
 
     def test_bare_dict_value_does_not_trigger(self):
-        # _extract_eval_value finds nothing useful → returns the dict as-is
+        # extract_eval_value finds nothing useful → returns the dict as-is
         # → dict isn't numerically scorable → fail closed.
         template = _template(output_type_normalized="percentage")
         run, reason = should_run_error_localizer({"some": "shape"}, template)
@@ -160,6 +158,37 @@ class TestEarlyExits:
 
 
 # =========================================================================
+# Runtime threshold override
+# =========================================================================
+
+
+class TestRuntimeThresholdOverride:
+    def test_runtime_threshold_takes_precedence_over_template(self):
+        template = _template(
+            output_type_normalized="percentage", pass_threshold=0.5
+        )
+        run, reason = should_run_error_localizer(
+            0.6, template, runtime_threshold=0.8
+        )
+        assert run is True
+        assert "0.80" in reason
+
+    def test_runtime_threshold_flips_high_score_to_pass(self):
+        template = _template(
+            output_type_normalized="percentage", pass_threshold=0.5
+        )
+        run, _ = should_run_error_localizer(0.4, template, runtime_threshold=0.3)
+        assert run is False
+
+    def test_runtime_threshold_none_falls_back_to_template(self):
+        template = _template(
+            output_type_normalized="percentage", pass_threshold=0.5
+        )
+        run, _ = should_run_error_localizer(0.2, template, runtime_threshold=None)
+        assert run is True
+
+
+# =========================================================================
 # The scorability helper, directly
 # =========================================================================
 
@@ -167,31 +196,41 @@ class TestEarlyExits:
 class TestIsNumericallyScorable:
     @pytest.mark.parametrize("value", [0.5, 1, 0, True, False, "0.5", "1"])
     def test_percentage_accepts_numeric_shapes(self, value):
-        assert _is_numerically_scorable(value, "percentage", {}) is True
+        assert is_numerically_scorable(value, "percentage", {}) is True
 
     @pytest.mark.parametrize("value", [["x"], {"a": 1}, "not_a_number", None])
     def test_percentage_rejects_non_numeric_shapes(self, value):
-        assert _is_numerically_scorable(value, "percentage", {}) is False
+        assert is_numerically_scorable(value, "percentage", {}) is False
 
     def test_pass_fail_accepts_known_keywords(self):
-        assert _is_numerically_scorable("passed", "pass_fail", {}) is True
-        assert _is_numerically_scorable("Fail", "pass_fail", {}) is True
-        assert _is_numerically_scorable(True, "pass_fail", {}) is True
+        assert is_numerically_scorable("passed", "pass_fail", {}) is True
+        assert is_numerically_scorable("Fail", "pass_fail", {}) is True
+        assert is_numerically_scorable(True, "pass_fail", {}) is True
 
     def test_pass_fail_rejects_unknown_string(self):
-        assert _is_numerically_scorable("Resolved", "pass_fail", {}) is False
+        assert is_numerically_scorable("Resolved", "pass_fail", {}) is False
 
     def test_deterministic_needs_choice_scores(self):
-        assert _is_numerically_scorable("Yes", "deterministic", {}) is False
+        assert is_numerically_scorable("Yes", "deterministic", {}) is False
         assert (
-            _is_numerically_scorable(
+            is_numerically_scorable(
                 "Yes", "deterministic", {"Yes": 1.0, "No": 0.0}
             )
             is True
         )
 
-    def test_deterministic_list_each_member_must_be_known(self):
+    def test_deterministic_list_at_least_one_known_member(self):
+        # Matches normalize_score: skip unknown labels, average the known ones.
+        # Preflight should stay symmetric with the scorer.
         scores = {"A": 1.0, "B": 0.0}
-        assert _is_numerically_scorable(["A"], "deterministic", scores) is True
-        assert _is_numerically_scorable(["A", "B"], "deterministic", scores) is True
-        assert _is_numerically_scorable(["A", "C"], "deterministic", scores) is False
+        assert is_numerically_scorable(["A"], "deterministic", scores) is True
+        assert is_numerically_scorable(["A", "B"], "deterministic", scores) is True
+        assert is_numerically_scorable(["A", "C"], "deterministic", scores) is True
+        assert is_numerically_scorable(["C", "D"], "deterministic", scores) is False
+
+    def test_deterministic_string_case_insensitive(self):
+        # Matches apply_choice_scores.
+        scores = {"Yes": 1.0, "No": 0.0}
+        assert is_numerically_scorable("yes", "deterministic", scores) is True
+        assert is_numerically_scorable("YES", "deterministic", scores) is True
+        assert is_numerically_scorable(" Yes ", "deterministic", scores) is True

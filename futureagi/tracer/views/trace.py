@@ -28,7 +28,7 @@ from django.db.models import (
     When,
 )
 from django.db.models.functions import Coalesce, JSONObject, Round
-from django.http import FileResponse, HttpResponse
+from django.http import FileResponse, HttpResponse, StreamingHttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_yasg.utils import swagger_auto_schema
@@ -77,11 +77,18 @@ from tracer.services.clickhouse.graph_dispatch import (
 )
 from tracer.services.clickhouse.query_builders import (
     AgentGraphQueryBuilder,
-    UserListQueryBuilder,
 )
 from tracer.services.clickhouse.query_builders.base import NIL_UUID
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.v2.query_builders.user_list import (
+    UserListQueryBuilderV2,
+)
+from tracer.services.clickhouse.v2.span_selectors import (
+    flatten_span_attributes_into_entry,
+    merge_content_rows,
+)
 from tracer.services.observability_providers import ObservabilityService
+from tracer.services.users_list_manager import UsersListManager
 from tracer.utils.annotations import (
     build_annotation_subqueries as _build_annotation_subqueries_impl,
 )
@@ -102,72 +109,6 @@ ERROR_RESPONSES = {
     500: ApiErrorResponseSerializer,
 }
 
-
-def _users_attr_enrichment_query(project_id=None):
-    """Build the Observe-Users span-attribute enrichment query (UsersView.get).
-
-    P3b step1.5 (DESIGN §3 / id_remap_sql) — DUAL id-remap resolution so a
-    cross-cutover straddler's attributes unify under the OLD curated id:
-
-      1. MATCH: the per-user filter is keyed by the OLD curated ``EndUser.id``
-         (``%(eu_ids)s``), but a straddler's NEW (deterministic-id) spans carry
-         ``end_user_id = new_id``. Resolve each span new→old through
-         ``end_user_id_remap`` and filter on the RESOLVED id, so the old-id set
-         pulls in the new-id spans too.
-      2. KEY: re-project the RESOLVED id AS ``end_user_id`` so the caller's
-         Python aggregation (``user_attrs[uid]``) buckets a straddler's new-id
-         spans under the OLD id — without this the attributes would land under
-         the raw new id and never merge into the (old-id) user row.
-
-    The committed read used ``PREWHERE end_user_id IN %(eu_ids)s``; PREWHERE
-    cannot reference a joined column, so the resolve+filter moves to a wrapped
-    scan's ``WHERE`` (``resolved_id_expr`` is the zero-uuid-guarded new→old map —
-    NOT a COALESCE; an unmatched LEFT JOIN fills ``old_id`` with the zero-uuid,
-    not NULL; see id_remap_sql). Pre-flip NO span matches a ``new_id`` so the
-    resolved id == the span's own id and this is result-identical to the
-    committed read (acceptance gate B).
-
-    Returns ``(sql, params)`` where ``params`` carries the project binding (if
-    any); the caller binds ``%(eu_ids)s`` (and ``%(attr_pid)s`` when scoped).
-    """
-    from tracer.services.clickhouse.v2.id_remap_sql import (
-        remap_left_join,
-        resolved_id_expr,
-    )
-
-    params: dict = {}
-    project_clause = ""
-    if project_id:
-        params["attr_pid"] = str(project_id)
-        project_clause = "AND project_id = toUUID(%(attr_pid)s)"
-
-    remap_join = remap_left_join("end_user_id", "end_user_id_remap")
-    resolved = resolved_id_expr("end_user_id")
-    sql = f"""
-    SELECT
-        resolved_end_user_id AS end_user_id,
-        attributes_extra,
-        attrs_string,
-        attrs_number
-    FROM (
-        SELECT
-            {resolved} AS resolved_end_user_id,
-            attributes_extra,
-            attrs_string,
-            attrs_number
-        FROM spans
-        {remap_join}
-        WHERE is_deleted = 0
-          {project_clause}
-          AND (
-            (attributes_extra != '{{}}' AND attributes_extra != '')
-            OR length(mapKeys(attrs_string)) > 0
-            OR length(mapKeys(attrs_number)) > 0
-          )
-    )
-    WHERE resolved_end_user_id IN %(eu_ids)s
-    """
-    return sql, params
 
 
 class TraceTagsUpdateSerializer(serializers.Serializer):
@@ -2877,34 +2818,26 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         eval_outputs = {}
         trace_evals: dict[str, Any] = {}
         if eval_config_ids:
-            eval_table, eval_nd = eval_logger_source()
-            eval_query = f"""
-            SELECT
-                trace_id,
-                toString(custom_eval_config_id) AS eval_config_id,
-                avg(output_float) AS avg_score,
-                avg(CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END) AS pass_rate,
-                count() AS eval_count,
-                any(output_str_list) AS output_str_list
-            FROM {eval_table} FINAL
-            WHERE {eval_nd}
-              AND trace_id = %(trace_id)s
-              AND custom_eval_config_id IN %(eval_config_ids)s
-            GROUP BY trace_id, custom_eval_config_id
-            """
-            eval_result = analytics.execute_ch_query(
-                eval_query,
-                {
-                    "trace_id": str(trace_id),
-                    "eval_config_ids": tuple(eval_config_ids),
-                },
-                timeout_ms=30000,
+            # Reuse the list builder's eval query so the detail view stays in
+            # parity with the voice-call list (same completed-only aggregation
+            # + per-status counts) instead of a drifting parallel query. The
+            # builder gates aggregates on ``status = 'completed'`` so pending /
+            # running / skipped rows no longer contaminate the average, and the
+            # shared pivot emits a ``{"status": ...}`` marker for them.
+            eval_builder = TraceListQueryBuilder(
+                project_id=str(project_id),
+                eval_config_ids=eval_config_ids,
             )
-            eval_map = TraceListQueryBuilder.pivot_eval_results(
-                [(list(r.values())) for r in eval_result.data],
-                list(eval_result.data[0].keys()) if eval_result.data else [],
-            )
-            trace_evals = eval_map.get(str(trace_id), {}) or {}
+            eval_query, eval_params = eval_builder.build_eval_query([str(trace_id)])
+            if eval_query:
+                eval_result = analytics.execute_ch_query(
+                    eval_query, eval_params, timeout_ms=30000
+                )
+                eval_map = TraceListQueryBuilder.pivot_eval_results(
+                    [list(r.values()) for r in eval_result.data],
+                    list(eval_result.data[0].keys()) if eval_result.data else [],
+                )
+                trace_evals = eval_map.get(str(trace_id), {}) or {}
 
         for config in eval_configs:
             config_id = str(config.id)
@@ -2932,6 +2865,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
             scores = trace_evals[config_id]
             metric_entry = {"name": metric_name, "output_type": output_type}
+            # All rows errored — surface the error state to the frontend.
+            if isinstance(scores, dict) and scores.get("error"):
+                metric_entry["error"] = True
+                eval_outputs[config_id] = metric_entry
+                continue
+            # Non-terminal / skipped eval — surface the lifecycle status so the
+            # detail drawer renders a loading / pending / skipped state.
+            if isinstance(scores, dict) and isinstance(scores.get("status"), str):
+                metric_entry["status"] = scores["status"]
+                if scores.get("skipped_reason"):
+                    metric_entry["skipped_reason"] = scores["skipped_reason"]
+                eval_outputs[config_id] = metric_entry
+                continue
             if isinstance(scores, dict):
                 if scores.get("per_choice"):
                     metric_entry["output"] = [
@@ -3531,24 +3477,32 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Phase 1b: Fetch heavy columns (input/output/attrs) for the page
         trace_ids = [str(row.get("trace_id", "")) for row in result.data]
-        content_map = {}
+        content_rows = []
         if trace_ids:
             content_query, content_params = builder.build_content_query(trace_ids)
             if content_query:
                 content_result = analytics.execute_ch_query(
                     content_query, content_params, timeout_ms=10000
                 )
-                for crow in content_result.data:
-                    content_map[str(crow.get("trace_id", ""))] = crow
+                content_rows = content_result.data
+        content_map = merge_content_rows(
+            result.data,
+            content_rows,
+            id_key="trace_id",
+            keys=(
+                "input",
+                "output",
+                "attrs_string",
+                "attrs_number",
+                "attrs_bool",
+                "attributes_extra",
+                "trace_tags",
+            ),
+        )
 
-        # Merge content into Phase 1 results
+        # metadata needs JSON-parsing from the raw CH column
         for row in result.data:
-            tid = str(row.get("trace_id", ""))
-            content = content_map.get(tid, {})
-            row["input"] = content.get("input", "")
-            row["output"] = content.get("output", "")
-            row["attrs_string"] = content.get("attrs_string", {})
-            row["attrs_number"] = content.get("attrs_number", {})
+            content = content_map.get(str(row.get("trace_id", "")), {})
             raw_meta = content.get("metadata", "{}")
             if isinstance(raw_meta, str):
                 try:
@@ -3557,7 +3511,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     row["metadata"] = {}
             else:
                 row["metadata"] = raw_meta or {}
-            row["trace_tags"] = content.get("trace_tags", [])
 
         user_id_map = builder.resolve_user_ids(trace_ids, analytics)
 
@@ -3717,6 +3670,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 label_id = str(label.id)
                 if label_id in trace_annotations:
                     entry[label_id] = trace_annotations[label_id]
+
+            # Root-span attributes for custom columns (typed maps + attributes_extra)
+            flatten_span_attributes_into_entry(entry, row)
 
             # Include metadata for custom columns
             metadata = row.get("metadata") or {}
@@ -4021,6 +3977,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             metric_entry["error"] = True
                             metrics[config_id] = metric_entry
                             continue
+                        # Non-terminal / skipped eval — surface the lifecycle
+                        # status so the FE renders a loading/pending/skipped
+                        # cell instead of a blank/0.
+                        if isinstance(scores, dict) and isinstance(
+                            scores.get("status"), str
+                        ):
+                            metric_entry["status"] = scores["status"]
+                            if scores.get("skipped_reason"):
+                                metric_entry["skipped_reason"] = scores[
+                                    "skipped_reason"
+                                ]
+                            metrics[config_id] = metric_entry
+                            continue
                         if isinstance(scores, dict):
                             if scores.get("per_choice"):
                                 metric_entry["output"] = [
@@ -4156,6 +4125,30 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         result = analytics.execute_ch_query(query, params, timeout_ms=10000)
         result.data = result.data[:page_size]
 
+        # Phase 1b: heavy columns (input/output + root-span attrs) for the page.
+        # Root-span attrs feed custom columns; without this merge they render "-".
+        page_trace_ids = [str(row.get("trace_id", "")) for row in result.data]
+        if page_trace_ids:
+            content_query, content_params = builder.build_content_query(page_trace_ids)
+            if content_query:
+                content_result = analytics.execute_ch_query(
+                    content_query, content_params, timeout_ms=10000
+                )
+                merge_content_rows(
+                    result.data,
+                    content_result.data,
+                    id_key="trace_id",
+                    keys=(
+                        "input",
+                        "output",
+                        "trace_tags",
+                        "attrs_string",
+                        "attrs_number",
+                        "attrs_bool",
+                        "attributes_extra",
+                    ),
+                )
+
         # Get count
         count_query, count_params = builder.build_count_query()
         count_result = analytics.execute_ch_query(
@@ -4241,6 +4234,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 if label_id in trace_annotations:
                     entry[label_id] = trace_annotations[label_id]
 
+            # Root-span attributes for custom columns (typed maps + attributes_extra)
+            flatten_span_attributes_into_entry(entry, row)
+
             table_data.append(entry)
 
         response = {
@@ -4322,160 +4318,59 @@ class UsersView(APIView):
     @validated_request(
         query_serializer=UsersQuerySerializer,
         responses={200: UsersResponseSerializer, **ERROR_RESPONSES},
+        # `export=true` returns text/csv; list returns JSON.
+        produces=["application/json", "text/csv"],
     )
     def get(self, request, *args, **kwargs):
         """
         List traces filtered by project ID with optimized queries.
         """
+        # Thin transport layer: deserialize the request, resolve the
+        # request-scoped allowed projects, then delegate all query/enrichment/
+        # CSV work to UsersListManager (export=true streams CSV; else JSON).
         try:
             query_data = request.validated_query_data
 
-            project_id = query_data.get("project_id") or None
-            project_id = str(project_id) if project_id else None
+            # Serializer is BooleanField(default=False), so this is already a bool.
+            export = query_data.get("export", False)
             search = query_data.get("search", "")
-            page_size = query_data.get("page_size", 30)
-            current_page = query_data.get("current_page_index", 0)
-            search_name = search.strip() if search else None
-            organization_id = request.user.organization.id
-            limit = page_size
-            offset = current_page * page_size
-            sort_params = query_data.get("sort_params", [])
-            filters = query_data.get("filters", [])
 
-            # Convert string parameters to appropriate types
             try:
-                page_size = int(page_size)
-                current_page = int(current_page)
+                page_size = int(query_data.get("page_size", 30))
+                current_page = int(query_data.get("current_page_index", 0))
             except (ValueError, TypeError):
                 page_size = 10
                 current_page = 0
 
-            # CH25 EndUser cutover (DESIGN §4.3): the curated source is now the
-            # v2 `end_users` RMT, which has NO `workspace_id` column (schema
-            # 017). The legacy `tracer_enduser.workspace_id` filter was this
-            # view's ONLY server-side workspace guard, so isolation must now
-            # route through the workspace's projects. Resolve the allowed
-            # project set (the is_default / null-workspace fan-out is encoded by
-            # `_project_queryset_for_request`); if a specific project_id was
-            # requested, keep it only when it is in scope (else the result is
-            # empty — never an org-wide scan).
-            allowed_project_ids = list(
-                _project_queryset_for_request(request).values_list("id", flat=True)
+            # Workspace isolation is request-bound, so resolve the allowed
+            # projects here and pass the plain list to the manager (CH25: the
+            # curated source has no workspace_id column to filter on).
+            manager = UsersListManager(
+                organization_id=str(request.user.organization.id),
+                allowed_project_ids=[
+                    str(pid)
+                    for pid in _project_queryset_for_request(request).values_list(
+                        "id", flat=True
+                    )
+                ],
+                project_id=query_data.get("project_id") or None,
+                search=search.strip() if search else None,
+                filters=query_data.get("filters", []),
+                sort_params=query_data.get("sort_params", []),
             )
-            allowed_project_id_strs = {str(p) for p in allowed_project_ids}
-            empty_scope = False
-            if project_id:
-                if project_id in allowed_project_id_strs:
-                    scoped_project_ids = [project_id]
-                else:
-                    scoped_project_ids = []
-                    empty_scope = True
-            else:
-                scoped_project_ids = [str(p) for p in allowed_project_ids]
-                empty_scope = not scoped_project_ids
 
-            analytics = AnalyticsQueryService()
-            builder = UserListQueryBuilder(
-                organization_id=str(organization_id),
-                project_ids=scoped_project_ids,
-                search=search_name,
-                limit=limit,
-                offset=offset,
-                filters=filters,
-                sort_params=sort_params,
-                empty_scope=empty_scope,
+            if export:
+                response = StreamingHttpResponse(
+                    manager.iter_export_csv(),
+                    content_type="text/csv",
+                )
+                response["Content-Disposition"] = "attachment"
+                return response
+
+            payload = manager.list_payload(
+                page_size=page_size, current_page=current_page
             )
-            query, params = builder.build()
-            result = analytics.execute_ch_query(query, params, timeout_ms=30000)
-            formatted = builder.format_rows(result.data)
-            output = formatted["table"]
-            count = formatted["total_count"]
-
-            # Enrich with aggregated span attributes from ClickHouse
-            end_user_ids = [
-                r.get("end_user_id") for r in output if r.get("end_user_id")
-            ]
-            if end_user_ids:
-                try:
-                    analytics = AnalyticsQueryService()
-                    _SKIP_ATTR_PREFIXES = (
-                        "raw.",
-                        "llm.input_messages",
-                        "llm.output_messages",
-                        "input.value",
-                        "output.value",
-                    )
-                    # P3b step1.5: resolve end_user_id new→old (filter + key) so a
-                    # straddler's new-id span attributes unify under the OLD id.
-                    # See `_users_attr_enrichment_query`.
-                    attr_query, attr_params = _users_attr_enrichment_query(
-                        project_id=project_id
-                    )
-                    attr_params["eu_ids"] = tuple(str(e) for e in end_user_ids)
-                    attr_result = analytics.execute_ch_query(
-                        attr_query, attr_params, timeout_ms=30000
-                    )
-                    # Aggregate per user
-                    user_attrs: dict = {}
-                    for attr_row in attr_result.data:
-                        uid = str(attr_row.get("end_user_id", ""))
-                        raw = attr_row.get("attributes_extra", "{}")
-                        try:
-                            attrs = (
-                                json.loads(raw) if isinstance(raw, str) else (raw or {})
-                            )
-                        except (json.JSONDecodeError, TypeError):
-                            attrs = {}
-                        # Fallback: merge from typed Map columns when raw is empty
-                        if not attrs:
-                            str_map = attr_row.get("attrs_string") or {}
-                            num_map = attr_row.get("attrs_number") or {}
-                            if isinstance(str_map, dict):
-                                attrs.update(str_map)
-                            if isinstance(num_map, dict):
-                                for k, v in num_map.items():
-                                    if k not in attrs:
-                                        attrs[k] = v
-                        if uid not in user_attrs:
-                            user_attrs[uid] = {}
-                        for key, value in attrs.items():
-                            if key.startswith(_SKIP_ATTR_PREFIXES):
-                                continue
-                            if isinstance(value, str) and len(value) > 500:
-                                continue
-                            if key not in user_attrs[uid]:
-                                user_attrs[uid][key] = (
-                                    set()
-                                    if isinstance(value, (str, int, float, bool))
-                                    else []
-                                )
-                            if isinstance(value, (str, int, float, bool)):
-                                user_attrs[uid][key].add(
-                                    value
-                                    if not isinstance(value, bool)
-                                    else str(value).lower()
-                                )
-                    # Merge into output rows
-                    for entry in output:
-                        euid = str(entry.get("end_user_id", ""))
-                        for key, values in user_attrs.get(euid, {}).items():
-                            if key not in entry:
-                                if isinstance(values, set):
-                                    vals = sorted(values, key=str)
-                                    entry[key] = vals[0] if len(vals) == 1 else vals
-                                else:
-                                    entry[key] = values
-                except Exception as e:
-                    logger.warning(f"User span attribute enrichment failed: {e}")
-
-            final_output = {
-                "table": output,
-                "total_count": count,
-                "total_pages": (count // page_size)
-                + (1 if count % page_size > 0 else 0),
-            }
-
-            return self._gm.success_response(final_output)
+            return self._gm.success_response(payload)
 
         except Exception as e:
             logger.exception(f"ERROR {e}")

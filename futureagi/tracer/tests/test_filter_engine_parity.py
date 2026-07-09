@@ -121,6 +121,8 @@ class TestSystemMetricAliases:
             ("tokens", "total_tokens"),
             ("prompt_tokens", "avg_input_tokens"),
             ("completion_tokens", "avg_output_tokens"),
+            ("input", "input"),
+            ("output", "output"),
         ],
     )
     def test_pg_filter_engine_accepts_frontend_and_canonical_ids(
@@ -251,7 +253,9 @@ class TestLegacyOpsRaiseInMemory:
     def test_filter_number_rejects_not_in_between(self):
         engine = FilterEngine([])
         with pytest.raises(ValueError):
-            engine._filter_number([{"x": 1}], "x", "not_in_between", [0, 10], ColType.NORMAL)
+            engine._filter_number(
+                [{"x": 1}], "x", "not_in_between", [0, 10], ColType.NORMAL
+            )
 
     def test_filter_text_rejects_is(self):
         engine = FilterEngine([])

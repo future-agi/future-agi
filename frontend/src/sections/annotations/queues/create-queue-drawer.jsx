@@ -147,7 +147,6 @@ export default function CreateQueueDrawer({
     defaultValues: DEFAULT_VALUES,
   });
 
-  const labelIds = watch("label_ids");
   const annotators = watch("annotators");
   const autoAssign = watch("autoAssign");
   const annotatorCount = annotators.filter(isQueueAnnotatorRole).length;
@@ -317,7 +316,7 @@ export default function CreateQueueDrawer({
                 <Controller
                   name="name"
                   control={control}
-                  rules={{ required: "Queue name is required" }}
+                  rules={{ required: "Please enter a name for this queue" }}
                   render={({ field, fieldState }) => (
                     <TextField
                       {...field}
@@ -329,7 +328,7 @@ export default function CreateQueueDrawer({
                       error={!!fieldState.error}
                       helperText={
                         fieldState.error?.message ||
-                        "Enter annotation queue name"
+                        "A short, descriptive name annotators will recognize"
                       }
                       inputProps={{ maxLength: 255 }}
                       FormHelperTextProps={{
@@ -389,9 +388,32 @@ export default function CreateQueueDrawer({
               title="Annotation Labels"
               subtitle="Choose labels that annotators will assign to items in this queue."
             >
-              <LabelPicker
-                selectedIds={labelIds}
-                onChange={(ids) => setValue("label_ids", ids)}
+              <Controller
+                name="label_ids"
+                control={control}
+                rules={{
+                  validate: (value) =>
+                    (Array.isArray(value) && value.length > 0) ||
+                    "At least one label is required",
+                }}
+                render={({ field, fieldState }) => (
+                  <>
+                    <LabelPicker
+                      selectedIds={field.value}
+                      onChange={(ids) => field.onChange(ids)}
+                      lockLastSelected={isEdit}
+                    />
+                    {fieldState.error && (
+                      <Typography
+                        variant="caption"
+                        color="error.main"
+                        sx={{ mt: 0.75, display: "block" }}
+                      >
+                        {fieldState.error.message}
+                      </Typography>
+                    )}
+                  </>
+                )}
               />
             </Section>
 
@@ -449,10 +471,11 @@ export default function CreateQueueDrawer({
                   rules={{
                     validate: (value) => {
                       const n = Number(value);
-                      if (!value && value !== 0) return "Required";
-                      if (n < 1) return "Must be at least 1";
+                      if (!value && value !== 0)
+                        return "Enter how many submissions each item needs";
+                      if (n < 1) return "Each item needs at least 1 submission";
                       if (annotatorCount > 0 && n > annotatorCount)
-                        return `Cannot exceed annotator count (${annotatorCount})`;
+                        return `Can't be more than the number of annotators added (${annotatorCount})`;
                       return true;
                     },
                   }}
@@ -471,7 +494,7 @@ export default function CreateQueueDrawer({
                       inputProps={{ min: 1, max: 10 }}
                       helperText={
                         fieldState.error?.message ||
-                        "Number of responses should be less than or equal to added annotators"
+                        "How many annotators must label each item — at most the number you've added"
                       }
                       FormHelperTextProps={{
                         sx: { ml: 0, color: "text.disabled" },

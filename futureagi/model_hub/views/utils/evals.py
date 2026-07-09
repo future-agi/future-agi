@@ -460,6 +460,7 @@ def run_eval_func(
                 value=value,
                 mapping=mappings,
                 eval_explanation=response.get("reason"),
+                eval_config=config,
             )
 
         return output

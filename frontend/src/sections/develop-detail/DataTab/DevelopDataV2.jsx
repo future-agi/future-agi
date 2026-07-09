@@ -82,17 +82,13 @@ import DatasetLoader from "../../develop/loaders/DatasetLoader";
 import { useEditSyntheticDataStore } from "src/sections/develop/AddRowDrawer/EditSyntheticData/state";
 import RunningSkeletonRenderer from "src/sections/common/DevelopCellRenderer/CellRenderers/RunningSkeletonRenderer";
 import { APP_CONSTANTS } from "src/utils/constants";
-import { OutputTypes } from "../../common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
+import {
+  OutputTypes,
+  RefreshStatus,
+} from "../../common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 import { useAuthContext } from "src/auth/hooks";
 import { ROLES } from "src/utils/rolePermissionMapping";
 const PdfPreviewDrawer = lazy(() => import("src/components/PdfPreviewDrawer"));
-const RefreshStatus = [
-  "Running",
-  "NotStarted",
-  "Editing",
-  "ExperimentEvaluation",
-  "PartialRun",
-];
 
 const getResultColumnConfig = (result) => result?.column_config ?? [];
 const getResultIsProcessingData = (result) =>
@@ -104,11 +100,14 @@ const getResultSyntheticPercentage = (result) =>
 const getResultIsSyntheticRegenerate = (result) =>
   Boolean(result?.synthetic_regenerate);
 const getRowId = (row) => row?.row_id ?? row?.rowId;
-const getColumnSourceId = (column) => column?.source_id ?? column?.sourceId;
+const getColumnSourceId = (column) =>
+  column?.source_id !== undefined ? column.source_id : column?.sourceId;
 const getColumnOriginType = (column) =>
-  column?.origin_type ?? column?.originType;
-const getColumnIsFrozen = (column) => column?.is_frozen ?? column?.isFrozen;
-const getColumnIsVisible = (column) => column?.is_visible ?? column?.isVisible;
+  column?.origin_type !== undefined ? column.origin_type : column?.originType;
+const getColumnIsFrozen = (column) =>
+  column?.is_frozen !== undefined ? column.is_frozen : column?.isFrozen;
+const getColumnIsVisible = (column) =>
+  column?.is_visible !== undefined ? column.is_visible : column?.isVisible;
 const SkeletonHeader = () => {
   return <Skeleton width="60%" />;
 };
@@ -434,7 +433,7 @@ const getDefaultColDefs = () => {
   ];
 };
 
-const getAverageColumnConfig = (columns, tableRows) => {
+export const getAverageColumnConfig = (columns, tableRows) => {
   if (!columns?.length) {
     return [];
   }
@@ -547,6 +546,12 @@ const getAverageColumnConfig = (columns, tableRows) => {
             : `Average : ${eachCol?.averageScore}%`
           : "";
     }
+  }
+
+  // Skip the pinned summary row when no column has a value to show; otherwise
+  // every cell is "" and AG Grid renders a blank placeholder row at the bottom.
+  if (!Object.values(bottomRow).some(Boolean)) {
+    return [];
   }
 
   return [
@@ -1327,10 +1332,8 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
                         const datapointValue = {
                           index: params.rowIndex,
                           rowData: params.data,
-                          valueInfos:
-                            params?.data[params?.colDef?.col?.id]
-                              ?.value_infos ??
-                            params?.data[params?.colDef?.col?.id]?.valueInfos,
+                          value_infos:
+                            params?.data[params?.colDef?.col?.id]?.value_infos,
                         };
                         useDatapointDrawerStore
                           .getState()

@@ -402,10 +402,8 @@ class TestMetricsEndpoint:
         metric_names = [m["name"] for m in data["metrics"]]
         assert "latency" in metric_names
         assert "cost" in metric_names
-        span_duration = next(m for m in data["metrics"] if m["name"] == "latency_ms")
-        assert span_duration["display_name"] == "Duration"
-        assert span_duration["source"] == "spans"
-        assert span_duration["type"] == "number"
+        # latency_ms ("Duration") was removed from the catalog (duplicate of latency)
+        assert "latency_ms" not in metric_names
 
     @pytest.mark.django_db
     def test_metrics_returns_agent_scoped_simulation_eval_metrics(
@@ -843,7 +841,11 @@ class TestMetricsEndpoint:
         auth_client,
         observe_project,
     ):
-        """`metric_name=name` (Trace Name) must scope to root spans."""
+        """`metric_name=name` (Trace Name) must scope to root spans.
+
+        CH25 v2 spans write '' (not NULL) on the non-nullable parent_span_id
+        for root spans, so the clause must match both forms or it returns 0 rows.
+        """
         mock_result = MagicMock()
         mock_result.data = []
         mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
@@ -855,7 +857,7 @@ class TestMetricsEndpoint:
         )
 
         sql_arg = mock_analytics_cls.return_value.execute_ch_query.call_args[0][0]
-        assert "parent_span_id IS NULL" in sql_arg
+        assert "(parent_span_id IS NULL OR parent_span_id = '')" in sql_arg
 
     @pytest.mark.parametrize("metric_name", ["span_name", "service_name"])
     @pytest.mark.django_db
@@ -882,6 +884,34 @@ class TestMetricsEndpoint:
 
         sql_arg = mock_analytics_cls.return_value.execute_ch_query.call_args[0][0]
         assert "parent_span_id" not in sql_arg
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_filter_values_service_name_uses_service_name_col(
+        self,
+        mock_analytics_cls,
+        _mock_ch_enabled,
+        auth_client,
+        observe_project,
+    ):
+        """service_name must select the real `service_name` column (OTel
+        service.name) — the same column _STRING_FILTER_COL filters on — not the
+        span `name`/`trace_name`, else the picker offers unmatchable values."""
+        mock_result = MagicMock()
+        mock_result.data = []
+        mock_analytics_cls.return_value.execute_ch_query.return_value = mock_result
+
+        auth_client.get(
+            "/tracer/dashboard/filter_values/"
+            f"?metric_name=service_name&metric_type=system_metric"
+            f"&project_ids={observe_project.id}&source=traces"
+        )
+
+        sql_arg = mock_analytics_cls.return_value.execute_ch_query.call_args[0][0]
+        assert "SELECT DISTINCT service_name AS val" in sql_arg
+        assert "SELECT DISTINCT name AS val" not in sql_arg
+        assert "trace_name" not in sql_arg
 
 
 class TestChartsView:
@@ -1384,6 +1414,260 @@ class TestDashboardQueryBuilder:
         sql, _, _ = queries[0]
         assert "span_attr_str" in sql
         assert "breakdown_value" in sql
+
+
+class TestDashboardAttrRollupRouting:
+    """Routing for the latency-avg × covered-attribute breakdown.
+
+    Drives the real build_all_queries() call-path. [FIX] tests go RED if the
+    routing branch is removed; [FALLBACK] tests prove the spans path is kept.
+
+    The rollup is fail-closed behind three gates: v2 schema only
+    (``_attr_rollup_available``), DASHBOARD_ATTR_ROLLUP_ENABLED, and the window
+    starting at/after DASHBOARD_ATTR_ROLLUP_COVERED_SINCE. ``_v2``+``_enable``
+    open all three so a [FALLBACK] test isolates the one condition it names.
+    """
+
+    # Far enough in the past that the 30D-preset window always starts after it.
+    _COVERED_SINCE = datetime(2000, 1, 1, tzinfo=UTC)
+
+    @staticmethod
+    def _config(metric_name="latency", aggregation="avg", breakdowns=None,
+                metric_filters=None, global_filters=None, granularity="day"):
+        metric = {
+            "id": metric_name,
+            "name": metric_name,
+            "type": "system_metric",
+            "aggregation": aggregation,
+        }
+        if metric_filters is not None:
+            metric["filters"] = metric_filters
+        return {
+            "project_ids": [str(uuid.uuid4())],
+            "granularity": granularity,
+            "time_range": {"preset": "30D"},
+            "metrics": [metric],
+            "filters": global_filters or [],
+            "breakdowns": breakdowns if breakdowns is not None else [],
+        }
+
+    @staticmethod
+    def _bd(name):
+        return {
+            "type": "custom_attribute",
+            "name": name,
+            "source": "traces",
+            "display_name": name,
+            "attribute_type": "string",
+        }
+
+    @staticmethod
+    def _v2(config):
+        return DashboardQueryBuilderV2(config)
+
+    def _enable(self, settings, covered_since=None):
+        settings.DASHBOARD_ATTR_ROLLUP_ENABLED = True
+        settings.DASHBOARD_ATTR_ROLLUP_COVERED_SINCE = (
+            self._COVERED_SINCE if covered_since is None else covered_since
+        )
+
+    def test_covered_breakdown_final_status_routes_to_rollup(self, settings):
+        # [FIX] final_status → rollup. RED without the routing branch.
+        self._enable(settings)
+        config = self._config(breakdowns=[self._bd("final_status")])
+        sql, params, _ = self._v2(config).build_all_queries()[0]
+        # Targets the rollup, reads merged state, and does NOT scan the Map.
+        assert "dashboard_attr_rollup" in sql
+        assert "sumMerge(latency_sum)" in sql
+        assert "countMerge(n)" in sql
+        assert "span_attr_str" not in sql
+        assert "FROM spans" not in sql
+        # Output contract unchanged: time_bucket / breakdown_value / value.
+        assert "time_bucket" in sql
+        assert "breakdown_value" in sql
+        # attr_key is passed as a param, filtered on in the rollup.
+        assert params["attr_key"] == "final_status"
+        assert "attr_key = %(attr_key)s" in sql
+
+    def test_covered_breakdown_country_routes_to_rollup(self, settings):
+        # [FIX] country → rollup too.
+        self._enable(settings)
+        config = self._config(breakdowns=[self._bd("country")])
+        sql, params, _ = self._v2(config).build_all_queries()[0]
+        assert "dashboard_attr_rollup" in sql
+        assert "sumMerge(latency_sum) / countMerge(n)" in sql
+        assert "span_attr_str" not in sql
+        assert params["attr_key"] == "country"
+
+    def test_v1_builder_never_routes_to_rollup(self, settings):
+        # [FALLBACK] FIX 1 — base/v1 builder lacks the rollup table; even with
+        # the flag on and the window covered it must emit the spans scan.
+        self._enable(settings)
+        config = self._config(breakdowns=[self._bd("final_status")])
+        sql, _, _ = DashboardQueryBuilder(config).build_all_queries()[0]
+        assert "dashboard_attr_rollup" not in sql
+        assert "FROM spans" in sql
+
+    def test_flag_disabled_falls_back_to_spans(self, settings):
+        # [FALLBACK] FIX 2 — flag off (fresh deploy) → spans path.
+        settings.DASHBOARD_ATTR_ROLLUP_ENABLED = False
+        settings.DASHBOARD_ATTR_ROLLUP_COVERED_SINCE = self._COVERED_SINCE
+        config = self._config(breakdowns=[self._bd("final_status")])
+        sql, _, _ = self._v2(config).build_all_queries()[0]
+        assert "dashboard_attr_rollup" not in sql
+        assert "FROM spans" in sql
+
+    def test_coverage_unset_falls_back_to_spans(self, settings):
+        # [FALLBACK] FIX 2 — flag on but no coverage date set → spans path.
+        settings.DASHBOARD_ATTR_ROLLUP_ENABLED = True
+        settings.DASHBOARD_ATTR_ROLLUP_COVERED_SINCE = None
+        config = self._config(breakdowns=[self._bd("final_status")])
+        sql, _, _ = self._v2(config).build_all_queries()[0]
+        assert "dashboard_attr_rollup" not in sql
+        assert "FROM spans" in sql
+
+    def test_window_before_coverage_falls_back_to_spans(self, settings):
+        # [FALLBACK] boundary (a) — a window starting before COVERED_SINCE is
+        # not backfilled; route must fall back, never return a partial rollup.
+        self._enable(settings, covered_since=datetime.now(UTC) + timedelta(days=1))
+        config = self._config(breakdowns=[self._bd("final_status")])
+        sql, _, _ = self._v2(config).build_all_queries()[0]
+        assert "dashboard_attr_rollup" not in sql
+        assert "FROM spans" in sql
+
+    def test_per_metric_filter_falls_back_to_spans(self, settings):
+        # [FALLBACK] per-metric filter → spans path.
+        self._enable(settings)
+        config = self._config(
+            breakdowns=[self._bd("final_status")],
+            metric_filters=[
+                {
+                    "metric_type": "system_metric",
+                    "metric_name": "status",
+                    "operator": "equal_to",
+                    "value": "OK",
+                }
+            ],
+        )
+        sql, _, _ = self._v2(config).build_all_queries()[0]
+        assert "dashboard_attr_rollup" not in sql
+        assert "FROM spans" in sql
+
+    def test_global_filter_falls_back_to_spans(self, settings):
+        # [FALLBACK] a global filter present → spans path.
+        self._enable(settings)
+        config = self._config(
+            breakdowns=[self._bd("final_status")],
+            global_filters=[
+                {
+                    "metric_type": "custom_attribute",
+                    "metric_name": "env",
+                    "operator": "equal_to",
+                    "value": "prod",
+                    "attribute_type": "string",
+                }
+            ],
+        )
+        sql, _, _ = self._v2(config).build_all_queries()[0]
+        assert "dashboard_attr_rollup" not in sql
+        assert "FROM spans" in sql
+
+    def test_uncovered_attribute_falls_back_to_spans(self, settings):
+        # [FALLBACK] an attribute outside the covered set (user_id) → spans path.
+        self._enable(settings)
+        config = self._config(breakdowns=[self._bd("user_id")])
+        sql, _, _ = self._v2(config).build_all_queries()[0]
+        assert "dashboard_attr_rollup" not in sql
+        assert "FROM spans" in sql
+
+    def test_non_avg_aggregation_falls_back_to_spans(self, settings):
+        # [FALLBACK] non-avg (p95) → spans path.
+        self._enable(settings)
+        config = self._config(
+            aggregation="p95", breakdowns=[self._bd("final_status")]
+        )
+        sql, _, _ = self._v2(config).build_all_queries()[0]
+        assert "dashboard_attr_rollup" not in sql
+        assert "FROM spans" in sql
+
+    def test_non_latency_metric_falls_back_to_spans(self, settings):
+        # [FALLBACK] non-latency (cost) → spans path.
+        self._enable(settings)
+        config = self._config(
+            metric_name="cost", breakdowns=[self._bd("final_status")]
+        )
+        sql, _, _ = self._v2(config).build_all_queries()[0]
+        assert "dashboard_attr_rollup" not in sql
+        assert "cost" in sql.lower()
+        assert "breakdown_value" in sql
+
+    def test_two_breakdowns_fall_back_to_spans(self, settings):
+        # [FALLBACK] >1 breakdown → spans path.
+        self._enable(settings)
+        config = self._config(
+            breakdowns=[self._bd("final_status"), self._bd("country")]
+        )
+        sql, _, _ = self._v2(config).build_all_queries()[0]
+        assert "dashboard_attr_rollup" not in sql
+
+    def test_no_breakdown_latency_avg_falls_back_to_spans(self, settings):
+        # [FALLBACK] plain latency avg with no breakdown → spans path unchanged.
+        self._enable(settings)
+        config = self._config(breakdowns=[])
+        sql, _, _ = self._v2(config).build_all_queries()[0]
+        assert "dashboard_attr_rollup" not in sql
+        assert "latency_ms" in sql
+
+    def test_sub_hour_granularity_falls_back_to_spans(self, settings):
+        # [FALLBACK] sub-hour granularity → spans path (rollup is hourly).
+        self._enable(settings)
+        config = self._config(
+            breakdowns=[self._bd("final_status")], granularity="minute"
+        )
+        sql, _, _ = self._v2(config).build_all_queries()[0]
+        assert "dashboard_attr_rollup" not in sql
+        assert "FROM spans" in sql
+
+    def test_hour_granularity_routes_to_rollup(self, settings):
+        # [FIX] hour granularity is covered (>= the rollup's hour resolution).
+        self._enable(settings)
+        config = self._config(
+            breakdowns=[self._bd("final_status")], granularity="hour"
+        )
+        sql, _, _ = self._v2(config).build_all_queries()[0]
+        assert "dashboard_attr_rollup" in sql
+
+    def test_rollup_params_carry_window_bounds(self, settings):
+        # [FIX] rollup is window-bounded, never all-history.
+        self._enable(settings)
+        config = self._config(breakdowns=[self._bd("final_status")])
+        sql, params, _ = self._v2(config).build_all_queries()[0]
+        assert "hour >= %(start_date)s" in sql
+        assert "hour < %(end_date)s" in sql
+        assert "start_date" in params and "end_date" in params
+        assert "project_id IN %(project_ids)s" in sql
+
+    def test_rollup_window_snapped_to_hour(self, settings):
+        # [FIX] FIX 3 — the rollup window is floored to whole hours so no
+        # partial bucket is read.
+        self._enable(settings)
+        config = self._config(breakdowns=[self._bd("final_status")])
+        _, params, _ = self._v2(config).build_all_queries()[0]
+        for key in ("start_date", "end_date"):
+            dt = params[key]
+            assert dt.minute == 0 and dt.second == 0 and dt.microsecond == 0
+
+    def test_weighted_mean_equals_raw_avg(self):
+        # sumMerge/countMerge == flat avg of raw latencies; avg-of-avgs would not.
+        hour_a = [100, 200, 300]
+        hour_b = [1000]
+        raw = hour_a + hour_b
+        flat_avg = sum(raw) / len(raw)
+        states = [(sum(hour_a), len(hour_a)), (sum(hour_b), len(hour_b))]
+        weighted = sum(s for s, _ in states) / sum(c for _, c in states)
+        assert weighted == pytest.approx(flat_avg)
+        avg_of_avgs = ((sum(hour_a) / len(hour_a)) + (sum(hour_b) / len(hour_b))) / 2
+        assert avg_of_avgs != pytest.approx(flat_avg)
 
 
 class TestDashboardQueryBuilderTimeRanges:
@@ -2048,6 +2332,51 @@ class TestDashboardQueryExecution:
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.AnalyticsQueryService")
+    def test_query_action_dataset_string_metric_is_queryable(
+        self, mock_analytics_cls, auth_client
+    ):
+        mock_service = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = [{"time_bucket": "2025-01-01T00:00:00", "value": 3}]
+        mock_service.execute_ch_query.return_value = mock_result
+        mock_analytics_cls.return_value = mock_service
+
+        response = auth_client.post(
+            "/tracer/dashboard/query/",
+            {
+                "workflow": "observability",
+                "project_ids": [],
+                "time_range": {"preset": "12M"},
+                "granularity": "month",
+                "metrics": [
+                    {
+                        "id": "dataset",
+                        "name": "dataset",
+                        "display_name": "Dataset",
+                        "type": "system_metric",
+                        "source": "datasets",
+                        "aggregation": "avg",
+                        "attribute_type": "string",
+                        "data_type": "string",
+                        "filters": [],
+                    }
+                ],
+                "filters": [],
+                "breakdowns": [],
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200
+        metric = response.json()["result"]["metrics"][0]
+        assert metric["id"] == "dataset"
+        assert metric["aggregation"] == "count_distinct"
+        sql = mock_service.execute_ch_query.call_args.args[0]
+        assert "uniqIf(" in sql
+        assert "dataset_dict" in sql
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
     def test_filter_values_simulation_excludes_deleted_rows_and_handles_numeric_columns(
         self, _mock_enabled, mock_analytics_cls, auth_client
@@ -2067,6 +2396,27 @@ class TestDashboardQueryExecution:
         assert "c.deleted = 0" in sql
         assert "c.duration_seconds IS NOT NULL" in sql
         assert "c.duration_seconds != ''" not in sql
+
+    @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
+    def test_filter_values_dataset_picker_keeps_active_dataset_scope(
+        self, _mock_enabled, mock_analytics_cls, auth_client
+    ):
+        mock_service = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = []
+        mock_service.execute_ch_query.return_value = mock_result
+        mock_analytics_cls.return_value = mock_service
+
+        response = auth_client.get(
+            "/tracer/dashboard/filter_values/?source=datasets&metric_name=dataset&metric_type=system_metric"
+        )
+
+        assert response.status_code == 200
+        sql = mock_service.execute_ch_query.call_args.args[0]
+        assert "FROM model_hub_dataset FINAL" in sql
+        assert "AND deleted = 0" in sql
 
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.AnalyticsQueryService")
@@ -2172,6 +2522,58 @@ class TestDashboardQueryExecution:
         ]
         sql = mock_service.execute_ch_query.call_args.args[0]
         assert "SELECT DISTINCT model AS val FROM spans" in sql
+
+    @pytest.mark.django_db
+    def test_filter_values_session_search_adds_ilike_and_limits_to_20(
+        self, _mock_enabled, mock_analytics_cls, auth_client, observe_project
+    ):
+        mock_service = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = []
+        mock_service.execute_ch_query.return_value = mock_result
+        mock_analytics_cls.return_value = mock_service
+
+        auth_client.get(
+            "/tracer/dashboard/filter_values/",
+            {
+                "source": "traces",
+                "metric_name": "session",
+                "metric_type": "system_metric",
+                "project_ids": str(observe_project.id),
+                "search": "abc123",
+            },
+        )
+
+        sql, params = mock_service.execute_ch_query.call_args.args[:2]
+        assert "ILIKE %(search_pattern)s" in sql
+        assert params["search_pattern"] == "%abc123%"
+        assert "LIMIT 20" in sql
+        assert "LIMIT 500" not in sql
+
+    @pytest.mark.django_db
+    def test_filter_values_session_no_search_uses_limit_500_without_ilike(
+        self, _mock_enabled, mock_analytics_cls, auth_client, observe_project
+    ):
+        mock_service = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = []
+        mock_service.execute_ch_query.return_value = mock_result
+        mock_analytics_cls.return_value = mock_service
+
+        auth_client.get(
+            "/tracer/dashboard/filter_values/",
+            {
+                "source": "traces",
+                "metric_name": "session",
+                "metric_type": "system_metric",
+                "project_ids": str(observe_project.id),
+            },
+        )
+
+        sql, params = mock_service.execute_ch_query.call_args.args[:2]
+        assert "ILIKE" not in sql
+        assert "search_pattern" not in params
+        assert "LIMIT 500" in sql
 
     @pytest.mark.django_db
     def test_filter_values_annotation_annotator_returns_project_annotators(

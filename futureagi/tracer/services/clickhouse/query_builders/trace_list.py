@@ -15,12 +15,15 @@ The two result sets are merged in Python.
 
 import math
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.eval_status import (
+    non_terminal_eval_marker,
+)
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 
-#TODO: switch this to "start_time" once we create an index on that column .
+# TODO: switch this to "start_time" once we create an index on that column .
 TIME_FILTER_COLUMN = "created_at"  # Options: "created_at" | "start_time"
 
 
@@ -45,7 +48,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
     # Mapping from sort column names the frontend sends to actual
     # ClickHouse column names on the root span.
-    SORT_FIELD_MAP: Dict[str, str] = {
+    SORT_FIELD_MAP: dict[str, str] = {
         "created_at": "start_time",
         "start_time": "start_time",
         "latency": "latency_ms",
@@ -58,7 +61,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     }
 
     # All available light columns for configurable column selection.
-    AVAILABLE_COLUMNS: List[str] = [
+    AVAILABLE_COLUMNS: list[str] = [
         "trace_id",
         "trace_name",
         "name",
@@ -79,17 +82,17 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
     def __init__(
         self,
-        project_id: Optional[str] = None,
-        project_ids: Optional[List[str]] = None,
+        project_id: str | None = None,
+        project_ids: list[str] | None = None,
         page_number: int = 0,
         page_size: int = 50,
-        filters: Optional[List[Dict]] = None,
-        sort_params: Optional[List[Dict]] = None,
-        eval_config_ids: Optional[List[str]] = None,
-        project_version_id: Optional[str] = None,
-        search: Optional[str] = None,
-        columns: Optional[List[str]] = None,
-        annotation_label_ids: Optional[List[str]] = None,
+        filters: list[dict] | None = None,
+        sort_params: list[dict] | None = None,
+        eval_config_ids: list[str] | None = None,
+        project_version_id: str | None = None,
+        search: str | None = None,
+        columns: list[str] | None = None,
+        annotation_label_ids: list[str] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
@@ -102,14 +105,14 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         self.search = search.strip() if search else None
         self.columns = columns
         self.annotation_label_ids = annotation_label_ids or []
-        self.start_date: Optional[datetime] = None
-        self.end_date: Optional[datetime] = None
+        self.start_date: datetime | None = None
+        self.end_date: datetime | None = None
 
     # ------------------------------------------------------------------
     # Phase 1: Paginated trace list
     # ------------------------------------------------------------------
 
-    def build(self) -> Tuple[str, Dict[str, Any]]:
+    def build(self) -> tuple[str, dict[str, Any]]:
         """Build the Phase-1 query for paginated root-span trace data.
 
         Returns:
@@ -229,7 +232,50 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
-    def build_content_query(self, trace_ids: List[str]) -> Tuple[str, Dict[str, Any]]:
+    def build_id_query(self) -> tuple[str, dict[str, Any]]:
+        """Filtered trace ids only — same root-span predicate/window as build(),
+        no pagination/order. Lets the eval resolver select the same traces this
+        list endpoint returns."""
+        self.start_date, self.end_date = self.parse_time_range(self.filters)
+        self.params["start_date"] = self.start_date
+        self.params["end_date"] = self.end_date
+
+        fb = self._FILTER_BUILDER_CLS(
+            table=self.TABLE,
+            annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
+        extra_where, extra_params = fb.translate(self.filters)
+        self.params.update(extra_params)
+        filter_fragment = f"AND {extra_where}" if extra_where else ""
+
+        pv_fragment = ""
+        if self.project_version_id:
+            pv_fragment = "AND project_version_id = %(project_version_id)s"
+            self.params["project_version_id"] = self.project_version_id
+
+        search_fragment = ""
+        if self.search:
+            search_fragment = "AND trace_name ILIKE %(search)s"
+            self.params["search"] = f"%{self.search}%"
+
+        query = f"""
+        SELECT trace_id
+        FROM {self.TABLE}
+        {self.project_where()}
+          AND (parent_span_id IS NULL OR parent_span_id = '')
+          AND created_at >= %(start_date)s - INTERVAL 1 DAY
+          AND {TIME_FILTER_COLUMN} >= %(start_date)s
+          AND {TIME_FILTER_COLUMN} < %(end_date)s
+          {pv_fragment}
+          {search_fragment}
+          {filter_fragment}
+        LIMIT 1 BY trace_id
+        """
+        return query, self.params
+
+    def build_content_query(self, trace_ids: list[str]) -> tuple[str, dict[str, Any]]:
         """Fetch heavy columns (input, output, attributes) for a page of traces.
 
         Uses PREWHERE on trace_id for fast point lookups — avoids scanning
@@ -238,7 +284,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if not trace_ids:
             return "", {}
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             **self.params,
             "content_trace_ids": tuple(trace_ids),
         }
@@ -250,6 +296,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             output,
             attrs_string,
             attrs_number,
+            attrs_bool,
+            attributes_extra,
             toJSONString(metadata) AS metadata,
             dictGetOrDefault('trace_dict', 'tags', toUUID(trace_id), '[]') AS trace_tags
         FROM {self.TABLE}
@@ -262,8 +310,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         return query, params
 
     def build_span_attributes_query(
-        self, trace_ids: List[str]
-    ) -> Tuple[str, Dict[str, Any]]:
+        self, trace_ids: list[str]
+    ) -> tuple[str, dict[str, Any]]:
         """Aggregate span attributes across all spans of each trace.
 
         Returns one row per trace with groupArrayDistinct for each attribute key.
@@ -286,7 +334,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
-    def build_count_query(self) -> Tuple[str, Dict[str, Any]]:
+    def build_count_query(self) -> tuple[str, dict[str, Any]]:
         """Build a query to count total matching traces (for pagination).
 
         Returns:
@@ -341,13 +389,13 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     # ------------------------------------------------------------------
 
     def build_span_count_query(
-        self, trace_ids: List[str]
-    ) -> Tuple[str, Dict[str, Any]]:
+        self, trace_ids: list[str]
+    ) -> tuple[str, dict[str, Any]]:
         """Count spans and errors per trace for a page of trace IDs."""
         if not trace_ids:
             return "", {}
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             **self.params,
             "sc_trace_ids": tuple(trace_ids),
         }
@@ -366,10 +414,10 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
     @staticmethod
     def pivot_span_count_results(
-        data: List[Dict],
-    ) -> Dict[str, Dict[str, int]]:
+        data: list[dict],
+    ) -> dict[str, dict[str, int]]:
         """Pivot span count results into ``{trace_id: {span_count, error_count}}``."""
-        result: Dict[str, Dict[str, int]] = {}
+        result: dict[str, dict[str, int]] = {}
         for row in data:
             tid = str(row.get("trace_id", ""))
             if tid:
@@ -385,8 +433,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
     def build_eval_query(
         self,
-        trace_ids: List[str],
-    ) -> Tuple[str, Dict[str, Any]]:
+        trace_ids: list[str],
+    ) -> tuple[str, dict[str, Any]]:
         """Build the Phase-2 eval-scores query for a page of trace IDs.
 
         Queries ``tracer_eval_logger FINAL`` grouped by
@@ -403,7 +451,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if not trace_ids or not self.eval_config_ids:
             return "", {}
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "trace_ids": tuple(trace_ids),
             "eval_config_ids": tuple(self.eval_config_ids),
         }
@@ -421,25 +469,25 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         created_at_fragment = ""
         if self.start_date is not None:
             params["start_date"] = self.start_date
-            created_at_fragment = (
-                "AND created_at >= %(start_date)s - INTERVAL 1 DAY"
-            )
+            created_at_fragment = "AND created_at >= %(start_date)s - INTERVAL 1 DAY"
 
-        # Include errored rows but compute aggregates only over successful
-        # rows (error = 0). ``success_count`` / ``error_count`` let the
-        # pivot surface an explicit error state on the UI when every eval
-        # row for a (trace, config) pair errored (distinct from "no eval
-        # run" vs a real Pass/Fail/score). ``str_lists`` keeps every
-        # non-errored ``output_str_list`` so the pivot can compute
-        # per-choice percentages for CHOICES evals.
-        # ``output_str`` is Nullable(String) and most evaluators leave it
-        # NULL. ClickHouse three-valued logic means ``NULL != 'ERROR'`` is
-        # NULL (not TRUE), so a bare ``output_str != 'ERROR'`` guard
-        # silently excludes every non-errored row with a NULL
-        # ``output_str`` — collapsing ``success_count`` to 0, making
-        # ``avg_score``/``pass_rate`` NaN, and leaving eval columns blank
-        # on the trace list. Use ``ifNull(...)`` to keep the comparison
-        # NULL-safe.
+        # Aggregates are computed only over *completed*, non-errored rows so a
+        # non-terminal (pending/running) or skipped row never skews a score nor
+        # masquerades as a real value. The per-status counts let the pivot pick
+        # one cell state per (trace, config) by the precedence
+        # completed > errored > skipped > running > pending.
+        # ``success_count`` excludes non-terminal/skipped/errored rows via
+        # ``status NOT IN (...)``: a bare ``error = 0`` guard also matches
+        # pending/running/skipped rows (they carry ``error = 0`` and a NULL
+        # output). NOT-IN (rather than ``status = 'completed'``) keeps legacy
+        # rows whose mirrored ``status`` is empty/NULL counted as completed.
+        # ``str_lists`` keeps every completed ``output_str_list`` so the pivot
+        # can compute per-choice percentages for CHOICES evals.
+        # ``output_str`` is Nullable(String); ClickHouse 3-valued logic makes
+        # ``NULL != 'ERROR'`` NULL (not TRUE), so use ``ifNull(...)`` to keep
+        # the comparison NULL-safe.
+        # New per-status columns are appended after ``str_lists`` so the pivot's
+        # positional column fallbacks (0..7) stay valid.
         query = f"""
         SELECT
             trace_id,
@@ -448,23 +496,27 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             -- json.dumps(allow_nan=False) rejects. NULL serializes as null.
             ifNotFinite(avgIf(
                 output_float,
-                error = 0 AND ifNull(output_str, '') != 'ERROR'
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
             ), NULL) AS avg_score,
             ifNotFinite(avgIf(
                 CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
-                error = 0 AND ifNull(output_str, '') != 'ERROR'
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
             ), NULL) AS pass_rate,
             countIf(
-                error = 0 AND ifNull(output_str, '') != 'ERROR'
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS success_count,
             countIf(
-                error = 1 OR ifNull(output_str, '') = 'ERROR'
+                error = 1 OR ifNull(output_str, '') = 'ERROR' OR status = 'errored'
             ) AS error_count,
             count() AS eval_count,
             groupArrayIf(
                 output_str_list,
-                error = 0 AND ifNull(output_str, '') != 'ERROR'
-            ) AS str_lists
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS str_lists,
+            countIf(status = 'skipped') AS skipped_count,
+            countIf(status = 'running') AS running_count,
+            countIf(status = 'pending') AS pending_count,
+            anyIf(skipped_reason, status = 'skipped') AS skipped_reason
         FROM {self.EVAL_TABLE} FINAL
         WHERE _peerdb_is_deleted = 0
           AND (deleted = 0 OR deleted IS NULL)
@@ -483,14 +535,14 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
     def build_annotation_query(
         self,
-        trace_ids: List[str],
-        annotation_label_ids: Optional[List[str]] = None,
-    ) -> Tuple[str, Dict[str, Any]]:
+        trace_ids: list[str],
+        annotation_label_ids: list[str] | None = None,
+    ) -> tuple[str, dict[str, Any]]:
         """Build annotation query for a page of trace IDs."""
         if not trace_ids or not annotation_label_ids:
             return "", {}
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             "trace_ids": tuple(trace_ids),
             "label_ids": tuple(annotation_label_ids),
         }
@@ -523,9 +575,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
-    def build_user_id_query(
-        self, trace_ids: List[str]
-    ) -> Tuple[str, Dict[str, Any]]:
+    def build_user_id_query(self, trace_ids: list[str]) -> tuple[str, dict[str, Any]]:
         """Fetch user_id strings from ClickHouse for a page of trace IDs.
 
         Uses enduser_dict to resolve end_user_id UUIDs to user_id strings
@@ -535,7 +585,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if not trace_ids:
             return "", {}
 
-        params: Dict[str, Any] = {
+        params: dict[str, Any] = {
             **self.params,
             "user_trace_ids": tuple(trace_ids),
         }
@@ -558,9 +608,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         """
         return query, params
 
-    def resolve_user_ids(
-        self, trace_ids: List[str], analytics
-    ) -> Dict[str, str]:
+    def resolve_user_ids(self, trace_ids: list[str], analytics) -> dict[str, str]:
         """Resolve user_id strings for a page of trace IDs.
 
         Single-query lookup using ClickHouse enduser_dict:
@@ -581,9 +629,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if not user_query:
             return {}
 
-        result = analytics.execute_ch_query(
-            user_query, user_params, timeout_ms=10000
-        )
+        result = analytics.execute_ch_query(user_query, user_params, timeout_ms=10000)
 
         # Build trace_id → user_id mapping (filter already applied in query)
         user_id_map = {
@@ -596,9 +642,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
     @staticmethod
     def pivot_annotation_results(
-        annotation_rows: List[Dict],
-        label_types: Optional[Dict[str, str]] = None,
-    ) -> Dict[str, Dict[str, Any]]:
+        annotation_rows: list[dict],
+        label_types: dict[str, str] | None = None,
+    ) -> dict[str, dict[str, Any]]:
         """Pivot annotation results keyed by trace_id.
 
         Returns:
@@ -607,7 +653,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         import json
 
         label_types = label_types or {}
-        result: Dict[str, Dict[str, Any]] = {}
+        result: dict[str, dict[str, Any]] = {}
         for row in annotation_rows:
             trace_id = str(row.get("trace_id", ""))
             label_id = str(row.get("label_id", ""))
@@ -645,9 +691,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
     @staticmethod
     def pivot_eval_results(
-        eval_rows: List[Tuple],
-        eval_columns: List[str],
-    ) -> Dict[str, Dict[str, Any]]:
+        eval_rows: list[tuple],
+        eval_columns: list[str],
+    ) -> dict[str, dict[str, Any]]:
         """Pivot eval query results into a nested dict keyed by trace_id.
 
         Args:
@@ -657,7 +703,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         Returns:
             A dict of ``{trace_id: {eval_config_id: score_dict}}``.
         """
-        result: Dict[str, Dict[str, Any]] = {}
+        result: dict[str, dict[str, Any]] = {}
         col_idx = {name: i for i, name in enumerate(eval_columns)}
 
         def _get(row, key, idx, default=None):
@@ -711,13 +757,11 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                         continue
             if parsed:
                 total = len(parsed)
-                counts: Dict[str, int] = {}
+                counts: dict[str, int] = {}
                 for lst in parsed:
                     for choice in set(lst):
                         counts[choice] = counts.get(choice, 0) + 1
-                per_choice = {
-                    k: round(100.0 * v / total, 2) for k, v in counts.items()
-                }
+                per_choice = {k: round(100.0 * v / total, 2) for k, v in counts.items()}
                 result.setdefault(trace_id, {})[config_id] = {
                     "per_choice": per_choice,
                 }
@@ -735,13 +779,28 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                     and math.isfinite(v)
                 )
 
+            avg_val = round(avg_score * 100, 2) if _finite(avg_score) else None
+            pass_val = round(pass_rate, 2) if _finite(pass_rate) else None
+
+            # No completed score: surface a non-terminal / skipped lifecycle
+            # marker (skipped > running > pending) so the cell renders a
+            # loading/pending/skipped state instead of a misleading blank.
+            if avg_val is None and pass_val is None:
+                marker = non_terminal_eval_marker(
+                    {
+                        "skipped_count": _get(row, "skipped_count", 8, 0) or 0,
+                        "running_count": _get(row, "running_count", 9, 0) or 0,
+                        "pending_count": _get(row, "pending_count", 10, 0) or 0,
+                        "skipped_reason": _get(row, "skipped_reason", 11, None),
+                    }
+                )
+                if marker is not None:
+                    result.setdefault(trace_id, {})[config_id] = marker
+                    continue
+
             score_data = {
-                "avg_score": (
-                    round(avg_score * 100, 2) if _finite(avg_score) else None
-                ),
-                "pass_rate": (
-                    round(pass_rate, 2) if _finite(pass_rate) else None
-                ),
+                "avg_score": avg_val,
+                "pass_rate": pass_val,
                 "count": _get(row, "eval_count", 6, 0) or 0,
             }
             result.setdefault(trace_id, {})[config_id] = score_data

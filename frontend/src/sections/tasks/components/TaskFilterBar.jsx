@@ -78,15 +78,6 @@ const OP_DISPLAY = {
   not_between: "not between",
 };
 
-const TASK_FILTER_CATEGORIES = [
-  { key: "all", label: "All", icon: "mdi:view-grid-outline" },
-  { key: "system", label: "Span type", icon: "mdi:shape-outline" },
-  { key: "attribute", label: "Attributes", icon: "mdi:code-braces" },
-];
-
-const isTaskFilterProperty = (property) =>
-  property?.id === "span_kind" || property?.category === "attribute";
-
 // Panel filter → form row(s). List/range ops keep array `filterValue`;
 // no-value ops drop it; other ops explode into one scalar row per value.
 function convertNewToOld(newFilters) {
@@ -408,16 +399,11 @@ const TaskFilterBar = ({
   }, [formFilters]);
 
   const [anchorEl, setAnchorEl] = useState(null);
-  const addBtnRef = useRef(null);
-
-  // Re-anchor when chips swap the trigger DOM node, so an open popover
-  // doesn't end up attached to a detached element.
-  const hasFiltersForEffect = panelFilters.length > 0;
-  useEffect(() => {
-    if (anchorEl && addBtnRef.current && anchorEl !== addBtnRef.current) {
-      setAnchorEl(addBtnRef.current);
-    }
-  }, [hasFiltersForEffect, anchorEl]);
+  // Anchor the panel to the filter bar row (not the "+", which drifts as chips
+  // wrap). It opens flush below the bar and stays glued there as filters are
+  // added/removed — avoiding the value-dropdown float, the "chases the +"
+  // drift, and the stranded panel on delete (TH-6534).
+  const barRef = useRef(null);
 
   const applyPanelFilters = useCallback(
     (next) => {
@@ -443,14 +429,34 @@ const TaskFilterBar = ({
     applyPanelFilters([]);
   }, [applyPanelFilters]);
 
-  const openPanel = useCallback((e) => {
-    setAnchorEl(e?.currentTarget || addBtnRef.current);
-  }, []);
+  const anchorToBar = useCallback(
+    () => ({
+      nodeType: 1,
+      getBoundingClientRect: () => barRef.current?.getBoundingClientRect(),
+    }),
+    [],
+  );
+
+  const openPanel = useCallback(() => {
+    if (!barRef.current) return;
+    setAnchorEl(anchorToBar());
+  }, [anchorToBar]);
+
+  // Keep the panel glued just below the bar as chips wrap/unwrap while it's
+  // open: a size change swaps in a fresh anchor object so MUI re-positions.
+  const isPanelOpen = Boolean(anchorEl);
+  useEffect(() => {
+    const el = barRef.current;
+    if (!isPanelOpen || !el) return undefined;
+    const ro = new ResizeObserver(() => setAnchorEl(anchorToBar()));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isPanelOpen, anchorToBar]);
 
   const hasFilters = panelFilters.length > 0;
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+    <Box ref={barRef} sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
       {hasFilters ? (
         <Box
           sx={{
@@ -468,9 +474,7 @@ const TaskFilterBar = ({
             />
           ))}
 
-          {/* + button to add another filter */}
           <Box
-            ref={addBtnRef}
             component="button"
             type="button"
             onClick={openPanel}
@@ -480,6 +484,7 @@ const TaskFilterBar = ({
               justifyContent: "center",
               width: 26,
               height: 26,
+              p: 0,
               border: "1px solid",
               borderColor: "divider",
               borderRadius: "6px",
@@ -489,7 +494,6 @@ const TaskFilterBar = ({
                   : "background.paper",
               color: "text.secondary",
               cursor: "pointer",
-              p: 0,
               "&:hover": {
                 color: "text.primary",
                 bgcolor:
@@ -521,7 +525,6 @@ const TaskFilterBar = ({
         </Box>
       ) : (
         <Button
-          ref={addBtnRef}
           onClick={openPanel}
           variant="outlined"
           size="small"
@@ -553,8 +556,6 @@ const TaskFilterBar = ({
         projectId={projectId}
         isSimulator={isSimulator}
         tab={rowTypeToFilterTab(rowType)}
-        categories={TASK_FILTER_CATEGORIES}
-        propertyFilter={isTaskFilterProperty}
         onApply={(next) => applyPanelFilters(next || [])}
       />
     </Box>

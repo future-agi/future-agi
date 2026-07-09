@@ -12,9 +12,7 @@ from model_hub.models.develop_dataset import Column, Dataset
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
-from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
-from tracer.models.trace import Trace
 from tracer.serializers.dataset import (
     AddToExistingDatasetObserveSerializer,
     AddToNewDatasetObserveSerializer,
@@ -60,55 +58,16 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             select_all = serializer.validated_data.get("select_all", False)
             project = serializer.validated_data.get("project")
 
-            # Derive project from the target trace(s)/span(s) when the client
-            # didn't pass one — avoids forcing the frontend to thread a
-            # project id through every call site. Org scoping on the lookup
-            # prevents cross-org leakage, and workspace scoping prevents
-            # same-org workspace bleed. `select_all` still requires project.
             org = _request_organization(request)
             workspace = _request_workspace(request)
             if not project and not select_all:
-                if trace_ids:
-                    project = (
-                        Trace.no_workspace_objects.filter(
-                            Q(project__organization=org),
-                            _workspace_scope_q("project__workspace", workspace, org),
-                            id__in=trace_ids,
-                        )
-                        .values_list("project_id", flat=True)
-                        .first()
-                    )
-                elif span_ids:
-                    # KEEP-PG: tenancy-anchored project derivation. The
-                    # PG variant is one query (single JOIN through
-                    # ``project__organization=org``); replacing with
-                    # CHSpanReader.get() would cost a CH round-trip
-                    # PLUS a PG ``Project.objects.filter(id=..,
-                    # organization=).exists()`` round-trip — same blast
-                    # radius, more code, no perf win. Spans table is
-                    # only used here to resolve the project FK.
-                    project = (
-                        ObservationSpan.no_workspace_objects.filter(
-                            Q(project__organization=org),
-                            _workspace_scope_q("project__workspace", workspace, org),
-                            id__in=span_ids,
-                        )
-                        .values_list("project_id", flat=True)
-                        .first()
-                    )
+                project = _project_id_from_selected_ids(
+                    trace_ids, span_ids, org, workspace
+                )
 
             if not project:
                 raise ValueError("Project id cannot be null")
 
-            # Tenant scope: validate the resolved project belongs to the
-            # caller's org BEFORE issuing any CH read. Spans in CH carry
-            # only project_id (no org_id JOIN), so the PG ``project__
-            # organization=org`` predicate the legacy ORM filters used
-            # MUST be replicated as an explicit pre-flight check here —
-            # otherwise a malicious caller can pass a foreign project
-            # UUID and reader.list_by_project would happily return that
-            # other org's spans. This matches the P1 fix landed in
-            # commit e80a7176d for separate_evals.py.
             if not Project.no_workspace_objects.filter(
                 _workspace_scope_q("workspace", workspace, org),
                 id=project,
@@ -116,130 +75,20 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             ).exists():
                 return self._gm.bad_request(get_error_message("PROJECT_NOT_FOUND"))
 
-            # Build span_ids list for create_new_cells. Each branch
-            # below is either a pure CH read (project_id-scoped) or a
-            # CH25-TODO deferral when the reader lacks exclusion API.
             span_id_list: list[str] = []
             if select_all:
-                # CH25-TODO(list_by_project_exclude): both select_all
-                # branches use ``.exclude(trace_id__in=…)`` /
-                # ``.exclude(id__in=…)``. CHSpanReader has no exclusion
-                # API; adding ad-hoc CH SQL inline would violate Rule 1.
-                # Propose: ``list_by_project(..., exclude_trace_ids=None,
-                # exclude_ids=None) -> list[CHSpan]`` (or a sibling
-                # ``ids_by_project_exclude``). Until that lands, keep
-                # the PG queryset so the select_all-with-exclusion
-                # semantics stay exact and don't risk silent row loss
-                # from a Python-side filter on a partially-fetched set.
-                if trace_ids is not None:
-                    observation_spans = ObservationSpan.no_workspace_objects.filter(
-                        _project_scope_q(request),
-                        parent_span_id__isnull=True,
-                        project_id=project,
-                    ).exclude(
-                        trace_id__in=trace_ids,
-                    )
-                elif span_ids is not None:
-                    observation_spans = ObservationSpan.no_workspace_objects.filter(
-                        _project_scope_q(request),
-                        project_id=project,
-                    ).exclude(
-                        id__in=span_ids,
-                    )
-                else:
-                    observation_spans = ObservationSpan.objects.none()
-                span_id_list = [
-                    str(sid) for sid in observation_spans.values_list("id", flat=True)
-                ]
+                span_id_list = _span_ids_for_select_all(
+                    request, project, trace_ids, span_ids
+                )
 
             elif trace_ids and len(trace_ids) > 0:
-                # Pre-validate trace_ids via PG so foreign-org / foreign-
-                # project ids are dropped BEFORE the CH read — without
-                # this, ``reader.list_by_trace_ids`` would happily fetch
-                # foreign-org spans into process memory and we'd drop
-                # them only at the Python ``project_id`` filter (defense
-                # in depth still works, but loading foreign rows even
-                # transiently is the codex P1 concern). The PG lookup
-                # is one indexed SELECT.
-                #
-                # CH: legacy ORM additionally constrained
-                # ``parent_span_id__isnull=True`` (root spans only). CH
-                # stores parent_span_id as non-nullable String — root
-                # spans have empty string, so a Python ``not span
-                # .parent_span_id`` filter is the equivalent test.
-                validated_trace_ids = list(
-                    Trace.no_workspace_objects.filter(
-                        _workspace_scope_q("project__workspace", workspace, org),
-                        id__in=trace_ids,
-                        project_id=project,
-                        project__organization=org,
-                    ).values_list("id", flat=True)
+                span_id_list = _root_span_ids_for_trace_ids(
+                    request, trace_ids, project_id=project
                 )
-                if not validated_trace_ids:
-                    span_id_list = []
-                else:
-                    with get_reader() as reader:
-                        ch_spans = reader.list_by_trace_ids(
-                            [str(t) for t in validated_trace_ids]
-                        )
-                    # Codex final-review P2 (2026-05-26): every PG-validated
-                    # trace must produce at least one root span in CH. A
-                    # silently empty subset would have the dataset task
-                    # report "creation started" while quietly dropping
-                    # selected rows, because the downstream missing-span
-                    # check only sees the already-filtered list.
-                    seen_root_trace_ids = {
-                        str(s.trace_id) for s in ch_spans if not s.parent_span_id
-                    }
-                    missing_root = [
-                        str(t)
-                        for t in validated_trace_ids
-                        if str(t) not in seen_root_trace_ids
-                    ]
-                    if missing_root:
-                        pg_root_span_ids = _pg_root_span_ids_for_trace_ids(
-                            request, validated_trace_ids, project_id=project
-                        )
-                        if pg_root_span_ids:
-                            span_id_list = pg_root_span_ids
-                        else:
-                            logger.error(
-                                "dataset_add_to_new_ch_traces_missing_root_spans",
-                                new_dataset_name=new_dataset_name,
-                                missing_count=len(missing_root),
-                                missing_sample=missing_root[:10],
-                            )
-                            raise RuntimeError(
-                                f"CH missing root spans for {len(missing_root)} of "
-                                f"{len(validated_trace_ids)} requested traces; "
-                                "refusing to silently drop rows from the new dataset."
-                            )
-                    else:
-                        span_id_list = [s.id for s in ch_spans if not s.parent_span_id]
             elif span_ids and len(span_ids) > 0:
-                # Pre-validate span_ids via PG (project + org JOIN) so
-                # only same-project / same-org ids reach the CH reader.
-                # Codex P1 (mid-views-chunk review).
-                validated_span_ids = list(
-                    ObservationSpan.no_workspace_objects.filter(
-                        _workspace_scope_q("project__workspace", workspace, org),
-                        id__in=span_ids,
-                        project_id=project,
-                        project__organization=org,
-                    ).values_list("id", flat=True)
+                span_id_list = _span_ids_for_span_ids(
+                    request, span_ids, project_id=project
                 )
-                if not validated_span_ids:
-                    span_id_list = []
-                else:
-                    with get_reader() as reader:
-                        ch_spans = reader.list_by_ids(
-                            [str(s) for s in validated_span_ids]
-                        )
-                    ch_span_ids = {str(s.id) for s in ch_spans}
-                    if len(ch_span_ids) < len(validated_span_ids):
-                        span_id_list = [str(sid) for sid in validated_span_ids]
-                    else:
-                        span_id_list = [s.id for s in ch_spans]
             else:
                 raise ValueError("No trace or span ids provided")
 
@@ -253,7 +102,13 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             column_span_mapping = create_new_columns(dataset, mapping_config)
 
             # Submit batch tasks asynchronously - returns nothing
-            create_new_cells(span_id_list, dataset, column_span_mapping)
+            create_new_cells(
+                span_id_list,
+                dataset,
+                column_span_mapping,
+                project_id=project,
+                org_id=org.id,
+            )
 
             return self._gm.success_response(
                 {
@@ -302,11 +157,6 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                 logger.exception(f"Dataset with id {dataset_id} does not exist.")
                 return self._gm.bad_request(get_error_message("DATASET_NOT_FOUND"))
 
-            # Tenant scope: if project is client-supplied, validate it
-            # against the caller's org before any CH read. ``select_all``
-            # paths use project explicitly; trace_ids / span_ids paths
-            # below pre-validate via PG ``Trace`` / ``ObservationSpan``
-            # filters that JOIN through ``project__organization=org``.
             if (
                 project
                 and not Project.no_workspace_objects.filter(
@@ -317,88 +167,27 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
             ):
                 return self._gm.bad_request(get_error_message("PROJECT_NOT_FOUND"))
 
+            if not project and not select_all:
+                project = _project_id_from_selected_ids(
+                    trace_ids, span_ids, org, workspace
+                )
+                if not project:
+                    raise ValueError("Project id cannot be null")
+
             span_id_list: list[str] = []
             if select_all:
-                # CH25-TODO(list_by_project_exclude): same exclusion-API
-                # gap as add_to_new_dataset. The reader has no
-                # ``.exclude()`` equivalent and Rule 1 forbids ad-hoc
-                # CH SQL. Defer until ``list_by_project(...,
-                # exclude_trace_ids=, exclude_ids=)`` (or
-                # ``ids_by_project_exclude``) lands.
-                if trace_ids is not None:
-                    observation_spans = ObservationSpan.no_workspace_objects.filter(
-                        _project_scope_q(request),
-                        parent_span_id__isnull=True,
-                        project_id=project,
-                    ).exclude(
-                        trace_id__in=trace_ids,
-                    )
-                elif span_ids is not None:
-                    observation_spans = ObservationSpan.no_workspace_objects.filter(
-                        _project_scope_q(request),
-                        project_id=project,
-                    ).exclude(
-                        id__in=span_ids,
-                    )
-                else:
-                    observation_spans = ObservationSpan.objects.none()
-                span_id_list = [
-                    str(sid) for sid in observation_spans.values_list("id", flat=True)
-                ]
+                span_id_list = _span_ids_for_select_all(
+                    request, project, trace_ids, span_ids
+                )
 
             elif trace_ids and len(trace_ids) > 0:
-                # Org-scope pre-validate via PG (no project_id supplied
-                # in this branch — the trace_id list itself is the
-                # tenancy anchor). PG ``Trace`` JOINs through
-                # ``project__organization=org``; only the surviving
-                # trace_ids hit CH.
-                validated_trace_ids = list(
-                    Trace.no_workspace_objects.filter(
-                        Q(project__organization=org),
-                        _workspace_scope_q("project__workspace", workspace, org),
-                        id__in=trace_ids,
-                    ).values_list("id", flat=True)
+                span_id_list = _root_span_ids_for_trace_ids(
+                    request, trace_ids, project_id=project
                 )
-                if not validated_trace_ids:
-                    span_id_list = []
-                else:
-                    with get_reader() as reader:
-                        ch_spans = reader.list_by_trace_ids(
-                            [str(t) for t in validated_trace_ids]
-                        )
-                    # parent_span_id__isnull=True in PG; CH stores it as
-                    # non-nullable String so root spans have an empty
-                    # value. ``not s.parent_span_id`` is the equivalent
-                    # truthy test.
-                    span_id_list = [s.id for s in ch_spans if not s.parent_span_id]
-                    if not span_id_list:
-                        span_id_list = _pg_root_span_ids_for_trace_ids(
-                            request, validated_trace_ids
-                        )
             elif span_ids and len(span_ids) > 0:
-                # KEEP-PG: this branch was a single ORM lookup that
-                # served BOTH as the row accessor and as the tenancy
-                # gate (``project__organization=org`` JOIN). Migrating
-                # in isolation would either (a) replace the row read
-                # with CH + bolt a PG ``ObservationSpan.objects.filter
-                # (id__in=, project__organization=org)`` round-trip back
-                # on for tenancy — net negative, no perf win, more code
-                # paths — or (b) use ``reader.list_by_ids`` with a
-                # Python ``s.org_id == str(org.id)`` filter, trusting
-                # CH's denormalized ``org_id`` column.
-                # CH25-TODO(span_id_org_validate_pure_ch): option (b)
-                # is the right end state; add a benchmark + a
-                # ``reader.list_by_ids(..., org_id=)`` overload so the
-                # org filter happens in the CH WHERE clause instead of
-                # in Python over the full result set.
-                observation_spans = ObservationSpan.no_workspace_objects.filter(
-                    Q(project__organization=org),
-                    _workspace_scope_q("project__workspace", workspace, org),
-                    id__in=span_ids,
+                span_id_list = _span_ids_for_span_ids(
+                    request, span_ids, project_id=project
                 )
-                span_id_list = [
-                    str(sid) for sid in observation_spans.values_list("id", flat=True)
-                ]
             else:
                 raise ValueError("No trace or span ids provided")
 
@@ -440,7 +229,13 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
                     )
 
             # Submit batch tasks asynchronously - returns nothing
-            create_new_cells(span_id_list, dataset, columns_to_span_fields)
+            create_new_cells(
+                span_id_list,
+                dataset,
+                columns_to_span_fields,
+                project_id=project,
+                org_id=org.id,
+            )
 
             return self._gm.success_response(
                 {
@@ -488,24 +283,138 @@ def _workspace_scope_q(field_name, workspace, organization):
     return Q(**{field_name: workspace})
 
 
-def _project_scope_q(request):
+def _project_id_from_selected_ids(trace_ids, span_ids, organization, workspace):
+    if trace_ids:
+        with get_reader() as reader:
+            spans = reader.roots_by_trace_ids(
+                [str(trace_id) for trace_id in trace_ids],
+                org_id=str(organization.id),
+            )
+        return _first_allowed_project_id(
+            [span.project_id for span in spans], organization, workspace
+        )
+
+    if span_ids:
+        with get_reader() as reader:
+            spans = reader.list_by_ids(
+                [str(span_id) for span_id in span_ids],
+                org_id=str(organization.id),
+            )
+        return _first_allowed_project_id(
+            [span.project_id for span in spans], organization, workspace
+        )
+
+    return None
+
+
+def _first_allowed_project_id(project_ids, organization, workspace):
+    ids = [str(project_id) for project_id in project_ids if project_id]
+    if not ids:
+        return None
+    return (
+        Project.no_workspace_objects.filter(
+            _workspace_scope_q("workspace", workspace, organization),
+            id__in=ids,
+            organization=organization,
+        )
+        .values_list("id", flat=True)
+        .first()
+    )
+
+
+def _allowed_project_id_strings(project_ids, organization, workspace):
+    ids = [str(project_id) for project_id in project_ids if project_id]
+    if not ids:
+        return set()
+    return {
+        str(project_id)
+        for project_id in Project.no_workspace_objects.filter(
+            _workspace_scope_q("workspace", workspace, organization),
+            id__in=ids,
+            organization=organization,
+        ).values_list("id", flat=True)
+    }
+
+
+def _root_span_ids_for_trace_ids(request, trace_ids, project_id=None):
+    trace_id_list = [str(trace_id) for trace_id in trace_ids or []]
+    if not trace_id_list:
+        return []
+
     org = _request_organization(request)
     workspace = _request_workspace(request)
-    return Q(project__organization=org) & _workspace_scope_q(
-        "project__workspace", workspace, org
-    )
+    with get_reader() as reader:
+        ch_spans = reader.roots_by_trace_ids(
+            trace_id_list,
+            project_id=str(project_id) if project_id else None,
+            org_id=None if project_id else str(org.id),
+        )
+
+    if not project_id:
+        allowed_project_ids = _allowed_project_id_strings(
+            [span.project_id for span in ch_spans], org, workspace
+        )
+        ch_spans = [
+            span for span in ch_spans if str(span.project_id) in allowed_project_ids
+        ]
+
+    if ch_spans:
+        return [str(span.id) for span in ch_spans]
+
+    return []
 
 
-def _pg_root_span_ids_for_trace_ids(request, trace_ids, project_id=None):
-    root_filter = Q(parent_span_id__isnull=True) | Q(parent_span_id="")
-    qs = ObservationSpan.no_workspace_objects.filter(
-        _project_scope_q(request),
-        root_filter,
-        trace_id__in=trace_ids,
-    )
-    if project_id:
-        qs = qs.filter(project_id=project_id)
-    return [str(sid) for sid in qs.values_list("id", flat=True)]
+def _span_ids_for_span_ids(request, span_ids, project_id=None):
+    span_id_list = [str(span_id) for span_id in span_ids or []]
+    if not span_id_list:
+        return []
+
+    org = _request_organization(request)
+    workspace = _request_workspace(request)
+    with get_reader() as reader:
+        ch_spans = reader.list_by_ids(
+            span_id_list,
+            project_id=str(project_id) if project_id else None,
+            org_id=None if project_id else str(org.id),
+        )
+
+    if not project_id:
+        allowed_project_ids = _allowed_project_id_strings(
+            [span.project_id for span in ch_spans], org, workspace
+        )
+        ch_spans = [
+            span for span in ch_spans if str(span.project_id) in allowed_project_ids
+        ]
+
+    ch_span_ids = {str(span.id) for span in ch_spans}
+    if ch_span_ids:
+        return [span_id for span_id in span_id_list if span_id in ch_span_ids]
+
+    return []
+
+
+def _span_ids_for_select_all(request, project_id, trace_ids, span_ids):
+    if not project_id:
+        return []
+
+    org = _request_organization(request)
+    with get_reader() as reader:
+        if trace_ids is not None:
+            ch_span_ids = reader.root_ids_by_project(
+                str(project_id),
+                org_id=str(org.id),
+                exclude_trace_ids=[str(trace_id) for trace_id in trace_ids],
+            )
+        elif span_ids is not None:
+            ch_span_ids = reader.ids_by_project(
+                str(project_id),
+                org_id=str(org.id),
+                exclude_ids=[str(span_id) for span_id in span_ids],
+            )
+        else:
+            ch_span_ids = []
+
+    return ch_span_ids
 
 
 def create_new_dataset(new_dataset_name, organization, workspace, user_id):
@@ -594,13 +503,22 @@ def create_new_columns(dataset, mapping_config):
     return column_span_mapping
 
 
-def _submit_or_run_sync(batch, dataset_id, column_span_mapping_data):
+def _submit_or_run_sync(
+    batch,
+    dataset_id,
+    column_span_mapping_data,
+    *,
+    project_id=None,
+    org_id=None,
+):
     """Submit task via Temporal, fall back to synchronous execution."""
     try:
         process_spans_chunk_task.delay(
             batch,
             dataset_id,
             column_span_mapping_data,
+            project_id,
+            org_id,
         )
     except Exception:
         logger.warning(
@@ -613,10 +531,19 @@ def _submit_or_run_sync(batch, dataset_id, column_span_mapping_data):
             batch,
             dataset_id,
             column_span_mapping_data,
+            project_id,
+            org_id,
         )
 
 
-def create_new_cells(span_ids, dataset, column_span_mapping):
+def create_new_cells(
+    span_ids,
+    dataset,
+    column_span_mapping,
+    *,
+    project_id=None,
+    org_id=None,
+):
     """Submit Celery/Temporal batches of span ids for cell processing.
 
     CH25 migration (D-027): callers used to pass an
@@ -662,12 +589,24 @@ def create_new_cells(span_ids, dataset, column_span_mapping):
         batch.append(span_id)
 
         if len(batch) >= CHUNK_SIZE:
-            _submit_or_run_sync(batch, str(dataset.id), column_span_mapping_data)
+            _submit_or_run_sync(
+                batch,
+                str(dataset.id),
+                column_span_mapping_data,
+                project_id=project_id,
+                org_id=org_id,
+            )
             batch = []
 
     # Process remaining
     if batch:
-        _submit_or_run_sync(batch, str(dataset.id), column_span_mapping_data)
+        _submit_or_run_sync(
+            batch,
+            str(dataset.id),
+            column_span_mapping_data,
+            project_id=project_id,
+            org_id=org_id,
+        )
 
     logger.info(
         f"dataset_creation_tasks_submitted: dataset_id={dataset.id}, "

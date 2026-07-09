@@ -973,7 +973,7 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
             if not file:
                 return self._gm.bad_request(get_error_message("NO_FILE_UPLOADED"))
 
-            # Enforce file size limit (aligned with UI: max 10 MB)
+            # Enforce file size limit (aligned with UI: max 25 MB)
             if file:
                 from model_hub.validators.dataset_validators import validate_file_size
 

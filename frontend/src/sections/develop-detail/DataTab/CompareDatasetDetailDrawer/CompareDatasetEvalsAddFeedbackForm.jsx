@@ -526,7 +526,7 @@ export default function CompareDatasetEvalsAddFeedbackForm({
     if (existingFeedback && open) {
       setValue("value", existingFeedback?.value);
       setValue("explanation", existingFeedback?.comment);
-      setSubmittedFeedBackValue("value", existingFeedback?.actionType);
+      setSubmittedFeedBackValue("value", existingFeedback?.action_type);
     }
   }, [existingFeedback, open, setSubmittedFeedBackValue, setValue]);
 

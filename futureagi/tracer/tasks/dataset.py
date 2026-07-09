@@ -16,6 +16,8 @@ from tfc.temporal import temporal_activity
 logger = structlog.get_logger(__name__)
 
 CHUNK_SIZE = 500  # Process 500 spans at a time
+CH_EXPORT_READ_BATCH_SIZE = 25
+CH_CHILD_TREE_TRACE_BATCH_SIZE = 5
 
 # Fields to include when serializing a child span
 _CHILD_SPAN_FIELDS = [
@@ -106,52 +108,225 @@ def _chspan_field_value(span, field_name):
     return getattr(span, field_name, None)
 
 
-def _serialize_span_tree(span_id):
-    """
-    Serialize all descendants of a span into a nested JSON-safe structure.
-    Uses a single ClickHouse query to fetch all spans in the same trace,
-    then builds the tree in memory to avoid N+1 queries.
+def _json_value(raw, default=None):
+    if raw in (None, ""):
+        return default
+    if isinstance(raw, (dict, list)):
+        return raw
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return default
+
+
+def _export_span_field_value(span, field_name):
+    if not isinstance(span, dict):
+        return _chspan_field_value(span, field_name)
+
+    if field_name == "id":
+        return span.get("id")
+
+    if field_name in (
+        "model_parameters",
+        "input_images",
+        "eval_input",
+        "eval_attributes",
+    ):
+        extra = _json_value(span.get("attributes_extra"), default={})
+        if not isinstance(extra, dict):
+            return None
+        return extra.get(field_name)
+
+    if field_name == "span_attributes":
+        extra = _json_value(span.get("attributes_extra"), default={})
+        if not isinstance(extra, dict):
+            extra = {}
+        merged = {}
+        merged.update(span.get("attrs_string") or {})
+        merged.update(span.get("attrs_number") or {})
+        merged.update(span.get("attrs_bool") or {})
+        for key, value in extra.items():
+            if key not in (
+                "model_parameters",
+                "input_images",
+                "eval_input",
+                "eval_attributes",
+            ):
+                merged[key] = value
+        return merged
+
+    if field_name in ("metadata", "resource_attributes"):
+        source_field = (
+            "resource_attrs" if field_name == "resource_attributes" else field_name
+        )
+        return _json_value(span.get(source_field), default={})
+
+    if field_name in ("tags", "span_events"):
+        return _json_value(span.get(field_name), default=[])
+
+    if field_name in ("input", "output"):
+        parsed = _json_value(span.get(field_name), default=None)
+        return span.get(field_name) if parsed is None else parsed
+
+    if field_name == "project":
+        return span.get("project_id")
+
+    if field_name == "trace":
+        return span.get("trace_id")
+
+    return span.get(field_name)
+
+
+def _mapped_span_fields(column_span_mapping_data):
+    virtual_fields = {"child_spans", "eval_metrics", "annotation_metrics"}
+    fields = set()
+    for mapping in column_span_mapping_data:
+        field_name = mapping.get("span_field") or mapping.get("column_name")
+        if field_name and field_name not in virtual_fields:
+            fields.add(field_name)
+    return fields
+
+
+def _export_span_rows(reader, span_ids, mapped_span_fields, project_id=None, org_id=None):
+    if not span_ids:
+        return {}
+
+    try:
+        return reader.export_fields_by_ids(
+            [str(s) for s in span_ids],
+            mapped_span_fields,
+            project_id=str(project_id) if project_id else None,
+            org_id=str(org_id) if org_id else None,
+        )
+    except Exception:
+        if len(span_ids) == 1:
+            raise
+        midpoint = len(span_ids) // 2
+        left = _export_span_rows(
+            reader,
+            span_ids[:midpoint],
+            mapped_span_fields,
+            project_id=project_id,
+            org_id=org_id,
+        )
+        right = _export_span_rows(
+            reader,
+            span_ids[midpoint:],
+            mapped_span_fields,
+            project_id=project_id,
+            org_id=org_id,
+        )
+        left.update(right)
+        return left
+
+
+def _child_tree_spans_by_trace_ids(reader, trace_ids, project_id=None):
+    if not trace_ids:
+        return {}
+
+    try:
+        return reader.child_tree_spans_by_trace_ids(
+            [str(trace_id) for trace_id in trace_ids],
+            project_id=str(project_id) if project_id else None,
+        )
+    except Exception:
+        if len(trace_ids) == 1:
+            raise
+        midpoint = len(trace_ids) // 2
+        left = _child_tree_spans_by_trace_ids(
+            reader,
+            trace_ids[:midpoint],
+            project_id=project_id,
+        )
+        right = _child_tree_spans_by_trace_ids(
+            reader,
+            trace_ids[midpoint:],
+            project_id=project_id,
+        )
+        left.update(right)
+        return left
+
+
+def _serialize_span_trees_batch(span_ids, project_id=None) -> dict[str, list]:
+    """Batch-serialize child trees for multiple span IDs in minimal CH queries.
+
+    Replaces per-span _serialize_span_tree which did N × (reader.get + list_by_trace)
+    with FINAL — causing OOM on large traces. This version:
+      1. Resolves trace_ids for all span_ids in one lightweight query
+      2. Deduplicates traces (multiple span_ids may share a trace)
+      3. Fetches all spans for those traces in one argMax query (no FINAL)
+
+    Returns {span_id: [child_dicts]} matching the old function's output shape.
     """
     from tracer.services.clickhouse.v2 import get_reader
 
+    if not span_ids:
+        return {}
+
+    str_ids = [str(s) for s in span_ids]
+
     with get_reader() as reader:
-        root_span = reader.get(str(span_id))
-        if root_span is None:
-            return []
-        all_spans = reader.list_by_trace(root_span.trace_id)
+        trace_map = reader.trace_ids_for_span_ids(
+            str_ids, project_id=str(project_id) if project_id else None
+        )
+        unique_trace_ids = list(dict.fromkeys(trace_map.values()))
 
-    # Preserve the legacy ObservationSpan model's default ordering
-    # (`Meta.ordering = ["-start_time"]`) so sibling child JSON order is
-    # unchanged. list_by_trace returns ascending start_time, so reverse.
-    all_spans = list(reversed(all_spans))
+        all_trace_spans = {}
+        for start in range(0, len(unique_trace_ids), CH_CHILD_TREE_TRACE_BATCH_SIZE):
+            trace_chunk = unique_trace_ids[
+                start : start + CH_CHILD_TREE_TRACE_BATCH_SIZE
+            ]
+            all_trace_spans.update(
+                _child_tree_spans_by_trace_ids(
+                    reader,
+                    trace_chunk,
+                    project_id=project_id,
+                )
+            )
 
-    # Build parent_id -> children lookup
-    children_map: dict = {}
-    for span in all_spans:
-        # CHSpan stores empty parent ids as "" (CH default), not None.
-        pid = span.parent_span_id or None
-        children_map.setdefault(pid, []).append(span)
+    # Build children_map once per trace (not per span_id)
+    trace_children_maps: dict[str, dict] = {}
+    for trace_id, trace_spans in all_trace_spans.items():
+        children_map: dict = {}
+        for span in trace_spans:
+            pid = span.get("parent_span_id") or None
+            children_map.setdefault(pid, []).append(span)
+        trace_children_maps[trace_id] = children_map
 
-    def _build_subtree(parent_id, depth=0):
-        if depth > 20:  # Safety limit
-            return []
-        children = children_map.get(parent_id, [])
-        result = []
-        for child in children:
-            child_data = {}
-            for field_name in _CHILD_SPAN_FIELDS:
-                value = _chspan_field_value(child, field_name)
-                if value is not None:
-                    if hasattr(value, "isoformat"):
-                        value = value.isoformat()
-                    child_data[field_name] = value
-            grandchildren = _build_subtree(child.id, depth + 1)
-            if grandchildren:
-                child_data["children"] = grandchildren
-            result.append(child_data)
-        return result
+    result = {}
+    for span_id in span_ids:
+        str_span_id = str(span_id)
+        trace_id = trace_map.get(str_span_id)
+        if not trace_id:
+            result[str_span_id] = []
+            continue
 
-    return _build_subtree(str(span_id))
+        children_map = trace_children_maps.get(trace_id, {})
+        result[str_span_id] = _build_subtree_from_dicts(children_map, str_span_id)
+
+    return result
+
+
+def _build_subtree_from_dicts(children_map, parent_id, depth=0) -> list[dict]:
+    if depth > 20:
+        return []
+    children = children_map.get(parent_id, [])
+    result = []
+    for child in children:
+        child_data = {}
+        for field_name in _CHILD_SPAN_FIELDS:
+            value = _export_span_field_value(child, field_name)
+            if value is not None:
+                if hasattr(value, "isoformat"):
+                    value = value.isoformat()
+                child_data[field_name] = value
+        grandchildren = _build_subtree_from_dicts(
+            children_map, str(child.get("id", "")), depth + 1
+        )
+        if grandchildren:
+            child_data["children"] = grandchildren
+        result.append(child_data)
+    return result
 
 
 def _serialize_cell_value(value):
@@ -168,7 +343,13 @@ def _serialize_cell_value(value):
     time_limit=1800,
     queue="tasks_l",
 )
-def process_spans_chunk_task(span_ids, dataset_id, column_span_mapping_data):
+def process_spans_chunk_task(
+    span_ids,
+    dataset_id,
+    column_span_mapping_data,
+    project_id=None,
+    org_id=None,
+):
     """
     Process a chunk of observation spans and create rows + cells.
 
@@ -192,15 +373,23 @@ def process_spans_chunk_task(span_ids, dataset_id, column_span_mapping_data):
     try:
         close_old_connections()
 
-        # Span data comes from ClickHouse. The legacy ORM call also did
-        # `.prefetch_related("project")` but no code below actually reads
-        # ``.project``, so the prefetch was dead weight — dropping it is
-        # safe. Result order from list_by_ids is by id (deterministic but
-        # not matching span_ids); we reorder below to preserve the input
-        # order so the resulting Row.order numbers are stable.
+        # Span data comes from ClickHouse. Fetch only columns that are mapped to
+        # dataset cells; hydrating full CHSpan rows reads fat payload columns
+        # and can exceed CH memory limits on large exports.
+        mapped_span_fields = _mapped_span_fields(column_span_mapping_data)
         with get_reader() as reader:
-            fetched = reader.list_by_ids([str(s) for s in span_ids])
-        by_id = {s.id: s for s in fetched}
+            by_id = {}
+            for start in range(0, len(span_ids), CH_EXPORT_READ_BATCH_SIZE):
+                chunk = span_ids[start : start + CH_EXPORT_READ_BATCH_SIZE]
+                by_id.update(
+                    _export_span_rows(
+                        reader,
+                        chunk,
+                        mapped_span_fields,
+                        project_id=project_id,
+                        org_id=org_id,
+                    )
+                )
         observation_spans = [by_id[str(s)] for s in span_ids if str(s) in by_id]
 
         # Codex consolidated review P0 (2026-05-26): silently dropping
@@ -248,11 +437,12 @@ def process_spans_chunk_task(span_ids, dataset_id, column_span_mapping_data):
             for m in column_span_mapping_data
         )
 
-        # Pre-fetch child span trees if needed
+        # Pre-fetch child span trees if needed (batch to avoid N+1 CH queries)
         child_spans_cache = {}
         if needs_child_spans:
-            for span_id in span_ids:
-                child_spans_cache[span_id] = _serialize_span_tree(span_id)
+            child_spans_cache = _serialize_span_trees_batch(
+                span_ids, project_id=project_id
+            )
 
         # Pre-fetch eval metrics (EvalLogger) if needed — single bulk query, no N+1
         from collections import defaultdict
@@ -320,17 +510,18 @@ def process_spans_chunk_task(span_ids, dataset_id, column_span_mapping_data):
                     # Use span_field if provided, otherwise fall back to column_name
                     field_name = span_field or column_name
 
+                    observation_span_id = str(observation_span["id"])
                     if field_name == "child_spans":
                         # Virtual field: recursively collected child span data
-                        value = child_spans_cache.get(observation_span.id, [])
+                        value = child_spans_cache.get(observation_span_id, [])
                     elif field_name == "eval_metrics":
-                        value = dict(eval_metrics_cache.get(observation_span.id, {}))
+                        value = dict(eval_metrics_cache.get(observation_span_id, {}))
                     elif field_name == "annotation_metrics":
                         value = dict(
-                            annotation_metrics_cache.get(observation_span.id, {})
+                            annotation_metrics_cache.get(observation_span_id, {})
                         )
                     else:
-                        value = _chspan_field_value(observation_span, field_name)
+                        value = _export_span_field_value(observation_span, field_name)
 
                     # Use ForeignKey _id fields directly - no need to fetch objects!
                     cell = Cell(

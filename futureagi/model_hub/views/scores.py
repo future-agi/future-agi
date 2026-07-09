@@ -352,14 +352,17 @@ class ScoreViewSet(viewsets.ModelViewSet):
         if not fk_field:
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
+        # Collector traces/spans have no PG row, so resolve from CH instead of
+        # 404ing. Trace uses the standard project-scoped CH resolver (returns a
+        # duck-typed source); observation_span keeps its dedicated org_id-scoped
+        # fallback below.
         source_obj = resolve_source_object(
             source_type,
             source_id,
             organization=request.organization,
             workspace=getattr(request, "workspace", None),
+            allow_ch_fallback=(source_type == "trace"),
         )
-        # CDC-off fallback: collector-only spans have no PG row, so resolve from CH
-        # instead of 404ing. CHSpan duck-types as a source object for the writes below.
         if not source_obj and source_type == "observation_span":
             source_obj = resolve_ch_span_source(
                 source_id,
@@ -467,13 +470,15 @@ class ScoreViewSet(viewsets.ModelViewSet):
         if not fk_field:
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
+        # Collector traces/spans have no PG row (see create()): trace resolves
+        # from CH via the standard resolver, observation_span via its fallback.
         source_obj = resolve_source_object(
             source_type,
             source_id,
             organization=request.organization,
             workspace=getattr(request, "workspace", None),
+            allow_ch_fallback=(source_type == "trace"),
         )
-        # CDC-off fallback: collector-only spans live only in CH (see create()).
         if not source_obj and source_type == "observation_span":
             source_obj = resolve_ch_span_source(
                 source_id,
@@ -764,19 +769,22 @@ class ScoreViewSet(viewsets.ModelViewSet):
             #     .values_list("trace_id", flat=True).first()
             # Org-tenant scope is verified by checking the span's project_id
             # against the requesting org via Project (the only side of the
-            # FK that's still in PG).
+            # FK that's still in PG). Read the lean ``scope_by_ids`` projection
+            # (project_id + trace_id only): pulling the full span row here blows
+            # the shared ClickHouse memory limit (code 241) on fat voice spans.
             with get_reader() as reader:
-                span = reader.get(str(source_id))
+                span_scope = reader.scope_by_ids([str(source_id)]).get(str(source_id))
             span_belongs_to_org = False
             trace_id = None
             if (
-                span is not None
+                span_scope is not None
+                and span_scope.project_id is not None
                 and Project.objects.filter(
-                    id=span.project_id, organization=request.organization
+                    id=span_scope.project_id, organization=request.organization
                 ).exists()
             ):
                 span_belongs_to_org = True
-                trace_id = span.trace_id or None
+                trace_id = span_scope.trace_id or None
 
             queue_note_filter = Q(queue_item__observation_span_id=source_id)
             if trace_id:

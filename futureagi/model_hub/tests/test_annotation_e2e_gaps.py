@@ -27,6 +27,8 @@ import pytest
 from django.utils import timezone
 from rest_framework import status
 
+from conftest import create_categorical_label
+
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
@@ -1203,10 +1205,18 @@ def observation_span_factory(db, project, organization, workspace):
     return _make
 
 
+
+
 @pytest.fixture
 def queue(db, auth_client, user):
     """Active queue with current user as MANAGER."""
-    resp = auth_client.post(QUEUE_URL, {"name": "E2E Gap Queue"}, format="json")
+    # A queue must have at least one label (serializer-enforced).
+    label_id = create_categorical_label(auth_client, name="E2E Gap Label")
+    resp = auth_client.post(
+        QUEUE_URL,
+        {"name": "E2E Gap Queue", "label_ids": [str(label_id)]},
+        format="json",
+    )
     assert resp.status_code in (200, 201), resp.data
     qid = resp.data["id"]
     # Activate

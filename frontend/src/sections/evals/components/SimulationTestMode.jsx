@@ -554,15 +554,17 @@ const SimulationTestMode = React.forwardRef(
 
           // -- Scenario columns: display key `scenario.columns.<name>`,
           // persisted mapping value is the column UUID (backend resolver
-          // accepts UUIDs, not names).
+          // accepts UUIDs, not names). scenario_columns is now keyed by the
+          // column name, so read the UUID from each entry's dataset_column_id
+          // rather than the map key.
           const sc = callData.scenario_columns;
           scenarioKeyMap.current = {};
           if (sc && typeof sc === "object") {
-            for (const [uuid, col] of Object.entries(sc)) {
+            for (const [, col] of Object.entries(sc)) {
               if (col?.column_name && col?.value !== undefined) {
                 flat.scenario.columns[col.column_name] = col.value;
                 scenarioKeyMap.current[`scenario.columns.${col.column_name}`] =
-                  uuid;
+                  col.dataset_column_id;
               }
             }
           }
@@ -603,10 +605,26 @@ const SimulationTestMode = React.forwardRef(
             // `recordings` dict / `audio_url`, with provider_call_data
             // fallback for shapes that don't normalize cleanly.
             const rec = callData.recordings || {};
+            // Voice transcript arrives as an array of turn objects. Mirror
+            // the BE eval-runtime shape (`agent: ...\ncustomer: ...`) so the
+            // preview matches what the eval actually consumes.
             flat.call.transcript =
               typeof callData.transcript === "string"
                 ? callData.transcript
-                : "";
+                : Array.isArray(callData.transcript)
+                  ? callData.transcript
+                      .filter(
+                        (r) =>
+                          r?.content?.trim() &&
+                          (r.speaker_role === "user" ||
+                            r.speaker_role === "assistant"),
+                      )
+                      .map(
+                        (r) =>
+                          `${r.speaker_role === "assistant" ? "agent" : "customer"}: ${r.content}`,
+                      )
+                      .join("\n")
+                  : "";
             flat.call.voice_recording =
               callData.audio_url ||
               rec.combined ||

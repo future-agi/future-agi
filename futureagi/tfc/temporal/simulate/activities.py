@@ -2401,7 +2401,6 @@ def _create_graph_scenario_sync(
                     name=f"{scenario.name} - Graph",
                     description=f"Graph for {scenario.name}",
                     organization=scenario.organization,
-                    workspace=scenario.workspace,
                     graph_config={"graph_data": graph_data, "source": "user_provided"},
                 )
 
@@ -2816,7 +2815,6 @@ def _setup_graph_scenario_sync(
                         name=f"{scenario.name} - Graph",
                         description=f"Graph for {scenario.name}",
                         organization=scenario.organization,
-                        workspace=scenario.workspace,
                         graph_config={
                             "graph_data": graph_data,
                             "source": "user_provided",

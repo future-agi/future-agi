@@ -1040,6 +1040,8 @@ export default function AnnotateWorkspaceView() {
                   );
                   if (nextItem?.id) {
                     dispatch({ type: "push", id: nextItem.id });
+                  } else {
+                    navigate(`/dashboard/annotations/queues/${queueId}`);
                   }
                 },
                 onError: () => {
@@ -1063,6 +1065,7 @@ export default function AnnotateWorkspaceView() {
       requiresReview,
       includeCompletedItems,
       enqueueSnackbar,
+      navigate,
     ],
   );
 

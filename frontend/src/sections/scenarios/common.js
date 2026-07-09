@@ -142,6 +142,18 @@ export const CreateScenarioValidationSchema = z
   ])
   .refine(
     (data) => {
+      if (!data.addPersonaAutomatically) {
+        return Array.isArray(data.personas) && data.personas.length > 0;
+      }
+      return true;
+    },
+    {
+      message: "Add at least one persona",
+      path: ["personas"],
+    },
+  )
+  .refine(
+    (data) => {
       // Validate agent definition fields when source type is agent_definition
       if (data.sourceType === "agent_definition") {
         return data.agentDefinitionId && data.agentDefinitionId.length > 0;

@@ -35,7 +35,7 @@ const TraceCardRightSection = ({
   // Ensure systemMetrics is valid
   const safeSystemMetrics = {
     total_latency_ms: formatMs(systemMetrics?.total_latency_ms) || "N/A",
-    // user_id: user?.id,
+    ...(systemMetrics?.user_id ? { user_id: systemMetrics.user_id } : {}),
     total_cost: systemMetrics?.total_cost || "N/A",
     total_token_count: systemMetrics?.total_tokens || "N/A",
     input_tokens: systemMetrics?.input_tokens || "N/A", //DUMMY

@@ -8,10 +8,12 @@ the v2 rewriter at one boundary — `build()`, `build_content_query()` and
 `build_count_query()` need no per-method overrides.
 
 The eval and annotation queries (`build_eval_query`, `build_annotation_query`)
-read from `tracer_eval_logger` and `model_hub_score` respectively — those
-tables are NOT part of the CH 25.3 migration (eval results stay in PG;
-annotations live in their own CDC'd table) and still carry `_peerdb_is_deleted`.
-They are excluded from the rewrite via `_v2_rewrite_exclude`.
+read from the eval-logger and `model_hub_score` tables, which the `spans`
+rewrite doesn't apply to — so both are excluded via `_v2_rewrite_exclude`.
+`build_eval_query` instead resolves its table + not-deleted predicate through
+`eval_logger_source()`, so it follows the CH25 `tracer_eval_logger_v2`
+(`is_deleted`) flip on its own. `build_annotation_query` still reads the
+CDC'd `model_hub_score` with `_peerdb_is_deleted`.
 """
 
 from __future__ import annotations

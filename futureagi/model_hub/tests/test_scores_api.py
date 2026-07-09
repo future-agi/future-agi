@@ -863,6 +863,55 @@ class TestForSourceEndpoint:
         assert "sourceType" in str(resp.data)
         assert "sourceId" in str(resp.data)
 
+    def test_span_scope_uses_lean_projection(
+        self, mocker, auth_client, observe_project, observation_span, star_label
+    ):
+        """The span-note org-scope check must read only project_id/trace_id via
+        ``scope_by_ids`` — reading the full span row (``reader.get``) OOMs the
+        shared ClickHouse cluster on fat voice spans (code 241). Guard that the
+        wide read is never used, and scores still return.
+        """
+        from unittest.mock import MagicMock
+
+        from tracer.services.clickhouse.v2.span_reader import SpanScope
+
+        auth_client.post(
+            SCORE_URL,
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+                "label_id": str(star_label.id),
+                "value": {"rating": 4},
+            },
+            format="json",
+        )
+
+        fake_reader = MagicMock()
+        fake_reader.__enter__.return_value = fake_reader
+        fake_reader.__exit__.return_value = False
+        fake_reader.scope_by_ids.return_value = {
+            observation_span.id: SpanScope(
+                project_id=str(observe_project.id), trace_id=None
+            )
+        }
+        fake_reader.get.side_effect = AssertionError(
+            "scores for-source must not read full span rows (OOMs shared ClickHouse)"
+        )
+        mocker.patch(
+            "tracer.services.clickhouse.v2.get_reader", return_value=fake_reader
+        )
+
+        resp = auth_client.get(
+            f"{SCORE_URL}for-source/",
+            {
+                "source_type": "observation_span",
+                "source_id": observation_span.id,
+            },
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        fake_reader.scope_by_ids.assert_called_once()
+        assert len(resp.data["result"]) == 1
+
 
 @pytest.mark.django_db
 class TestDeleteScore:
@@ -1481,3 +1530,58 @@ class TestScoreOnCollectorOnlySpan:
         ).exists()
         # SpanNotes written by id (the FK rejects a CHSpan OBJECT) on the CH span id
         assert SpanNotes.objects.filter(span_id=ch_span_id).exists()
+
+
+@pytest.mark.django_db
+class TestScoreOnCollectorOnlyTrace:
+    """Annotating a collector-only trace (no PG row) resolves via CH, not 404.
+
+    TH-6647: the Observe grid stores a source_type=trace item; scoring it must
+    CH-resolve the trace (via its root span) and attribute the score to a queue.
+    """
+
+    def _fake_trace_reader(self, monkeypatch, trace_id, project):
+        from types import SimpleNamespace
+
+        root_span = SimpleNamespace(
+            id="ch_" + uuid.uuid4().hex[:16],
+            project_id=str(project.id),
+            trace_id=str(trace_id),
+            parent_span_id="",  # root span
+            observation_type="agent",
+        )
+
+        class _R:
+            def __enter__(self_inner):
+                return self_inner
+
+            def __exit__(self_inner, *exc):
+                return False
+
+            def list_by_trace(self_inner, tid, *, project_id=None):
+                return [root_span] if str(tid) == str(trace_id) else []
+
+            def close(self_inner):
+                pass
+
+        monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: _R())
+
+    def test_create_score_on_ch_only_trace(
+        self, auth_client, observe_project, organization, star_label, monkeypatch
+    ):
+        """A collector trace scores end-to-end (200, not the TH-6647 404). Uses the
+        default-queue path, so it also exercises the CH `_resolve_default_queue_scope`
+        project fallback."""
+        trace_id = str(uuid.uuid4())  # collector trace: NO PG row
+        self._fake_trace_reader(monkeypatch, trace_id, observe_project)
+        payload = {
+            "source_type": "trace",
+            "source_id": trace_id,
+            "label_id": str(star_label.id),
+            "value": {"rating": 4},
+        }
+        resp = auth_client.post(SCORE_URL, payload, format="json")
+        assert resp.status_code == status.HTTP_200_OK, resp.content  # NOT 404
+        s = Score.objects.get(trace_id=trace_id, deleted=False)
+        assert s.source_type == "trace"
+        assert s.queue_item_id is not None  # attributed to a queue

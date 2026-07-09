@@ -23,6 +23,7 @@ import {
   FILTER_FOR_HAS_EVAL,
   generateAnnotationColumnsForTracing,
   normalizeConfigKeys,
+  toBackendFilters,
 } from "./common";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
@@ -55,6 +56,7 @@ const TraceGrid = React.forwardRef(
       hasEvalFilter,
       metricFilters,
       pendingCustomColumnsRef,
+      canonicalOrderRef,
       enabled = true,
       showErrors = false,
     },
@@ -223,12 +225,14 @@ const TraceGrid = React.forwardRef(
                 ...(projectId ? { project_id: projectId } : {}),
                 page_number: page,
                 page_size: ROWS_LIMIT,
-                filters: JSON.stringify([
-                  ...filters,
-                  ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                  ...(extraFilters || EMPTY_EXTRA_FILTERS),
-                  ...(metricFilters || []),
-                ]),
+                filters: JSON.stringify(
+                  toBackendFilters([
+                    ...filters,
+                    ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                    ...(extraFilters || EMPTY_EXTRA_FILTERS),
+                    ...(metricFilters || []),
+                  ]),
+                ),
                 ...(dateInterval && { interval: dateInterval }),
               });
 
@@ -248,6 +252,9 @@ const TraceGrid = React.forwardRef(
               // Use ref to get latest columns for comparison without triggering dataSource recreation
               // Compare only non-custom columns to avoid unnecessary re-renders
               if (newCols) {
+                // Canonical order, to restore default when leaving a saved view.
+                if (canonicalOrderRef)
+                  canonicalOrderRef.current = newCols.map((c) => c.id);
                 const currentNonCustom = (columnsRef.current || []).filter(
                   (c) => c.groupBy !== "Custom Columns",
                 );
@@ -377,33 +384,17 @@ const TraceGrid = React.forwardRef(
       const annotationCols = columns.filter(
         (c) => c?.groupBy === "Annotation Metrics",
       );
-      const customCols = columns.filter((c) => c?.groupBy === "Custom Columns");
-      const otherCols = columns.filter(
-        (c) =>
-          c?.groupBy !== "Annotation Metrics" &&
-          c?.groupBy !== "Custom Columns",
-      );
-
-      // Build flat column defs for non-annotation, non-custom columns
-      const columnDefsResult = otherCols.map((c) => {
+      // Custom columns flat (ungrouped), in store order.
+      const columnDefsResult = [];
+      for (const c of columns) {
+        if (c?.groupBy === "Annotation Metrics") continue;
         bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-        return getTraceListColumnDefs(c);
-      });
-
-      // Group custom columns under a "Custom Columns" header (TH-4151)
-      if (customCols.length > 0) {
-        columnDefsResult.push({
-          headerName: "Custom Columns",
-          children: customCols.map((c) => {
-            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-            const colDef = getTraceListColumnDefs(c);
-            return {
-              ...colDef,
-              minWidth: 200,
-              flex: 1,
-            };
-          }),
-        });
+        if (c?.groupBy === "Custom Columns") {
+          const colDef = getTraceListColumnDefs(c);
+          columnDefsResult.push({ ...colDef, minWidth: 200, flex: 1 });
+          continue;
+        }
+        columnDefsResult.push(getTraceListColumnDefs(c));
       }
 
       // Add annotation columns as flat columns (not grouped)
@@ -438,6 +429,8 @@ const TraceGrid = React.forwardRef(
     const onColumnMoved = useCallback(
       (params) => {
         if (!params.finished) return;
+        // User drags only; programmatic moves would feed back into setColumns.
+        if (params.source !== "uiColumnMoved") return;
 
         const newOrder = params.api
           .getColumnState()

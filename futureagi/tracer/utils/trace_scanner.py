@@ -84,7 +84,7 @@ def scan_and_write(
         return []
 
     # Fetch
-    traces_data = fetch_trace_data(trace_ids)
+    traces_data = fetch_trace_data(trace_ids, project_id)
 
     if mark_unresolved:
         resolved = {td.trace_id for td in traces_data}

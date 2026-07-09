@@ -545,3 +545,40 @@ def auth_client(user, workspace):
     yield client
     # Clean up the workspace injection patcher
     client.stop_workspace_injection()
+
+
+def create_categorical_label(auth_client, name="Default Queue Label"):
+    """Create a categorical annotation label via the API and return its id.
+
+    Shared across annotation test modules so queue-creation helpers can attach
+    the label the serializer now requires (>=1 label per queue). Exposed as a
+    plain function (not only a fixture) because several call sites are
+    module-level helpers, not fixtures/tests.
+    """
+    auth_client.post(
+        "/model-hub/annotations-labels/",
+        {
+            "name": name,
+            "type": "categorical",
+            "settings": {
+                "options": [{"label": "A"}, {"label": "B"}],
+                "multi_choice": False,
+                "rule_prompt": "",
+                "auto_annotate": False,
+                "strategy": None,
+            },
+        },
+        format="json",
+    )
+    resp = auth_client.get("/model-hub/annotations-labels/", {"search": name})
+    return resp.data["results"][0]["id"]
+
+
+@pytest.fixture
+def make_label(auth_client):
+    """Factory fixture wrapping create_categorical_label for the active client."""
+
+    def _make(name="Default Queue Label"):
+        return create_categorical_label(auth_client, name=name)
+
+    return _make

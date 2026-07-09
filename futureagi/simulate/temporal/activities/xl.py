@@ -40,6 +40,7 @@ from simulate.temporal.types.activities import (
     RunToolCallEvaluationOutput,
 )
 from simulate.utils.eval_summary import derive_kpi_output_type
+from tfc.utils.case import to_camel_case, to_snake_case
 
 logger = structlog.get_logger(__name__)
 
@@ -271,34 +272,27 @@ def _build_transcript_data(call_execution):
                             elif chat_message.role == "assistant":
                                 assistant_chat_transcript_text.append(message)
             else:
-                try:
-                    from ee.voice.utils.transcript_roles import SpeakerRoleResolver
-                except ImportError:
-                    SpeakerRoleResolver = None
-                    logger.warning(
-                        "speaker_role_resolver_unavailable_for_xl_transcript",
-                        call_execution_id=str(call_execution.id),
-                    )
-                else:
-                    provider = SpeakerRoleResolver.detect_provider(
-                        call_execution.provider_call_data
-                    )
-                    call_dir = (call_execution.call_metadata or {}).get(
-                        "call_direction", ""
-                    )
-                    is_outbound = str(call_dir).strip().lower() == "outbound"
+                from simulate.utils.speaker_roles import SpeakerRoleResolver
 
+                provider = SpeakerRoleResolver.detect_provider(
+                    call_execution.provider_call_data
+                )
+                call_dir = (call_execution.call_metadata or {}).get(
+                    "call_direction", ""
+                )
+                is_outbound = str(call_dir).strip().lower() == "outbound"
+                conversational_roles = SpeakerRoleResolver.get_conversational_roles()
                 for transcript in transcripts:
-                    if transcript.content.strip():
-                        if SpeakerRoleResolver is None:
-                            eval_role = transcript.speaker_role
-                        else:
-                            eval_role = SpeakerRoleResolver.get_eval_role_label(
-                                transcript.speaker_role,
-                                provider=provider,
-                                is_outbound=is_outbound,
-                            )
-                        transcript_text.append(f"{eval_role}: {transcript.content}")
+                    if not transcript.content.strip():
+                        continue
+                    if transcript.speaker_role not in conversational_roles:
+                        continue
+                    eval_role = SpeakerRoleResolver.get_eval_role_label(
+                        transcript.speaker_role,
+                        provider=provider,
+                        is_outbound=is_outbound,
+                    )
+                    transcript_text.append(f"{eval_role}: {transcript.content}")
 
             transcript_data["transcript"] = "\n".join(transcript_text)
             transcript_data["user_chat_transcript"] = "\n".join(
@@ -393,14 +387,100 @@ CONTEXT_MAP_DOT_ALIASES = {
     "overall_score": "call.overall_score",
     "recording_url": "call.recording_url",
     "stereo_recording_url": "call.stereo_recording_url",
+    "response_time": "call.response_time",
+    "response_time_ms": "call.response_time_ms",
+    "avg_agent_latency": "call.avg_agent_latency",
+    "avg_agent_latency_ms": "call.avg_agent_latency_ms",
+    "avg_latency_ms": "call.avg_latency_ms",
+    "avg_stop_time_after_interruption": "call.avg_stop_time_after_interruption",
+    "avg_stop_time_after_interruption_ms": "call.avg_stop_time_after_interruption_ms",
+    "user_interruption_count": "call.user_interruption_count",
+    "user_interruption_rate": "call.user_interruption_rate",
+    "user_wpm": "call.user_wpm",
+    "bot_wpm": "call.bot_wpm",
+    "talk_ratio": "call.talk_ratio",
+    "ai_interruption_count": "call.ai_interruption_count",
+    "ai_interruption_rate": "call.ai_interruption_rate",
+    "total_tokens": "call.total_tokens",
+    "input_tokens": "call.input_tokens",
+    "output_tokens": "call.output_tokens",
+    "turn_count": "call.turn_count",
+    "agent_talk_percentage": "call.agent_talk_percentage",
+    "csat_score": "call.csat_score",
+    "cost_cents": "call.cost_cents",
+    "customer_cost_cents": "call.customer_cost_cents",
+    "provider": "call.provider",
 }
+
+
+# Local sibling of `tracer.utils.eval._walk_raw_log`; adds attribute access.
+PATH_MISSING = object()
+_STEP_MISS = object()
+
+
+def stringify_leaf(v):
+    return "" if v is None else str(v)
+
+
+def _step_segment(current, part):
+    """One hop through `current`: dict key / list index / attribute, with snake<->camel coercion."""
+    if current is None:
+        return _STEP_MISS
+    if isinstance(current, dict):
+        for candidate in (part, to_snake_case(part), to_camel_case(part)):
+            if candidate in current:
+                return current[candidate]
+        return _STEP_MISS
+    if isinstance(current, list):
+        try:
+            return current[int(part)]
+        except (ValueError, IndexError):
+            return _STEP_MISS
+    # Reject dunder / private attrs and callables to block escapes to module globals.
+    if part.startswith("_"):
+        return _STEP_MISS
+    for candidate in (part, to_snake_case(part), to_camel_case(part)):
+        if hasattr(current, candidate):
+            value = getattr(current, candidate)
+            if callable(value):
+                return _STEP_MISS
+            return value
+    return _STEP_MISS
+
+
+_MAX_PATH_SEGMENTS = 32  # cap traversal depth to bound FK descriptor chains
+
+
+def walk_subject_path(subjects, path):
+    """Resolve a dotted path against any registered subject root at any depth."""
+    if not isinstance(path, str) or "." not in path:
+        return PATH_MISSING
+    if path.count(".") + 1 > _MAX_PATH_SEGMENTS:
+        return PATH_MISSING
+    head, _, rest = path.partition(".")
+    if head in subjects:
+        current = subjects[head]
+    else:
+        current = _STEP_MISS
+        for root in subjects.values():
+            stepped = _step_segment(root, head)
+            if stepped is not _STEP_MISS:
+                current = stepped
+                break
+        if current is _STEP_MISS:
+            return PATH_MISSING
+    if not rest:
+        return current
+    for part in rest.split("."):
+        current = _step_segment(current, part)
+        if current is _STEP_MISS:
+            return None
+    return current
 
 
 # Runtime keys built by `_build_transcript_data` (not on the CallExecution
 # model). Mapping translates the dot-form a new frontend config emits into
-# the transcript_data key the resolver already knows how to look up. The
-# original underscore keys remain handled by the dedicated branches in
-# `_run_single_evaluation` for full backcompat.
+# the transcript_data key the resolver already knows how to look up.
 TRANSCRIPT_DOT_ALIASES = {
     "call.transcript": "transcript",
     "call.voice_recording": "voice_recording",
@@ -415,7 +495,7 @@ TRANSCRIPT_DOT_ALIASES = {
 }
 
 
-def _build_simulation_context_map(call_execution, agent_version):
+def build_simulation_context_map(call_execution, agent_version):
     """
     Build a flat {key: string} map of simulation context that eval configs
     can bind variables to. The key set is the contract with the frontend
@@ -427,6 +507,9 @@ def _build_simulation_context_map(call_execution, agent_version):
     Each logical field is exposed under BOTH its legacy underscore key
     (`agent_name`) and its dot-hierarchy key (`agent.name`) so pre-migration
     saved eval configs and new dot-notation configs both resolve.
+
+    Also returns a `subjects` dispatch table for the walker; both come from
+    the same FK-chain walk.
     """
     test_execution = call_execution.test_execution
     run_test = test_execution.run_test
@@ -448,6 +531,15 @@ def _build_simulation_context_map(call_execution, agent_version):
     # flattened keys below (simulation_*, agent_*, persona_*, prompt_*)
     # match the explicit flattening block in the frontend, not the raw
     # serializer field names.
+    conv_metrics = call_execution.conversation_metrics_data or {}
+    rtm = call_execution.response_time_ms
+    response_time_seconds = rtm / 1000.0 if rtm is not None else None
+    # Reuse the drawer's provider resolution so the eval column and the
+    # UI chip agree in every payload shape.
+    from simulate.serializers.test_execution import CallExecutionDetailSerializer
+
+    provider_name = CallExecutionDetailSerializer().get_provider(call_execution)
+
     ctx = {
         "simulation_name": _s(run_test.name),
         "simulation_type": _s(run_test.source_type),
@@ -460,6 +552,33 @@ def _build_simulation_context_map(call_execution, agent_version):
         "overall_score": _s(call_execution.overall_score),
         "recording_url": _s(call_execution.recording_url),
         "stereo_recording_url": _s(call_execution.stereo_recording_url),
+        "response_time": _s(response_time_seconds),
+        "response_time_ms": _s(call_execution.response_time_ms),
+        "avg_agent_latency": _s(call_execution.avg_agent_latency_ms),
+        "avg_agent_latency_ms": _s(call_execution.avg_agent_latency_ms),
+        "avg_latency_ms": _s(conv_metrics.get("avg_latency_ms")),
+        "avg_stop_time_after_interruption": _s(
+            call_execution.avg_stop_time_after_interruption_ms
+        ),
+        "avg_stop_time_after_interruption_ms": _s(
+            call_execution.avg_stop_time_after_interruption_ms
+        ),
+        "user_interruption_count": _s(call_execution.user_interruption_count),
+        "user_interruption_rate": _s(call_execution.user_interruption_rate),
+        "user_wpm": _s(call_execution.user_wpm),
+        "bot_wpm": _s(call_execution.bot_wpm),
+        "talk_ratio": _s(call_execution.talk_ratio),
+        "ai_interruption_count": _s(call_execution.ai_interruption_count),
+        "ai_interruption_rate": _s(call_execution.ai_interruption_rate),
+        "total_tokens": _s(conv_metrics.get("total_tokens")),
+        "input_tokens": _s(conv_metrics.get("input_tokens")),
+        "output_tokens": _s(conv_metrics.get("output_tokens")),
+        "turn_count": _s(conv_metrics.get("turn_count")),
+        "agent_talk_percentage": _s(conv_metrics.get("agent_talk_percentage")),
+        "csat_score": _s(conv_metrics.get("csat_score")),
+        "cost_cents": _s(call_execution.cost_cents),
+        "customer_cost_cents": _s(call_execution.customer_cost_cents),
+        "provider": _s(provider_name),
     }
 
     if agent_def:
@@ -521,7 +640,17 @@ def _build_simulation_context_map(call_execution, agent_version):
         if underscore_key in ctx:
             ctx[dot_key] = ctx[underscore_key]
 
-    return ctx
+    # Walker dispatch roots; order is load-bearing (`call` first for bare heads).
+    subjects = {
+        "call": call_execution,
+        "agent": agent_def,
+        "agent_version": agent_version,
+        "persona": simulator_agent,
+        "prompt": prompt_template,
+        "scenario": scenario,
+        "simulation": run_test,
+    }
+    return ctx, subjects
 
 
 def _run_single_evaluation(eval_config, call_execution, transcript_data):
@@ -583,7 +712,9 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
         # persona, prompt, and call metadata — not just transcripts and
         # scenario columns. The keys here MUST stay in sync with what the
         # frontend flattens; when adding a new key, add it in both places.
-        context_map = _build_simulation_context_map(call_execution, agent_version)
+        context_map, subjects = build_simulation_context_map(
+            call_execution, agent_version
+        )
 
         # Collect column IDs that need cell lookups vs mismatch lookups
         cell_column_ids = []
@@ -592,12 +723,13 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
             if not value or value == "" or value in known_keys:
                 continue
             if value in TRANSCRIPT_DOT_ALIASES:
-                # Dot-form alias for transcript_data / snapshot keys.
                 continue
             if value in context_map:
                 continue
             if value in scenario_column_order_set:
                 cell_column_ids.append(value)
+            elif walk_subject_path(subjects, value) is not PATH_MISSING:
+                continue
             else:
                 mismatch_column_ids.append(value)
 
@@ -684,6 +816,8 @@ def _run_single_evaluation(eval_config, call_execution, transcript_data):
                     updated_mapping[key] = ""
                     continue
                 updated_mapping[key] = cells_by_column.get(value, "")
+            elif (walked := walk_subject_path(subjects, value)) is not PATH_MISSING:
+                updated_mapping[key] = stringify_leaf(walked)
             else:
                 # Check if it's a valid column from a different scenario (mismatch)
                 column_obj = columns_by_id.get(value)

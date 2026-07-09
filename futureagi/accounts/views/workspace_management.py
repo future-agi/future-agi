@@ -66,7 +66,12 @@ from accounts.services.workspace_membership import (
     create_workspace_membership,
     resolve_org_membership,
 )
-from accounts.utils import generate_password, resolve_org, resolve_org_role
+from accounts.utils import (
+    generate_password,
+    persist_pending_org_invite,
+    resolve_org,
+    resolve_org_role,
+)
 from analytics.mixpanel_util import mixpanel_tracker
 from analytics.utils import (
     MixpanelEvents,
@@ -599,6 +604,15 @@ class WorkspaceInviteAPIView(APIView):
                                         role=workspace_role,
                                         invited_by=user,
                                     )
+
+                            persist_pending_org_invite(
+                                organization=organization,
+                                target_email=email,
+                                org_role=org_role,
+                                workspace_role=workspace_role,
+                                workspaces=workspaces,
+                                invited_by=user,
+                            )
 
                             # Send invitation email with credentials
                             # ssl_context = ssl.create_default_context()
@@ -2236,6 +2250,15 @@ class ManageTeamView(APIView):
                             workspace,
                             workspace_role,
                             request.user,
+                        )
+
+                        persist_pending_org_invite(
+                            organization=organization,
+                            target_email=member_data["email"],
+                            org_role=org_role,
+                            workspace_role=workspace_role,
+                            workspaces=[workspace],
+                            invited_by=request.user,
                         )
 
                         token = default_token_generator.make_token(new_member)

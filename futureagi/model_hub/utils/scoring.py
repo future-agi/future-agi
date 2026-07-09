@@ -12,6 +12,7 @@ is NOT modified — these coexist.
 from __future__ import annotations
 
 import math
+from typing import Any
 
 
 def _to_clamped_score(value) -> float:
@@ -24,6 +25,57 @@ def _to_clamped_score(value) -> float:
     if math.isnan(score):
         return 0.0
     return max(0.0, min(1.0, score))
+
+
+def extract_eval_value(value: Any) -> Any:
+    """Unwrap a dict eval output to its scalar via failure/score/result/output/choice/value."""
+    if not isinstance(value, dict):
+        return value
+    if isinstance(value.get("failure"), bool):
+        return not value["failure"]
+    for key in ("score", "result", "output", "choice", "value"):
+        if value.get(key) is not None:
+            return value[key]
+    return value
+
+
+_PASS_FAIL_TOKENS = frozenset(
+    {"passed", "pass", "true", "yes", "failed", "fail", "false", "no"}
+)
+
+
+def is_numerically_scorable(
+    value: Any, output_type: str, choice_scores: dict[str, float]
+) -> bool:
+    """True when ``normalize_score`` can produce a meaningful score for ``value``."""
+    if value is None:
+        return False
+    if output_type == "pass_fail":
+        if isinstance(value, (bool, int, float)):
+            return True
+        if isinstance(value, str):
+            return value.strip().lower() in _PASS_FAIL_TOKENS
+        return False
+    if output_type == "deterministic":
+        if not choice_scores:
+            return False
+        if isinstance(value, str):
+            return apply_choice_scores(value, choice_scores) is not None
+        if isinstance(value, list) and value:
+            return any(
+                isinstance(v, str) and apply_choice_scores(v, choice_scores) is not None
+                for v in value
+            )
+        return isinstance(value, (int, float))
+    if isinstance(value, (bool, int, float)):
+        return True
+    if isinstance(value, str):
+        try:
+            float(value)
+            return True
+        except (TypeError, ValueError):
+            return False
+    return False
 
 
 def normalize_score(
@@ -57,8 +109,10 @@ def normalize_score(
     if output_type == "deterministic":
         if choice_scores and isinstance(value, str):
             return apply_choice_scores(value, choice_scores) or 0.0
-        if choice_scores and isinstance(value, list) and len(value) > 0:
-            return apply_choice_scores(str(value[0]), choice_scores) or 0.0
+        if choice_scores and isinstance(value, list) and value:
+            mapped = [apply_choice_scores(str(v), choice_scores) for v in value]
+            mapped = [m for m in mapped if m is not None]
+            return sum(mapped) / len(mapped) if mapped else 0.0
         return _to_clamped_score(value)
 
     return _to_clamped_score(value)
@@ -159,3 +213,31 @@ def validate_pass_threshold(threshold) -> list[str]:
         return [f"pass_threshold must be between 0 and 1, got: {threshold}"]
 
     return []
+
+
+def score_eval_output(
+    value_or_result: Any,
+    eval_template: Any,
+    default_score: float | None = 0.0,
+) -> float | None:
+    """Canonical eval-output → normalized 0-1 score. Falls back to
+    ``default_score`` when the value cannot be interpreted under the
+    template's output type; pass ``default_score=None`` to surface that
+    case as ``None`` instead of a hard 0.0."""
+    if hasattr(value_or_result, "eval_results"):
+        from evaluations.engine.formatting import (
+            extract_raw_result,
+            format_eval_value,
+        )
+
+        raw = extract_raw_result(value_or_result, eval_template)
+        value_or_result = format_eval_value(raw, eval_template)
+
+    scalar = extract_eval_value(value_or_result)
+    output_type = getattr(eval_template, "output_type_normalized", None) or "percentage"
+    choice_scores = getattr(eval_template, "choice_scores", None) or {}
+
+    if not is_numerically_scorable(scalar, output_type, choice_scores):
+        return default_score
+
+    return normalize_score(scalar, output_type, choice_scores)

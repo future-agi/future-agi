@@ -90,6 +90,7 @@ import {
 } from "./add-items-session-utils";
 import "src/styles/clean-data-table.css";
 import { fetchRootSpans } from "src/api/project/llm-tracing";
+import { summarizeAddResults, addResultToast } from "./add-items-results";
 
 const panelFilterToApi = (panel) =>
   panelFilterToApiBase(panel, { includeMeta: true });
@@ -551,8 +552,6 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
           sourceType === "call_execution");
 
       if (isBackendFilterMode) {
-        const totalCount =
-          selectAllInfo.totalCount - selectAllInfo.excludedIds.size;
         addItems(
           {
             queueId,
@@ -568,11 +567,11 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
             },
           },
           {
-            onSuccess: () => {
-              enqueueSnackbar(
-                `${totalCount} item${totalCount !== 1 ? "s" : ""} added to queue`,
-                { variant: "success" },
+            onSuccess: (resp) => {
+              const { message, variant } = addResultToast(
+                summarizeAddResults([resp]),
               );
+              enqueueSnackbar(message, { variant });
               resetSelection();
               setSourceType(null);
               onClose();
@@ -674,18 +673,21 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
       const BATCH_SIZE = 500;
       const totalCount = itemsToAdd.length;
       if (totalCount > BATCH_SIZE) {
+        const responses = [];
         for (let i = 0; i < totalCount; i += BATCH_SIZE) {
           const batch = itemsToAdd.slice(i, i + BATCH_SIZE);
-          await new Promise((resolve, reject) => {
+          const resp = await new Promise((resolve, reject) => {
             addItems(
               { queueId, items: batch },
               { onSuccess: resolve, onError: reject },
             );
           });
+          responses.push(resp);
         }
-        enqueueSnackbar(`${totalCount} items added to queue`, {
-          variant: "success",
-        });
+        const { message, variant } = addResultToast(
+          summarizeAddResults(responses),
+        );
+        enqueueSnackbar(message, { variant });
         resetSelection();
         setSourceType(null);
         onClose();
@@ -693,11 +695,11 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
         addItems(
           { queueId, items: itemsToAdd },
           {
-            onSuccess: () => {
-              enqueueSnackbar(
-                `${totalCount} item${totalCount !== 1 ? "s" : ""} added to queue`,
-                { variant: "success" },
+            onSuccess: (resp) => {
+              const { message, variant } = addResultToast(
+                summarizeAddResults([resp]),
               );
+              enqueueSnackbar(message, { variant });
               resetSelection();
               setSourceType(null);
               onClose();
@@ -1951,7 +1953,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
     }
     return columns
       .filter((col) => !col.groupBy || col.groupBy === "")
-      .map((col) => getTraceListColumnDefs(col));
+      .map((col) => ({ ...getTraceListColumnDefs(col), hide: false }));
   }, [columns]);
 
   const defaultColDef = useMemo(
@@ -2599,7 +2601,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     }
     return columns
       .filter((col) => !col.groupBy || col.groupBy === "")
-      .map((col) => getTraceListColumnDefs(col));
+      .map((col) => ({ ...getTraceListColumnDefs(col), hide: false }));
   }, [columns]);
 
   const defaultColDef = useMemo(
@@ -3181,7 +3183,10 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
         },
       ];
     }
-    return columns.map((col) => getSessionListColumnDef(col));
+    return columns.map((col) => ({
+      ...getSessionListColumnDef(col),
+      hide: false,
+    }));
   }, [columns]);
 
   const defaultColDef = useMemo(

@@ -1135,11 +1135,17 @@ class ClickHouseFilterBuilder:
         if filter_op == "is_null":
             if column in self._NULLABLE_UUID_COLUMNS:
                 return f"{column} IS NULL"
-            return f"({column} IS NULL OR {column} = '')"
+            # Empty-string fallback is text-only; comparing a numeric/datetime
+            # column to '' raises a ClickHouse cast error.
+            if filter_type == FilterType.TEXT.value:
+                return f"({column} IS NULL OR {column} = '')"
+            return f"{column} IS NULL"
         elif filter_op == "is_not_null":
             if column in self._NULLABLE_UUID_COLUMNS:
                 return f"{column} IS NOT NULL"
-            return f"({column} IS NOT NULL AND {column} != '')"
+            if filter_type == FilterType.TEXT.value:
+                return f"({column} IS NOT NULL AND {column} != '')"
+            return f"{column} IS NOT NULL"
         elif filter_op == "contains":
             self._params[param] = f"%{filter_value}%"
             like_op = "ILIKE" if case_insensitive else "LIKE"

@@ -55,6 +55,9 @@ class DashboardQueryBuilderV2(V2RewriteMixin, DashboardQueryBuilder):
       (``e.is_deleted`` → ``e._peerdb_is_deleted``).
     """
 
+    # dashboard_attr_rollup ships only in the v2 schema, so the fast-path is safe only here.
+    _attr_rollup_available: bool = True
+
     _v2_rewrite_exclude = frozenset({"build_metric_query", "build_all_queries"})
 
     def build_metric_query(self, metric: dict) -> tuple[str, dict]:

@@ -25,6 +25,7 @@ from tracer.services.clickhouse.query_builders.trace_detail import (
     compute_trace_summary_and_graph,
 )
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
+from tracer.services.clickhouse.v2.span_reader import merge_span_attributes
 
 if TYPE_CHECKING:
     from rest_framework.request import Request
@@ -158,24 +159,12 @@ def retrieve_trace_detail_ch(
 
         provider = row.get("provider")
 
-        # Build span_attributes from raw JSON or decomposed maps
-        span_attrs_raw = row.get("span_attributes") or "{}"
-        try:
-            span_attrs = (
-                _json.loads(span_attrs_raw)
-                if isinstance(span_attrs_raw, str)
-                else span_attrs_raw
-            )
-        except (ValueError, TypeError):
-            span_attrs = {}
-        if not span_attrs:
-            span_attrs = {}
-            for k, v in (row.get("attrs_string") or {}).items():
-                span_attrs[k] = v
-            for k, v in (row.get("attrs_number") or {}).items():
-                span_attrs[k] = v
-            for k, v in (row.get("attrs_bool") or {}).items():
-                span_attrs[k] = bool(v)
+        span_attrs = merge_span_attributes(
+            row.get("attrs_string"),
+            row.get("attrs_number"),
+            row.get("attrs_bool"),
+            row.get("span_attributes"),
+        )
         # Fallback: if CH has no span_attributes, try PG (skipped on a CH-only
         # deployment where `tracer_observation_span` is dropped — the query
         # raises and we fall through to the empty attrs).
@@ -263,7 +252,10 @@ def retrieve_trace_detail_ch(
             output_float,
             output_bool,
             output_str,
-            eval_explanation
+            eval_explanation,
+            error,
+            status,
+            skipped_reason
         FROM {eval_table} FINAL
         WHERE trace_id = %(trace_id)s
           AND {eval_nd}
@@ -326,6 +318,29 @@ def retrieve_trace_detail_ch(
                 score = None
 
             explanation = row.get("eval_explanation", "")
+            # Lifecycle status (pending/running/completed/errored/skipped) so the
+            # drawer can render a loading / pending / skipped state per eval.
+            status = (row.get("status") or "").lower()
+            skipped_reason = row.get("skipped_reason")
+
+            # An errored or non-terminal row can carry stale/coerced output (the
+            # CH mirror stores 0 for a NULL bool), so drop the fabricated
+            # score/result — the drawer renders the error / lifecycle state
+            # instead. ``status == 'errored'`` is treated as an error even when
+            # the legacy ``error`` flag/``output_str`` weren't set. (Named
+            # ``result_value`` — ``result`` is the CH query result in the outer
+            # scope and must not be shadowed by this loop.)
+            is_errored = (
+                bool(row.get("error")) or output_str == "ERROR" or status == "errored"
+            )
+            is_non_terminal = status in ("pending", "running", "skipped")
+            drop_derived = is_errored or is_non_terminal
+            eval_score = None if drop_derived else score
+            result_value = (
+                None
+                if drop_derived
+                else (output_str or (output_bool if output_bool is not None else None))
+            )
 
             eval_map[sid].append(
                 {
@@ -333,10 +348,17 @@ def retrieve_trace_detail_ch(
                     "eval_name": info.get("name", cid),
                     "output_type": info.get("output_type"),
                     "template_type": info.get("template_type"),
-                    "score": score,
-                    "result": output_str
-                    or (output_bool if output_bool is not None else None),
-                    "explanation": explanation if explanation else None,
+                    "score": eval_score,
+                    "result": result_value,
+                    "explanation": (
+                        explanation
+                        or (skipped_reason if status == "skipped" else None)
+                        or None
+                    ),
+                    "status": status or None,
+                    "error": is_errored,
+                    "skipped": status == "skipped",
+                    "skipped_reason": skipped_reason,
                 }
             )
     except Exception:
