@@ -21,7 +21,6 @@ import { useGetProjectDetails } from "src/api/project/project-detail";
 import { useNavigate } from "react-router";
 import { zodResolver } from "@hookform/resolvers/zod";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
-import logger from "src/utils/logger";
 
 import { projectSchema } from "./common";
 import DeleteProject from "./DeleteProject";
@@ -97,8 +96,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
       name: data.projectName,
     };
     if (module === "observe") {
-      payload["sampling_rate"] =
-        typeof data.samplingRate === "number" ? data.samplingRate / 100 : 0;
+      payload["sampling_rate"] = data.samplingRate / 100;
     }
     updateProject(payload);
   };
@@ -417,19 +415,8 @@ ConfigureProject.propTypes = {
 };
 
 export function getSamplingRatePercent(projectDetail, module) {
-  if (typeof projectDetail?.sampling_rate === "number") {
-    return projectDetail.sampling_rate * 100;
+  if (projectDetail == null) {
+    return module === "observe" ? 0 : undefined;
   }
-  // projectDetail is only nullish while the project is still loading — that's
-  // expected and not worth logging. Once it's loaded, sampling_rate should
-  // always be a number (backend contract); anything else means the backend
-  // handed us bad data, which we'd otherwise silently show as 0%.
-  if (projectDetail != null) {
-    logger.error(
-      "ConfigureProject: sampling_rate is not a number, defaulting display to 0%",
-      null,
-      { sampling_rate: projectDetail.sampling_rate, module },
-    );
-  }
-  return module === "observe" ? 0 : undefined;
+  return projectDetail.sampling_rate * 100;
 }
