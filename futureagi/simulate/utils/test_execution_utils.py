@@ -1067,42 +1067,54 @@ class TestExecutionUtils:
         # Add group_keys filtering if provided
         where_conditions = ["simulate_call_execution.deleted = false"]
         if group_keys:
-            for i, group_key in enumerate(group_keys):
-                if i < len(row_groups):
-                    group_field = row_groups[i]
+            cursor = connection.cursor()
+            try:
 
-                    if group_field == "timestamp":
-                        where_conditions.append(
-                            f"DATE(simulate_call_execution.created_at) = '{group_key}'"
-                        )
-                    elif group_field == "status":
-                        where_conditions.append(
-                            f"simulate_call_execution.status = '{group_key}'"
-                        )
-                    elif group_field in ("call_type", "callType"):
-                        where_conditions.append(
-                            f"LOWER(simulate_call_execution.call_type) LIKE '%{group_key.lower()}%'"
-                        )
-                    elif group_field == "scenario":
-                        where_conditions.append(
-                            f"simulate_scenarios.name = '{group_key}'"
-                        )
-                    elif group_field in ("overall_score", "overallScore"):
-                        try:
-                            numeric_key = float(group_key)
+                def _lit(value):
+                    try:
+                        return cursor.mogrify("%s", [value]).decode("utf-8")
+                    except AttributeError:
+                        return "'{}'".format(str(value).replace("'", "''"))
+
+                for i, group_key in enumerate(group_keys):
+                    if i < len(row_groups):
+                        group_field = row_groups[i]
+
+                        if group_field == "timestamp":
                             where_conditions.append(
-                                f"simulate_call_execution.overall_score = {numeric_key}"
+                                f"DATE(simulate_call_execution.created_at) = {_lit(group_key)}"
                             )
-                        except (ValueError, TypeError):
-                            pass
-                    elif group_field in ("response_time", "responseTime"):
-                        try:
-                            numeric_key = float(group_key)
+                        elif group_field == "status":
                             where_conditions.append(
-                                f"simulate_call_execution.response_time_ms = {numeric_key}"
+                                f"simulate_call_execution.status = {_lit(group_key)}"
                             )
-                        except (ValueError, TypeError):
-                            pass
+                        elif group_field in ("call_type", "callType"):
+                            where_conditions.append(
+                                "LOWER(simulate_call_execution.call_type) LIKE "
+                                f"{_lit('%' + str(group_key).lower() + '%')}"
+                            )
+                        elif group_field == "scenario":
+                            where_conditions.append(
+                                f"simulate_scenarios.name = {_lit(group_key)}"
+                            )
+                        elif group_field in ("overall_score", "overallScore"):
+                            try:
+                                numeric_key = float(group_key)
+                                where_conditions.append(
+                                    f"simulate_call_execution.overall_score = {numeric_key}"
+                                )
+                            except (ValueError, TypeError):
+                                pass
+                        elif group_field in ("response_time", "responseTime"):
+                            try:
+                                numeric_key = float(group_key)
+                                where_conditions.append(
+                                    f"simulate_call_execution.response_time_ms = {numeric_key}"
+                                )
+                            except (ValueError, TypeError):
+                                pass
+            finally:
+                cursor.close()
 
         where_clause = " AND ".join(where_conditions)
 

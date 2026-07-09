@@ -321,3 +321,31 @@ class TestScenarioDatasetGrouping:
         )
 
         assert CallExecution.objects.filter(id=ce1.id).exists()
+
+    def test_grouping_filter_rejects_sql_injection(
+        self, organization, workspace, user, test_execution
+    ):
+        s1, ds1, c1 = _make_scenario(organization, workspace, user, "scenario-a")
+        r1 = _make_row_with_cell(ds1, c1, "win")
+        ce1 = CallExecution.objects.create(
+            test_execution=test_execution, scenario=s1, row_id=r1.id
+        )
+
+        default_columns = [
+            {
+                "type": "scenario_dataset_column",
+                "id": "Ideal Outcome",
+                "column_name": "Ideal Outcome",
+                "dataset_column_ids": [str(c1.id)],
+            }
+        ]
+        hostile_value = "'; DROP TABLE simulate_call_execution; --"
+
+        TestExecutionUtils()._apply_scenario_dataset_grouping(
+            CallExecution.objects.filter(test_execution=test_execution),
+            row_groups=["status"],
+            group_keys=[hostile_value],
+            default_columns=default_columns,
+        )
+
+        assert CallExecution.objects.filter(id=ce1.id).exists()
