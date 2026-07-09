@@ -632,7 +632,7 @@ class TestIsDocumentUrlSSRF:
     directly, with zero SSRF protection: a plain CSV upload with a URL-like
     column could make the server probe cloud metadata endpoints or any
     internal/private address, and would also happily follow redirects to one.
-    It must now route through the same SSRF-safe `_safe_head` used by
+    It must now route through the same SSRF-safe `safe_fetch` used by
     `validate_file_url`, and reject unsafe targets outright (returning False,
     since it's a best-effort classifier) instead of ever issuing the request.
     """
@@ -661,7 +661,10 @@ class TestIsDocumentUrlSSRF:
 
         def fake_safe_fetch(url, **kwargs):
             calls.append((url, kwargs.get("method")))
-            return SsrfResponse(200, {"content-type": "application/pdf"}, b"", url)
+            # Canonical `Content-Type` casing so this test reflects what real
+            # safe_fetch emits (case-insensitive HTTPHeaderDict keyed by the
+            # server's chosen casing) — not a fabricated lowercase shape.
+            return SsrfResponse(200, {"Content-Type": "application/pdf"}, b"", url)
 
         monkeypatch.setattr(choices_module, "safe_fetch", fake_safe_fetch)
 

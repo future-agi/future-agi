@@ -8,8 +8,9 @@ from urllib.parse import unquote, urlparse
 from uuid import UUID
 
 import litellm
-import requests
 import structlog
+
+from tfc.utils.ssrf_guard import safe_fetch
 
 from tfc.ee_stub import _ee_stub
 
@@ -243,7 +244,10 @@ def handle_media(item: dict, model_name: str):
             if not url:
                 raise ValueError("Missing audio URL")
 
-            response = requests.get(url, timeout=120)
+            # SSRF-guarded: user-supplied URL; safe_fetch resolves + pins IP,
+            # blocks private/link-local hosts (including 169.254.169.254),
+            # and re-validates each redirect hop.
+            response = safe_fetch(url, method="GET", timeout=120)
             response.raise_for_status()
 
             bytes_data = response.content
@@ -258,8 +262,6 @@ def handle_media(item: dict, model_name: str):
                 "input_audio": {"data": encoded_string, "format": audio_type},
             }
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request failed for audio URL: {e}")
         except (KeyError, ValueError) as e:
             logger.error(f"Data processing error: {e}")
         except Exception as e:
@@ -555,7 +557,7 @@ class UploadFileView(APIView):
             return file_name
 
         try:
-            response = requests.head(url, timeout=10)
+            response = safe_fetch(url, method="HEAD", timeout=10)
             content_type = (
                 response.headers.get("Content-Type", "").split(";")[0].strip()
             )
@@ -563,8 +565,10 @@ class UploadFileView(APIView):
             if content_type in MIME_TO_EXT:
                 return f"{file_name}.{MIME_TO_EXT[content_type]}"
 
-        except requests.RequestException:
-            pass
+        except ValueError as e:
+            # SSRF rejection / bad URL / bad response — log and fall through
+            # to path-extension inspection so a bad HEAD doesn't drop the file.
+            logger.info(f"safe_fetch failed for file name extension check: {e}")
 
         path_extension = urlparse(url).path.rsplit(".", 1)[-1]
         if path_extension and "/" not in path_extension and len(path_extension) <= 8:

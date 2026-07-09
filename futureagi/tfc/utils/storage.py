@@ -25,21 +25,83 @@ from requests.exceptions import ChunkedEncodingError, ConnectionError, RequestEx
 logger = structlog.get_logger(__name__)
 from tfc.settings.settings import MINIO_URL, UPLOAD_BUCKET_NAME
 from tfc.utils.error_codes import get_error_message
-from tfc.utils.ssrf_guard import safe_fetch
+from tfc.utils.ssrf_guard import SsrfBlocked, safe_fetch
 from tfc.utils.storage_client import ensure_bucket, get_object_url, get_storage_client
 
 MAX_VIDEO_FILE_SIZE = 200 * 1024 * 1024
+# safe_fetch default max_bytes is 25 MiB (a general safety cap); real
+# images/documents are routinely larger, so pass explicit caps to preserve
+# pre-SSRF-refactor behavior without leaving payloads unbounded.
+MAX_IMAGE_FILE_SIZE = 50 * 1024 * 1024
+MAX_DOCUMENT_FILE_SIZE = 100 * 1024 * 1024
+
+
+def is_own_storage_url(value, bucket_name):
+    """True if the URL is a well-formed reference to our own S3/GCS/MinIO
+    bucket.
+
+    Matches only the URL shapes produced by :func:`get_object_url` (AWS S3
+    virtual-hosted, GCS path-style, or path-style on the configured MinIO
+    endpoint). Attacker-controlled hostnames that merely contain the bucket
+    name as a substring (e.g. ``https://<bucket>.attacker.com/x`` or
+    ``https://evil.com/<bucket>/x``) do NOT match.
+    """
+    if not isinstance(value, str) or not bucket_name:
+        return False
+    try:
+        parsed = urlparse(value)
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").lower()
+    path = parsed.path or ""
+    bucket = bucket_name.lower()
+    bucket_path = "/" + bucket
+
+    # AWS S3 virtual-hosted style: `<bucket>.s3.<region?>.amazonaws.com`.
+    # Parent MUST be amazonaws.com — matching arbitrary parents lets
+    # `<bucket>.attacker.com` spoof.
+    if host == bucket + ".s3.amazonaws.com":
+        return True
+    if host.startswith(bucket + ".s3.") and host.endswith(".amazonaws.com"):
+        return True
+
+    # GCS path style on the fixed googleapis.com host.
+    if host == "storage.googleapis.com" and (
+        path.startswith(bucket_path + "/") or path == bucket_path
+    ):
+        return True
+
+    # MinIO / custom S3-compatible endpoint: only trust hosts that match
+    # the configured MINIO_URL.
+    try:
+        own_host = (urlparse(MINIO_URL).hostname or "").lower()
+    except Exception:
+        own_host = ""
+    if own_host and host == own_host and (
+        path.startswith(bucket_path + "/") or path == bucket_path
+    ):
+        return True
+
+    return False
 
 
 def _ssrf_safe_get(url, *, headers=None, timeout=20, max_bytes=None):
-    """SSRF-guarded GET. Raises RequestException (not ValueError) so existing
-    retry blocks in this module catch it like a normal connection failure.
+    """SSRF-guarded GET.
+
+    SsrfBlocked (permanent rejection: private IP, bad scheme, blocked redirect)
+    propagates unchanged so retry loops can catch it and fail fast. Other
+    ValueErrors from safe_fetch (transient network / body-size / bad redirect)
+    become RequestException so existing retry blocks treat them as transient.
     """
     kwargs = {"method": "GET", "timeout": timeout, "headers": headers}
     if max_bytes is not None:
         kwargs["max_bytes"] = max_bytes
     try:
         return safe_fetch(url, **kwargs)
+    except SsrfBlocked:
+        raise
     except ValueError as e:
         raise RequestException(str(e)) from e
 
@@ -279,7 +341,12 @@ def download_document_from_url(doc_url, max_retries=5, timeout=20):
 
     for attempt in range(max_retries):
         try:
-            response = _ssrf_safe_get(doc_url, headers=headers, timeout=timeout)
+            response = _ssrf_safe_get(
+                doc_url,
+                headers=headers,
+                timeout=timeout,
+                max_bytes=MAX_DOCUMENT_FILE_SIZE,
+            )
 
             if response.status_code == 200:
                 # Get the content
@@ -336,6 +403,11 @@ def download_document_from_url(doc_url, max_retries=5, timeout=20):
                     f"Unable to process link. Status Code: {response.status_code}"
                 )
 
+        except SsrfBlocked as e:
+            # Permanent rejection (private IP, bad scheme, redirect to blocked
+            # target). Retrying will not help — surface immediately.
+            logger.warning(f"SSRF-blocked URL, not retrying: {e}")
+            raise ValueError(f"ERROR_DOWNLOADING_DOCUMENT: {e}") from e
         except RequestException as e:
             logger.error(f"Attempt {attempt + 1} failed with error: {e}")
             if attempt < max_retries - 1:
@@ -359,7 +431,7 @@ def upload_document_to_s3(
 
         bucket_name = UPLOAD_BUCKET_NAME
 
-        if bucket_name in file_url:
+        if is_own_storage_url(file_url, bucket_name):
             return file_url
 
         # Supported document formats
@@ -524,7 +596,7 @@ def upload_image_to_s3(
             img_bytes = in_mem_file.getvalue()
 
         else:
-            if bucket_name in img_base64_str:
+            if is_own_storage_url(img_base64_str, bucket_name):
                 return img_base64_str
 
             # Check if the input is already a URL
@@ -718,7 +790,7 @@ def upload_audio_to_s3_duration(
                 audio_bytes, audio_format = convert_to_mp3(audio_bytes)
 
         else:
-            if bucket_name in audio_base64_str:
+            if is_own_storage_url(audio_base64_str, bucket_name):
                 if not duration_seconds:
                     if is_valid_url(audio_base64_str):
                         audio_bytes = download_audio_from_url(audio_base64_str)
@@ -913,7 +985,12 @@ def download_image_from_url(image_url, max_retries=5, timeout=20):
             logger.info(
                 f"[DEBUG] Attempt {attempt + 1}/{max_retries} for URL: {image_url}"
             )
-            with _ssrf_safe_get(image_url, headers=headers, timeout=timeout) as response:
+            with _ssrf_safe_get(
+                image_url,
+                headers=headers,
+                timeout=timeout,
+                max_bytes=MAX_IMAGE_FILE_SIZE,
+            ) as response:
                 logger.info(
                     f"[DEBUG] Response status: {response.status_code}, URL: {image_url}"
                 )
@@ -947,6 +1024,9 @@ def download_image_from_url(image_url, max_retries=5, timeout=20):
                         f"Unable to process link. Status Code: {response.status_code}"
                     )
 
+        except SsrfBlocked as e:
+            logger.warning(f"SSRF-blocked URL, not retrying: {e}")
+            raise ValueError(f"ERROR_DOWNLOADING_IMAGE: {e}") from e
         except RequestException as e:
             logger.error(
                 f"[DEBUG] Attempt {attempt + 1} failed with RequestException: {e}, URL: {image_url}"
@@ -960,7 +1040,9 @@ def download_image_from_url(image_url, max_retries=5, timeout=20):
 def convert_image_from_url_to_base64(image_url, max_retries=5, timeout=120):
     for attempt in range(max_retries):
         try:
-            response = _ssrf_safe_get(image_url, timeout=timeout)
+            response = _ssrf_safe_get(
+                image_url, timeout=timeout, max_bytes=MAX_IMAGE_FILE_SIZE
+            )
 
             if response.status_code == 200:
                 # Attempt to verify if the response is an image by using Pillow
@@ -990,6 +1072,9 @@ def convert_image_from_url_to_base64(image_url, max_retries=5, timeout=120):
                     f"Unable to process link. Status Code: {response.status_code}"
                 )
 
+        except SsrfBlocked as e:
+            logger.warning(f"SSRF-blocked URL, not retrying: {e}")
+            raise ValueError(f"ERROR_DOWNLOADING_IMAGE: {e}") from e
         except RequestException as e:
             logger.error(f"Attempt {attempt + 1} failed with error: {e}")
             time.sleep(2**attempt)  # Exponential backoff
@@ -1500,6 +1585,9 @@ def download_audio_from_url(
                         f"Failed to download audio. Status Code: {response.status_code}"
                     )
 
+        except SsrfBlocked as e:
+            logger.warning(f"SSRF-blocked audio URL, not retrying: {e}")
+            raise ValueError(f"ERROR_DOWNLOADING_AUDIO: {e}") from e
         except RequestException as e:
             logger.exception(
                 f"download_audio_retry - Attempt {attempt + 1}/{max_retries}, audio_url={audio_url}, error={e}"
@@ -1590,7 +1678,7 @@ def upload_audio_to_s3(
 
         bucket_name = UPLOAD_BUCKET_NAME
 
-        if bucket_name in str(audio_data):
+        if isinstance(audio_data, str) and is_own_storage_url(audio_data, bucket_name):
             return audio_data
 
         # Handle string representation of dictionary
@@ -1871,7 +1959,7 @@ def upload_video_to_s3(
 
         bucket_name = UPLOAD_BUCKET_NAME
 
-        if bucket_name in str(video_data):
+        if isinstance(video_data, str) and is_own_storage_url(video_data, bucket_name):
             return video_data
 
         if isinstance(video_data, bytes):

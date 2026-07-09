@@ -15,6 +15,15 @@ _MAX_REDIRECTS = 5
 _DEFAULT_TIMEOUT_SECONDS = 5
 _DEFAULT_MAX_BODY_BYTES = 25 * 1024 * 1024
 
+
+class SsrfBlocked(ValueError):
+    """Permanent SSRF rejection — never retriable.
+
+    Subclasses ValueError so existing `except ValueError` sites keep working,
+    but retry loops can catch it specifically and fail fast instead of
+    burning the exponential-backoff budget on a URL that will never succeed.
+    """
+
 # 100.64.0.0/10 is RFC 6598 carrier-grade NAT (used by some cloud providers,
 # Tailscale). Not covered by ipaddress.is_private/is_reserved.
 _EXTRA_BLOCKED_NETWORKS = (ipaddress.ip_network("100.64.0.0/10"),)
@@ -32,7 +41,10 @@ class SsrfResponse:
 
     def __init__(self, status_code, headers, content, final_url):
         self.status_code = status_code
-        self.headers = headers
+        # HTTPHeaderDict is case-insensitive (matches requests.Response's
+        # CaseInsensitiveDict contract): callers can look up 'Content-Type'
+        # regardless of the casing the server sent (or a test constructed).
+        self.headers = urllib3.HTTPHeaderDict(headers) if headers is not None else urllib3.HTTPHeaderDict()
         self.content = content
         self.final_url = final_url
 
@@ -71,7 +83,7 @@ def _reject_unsafe_ip(ip_str: str, host: str) -> None:
         or ip.is_unspecified
         or any(ip in net for net in _EXTRA_BLOCKED_NETWORKS)
     ):
-        raise ValueError(
+        raise SsrfBlocked(
             f"URL host '{host}' resolves to a private/internal address."
         )
 
@@ -81,11 +93,11 @@ def _resolve_pinned_ip(host: str) -> str:
     try:
         infos = socket.getaddrinfo(host, None)
     except socket.gaierror as e:
-        raise ValueError(f"Cannot resolve URL host '{host}': {e}") from None
+        raise SsrfBlocked(f"Cannot resolve URL host '{host}': {e}") from None
 
     resolved_ips = sorted({info[4][0] for info in infos})
     if not resolved_ips:
-        raise ValueError(f"Cannot resolve URL host '{host}'.")
+        raise SsrfBlocked(f"Cannot resolve URL host '{host}'.")
 
     for ip_str in resolved_ips:
         _reject_unsafe_ip(ip_str, host)
@@ -124,13 +136,15 @@ def safe_fetch(
     Raises ValueError on any SSRF-relevant rejection.
     """
     current_url = url
+    caller_headers = headers or {}
+    origin_host = urlparse(url).hostname
     for _ in range(_MAX_REDIRECTS):
         parsed = urlparse(current_url)
         if parsed.scheme not in ("http", "https"):
-            raise ValueError(f"Unsupported URL scheme: '{parsed.scheme}'.")
+            raise SsrfBlocked(f"Unsupported URL scheme: '{parsed.scheme}'.")
         host = parsed.hostname
         if not host:
-            raise ValueError("Invalid URL: missing host.")
+            raise SsrfBlocked("Invalid URL: missing host.")
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
         pinned_ip = _resolve_pinned_ip(host)
 
@@ -138,13 +152,26 @@ def safe_fetch(
         if parsed.query:
             path = f"{path}?{parsed.query}"
 
+        # Host header must include the port for non-default ports so
+        # vhost-routed backends match the correct server_name.
+        default_port = 443 if parsed.scheme == "https" else 80
+        host_header = host if port == default_port else f"{host}:{port}"
+
+        # Strip sensitive headers on cross-origin hops so a redirect to
+        # attacker.com does not leak Authorization/Cookie/etc.
+        hop_headers = dict(caller_headers)
+        if host != origin_host:
+            for sensitive in ("Authorization", "Cookie", "Proxy-Authorization"):
+                hop_headers.pop(sensitive, None)
+                hop_headers.pop(sensitive.lower(), None)
+
         pool = _open_pinned_pool(parsed.scheme, pinned_ip, host, port, timeout)
         response = None
         try:
             response = pool.request(
                 method,
                 path,
-                headers={"Host": host, **(headers or {})},
+                headers={"Host": host_header, **hop_headers},
                 redirect=False,
                 preload_content=False,
             )
@@ -155,7 +182,7 @@ def safe_fetch(
                     raise ValueError("Redirect with no Location header.")
                 current_url = urljoin(current_url, location)
                 if not is_valid_url(current_url):
-                    raise ValueError("Redirect target is not a valid URL.")
+                    raise SsrfBlocked("Redirect target is not a valid URL.")
                 continue
 
             content = b""
@@ -171,7 +198,7 @@ def safe_fetch(
 
             return SsrfResponse(
                 status_code=response.status,
-                headers=dict(response.headers),
+                headers=response.headers,
                 content=content,
                 final_url=current_url,
             )

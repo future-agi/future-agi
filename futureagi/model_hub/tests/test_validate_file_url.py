@@ -250,3 +250,84 @@ def test_validate_file_url_document_rejects_exe_with_png_fragment(monkeypatch):
     )
     with pytest.raises(ValueError):
         validate_file_url("https://public.example.com/x.exe#a.pdf", "document")
+
+
+def test_validate_file_url_rejects_extensionless_url_with_octet_stream(monkeypatch):
+    """Extensionless URL + `application/octet-stream` must be rejected.
+
+    Regression guard for the review finding where an SVG served with
+    Content-Type: application/octet-stream from `/uploads/abc` slipped past
+    validation because the URL carried no extension at all.
+    """
+    monkeypatch.setattr(
+        "model_hub.views.utils.utils.safe_fetch",
+        _stub_safe_fetch(
+            200,
+            {"Content-Type": "application/octet-stream"},
+            final_url="https://cdn.example.com/uploads/abc",
+        ),
+    )
+    with pytest.raises(ValueError):
+        validate_file_url("https://cdn.example.com/uploads/abc", "image")
+
+
+def test_validate_file_url_reads_content_type_case_insensitively(monkeypatch):
+    """SsrfResponse.headers must be case-insensitive so callers using
+    `.get('Content-Type')` catch responses sent with lowercase `content-type`
+    (HTTP/2 canonical form).
+    """
+    monkeypatch.setattr(
+        "model_hub.views.utils.utils.safe_fetch",
+        _stub_safe_fetch(200, {"content-type": "image/png"}),  # lowercase
+    )
+    validate_file_url("https://public.example.com/pic", "image")
+
+
+def test_safe_fetch_sends_host_header_with_port_for_non_default(monkeypatch):
+    """Regression: on non-default ports (e.g. :8443), the Host header must
+    include the port so virtual-host-routed backends match the correct
+    server_name.
+    """
+    monkeypatch.setattr(
+        "tfc.utils.ssrf_guard.socket.getaddrinfo",
+        lambda host, port: [(None, None, None, None, ("8.8.8.8", 0))],
+    )
+    captured = {}
+
+    def fake_request(method, path, headers, redirect, preload_content):
+        captured["headers"] = dict(headers)
+        return _fake_urllib3_response(200, {"Content-Type": "image/jpeg"})
+
+    with patch("tfc.utils.ssrf_guard.urllib3.HTTPSConnectionPool") as pool_cls:
+        pool_cls.return_value.request.side_effect = fake_request
+        safe_fetch("https://public.example.com:8443/x.jpg")
+    assert captured["headers"]["Host"] == "public.example.com:8443"
+
+
+def test_safe_fetch_strips_authorization_on_cross_origin_redirect(monkeypatch):
+    """Authorization / Cookie / Proxy-Authorization must NOT leak to a
+    redirect target on a different origin.
+    """
+    monkeypatch.setattr(
+        "tfc.utils.ssrf_guard.socket.getaddrinfo",
+        lambda host, port: [(None, None, None, None, ("8.8.8.8", 0))],
+    )
+    redirect_response = _fake_urllib3_response(
+        302, {"Location": "http://other.example.com/final"}
+    )
+    final_response = _fake_urllib3_response(200, {"Content-Type": "text/plain"})
+    captured_headers = []
+
+    def fake_request(method, path, headers, redirect, preload_content):
+        captured_headers.append(dict(headers))
+        return redirect_response if len(captured_headers) == 1 else final_response
+
+    with patch("tfc.utils.ssrf_guard.urllib3.HTTPConnectionPool") as pool_cls:
+        pool_cls.return_value.request.side_effect = fake_request
+        safe_fetch(
+            "http://origin.example.com/x",
+            headers={"Authorization": "Bearer secret", "Cookie": "session=abc"},
+        )
+    assert captured_headers[0].get("Authorization") == "Bearer secret"
+    assert "Authorization" not in captured_headers[1]
+    assert "Cookie" not in captured_headers[1]

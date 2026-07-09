@@ -220,10 +220,6 @@ def _url_has_valid_extension(url: str, valid_extensions: tuple) -> bool:
     return any(path.endswith(ext) for ext in valid_extensions)
 
 
-def _url_has_any_extension(url: str) -> bool:
-    return "." in _url_path(url).rsplit("/", 1)[-1]
-
-
 def validate_file_url(
     url: str, file_type: Union[Literal["image"], Literal["document"], Literal["audio"]]
 ) -> None:
@@ -267,13 +263,15 @@ def validate_file_url(
     if content_type.startswith(config["content_type_prefix"]):
         return
 
-    # Server gave no useful type signal — fall back to extension.
+    # Server gave no useful type signal — fall back to extension. An
+    # extension MUST be present and match the expected set; extensionless
+    # URLs with a generic content-type must not silently pass (e.g. an SVG
+    # served as application/octet-stream from `.../uploads/abc`).
     if not content_type or content_type in _GENERIC_CONTENT_TYPES:
-        if _url_has_any_extension(response.final_url) and not _url_has_valid_extension(
-            response.final_url, valid_extensions
-        ):
+        if not _url_has_valid_extension(response.final_url, valid_extensions):
             raise ValueError(
-                f"URL has a non-{file_type} extension and no content-type signal."
+                f"URL has no {file_type} content-type and no matching "
+                f"{file_type} extension."
             )
         return
 

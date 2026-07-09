@@ -280,6 +280,7 @@ from tfc.utils.storage import (
     download_json_from_s3,
     get_compare_local_dir,
     get_compare_metadata_path,
+    is_own_storage_url,
     upload_audio_to_s3,
     upload_audio_to_s3_duration,
     upload_compare_json_to_s3,
@@ -814,11 +815,19 @@ class AddRowsFromFile(CreateAPIView):
             # when the URL points at our own S3 (upload_*_to_s3 no-op-links).
             _MAX_VALIDATIONS = 100
             validations_used = [0]
+            budget_exhausted_logged = [False]
 
             def _maybe_validate(url_value, file_type):
                 if DatatypeConverter._is_own_s3_url(url_value):
                     return
                 if validations_used[0] >= _MAX_VALIDATIONS:
+                    if not budget_exhausted_logged[0]:
+                        logger.warning(
+                            "add_rows_validation_budget_exhausted",
+                            budget=_MAX_VALIDATIONS,
+                            dataset_id=str(dataset_id),
+                        )
+                        budget_exhausted_logged[0] = True
                     return
                 # Count the attempt BEFORE the call so a slow external host
                 # can't blow the budget by returning errors — otherwise the
@@ -6400,25 +6409,20 @@ class DatatypeConverter:
             # Catch any other unexpected errors
             raise ValueError(f"Failed to convert to JSON: {str(e)}") from e
 
-    _OWN_S3_BUCKET_MARKERS = tuple(
+    _OWN_S3_BUCKETS = tuple(
         m.strip()
         for m in os.getenv(
-            "OWN_S3_BUCKET_MARKERS", "fi-customer-data,fi-content-dev"
+            "OWN_S3_BUCKETS",
+            "fi-customer-data,fi-customer-data-dev,fi-content,fi-content-dev",
         ).split(",")
         if m.strip()
     )
 
     @classmethod
     def _is_own_s3_url(cls, value):
-        if not isinstance(value, str):
-            return False
-        try:
-            from urllib.parse import urlparse
-
-            host = (urlparse(value).hostname or "").lower()
-        except Exception:
-            return False
-        return any(marker in host for marker in cls._OWN_S3_BUCKET_MARKERS)
+        return any(
+            is_own_storage_url(value, bucket) for bucket in cls._OWN_S3_BUCKETS
+        )
 
     def _convert_cell_to_image(self, cell):
         """Convert to image - uploads to S3"""
@@ -6427,7 +6431,6 @@ class DatatypeConverter:
 
         try:
             image_value = cell.value
-            is_s3_url = False
 
             # Handle JSON array with single element (e.g., from images -> image conversion)
             if isinstance(image_value, str) and image_value.strip().startswith("["):
@@ -6435,16 +6438,16 @@ class DatatypeConverter:
                     parsed = json.loads(image_value)
                     if isinstance(parsed, list) and len(parsed) == 1:
                         image_value = parsed[0]
-                        is_s3_url = self._is_own_s3_url(image_value)
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-            # Always validate the URL, even if extracted from a JSON array
-            validate_file_url(str(image_value), "image")
-
-            # Skip re-upload only if it's already in our S3 bucket
-            if is_s3_url:
+            # Our own stored objects are linked as-is: re-validating them is
+            # redundant, and the HEAD would be SSRF-blocked outright on
+            # MinIO/private storage endpoints. External URLs are validated.
+            if self._is_own_s3_url(str(image_value)):
                 return image_value, {}
+
+            validate_file_url(str(image_value), "image")
 
             image_key = f"images/{self.dataset_id}/{uuid.uuid4()}"
             image_url = upload_image_to_s3(
@@ -6478,6 +6481,10 @@ class DatatypeConverter:
             uploaded_urls = []
             for img_value in images_list:
                 if img_value:
+                    # Same own-storage skip as the single-image path.
+                    if self._is_own_s3_url(str(img_value)):
+                        uploaded_urls.append(img_value)
+                        continue
                     validate_file_url(str(img_value), "image")
 
                     image_key = f"images/{self.dataset_id}/{uuid.uuid4()}"

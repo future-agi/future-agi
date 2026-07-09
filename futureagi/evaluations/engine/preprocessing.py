@@ -29,6 +29,10 @@ _BROWSER_UA = (
     "Chrome/124.0 Safari/537.36"
 )
 
+# SVG can carry <script>; dropping the payload here keeps stored-XSS from
+# reaching downstream consumers that inline the resulting data: URI.
+_REJECTED_CONTENT_TYPES = frozenset({"image/svg+xml"})
+
 
 def _fetch_url_bytes(url):
     """SSRF-guarded fetch. Returns (bytes, content_type) or None on any failure."""
@@ -49,6 +53,13 @@ def _fetch_url_bytes(url):
             )
             return None
         ct = (response.headers.get("Content-Type", "") or "").split(";")[0].strip().lower()
+        if ct in _REJECTED_CONTENT_TYPES:
+            logger.warning(
+                "image_preprocess_rejected_content_type",
+                content_type=ct,
+                url=stripped[:120],
+            )
+            return None
         return response.content, ct or "application/octet-stream"
     except Exception as e:
         logger.warning("image_preprocess_fetch_failed", url=stripped[:120], error=str(e))

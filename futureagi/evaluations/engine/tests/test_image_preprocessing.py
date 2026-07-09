@@ -225,6 +225,24 @@ def test_data_uri_resolver_blocks_private_hosts():
     assert out == url
 
 
+def test_data_uri_resolver_rejects_svg_content_type():
+    """SVG can carry <script>; if the preprocessor emitted
+    `data:image/svg+xml;base64,...` any downstream inline renderer would
+    execute it. Reject at fetch time — fall through to the original URL so
+    the sandbox produces its own load error, no data URI is returned.
+    """
+    body = b"<svg onload=\"alert(1)\"></svg>"
+    with patch(
+        "evaluations.engine.preprocessing.safe_fetch",
+        return_value=_safe_get_result(body=body, content_type="image/svg+xml"),
+    ):
+        out = _resolve_image_input_as_data_uri("https://example.com/x.svg")
+    # On rejection, _fetch_url_bytes returns None → resolver returns original
+    # URL string, not a data URI carrying the SVG.
+    assert out == "https://example.com/x.svg"
+    assert not out.startswith("data:")
+
+
 # ---------------------------------------------------------------------------
 # FID list resolver
 # ---------------------------------------------------------------------------
