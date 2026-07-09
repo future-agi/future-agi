@@ -23,12 +23,17 @@ from tracer.models.trace_error_analysis import (
     TraceErrorGroup,
 )
 from tracer.models.trace_scan import TraceScanIssue, TraceScanResult
+from tracer.services.clickhouse.clustering_tables import (
+    CENTROIDS_TABLE,
+    TRACE_INPUTS_TABLE,
+    ensure_centroid_table,
+    ensure_trace_inputs_table,
+)
 from tracer.services.clickhouse.v2 import get_reader
 from tracer.types.scan_types import ClusterableIssue, TraceInputData
 
 logger = structlog.get_logger(__name__)
 
-CENTROIDS_TABLE = "cluster_centroids"
 COSINE_THRESHOLD = 0.45  # cosine distance: 0 = identical, 2 = opposite
 
 
@@ -108,27 +113,6 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
 # ---------------------------------------------------------------------------
 
 
-def _ensure_centroid_table(db: ClickHouseVectorDB) -> None:
-    """Ensure the cluster_centroids table exists."""
-    # Array(...) can't sit inside Nullable; override server profiles that set
-    # data_type_default_nullable=1 so unmodified types aren't auto-wrapped.
-    db.client.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS {CENTROIDS_TABLE} (
-            cluster_id String,
-            project_id UUID,
-            centroid Array(Float32),
-            member_count UInt32,
-            family String,
-            last_updated DateTime DEFAULT now(),
-            PRIMARY KEY (cluster_id)
-        ) ENGINE = ReplacingMergeTree(last_updated)
-        ORDER BY (cluster_id)
-        """,
-        settings={"data_type_default_nullable": 0},
-    )
-
-
 def _update_centroid(
     current: List[float], new_vector: List[float], count: int
 ) -> List[float]:
@@ -151,7 +135,7 @@ def find_nearest_centroid(
     """
     db = ClickHouseVectorDB()
     try:
-        _ensure_centroid_table(db)
+        ensure_centroid_table(db)
         vector_str = "[" + ",".join(map(str, embedding)) + "]"
         rows = db.client.execute(
             f"""
@@ -243,7 +227,7 @@ def create_cluster(
     # Store centroid in ClickHouse
     db = ClickHouseVectorDB()
     try:
-        _ensure_centroid_table(db)
+        ensure_centroid_table(db)
         db.client.execute(
             f"""
             INSERT INTO {CENTROIDS_TABLE}
@@ -359,25 +343,6 @@ def assign_to_cluster(
 # Trace input embeddings (for success trace matching)
 # ---------------------------------------------------------------------------
 
-TRACE_INPUTS_TABLE = "trace_input_embeddings"
-
-
-def _ensure_trace_inputs_table(db: ClickHouseVectorDB) -> None:
-    """Ensure the trace_input_embeddings table exists."""
-    db.client.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS {TRACE_INPUTS_TABLE} (
-            trace_id UUID,
-            project_id UUID,
-            embedding Array(Float32),
-            has_issues Bool,
-            created_at DateTime DEFAULT now()
-        ) ENGINE = ReplacingMergeTree(created_at)
-        ORDER BY (project_id, trace_id)
-        """,
-        settings={"data_type_default_nullable": 0},
-    )
-
 
 def get_trace_input_data(trace_ids: List[str], project_id: str) -> List[TraceInputData]:
     """
@@ -464,7 +429,7 @@ def store_trace_input_embeddings(
     """
     db = ClickHouseVectorDB()
     try:
-        _ensure_trace_inputs_table(db)
+        ensure_trace_inputs_table(db)
         rows = [
             {
                 "trace_id": inp.trace_id,
@@ -506,7 +471,7 @@ def find_success_trace_baseline(
     """
     db = ClickHouseVectorDB()
     try:
-        _ensure_trace_inputs_table(db)
+        ensure_trace_inputs_table(db)
         vector_str = "[" + ",".join(map(str, query_embedding)) + "]"
 
         exclude_clause = ""
@@ -575,7 +540,7 @@ def get_cluster_trace_embeddings(
 
     db = ClickHouseVectorDB()
     try:
-        _ensure_trace_inputs_table(db)
+        ensure_trace_inputs_table(db)
         ids_str = ",".join(f"'{tid}'" for tid in trace_ids)
         rows = db.client.execute(
             f"""
