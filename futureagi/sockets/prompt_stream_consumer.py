@@ -139,6 +139,13 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
             execution = await database_sync_to_async(PromptVersion.objects.get)(
                 original_template=template, template_version=version_to_run
             )
+
+            # Persist variable_names from WS message (mirrors REST path at prompt_template.py:1503-1504)
+            variable_names = content.get("variable_names")
+            if variable_names and len(variable_names) > 0:
+                execution.variable_names = variable_names
+                await database_sync_to_async(execution.save)()
+
             workspace = (
                 await database_sync_to_async(Workspace.objects.get)(id=workspace_id)
                 if workspace_id
