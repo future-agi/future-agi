@@ -3947,7 +3947,6 @@ export interface ConversationCreateRequestApi {
   title?: string;
   /** @maxLength 500 */
   context_page?: string;
-  hidden?: boolean;
 }
 
 export type FalconMessageApiRole = typeof FalconMessageApiRole[keyof typeof FalconMessageApiRole];
@@ -19832,6 +19831,18 @@ export interface ObserveGraphDataResultApi {
 export interface ObserveGraphDataResponseApi {
   status?: boolean;
   result: ObserveGraphDataResultApi;
+}
+
+export interface RootSpansRequestApi {
+  trace_ids: string[];
+  project_ids?: string[];
+}
+
+export type RootSpansResponseApiResult = {[key: string]: string};
+
+export interface RootSpansResponseApi {
+  status?: boolean;
+  result: RootSpansResponseApiResult;
 }
 
 export type ProjectVersionApiMetadata = { [key: string]: unknown };

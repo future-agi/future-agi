@@ -70,6 +70,8 @@ from tracer.serializers.observation_span import (
     ObservationAttributeListQuerySerializer,
     ObservationAttributeListResponseSerializer,
     ObservationSpanSerializer,
+    RootSpansRequestSerializer,
+    RootSpansResponseSerializer,
     SpanExportQuerySerializer,
     SpanIndexQuerySerializer,
     SpanListQuerySerializer,
@@ -914,6 +916,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"Error retrieving observation span {get_error_message('FAILED_GET_OBSERVATION_SPAN')}"
             )
 
+    @validated_request(
+        request_serializer=RootSpansRequestSerializer,
+        responses={200: RootSpansResponseSerializer},
+    )
     @action(detail=False, methods=["post"], url_path="root-spans")
     def root_spans(self, request, *args, **kwargs):
         """
@@ -925,15 +931,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         Response: { "result": { "<trace_id>": "<span_id>", ... } }
         """
         try:
-            trace_ids = request.data.get("trace_ids") or []
-            project_ids = request.data.get("project_ids") or None
-            # Tolerate a single id sent as a bare string.
-            if isinstance(trace_ids, str):
-                trace_ids = [trace_ids]
-            if isinstance(project_ids, str):
-                project_ids = [project_ids]
-            if not trace_ids:
-                return self._gm.bad_request("trace_ids is required")
+            trace_ids = request.validated_data["trace_ids"]
+            project_ids = request.validated_data.get("project_ids") or None
 
             # Collector traces have no PG ``Trace`` row; the gate resolves the root
             # span + tenant from CH/PG-Project instead (fail closed). See selector.
@@ -947,7 +946,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             return self._gm.success_response(result)
         except Exception as e:
             # fail closed: any CH/PG error returns no data, never a partial leak
-            return self._gm.bad_request(f"Error fetching root spans: {str(e)}")
+            logger.exception("Error fetching root spans", error=str(e))
+            return self._gm.bad_request("Error fetching root spans")
 
     @action(detail=False, methods=["post"])
     def bulk_create(self, request, *args, **kwargs):

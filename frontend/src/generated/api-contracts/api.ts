@@ -896,6 +896,8 @@ import type {
   ResourceLimitMutationResponseApi,
   ResourceTypeListResponseApi,
   ReviewItemRequestApi,
+  RootSpansRequestApi,
+  RootSpansResponseApi,
   RunNewEvalsOnTestExecutionApi,
   RunNewEvalsResponseApi,
   RunPromptColumnConfigResponseApi,
@@ -62443,17 +62445,17 @@ export const tracerObservationSpanRetrieveLoading = async (params?: TracerObserv
 
 
 
-export type tracerObservationSpanRootSpansResponse201 = {
-  data: ObservationSpanApi
-  status: 201
+export type tracerObservationSpanRootSpansResponse200 = {
+  data: RootSpansResponseApi
+  status: 200
 }
 
 export type tracerObservationSpanRootSpansResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 200>
 }
 
-export type tracerObservationSpanRootSpansResponseSuccess = (tracerObservationSpanRootSpansResponse201) & {
+export type tracerObservationSpanRootSpansResponseSuccess = (tracerObservationSpanRootSpansResponse200) & {
   headers: Headers;
 };
 export type tracerObservationSpanRootSpansResponseError = (tracerObservationSpanRootSpansResponseDefault) & {
@@ -62477,7 +62479,7 @@ Root span = the span where parent_span_id IS NULL for that trace.
 POST JSON body (large trace lists exceed URL limits): trace_ids (list) +
 optional project_ids (list, prunes the CH scan).
  */
-export const tracerObservationSpanRootSpans = async (observationSpanApi: NonReadonly<ObservationSpanApi>, options?: RequestInit): Promise<tracerObservationSpanRootSpansResponse> => {
+export const tracerObservationSpanRootSpans = async (rootSpansRequestApi: RootSpansRequestApi, options?: RequestInit): Promise<tracerObservationSpanRootSpansResponse> => {
 
   return apiMutator<tracerObservationSpanRootSpansResponse>(getTracerObservationSpanRootSpansUrl(),
   {
@@ -62485,7 +62487,7 @@ export const tracerObservationSpanRootSpans = async (observationSpanApi: NonRead
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      observationSpanApi,)
+      rootSpansRequestApi,)
   }
 );}
 

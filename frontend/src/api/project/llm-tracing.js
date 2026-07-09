@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
-import { apiPath } from "src/api/contracts/api-surface";
+import { tracerObservationSpanRootSpans } from "src/generated/api-contracts/api";
 
 /**
  * Fetch root span IDs for the given trace IDs (POST — large trace lists exceed
@@ -14,11 +14,8 @@ export async function fetchRootSpans(traceIds, projectIds = []) {
   if (!traceIds || traceIds.length === 0) return {};
   const body = { trace_ids: traceIds };
   if (projectIds?.length) body.project_ids = projectIds;
-  const res = await axios.post(
-    apiPath("/tracer/observation-span/root-spans/"),
-    body,
-  );
-  return res.data?.result || {};
+  const res = await tracerObservationSpanRootSpans(body);
+  return res?.data?.result || {};
 }
 
 export const useGetTraceProperties = () => {

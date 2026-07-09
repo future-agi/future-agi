@@ -32968,15 +32968,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/observation-span/root-spans/": {
       "post": {
         "operationId": "tracer_observation-span_root_spans",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": {
-          "$ref": "#/definitions/ObservationSpan"
+          "$ref": "#/definitions/RootSpansRequest"
         },
         "queryParameters": {},
         "responses": {
-          "201": {
-            "$ref": "#/definitions/ObservationSpan"
+          "200": {
+            "$ref": "#/definitions/RootSpansResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -49342,11 +49342,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Context page",
           "type": "string",
           "maxLength": 500
-        },
-        "hidden": {
-          "title": "Hidden",
-          "type": "boolean",
-          "default": false
         }
       }
     },
@@ -65646,6 +65641,49 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/ReviewLabelCommentRequest"
           },
           "default": []
+        }
+      }
+    },
+    "RootSpansRequest": {
+      "required": [
+        "trace_ids"
+      ],
+      "type": "object",
+      "properties": {
+        "trace_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "project_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "RootSpansResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "title": "Result",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },

@@ -9572,12 +9572,11 @@ export const falconAiConversationsCreateBodyTitleMax = 255;
 
 export const falconAiConversationsCreateBodyContextPageMax = 500;
 
-export const falconAiConversationsCreateBodyHiddenDefault = false;
+
 
 export const FalconAiConversationsCreateBody = zod.object({
   "title": zod.string().max(falconAiConversationsCreateBodyTitleMax).optional(),
-  "context_page": zod.string().max(falconAiConversationsCreateBodyContextPageMax).optional(),
-  "hidden": zod.boolean().default(falconAiConversationsCreateBodyHiddenDefault)
+  "context_page": zod.string().max(falconAiConversationsCreateBodyContextPageMax).optional()
 })
 
 
@@ -38235,73 +38234,21 @@ Root span = the span where parent_span_id IS NULL for that trace.
 POST JSON body (large trace lists exceed URL limits): trace_ids (list) +
 optional project_ids (list, prunes the CH scan).
  */
-export const tracerObservationSpanRootSpansBodyParentSpanIdMax = 255;
 
-export const tracerObservationSpanRootSpansBodyNameMax = 2000;
-
-export const tracerObservationSpanRootSpansBodyModelMax = 255;
-
-export const tracerObservationSpanRootSpansBodyLatencyMsMin = -2147483648;
-export const tracerObservationSpanRootSpansBodyLatencyMsMax = 2147483647;
-
-export const tracerObservationSpanRootSpansBodyPromptTokensMin = -2147483648;
-export const tracerObservationSpanRootSpansBodyPromptTokensMax = 2147483647;
-
-export const tracerObservationSpanRootSpansBodyCompletionTokensMin = -2147483648;
-export const tracerObservationSpanRootSpansBodyCompletionTokensMax = 2147483647;
-
-export const tracerObservationSpanRootSpansBodyTotalTokensMin = -2147483648;
-export const tracerObservationSpanRootSpansBodyTotalTokensMax = 2147483647;
-
-export const tracerObservationSpanRootSpansBodyEvalIdMax = 255;
-
-export const tracerObservationSpanRootSpansBodyProviderMax = 255;
 
 
 
 export const TracerObservationSpanRootSpansBody = zod.object({
-  "project": zod.string().uuid(),
-  "project_version": zod.string().uuid().optional(),
-  "trace": zod.string().uuid(),
-  "parent_span_id": zod.string().max(tracerObservationSpanRootSpansBodyParentSpanIdMax).optional(),
-  "name": zod.string().min(1).max(tracerObservationSpanRootSpansBodyNameMax),
-  "observation_type": zod.enum(['tool', 'chain', 'llm', 'retriever', 'embedding', 'agent', 'reranker', 'unknown', 'guardrail', 'evaluator', 'conversation']),
-  "start_time": zod.string().datetime({"offset":true}).optional(),
-  "end_time": zod.string().datetime({"offset":true}).optional(),
-  "input": zod.object({
+  "trace_ids": zod.array(zod.string().min(1)),
+  "project_ids": zod.array(zod.string().min(1)).optional()
+})
 
-}).passthrough().optional(),
-  "output": zod.object({
+export const tracerObservationSpanRootSpansResponseStatusDefault = true;
 
-}).passthrough().optional(),
-  "model": zod.string().max(tracerObservationSpanRootSpansBodyModelMax).optional(),
-  "model_parameters": zod.object({
 
-}).passthrough().optional(),
-  "latency_ms": zod.number().min(tracerObservationSpanRootSpansBodyLatencyMsMin).max(tracerObservationSpanRootSpansBodyLatencyMsMax).optional(),
-  "org_id": zod.string().uuid().optional(),
-  "org_user_id": zod.string().uuid().optional(),
-  "prompt_tokens": zod.number().min(tracerObservationSpanRootSpansBodyPromptTokensMin).max(tracerObservationSpanRootSpansBodyPromptTokensMax).optional(),
-  "completion_tokens": zod.number().min(tracerObservationSpanRootSpansBodyCompletionTokensMin).max(tracerObservationSpanRootSpansBodyCompletionTokensMax).optional(),
-  "total_tokens": zod.number().min(tracerObservationSpanRootSpansBodyTotalTokensMin).max(tracerObservationSpanRootSpansBodyTotalTokensMax).optional(),
-  "response_time": zod.number().optional(),
-  "eval_id": zod.string().max(tracerObservationSpanRootSpansBodyEvalIdMax).optional(),
-  "cost": zod.number().optional(),
-  "status": zod.enum(['UNSET', 'OK', 'ERROR']).optional(),
-  "status_message": zod.string().optional(),
-  "tags": zod.object({
-
-}).passthrough().optional(),
-  "metadata": zod.object({
-
-}).passthrough().optional(),
-  "span_events": zod.object({
-
-}).passthrough().optional(),
-  "provider": zod.string().max(tracerObservationSpanRootSpansBodyProviderMax).optional(),
-  "custom_eval_config": zod.string().uuid().optional(),
-  "eval_status": zod.enum(['NotStarted', 'Queued', 'Running', 'Completed', 'Editing', 'Inactive', 'Failed', 'PartialRun', 'ExperimentEvaluation', 'Uploading', 'PartialExtracted', 'Processing', 'Deleting', 'PartialCompleted', 'OptimizationEvaluation', 'Error', 'Cancelled']).optional(),
-  "prompt_version": zod.string().uuid().optional()
+export const TracerObservationSpanRootSpansResponse = zod.object({
+  "status": zod.boolean().default(tracerObservationSpanRootSpansResponseStatusDefault),
+  "result": zod.record(zod.string(), zod.string().min(1))
 })
 
 
