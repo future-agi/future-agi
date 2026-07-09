@@ -547,14 +547,26 @@ const CompareGraphHeader = ({
                 }
                 sx={{
                   height: 24,
-                  bgcolor: "rgba(0,0,0,0.04)",
+                  bgcolor: "action.hover",
                   border: "1px solid",
                   borderColor: "divider",
                   borderRadius: "6px",
+                  transition: (theme) =>
+                    theme.transitions.create(
+                      ["background-color", "border-color"],
+                      {
+                        duration: theme.transitions.duration.shortest,
+                      },
+                    ),
+                  "&:hover": {
+                    bgcolor: "action.selected",
+                    borderColor: "text.disabled",
+                  },
                   "& .MuiChip-label": { px: 0.5 },
                   "& .MuiChip-deleteIcon": {
                     fontSize: 12,
                     color: "text.disabled",
+                    "&:hover": { color: "text.secondary" },
                   },
                 }}
               />
@@ -1254,29 +1266,32 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     enabled: Boolean(observeId),
   });
 
-  // Shared node click handler for agent graph/path views
   const handleAgentNodeClick = useCallback(
     (nodeData) => {
       if (!nodeData?.type) return;
       const isSame = extraFilters.some(
         (f) =>
-          f.column_id === "observation_type" &&
-          f.filter_config?.filter_value === nodeData.type,
+          f.column_id === "node_type" &&
+          (Array.isArray(f.filter_config?.filter_value)
+            ? f.filter_config.filter_value.includes(nodeData.type)
+            : f.filter_config?.filter_value === nodeData.type),
       );
-      if (isSame) {
-        setExtraFilters([]);
-      } else {
-        setExtraFilters([
-          {
-            column_id: "observation_type",
-            filter_config: {
-              filter_type: "string",
-              filter_op: "equals",
-              filter_value: nodeData.type,
-            },
-          },
-        ]);
-      }
+      const others = extraFilters.filter((f) => f.column_id !== "node_type");
+      setExtraFilters(
+        isSame
+          ? others
+          : [
+              ...others,
+              {
+                column_id: "node_type",
+                filter_config: {
+                  filter_type: "text",
+                  filter_op: "in",
+                  filter_value: [nodeData.type],
+                },
+              },
+            ],
+      );
     },
     [extraFilters, setExtraFilters],
   );
