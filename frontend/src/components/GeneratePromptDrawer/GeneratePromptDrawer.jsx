@@ -23,8 +23,8 @@ import { enqueueSnackbar } from "notistack";
 import { GENERATE_PROMPT_BUTTONS } from "src/utils/constants";
 import { usePromptStreamUrl } from "src/sections/workbench/createPrompt/hooks/usePromptStreamUrl";
 import {
-  authFailMessage,
-  isAuthFailCloseCode,
+  handleAuthFailClose,
+  handleWsErrorFrame,
   runPromptOverSocket,
 } from "src/sections/workbench/createPrompt/common";
 import { useBeforeUnload } from "src/hooks/useBeforeUnload";
@@ -78,6 +78,15 @@ export default function GeneratePromptDrawer({
         // one from llm streaming activity completion and one canonical final completion.
         // settled ensures we resolve/reject only once.
         let settled = false;
+        const isSettled = () => settled;
+        const markSettled = () => {
+          settled = true;
+        };
+        const resetGenerationState = () => {
+          setIsGeneratingPrompt(false);
+          setLoadingStage("");
+          setGeneratedPrompt("");
+        };
         const completeGeneration = (message, promptText) => {
           if (settled || !promptText) return;
           settled = true;
@@ -98,20 +107,15 @@ export default function GeneratePromptDrawer({
             const wsData = data;
             // Surface top-level BE error frames (permission, workspace, etc.)
             // before the type filter so the spinner doesn't hang on 4003/4004.
-            if (wsData?.type === "error") {
-              if (settled) return;
-              settled = true;
-              enqueueSnackbar(wsData?.message || "Failed to generate prompt", {
-                variant: "error",
-              });
-              setIsGeneratingPrompt(false);
-              setLoadingStage("");
-              setGeneratedPrompt("");
-              reject(
-                new Error(wsData?.message || "generate_permission_denied"),
-              );
-              return;
-            }
+            const handled = handleWsErrorFrame({
+              wsData,
+              isSettled,
+              markSettled,
+              cleanup: resetGenerationState,
+              reject,
+              defaultMessage: "Failed to generate prompt",
+            });
+            if (handled) return;
             if (wsData?.type !== "generate_prompt") return;
             const generatePromptData = wsData;
             const current_activity = generatePromptData?.current_activity;
@@ -158,17 +162,20 @@ export default function GeneratePromptDrawer({
             reject(err);
           },
           onClose: (event) => {
+            const handled = handleAuthFailClose({
+              event,
+              isSettled,
+              markSettled,
+              cleanup: () => setIsGeneratingPrompt(false),
+              reject,
+            });
+            if (handled) return;
             if (settled) return;
             settled = true;
             setIsGeneratingPrompt(false);
-            const isAuthFail = isAuthFailCloseCode(event);
-            const message = isAuthFail
-              ? authFailMessage(event)
-              : "WebSocket closed before prompt generation completed";
-            if (isAuthFail) {
-              enqueueSnackbar(message, { variant: "error" });
-            }
-            reject(new Error(message));
+            reject(
+              new Error("WebSocket closed before prompt generation completed"),
+            );
           },
         });
         activeSocketRef.current = socket;

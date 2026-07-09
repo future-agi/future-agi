@@ -1,3 +1,4 @@
+import { enqueueSnackbar } from "notistack";
 import { PromptRoles, WS_CLOSE_CODES } from "src/utils/constants";
 import { extractVariables } from "./Playground/common";
 
@@ -24,6 +25,88 @@ export const isAuthFailCloseCode = (event) =>
  * browsers strip long reasons per RFC 6455's 123-byte limit).
  */
 export const authFailMessage = (event) => event?.reason || "Permission denied";
+
+/**
+ * Shared `onClose` body for every `runPromptOverSocket` consumer's
+ * server-initiated auth-fail handling (4001/4003/4004).
+ *
+ * Every call site used to hand-roll the same few lines: check
+ * `isAuthFailCloseCode`, run its own cleanup (spinner off / clear timers /
+ * close socket), snackbar the reason, and reject the pending Promise —
+ * duplicated across `WorkbenchProvider`'s run + compare blocks,
+ * `GeneratePromptDrawer`, `ImprovePromptDrawer`, and the DataTab
+ * `ImprovePrompt`. This centralizes that; only the cleanup side effects and
+ * rejection shape differ per call site, so those are passed in.
+ *
+ * @param {object} opts
+ * @param {CloseEvent} opts.event
+ * @param {() => boolean} [opts.isSettled] - Skip if the Promise already
+ *   settled. Omit for call sites with no separate settled guard.
+ * @param {() => void} [opts.markSettled]
+ * @param {() => void} [opts.cleanup] - Reset loading state, clear timers,
+ *   close the socket, etc.
+ * @param {(reason: string) => void} opts.reject
+ * @param {(reason: string) => Error} [opts.buildRejection] - Defaults to
+ *   `new Error(reason)`; override for call sites that reject with a
+ *   richer shape (e.g. `{ version, error }`).
+ * @returns {boolean} true if this was an auth-fail close (fully handled —
+ *   caller should stop), false otherwise (caller runs its own disconnect
+ *   logic, e.g. HTTP-polling fallback).
+ */
+export function handleAuthFailClose({
+  event,
+  isSettled,
+  markSettled,
+  cleanup,
+  reject,
+  buildRejection = (reason) => new Error(reason),
+}) {
+  if (!isAuthFailCloseCode(event)) return false;
+  if (isSettled && isSettled()) return true;
+  markSettled?.();
+  cleanup?.();
+  const reason = authFailMessage(event);
+  enqueueSnackbar(reason, { variant: "error" });
+  reject(buildRejection(reason));
+  return true;
+}
+
+/**
+ * Shared `onMessage` body for handling a top-level `{type:"error"}` WS
+ * frame — the BE's structured error path (permission denied, workspace not
+ * found, unhandled exception, etc). Duplicated across `GeneratePromptDrawer`,
+ * `ImprovePromptDrawer`, and the DataTab `ImprovePrompt`: short-circuit
+ * before the consumer's own message-type filter, guard against double-firing
+ * via `settled`, reset loading state, snackbar, and reject.
+ *
+ * @param {object} opts
+ * @param {object} opts.wsData - The parsed WS message.
+ * @param {() => boolean} opts.isSettled
+ * @param {() => void} opts.markSettled
+ * @param {() => void} [opts.cleanup]
+ * @param {(reason: string) => void} opts.reject
+ * @param {string} opts.defaultMessage - Used for both the snackbar and the
+ *   rejection when the BE frame didn't include a `message`.
+ * @returns {boolean} true if `wsData` was a `type:"error"` frame (caller
+ *   should return immediately from its `onMessage`), false otherwise.
+ */
+export function handleWsErrorFrame({
+  wsData,
+  isSettled,
+  markSettled,
+  cleanup,
+  reject,
+  defaultMessage,
+}) {
+  if (wsData?.type !== "error") return false;
+  if (isSettled()) return true;
+  markSettled();
+  cleanup?.();
+  const message = wsData?.message || defaultMessage;
+  enqueueSnackbar(message, { variant: "error" });
+  reject(new Error(message));
+  return true;
+}
 
 export const dataTypeMapping = {
   "Pass/Fail": "boolean",

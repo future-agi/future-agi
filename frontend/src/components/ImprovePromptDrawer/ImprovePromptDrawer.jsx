@@ -15,8 +15,8 @@ import { Events, PropertyName, trackEvent } from "src/utils/Mixpanel";
 import { useParams } from "react-router";
 import { usePromptStreamUrl } from "src/sections/workbench/createPrompt/hooks/usePromptStreamUrl";
 import {
-  authFailMessage,
-  isAuthFailCloseCode,
+  handleAuthFailClose,
+  handleWsErrorFrame,
   runPromptOverSocket,
 } from "src/sections/workbench/createPrompt/common";
 import { useBeforeUnload } from "src/hooks/useBeforeUnload";
@@ -68,6 +68,14 @@ export default function ImprovePromptDrawer({
         // one from llm streaming activity completion and one canonical final completion.
         // settled ensures we resolve/reject only once.
         let settled = false;
+        const isSettled = () => settled;
+        const markSettled = () => {
+          settled = true;
+        };
+        const resetImprovementState = () => {
+          setIsImprovingPrompt(false);
+          setLoadingStage("");
+        };
         const completeImprovement = (message, promptText) => {
           if (settled || !promptText) return;
           settled = true;
@@ -91,17 +99,15 @@ export default function ImprovePromptDrawer({
             const wsData = data;
             // Surface top-level BE error frames (permission, workspace, etc.)
             // before the type filter so the spinner doesn't hang on 4003/4004.
-            if (wsData?.type === "error") {
-              if (settled) return;
-              settled = true;
-              enqueueSnackbar(wsData?.message || "Failed to improve prompt", {
-                variant: "error",
-              });
-              setIsImprovingPrompt(false);
-              setLoadingStage("");
-              reject(new Error(wsData?.message || "improve_permission_denied"));
-              return;
-            }
+            const handled = handleWsErrorFrame({
+              wsData,
+              isSettled,
+              markSettled,
+              cleanup: resetImprovementState,
+              reject,
+              defaultMessage: "Failed to improve prompt",
+            });
+            if (handled) return;
             if (wsData?.type !== "improve_prompt") return;
             const generatePromptData = wsData;
             const current_activity = generatePromptData?.current_activity;
@@ -150,17 +156,20 @@ export default function ImprovePromptDrawer({
             reject(err);
           },
           onClose: (event) => {
+            const handled = handleAuthFailClose({
+              event,
+              isSettled,
+              markSettled,
+              cleanup: () => setIsImprovingPrompt(false),
+              reject,
+            });
+            if (handled) return;
             if (settled) return;
             settled = true;
             setIsImprovingPrompt(false);
-            const isAuthFail = isAuthFailCloseCode(event);
-            const message = isAuthFail
-              ? authFailMessage(event)
-              : "WebSocket closed before prompt improvement completed";
-            if (isAuthFail) {
-              enqueueSnackbar(message, { variant: "error" });
-            }
-            reject(new Error(message));
+            reject(
+              new Error("WebSocket closed before prompt improvement completed"),
+            );
           },
         });
         activeSocketRef.current = socket;

@@ -199,6 +199,67 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
             }
         )
 
+    async def _execute_with_org(self, *, correlation, log_context, failure_message, run):
+        """Shared scaffold for the three execute_*_async methods.
+
+        Resolves ``(workspace, org_id)`` via the single access gate, then
+        awaits ``run(workspace, org_id)`` — a closure supplying the
+        handler-specific validation (if any) and the actual runner call.
+        Any exception raised out of ``run`` (or the resolve step) is logged
+        and turned into a generic error frame, so each handler no longer
+        repeats its own try/resolve/except block. ``run`` is expected to
+        send its own error frames + close the socket for any handler-specific
+        rejection (e.g. cross-workspace template access) rather than raising,
+        so those cases don't get masked by ``failure_message``.
+        """
+        try:
+            workspace, org_id = await self._resolve_workspace_and_org(
+                correlation=correlation
+            )
+            if workspace is None:
+                return
+            await run(workspace, org_id)
+        except Exception:
+            logger.exception(log_context)
+            await self._send_ws_error(failure_message, correlation=correlation)
+
+    async def _fetch_template_for_run(self, template_id, workspace, org_id, correlation):
+        """Fetch + validate template access for a run.
+
+        Sends the appropriate error frame and closes the socket on failure,
+        returning ``None``. Returns the template on success.
+        """
+        try:
+            template = await database_sync_to_async(PromptTemplate.objects.get)(
+                id=template_id
+            )
+        except PromptTemplate.DoesNotExist:
+            await self._send_ws_error("Template not found.", correlation=correlation)
+            await self.close(code=WS_CLOSE_CODE_NOT_FOUND)
+            return None
+
+        if template.workspace_id:
+            # Template scoped to a specific workspace — connected workspace
+            # must match. Same-org-different-workspace is a leak too
+            # (TH-5944 only closed the cross-org hole).
+            if template.workspace_id != workspace.id:
+                await self._send_ws_error(
+                    "Template does not belong to the selected workspace.",
+                    correlation=correlation,
+                )
+                await self.close(code=WS_CLOSE_CODE_PERMISSION_DENIED)
+                return None
+        elif template.organization_id != org_id:
+            # Legacy/org-wide template — fall back to the looser org check.
+            await self._send_ws_error(
+                "Template does not belong to the selected workspace's organization.",
+                correlation=correlation,
+            )
+            await self.close(code=WS_CLOSE_CODE_PERMISSION_DENIED)
+            return None
+
+        return template
+
     # ------------------------------------------------------------------
     # run_template
     # ------------------------------------------------------------------
@@ -224,43 +285,12 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
 
     async def execute_template_async(self, content, template_id):
         correlation = {"template_id": template_id}
-        try:
-            workspace, org_id = await self._resolve_workspace_and_org(
-                correlation=correlation
+
+        async def run(workspace, org_id):
+            template = await self._fetch_template_for_run(
+                template_id, workspace, org_id, correlation
             )
-            if workspace is None:
-                return
-
-            try:
-                template = await database_sync_to_async(PromptTemplate.objects.get)(
-                    id=template_id
-                )
-            except PromptTemplate.DoesNotExist:
-                await self._send_ws_error(
-                    "Template not found.",
-                    correlation=correlation,
-                )
-                await self.close(code=WS_CLOSE_CODE_NOT_FOUND)
-                return
-
-            if template.workspace_id:
-                # Template scoped to a specific workspace — connected workspace
-                # must match. Same-org-different-workspace is a leak too
-                # (TH-5944 only closed the cross-org hole).
-                if template.workspace_id != workspace.id:
-                    await self._send_ws_error(
-                        "Template does not belong to the selected workspace.",
-                        correlation=correlation,
-                    )
-                    await self.close(code=WS_CLOSE_CODE_PERMISSION_DENIED)
-                    return
-            elif template.organization_id != org_id:
-                # Legacy/org-wide template — fall back to the looser org check.
-                await self._send_ws_error(
-                    "Template does not belong to the selected workspace's organization.",
-                    correlation=correlation,
-                )
-                await self.close(code=WS_CLOSE_CODE_PERMISSION_DENIED)
+            if template is None:
                 return
 
             version_to_run = content.get("version")
@@ -278,12 +308,13 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
                 workspace=workspace,
                 ws_manager=self._make_ws_manager(org_id),
             )
-        except Exception:
-            logger.exception("execute_template_async failed")
-            await self._send_ws_error(
-                "Execution failed. Please retry.",
-                correlation=correlation,
-            )
+
+        await self._execute_with_org(
+            correlation=correlation,
+            log_context="execute_template_async failed",
+            failure_message="Execution failed. Please retry.",
+            run=run,
+        )
 
     async def handle_stop_streaming(self, content):
         template_id = content.get("template_id")
@@ -331,13 +362,8 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
 
     async def execute_improve_prompt_async(self, content, improve_id):
         correlation = {"improve_id": improve_id}
-        try:
-            workspace, org_id = await self._resolve_workspace_and_org(
-                correlation=correlation
-            )
-            if workspace is None:
-                return
 
+        async def run(workspace, org_id):
             await improve_prompt_async(
                 original_prompt=content.get("original_prompt", ""),
                 improvement_suggestions=content.get("improvement_suggestions", ""),
@@ -349,12 +375,13 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
                 workspace=workspace,
                 ws_manager=self._make_ws_manager(org_id),
             )
-        except Exception:
-            logger.exception("execute_improve_prompt_async failed")
-            await self._send_ws_error(
-                "Improve failed. Please retry.",
-                correlation=correlation,
-            )
+
+        await self._execute_with_org(
+            correlation=correlation,
+            log_context="execute_improve_prompt_async failed",
+            failure_message="Improve failed. Please retry.",
+            run=run,
+        )
 
     async def handle_stop_improve_prompt(self, content):
         improve_id = content.get("improve_id")
@@ -396,13 +423,8 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
 
     async def execute_generate_prompt_async(self, content, generation_id):
         correlation = {"generation_id": generation_id}
-        try:
-            workspace, org_id = await self._resolve_workspace_and_org(
-                correlation=correlation
-            )
-            if workspace is None:
-                return
 
+        async def run(workspace, org_id):
             await generate_prompt_async(
                 description=content.get("description", ""),
                 generation_id=generation_id,
@@ -412,12 +434,13 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
                 workspace=workspace,
                 ws_manager=self._make_ws_manager(org_id),
             )
-        except Exception:
-            logger.exception("execute_generate_prompt_async failed")
-            await self._send_ws_error(
-                "Generate failed. Please retry.",
-                correlation=correlation,
-            )
+
+        await self._execute_with_org(
+            correlation=correlation,
+            log_context="execute_generate_prompt_async failed",
+            failure_message="Generate failed. Please retry.",
+            run=run,
+        )
 
     async def handle_stop_generate_prompt(self, content):
         generation_id = content.get("generation_id")

@@ -17,9 +17,8 @@ import { DefaultMessages } from "../constant";
 import { isContentNotEmpty } from "./Playground/common";
 import { modelConfigDefault, PromptWorkbenchContext } from "./WorkbenchContext";
 import {
-  authFailMessage,
   getVariables,
-  isAuthFailCloseCode,
+  handleAuthFailClose,
   normalizeConfigurationForLoad,
   normalizeConfigurationForSave,
   runPromptOverSocket,
@@ -681,13 +680,15 @@ const WorkbenchProvider = ({ children }) => {
               // Server-initiated auth-fail closes: settle the version's
               // Promise, clear its spinner, and surface the reason so
               // Promise.allSettled + the UI don't hang.
-              if (isAuthFailCloseCode(event)) {
-                closeSocketByIndex(`compare-${versionIndex}`);
-                setLoadingStatusByIndex(versionIndex, false);
-                const reason = authFailMessage(event);
-                enqueueSnackbar(reason, { variant: "error" });
-                reject({ version, error: reason });
-              }
+              handleAuthFailClose({
+                event,
+                cleanup: () => {
+                  closeSocketByIndex(`compare-${versionIndex}`);
+                  setLoadingStatusByIndex(versionIndex, false);
+                },
+                reject,
+                buildRejection: (reason) => ({ version, error: reason }),
+              });
             },
           });
           activeSocketsRef.current[`compare-${versionIndex}`] = socket;
@@ -1071,14 +1072,17 @@ const WorkbenchProvider = ({ children }) => {
               // Server-initiated auth-fail closes: don't fall back to
               // polling a run that never started. Settle the Promise and
               // cancel the fallback timer.
-              if (isAuthFailCloseCode(event)) {
-                completed = true;
-                clearFallbackTimer();
-                closeSocketByIndex(`run-${index}`);
-                setLoadingStatusByIndex(index, false);
-                reject(new Error(authFailMessage(event)));
-                return;
-              }
+              const handled = handleAuthFailClose({
+                event,
+                cleanup: () => {
+                  completed = true;
+                  clearFallbackTimer();
+                  closeSocketByIndex(`run-${index}`);
+                  setLoadingStatusByIndex(index, false);
+                },
+                reject,
+              });
+              if (handled) return;
               if (!completed) {
                 fallbackToHttpPolling({
                   startRun: !receivedSocketMessage,
