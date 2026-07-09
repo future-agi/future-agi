@@ -56,7 +56,7 @@ func TestPreset_Groq(t *testing.T) {
 	}
 	applyProviderPreset(cfg)
 
-	wantURL := "https://api.groq.com/openai"
+	wantURL := "https://api.groq.com/openai/v1"
 	wantFmt := "openai"
 
 	if cfg.BaseURL != wantURL {
@@ -123,8 +123,8 @@ func TestPreset_ExplicitAPIFormatPreserved(t *testing.T) {
 		t.Errorf("APIFormat = %q, want %q (explicit value must not be overridden)", cfg.APIFormat, customFmt)
 	}
 	// BaseURL should still be filled from the preset since it was empty.
-	if cfg.BaseURL != "https://api.groq.com/openai" {
-		t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, "https://api.groq.com/openai")
+	if cfg.BaseURL != "https://api.groq.com/openai/v1" {
+		t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, "https://api.groq.com/openai/v1")
 	}
 }
 
@@ -134,18 +134,23 @@ func TestPreset_ExplicitAPIFormatPreserved(t *testing.T) {
 
 func TestPreset_KnownProvidersComplete(t *testing.T) {
 	expected := map[string]ProviderPreset{
-		"groq":        {BaseURL: "https://api.groq.com/openai", APIFormat: "openai"},
-		"mistral":     {BaseURL: "https://api.mistral.ai", APIFormat: "openai"},
-		"together":    {BaseURL: "https://api.together.xyz", APIFormat: "openai"},
-		"fireworks":   {BaseURL: "https://api.fireworks.ai/inference", APIFormat: "openai"},
-		"deepinfra":   {BaseURL: "https://api.deepinfra.com", APIFormat: "openai"},
+		"openai":      {BaseURL: "https://api.openai.com/v1", APIFormat: "openai"},
+		"anthropic":   {BaseURL: "https://api.anthropic.com", APIFormat: "anthropic"},
+		"gemini":      {BaseURL: "https://generativelanguage.googleapis.com", APIFormat: "gemini"},
+		"cohere":      {BaseURL: "https://api.cohere.ai/compatibility/v1", APIFormat: "cohere"},
+		"groq":        {BaseURL: "https://api.groq.com/openai/v1", APIFormat: "openai"},
+		"mistral":     {BaseURL: "https://api.mistral.ai/v1", APIFormat: "openai"},
+		"together":    {BaseURL: "https://api.together.xyz/v1", APIFormat: "openai"},
+		"deepseek":    {BaseURL: "https://api.deepseek.com/v1", APIFormat: "openai"},
 		"perplexity":  {BaseURL: "https://api.perplexity.ai", APIFormat: "openai"},
-		"cerebras":    {BaseURL: "https://api.cerebras.ai", APIFormat: "openai"},
-		"xai":         {BaseURL: "https://api.x.ai", APIFormat: "openai"},
+		"fireworks":   {BaseURL: "https://api.fireworks.ai/inference/v1", APIFormat: "openai"},
+		"deepinfra":   {BaseURL: "https://api.deepinfra.com/v1", APIFormat: "openai"},
+		"cerebras":    {BaseURL: "https://api.cerebras.ai/v1", APIFormat: "openai"},
+		"xai":         {BaseURL: "https://api.x.ai/v1", APIFormat: "openai"},
 		"huggingface": {BaseURL: "https://api-inference.huggingface.co", APIFormat: "openai"},
-		"anyscale":    {BaseURL: "https://api.endpoints.anyscale.com", APIFormat: "openai"},
+		"anyscale":    {BaseURL: "https://api.endpoints.anyscale.com/v1", APIFormat: "openai"},
 		"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai"},
-		"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai"},
+		"openrouter":  {BaseURL: "https://openrouter.ai/api/v1", APIFormat: "openai"},
 		"azure":       {BaseURL: "", APIFormat: "azure"},
 	}
 
@@ -207,6 +212,26 @@ func TestPreset_AllKnownProviders_ApplyDefaults(t *testing.T) {
 			// For non-azure providers, BaseURL must be non-empty.
 			if name != "azure" && cfg.BaseURL == "" {
 				t.Errorf("BaseURL is empty after applying preset for %q (expected non-empty)", name)
+			}
+
+			// Core providers with native API formats must use their own format.
+			switch name {
+			case "openai":
+				if cfg.APIFormat != "openai" {
+					t.Errorf("openai APIFormat = %q, want %q", cfg.APIFormat, "openai")
+				}
+			case "anthropic":
+				if cfg.APIFormat != "anthropic" {
+					t.Errorf("anthropic APIFormat = %q, want %q", cfg.APIFormat, "anthropic")
+				}
+			case "gemini":
+				if cfg.APIFormat != "gemini" {
+					t.Errorf("gemini APIFormat = %q, want %q", cfg.APIFormat, "gemini")
+				}
+			case "cohere":
+				if cfg.APIFormat != "cohere" {
+					t.Errorf("cohere APIFormat = %q, want %q", cfg.APIFormat, "cohere")
+				}
 			}
 		})
 	}

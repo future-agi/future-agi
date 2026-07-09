@@ -1474,7 +1474,13 @@ export const endpoints = {
       detail: (id) => `/agentcc/shadow-results/${id}/`,
     },
     providerCredentials: {
+      list: "/agentcc/provider-credentials/",
+      create: "/agentcc/provider-credentials/",
+      detail: (id) => `/agentcc/provider-credentials/${id}/`,
+      update: (id) => `/agentcc/provider-credentials/${id}/`,
+      delete: (id) => `/agentcc/provider-credentials/${id}/`,
       fetchModels: "/agentcc/provider-credentials/fetch_models/",
+      rotate: (id) => `/agentcc/provider-credentials/${id}/rotate/`,
     },
   },
   integrations: {

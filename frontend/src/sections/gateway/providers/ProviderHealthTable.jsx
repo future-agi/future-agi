@@ -14,6 +14,7 @@ import {
   Stack,
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
+import { formatProviderName } from "./utils/formatProviderName";
 
 const STATUS_MAP = {
   healthy: { label: "Healthy", color: "success" },
@@ -36,7 +37,7 @@ function formatLatency(ms) {
   return `${Math.round(ms)}ms`;
 }
 
-const ProviderHealthTable = ({ providerHealth, orgConfig }) => {
+const ProviderHealthTable = ({ providerHealth, orgConfig, providerCredentials }) => {
   const navigate = useNavigate();
   // providerHealth can be { providers: [...] } or { providers: { name: {...} } }
   const providers = providerHealth?.providers;
@@ -91,13 +92,9 @@ const ProviderHealthTable = ({ providerHealth, orgConfig }) => {
           <TableBody>
             {providerList.map((p, idx) => {
               const status = getProviderStatus(p);
+              const displayName = formatProviderName(p, idx);
               const originalName =
-                p.originalName || p.name || p.id || `Provider ${idx + 1}`;
-              const displayName =
-                (p.display_name || "").trim() ||
-                (originalName
-                  ? originalName.charAt(0).toUpperCase() + originalName.slice(1)
-                  : originalName);
+                p.originalName || p.name || p.provider_name || p.id || "";
               const models =
                 p.models || orgProviders[originalName]?.models || [];
               const modelCount = Array.isArray(models)
@@ -202,8 +199,18 @@ const ProviderHealthTable = ({ providerHealth, orgConfig }) => {
 };
 
 ProviderHealthTable.propTypes = {
-  providerHealth: PropTypes.object,
-  orgConfig: PropTypes.object,
+  providerHealth: PropTypes.shape({
+    providers: PropTypes.oneOfType([PropTypes.object, PropTypes.array]),
+  }),
+  orgConfig: PropTypes.shape({
+    providers: PropTypes.object,
+  }),
+  providerCredentials: PropTypes.arrayOf(
+    PropTypes.shape({
+      provider_name: PropTypes.string,
+      display_name: PropTypes.string,
+    }),
+  ),
 };
 
 export default ProviderHealthTable;

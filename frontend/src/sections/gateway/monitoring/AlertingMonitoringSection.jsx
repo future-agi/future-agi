@@ -34,6 +34,7 @@ import CreateAlertRuleDialog from "./CreateAlertRuleDialog";
 import CreateChannelDialog from "./CreateChannelDialog";
 import { val } from "../utils/analyticsHelpers";
 import { formatCost } from "../utils/formatters";
+import { formatProviderName } from "../providers/utils/formatProviderName";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -417,7 +418,7 @@ const LiveMetricsTab = ({
                 return (
                   <Chip
                     key={p.name || idx}
-                    label={p.name || `Provider ${idx + 1}`}
+                    label={formatProviderName(p, idx)}
                     color={isHealthy ? "success" : "error"}
                     variant="outlined"
                     sx={{ fontSize: "0.875rem", py: 2 }}
