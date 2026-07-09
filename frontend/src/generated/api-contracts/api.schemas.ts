@@ -19834,11 +19834,6 @@ export interface ObserveGraphDataResponseApi {
   result: ObserveGraphDataResultApi;
 }
 
-export interface RootSpansRequestApi {
-  trace_ids: string[];
-  project_ids?: string[];
-}
-
 export type RootSpansResponseApiResult = {[key: string]: string};
 
 export interface RootSpansResponseApi {
@@ -25965,6 +25960,19 @@ export type TracerObservationSpanRetrieveLoading200 = {
   next?: string;
   previous?: string;
   results: ObservationSpanApi[];
+};
+
+export type TracerObservationSpanRootSpansParams = {
+/**
+ * A page number within the paginated result set.
+ */
+page?: number;
+/**
+ * Number of results to return per page.
+ */
+limit?: number;
+trace_ids: string[];
+project_ids?: string[];
 };
 
 export type TracerProjectVersionListParams = {

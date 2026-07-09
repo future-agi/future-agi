@@ -2735,7 +2735,7 @@ export const API_SURFACE_CONTRACT = Object.freeze({
         "get"
       ],
       "/tracer/observation-span/root-spans/": [
-        "post"
+        "get"
       ],
       "/tracer/observation-span/submit_feedback/": [
         "post"
@@ -5994,7 +5994,7 @@ export const API_SURFACE_PATHS = Object.freeze({
     "get"
   ],
   "/tracer/observation-span/root-spans/": [
-    "post"
+    "get"
   ],
   "/tracer/observation-span/submit_feedback/": [
     "post"

@@ -70,7 +70,7 @@ from tracer.serializers.observation_span import (
     ObservationAttributeListQuerySerializer,
     ObservationAttributeListResponseSerializer,
     ObservationSpanSerializer,
-    RootSpansRequestSerializer,
+    RootSpansQuerySerializer,
     RootSpansResponseSerializer,
     SpanExportQuerySerializer,
     SpanIndexQuerySerializer,
@@ -917,22 +917,22 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             )
 
     @validated_request(
-        request_serializer=RootSpansRequestSerializer,
+        query_serializer=RootSpansQuerySerializer,
         responses={200: RootSpansResponseSerializer},
     )
-    @action(detail=False, methods=["post"], url_path="root-spans")
+    @action(detail=False, methods=["get"], url_path="root-spans")
     def root_spans(self, request, *args, **kwargs):
         """
         Given a list of trace_ids, return the root span ID for each trace.
         Root span = the span where parent_span_id IS NULL for that trace.
 
-        POST JSON body (large trace lists exceed URL limits): trace_ids (list) +
-        optional project_ids (list, prunes the CH scan).
-        Response: { "result": { "<trace_id>": "<span_id>", ... } }
+        Query params (repeated): trace_ids (required,
+        ?trace_ids=<id>&trace_ids=<id>) + optional project_ids (prunes the CH
+        scan). Response: { "result": { "<trace_id>": "<span_id>", ... } }
         """
         try:
-            trace_ids = request.validated_data["trace_ids"]
-            project_ids = request.validated_data.get("project_ids") or None
+            trace_ids = request.validated_query_data["trace_ids"]
+            project_ids = request.validated_query_data.get("project_ids") or None
 
             # Collector traces have no PG ``Trace`` row; the gate resolves the root
             # span + tenant from CH/PG-Project instead (fail closed). See selector.

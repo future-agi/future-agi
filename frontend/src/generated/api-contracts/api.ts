@@ -896,7 +896,6 @@ import type {
   ResourceLimitMutationResponseApi,
   ResourceTypeListResponseApi,
   ReviewItemRequestApi,
-  RootSpansRequestApi,
   RootSpansResponseApi,
   RunNewEvalsOnTestExecutionApi,
   RunNewEvalsResponseApi,
@@ -1152,6 +1151,7 @@ import type {
   TracerObservationSpanListSpansParams,
   TracerObservationSpanRetrieveLoading200,
   TracerObservationSpanRetrieveLoadingParams,
+  TracerObservationSpanRootSpansParams,
   TracerProjectFetchSystemMetrics200,
   TracerProjectFetchSystemMetricsParams,
   TracerProjectGetGraphData200,
@@ -62464,30 +62464,41 @@ export type tracerObservationSpanRootSpansResponseError = (tracerObservationSpan
 
 export type tracerObservationSpanRootSpansResponse = (tracerObservationSpanRootSpansResponseSuccess | tracerObservationSpanRootSpansResponseError)
 
-export const getTracerObservationSpanRootSpansUrl = () => {
+export const getTracerObservationSpanRootSpansUrl = (params: TracerObservationSpanRootSpansParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/tracer/observation-span/root-spans/`
+  return stringifiedParams.length > 0 ? `/tracer/observation-span/root-spans/?${stringifiedParams}` : `/tracer/observation-span/root-spans/`
 }
 
 /**
  * Given a list of trace_ids, return the root span ID for each trace.
 Root span = the span where parent_span_id IS NULL for that trace.
 
-POST JSON body (large trace lists exceed URL limits): trace_ids (list) +
-optional project_ids (list, prunes the CH scan).
+Query params (repeated): trace_ids (required,
+?trace_ids=<id>&trace_ids=<id>) + optional project_ids (prunes the CH
+scan). Response: { "result": { "<trace_id>": "<span_id>", ... } }
  */
-export const tracerObservationSpanRootSpans = async (rootSpansRequestApi: RootSpansRequestApi, options?: RequestInit): Promise<tracerObservationSpanRootSpansResponse> => {
+export const tracerObservationSpanRootSpans = async (params: TracerObservationSpanRootSpansParams, options?: RequestInit): Promise<tracerObservationSpanRootSpansResponse> => {
 
-  return apiMutator<tracerObservationSpanRootSpansResponse>(getTracerObservationSpanRootSpansUrl(),
+  return apiMutator<tracerObservationSpanRootSpansResponse>(getTracerObservationSpanRootSpansUrl(params),
   {
     ...options,
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    body: JSON.stringify(
-      rootSpansRequestApi,)
+    method: 'GET'
+
+
   }
 );}
 

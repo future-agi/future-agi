@@ -38232,14 +38232,17 @@ export const TracerObservationSpanRetrieveLoadingResponse = zod.object({
  * Given a list of trace_ids, return the root span ID for each trace.
 Root span = the span where parent_span_id IS NULL for that trace.
 
-POST JSON body (large trace lists exceed URL limits): trace_ids (list) +
-optional project_ids (list, prunes the CH scan).
+Query params (repeated): trace_ids (required,
+?trace_ids=<id>&trace_ids=<id>) + optional project_ids (prunes the CH
+scan). Response: { "result": { "<trace_id>": "<span_id>", ... } }
  */
 
 
 
 
-export const TracerObservationSpanRootSpansBody = zod.object({
+export const TracerObservationSpanRootSpansQueryParams = zod.object({
+  "page": zod.number().optional().describe('A page number within the paginated result set.'),
+  "limit": zod.number().optional().describe('Number of results to return per page.'),
   "trace_ids": zod.array(zod.string().min(1)),
   "project_ids": zod.array(zod.string().min(1)).optional()
 })

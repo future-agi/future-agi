@@ -32966,14 +32966,45 @@ export const OPENAPI_CONTRACT = Object.freeze({
       }
     },
     "/tracer/observation-span/root-spans/": {
-      "post": {
+      "get": {
         "operationId": "tracer_observation-span_root_spans",
         "runtimeRequestValidation": true,
         "runtimeResponseValidation": true,
-        "requestBody": {
-          "$ref": "#/definitions/RootSpansRequest"
+        "requestBody": null,
+        "queryParameters": {
+          "page": {
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "limit": {
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          "trace_ids": {
+            "required": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "project_ids": {
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
         },
-        "queryParameters": {},
         "responses": {
           "200": {
             "$ref": "#/definitions/RootSpansResponse"
@@ -65646,28 +65677,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/ReviewLabelCommentRequest"
           },
           "default": []
-        }
-      }
-    },
-    "RootSpansRequest": {
-      "required": [
-        "trace_ids"
-      ],
-      "type": "object",
-      "properties": {
-        "trace_ids": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
-        },
-        "project_ids": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
         }
       }
     },

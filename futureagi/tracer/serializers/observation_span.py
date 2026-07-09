@@ -57,19 +57,11 @@ class ObservationAttributeListResponseSerializer(serializers.Serializer):
     result = serializers.ListField(child=serializers.CharField())
 
 
-class _StrOrListField(serializers.ListField):
-    """Tolerate a single id sent as a bare string, coercing it to a 1-item list."""
-
-    def to_internal_value(self, data):
-        if isinstance(data, str):
-            data = [data]
-        return super().to_internal_value(data)
-
-
-class RootSpansRequestSerializer(StrictInputSerializer):
-    # CharField (not UUID): collector traces use deterministic-hash string ids.
-    trace_ids = _StrOrListField(child=serializers.CharField(), allow_empty=False)
-    project_ids = _StrOrListField(
+class RootSpansQuerySerializer(serializers.Serializer):
+    # Repeated query params: ?trace_ids=<id>&trace_ids=<id> (DRF ListField reads
+    # QueryDict.getlist). CharField (not UUID): collector ids are hash strings.
+    trace_ids = serializers.ListField(child=serializers.CharField(), allow_empty=False)
+    project_ids = serializers.ListField(
         child=serializers.CharField(), required=False, allow_empty=True
     )
 

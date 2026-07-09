@@ -3,8 +3,8 @@ import axios, { endpoints } from "src/utils/axios";
 import { tracerObservationSpanRootSpans } from "src/generated/api-contracts/api";
 
 /**
- * Fetch root span IDs for the given trace IDs (POST — large trace lists exceed
- * URL length limits). Root span = the span whose parent_span_id is NULL.
+ * Fetch root span IDs for the given trace IDs. Root span = the span whose
+ * parent_span_id is NULL. Sent as repeated ?trace_ids= query params.
  *
  * @param {string[]} traceIds
  * @param {string[]} [projectIds] optional — prunes the ClickHouse scan
@@ -12,9 +12,9 @@ import { tracerObservationSpanRootSpans } from "src/generated/api-contracts/api"
  */
 export async function fetchRootSpans(traceIds, projectIds = []) {
   if (!traceIds || traceIds.length === 0) return {};
-  const body = { trace_ids: traceIds };
-  if (projectIds?.length) body.project_ids = projectIds;
-  const res = await tracerObservationSpanRootSpans(body);
+  const params = { trace_ids: traceIds };
+  if (projectIds?.length) params.project_ids = projectIds;
+  const res = await tracerObservationSpanRootSpans(params);
   return res?.data?.result || {};
 }
 
