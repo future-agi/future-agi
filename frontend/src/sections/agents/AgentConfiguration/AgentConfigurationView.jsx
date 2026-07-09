@@ -35,7 +35,7 @@ const AgentConfigurationView = () => {
     setValue,
     getValues,
     trigger,
-  } = useAgentConfigForm(createAgentDefinitionSchema(), agentDetails);
+  } = useAgentConfigForm(createAgentDefinitionSchema({ agentDefinitionId }), agentDetails);
 
   const { errors, isSubmitting, isDirty } = formState;
   const [error, setError] = useState("");
@@ -95,7 +95,7 @@ const AgentConfigurationView = () => {
               </Typography>
               <Typography
                 typography="s2_1"
-                color="text.disabled"
+                color="text.secondary"
                 fontWeight={"fontWeightRegular"}
               >
                 A configuration that specifies how your AI agent behaves during

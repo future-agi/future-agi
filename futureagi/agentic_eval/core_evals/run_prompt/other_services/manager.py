@@ -21,7 +21,10 @@ from .cartesia_response import (
     validate_cartesia_voice,
 )
 from .lmnt_response import lmnt_speech_response, get_lmnt_tts_parameters
-from agentic_eval.core_evals.run_prompt.error_handler import handle_api_error
+from agentic_eval.core_evals.run_prompt.error_handler import (
+    ErrorContext,
+    handle_api_error,
+)
 import structlog
 from functools import wraps
 import litellm
@@ -44,15 +47,15 @@ def wrap_handler_with_error_handling(handler, provider_name):
         except Exception as e:
             # Build context for error logging
             # Use getattr for compatibility with both RunPrompt and RunPromptAdapter
-            context = {
-                "model": getattr(run_prompt_instance, "model", None),
-                "temperature": getattr(run_prompt_instance, "temperature", None),
-                "max_tokens": getattr(run_prompt_instance, "max_tokens", None),
-                "output_format": getattr(run_prompt_instance, "output_format", None),
-                "organization_id": getattr(run_prompt_instance, "organization_id", None),
-                "workspace_id": getattr(run_prompt_instance, "workspace_id", None),
-                "provider": provider_name,
-            }
+            context = ErrorContext(
+                model=getattr(run_prompt_instance, "model", None),
+                temperature=getattr(run_prompt_instance, "temperature", None),
+                max_tokens=getattr(run_prompt_instance, "max_tokens", None),
+                output_format=getattr(run_prompt_instance, "output_format", None),
+                organization_id=getattr(run_prompt_instance, "organization_id", None),
+                workspace_id=getattr(run_prompt_instance, "workspace_id", None),
+                provider=provider_name,
+            )
 
             # Use error handler for concise message and verbose logging
             concise_error = handle_api_error(e, logger, context)

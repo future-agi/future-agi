@@ -8,7 +8,7 @@ export const FieldWrapper = ({ children, helperText }) => {
       <Typography
         typography="s3"
         fontWeight="fontWeightMedium"
-        color="text.disabled"
+        color="text.secondary"
       >
         {helperText}
       </Typography>

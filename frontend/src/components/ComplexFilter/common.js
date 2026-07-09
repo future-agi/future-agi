@@ -20,6 +20,15 @@ const ListOperators = new Set(LIST_FILTER_OPS);
 const NoValueOperators = new Set(NO_VALUE_FILTER_OPS);
 const RangeOperators = new Set(RANGE_FILTER_OPS);
 
+export const stripUiFilterKeys = (filters = []) =>
+  (Array.isArray(filters) ? filters : []).map((filter) => {
+    if (!filter || typeof filter !== "object") return filter;
+    const cleaned = { ...filter };
+    delete cleaned._meta;
+    delete cleaned.id;
+    return cleaned;
+  });
+
 export const NULL_OPERATORS = ["is_null", "is_not_null"];
 
 export const getComplexFilterValidation = (

@@ -244,9 +244,6 @@ const VoiceFullPage = lazyWithRetry(
 const SessionsView = lazyWithRetry(
   () => import("src/sections/projects/SessionsView/Sessions-view"),
 );
-const ChartsView = lazyWithRetry(
-  () => import("src/sections/projects/ChartsView/ChartsViewWrapper"),
-);
 const LLMTracingView = lazyWithRetry(
   () => import("src/sections/projects/LLMTracing/LLMTracingView"),
 );
@@ -1131,18 +1128,6 @@ export const dashboardRoutes = (
         {
           path: "sessions",
           element: <SessionsView />,
-        },
-        {
-          path: "evals-tasks",
-          element: <Navigate to="../llm-tracing" replace />,
-        },
-        {
-          path: "charts",
-          element: <ChartsView />,
-        },
-        {
-          path: "alerts",
-          element: <Navigate to="../llm-tracing" replace />,
         },
         {
           path: "users",

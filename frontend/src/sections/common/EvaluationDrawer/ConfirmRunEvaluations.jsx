@@ -74,7 +74,7 @@ const ConfirmRunEvaluations = ({
             <Iconify icon="line-md:close" color="text.primary" />
           </IconButton>
         </Box>
-        <Typography variant="body2" color="text.disabled">
+        <Typography variant="body2" color="text.secondary">
           This will overwrite previous evaluation results.
         </Typography>
       </DialogTitle>

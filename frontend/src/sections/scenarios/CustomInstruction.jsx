@@ -43,7 +43,7 @@ export default function CustomInstruction({ control }) {
           <Typography
             typography={"s2_1"}
             fontWeight={"fontWeightRegular"}
-            color={"text.primary"}
+            color={"text.secondary"}
           >
             Create scenarios based on how your agent is defined
           </Typography>

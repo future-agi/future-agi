@@ -43,7 +43,7 @@ function HelpCard({ title, description, imageSrc }) {
             width: "90%",
             bottom: 0,
             right: 0,
-            bgcolor: "background.paper",
+            bgcolor: "common.white",
             borderRadius: 1,
             padding: theme.spacing(1.5, 0, 0, 1.5),
             "& img": {
@@ -76,7 +76,7 @@ function HelpCard({ title, description, imageSrc }) {
         <Typography
           typography={"s1"}
           fontWeight={"fontWeightRegular"}
-          color={"text.disabled"}
+          color={"text.secondary"}
         >
           {description}
         </Typography>
@@ -136,7 +136,7 @@ export default function CreateAgentScenarioHelp({ open, onClose }) {
           </Typography>
           <Typography
             typography={"s1_2"}
-            color={"text.disabled"}
+            color={"text.secondary"}
             fontWeight={"fontWeightRegular"}
           >
             Use your agent definition to create scenarios and run tests

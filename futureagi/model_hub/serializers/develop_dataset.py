@@ -95,86 +95,39 @@ class UploadFileForm(forms.Form):
     )
 
 
+class SyntheticDatasetColumnSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    data_type = serializers.CharField()
+    description = serializers.CharField(allow_blank=True)
+    property = serializers.JSONField()
+    skip = serializers.BooleanField(required=False)
+    is_new = serializers.BooleanField(required=False)
+
+
+class SyntheticDatasetPayloadSerializer(serializers.Serializer):
+    # Optional here; each caller enforces name in `validate_dataset`.
+    name = serializers.CharField(required=False, allow_blank=True)
+    description = serializers.CharField(allow_blank=True)
+    objective = serializers.CharField(allow_blank=True)
+    patterns = serializers.CharField(allow_blank=True)
+
+
 class SyntheticDatasetCreationSerializer(serializers.Serializer):
     num_rows = serializers.IntegerField()
-    columns = serializers.ListField()
-    dataset = serializers.JSONField()
+    columns = SyntheticDatasetColumnSerializer(many=True)
+    dataset = SyntheticDatasetPayloadSerializer()
     kb_id = serializers.UUIDField(required=False)
 
     def validate_dataset(self, value):
-        if not isinstance(value, dict):
-            raise serializers.ValidationError("dataset must be a JSON object.")
-
-        required_keys = {"name", "description", "objective", "patterns"}
-
-        missing_keys = required_keys - value.keys()
-        if missing_keys:
-            raise serializers.ValidationError(
-                f"dataset must contain the keys: {', '.join(required_keys)}."
-            )
-
-        return value
-
-    def validate_columns(self, value):
-        if not isinstance(value, list):
-            raise serializers.ValidationError("columns must be a list of JSON objects.")
-
-        required_keys = {"name", "data_type", "description", "property"}
-
-        for item in value:
-            if not isinstance(item, dict):
-                raise serializers.ValidationError(
-                    "Each item in columns must be a JSON object."
-                )
-
-            missing_keys = required_keys - item.keys()
-            if missing_keys:
-                raise serializers.ValidationError(
-                    f"Each JSON object in columns must contain the keys: {', '.join(sorted(missing_keys))}."
-                )
-
+        if not value.get("name"):
+            raise serializers.ValidationError("dataset must contain a 'name'.")
         return value
 
 
 class SyntheticDataSerializer(SyntheticDatasetCreationSerializer):
     fill_existing_rows = serializers.BooleanField(default=False)
 
-    def validate_columns(self, value):
-        if not isinstance(value, list):
-            raise serializers.ValidationError("columns must be a list of JSON objects.")
-
-        required_keys = {
-            "name",
-            "data_type",
-            "description",
-            "skip",
-            "is_new",
-            "property",
-        }
-
-        for item in value:
-            if not isinstance(item, dict):
-                raise serializers.ValidationError(
-                    "Each item in columns must be a JSON object."
-                )
-
-            missing_keys = required_keys - item.keys()
-            if missing_keys:
-                raise serializers.ValidationError(
-                    f"Each JSON object in columns must contain the keys: {', '.join(sorted(missing_keys))}."
-                )
-
-        return value
-
     def validate_dataset(self, value):
-        if not isinstance(value, dict):
-            raise serializers.ValidationError("dataset must be a JSON object.")
-        required_keys = {"description", "objective", "patterns"}
-        missing_keys = required_keys - value.keys()
-        if missing_keys:
-            raise serializers.ValidationError(
-                f"dataset must contain the keys: {', '.join(required_keys)}."
-            )
         return value
 
 
@@ -182,62 +135,14 @@ class SyntheticDatasetConfigSerializer(serializers.Serializer):
     """Serializer for getting and updating synthetic dataset configuration"""
 
     num_rows = serializers.IntegerField()
-    columns = serializers.ListField(child=serializers.JSONField())
-    dataset = serializers.JSONField()
+    columns = SyntheticDatasetColumnSerializer(many=True)
+    dataset = SyntheticDatasetPayloadSerializer()
     kb_id = serializers.UUIDField(required=False, allow_null=True)
     regenerate = serializers.BooleanField(required=False, default=False)
 
-    def validate_columns(self, value):
-        if not isinstance(value, list):
-            raise serializers.ValidationError("columns must be a list of JSON objects.")
-
-        required_keys = {"name", "data_type", "description", "property"}
-        for item in value:
-            if not isinstance(item, dict):
-                raise serializers.ValidationError(
-                    "Each item in columns must be a JSON object."
-                )
-
-            missing_keys = required_keys - item.keys()
-            if missing_keys:
-                raise serializers.ValidationError(
-                    f"Each JSON object in columns must contain the keys: {', '.join(sorted(missing_keys))}."
-                )
-
-        return value
-
     def validate_dataset(self, value):
-        if not isinstance(value, dict):
-            raise serializers.ValidationError("dataset must be a JSON object.")
-
-        required_keys = {"name", "description", "objective", "patterns"}
-
-        missing_keys = required_keys - value.keys()
-        if missing_keys:
-            raise serializers.ValidationError(
-                f"dataset must contain the keys: {', '.join(required_keys)}."
-            )
-
-        return value
-
-    def validate_columns(self, value):
-        if not isinstance(value, list):
-            raise serializers.ValidationError("columns must be a list of JSON objects.")
-
-        required_keys = {"name", "data_type", "description", "property"}
-
-        for item in value:
-            if not isinstance(item, dict):
-                raise serializers.ValidationError(
-                    "Each item in columns must be a JSON object."
-                )
-
-            missing_keys = required_keys - item.keys()
-            if missing_keys:
-                raise serializers.ValidationError(
-                    f"Each JSON object in columns must contain the keys: {', '.join(required_keys)}."
-                )
-
+        if not value.get("name"):
+            raise serializers.ValidationError("dataset must contain a 'name'.")
         return value
 
 

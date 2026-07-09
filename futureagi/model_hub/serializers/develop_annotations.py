@@ -3,6 +3,7 @@ from collections import defaultdict
 from rest_framework import serializers
 
 from accounts.models import User
+from accounts.utils import get_request_organization
 from model_hub.models.choices import AnnotationTypeChoices
 from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Row
@@ -227,8 +228,7 @@ class AnnotationsLabelsSerializer(serializers.ModelSerializer):
         # Attempt to fetch organisation from request context if not supplied
         # directly (typical in API usage).
         if organization is None and "request" in self.context:
-            user = getattr(self.context["request"], "user", None)
-            organization = getattr(user, "organization", None)
+            organization = get_request_organization(self.context["request"])
 
         # Build the queryset to check for duplicates.
         duplicate_qs = AnnotationsLabels.objects.filter(
@@ -263,6 +263,11 @@ class AnnotationsLabelsSerializer(serializers.ModelSerializer):
 
 
 class AnnotationLabelRestoreResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = AnnotationsLabelsSerializer()
+
+
+class AnnotationLabelCreateResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = AnnotationsLabelsSerializer()
 

@@ -467,6 +467,9 @@ class CompositeExecuteResponse(BaseModel):
 # =============================================================================
 
 
+MappingValue = str | list[str]
+
+
 class GroundTruthUploadRequest(BaseModel):
     """Request for POST /model-hub/eval-templates/{id}/ground-truth/upload/ (JSON body)"""
 
@@ -475,8 +478,8 @@ class GroundTruthUploadRequest(BaseModel):
     file_name: str = ""
     columns: list[str]
     data: list[dict]
-    variable_mapping: dict[str, str] | None = None
-    role_mapping: dict[str, str] | None = None
+    variable_mapping: dict[str, MappingValue] | None = None
+    role_mapping: dict[str, MappingValue] | None = None
 
 
 class GroundTruthItem(BaseModel):
@@ -488,12 +491,38 @@ class GroundTruthItem(BaseModel):
     file_name: str = ""
     columns: list[str]
     row_count: int
-    variable_mapping: dict[str, str] | None = None
-    role_mapping: dict[str, str] | None = None
+    variable_mapping: dict[str, MappingValue] | None = None
+    role_mapping: dict[str, MappingValue] | None = None
     embedding_status: str = "pending"
     embedded_row_count: int = 0
     storage_type: str = "db"
     created_at: str = ""
+    embeddings_stale: bool = False
+    is_active: bool = False
+    enabled: bool = True
+    max_examples: int = 3
+    similarity_threshold: float = 0.7
+
+
+class GroundTruthRuntimeConfig(BaseModel):
+    """Per-tenant runtime knobs that drive GT retrieval at eval time."""
+
+    enabled: bool
+    ground_truth_id: str
+    max_examples: int
+    similarity_threshold: float
+
+
+class GroundTruthSetupResult(BaseModel):
+    """Shape returned by GroundTruthService.update_setup."""
+
+    id: str
+    template_id: str
+    variable_mapping: dict[str, MappingValue] | None = None
+    role_mapping: dict[str, MappingValue] | None = None
+    embedding_status: str
+    embeddings_stale: bool = False
+    config: GroundTruthRuntimeConfig
 
 
 class GroundTruthListResponse(BaseModel):
@@ -512,18 +541,6 @@ class GroundTruthUploadResponse(BaseModel):
     row_count: int
     columns: list[str]
     embedding_status: str = "pending"
-
-
-class VariableMappingRequest(BaseModel):
-    """Request for PUT /model-hub/ground-truth/{id}/mapping/"""
-
-    variable_mapping: dict[str, str]
-
-
-class RoleMappingRequest(BaseModel):
-    """Request for PUT /model-hub/ground-truth/{id}/role-mapping/"""
-
-    role_mapping: dict[str, str]
 
 
 class GroundTruthDataResponse(BaseModel):
@@ -546,24 +563,7 @@ class GroundTruthStatusResponse(BaseModel):
     embedded_row_count: int
     total_rows: int
     progress_percent: float
-
-
-class GroundTruthConfigRequest(BaseModel):
-    """Request for PUT /model-hub/eval-templates/{id}/ground-truth-config/"""
-
-    enabled: bool = True
-    ground_truth_id: str | None = None
-    mode: str = "auto"  # auto | manual | disabled
-    max_examples: int = Field(default=3, ge=1, le=10)
-    similarity_threshold: float = Field(default=0.7, ge=0.0, le=1.0)
-    injection_format: str = "structured"  # structured | conversational | xml
-
-
-class GroundTruthSearchRequest(BaseModel):
-    """Request for POST /model-hub/ground-truth/{id}/search/"""
-
-    query: str = Field(min_length=1)
-    max_results: int = Field(default=3, ge=1, le=20)
+    embeddings_stale: bool = False
 
 
 # =============================================================================

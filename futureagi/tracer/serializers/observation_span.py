@@ -275,7 +275,7 @@ class SpanListQuerySerializer(StrictInputSerializer):
 
 
 class SpanObserveListQuerySerializer(StrictInputSerializer):
-    project_id = serializers.UUIDField()
+    project_id = serializers.UUIDField(required=False, allow_null=True)
     user_id = serializers.CharField(required=False, allow_blank=True)
     filters = filter_list_query_param_field(required=False, default=list)
     page_number = serializers.IntegerField(required=False, default=0, min_value=0)

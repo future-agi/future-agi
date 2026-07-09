@@ -42,12 +42,14 @@ import { isEqual } from "lodash";
 import "src/sections/develop-detail/DataTab/developDataGrid.css";
 import SvgColor from "src/components/svg-color";
 import axios, { endpoints } from "src/utils/axios";
+import { stripUiFilterKeys } from "src/components/ComplexFilter/common";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { useTestRunsList } from "src/api/tests/testRuns";
 import SingleImageViewerProvider from "src/sections/develop-detail/Common/SingleImageViewer/SingleImageViewerProvider";
 import {
   getTraceListColumnDefs,
+  normalizeConfigKeys,
   TRACE_DEFAULT_COLUMNS,
   generateObserveTraceFilterDefinition,
   generateSpanObserveFilterDefinition,
@@ -88,6 +90,7 @@ import {
 } from "./add-items-session-utils";
 import "src/styles/clean-data-table.css";
 import { fetchRootSpans } from "src/api/project/llm-tracing";
+import { summarizeAddResults, addResultToast } from "./add-items-results";
 
 const panelFilterToApi = (panel) =>
   panelFilterToApiBase(panel, { includeMeta: true });
@@ -549,8 +552,6 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
           sourceType === "call_execution");
 
       if (isBackendFilterMode) {
-        const totalCount =
-          selectAllInfo.totalCount - selectAllInfo.excludedIds.size;
         addItems(
           {
             queueId,
@@ -566,11 +567,11 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
             },
           },
           {
-            onSuccess: () => {
-              enqueueSnackbar(
-                `${totalCount} item${totalCount !== 1 ? "s" : ""} added to queue`,
-                { variant: "success" },
+            onSuccess: (resp) => {
+              const { message, variant } = addResultToast(
+                summarizeAddResults([resp]),
               );
+              enqueueSnackbar(message, { variant });
               resetSelection();
               setSourceType(null);
               onClose();
@@ -672,18 +673,21 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
       const BATCH_SIZE = 500;
       const totalCount = itemsToAdd.length;
       if (totalCount > BATCH_SIZE) {
+        const responses = [];
         for (let i = 0; i < totalCount; i += BATCH_SIZE) {
           const batch = itemsToAdd.slice(i, i + BATCH_SIZE);
-          await new Promise((resolve, reject) => {
+          const resp = await new Promise((resolve, reject) => {
             addItems(
               { queueId, items: batch },
               { onSuccess: resolve, onError: reject },
             );
           });
+          responses.push(resp);
         }
-        enqueueSnackbar(`${totalCount} items added to queue`, {
-          variant: "success",
-        });
+        const { message, variant } = addResultToast(
+          summarizeAddResults(responses),
+        );
+        enqueueSnackbar(message, { variant });
         resetSelection();
         setSourceType(null);
         onClose();
@@ -691,11 +695,11 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
         addItems(
           { queueId, items: itemsToAdd },
           {
-            onSuccess: () => {
-              enqueueSnackbar(
-                `${totalCount} item${totalCount !== 1 ? "s" : ""} added to queue`,
-                { variant: "success" },
+            onSuccess: (resp) => {
+              const { message, variant } = addResultToast(
+                summarizeAddResults([resp]),
               );
+              enqueueSnackbar(message, { variant });
               resetSelection();
               setSourceType(null);
               onClose();
@@ -1087,49 +1091,56 @@ SourceTypeSelection.propTypes = {
 // ---------------------------------------------------------------------------
 // Build read-only column defs that match the dataset view exactly
 // ---------------------------------------------------------------------------
-function buildReadOnlyColumnDefs(columnConfig) {
+export function buildReadOnlyColumnDefs(columnConfig) {
   return columnConfig
-    .filter((col) => col.isVisible !== false)
-    .map((col) => ({
-      field: col.id,
-      headerName: col.name,
-      minWidth: DEFAULT_MIN_WIDTH,
-      resizable: true,
-      sortable: true,
-      editable: false,
-      cellDataType: AGGridCellDataType[col.dataType],
-      dataType: col.dataType,
-      pinned: col.isFrozen,
-      hide: !col.isVisible,
-      headerComponent: CustomDevelopDetailColumn,
-      headerComponentParams: { col, readOnly: true },
-      cellRenderer: CustomCellRender,
-      cellRendererParams: { editable: false },
-      cellStyle: {
-        padding: 0,
-        height: "100%",
-        display: "flex",
-        flex: 1,
-        flexDirection: "column",
-      },
-      col: { ...col, isHoverButtonVisible: false },
-      valueGetter: (params) => {
-        const cellValue = params.data?.[col.id]?.cellValue;
-        return parseCellValue(cellValue, AGGridCellDataType[col.dataType]);
-      },
-    }));
+    .filter((col) => col.is_visible !== false)
+    .map((col) => {
+      const colDataType = col.data_type
+      const colIsFrozen = col.is_frozen
+      const colOriginType = col.origin_type
+      const enrichedCol = {
+        ...col,
+        dataType: colDataType,
+        originType: colOriginType,
+        isFrozen: colIsFrozen,
+        isHoverButtonVisible: false,
+      };
+      return {
+        field: col.id,
+        headerName: col.name,
+        minWidth: DEFAULT_MIN_WIDTH,
+        resizable: true,
+        sortable: true,
+        editable: false,
+        cellDataType: AGGridCellDataType[colDataType],
+        dataType: colDataType,
+        pinned: colIsFrozen,
+        originType: colOriginType,
+        hide: false,
+        headerComponent: CustomDevelopDetailColumn,
+        headerComponentParams: { col: enrichedCol, readOnly: true },
+        cellRenderer: CustomCellRender,
+        cellRendererParams: { editable: false },
+        cellStyle: {
+          padding: 0,
+          height: "100%",
+          display: "flex",
+          flex: 1,
+          flexDirection: "column",
+        },
+        col: enrichedCol,
+        valueGetter: (params) => {
+          const cellValue = params.data?.[col.id]?.cell_value;
+          return parseCellValue(cellValue, AGGridCellDataType[colDataType]);
+        },
+      };
+    });
 }
 
 // ---------------------------------------------------------------------------
 // Server-side datasource for dataset grid (read-only, with filters)
 // ---------------------------------------------------------------------------
-function createDataSource(
-  queryClient,
-  datasetId,
-  filtersRef,
-  searchRef,
-  setGridLoading,
-) {
+function createDataSource(queryClient, datasetId, filtersRef, searchRef) {
   return {
     getRows: async (params) => {
       const { request } = params;
@@ -1145,7 +1156,6 @@ function createDataSource(
       const search = searchRef.current || "";
 
       try {
-        setGridLoading?.(true);
         const queryOptions = getDatasetQueryOptions(
           datasetId,
           pageNumber,
@@ -1168,8 +1178,6 @@ function createDataSource(
         });
       } catch {
         params.fail();
-      } finally {
-        setGridLoading?.(false);
       }
     },
   };
@@ -1293,36 +1301,6 @@ SelectorEmptyState.propTypes = {
   loadingLabel: PropTypes.string,
 };
 
-function GridLoadingOverlay({ open, label = "Loading rows..." }) {
-  if (!open) return null;
-  return (
-    <Box
-      sx={{
-        position: "absolute",
-        inset: 0,
-        zIndex: 2,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        bgcolor: (theme) => alpha(theme.palette.background.paper, 0.72),
-        backdropFilter: "blur(1px)",
-      }}
-    >
-      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-        <CircularProgress size={18} />
-        <Typography variant="body2" color="text.secondary">
-          {label}
-        </Typography>
-      </Box>
-    </Box>
-  );
-}
-
-GridLoadingOverlay.propTypes = {
-  open: PropTypes.bool,
-  label: PropTypes.string,
-};
-
 // ---------------------------------------------------------------------------
 // Dataset Row Selector – Same AG Grid as dataset view
 // ---------------------------------------------------------------------------
@@ -1335,7 +1313,6 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
   const [filters, setFiltersState] = useState([
     { ...DefaultFilter, id: getRandomId() },
   ]);
-  const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
   const agTheme = useAgThemeWith(DATASET_GRID_THEME_PARAMS);
   const queryClient = useQueryClient();
@@ -1367,7 +1344,7 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
   );
 
   const columnConfig = useMemo(
-    () => tableData?.data?.result?.columnConfig ?? [],
+    () => tableData?.data?.result?.column_config ?? [],
     [tableData],
   );
 
@@ -1406,7 +1383,6 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
           datasetId,
           filtersRef,
           searchRef,
-          setIsGridLoading,
         );
         params.api.setGridOption("serverSideDatasource", ds);
       }
@@ -1422,7 +1398,6 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         datasetId,
         filtersRef,
         searchRef,
-        setIsGridLoading,
       );
       gridApi.setGridOption("serverSideDatasource", ds);
     }
@@ -1437,7 +1412,6 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         datasetId,
         filtersRef,
         searchRef,
-        setIsGridLoading,
       );
       gridApi.setGridOption("serverSideDatasource", ds);
     },
@@ -1479,7 +1453,7 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         // Individual selection — collect from loaded nodes
         const ids = [];
         api.forEachNode((node) => {
-          if (node.isSelected() && node.data?.rowId) {
+          if (node.isSelected() && node.data?.row_id) {
             ids.push(node.data.row_id);
           }
         });
@@ -1497,7 +1471,6 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         datasetId,
         filtersRef,
         searchRef,
-        setIsGridLoading,
       );
       gridApi.setGridOption("serverSideDatasource", ds);
     }
@@ -1526,11 +1499,9 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
       columnDefs.map((cd) => ({
         field: cd.field,
         headerName: cd.headerName,
-        col: columnConfig.find((c) => c.id === cd.field) || {
-          dataType: "text",
-        },
+        col: cd.col || { dataType: "text" },
       })),
-    [columnDefs, columnConfig],
+    [columnDefs],
   );
 
   const isFilterApplied = useMemo(
@@ -1612,7 +1583,7 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
             </MenuItem>
           )}
           {(datasets || []).map((ds) => (
-            <MenuItem key={ds.datasetId || ds.id} value={ds.datasetId || ds.id}>
+            <MenuItem key={ds.dataset_id} value={ds.dataset_id}>
               {ds.name}
             </MenuItem>
           ))}
@@ -1746,7 +1717,6 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
             }}
           >
             <Box sx={{ flex: 1, position: "relative" }}>
-              <GridLoadingOverlay open={isGridLoading} />
               <AgGridReact
                 ref={gridRef}
                 rowHeight={100}
@@ -1812,7 +1782,6 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [gridApi, setGridApi] = useState(null);
-  const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
   const filterButtonRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
@@ -1941,12 +1910,11 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: TRACE_ROWS_LIMIT,
-            filters: JSON.stringify(filtersRef.current || []),
+            filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
           }
-          setIsGridLoading(true);
           const results = await axios.get(
             endpoints.project.getTracesForObserveProject(),
             { params: apiParams },
@@ -1954,10 +1922,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           const res = results?.data?.result;
 
           // Update columns from response config (same as TraceGrid)
-          const newCols = res?.config?.map((o) => ({
-            ...o,
-            id: o.id,
-          }));
+          const newCols = normalizeConfigKeys(res?.config);
           if (newCols) {
             setColumns((prev) => (isEqual(prev, newCols) ? prev : newCols));
           }
@@ -1974,8 +1939,6 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           });
         } catch {
           params.fail();
-        } finally {
-          setIsGridLoading(false);
         }
       },
     }),
@@ -1990,7 +1953,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
     }
     return columns
       .filter((col) => !col.groupBy || col.groupBy === "")
-      .map((col) => getTraceListColumnDefs(col));
+      .map((col) => ({ ...getTraceListColumnDefs(col), hide: false }));
   }, [columns]);
 
   const defaultColDef = useMemo(
@@ -2441,7 +2404,6 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             onSelectAll={commitFilterModeSelectAll}
           />
           <Box sx={{ flex: 1, position: "relative" }}>
-            <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
               ref={gridRef}
               className="clean-data-table"
@@ -2495,7 +2457,6 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [gridApi, setGridApi] = useState(null);
-  const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
   const filterButtonRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
@@ -2596,13 +2557,12 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: SPAN_ROWS_LIMIT,
-            filters: JSON.stringify(filtersRef.current || []),
+            filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
           }
 
-          setIsGridLoading(true);
           const results = await axios.get(
             endpoints.project.getSpansForObserveProject(),
             { params: apiParams },
@@ -2610,10 +2570,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           const res = results?.data?.result;
 
           // Update columns from response config
-          const newCols = res?.config?.map((o) => ({
-            ...o,
-            id: o.id,
-          }));
+          const newCols = normalizeConfigKeys(res?.config);
           if (newCols) {
             setColumns((prev) => (isEqual(prev, newCols) ? prev : newCols));
           }
@@ -2630,8 +2587,6 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           });
         } catch {
           params.fail();
-        } finally {
-          setIsGridLoading(false);
         }
       },
     }),
@@ -2646,7 +2601,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     }
     return columns
       .filter((col) => !col.groupBy || col.groupBy === "")
-      .map((col) => getTraceListColumnDefs(col));
+      .map((col) => ({ ...getTraceListColumnDefs(col), hide: false }));
   }, [columns]);
 
   const defaultColDef = useMemo(
@@ -3017,7 +2972,6 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             onSelectAll={commitFilterModeSelectAll}
           />
           <Box sx={{ flex: 1, position: "relative" }}>
-            <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
               ref={gridRef}
               className="clean-data-table"
@@ -3071,7 +3025,6 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [gridApi, setGridApi] = useState(null);
-  const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
   const filterButtonRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
@@ -3154,7 +3107,6 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
           const pageSize = request.endRow - request.startRow;
           const pageNumber = Math.floor(request.startRow / pageSize);
 
-          setIsGridLoading(true);
           const results = await axios.get(
             endpoints.project.projectSessionList(),
             {
@@ -3169,17 +3121,14 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
                     direction: sort,
                   })),
                 ),
-                filters: JSON.stringify(filtersRef.current || []),
+                filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
               },
             },
           );
           const res = results?.data?.result;
 
           // Update columns from response config
-          const newCols = res?.config?.map((o) => ({
-            ...o,
-            id: o.id,
-          }));
+          const newCols = normalizeConfigKeys(res?.config);
           if (newCols) {
             setColumns((prev) => (isEqual(prev, newCols) ? prev : newCols));
           }
@@ -3196,8 +3145,6 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
           });
         } catch {
           params.fail();
-        } finally {
-          setIsGridLoading(false);
         }
       },
     }),
@@ -3236,7 +3183,10 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
         },
       ];
     }
-    return columns.map((col) => getSessionListColumnDef(col));
+    return columns.map((col) => ({
+      ...getSessionListColumnDef(col),
+      hide: false,
+    }));
   }, [columns]);
 
   const defaultColDef = useMemo(
@@ -3597,7 +3547,6 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
             onSelectAll={commitFilterModeSelectAll}
           />
           <Box sx={{ flex: 1, position: "relative" }}>
-            <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
               ref={gridRef}
               className="clean-data-table"
@@ -4196,7 +4145,6 @@ function SimulationSelector({ onSetSelection }) {
   const [testId, setTestId] = useState("");
   const [executionRunId, setExecutionRunId] = useState("");
   const [gridApi, setGridApi] = useState(null);
-  const [isGridLoading, setIsGridLoading] = useState(false);
   const [simulationColumnOrder, setSimulationColumnOrder] = useState([]);
   const [filters, setFilters] = useState([
     { ...simulationDefaultFilterBase, id: getRandomId() },
@@ -4252,7 +4200,7 @@ function SimulationSelector({ onSetSelection }) {
   );
 
   const serializedFilters = useMemo(
-    () => JSON.stringify(validatedFilters || []),
+    () => JSON.stringify(stripUiFilterKeys(validatedFilters)),
     [validatedFilters],
   );
 
@@ -4265,7 +4213,6 @@ function SimulationSelector({ onSetSelection }) {
           const pageSize = request.endRow - request.startRow;
           const pageNumber = Math.floor(request.startRow / pageSize);
 
-          setIsGridLoading(true);
           const { data } = await queryClient.fetchQuery({
             queryKey: [
               "sim-call-executions",
@@ -4311,8 +4258,6 @@ function SimulationSelector({ onSetSelection }) {
           });
         } catch {
           params.fail();
-        } finally {
-          setIsGridLoading(false);
         }
       },
     }),
@@ -4460,7 +4405,7 @@ function SimulationSelector({ onSetSelection }) {
             </MenuItem>
           )}
           {tests.map((t) => (
-            <MenuItem key={t.id} value={t.id} sx={{ maxWidth: 300 }}>
+            <MenuItem key={t.id} value={t.id} sx={{ width: "100%" }}>
               <CustomTooltip
                 size="small"
                 arrow
@@ -4536,7 +4481,7 @@ function SimulationSelector({ onSetSelection }) {
             {(executionRuns || []).map((run) => {
               const label = formatExecutionRunLabel(run);
               return (
-                <MenuItem key={run.id} value={run.id} sx={{ maxWidth: 340 }}>
+                <MenuItem key={run.id} value={run.id} sx={{ width: "100%" }}>
                   <CustomTooltip
                     size="small"
                     arrow
@@ -4700,7 +4645,6 @@ function SimulationSelector({ onSetSelection }) {
           }}
         >
           <Box sx={{ flex: 1, position: "relative" }}>
-            <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
               ref={gridRef}
               className="clean-data-table"

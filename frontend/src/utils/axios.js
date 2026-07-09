@@ -915,22 +915,8 @@ export const endpoints = {
           "/model-hub/eval-templates/{template_id}/ground-truth/upload/",
           { template_id: id },
         ),
-      getGroundTruthConfig: (id) =>
-        apiPath(
-          "/model-hub/eval-templates/{template_id}/ground-truth-config/",
-          { template_id: id },
-        ),
-      updateGroundTruthConfig: (id) =>
-        apiPath(
-          "/model-hub/eval-templates/{template_id}/ground-truth-config/",
-          { template_id: id },
-        ),
-      groundTruthMapping: (id) =>
-        apiPath("/model-hub/ground-truth/{ground_truth_id}/mapping/", {
-          ground_truth_id: id,
-        }),
-      groundTruthRoleMapping: (id) =>
-        apiPath("/model-hub/ground-truth/{ground_truth_id}/role-mapping/", {
+      groundTruthSetup: (id) =>
+        apiPath("/model-hub/ground-truth/{ground_truth_id}/setup/", {
           ground_truth_id: id,
         }),
       groundTruthData: (id) =>
@@ -939,10 +925,6 @@ export const endpoints = {
         }),
       groundTruthStatus: (id) =>
         apiPath("/model-hub/ground-truth/{ground_truth_id}/status/", {
-          ground_truth_id: id,
-        }),
-      groundTruthSearch: (id) =>
-        apiPath("/model-hub/ground-truth/{ground_truth_id}/search/", {
           ground_truth_id: id,
         }),
       groundTruthEmbed: (id) =>
@@ -1321,6 +1303,8 @@ export const endpoints = {
       `${apiPath("/tracer/observation-span/get_trace_id_by_index_spans_as_observe/")}?project_id=${observeId}`,
     addAnnotationValuesForSpan: () =>
       apiPath("/tracer/observation-span/add_annotations/"),
+    submitObservationSpanFeedbackActionType: () =>
+      apiPath("/tracer/observation-span/submit_feedback_action_type/"),
     getObservationSpan: (id) =>
       apiPath("/tracer/observation-span/{id}/", { id }),
     getObservationSpanLoading: (id) =>

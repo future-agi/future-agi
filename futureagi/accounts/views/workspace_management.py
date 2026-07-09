@@ -62,7 +62,16 @@ from accounts.serializers.workspace import (
     WorkspaceListRequestSerializer,
     WorkspaceListSerializer,
 )
-from accounts.utils import generate_password, resolve_org, resolve_org_role
+from accounts.services.workspace_membership import (
+    create_workspace_membership,
+    resolve_org_membership,
+)
+from accounts.utils import (
+    generate_password,
+    persist_pending_org_invite,
+    resolve_org,
+    resolve_org_role,
+)
 from ai_tools.drf_bridge import expose_to_mcp
 from analytics.mixpanel_util import mixpanel_tracker
 from analytics.utils import (
@@ -493,6 +502,11 @@ class WorkspaceInviteAPIView(APIView):
                                         "role": workspace_role,
                                         "invited_by": user,
                                         "is_active": True,
+                                        "organization_membership": (
+                                            resolve_org_membership(
+                                                target_user, workspace.organization
+                                            )
+                                        ),
                                     },
                                 )
                             )
@@ -591,12 +605,21 @@ class WorkspaceInviteAPIView(APIView):
                                     existing_deleted_membership.invited_by = user
                                     existing_deleted_membership.save()
                                 else:
-                                    WorkspaceMembership.no_workspace_objects.create(
+                                    create_workspace_membership(
                                         workspace=workspace,
                                         user=new_member,
                                         role=workspace_role,
                                         invited_by=user,
                                     )
+
+                            persist_pending_org_invite(
+                                organization=organization,
+                                target_email=email,
+                                org_role=org_role,
+                                workspace_role=workspace_role,
+                                workspaces=workspaces,
+                                invited_by=user,
+                            )
 
                             # Send invitation email with credentials
                             # ssl_context = ssl.create_default_context()
@@ -1186,7 +1209,7 @@ class UserRoleUpdateAPIView(APIView):
                             existing_deleted_membership.save()
                         else:
                             # Create workspace membership if it doesn't exist
-                            WorkspaceMembership.no_workspace_objects.create(
+                            create_workspace_membership(
                                 workspace=current_workspace,
                                 user=target_user,
                                 role=workspace_role,
@@ -1250,7 +1273,7 @@ class UserRoleUpdateAPIView(APIView):
                         existing_deleted_membership.save()
                     else:
                         # Create workspace membership if it doesn't exist
-                        WorkspaceMembership.no_workspace_objects.create(
+                        create_workspace_membership(
                             workspace=current_workspace,
                             user=target_user,
                             role=new_role,
@@ -1987,7 +2010,7 @@ class ManageTeamView(APIView):
                         )
 
                         # Add organization owner to workspace with admin role
-                        WorkspaceMembership.no_workspace_objects.create(
+                        create_workspace_membership(
                             workspace=workspace,
                             user=user,
                             role=OrganizationRoles.WORKSPACE_ADMIN,
@@ -2012,7 +2035,7 @@ class ManageTeamView(APIView):
                     )
 
                     # Add organization owner to default workspace
-                    WorkspaceMembership.no_workspace_objects.create(
+                    create_workspace_membership(
                         workspace=workspace,
                         user=user,
                         role=OrganizationRoles.WORKSPACE_ADMIN,
@@ -2235,6 +2258,15 @@ class ManageTeamView(APIView):
                             request.user,
                         )
 
+                        persist_pending_org_invite(
+                            organization=organization,
+                            target_email=member_data["email"],
+                            org_role=org_role,
+                            workspace_role=workspace_role,
+                            workspaces=[workspace],
+                            invited_by=request.user,
+                        )
+
                         token = default_token_generator.make_token(new_member)
                         uidb64 = urlsafe_base64_encode(force_bytes(new_member.pk))
                         email_helper(
@@ -2324,7 +2356,7 @@ class ManageTeamView(APIView):
                     existing_deleted_membership.save()
                 else:
                     # Create new workspace membership
-                    WorkspaceMembership.no_workspace_objects.create(
+                    create_workspace_membership(
                         workspace=workspace,
                         user=user,
                         role=role,

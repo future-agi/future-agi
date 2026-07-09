@@ -36,5 +36,16 @@ server:
   batch_max_rows: 5000
   batch_max_age: 5s
 
+auth:
+  # Auth is active when pg_write is set. Without it, spans land with
+  # empty project_id and are unqueryable.
+  pg_write: postgres://user:password@db:5432/tfc
+  # Falls back to pg_write if empty. In prod, point to read replica.
+  pg_read: ""
+  cache_ttl: 5m
+  warm_ttl: 1h
+  # Redis for rate limiting + usage event emission. Empty disables both.
+  redis_addr: ""
+
 admin:
   addr: ":9464" # /healthz and /metrics

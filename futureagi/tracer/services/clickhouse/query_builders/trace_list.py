@@ -18,7 +18,13 @@ from datetime import datetime
 from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+from tracer.services.clickhouse.query_builders.eval_status import (
+    non_terminal_eval_marker,
+)
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
+
+# TODO: switch this to "start_time" once we create an index on that column .
+TIME_FILTER_COLUMN = "created_at"  # Options: "created_at" | "start_time"
 
 
 class TraceListQueryBuilder(BaseQueryBuilder):
@@ -36,6 +42,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
 
     TABLE = "spans"
     EVAL_TABLE = "tracer_eval_logger"
+    # Filter compiler class; the v2 list builder overrides this to the v2
+    # builder so it reads the v2 dimension tables (end_users, etc.).
+    _FILTER_BUILDER_CLS = ClickHouseFilterBuilder
 
     # Mapping from sort column names the frontend sends to actual
     # ClickHouse column names on the root span.
@@ -115,7 +124,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         self.params["end_date"] = self.end_date
 
         # Translate attribute / metric filters
-        fb = ClickHouseFilterBuilder(
+        fb = self._FILTER_BUILDER_CLS(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -211,8 +220,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         {self.project_where()}
           AND (parent_span_id IS NULL OR parent_span_id = '')
           AND created_at >= %(start_date)s - INTERVAL 1 DAY
-          AND start_time >= %(start_date)s
-          AND start_time < %(end_date)s
+          AND {TIME_FILTER_COLUMN} >= %(start_date)s
+          AND {TIME_FILTER_COLUMN} < %(end_date)s
           {pv_fragment}
           {search_fragment}
           {filter_fragment}
@@ -220,6 +229,49 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         LIMIT 1 BY trace_id
         LIMIT %(limit)s
         OFFSET %(offset)s
+        """
+        return query, self.params
+
+    def build_id_query(self) -> tuple[str, dict[str, Any]]:
+        """Filtered trace ids only — same root-span predicate/window as build(),
+        no pagination/order. Lets the eval resolver select the same traces this
+        list endpoint returns."""
+        self.start_date, self.end_date = self.parse_time_range(self.filters)
+        self.params["start_date"] = self.start_date
+        self.params["end_date"] = self.end_date
+
+        fb = self._FILTER_BUILDER_CLS(
+            table=self.TABLE,
+            annotation_label_ids=self.annotation_label_ids,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
+        extra_where, extra_params = fb.translate(self.filters)
+        self.params.update(extra_params)
+        filter_fragment = f"AND {extra_where}" if extra_where else ""
+
+        pv_fragment = ""
+        if self.project_version_id:
+            pv_fragment = "AND project_version_id = %(project_version_id)s"
+            self.params["project_version_id"] = self.project_version_id
+
+        search_fragment = ""
+        if self.search:
+            search_fragment = "AND trace_name ILIKE %(search)s"
+            self.params["search"] = f"%{self.search}%"
+
+        query = f"""
+        SELECT trace_id
+        FROM {self.TABLE}
+        {self.project_where()}
+          AND (parent_span_id IS NULL OR parent_span_id = '')
+          AND created_at >= %(start_date)s - INTERVAL 1 DAY
+          AND {TIME_FILTER_COLUMN} >= %(start_date)s
+          AND {TIME_FILTER_COLUMN} < %(end_date)s
+          {pv_fragment}
+          {search_fragment}
+          {filter_fragment}
+        LIMIT 1 BY trace_id
         """
         return query, self.params
 
@@ -244,6 +296,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             output,
             attrs_string,
             attrs_number,
+            attrs_bool,
+            attributes_extra,
             toJSONString(metadata) AS metadata,
             dictGetOrDefault('trace_dict', 'tags', toUUID(trace_id), '[]') AS trace_tags
         FROM {self.TABLE}
@@ -286,7 +340,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         Returns:
             A ``(query_string, params)`` tuple returning a single count.
         """
-        fb = ClickHouseFilterBuilder(
+        fb = self._FILTER_BUILDER_CLS(
             table=self.TABLE,
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
@@ -315,14 +369,15 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         # prunes old partitions. Drops 7d count from 716ms/3.5M rows to
         # 255ms/306K rows on a 3.5M-span project, without dropping any
         # rows that legitimately match the user's `start_time` window.
+
         query = f"""
         SELECT uniq(trace_id) AS total
         FROM {self.TABLE}
         {self.project_where()}
           AND (parent_span_id IS NULL OR parent_span_id = '')
           AND created_at >= %(start_date)s - INTERVAL 1 DAY
-          AND start_time >= %(start_date)s
-          AND start_time < %(end_date)s
+          AND {TIME_FILTER_COLUMN} >= %(start_date)s
+          AND {TIME_FILTER_COLUMN} < %(end_date)s
           {pv_fragment}
           {search_fragment}
           {filter_fragment}
@@ -414,25 +469,25 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         created_at_fragment = ""
         if self.start_date is not None:
             params["start_date"] = self.start_date
-            created_at_fragment = (
-                "AND created_at >= %(start_date)s - INTERVAL 1 DAY"
-            )
+            created_at_fragment = "AND created_at >= %(start_date)s - INTERVAL 1 DAY"
 
-        # Include errored rows but compute aggregates only over successful
-        # rows (error = 0). ``success_count`` / ``error_count`` let the
-        # pivot surface an explicit error state on the UI when every eval
-        # row for a (trace, config) pair errored (distinct from "no eval
-        # run" vs a real Pass/Fail/score). ``str_lists`` keeps every
-        # non-errored ``output_str_list`` so the pivot can compute
-        # per-choice percentages for CHOICES evals.
-        # ``output_str`` is Nullable(String) and most evaluators leave it
-        # NULL. ClickHouse three-valued logic means ``NULL != 'ERROR'`` is
-        # NULL (not TRUE), so a bare ``output_str != 'ERROR'`` guard
-        # silently excludes every non-errored row with a NULL
-        # ``output_str`` — collapsing ``success_count`` to 0, making
-        # ``avg_score``/``pass_rate`` NaN, and leaving eval columns blank
-        # on the trace list. Use ``ifNull(...)`` to keep the comparison
-        # NULL-safe.
+        # Aggregates are computed only over *completed*, non-errored rows so a
+        # non-terminal (pending/running) or skipped row never skews a score nor
+        # masquerades as a real value. The per-status counts let the pivot pick
+        # one cell state per (trace, config) by the precedence
+        # completed > errored > skipped > running > pending.
+        # ``success_count`` excludes non-terminal/skipped/errored rows via
+        # ``status NOT IN (...)``: a bare ``error = 0`` guard also matches
+        # pending/running/skipped rows (they carry ``error = 0`` and a NULL
+        # output). NOT-IN (rather than ``status = 'completed'``) keeps legacy
+        # rows whose mirrored ``status`` is empty/NULL counted as completed.
+        # ``str_lists`` keeps every completed ``output_str_list`` so the pivot
+        # can compute per-choice percentages for CHOICES evals.
+        # ``output_str`` is Nullable(String); ClickHouse 3-valued logic makes
+        # ``NULL != 'ERROR'`` NULL (not TRUE), so use ``ifNull(...)`` to keep
+        # the comparison NULL-safe.
+        # New per-status columns are appended after ``str_lists`` so the pivot's
+        # positional column fallbacks (0..7) stay valid.
         query = f"""
         SELECT
             trace_id,
@@ -441,23 +496,27 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             -- json.dumps(allow_nan=False) rejects. NULL serializes as null.
             ifNotFinite(avgIf(
                 output_float,
-                error = 0 AND ifNull(output_str, '') != 'ERROR'
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
             ), NULL) AS avg_score,
             ifNotFinite(avgIf(
                 CASE WHEN output_bool = 1 THEN 100.0 ELSE 0.0 END,
-                error = 0 AND ifNull(output_str, '') != 'ERROR'
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
             ), NULL) AS pass_rate,
             countIf(
-                error = 0 AND ifNull(output_str, '') != 'ERROR'
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS success_count,
             countIf(
-                error = 1 OR ifNull(output_str, '') = 'ERROR'
+                error = 1 OR ifNull(output_str, '') = 'ERROR' OR status = 'errored'
             ) AS error_count,
             count() AS eval_count,
             groupArrayIf(
                 output_str_list,
-                error = 0 AND ifNull(output_str, '') != 'ERROR'
-            ) AS str_lists
+                error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
+            ) AS str_lists,
+            countIf(status = 'skipped') AS skipped_count,
+            countIf(status = 'running') AS running_count,
+            countIf(status = 'pending') AS pending_count,
+            anyIf(skipped_reason, status = 'skipped') AS skipped_reason
         FROM {self.EVAL_TABLE} FINAL
         WHERE _peerdb_is_deleted = 0
           AND (deleted = 0 OR deleted IS NULL)
@@ -515,6 +574,71 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         GROUP BY trace_id, label_id
         """
         return query, params
+
+    def build_user_id_query(self, trace_ids: list[str]) -> tuple[str, dict[str, Any]]:
+        """Fetch user_id strings from ClickHouse for a page of trace IDs.
+
+        Uses enduser_dict to resolve end_user_id UUIDs to user_id strings
+        in a single query. Returns one user_id per trace (uses `any()`
+        aggregation to pick the first non-null value across all spans).
+        """
+        if not trace_ids:
+            return "", {}
+
+        params: dict[str, Any] = {
+            **self.params,
+            "user_trace_ids": tuple(trace_ids),
+        }
+
+        query = f"""
+        SELECT trace_id, user_id
+        FROM (
+            SELECT
+                trace_id,
+                dictGetOrDefault('enduser_dict', 'user_id', any(end_user_id), '') AS user_id
+            FROM {self.TABLE}
+            PREWHERE trace_id IN %(user_trace_ids)s
+            WHERE {self.project_filter_sql()}
+              AND _peerdb_is_deleted = 0
+              AND end_user_id IS NOT NULL
+              AND end_user_id != toUUID('00000000-0000-0000-0000-000000000000')
+            GROUP BY trace_id
+        )
+        WHERE user_id != ''
+        """
+        return query, params
+
+    def resolve_user_ids(self, trace_ids: list[str], analytics) -> dict[str, str]:
+        """Resolve user_id strings for a page of trace IDs.
+
+        Single-query lookup using ClickHouse enduser_dict:
+        - Queries ClickHouse for user_id strings via dictionary lookup (~50-100ms)
+        - No PostgreSQL round-trip needed
+
+        Args:
+            trace_ids: List of trace ID strings to resolve users for.
+            analytics: Analytics service instance for executing CH queries.
+
+        Returns:
+            Dict mapping trace_id → user_id string.
+        """
+        if not trace_ids:
+            return {}
+
+        user_query, user_params = self.build_user_id_query(trace_ids)
+        if not user_query:
+            return {}
+
+        result = analytics.execute_ch_query(user_query, user_params, timeout_ms=10000)
+
+        # Build trace_id → user_id mapping (filter already applied in query)
+        user_id_map = {
+            str(row.get("trace_id", "")): row.get("user_id")
+            for row in result.data
+            if row.get("user_id")
+        }
+
+        return user_id_map
 
     @staticmethod
     def pivot_annotation_results(
@@ -655,11 +779,28 @@ class TraceListQueryBuilder(BaseQueryBuilder):
                     and math.isfinite(v)
                 )
 
+            avg_val = round(avg_score * 100, 2) if _finite(avg_score) else None
+            pass_val = round(pass_rate, 2) if _finite(pass_rate) else None
+
+            # No completed score: surface a non-terminal / skipped lifecycle
+            # marker (skipped > running > pending) so the cell renders a
+            # loading/pending/skipped state instead of a misleading blank.
+            if avg_val is None and pass_val is None:
+                marker = non_terminal_eval_marker(
+                    {
+                        "skipped_count": _get(row, "skipped_count", 8, 0) or 0,
+                        "running_count": _get(row, "running_count", 9, 0) or 0,
+                        "pending_count": _get(row, "pending_count", 10, 0) or 0,
+                        "skipped_reason": _get(row, "skipped_reason", 11, None),
+                    }
+                )
+                if marker is not None:
+                    result.setdefault(trace_id, {})[config_id] = marker
+                    continue
+
             score_data = {
-                "avg_score": (
-                    round(avg_score * 100, 2) if _finite(avg_score) else None
-                ),
-                "pass_rate": (round(pass_rate, 2) if _finite(pass_rate) else None),
+                "avg_score": avg_val,
+                "pass_rate": pass_val,
                 "count": _get(row, "eval_count", 6, 0) or 0,
             }
             result.setdefault(trace_id, {})[config_id] = score_data

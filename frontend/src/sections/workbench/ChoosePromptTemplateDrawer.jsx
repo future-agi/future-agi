@@ -4,6 +4,8 @@ import {
   Drawer,
   Grid,
   IconButton,
+  Menu,
+  MenuItem,
   Stack,
   Typography,
   Skeleton,
@@ -12,13 +14,20 @@ import {
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useState, useRef, useCallback, useEffect } from "react";
+import { useSnackbar } from "notistack";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import Iconify from "src/components/iconify";
+import ConfirmDialog from "src/components/custom-dialog/confirm-dialog";
 import { SelectedPromptTemplateDrawer } from "./SelectedPromptTemplateDrawer";
 import SvgColor from "src/components/svg-color";
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import _ from "lodash";
 import axios, { endpoints } from "src/utils/axios";
+import { useDeletePromptTemplate } from "src/api/develop/prompt";
 import { useDebounce } from "../../hooks/use-debounce";
 import { extractTextFromPrompt } from "../../components/ImprovePromptDrawer/common";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
@@ -26,11 +35,13 @@ import { usePromptStore } from "../workbench-v2/store/usePromptStore";
 import { Events, trackEvent } from "src/utils/Mixpanel";
 import { PropertyName } from "../../utils/Mixpanel";
 
-const TemplateCard = ({ name, description, createdBy, onClick }) => {
+const TemplateCard = ({ name, description, createdBy, onClick, onDelete }) => {
   const theme = useTheme();
+  const [menuAnchor, setMenuAnchor] = useState(null);
   return (
     <Box
       sx={{
+        position: "relative",
         border: "1px solid",
         borderColor:
           theme.palette.mode === "dark"
@@ -59,6 +70,49 @@ const TemplateCard = ({ name, description, createdBy, onClick }) => {
       component={"div"}
       onClick={onClick}
     >
+      {onDelete && (
+        <>
+          <IconButton
+            size="small"
+            aria-label="Template actions"
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuAnchor(e.currentTarget);
+            }}
+            sx={{
+              position: "absolute",
+              top: 6,
+              right: 6,
+              color: "text.secondary",
+            }}
+          >
+            <Iconify icon="mdi:dots-vertical" width={18} />
+          </IconButton>
+          <Menu
+            anchorEl={menuAnchor}
+            open={Boolean(menuAnchor)}
+            onClose={(e) => {
+              e?.stopPropagation?.();
+              setMenuAnchor(null);
+            }}
+            onClick={(e) => e.stopPropagation()}
+            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+            transformOrigin={{ vertical: "top", horizontal: "right" }}
+          >
+            <MenuItem
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuAnchor(null);
+                onDelete();
+              }}
+              sx={{ color: "error.main", gap: 1, fontSize: 13 }}
+            >
+              <Iconify icon="solar:trash-bin-trash-bold" width={16} />
+              Delete
+            </MenuItem>
+          </Menu>
+        </>
+      )}
       <Box
         sx={{
           border: "2px solid",
@@ -97,7 +151,7 @@ const TemplateCard = ({ name, description, createdBy, onClick }) => {
         <Typography
           typography={"s2"}
           fontWeight={"fontWeightRegular"}
-          color={"text.disabled"}
+          color={"text.secondary"}
           sx={{
             overflowWrap: "break-word",
             wordBreak: "break-word",
@@ -177,6 +231,7 @@ TemplateCard.propTypes = {
   description: PropTypes.string,
   createdBy: PropTypes.string,
   onClick: PropTypes.func,
+  onDelete: PropTypes.func,
 };
 
 export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
@@ -192,6 +247,29 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
   const loadMoreRef = useRef(null);
   const debouncedSearchQuery = useDebounce(searchQuery, 300);
   const { setNewPromptModal } = usePromptStore();
+  const { enqueueSnackbar } = useSnackbar();
+  const queryClient = useQueryClient();
+
+  // Template to delete (drives the confirm dialog). null = closed.
+  const [templateToDelete, setTemplateToDelete] = useState(null);
+  // Drives the dialog's open state on its own so the payload (name) can stay
+  // mounted through the fade-out and only clear on `onExited`.
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+
+  const { mutate: deleteTemplate, isPending: isDeleting } =
+    useDeletePromptTemplate({
+      onSuccess: () => {
+        enqueueSnackbar("Template deleted", { variant: "success" });
+        setDeleteDialogOpen(false);
+        queryClient.invalidateQueries({ queryKey: ["prompt-templates"] });
+      },
+      onError: (err) => {
+        enqueueSnackbar(
+          err?.response?.data?.message || "Failed to delete template",
+          { variant: "error" },
+        );
+      },
+    });
 
   const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage } =
     // @ts-ignore
@@ -319,7 +397,7 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
           </Typography>
           <Typography
             typography="s2"
-            color="text.disabled"
+            color="text.secondary"
             fontWeight={"fontWeightRegular"}
           >
             Browse and discover curated prompt templates for writing,
@@ -501,6 +579,17 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
                         desc: "",
                       })
                     }
+                    onDelete={
+                      category === "templates"
+                        ? () => {
+                            setTemplateToDelete({
+                              id: template.id,
+                              name: template?.name,
+                            });
+                            setDeleteDialogOpen(true);
+                          }
+                        : undefined
+                    }
                   />
                 </Grid>
               ))}
@@ -591,6 +680,32 @@ export const ChoosePromptTemplateDrawer = ({ open, onClose, importMode }) => {
           />
         </Stack>
       </Stack>
+
+      <ConfirmDialog
+        open={deleteDialogOpen}
+        onClose={() => !isDeleting && setDeleteDialogOpen(false)}
+        TransitionProps={{ onExited: () => setTemplateToDelete(null) }}
+        title="Delete template"
+        content={
+          <Typography typography="s1" color="text.secondary">
+            Are you sure you want to delete{" "}
+            <Box component="span" sx={{ fontWeight: "fontWeightSemiBold", color: "text.primary" }}>
+              {templateToDelete?.name || "this template"}
+            </Box>
+            ? This can&apos;t be undone.
+          </Typography>
+        }
+        action={
+          <Button
+            variant="contained"
+            color="error"
+            disabled={isDeleting}
+            onClick={() => deleteTemplate(templateToDelete?.id)}
+          >
+            {isDeleting ? "Deleting…" : "Delete"}
+          </Button>
+        }
+      />
     </Drawer>
   );
 };

@@ -32,14 +32,14 @@ import { transformDynamicColumnConfig } from "../common";
 
 const getDefaultValue = () => {
   return {
-    columnName: "",
+    column_name: "",
     config: {
       url: "",
       method: "POST",
       params: [],
       headers: [],
       body: "",
-      outputType: "string",
+      output_type: "string",
     },
     concurrency: "",
   };
@@ -81,9 +81,6 @@ export const AddColumnApiCallChild = ({
     ),
   });
 
-  // Track which editId we've already loaded data for so that background
-  // re-renders (e.g. React Query refetches on window-focus) don't silently
-  // overwrite the user's in-progress edits via reset().
   const loadedEditIdRef = useRef(null);
 
   useEffect(() => {
@@ -91,7 +88,6 @@ export const AddColumnApiCallChild = ({
       reset(initialData);
       loadedEditIdRef.current = editId;
     } else if (!editId) {
-      // Reset to default values when opening for new column (no editId)
       reset(getDefaultValue());
       loadedEditIdRef.current = null;
     }
@@ -151,21 +147,6 @@ export const AddColumnApiCallChild = ({
     },
   });
 
-  const transformFormToApi = (formValues) => {
-    const { columnName, ...rest } = formValues;
-    const { outputType, ...configRest } = rest.config || {};
-    return {
-      ...rest,
-      config: {
-        ...configRest,
-        output_type: outputType,
-      },
-      column_name: columnName,
-    };
-  };
-
-  // Block columns whose name contains a dot (dot is the JSON path separator).
-  // Uses raw form values so we have display names + array indices for setError.
   const validateDotInColumnNames = () => {
     const dotCols = allColumns.filter((c) => c.headerName?.includes("."));
     if (!dotCols.length) return true;
@@ -209,15 +190,12 @@ export const AddColumnApiCallChild = ({
     return true;
   };
 
-  // If body is a bare {{variable}}, only allow a top-level JSON/array column
-  // (no dot-paths — input.prompt could resolve to a plain string).
   const validateBodyVariable = (formValues) => {
     const body = formValues?.config?.body;
     if (typeof body !== "string") return true;
     const m = body.trim().match(/^\{\{(.+)\}\}$/);
     if (!m) return true;
     const ref = m[1].trim();
-    // Must be an exact column UUID (36 chars, no trailing path)
     const col = allColumns.find((c) => c.field === ref);
     if (col && ["json", "array"].includes(col.dataType)) return true;
     setError("config.body", {
@@ -233,7 +211,7 @@ export const AddColumnApiCallChild = ({
     if (!validateBodyVariable(formValues)) return;
     if (editId) {
       updateColumn({
-        config: { ...transformFormToApi(formValues) },
+        config: { ...formValues },
         operation_type: "api_call",
       });
       return;
@@ -241,7 +219,7 @@ export const AddColumnApiCallChild = ({
     if (onFormSubmit) {
       onFormSubmit({ ...formValues, type: "api_call" });
     } else {
-      addColumn(transformFormToApi(formValues));
+      addColumn(formValues);
     }
   };
 
@@ -249,7 +227,7 @@ export const AddColumnApiCallChild = ({
     if (!validateDotInColumnNames()) return;
     if (!validateBodyVariable(formValues)) return;
     if (!onFormSubmit) {
-      preview(transformFormToApi(formValues));
+      preview({ config: formValues.config });
     }
   });
 
@@ -308,7 +286,7 @@ export const AddColumnApiCallChild = ({
               size="small"
               placeholder="Enter name"
               control={control}
-              fieldName="columnName"
+              fieldName="column_name"
             />
           </ShowComponent>
           <FormSearchSelectFieldControl
@@ -316,7 +294,7 @@ export const AddColumnApiCallChild = ({
             label="Output Type"
             size="small"
             control={control}
-            fieldName="config.outputType"
+            fieldName="config.output_type"
             options={OutputTypeOptions}
           />
           <RequestBody
@@ -411,7 +389,6 @@ export const AddColumnApiCallChild = ({
             color="primary"
             fullWidth
             size="small"
-            // onClick={handleSubmit(addColumn)}
           >
             {editId
               ? "Update Column"
@@ -453,8 +430,6 @@ const AddColumnApiCall = ({ initialData, onFormSubmit }) => {
 
   const allColumns = useDatasetColumnConfig(dataset, true);
 
-  // Memoize so the child receives a stable reference and its useEffect
-  // does not fire on every parent re-render.
   const memoizedInitialData = useMemo(() => {
     return columnConfig
       ? transformDynamicColumnConfig("api_call", columnConfig, allColumns)

@@ -37,8 +37,10 @@ import {
 import { alpha } from "@mui/material/styles";
 import PropTypes from "prop-types";
 import React, {
+  forwardRef,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
@@ -62,8 +64,14 @@ const ENUM_OPERATORS = [
   { value: "is_not", label: "Is not" },
 ];
 
-function getOperators(fieldType) {
-  return fieldType === "enum" ? ENUM_OPERATORS : STRING_OPERATORS;
+function getOperators(fieldDef) {
+  const fieldType = typeof fieldDef === "string" ? fieldDef : fieldDef?.type;
+  const base = fieldType === "enum" ? ENUM_OPERATORS : STRING_OPERATORS;
+  const allowed =
+    typeof fieldDef === "object" && Array.isArray(fieldDef?.operators)
+      ? fieldDef.operators
+      : null;
+  return allowed ? base.filter((op) => allowed.includes(op.value)) : base;
 }
 
 // ---------------------------------------------------------------------------
@@ -142,7 +150,7 @@ function parseNaturalLanguage(query, filterFields, fieldMap) {
 // ---------------------------------------------------------------------------
 // EnumValuePicker — checkbox multi-select popover (matches trace filter design)
 // ---------------------------------------------------------------------------
-function EnumValuePicker({ choices, value = [], onChange }) {
+function EnumValuePicker({ choices, value = [], onChange, single = false }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [search, setSearch] = useState("");
 
@@ -154,11 +162,17 @@ function EnumValuePicker({ choices, value = [], onChange }) {
 
   const toggle = useCallback(
     (val) => {
+      if (single) {
+        onChange(value.includes(val) ? [] : [val]);
+        setAnchorEl(null);
+        setSearch("");
+        return;
+      }
       onChange(
         value.includes(val) ? value.filter((v) => v !== val) : [...value, val],
       );
     },
-    [value, onChange],
+    [value, onChange, single],
   );
 
   return (
@@ -258,7 +272,9 @@ function EnumValuePicker({ choices, value = [], onChange }) {
           <Typography
             sx={{ fontSize: 10, color: "text.disabled", mt: 0.5, px: 0.25 }}
           >
-            Select one or more values (multi-select)
+            {single
+              ? "Select a value"
+              : "Select one or more values (multi-select)"}
           </Typography>
         </Box>
         <Box
@@ -270,7 +286,7 @@ function EnumValuePicker({ choices, value = [], onChange }) {
           }}
         >
           {/* Select all matching */}
-          {search && filtered.length > 0 && (
+          {!single && search && filtered.length > 0 && (
             <Box
               onClick={() => {
                 const allFiltered = filtered.filter((o) => !value.includes(o));
@@ -380,9 +396,13 @@ function EnumValuePicker({ choices, value = [], onChange }) {
               >
                 <Iconify
                   icon={
-                    isSelected
-                      ? "mdi:checkbox-marked"
-                      : "mdi:checkbox-blank-outline"
+                    single
+                      ? isSelected
+                        ? "mdi:radiobox-marked"
+                        : "mdi:radiobox-blank"
+                      : isSelected
+                        ? "mdi:checkbox-marked"
+                        : "mdi:checkbox-blank-outline"
                   }
                   width={18}
                   sx={{
@@ -450,7 +470,7 @@ function FilterRow({
   onRemove,
 }) {
   const fieldDef = fieldMap[filter.field] || filterFields[0];
-  const operators = getOperators(fieldDef.type);
+  const operators = getOperators(fieldDef);
 
   return (
     <Stack direction="row" alignItems="center" gap={0.5}>
@@ -492,6 +512,7 @@ function FilterRow({
       {fieldDef.type === "enum" ? (
         <EnumValuePicker
           choices={fieldDef.choices || []}
+          single={fieldDef.single}
           value={
             Array.isArray(filter.value)
               ? filter.value
@@ -544,21 +565,63 @@ FilterRow.propTypes = {
  * @param {string} [activeField] — notifies parent which field is selected (for value fetching)
  * @param {Function} [onFieldChange] — called when field changes (so parent can fetch values)
  */
-function QueryInput({
-  filterFields,
-  fieldMap,
-  onApply,
-  initialTokens = [],
-  valueOptions = [],
-  valueLoading = false,
-  onFieldChange,
-}) {
+// Field-type families used to pick the right HTML input type when a range op
+// (between / not_between) is active. Matches TraceFilterPanel's NUMERIC_TYPES /
+// DATE_TYPES sets — duplicated here so QueryInput stays self-contained.
+const RANGE_NUMERIC_TYPES = new Set([
+  "number",
+  "float",
+  "integer",
+  "int",
+  "decimal",
+  "double",
+  "numeric",
+  "long",
+]);
+const RANGE_DATE_TYPES = new Set(["date", "datetime", "timestamp"]);
+// Numeric ranges stay type="text": type="number" swallows invalid keystrokes
+// with no feedback (same rationale as the Basic-tab inputs, TH-5195).
+const rangeInputTypeFor = (fieldType) => {
+  if (RANGE_DATE_TYPES.has(fieldType)) return "date";
+  return "text";
+};
+
+const isValidRangeNumericInput = (v) =>
+  v === "" || /^-?\d*\.?\d*$/.test(String(v).trim());
+
+// Complete (fully-typed) number. Unlike the partial check above, this rejects
+// mid-type states ("-", ".", "1.5.6"); used to gate commit/flush so a partial
+// value never becomes an applied token (TH-5195). Empty passes — an empty
+// bound is handled by the non-empty checks, not this.
+const isCompleteNumericInput = (v) => {
+  const str = String(v ?? "").trim();
+  if (str === "") return true;
+  if (!/^-?(\d+\.?\d*|\.\d+)$/.test(str)) return false;
+  return Number.isFinite(parseFloat(str));
+};
+
+const QueryInput = forwardRef(function QueryInput(
+  {
+    filterFields,
+    fieldMap,
+    onApply,
+    initialTokens = [],
+    valueOptions = [],
+    valueLoading = false,
+    onFieldChange,
+    getOperators: getOperatorsProp,
+  },
+  ref,
+) {
   const [tokens, setTokens] = useState(initialTokens);
   const [partialField, setPartialField] = useState(null);
   const [partialOp, setPartialOp] = useState(null);
   const [inputValue, setInputValue] = useState("");
+  const [rangeFrom, setRangeFrom] = useState("");
+  const [rangeTo, setRangeTo] = useState("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [focused, setFocused] = useState(false);
+  const inputRef = useRef(null);
   const initialTokensKey = useMemo(
     () => JSON.stringify(initialTokens || []),
     [initialTokens],
@@ -576,9 +639,35 @@ function QueryInput({
     setPartialField(null);
     setPartialOp(null);
     setInputValue("");
+    setRangeFrom("");
+    setRangeTo("");
   }, [initialTokensKey]);
 
   const phase = !partialField ? "field" : !partialOp ? "operator" : "value";
+
+  // Resolve the picked operator's definition (so we can read `range: true`).
+  const currentOpDef = useMemo(() => {
+    if (!partialField || !partialOp) return null;
+    const fd = fieldMap[partialField];
+    const ops = getOperatorsProp
+      ? getOperatorsProp(fd?.type || "string", partialField)
+      : getOperators(fd || "string");
+    return ops.find((o) => o.value === partialOp);
+  }, [partialField, partialOp, fieldMap, getOperatorsProp]);
+
+  const isRangePhase = phase === "value" && Boolean(currentOpDef?.range);
+  const rangeInputType = isRangePhase
+    ? rangeInputTypeFor(fieldMap[partialField]?.type)
+    : "text";
+  const isNumericRange =
+    isRangePhase && RANGE_NUMERIC_TYPES.has(fieldMap[partialField]?.type);
+  const isNumericScalar =
+    phase === "value" &&
+    !isRangePhase &&
+    RANGE_NUMERIC_TYPES.has(fieldMap[partialField]?.type);
+  const rangeFromInvalid =
+    isNumericRange && !isValidRangeNumericInput(rangeFrom);
+  const rangeToInvalid = isNumericRange && !isValidRangeNumericInput(rangeTo);
 
   const options = useMemo(() => {
     if (phase === "field")
@@ -589,7 +678,10 @@ function QueryInput({
       }));
     if (phase === "operator") {
       const fd = fieldMap[partialField];
-      return getOperators(fd?.type || "string").map((o) => ({
+      const ops = getOperatorsProp
+        ? getOperatorsProp(fd?.type || "string", partialField)
+        : getOperators(fd || "string");
+      return ops.map((o) => ({
         id: o.value,
         label: o.label,
         type: "operator",
@@ -597,8 +689,9 @@ function QueryInput({
     }
     if (phase === "value") {
       const fd = fieldMap[partialField];
-      // Static enum choices
-      if (fd?.type === "enum" && fd.choices?.length) {
+      // Static choices: gate on choices presence so categorical / thumbs /
+      // annotator fields (which carry their real type tag) also pick up.
+      if (fd?.choices?.length) {
         return fd.choices.map((c) => ({ id: c, label: c, type: "value" }));
       }
       // Dynamic values from parent (fetched from CH)
@@ -611,7 +704,14 @@ function QueryInput({
       }
     }
     return [];
-  }, [phase, partialField, filterFields, fieldMap, valueOptions]);
+  }, [
+    phase,
+    partialField,
+    filterFields,
+    fieldMap,
+    valueOptions,
+    getOperatorsProp,
+  ]);
 
   const filtered = useMemo(() => {
     if (!inputValue) return options;
@@ -626,15 +726,114 @@ function QueryInput({
       setPartialField(null);
       setPartialOp(null);
       setInputValue("");
-      setTimeout(() => setDropdownOpen(true), 0);
+      setRangeFrom("");
+      setRangeTo("");
+      setTimeout(() => {
+        inputRef.current?.focus();
+        setDropdownOpen(true);
+      }, 0);
       onApply(updated);
     },
     [tokens, onApply],
   );
 
+  const commitRange = useCallback(() => {
+    if (rangeFrom === "" || rangeTo === "") return;
+    if (rangeFromInvalid || rangeToInvalid) return;
+    commitFilter(partialField, partialOp, [rangeFrom, rangeTo]);
+  }, [
+    rangeFrom,
+    rangeTo,
+    rangeFromInvalid,
+    rangeToInvalid,
+    partialField,
+    partialOp,
+    commitFilter,
+  ]);
+
+  // Imperative API used by the parent (TraceFilterPanel etc.) when Apply
+  // is clicked while a complete partial token is still pending. Without
+  // this the user types `field op value` + Apply and the filter silently
+  // drops because the token was never committed.
+  useImperativeHandle(
+    ref,
+    () => ({
+      // Returns the newly-committed tokens when a complete partial was
+      // flushed, otherwise null. Caller uses the return value to rebuild
+      // rows directly; no inner onApply needed since the parent panel
+      // closes right after Apply.
+      flushPartial: () => {
+        if (!partialField || !partialOp) return null;
+        if (isRangePhase) {
+          if (rangeFrom === "" || rangeTo === "") return null;
+          if (rangeFromInvalid || rangeToInvalid) return null;
+          // partial-regex above still allows "-"/"." — require complete numbers
+          if (
+            isNumericRange &&
+            (!isCompleteNumericInput(rangeFrom) ||
+              !isCompleteNumericInput(rangeTo))
+          )
+            return null;
+          const updated = [
+            ...tokens,
+            {
+              field: partialField,
+              operator: partialOp,
+              value: [rangeFrom, rangeTo],
+            },
+          ];
+          setTokens(updated);
+          setPartialField(null);
+          setPartialOp(null);
+          setInputValue("");
+          setRangeFrom("");
+          setRangeTo("");
+          return updated;
+        }
+        const v = inputValue.trim();
+        if (!v) return null;
+        // Don't commit a partial/invalid numeric on close (TH-5195).
+        if (isNumericScalar && !isCompleteNumericInput(v)) return null;
+        const updated = [
+          ...tokens,
+          { field: partialField, operator: partialOp, value: v },
+        ];
+        setTokens(updated);
+        setPartialField(null);
+        setPartialOp(null);
+        setInputValue("");
+        return updated;
+      },
+    }),
+    [
+      tokens,
+      partialField,
+      partialOp,
+      isRangePhase,
+      rangeFrom,
+      rangeTo,
+      rangeFromInvalid,
+      rangeToInvalid,
+      isNumericRange,
+      isNumericScalar,
+      inputValue,
+    ],
+  );
+
   const reopenDropdown = useCallback(() => {
     setTimeout(() => setDropdownOpen(true), 0);
   }, []);
+
+  const opDefFor = useCallback(
+    (field, op) => {
+      const fd = fieldMap[field];
+      const ops = getOperatorsProp
+        ? getOperatorsProp(fd?.type || "string", field)
+        : getOperators(fd || "string");
+      return ops.find((o) => o.value === op);
+    },
+    [fieldMap, getOperatorsProp],
+  );
 
   const handleSelect = useCallback(
     (_, option) => {
@@ -645,8 +844,14 @@ function QueryInput({
         onFieldChange?.(option.id);
         reopenDropdown();
       } else if (phase === "operator") {
+        if (opDefFor(partialField, option.id)?.noValue) {
+          commitFilter(partialField, option.id, "");
+          return;
+        }
         setPartialOp(option.id);
         setInputValue("");
+        setRangeFrom("");
+        setRangeTo("");
         reopenDropdown();
       } else if (phase === "value") {
         commitFilter(partialField, partialOp, option.id);
@@ -659,6 +864,7 @@ function QueryInput({
       commitFilter,
       reopenDropdown,
       onFieldChange,
+      opDefFor,
     ],
   );
 
@@ -668,21 +874,51 @@ function QueryInput({
       const updated = tokens.filter((_, i) => i !== index);
       setTokens(updated);
       setPartialField(token.field);
-      setPartialOp(token.operator);
-      setInputValue(typeof token.value === "string" ? token.value : "");
+      if (opDefFor(token.field, token.operator)?.noValue) {
+        // No-value op: re-pick operator, no value phase.
+        setPartialOp(null);
+        setRangeFrom("");
+        setRangeTo("");
+        setInputValue("");
+      } else {
+        setPartialOp(token.operator);
+        // Key off the operator, not the array shape — in/not_in and
+        // multi-select values are also 2-element arrays.
+        if (
+          opDefFor(token.field, token.operator)?.range &&
+          Array.isArray(token.value) &&
+          token.value.length === 2
+        ) {
+          setRangeFrom(token.value[0] ?? "");
+          setRangeTo(token.value[1] ?? "");
+          setInputValue("");
+        } else {
+          setRangeFrom("");
+          setRangeTo("");
+          setInputValue(
+            Array.isArray(token.value)
+              ? token.value.join(", ")
+              : typeof token.value === "string"
+                ? token.value
+                : "",
+          );
+        }
+      }
       setTimeout(() => setDropdownOpen(true), 0);
       onApply(updated.length > 0 ? updated : []);
     },
-    [tokens, onApply],
+    [tokens, onApply, opDefFor],
   );
 
   const handleKeyDown = useCallback(
     (e) => {
       if (
         phase === "value" &&
+        !isRangePhase &&
         e.key === "Enter" &&
         inputValue.trim() &&
-        filtered.length === 0
+        filtered.length === 0 &&
+        (!isNumericScalar || isCompleteNumericInput(inputValue.trim()))
       ) {
         e.preventDefault();
         commitFilter(partialField, partialOp, inputValue.trim());
@@ -692,6 +928,8 @@ function QueryInput({
         e.preventDefault();
         if (partialOp) {
           setPartialOp(null);
+          setRangeFrom("");
+          setRangeTo("");
           setDropdownOpen(true);
         } else if (partialField) {
           setPartialField(null);
@@ -703,6 +941,8 @@ function QueryInput({
     },
     [
       phase,
+      isRangePhase,
+      isNumericScalar,
       inputValue,
       partialField,
       partialOp,
@@ -731,16 +971,17 @@ function QueryInput({
         color: "primary.main",
       });
     if (partialOp) {
-      const opDef = [...STRING_OPERATORS, ...ENUM_OPERATORS].find(
-        (o) => o.value === partialOp,
-      );
-      parts.push({ text: opDef?.label || partialOp, color: "warning.main" });
+      parts.push({
+        text: currentOpDef?.label || partialOp,
+        color: "warning.main",
+      });
     }
     return parts;
-  }, [partialField, partialOp, fieldMap]);
+  }, [partialField, partialOp, fieldMap, currentOpDef]);
 
-  const placeholder =
-    phase === "field"
+  const placeholder = isRangePhase
+    ? ""
+    : phase === "field"
       ? tokens.length
         ? "add filter..."
         : "type to filter — e.g. field → operator → value"
@@ -748,14 +989,157 @@ function QueryInput({
         ? "pick operator..."
         : valueLoading
           ? "loading values..."
-          : fieldMap[partialField]?.type === "enum"
+          : fieldMap[partialField]?.choices?.length
             ? "pick value..."
             : "type or pick value...";
+
+  // Shared chip/prefix render — used by both the Autocomplete renderInput
+  // startAdornment and the range-phase Box below.
+  const tokenChips = tokens.map((token, idx) => {
+    const tokenLabel = `${fieldMap[token.field]?.label || token.field} ${opDefFor(token.field, token.operator)?.label || token.operator} ${Array.isArray(token.value) ? token.value.join(" – ") : token.value}`;
+    return (
+      <Tooltip key={idx} title={tokenLabel} arrow placement="top">
+        <Chip
+          label={tokenLabel}
+          size="small"
+          onClick={() => editToken(idx)}
+          onDelete={() => handleDeleteToken(idx)}
+          deleteIcon={<Iconify icon="mdi:close" width={10} />}
+          sx={{
+            height: 22,
+            fontSize: 11,
+            mr: 0.25,
+            bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
+            color: "primary.main",
+            border: "1px solid",
+            borderColor: (theme) => alpha(theme.palette.primary.main, 0.2),
+            cursor: "pointer",
+            "&:hover": {
+              bgcolor: (theme) => alpha(theme.palette.primary.main, 0.16),
+              borderColor: (theme) => alpha(theme.palette.primary.main, 0.4),
+            },
+            "& .MuiChip-deleteIcon": {
+              color: "primary.main",
+              "&:hover": { color: "primary.dark" },
+            },
+          }}
+        />
+      </Tooltip>
+    );
+  });
+
+  const prefixChips = inlinePrefix.map((p, i) => (
+    <Box
+      key={i}
+      component="span"
+      sx={{
+        fontSize: 13,
+        fontWeight: 600,
+        color: p.color,
+        mr: 0.5,
+        whiteSpace: "nowrap",
+      }}
+    >
+      {p.text}
+    </Box>
+  ));
+
+  if (isRangePhase) {
+    const rangeFieldSx = {
+      flex: 1,
+      minWidth: 100,
+      "& .MuiOutlinedInput-root": { height: 28, fontSize: 12 },
+      "& .MuiInputBase-input": { p: "4px 8px" },
+    };
+    const onRangeKeyDown = (e) => {
+      if (e.key === "Enter" && rangeFrom !== "" && rangeTo !== "") {
+        e.preventDefault();
+        commitRange();
+      }
+      if (
+        (e.key === "Backspace" || e.key === "Delete") &&
+        e.target.value === ""
+      ) {
+        e.preventDefault();
+        setPartialOp(null);
+        setRangeFrom("");
+        setRangeTo("");
+      }
+    };
+
+    return (
+      <Box
+        sx={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: 0.5,
+          width: "100%",
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: 1,
+          px: 1.5,
+          py: 0.5,
+          minHeight: 40,
+          "&:focus-within": { borderColor: "primary.main" },
+        }}
+      >
+        {tokenChips}
+        {prefixChips}
+        <TextField
+          size="small"
+          type={rangeInputType}
+          value={rangeFrom}
+          error={rangeFromInvalid}
+          onChange={(e) => setRangeFrom(e.target.value.trim())}
+          placeholder="from"
+          autoFocus
+          onKeyDown={onRangeKeyDown}
+          sx={rangeFieldSx}
+          inputProps={isNumericRange ? { inputMode: "decimal" } : undefined}
+        />
+        <Box
+          component="span"
+          sx={{ fontSize: 12, color: "text.secondary", px: 0.25 }}
+        >
+          and
+        </Box>
+        <TextField
+          size="small"
+          type={rangeInputType}
+          value={rangeTo}
+          error={rangeToInvalid}
+          onChange={(e) => setRangeTo(e.target.value.trim())}
+          placeholder="to"
+          onKeyDown={onRangeKeyDown}
+          sx={rangeFieldSx}
+          inputProps={isNumericRange ? { inputMode: "decimal" } : undefined}
+        />
+        <IconButton
+          size="small"
+          onClick={commitRange}
+          disabled={
+            rangeFrom === "" ||
+            rangeTo === "" ||
+            rangeFromInvalid ||
+            rangeToInvalid
+          }
+          sx={{ p: 0.5 }}
+        >
+          <Iconify icon="mdi:check" width={16} />
+        </IconButton>
+      </Box>
+    );
+  }
 
   return (
     <Autocomplete
       size="small"
-      freeSolo={phase === "value" && fieldMap[partialField]?.type !== "enum"}
+      freeSolo={
+        phase === "value" &&
+        !isRangePhase &&
+        !fieldMap[partialField]?.choices?.length
+      }
       options={filtered}
       getOptionLabel={(o) => (typeof o === "string" ? o : o.label)}
       inputValue={inputValue}
@@ -763,7 +1147,7 @@ function QueryInput({
         if (reason !== "reset") setInputValue(v);
       }}
       onChange={handleSelect}
-      open={dropdownOpen && focused && filtered.length > 0}
+      open={!isRangePhase && dropdownOpen && focused && filtered.length > 0}
       onOpen={() => setDropdownOpen(true)}
       onClose={() => setDropdownOpen(false)}
       autoHighlight
@@ -856,6 +1240,7 @@ function QueryInput({
       renderInput={(params) => (
         <TextField
           {...params}
+          inputRef={inputRef}
           placeholder={placeholder}
           onFocus={() => {
             setFocused(true);
@@ -867,65 +1252,8 @@ function QueryInput({
             ...params.InputProps,
             startAdornment: (
               <>
-                {tokens.map((token, idx) => {
-                  // Full "field operator value" text — shown as a tooltip so a
-                  // long/truncated applied filter is still fully readable on
-                  // hover (TH-4517).
-                  const tokenLabel = `${fieldMap[token.field]?.label || token.field} ${token.operator} ${token.value}`;
-                  return (
-                    <Tooltip key={idx} title={tokenLabel} arrow placement="top">
-                      <Chip
-                        label={tokenLabel}
-                        size="small"
-                        onClick={() => editToken(idx)}
-                        onDelete={() => handleDeleteToken(idx)}
-                        deleteIcon={<Iconify icon="mdi:close" width={10} />}
-                        sx={{
-                          height: 22,
-                          fontSize: 11,
-                          mr: 0.25,
-                          bgcolor: (theme) =>
-                            alpha(theme.palette.primary.main, 0.08),
-                          color: "primary.main",
-                          border: "1px solid",
-                          borderColor: (theme) =>
-                            alpha(theme.palette.primary.main, 0.2),
-                          cursor: "pointer",
-                          transition: (theme) =>
-                            theme.transitions.create(
-                              ["background-color", "border-color"],
-                              { duration: theme.transitions.duration.shortest },
-                            ),
-                          "&:hover": {
-                            bgcolor: (theme) =>
-                              alpha(theme.palette.primary.main, 0.16),
-                            borderColor: (theme) =>
-                              alpha(theme.palette.primary.main, 0.4),
-                          },
-                          "& .MuiChip-deleteIcon": {
-                            color: "primary.main",
-                            "&:hover": { color: "primary.dark" },
-                          },
-                        }}
-                      />
-                    </Tooltip>
-                  );
-                })}
-                {inlinePrefix.map((p, i) => (
-                  <Box
-                    key={i}
-                    component="span"
-                    sx={{
-                      fontSize: 13,
-                      fontWeight: 600,
-                      color: p.color,
-                      mr: 0.5,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {p.text}
-                  </Box>
-                ))}
+                {tokenChips}
+                {prefixChips}
               </>
             ),
             endAdornment:
@@ -946,7 +1274,7 @@ function QueryInput({
       )}
     />
   );
-}
+});
 
 QueryInput.propTypes = {
   filterFields: PropTypes.array.isRequired,
@@ -956,6 +1284,7 @@ QueryInput.propTypes = {
   valueOptions: PropTypes.array,
   valueLoading: PropTypes.bool,
   onFieldChange: PropTypes.func,
+  getOperators: PropTypes.func,
 };
 
 // ---------------------------------------------------------------------------

@@ -21,7 +21,11 @@ from rest_framework import status
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
-from model_hub.models.annotation_queues import AnnotationQueue, AnnotationQueueAnnotator
+from model_hub.models.annotation_queues import (
+    AnnotationQueue,
+    AnnotationQueueAnnotator,
+    AnnotationQueueLabel,
+)
 from model_hub.models.choices import AnnotationQueueStatusChoices, AnnotatorRole
 from model_hub.models.develop_annotations import AnnotationsLabels
 from tfc.constants.levels import Level
@@ -60,6 +64,12 @@ def queue_status_url(queue_id):
 
 
 def create_queue(auth_client, **overrides):
+    # A queue must have at least one label (enforced by the serializer), so
+    # default to a freshly-created label when the caller doesn't specify one.
+    if "label_ids" not in overrides:
+        overrides["label_ids"] = [
+            str(create_label_for_queue(auth_client, name="Default Queue Label"))
+        ]
     payload = {
         "name": overrides.pop("name", "Test Queue"),
         **overrides,
@@ -390,6 +400,26 @@ class TestCreateQueue:
         """TC-10: Missing name returns 400."""
         resp = auth_client.post(QUEUE_URL, {"description": "no name"}, format="json")
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_create_queue_without_label_ids_returns_400(self, auth_client):
+        """A queue requires >=1 label; omitting label_ids is rejected."""
+        resp = auth_client.post(
+            QUEUE_URL, {"name": "No Label Queue"}, format="json"
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert resp.data["type"] == "validation_error"
+        assert resp.data["code"] == "invalid"
+
+    def test_create_queue_with_empty_label_ids_returns_400(self, auth_client):
+        """An explicit empty label_ids list is rejected."""
+        resp = auth_client.post(
+            QUEUE_URL,
+            {"name": "Empty Label Queue", "label_ids": []},
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert resp.data["type"] == "validation_error"
+        assert resp.data["code"] == "invalid"
 
     def test_create_duplicate_name(self, auth_client):
         """TC-11: Duplicate name returns 400."""
@@ -780,6 +810,53 @@ class TestUpdateQueue:
             format="json",
         )
         assert resp.status_code == status.HTTP_200_OK
+
+    def test_update_with_empty_label_ids_returns_400(self, auth_client):
+        """PATCH with an explicit empty label_ids is rejected.
+
+        partial=True skips ``required``, but ``min_length`` still fires, so an
+        API/SDK caller that toggles labels off via PATCH-with-empty gets 400.
+        """
+        label_id = create_label_for_queue(auth_client, name="L1")
+        create_queue(
+            auth_client, name="Empty Update Queue", label_ids=[str(label_id)]
+        )
+        queue_id = get_queue_id(auth_client, "Empty Update Queue")
+        resp = auth_client.patch(
+            queue_detail_url(queue_id),
+            {"label_ids": []},
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert resp.data["type"] == "validation_error"
+        assert resp.data["code"] == "invalid"
+
+    def test_update_omitting_label_ids_on_legacy_zero_label_queue_succeeds(
+        self, auth_client, organization, workspace, user
+    ):
+        """Legacy zero-label queues (created before this rule) stay editable.
+
+        A PATCH that omits ``label_ids`` must not be blocked by the new
+        constraint (partial update skips ``required``), so prod rows that
+        pre-date this PR aren't locked out of edits.
+        """
+        queue = AnnotationQueue.objects.create(
+            name="Legacy Zero Label Queue",
+            organization=organization,
+            workspace=workspace,
+            created_by=user,
+        )
+        assert not AnnotationQueueLabel.objects.filter(
+            queue=queue, deleted=False
+        ).exists()
+
+        resp = auth_client.patch(
+            queue_detail_url(queue.id),
+            {"name": "Legacy Renamed"},
+            format="json",
+        )
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert resp.data["name"] == "Legacy Renamed"
 
     def test_org_owner_can_manage_queue_without_queue_membership(
         self, auth_client, organization, workspace, user

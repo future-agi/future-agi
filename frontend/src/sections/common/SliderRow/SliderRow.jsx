@@ -73,7 +73,7 @@ const SliderRow = ({
       <Typography
         typography="s1"
         fontWeight="fontWeightRegular"
-        color="text.disabled"
+        color="text.secondary"
       >
         {description}
       </Typography>
@@ -107,7 +107,7 @@ const SliderRow = ({
               <Typography
                 fontWeight="fontWeightRegular"
                 typography="s2_1"
-                color="text.disabled"
+                color="text.secondary"
               >
                 {rest.minDescription}
               </Typography>
@@ -124,7 +124,7 @@ const SliderRow = ({
               <Typography
                 fontWeight="fontWeightRegular"
                 typography="s2_1"
-                color="text.disabled"
+                color="text.secondary"
               >
                 {rest.maxDescription}
               </Typography>

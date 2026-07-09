@@ -56,9 +56,48 @@ class ExperimentTableRowsMetadataSerializer(serializers.Serializer):
     )
 
 
+class ExperimentRowCellInnerMetadataSerializer(serializers.Serializer):
+    explanation = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    error_analysis = serializers.JSONField(required=False, allow_null=True)
+    selected_input_key = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+
+
+class ExperimentRowCellMetadataSerializer(serializers.Serializer):
+    response_time_ms = serializers.FloatField(required=False, allow_null=True)
+    token_count = serializers.IntegerField(required=False, allow_null=True)
+    cost = serializers.JSONField(required=False, allow_null=True)
+    cell_metadata = ExperimentRowCellInnerMetadataSerializer(required=False)
+    reason = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+
+
+class ExperimentRowCellSerializer(serializers.Serializer):
+    cell_value = serializers.JSONField(required=False, allow_null=True)
+    cell_diff_value = serializers.JSONField(required=False, allow_null=True)
+    status = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    metadata = ExperimentRowCellMetadataSerializer(required=False)
+    value_infos = serializers.JSONField(required=False, allow_null=True)
+
+
+# Per-column cells are keyed by runtime column UUID and stay dynamic;
+# row_id is the only statically typed field on the row dict.
+class ExperimentTableRowSerializer(serializers.Serializer):
+    row_id = serializers.UUIDField()
+
+
 class ExperimentTableRowsResultSerializer(serializers.Serializer):
     column_config = ExperimentTableRowsColumnConfigSerializer(many=True)
-    table = serializers.ListField(child=serializers.JSONField(), required=False)
+    table = serializers.ListField(
+        child=ExperimentTableRowSerializer(),
+        required=False,
+    )
     metadata = ExperimentTableRowsMetadataSerializer(required=False)
     output_format = serializers.CharField(required=False, allow_blank=True)
     status = serializers.CharField(required=False, allow_blank=True)
@@ -73,17 +112,10 @@ class ExperimentTableRowsResponseSerializer(serializers.Serializer):
     result = ExperimentTableRowsResultSerializer()
 
 
-class ExperimentRowDiffCellSerializer(serializers.Serializer):
-    cell_value = serializers.JSONField(required=False, allow_null=True)
-    cell_diff_value = serializers.JSONField(required=False, allow_null=True)
-    status = serializers.CharField(required=False, allow_blank=True)
-    value_infos = serializers.JSONField(required=False, allow_null=True)
-
-
 class ExperimentRowDiffResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField()
     result = serializers.DictField(
-        child=serializers.DictField(child=ExperimentRowDiffCellSerializer())
+        child=serializers.DictField(child=ExperimentRowCellSerializer())
     )
 
 

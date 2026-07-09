@@ -19,6 +19,7 @@ from tracer.services.clickhouse.client import (
     get_clickhouse_client,
     is_clickhouse_enabled,
 )
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 
 logger = structlog.get_logger(__name__)
 
@@ -115,6 +116,78 @@ class AnalyticsQueryService:
             columns=col_names,
         )
 
+    def get_span_attribute_keys_ch_for_projects(
+        self,
+        project_ids: list[str],
+        *,
+        recent_days: int | None = 7,
+        timeout_ms: int = 10000,
+        outer_limit: int = 1000,
+        include_counts: bool = False,
+        order_by_count_desc: bool = False,
+    ) -> list[dict]:
+        """Get distinct span attribute keys with types for one or more projects."""
+        if not project_ids:
+            return []
+
+        recent_filter = ""
+        params: dict[str, Any] = {
+            "project_ids": tuple(project_ids),
+        }
+        if recent_days is not None:
+            params["recent_days"] = int(recent_days)
+            recent_filter = "AND created_at >= now() - toIntervalDay(%(recent_days)s)"
+
+        inner_order = "ORDER BY created_at DESC"
+        outer_select = "SELECT key, argMax(type, cnt) AS type"
+        if include_counts:
+            outer_select += ", sum(cnt) AS count"
+        outer_order = "ORDER BY count DESC, key" if order_by_count_desc else "ORDER BY key"
+
+        query = f"""
+            {outer_select} FROM (
+                SELECT key, 'string' AS type, count() AS cnt FROM (
+                    SELECT attrs_string FROM spans
+                    WHERE project_id IN %(project_ids)s
+                      AND is_deleted = 0
+                      {recent_filter}
+                    {inner_order}
+                    LIMIT 10000
+                ) ARRAY JOIN mapKeys(attrs_string) AS key
+                GROUP BY key
+                UNION ALL
+                SELECT key, 'number' AS type, count() AS cnt FROM (
+                    SELECT attrs_number FROM spans
+                    WHERE project_id IN %(project_ids)s
+                      AND is_deleted = 0
+                      {recent_filter}
+                    {inner_order}
+                    LIMIT 10000
+                ) ARRAY JOIN mapKeys(attrs_number) AS key
+                GROUP BY key
+                UNION ALL
+                SELECT key, 'boolean' AS type, count() AS cnt FROM (
+                    SELECT attrs_bool FROM spans
+                    WHERE project_id IN %(project_ids)s
+                      AND is_deleted = 0
+                      {recent_filter}
+                    {inner_order}
+                    LIMIT 10000
+                ) ARRAY JOIN mapKeys(attrs_bool) AS key
+                GROUP BY key
+            )
+            GROUP BY key
+            {outer_order}
+            LIMIT {int(outer_limit)}
+        """
+        result = self.execute_ch_query(query, params, timeout_ms=timeout_ms)
+        if include_counts:
+            return [
+                {"key": row["key"], "type": row["type"], "count": row["count"]}
+                for row in result.data
+            ]
+        return [{"key": row["key"], "type": row["type"]} for row in result.data]
+
     def get_span_attribute_keys_ch(self, project_id: str) -> list[dict]:
         """Get distinct span attribute keys with types from ClickHouse.
 
@@ -123,8 +196,7 @@ class AnalyticsQueryService:
         populated at ingest time by fi-collector, so they are the canonical
         attribute inventory — no CDC fallback needed post-CH25 close-out.
         """
-        # --- Try spans Maps first (fast, typed) ---
-        # This is a *discovery* query (populate a filter dropdown), not an
+        # This is a discovery query (populate a filter dropdown), not an
         # accounting one, so an approximate sample is semantically fine.
         # Two bounds keep it bounded even on very large projects:
         #   * 7-day window on `created_at` (the sort/partition key) so CH
@@ -133,77 +205,155 @@ class AnalyticsQueryService:
         #     ARRAY JOIN — without this, projects with millions of spans
         #     and wide `attrs_*` maps hit Code: 307 (max_bytes_to_read)
         #     because every row's Map gets exploded.
-        # Trade-off: `argMax(type, cnt)` type resolution is now on capped
-        # counts, and brand-new attribute keys added in the last hour on a
-        # high-volume project may not appear until older rows drop out of
-        # the LIMIT window.
-        # Use argMax(type, cnt) to pick the type with the highest row count.
-        # When a key exists in both attrs_string and attrs_number,
-        # the map with more rows wins (avoids phone numbers being typed as
-        # number when they appear in attrs_number for only a few rows).
-        query = """
-            SELECT key, argMax(type, cnt) AS type FROM (
-                SELECT key, 'text' AS type, count() AS cnt FROM (
-                    SELECT attrs_string FROM spans
-                    WHERE project_id = %(project_id)s
-                      AND is_deleted = 0
-                      AND created_at >= now() - INTERVAL 7 DAY
-                    LIMIT 10000
-                ) ARRAY JOIN mapKeys(attrs_string) AS key
-                GROUP BY key
-                UNION ALL
-                SELECT key, 'number' AS type, count() AS cnt FROM (
-                    SELECT attrs_number FROM spans
-                    WHERE project_id = %(project_id)s
-                      AND is_deleted = 0
-                      AND created_at >= now() - INTERVAL 7 DAY
-                    LIMIT 10000
-                ) ARRAY JOIN mapKeys(attrs_number) AS key
-                GROUP BY key
-                UNION ALL
-                SELECT key, 'boolean' AS type, count() AS cnt FROM (
-                    SELECT attrs_bool FROM spans
-                    WHERE project_id = %(project_id)s
-                      AND is_deleted = 0
-                      AND created_at >= now() - INTERVAL 7 DAY
-                    LIMIT 10000
-                ) ARRAY JOIN mapKeys(attrs_bool) AS key
-                GROUP BY key
-            )
-            GROUP BY key
-            ORDER BY key
-            LIMIT 1000
-        """
-        result = self.execute_ch_query(
-            query, {"project_id": project_id}, timeout_ms=10000
-        )
-        # CH25 close-out (2026-05-28): dropped the JSON-type-inference fallback
-        # that read `arrayJoin(JSONExtractKeysAndValuesRaw(span_attributes))`
-        # from the legacy `tracer_observation_span` CDC mirror. The v2 typed
-        # Maps (`attrs_string` / `attrs_number` / `attrs_bool`) are now the
-        # canonical attribute inventory — fi-collector splits attrs into them
-        # at ingest time, so the maps are always populated. If a project genuinely
-        # has fewer than 5 keys, returning whatever we have is correct.
-        return [{"key": row["key"], "type": row["type"]} for row in result.data]
+        return self.get_span_attribute_keys_ch_for_projects([project_id])
 
-    def get_eval_config_ids_with_data_ch(self, project_id: str) -> list[str]:
-        """Get distinct eval config IDs that have data for a project in ClickHouse."""
-        query = """
-            SELECT DISTINCT toString(custom_eval_config_id) AS config_id
-            FROM tracer_eval_logger FINAL
-            WHERE _peerdb_is_deleted = 0
-              AND (deleted = 0 OR deleted IS NULL)
-              AND trace_id IN (
-                  SELECT DISTINCT trace_id
-                  FROM spans
-                  WHERE project_id = %(project_id)s
-                    AND is_deleted = 0
-              )
+    @staticmethod
+    def _eval_config_ids_query(scope_sql: str) -> str:
+        """Build the shared "distinct eval-config IDs that have data" query.
+
+        One body for every eval-config discovery read: the table and its
+        not-deleted predicate come from ``eval_logger_source()`` (so a ``_v2``
+        stack uses ``is_deleted = 0``), and callers supply only the
+        trace-scoping clause.
         """
+        eval_table, eval_nd = eval_logger_source()
+        return (
+            "SELECT DISTINCT toString(custom_eval_config_id) AS config_id "
+            f"FROM {eval_table} FINAL "
+            f"WHERE {eval_nd} "
+            f"AND {scope_sql}"
+        )
+
+    def get_eval_config_ids_with_data_ch(
+        self, project_id: str, timeout_ms: int = 5000
+    ) -> list[str]:
+        """Distinct eval config IDs that have data for a project (scoped via spans)."""
+        query = self._eval_config_ids_query(
+            "trace_id IN ("
+            "SELECT DISTINCT trace_id FROM spans "
+            "WHERE project_id = %(project_id)s AND is_deleted = 0"
+            ")"
+        )
         result = self.execute_ch_query(
-            query, {"project_id": project_id}, timeout_ms=5000
+            query, {"project_id": project_id}, timeout_ms=timeout_ms
         )
         return [row["config_id"] for row in result.data]
+
+    def get_eval_config_ids_for_traces_ch(
+        self, trace_ids: list[str], timeout_ms: int = 3000
+    ) -> list[str]:
+        """Distinct eval config IDs recorded for an explicit set of trace IDs."""
+        if not trace_ids:
+            return []
+        query = self._eval_config_ids_query("trace_id IN %(trace_ids)s")
+        result = self.execute_ch_query(
+            query, {"trace_ids": trace_ids}, timeout_ms=timeout_ms
+        )
+        return [row["config_id"] for row in result.data]
+
+    def get_children_eval_metrics_ch(
+        self, span_ids: list[str], timeout_ms: int = 5000
+    ) -> list[dict]:
+        """Per-span eval rows for a set of child observation spans."""
+        if not span_ids:
+            return []
+        eval_table, eval_nd = eval_logger_source()
+        query = f"""
+            SELECT
+                toString(observation_span_id) AS span_id,
+                toString(custom_eval_config_id) AS config_id,
+                output_float,
+                output_bool,
+                output_str_list,
+                eval_explanation,
+                error,
+                error_message,
+                output_str,
+                status,
+                skipped_reason
+            FROM {eval_table} FINAL
+            WHERE observation_span_id IN %(span_ids)s
+              AND {eval_nd}
+        """
+        result = self.execute_ch_query(
+            query, {"span_ids": span_ids}, timeout_ms=timeout_ms
+        )
+        return result.data
+
+    def get_eval_detail_ch(
+        self, span_id: str, config_id: str, timeout_ms: int = 5000
+    ) -> dict | None:
+        """Single span/trace-target eval detail row, or ``None`` if absent."""
+        eval_table, eval_nd = eval_logger_source()
+        query = f"""
+            SELECT
+                output_float,
+                output_bool,
+                output_str_list,
+                output_str,
+                eval_explanation,
+                error,
+                error_message,
+                output_metadata
+            FROM {eval_table} FINAL
+            WHERE observation_span_id = %(span_id)s
+              AND custom_eval_config_id = %(config_id)s
+              AND target_type IN ('span', 'trace')
+              AND {eval_nd}
+            LIMIT 1
+        """
+        result = self.execute_ch_query(
+            query,
+            {"span_id": str(span_id), "config_id": str(config_id)},
+            timeout_ms=timeout_ms,
+        )
+        return result.data[0] if result.data else None
+
+    def get_trace_eval_scores_ch(
+        self, trace_ids: list[str], config_ids: list[str], timeout_ms: int = 5000
+    ) -> list[dict]:
+        """Per-(trace, config) aggregated eval scores for a session's traces."""
+        if not (trace_ids and config_ids):
+            return []
+        eval_table, eval_nd = eval_logger_source()
+        query = f"""
+            SELECT
+                toString(trace_id) AS trace_id,
+                toString(custom_eval_config_id) AS config_id,
+                -- Score aggregates count *terminal* rows only: a non-terminal
+                -- row can carry stale/coerced output (the CH mirror stores 0
+                -- for a NULL bool), which would otherwise fabricate a score for
+                -- a queued/running eval. The per-status counts below still see
+                -- those rows so the caller can render the lifecycle state.
+                round(avgIf(output_float,
+                    error = 0 AND ifNull(output_str, '') != 'ERROR'
+                    AND status NOT IN ('pending', 'running', 'skipped', 'errored')) * 100, 2) AS float_score,
+                round(avgIf(CASE WHEN output_bool = 1 THEN 100.0
+                                 WHEN output_bool = 0 THEN 0.0
+                                 ELSE NULL END,
+                    error = 0 AND ifNull(output_str, '') != 'ERROR'
+                    AND status NOT IN ('pending', 'running', 'skipped', 'errored')), 2) AS bool_score,
+                countIf(output_float IS NOT NULL AND error = 0 AND ifNull(output_str, '') != 'ERROR'
+                    AND status NOT IN ('pending', 'running', 'skipped', 'errored')) AS float_count,
+                countIf(output_bool IS NOT NULL AND error = 0 AND ifNull(output_str, '') != 'ERROR'
+                    AND status NOT IN ('pending', 'running', 'skipped', 'errored')) AS bool_count,
+                countIf(error = 1 OR ifNull(output_str, '') = 'ERROR' OR status = 'errored') AS error_count,
+                countIf(status = 'skipped') AS skipped_count,
+                countIf(status = 'running') AS running_count,
+                countIf(status = 'pending') AS pending_count,
+                anyIf(skipped_reason, status = 'skipped') AS skipped_reason
+            FROM {eval_table} FINAL
+            WHERE trace_id IN %(trace_ids)s
+              AND custom_eval_config_id IN %(config_ids)s
+              AND {eval_nd}
+            GROUP BY trace_id, custom_eval_config_id
+        """
+        result = self.execute_ch_query(
+            query,
+            {"trace_ids": trace_ids, "config_ids": config_ids},
+            timeout_ms=timeout_ms,
+        )
+        return result.data
 
     def get_backend_status(self) -> dict[str, Any]:
         """Get the ClickHouse connectivity status."""

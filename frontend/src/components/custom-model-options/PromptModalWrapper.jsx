@@ -67,7 +67,7 @@ export default function PromptModalWrapper({
         {subTitle && (
           <Typography
             variant="s2"
-            color={"text.disabled"}
+            color={"text.secondary"}
             fontWeight={"fontWeightRegular"}
           >
             {subTitle}

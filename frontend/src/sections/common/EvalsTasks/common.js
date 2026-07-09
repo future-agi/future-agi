@@ -8,6 +8,13 @@ import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { formatDate } from "src/utils/report-utils";
 import { canonicalEntries } from "src/utils/utils";
+import { NULL_OPERATORS } from "src/components/ComplexFilter/common";
+
+// Operator categories shared by the task filter wire builders (validation.js,
+// TaskLivePreview) and TaskFilterBar.
+export const RANGE_OPS = new Set(["between", "not_between"]);
+export const LIST_OPS = new Set(["in", "not_in"]);
+export const NO_VALUE_OPS = new Set(NULL_OPERATORS);
 
 export const getEvalsTaskColumnConfig = (observeId) => {
   const columns = [
@@ -40,8 +47,12 @@ export const getEvalsTaskColumnConfig = (observeId) => {
           );
         }
 
+        // Canonical key is `filters`; `span_attributes_filters` is the
+        // legacy form still present on un-migrated rows.
         const spanAttributes =
-          params?.data?.filters_applied?.span_attributes_filters ?? [];
+          params?.data?.filters_applied?.filters ??
+          params?.data?.filters_applied?.span_attributes_filters ??
+          [];
 
         if (spanAttributes.length > 0) {
           const customAttributeString = `Custom attribute is ${spanAttributes
@@ -177,36 +188,33 @@ export const EvalTaskFilterDefinition = (observeId) => {
   return filters;
 };
 
-// span_attributes_filters
-// [
-//     {
-//         "column_id": "llm.output_messages.0.message.content",
-//         "filter_config": {
-//             "col_type": "SPAN_ATTRIBUTE",
-//             "filter_op": "equals",
-//             "filter_type": "text",
-//             "filter_value": "asdasdasd"
-//         }
-//     }
-// ]
+// TraceFilterPanel `fieldCategory` → BE col_type enum. Fallback only —
+// the row's `apiColType` (set by TraceFilterPanel via metricToTraceFilterProperty)
+// is the source of truth when present.
+export const FIELD_CATEGORY_TO_COL_TYPE = {
+  attribute: "SPAN_ATTRIBUTE",
+  system: "SYSTEM_METRIC",
+  eval: "EVAL_METRIC",
+  annotation: "ANNOTATION",
+};
 
-// Reserved keys on the saved BE filters dict that are metadata, not
-// user-visible filter rows. Everything else is treated as a generic
-// system filter (one row per value).
+// Column ids the BE always routes through its annotation handler regardless
+// of col_type. Pin them to ANNOTATION on the wire so the dispatcher doesn't
+// also feed them to SPAN_ATTRIBUTE / SYSTEM_METRIC handlers.
+export const ANNOTATION_COLUMN_IDS = new Set(["annotator", "my_annotations"]);
+
+// Reserved metadata keys on the saved BE filters dict — every other key
+// becomes a generic system filter row.
 const RESERVED_FILTER_KEYS = new Set([
   "project_id",
   "date_range",
   "start_date",
   "end_date",
+  "filters",
   "span_attributes_filters",
 ]);
 
-// Legacy → current vocabulary aliases. The TraceFilterPanel column
-// for span observation type was renamed from `observation_type` to
-// `span_kind`; old tasks in the DB still use the legacy key, so map
-// it back to the new field on hydration so the filter row appears
-// under the correct column in the UI. Add a new entry here if any
-// other system column is ever renamed.
+// Legacy → current vocabulary aliases for the system-filter hydration path.
 const FILTER_KEY_ALIAS = {
   observation_type: "span_kind",
 };
@@ -214,26 +222,29 @@ const FILTER_KEY_ALIAS = {
 export const formatTaskFilters = (filters_applied) => {
   if (!filters_applied) return [];
 
-  // Attribute filters carry canonical API filter objects inside the saved
-  // task filters payload.
+  // Attribute filters are stored on the wire as {column_id, filter_config}
+  // (snake_case — see extractAttributeFilters). Prefer the canonical `filters`
+  // key; fall back to legacy `span_attributes_filters`. `col_type` round-trips
+  // as `apiColType` so the panel picks the right chip.
   const span_attributes_filters = (
-    filters_applied.span_attributes_filters || []
+    filters_applied.filters ||
+    filters_applied.span_attributes_filters ||
+    []
   ).map((i) => ({
     property: "attributes",
     propertyId: i?.column_id,
+    apiColType: i?.filter_config?.col_type,
     filterConfig: {
       filterType: i?.filter_config?.filter_type,
       filterOp: i?.filter_config?.filter_op,
       filterValue: i?.filter_config?.filter_value,
+      colType: i?.filter_config?.col_type,
     },
   }));
 
-  // Every other top-level key is treated as a task system filter: one filter
-  // row per value. The backend contract only accepts task-scoping keys such
-  // as observation_type; span attributes stay in `span_attributes_filters`.
-  //
-  // canonicalEntries (not Object.entries) drops legacy camelCase aliases
-  // that may exist beside snake_case keys.
+  // Every other top-level key → one generic system-filter row per value.
+  // canonicalEntries skips the camelCase aliases the axios interceptor adds
+  // (avoids duplicate chips + correctly filters reserved keys).
   const systemFilters = [];
   canonicalEntries(filters_applied).forEach(([key, vals]) => {
     if (RESERVED_FILTER_KEYS.has(key)) return;

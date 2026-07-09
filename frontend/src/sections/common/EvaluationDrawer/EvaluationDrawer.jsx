@@ -107,6 +107,13 @@ const EvaluationDrawerChild = ({
         config: {
           required_keys: evalItem.eval_required_keys || [],
           ...(evalItem.config?.run_config || evalItem.run_config || {}),
+          // Multi-turn LLM evals persist the full message chain on the
+          // template config, not under run_config — forward it so the
+          // picker pre-populates with every turn (not just System) before
+          // the detail API response merges the canonical value in.
+          ...(evalItem.config?.messages
+            ? { messages: evalItem.config.messages }
+            : {}),
           // Map the UserEvalMetric.error_localizer BooleanField to the key
           // EvalPickerConfigFull expects so the toggle shows the saved state.
           ...(evalItem.error_localizer !== undefined
@@ -120,6 +127,7 @@ const EvaluationDrawerChild = ({
         // The column-menu path matches via user_eval_id/userEvalId, so
         // evalItem.id may not be the user-eval id — normalize here.
         userEvalId: evalItem.user_eval_id ?? evalItem.userEvalId ?? evalItem.id,
+        pinned_version_id: evalItem.pinned_version_id ?? evalItem.pinnedVersionId ?? null,
       });
       setEvalPickerOpen(true);
     },
@@ -467,7 +475,7 @@ const EvaluationDrawerChild = ({
           )}
         </Collapse>
         <Collapse
-          in={visibleSection === "config"}
+          in={visibleSection === "config" && module !== "workbench"}
           orientation="horizontal"
           sx={{ height: "100%" }}
           unmountOnExit
@@ -612,6 +620,8 @@ const EvaluationDrawerChild = ({
               Object.keys(evalConfig.choice_scores).length
             )
               runConfig.choice_scores = evalConfig.choice_scores;
+            if (evalConfig.multi_choice !== undefined)
+              runConfig.multi_choice = !!evalConfig.multi_choice;
           }
           // Data injection applies to both single and composite — the
           // backend resolves it at row-evaluation time.
@@ -689,6 +699,9 @@ const EvaluationDrawerChild = ({
                       evalConfig.composite_weight_overrides,
                   }
                 : {}),
+              ...(evalConfig.versionId
+                ? { pinned_version_id: evalConfig.versionId }
+                : {}),
             };
           }
           // Edit branch: POST directly to /edit_and_run_user_eval/{id} so the
@@ -720,6 +733,12 @@ const EvaluationDrawerChild = ({
               queryClient.invalidateQueries({
                 queryKey: getUserEvalListKey(module, id),
               });
+              // Invalidate version cache so reopening shows the new version
+              if (evalConfig.templateId) {
+                queryClient.invalidateQueries({
+                  queryKey: ["evals", "versions", evalConfig.templateId],
+                });
+              }
               if (effectiveModule === "run-optimization") {
                 queryClient.invalidateQueries({
                   queryKey: ["optimize-develop-column-info"],

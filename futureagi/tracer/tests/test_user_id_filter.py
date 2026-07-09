@@ -75,7 +75,7 @@ class UserIdFilterTests(unittest.TestCase):
         b = self._build()
         sql = b._build_condition(
             col_id="user_id",
-            col_type=ClickHouseFilterBuilder.NORMAL,
+            col_type=ClickHouseFilterBuilder.SYSTEM_METRIC,
             filter_type="text",
             filter_op="in",
             filter_value=["9281", "106749"],
@@ -91,7 +91,7 @@ class UserIdFilterTests(unittest.TestCase):
         self.assertIsNone(
             b._build_condition(
                 col_id="user_id",
-                col_type=ClickHouseFilterBuilder.NORMAL,
+                col_type=ClickHouseFilterBuilder.SYSTEM_METRIC,
                 filter_type="text",
                 filter_op="in",
                 filter_value=[None, ""],
@@ -104,7 +104,7 @@ class UserIdFilterTests(unittest.TestCase):
             b = self._build()
             sql = b._build_condition(
                 col_id="user_id",
-                col_type=ClickHouseFilterBuilder.NORMAL,
+                col_type=ClickHouseFilterBuilder.SYSTEM_METRIC,
                 filter_type="text",
                 filter_op=op,
                 filter_value="9281",
@@ -125,7 +125,7 @@ class UserIdFilterTests(unittest.TestCase):
         b = self._build()
         sql = b._build_condition(
             col_id="user_id",
-            col_type=ClickHouseFilterBuilder.NORMAL,
+            col_type=ClickHouseFilterBuilder.SYSTEM_METRIC,
             filter_type="text",
             filter_op="equals",
             filter_value=9281,
@@ -133,13 +133,9 @@ class UserIdFilterTests(unittest.TestCase):
         self.assertIsNotNone(sql)
         self.assertEqual(b._params.get("col_1"), "9281")
 
-    def test_user_id_fires_regardless_of_col_type(self):
-        """Fix must work for both NORMAL (frontend default) and SYSTEM_METRIC.
-
-        The ``userScopeFilter`` on the cross-project user detail page omits
-        ``col_type`` so it arrives as NORMAL. Earlier versions of this fix
-        guarded on ``col_type == SYSTEM_METRIC`` which meant the branch
-        never fired in practice; this test locks in the fix.
+    def test_user_id_requires_system_metric_col_type(self):
+        """The ``user_id`` resolver lives at the top of the SYSTEM_METRIC
+        dispatch. FE must tag ``userScopeFilter`` with ``col_type=SYSTEM_METRIC``.
         """
         for col_type_val in (
             ClickHouseFilterBuilder.NORMAL,
@@ -159,8 +155,11 @@ class UserIdFilterTests(unittest.TestCase):
             )
             self.assertIn("FROM end_users", sql)
 
-    def test_user_id_does_not_affect_plain_user_filter(self):
-        """``col_id == 'user'`` (UUID-valued) must still go to TRACE_END_USER."""
+    def test_user_filter_always_resolves_via_tracer_enduser(self):
+        """``col_id == 'user'`` is treated as a string filter against
+        ``tracer_enduser.user_id`` regardless of value shape. UUID-shaped
+        back-compat that previously routed directly to ``end_user_id`` has
+        been removed — every value is matched as a user_id string."""
         b = self._build()
         sql = b._build_condition(
             col_id="user",

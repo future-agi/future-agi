@@ -184,7 +184,7 @@ const SimulationTestMode = React.forwardRef(
       initialRunTestId = "",
       isComposite = false,
       compositeAdhocConfig = null,
-      initialExecutionId=null
+      initialExecutionId = null,
     },
     ref,
   ) => {
@@ -356,7 +356,6 @@ const SimulationTestMode = React.forwardRef(
           setExecutions(items);
           setExecutionsFetched(true);
           if (items.length > 0) {
-
             const preferred =
               initialExecutionId &&
               items.some((it) => it.id === initialExecutionId)
@@ -604,10 +603,26 @@ const SimulationTestMode = React.forwardRef(
             // `recordings` dict / `audio_url`, with provider_call_data
             // fallback for shapes that don't normalize cleanly.
             const rec = callData.recordings || {};
+            // Voice transcript arrives as an array of turn objects. Mirror
+            // the BE eval-runtime shape (`agent: ...\ncustomer: ...`) so the
+            // preview matches what the eval actually consumes.
             flat.call.transcript =
               typeof callData.transcript === "string"
                 ? callData.transcript
-                : "";
+                : Array.isArray(callData.transcript)
+                  ? callData.transcript
+                      .filter(
+                        (r) =>
+                          r?.content?.trim() &&
+                          (r.speaker_role === "user" ||
+                            r.speaker_role === "assistant"),
+                      )
+                      .map(
+                        (r) =>
+                          `${r.speaker_role === "assistant" ? "agent" : "customer"}: ${r.content}`,
+                      )
+                      .join("\n")
+                  : "";
             flat.call.voice_recording =
               callData.audio_url ||
               rec.combined ||
@@ -1197,7 +1212,7 @@ const SimulationTestMode = React.forwardRef(
             <Typography variant="body2" fontWeight={600} color="text.secondary">
               This simulation has no data
             </Typography>
-            <Typography variant="caption" color="text.disabled">
+            <Typography variant="caption" color="text.secondary">
               Run the simulation first to generate call data for testing
             </Typography>
           </Box>
@@ -1232,7 +1247,7 @@ const SimulationTestMode = React.forwardRef(
               >
                 No calls in this simulation
               </Typography>
-              <Typography variant="caption" color="text.disabled">
+              <Typography variant="caption" color="text.secondary">
                 Add calls to the simulation before running a test
               </Typography>
             </Box>
@@ -1812,6 +1827,9 @@ const SimulationTestMode = React.forwardRef(
               ...(errorLocalizerState.status
                 ? { error_localizer_status: errorLocalizerState.status }
                 : {}),
+              ...(errorLocalizerState.message
+                ? { error_localizer_message: errorLocalizerState.message }
+                : {}),
               ...(errorLocalizerState.details
                 ? {
                     error_details:
@@ -1860,7 +1878,7 @@ SimulationTestMode.propTypes = {
   initialRunTestId: PropTypes.string,
   isComposite: PropTypes.bool,
   compositeAdhocConfig: PropTypes.object,
-  initialExecutionId :PropTypes.string
+  initialExecutionId: PropTypes.string,
 };
 
 export default SimulationTestMode;

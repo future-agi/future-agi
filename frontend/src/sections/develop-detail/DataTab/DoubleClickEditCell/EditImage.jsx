@@ -209,7 +209,7 @@ const EditImage = ({
                   >
                     No image added
                   </Typography>
-                  <Typography variant="caption" color="text.disabled">
+                  <Typography variant="caption" color="text.secondary">
                     Click to upload an image
                   </Typography>
                 </Box>

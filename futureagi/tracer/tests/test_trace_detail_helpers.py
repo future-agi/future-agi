@@ -1,52 +1,58 @@
 """
-Tests for Phase 8 trace detail helper logic.
+Tests for the shared trace-detail summary + graph compute.
 
-Tests the summary computation and graph derivation that were added to
-_retrieve_clickhouse() — tested via pure functions extracted for testability.
+These exercise the real ``compute_trace_summary_and_graph`` helper (the single
+source of truth both the V1/PG and V2/CH handlers call) rather than a copy. The
+flat ``{id: {observation_span, _parent_id}}`` fixtures are assembled into the
+nested span tree the helper consumes via ``_tree`` (the same shape the handlers
+build), so the totals/graph are validated against the production code path.
 """
 
-import pytest
+from tracer.services.clickhouse.query_builders.trace_detail import (
+    compute_trace_summary_and_graph,
+)
+
+
+def _tree(span_map):
+    """Assemble a flat ``{id: {observation_span, _parent_id}}`` fixture into the
+    nested span tree the shared helper consumes (mirrors the handler build).
+
+    Orphans (``_parent_id`` not present in the map) become roots, matching the
+    handler's ``root_spans + orphan_spans`` assembly. The span ``id`` is set from
+    the map key so graph node/edge ids line up with the fixtures.
+    """
+    nodes = {
+        sid: {
+            "observation_span": {**entry["observation_span"], "id": sid},
+            "children": [],
+        }
+        for sid, entry in span_map.items()
+    }
+    roots = []
+    for sid, entry in span_map.items():
+        parent = entry.get("_parent_id")
+        if parent is not None and parent in nodes:
+            nodes[parent]["children"].append(nodes[sid])
+        else:
+            roots.append(nodes[sid])
+    return roots
+
+
+def _summary(span_map):
+    summary, _ = compute_trace_summary_and_graph(_tree(span_map))
+    return summary
+
+
+def _graph(span_map):
+    _, graph = compute_trace_summary_and_graph(_tree(span_map))
+    return graph
 
 
 class TestTraceSummaryComputation:
-    """Test the summary computation logic from Phase 8."""
-
-    def _compute_summary(self, span_map):
-        """Extract of the summary computation from _retrieve_clickhouse."""
-        total_tokens = 0
-        total_prompt_tokens = 0
-        total_completion_tokens = 0
-        total_cost = 0.0
-        error_count = 0
-        type_counts = {}
-        root_latencies = []
-
-        for sid, entry in span_map.items():
-            sp = entry["observation_span"]
-            total_tokens += sp.get("total_tokens") or 0
-            total_prompt_tokens += sp.get("prompt_tokens") or 0
-            total_completion_tokens += sp.get("completion_tokens") or 0
-            total_cost += sp.get("cost") or 0.0
-            if sp.get("status") == "ERROR":
-                error_count += 1
-            obs_type = sp.get("observation_type", "unknown")
-            type_counts[obs_type] = type_counts.get(obs_type, 0) + 1
-            if entry.get("_parent_id") is None:
-                root_latencies.append(sp.get("latency_ms") or 0)
-
-        return {
-            "total_spans": len(span_map),
-            "total_duration_ms": max(root_latencies) if root_latencies else 0,
-            "total_tokens": total_tokens,
-            "total_prompt_tokens": total_prompt_tokens,
-            "total_completion_tokens": total_completion_tokens,
-            "total_cost": round(total_cost, 6),
-            "error_count": error_count,
-            "span_type_counts": type_counts,
-        }
+    """Summary totals computed by the shared helper."""
 
     def test_empty_span_map(self):
-        result = self._compute_summary({})
+        result = _summary({})
         assert result["total_spans"] == 0
         assert result["total_duration_ms"] == 0
         assert result["total_tokens"] == 0
@@ -68,7 +74,7 @@ class TestTraceSummaryComputation:
                 "_parent_id": None,
             }
         }
-        result = self._compute_summary(span_map)
+        result = _summary(span_map)
         assert result["total_spans"] == 1
         assert result["total_duration_ms"] == 1234
         assert result["total_tokens"] == 500
@@ -117,7 +123,7 @@ class TestTraceSummaryComputation:
                 "_parent_id": "s1",
             },
         }
-        result = self._compute_summary(span_map)
+        result = _summary(span_map)
         assert result["total_spans"] == 3
         assert result["total_duration_ms"] == 2000  # root span latency
         assert result["total_tokens"] == 900
@@ -140,38 +146,17 @@ class TestTraceSummaryComputation:
                 "_parent_id": None,
             }
         }
-        result = self._compute_summary(span_map)
+        result = _summary(span_map)
         assert result["total_tokens"] == 0
         assert result["total_cost"] == 0
         assert result["total_duration_ms"] == 0
 
 
 class TestGraphDerivation:
-    """Test the graph derivation logic from Phase 8."""
-
-    def _derive_graph(self, span_map):
-        """Extract of the graph derivation from _retrieve_clickhouse."""
-        nodes = []
-        edges = []
-        for sid, entry in span_map.items():
-            sp = entry["observation_span"]
-            nodes.append(
-                {
-                    "id": sid,
-                    "name": sp.get("name", ""),
-                    "type": sp.get("observation_type", "unknown"),
-                    "latency_ms": sp.get("latency_ms", 0),
-                    "tokens": sp.get("total_tokens", 0),
-                    "status": sp.get("status"),
-                }
-            )
-            parent_id = entry.get("_parent_id")
-            if parent_id and parent_id in span_map:
-                edges.append({"from": parent_id, "to": sid})
-        return {"nodes": nodes, "edges": edges}
+    """Agent graph derived by the shared helper."""
 
     def test_empty_graph(self):
-        result = self._derive_graph({})
+        result = _graph({})
         assert result["nodes"] == []
         assert result["edges"] == []
 
@@ -188,7 +173,7 @@ class TestGraphDerivation:
                 "_parent_id": None,
             }
         }
-        result = self._derive_graph(span_map)
+        result = _graph(span_map)
         assert len(result["nodes"]) == 1
         assert result["nodes"][0]["name"] == "root"
         assert result["edges"] == []
@@ -216,13 +201,13 @@ class TestGraphDerivation:
                 "_parent_id": "s1",
             },
         }
-        result = self._derive_graph(span_map)
+        result = _graph(span_map)
         assert len(result["nodes"]) == 2
         assert len(result["edges"]) == 1
         assert result["edges"][0] == {"from": "s1", "to": "s2"}
 
     def test_orphan_span_no_edge(self):
-        """Span with parent_id pointing to non-existent span."""
+        """Span with parent_id pointing to a non-existent span gets no edge."""
         span_map = {
             "s1": {
                 "observation_span": {
@@ -235,9 +220,9 @@ class TestGraphDerivation:
                 "_parent_id": "nonexistent",
             },
         }
-        result = self._derive_graph(span_map)
+        result = _graph(span_map)
         assert len(result["nodes"]) == 1
-        assert result["edges"] == []  # No edge because parent not in span_map
+        assert result["edges"] == []  # parent not in span set -> no edge
 
     def test_three_level_hierarchy(self):
         span_map = {
@@ -272,7 +257,7 @@ class TestGraphDerivation:
                 "_parent_id": "s2",
             },
         }
-        result = self._derive_graph(span_map)
+        result = _graph(span_map)
         assert len(result["nodes"]) == 3
         assert len(result["edges"]) == 2
         edge_pairs = [(e["from"], e["to"]) for e in result["edges"]]

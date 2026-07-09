@@ -29,7 +29,7 @@ const ConfigureDatasetModal = ({ open, onClose }) => {
         <Typography variant="h5">Configure Dataset</Typography>
         <Typography
           variant="body1"
-          color="text.disabled"
+          color="text.secondary"
         >{`You haven't configured a dataset`}</Typography>
         <Box sx={{ display: "flex", justifyContent: "end" }}>
           <Button

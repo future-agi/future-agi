@@ -7,6 +7,8 @@ Endpoints:
 3. GET /api/traces/span-attribute-detail/<key>/ - Full detail for a specific attribute key
 """
 
+from dataclasses import asdict
+
 import structlog
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -24,6 +26,9 @@ from tracer.serializers.span_attributes import (
     SpanAttributeValuesResponseSerializer,
 )
 from tracer.services.clickhouse.client import ClickHouseClient, is_clickhouse_enabled
+from tracer.services.clickhouse.span_attribute_lookups import (
+    list_attribute_keys_for_project,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -82,54 +87,11 @@ class SpanAttributeKeysView(APIView):
         if denied is not None:
             return denied
 
-        query = """
-            SELECT key, 'string' AS type, count() AS cnt
-            FROM (
-                SELECT arrayJoin(mapKeys(attrs_string)) AS key
-                FROM spans
-                WHERE project_id = %(project_id)s
-            )
-            GROUP BY key
-
-            UNION ALL
-
-            SELECT key, 'number' AS type, count() AS cnt
-            FROM (
-                SELECT arrayJoin(mapKeys(attrs_number)) AS key
-                FROM spans
-                WHERE project_id = %(project_id)s
-            )
-            GROUP BY key
-
-            UNION ALL
-
-            SELECT key, 'boolean' AS type, count() AS cnt
-            FROM (
-                SELECT arrayJoin(mapKeys(attrs_bool)) AS key
-                FROM spans
-                WHERE project_id = %(project_id)s
-            )
-            GROUP BY key
-
-            ORDER BY cnt DESC
-        """
-        params = {"project_id": project_id}
-
         try:
-            client = ClickHouseClient()
-            rows, column_types, query_time_ms = client.execute_read(query, params)
-
-            result = [{"key": row[0], "type": row[1], "count": row[2]} for row in rows]
-
-            logger.info(
-                "span_attribute_keys_fetched",
-                project_id=project_id,
-                key_count=len(result),
-                query_time_ms=query_time_ms,
+            keys = list_attribute_keys_for_project(project_id)
+            return Response(
+                {"result": [asdict(k) for k in keys]}, status=200
             )
-
-            return Response({"result": result}, status=200)
-
         except Exception as e:
             logger.error(
                 "span_attribute_keys_failed",

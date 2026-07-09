@@ -102,7 +102,7 @@ const VersionHistoryChild = ({ onClose }) => {
         <Typography
           typography="s1"
           fontWeight={"fontWeightRegular"}
-          color="text.disabled"
+          color="text.secondary"
         >
           Access the history of prompts along with variables, tags, and model
           versions.

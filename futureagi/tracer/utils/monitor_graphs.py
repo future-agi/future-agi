@@ -33,8 +33,8 @@ from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.services.clickhouse.query_builders.monitor_metrics import (
     MonitorMetricsQueryBuilder,
 )
-from tracer.services.clickhouse.query_service import AnalyticsQueryService
-from tracer.utils.eval_tasks import parsing_evaltask_filters
+from tracer.services.clickhouse.query_service import AnalyticsQueryService, QueryType
+from tracer.utils.eval_tasks import parsing_monitor_filters
 
 
 def _build_monitor_graph_ch_builder(monitor):
@@ -54,6 +54,7 @@ def _build_monitor_graph_ch_builder(monitor):
 
     # v1↔v2 dispatch — flips with CH25_QUERY_TYPES_V2_PRIMARY=MONITOR_METRICS
     from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
+
     BuilderCls = get_query_builder_class("MONITOR_METRICS")
     return BuilderCls(
         project_id=str(monitor.project_id),
@@ -201,7 +202,7 @@ def get_static_metric_graph_data(monitor, time_window_start=None, time_window_en
                 monitor, time_window_start, time_window_end, frequency_seconds
             )
 
-        filters = parsing_evaltask_filters(monitor.filters)
+        filters = parsing_monitor_filters(monitor.filters)
 
         base_queryset = ObservationSpan.objects.filter(project=monitor.project)
 
@@ -301,7 +302,7 @@ def _get_eval_metric_graph_data(
         )
         return []
 
-    filters = parsing_evaltask_filters(monitor.filters)
+    filters = parsing_monitor_filters(monitor.filters)
 
     # CH25-TODO(PG-fallback / Django-subquery-shape): this is the PG
     # fallback for evaluation-metric monitor graphs. The CH primary path
@@ -385,7 +386,7 @@ def _get_group_error_free_rate_data(
     stays as ORM until the CH primary path covers all branches.
     """
     metric_type = monitor.metric_type
-    filters = parsing_evaltask_filters(monitor.filters)
+    filters = parsing_monitor_filters(monitor.filters)
 
     # Build the base queryset with optional time filtering
     base_queryset = ObservationSpan.objects.filter(project=monitor.project)
@@ -818,7 +819,7 @@ def get_percentage_change_metric_graph_data(
         auto_threshold_time_window = timedelta(
             minutes=monitor.auto_threshold_time_window
         )
-        filters = parsing_evaltask_filters(monitor.filters)
+        filters = parsing_monitor_filters(monitor.filters)
 
         # Extend time window backwards for historical data
         extended_start = None

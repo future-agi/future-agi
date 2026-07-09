@@ -204,3 +204,26 @@ export const OptimizerConfigurationMapping = {
     maxMetricCalls: 40,
   },
 };
+
+export const ConfigurationSnakeToCamel = {
+  num_variations: "numVariations",
+  min_examples: "minExamples",
+  max_examples: "maxExamples",
+  n_trials: "nTrials",
+  num_gradients: "numGradients",
+  errors_per_gradient: "errorsPerGradient",
+  prompts_per_gradient: "promptsPerGradient",
+  task_description: "taskDescription",
+  mutate_rounds: "mutateRounds",
+  refine_iterations: "refineIterations",
+  beam_size: "beamSize",
+  num_rounds: "numRounds",
+  max_metric_calls: "maxMetricCalls",
+};
+
+export const mapConfigurationToForm = (configuration = {}) =>
+  Object.entries(configuration || {}).reduce((acc, [key, value]) => {
+    const camelKey = ConfigurationSnakeToCamel[key] ?? key;
+    acc[camelKey] = value;
+    return acc;
+  }, {});

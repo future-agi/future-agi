@@ -5,15 +5,13 @@ import {
   CircularProgress,
   IconButton,
   InputAdornment,
-  MenuItem,
-  Select,
   Skeleton,
   TextField,
   Tooltip,
   Typography,
   useTheme,
 } from "@mui/material";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import PropTypes from "prop-types";
 import React, {
   useCallback,
@@ -27,6 +25,7 @@ import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "src/components/snackbar";
 import axios, { endpoints } from "src/utils/axios";
 import { useSimulationDetailContext } from "./context/SimulationDetailContext";
+import VersionSelect from "./VersionSelect";
 import SimulationEvaluationDrawer from "./SimulationEvaluationDrawer";
 import SimulationExecutionsSelection from "./SimulationExecutionsSelection";
 import {
@@ -107,21 +106,6 @@ const SimulationDetailHeader = ({ onBack }) => {
     setSelectAll(false);
   }, [getGridApi, setToggledNodes, setSelectAll]);
 
-  // Fetch prompt versions filtered by current template
-  const { data: versionsData, isLoading: isLoadingVersions } = useQuery({
-    queryKey: ["prompt-versions-for-simulation-detail", promptTemplateId],
-    queryFn: async () => {
-      const res = await axios.get(
-        endpoints.develop.runPrompt.getPromptVersions(),
-        { params: { template_id: promptTemplateId } },
-      );
-      return res.data;
-    },
-    enabled: !!promptTemplateId,
-  });
-
-  const versions = versionsData?.results || [];
-
   const isInitializedRef = useRef(false);
   const isSyncingRef = useRef(false);
   const prevScenariosRef = useRef(null);
@@ -131,7 +115,7 @@ const SimulationDetailHeader = ({ onBack }) => {
   if (simulation && !isInitializedRef.current) {
     skipNextSyncRef.current = true;
     setSelectedVersion(
-      simulation.promptVersion || simulation.promptVersionDetail?.id || "",
+      simulation.prompt_version || simulation.prompt_version_detail?.id || "",
     );
     setSelectedScenarios(simulation.scenarios || []);
     prevScenariosRef.current = simulation.scenarios || [];
@@ -198,8 +182,7 @@ const SimulationDetailHeader = ({ onBack }) => {
     }
   }, [simulation, selectedScenarios, updateSimulation]);
 
-  const handleVersionChange = (event) => {
-    const newVersion = event.target.value;
+  const handleVersionChange = (newVersion) => {
     if (newVersion === "create-new") {
       window.open(
         `/dashboard/workbench/create/${promptTemplateId}?tab=Playground`,
@@ -230,13 +213,6 @@ const SimulationDetailHeader = ({ onBack }) => {
       );
     },
   });
-
-  const getVersionLabel = (version) => {
-    const v = String(version.template_version).startsWith("v")
-      ? version.template_version
-      : `v${version.template_version}`;
-    return v;
-  };
 
   if (isLoading) {
     return (
@@ -329,59 +305,13 @@ const SimulationDetailHeader = ({ onBack }) => {
                 >
                   Version:
                 </Typography>
-                <Select
+                <VersionSelect
+                  promptTemplateId={promptTemplateId}
                   value={selectedVersion}
                   onChange={handleVersionChange}
-                  disabled={isLoadingVersions || isUpdating}
-                  size="small"
-                  displayEmpty
-                  renderValue={(value) => {
-                    if (!value) return "Select";
-                    const version = versions.find((v) => v.id === value);
-                    return version ? getVersionLabel(version) : "Select";
-                  }}
-                  sx={{
-                    minWidth: 80,
-                    "& .MuiSelect-select": { py: 0.5, fontSize: "0.8rem" },
-                    "& .MuiOutlinedInput-notchedOutline": {
-                      borderColor: theme.palette.divider,
-                    },
-                  }}
-                >
-                  {versions.map((version) => (
-                    <MenuItem key={version.id} value={version.id}>
-                      <Box display="flex" alignItems="center" gap={0.5}>
-                        <span>{getVersionLabel(version)}</span>
-                        {version.is_default && (
-                          <Chip
-                            label="Default"
-                            size="small"
-                            sx={{ height: 16, fontSize: "0.55rem" }}
-                            color="primary"
-                          />
-                        )}
-                      </Box>
-                    </MenuItem>
-                  ))}
-                  <MenuItem
-                    value="create-new"
-                    sx={{
-                      borderTop: `1px solid ${theme.palette.divider}`,
-                      mt: 0.5,
-                    }}
-                  >
-                    <Box display="flex" alignItems="center" gap={0.5}>
-                      <Iconify
-                        icon="mdi:plus"
-                        width={16}
-                        sx={{ color: theme.palette.primary.main }}
-                      />
-                      <Typography variant="caption" color="primary">
-                        New Version
-                      </Typography>
-                    </Box>
-                  </MenuItem>
-                </Select>
+                  versionDetail={simulation?.prompt_version_detail}
+                  disabled={isUpdating}
+                />
               </Box>
 
               {/* Scenarios Button */}

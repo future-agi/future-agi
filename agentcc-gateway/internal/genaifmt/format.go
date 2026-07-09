@@ -93,18 +93,23 @@ func ExtractTextFromResponse(respBody []byte) string {
 }
 
 // ExtractUsageMetadata extracts token counts from a Google GenAI response.
-func ExtractUsageMetadata(respBody []byte) (promptTokens int, candidateTokens int, totalTokens int) {
+// completionTokens folds in thinking tokens (reported separately as
+// thoughtsTokenCount but billed as output), so thinking-on runs aren't
+// under-billed.
+func ExtractUsageMetadata(respBody []byte) (promptTokens int, completionTokens int, totalTokens int) {
 	var m struct {
 		UsageMetadata struct {
 			PromptTokenCount     int `json:"promptTokenCount"`
 			CandidatesTokenCount int `json:"candidatesTokenCount"`
+			ThoughtsTokenCount   int `json:"thoughtsTokenCount"`
 			TotalTokenCount      int `json:"totalTokenCount"`
 		} `json:"usageMetadata"`
 	}
 	if err := json.Unmarshal(respBody, &m); err != nil {
 		return 0, 0, 0
 	}
-	return m.UsageMetadata.PromptTokenCount, m.UsageMetadata.CandidatesTokenCount, m.UsageMetadata.TotalTokenCount
+	completion := m.UsageMetadata.CandidatesTokenCount + m.UsageMetadata.ThoughtsTokenCount
+	return m.UsageMetadata.PromptTokenCount, completion, m.UsageMetadata.TotalTokenCount
 }
 
 func extractTextFromPart(raw json.RawMessage) string {

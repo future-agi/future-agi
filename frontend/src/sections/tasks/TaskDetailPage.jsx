@@ -19,6 +19,8 @@ import Iconify from "src/components/iconify";
 import ResizablePanels from "src/components/resizablePanels/ResizablePanels";
 import TaskLogsView from "src/sections/common/EvalsTasks/TaskLogsView";
 import { useGetTaskData } from "src/sections/common/EvalsTasks/common";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import TaskHeader from "./components/TaskHeader";
 import TaskConfigPanel from "./components/TaskConfigPanel";
 import TaskLivePreview from "./components/TaskLivePreview";
@@ -66,6 +68,9 @@ const getLinkedTraceSource = (taskDetails) => {
 const TaskDetailPage = () => {
   const { taskId } = useParams();
   const navigate = useNavigate();
+  const { role } = useAuthContext();
+  const canEditTask =
+    RolePermission.OBSERVABILITY[PERMISSIONS.ADD_TASKS_ALERTS][role];
   const queryClient = useQueryClient();
   const [tab, setTab] = useState("details");
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -87,6 +92,12 @@ const TaskDetailPage = () => {
     error,
   } = useGetTaskData(taskId, {
     enabled: !!taskId,
+    // Poll while non-terminal so the header/badge advance without a refresh.
+    // queryFn returns the raw axios response, so status is pre-`select`.
+    refetchInterval: (query) => {
+      const s = query?.state?.data?.data?.result?.status?.toLowerCase?.();
+      return s === "pending" || s === "running" ? 4000 : false;
+    },
   });
 
   const { control, handleSubmit, getValues, setValue, reset } = useForm({
@@ -123,30 +134,59 @@ const TaskDetailPage = () => {
     },
   });
 
+  // Optimistically flip the header badge on click. The cache holds the raw
+  // axios response, so status lives at data.data.result.
+  const setCachedTaskStatus = (status) =>
+    queryClient.setQueryData(["taskDetails", taskId], (old) =>
+      old?.data?.result
+        ? {
+            ...old,
+            data: { ...old.data, result: { ...old.data.result, status } },
+          }
+        : old,
+    );
+
+  const optimisticStatus = async (status) => {
+    await queryClient.cancelQueries({ queryKey: ["taskDetails", taskId] });
+    const prev = queryClient.getQueryData(["taskDetails", taskId]);
+    setCachedTaskStatus(status);
+    return { prev };
+  };
+  const rollbackStatus = (ctx) => {
+    if (ctx?.prev !== undefined)
+      queryClient.setQueryData(["taskDetails", taskId], ctx.prev);
+  };
+  const reconcileStatus = () => {
+    queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
+    queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
+  };
+
   const { mutate: pauseTask } = useMutation({
-    mutationFn: () => axios.post(endpoints.project.pauseEvalTask(taskId)),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
-      queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
-      enqueueSnackbar("Task paused", { variant: "success" });
+    // {} body required — the request-contract interceptor drops a bodyless POST.
+    mutationFn: () => axios.post(endpoints.project.pauseEvalTask(taskId), {}),
+    meta: { errorHandled: true },
+    onMutate: () => optimisticStatus("paused"),
+    onError: (_e, _v, ctx) => {
+      rollbackStatus(ctx);
+      enqueueSnackbar("Failed to pause task", { variant: "error" });
     },
+    onSuccess: () => enqueueSnackbar("Task paused", { variant: "success" }),
+    onSettled: reconcileStatus,
   });
 
   const { mutate: resumeTask } = useMutation({
-    mutationFn: () => axios.post(endpoints.project.resumeEvalTask(taskId)),
+    mutationFn: () => axios.post(endpoints.project.resumeEvalTask(taskId), {}),
     meta: { errorHandled: true },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
-      queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
-      enqueueSnackbar("Task resumed", { variant: "success" });
-    },
-    onError: () => {
-      queryClient.invalidateQueries({ queryKey: ["taskDetails", taskId] });
-      queryClient.invalidateQueries({ queryKey: ["eval-tasks"] });
+    // pending (not running): resume re-queues, so the badge moves forward only.
+    onMutate: () => optimisticStatus("pending"),
+    onError: (_e, _v, ctx) => {
+      rollbackStatus(ctx);
       enqueueSnackbar("Failed to resume task. It may have already finished.", {
         variant: "error",
       });
     },
+    onSuccess: () => enqueueSnackbar("Task resumed", { variant: "success" }),
+    onSettled: reconcileStatus,
   });
 
   const { mutate: renameTask } = useMutation({
@@ -181,7 +221,7 @@ const TaskDetailPage = () => {
         filters: {
           ...filters,
           ...(attributeFilters?.length > 0
-            ? { span_attributes_filters: attributeFilters }
+            ? { filters: attributeFilters }
             : {}),
         },
         project_id: data.project,
@@ -189,7 +229,7 @@ const TaskDetailPage = () => {
         project: data.project,
         run_type: data.runType,
         sampling_rate: data.samplingRate,
-        spans_limit: data.spansLimit ? String(data.spansLimit) : undefined,
+        spans_limit: data.spansLimit ? Number(data.spansLimit) : undefined,
         edit_type: editType,
       };
       updateTask(transformedData);
@@ -431,7 +471,10 @@ const TaskDetailPage = () => {
 
         {tab === "logs" && (
           <Box sx={{ height: "100%", overflow: "auto", p: 2 }}>
-            <TaskLogsView evalTaskId={taskId} />
+            <TaskLogsView
+              evalTaskId={taskId}
+              taskStatus={taskDetails?.status}
+            />
           </Box>
         )}
 
@@ -462,7 +505,7 @@ const TaskDetailPage = () => {
             variant="outlined"
             size="small"
             loading={testState.isTesting}
-            disabled={!testState.canTest}
+            disabled={!testState.canTest || !canEditTask}
             onClick={() => previewRef.current?.runTest()}
             startIcon={<Iconify icon="solar:play-circle-linear" width={14} />}
             sx={{ textTransform: "none", fontWeight: 500, minWidth: 120 }}
@@ -474,6 +517,7 @@ const TaskDetailPage = () => {
             size="small"
             onClick={handleSave}
             loading={isUpdating}
+            disabled={!canEditTask}
             sx={{ textTransform: "none", fontWeight: 500, minWidth: 140 }}
           >
             Save

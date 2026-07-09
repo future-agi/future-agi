@@ -37,7 +37,7 @@ const MetricsContent = () => {
   const { id } = useParams();
 
   const hasActiveFiltersOrSearch = useMemo(() => {
-    const hasFilters = filters?.some((f) => f.columnId !== "");
+    const hasFilters = filters?.some((f) => f.column_id);
     return hasFilters;
   }, [filters]);
 
@@ -104,11 +104,11 @@ const MetricsContent = () => {
     const bottomRowObj = {};
 
     for (const eachCol of columns) {
-      if (eachCol?.groupBy) {
-        if (!grouping[eachCol?.groupBy]) {
-          grouping[eachCol?.groupBy] = [eachCol];
+      if (eachCol?.group_by) {
+        if (!grouping[eachCol?.group_by]) {
+          grouping[eachCol?.group_by] = [eachCol];
         } else {
-          grouping[eachCol?.groupBy].push(eachCol);
+          grouping[eachCol?.group_by].push(eachCol);
         }
       } else {
         grouping[getRandomId()] = [eachCol];
@@ -161,7 +161,7 @@ const MetricsContent = () => {
       getRows: async (params) => {
         try {
           setIsLoading(true);
-          const validFilters = filters?.filter((f) => f.columnId !== "");
+          const validFilters = filters?.filter((f) => f.column_id);
           // --- API Request ---
           const response = await axios.get(
             endpoints.develop.runPrompt.getPromptMetrics(),
@@ -203,7 +203,7 @@ const MetricsContent = () => {
         }
       },
 
-      getRowId: ({ data }) => data.promptVersionId,
+      getRowId: ({ data }) => data.prompt_version_id,
     }),
     [id, filters, setColumns],
   );

@@ -148,7 +148,7 @@ export default function ConfirmDelete({
             </Typography>
             <Typography
               variant="s1"
-              color={"text.disabled"}
+              color={"text.secondary"}
               fontWeight={"fontWeightRegular"}
             >
               {confirmationMessage}

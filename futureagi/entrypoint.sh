@@ -315,7 +315,8 @@ case "$SERVICE_TYPE" in
                     --reload-ignore-dirs "minio_data" \
                     --reload-ignore-patterns '^\..*' \
                     --reload-ignore-patterns '.*\.log$' \
-                    --reload-ignore-patterns '.*\.pyc$'
+                    --reload-ignore-patterns '.*\.pyc$' \
+                    --reload-ignore-patterns '.*\.core$'
             fi
         else
             echo "HTTP server disabled (ENABLE_HTTP=false)"

@@ -58,6 +58,7 @@ from ai_tools.tools.datasets import (
     add_columns,  # noqa: F401
     add_dataset_rows,  # noqa: F401
     add_rows_from_existing,  # noqa: F401
+    add_run_prompt_column,  # noqa: F401
     clone_dataset,  # noqa: F401
     delete_column,  # noqa: F401
     delete_rows,  # noqa: F401

@@ -54,7 +54,7 @@ const UnsupportedFileDialog = ({ open, onClose, onUpload }) => {
       >
         <Typography
           fontSize="14px"
-          color="text.disabled"
+          color="text.secondary"
           sx={{
             pr: 4,
             pl: 2,

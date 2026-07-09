@@ -1,15 +1,243 @@
-import { describe, it, expect } from "vitest";
-import {
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { fireEvent, render, screen, waitFor } from "src/utils/test-utils";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import TraceFilterPanel, {
   buildTraceFilterProperties,
   filterPropertiesForPicker,
   getTraceFilterFields,
   normalizeFilterRowOperator,
-  shouldUseSingleSelectValuePicker,
+  toStaticFilterProperty,
 } from "../TraceFilterPanel";
 import {
   getPickerOptionSearchText,
   getPickerOptionSecondaryLabel,
 } from "../filterValuePickerUtils";
+
+const parseQueryMock = vi.fn();
+
+vi.mock("src/hooks/use-ai-filter", () => ({
+  useAIFilter: () => ({
+    parseQuery: parseQueryMock,
+    loading: false,
+    error: null,
+  }),
+}));
+
+vi.mock("src/hooks/useDashboards", () => ({
+  useDashboardFilterValues: () => ({
+    data: [],
+    isLoading: false,
+    isError: false,
+  }),
+}));
+
+function renderPanel({
+  currentFilters = [],
+  properties,
+  onApply = vi.fn(),
+  onClose = vi.fn(),
+  open = true,
+}) {
+  const anchorEl = document.createElement("button");
+  document.body.appendChild(anchorEl);
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const utils = render(
+    <QueryClientProvider client={queryClient}>
+      <TraceFilterPanel
+        anchorEl={anchorEl}
+        open={open}
+        onClose={onClose}
+        onApply={onApply}
+        currentFilters={currentFilters}
+        properties={properties}
+        showQueryTab={false}
+      />
+    </QueryClientProvider>,
+  );
+  return { anchorEl, onApply, onClose, ...utils };
+}
+
+describe("TraceFilterPanel AI apply (#577)", () => {
+  beforeEach(() => {
+    parseQueryMock.mockReset();
+  });
+
+  it("runs the AI filter when the AI query is submitted (Enter)", async () => {
+    parseQueryMock.mockResolvedValue([
+      { field: "status", operator: "equals", value: "ERROR" },
+    ]);
+    const onApply = vi.fn();
+    const onClose = vi.fn();
+    const anchorEl = document.createElement("button");
+    document.body.appendChild(anchorEl);
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <TraceFilterPanel
+          anchorEl={anchorEl}
+          open
+          onClose={onClose}
+          onApply={onApply}
+          currentFilters={[]}
+          properties={[
+            {
+              id: "status",
+              name: "Status",
+              category: "system",
+              type: "string",
+            },
+          ]}
+          showQueryTab={false}
+        />
+      </QueryClientProvider>,
+    );
+
+    const aiInput = screen.getByPlaceholderText(/Ask AI/i);
+    fireEvent.change(aiInput, { target: { value: "show errors" } });
+    // Auto-apply removed the footer "Apply" button; the AI query is now
+    // submitted via Enter (or the inline send button in the input).
+    fireEvent.keyDown(aiInput, { key: "Enter" });
+
+    await waitFor(() => {
+      expect(parseQueryMock).toHaveBeenCalledWith("show errors", {
+        smart: true,
+        projectId: undefined,
+        source: "traces",
+      });
+    });
+    // The AI path now applies computeValidFilters(converted) like every other
+    // path, so the operator is normalized to the canonical string op ("in").
+    expect(onApply).toHaveBeenCalledWith([
+      {
+        field: "status",
+        fieldCategory: "system",
+        fieldType: "string",
+        apiColType: undefined,
+        operator: "in",
+        value: ["ERROR"],
+      },
+    ]);
+    expect(onClose).toHaveBeenCalled();
+
+    document.body.removeChild(anchorEl);
+  });
+});
+
+describe("TraceFilterPanel AI apply: additive, empty, single-call", () => {
+  const properties = [
+    { id: "status", name: "Status", category: "system", type: "string" },
+    { id: "language", name: "Language", category: "system", type: "string" },
+  ];
+
+  beforeEach(() => {
+    parseQueryMock.mockReset();
+  });
+
+  it("merges the AI-returned filter with the already-applied filter set", async () => {
+    parseQueryMock.mockResolvedValue([
+      { field: "language", operator: "equals", value: "english" },
+    ]);
+    const { anchorEl, onApply } = renderPanel({
+      currentFilters: [
+        {
+          field: "status",
+          fieldCategory: "system",
+          fieldType: "string",
+          operator: "in",
+          value: ["ERROR"],
+        },
+      ],
+      properties,
+    });
+
+    const aiInput = screen.getByPlaceholderText(/Ask AI/i);
+    fireEvent.change(aiInput, { target: { value: "language is english" } });
+    fireEvent.keyDown(aiInput, { key: "Enter" });
+
+    await waitFor(() => expect(parseQueryMock).toHaveBeenCalled());
+    await waitFor(() => expect(onApply).toHaveBeenCalled());
+
+    const lastCall = onApply.mock.calls[onApply.mock.calls.length - 1][0];
+    expect(lastCall).toHaveLength(2);
+    expect(lastCall[0]).toMatchObject({ field: "status", value: ["ERROR"] });
+    expect(lastCall[1]).toMatchObject({
+      field: "language",
+      value: ["english"],
+    });
+
+    document.body.removeChild(anchorEl);
+  });
+
+  it("shows an inline caption when the AI returns an empty filter list", async () => {
+    parseQueryMock.mockResolvedValue([]);
+    const { anchorEl, onApply, onClose } = renderPanel({
+      properties,
+    });
+
+    const aiInput = screen.getByPlaceholderText(/Ask AI/i);
+    fireEvent.change(aiInput, { target: { value: "gibberish" } });
+    fireEvent.keyDown(aiInput, { key: "Enter" });
+
+    await waitFor(() => expect(parseQueryMock).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Could not derive filters from that query/i),
+      ).toBeInTheDocument(),
+    );
+
+    expect(onApply).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(aiInput.value).toBe("gibberish");
+
+    document.body.removeChild(anchorEl);
+  });
+
+  it("clears the empty-result caption when the user edits the query", async () => {
+    parseQueryMock.mockResolvedValue([]);
+    const { anchorEl } = renderPanel({ properties });
+
+    const aiInput = screen.getByPlaceholderText(/Ask AI/i);
+    fireEvent.change(aiInput, { target: { value: "gibberish" } });
+    fireEvent.keyDown(aiInput, { key: "Enter" });
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Could not derive filters from that query/i),
+      ).toBeInTheDocument(),
+    );
+
+    fireEvent.change(aiInput, { target: { value: "gibberish typing more" } });
+
+    expect(
+      screen.queryByText(/Could not derive filters from that query/i),
+    ).not.toBeInTheDocument();
+
+    document.body.removeChild(anchorEl);
+  });
+
+  it("only calls onApply once with the AI filter set on a successful apply", async () => {
+    parseQueryMock.mockResolvedValue([
+      { field: "status", operator: "equals", value: "ERROR" },
+    ]);
+    const { anchorEl, onApply } = renderPanel({ properties });
+
+    const aiInput = screen.getByPlaceholderText(/Ask AI/i);
+    fireEvent.change(aiInput, { target: { value: "show errors" } });
+    fireEvent.keyDown(aiInput, { key: "Enter" });
+
+    await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
+    const [applied] = onApply.mock.calls[0];
+    expect(applied).not.toBeNull();
+    expect(applied[0]).toMatchObject({ field: "status" });
+
+    document.body.removeChild(anchorEl);
+  });
+});
 
 describe("getTraceFilterFields (TH-4571)", () => {
   it("prepends Trace ID when tab is 'trace'", () => {
@@ -43,6 +271,30 @@ describe("getTraceFilterFields (TH-4571)", () => {
     // are not required; structural equality is what consumers rely on).
     expect(fromNull).toEqual(fromUndefined);
     expect(fromNull).toEqual(fromUnknown);
+  });
+});
+
+describe("toStaticFilterProperty (spans Span Name)", () => {
+  const nameField = { value: "name", label: "Trace Name", type: "string" };
+
+  it("remaps the name field to span_name in spans view", () => {
+    expect(toStaticFilterProperty(nameField, true)).toMatchObject({
+      id: "span_name",
+      name: "Span Name",
+      type: "string",
+    });
+  });
+
+  it("keeps the name field as name outside spans view", () => {
+    expect(toStaticFilterProperty(nameField, false)).toMatchObject({
+      id: "name",
+      name: "Trace Name",
+    });
+  });
+
+  it("does not remap non-name fields in spans view", () => {
+    const field = { value: "status", label: "Status", type: "string" };
+    expect(toStaticFilterProperty(field, true).id).toBe("status");
   });
 });
 
@@ -129,39 +381,6 @@ describe("normalizeFilterRowOperator", () => {
         }).operator,
       ).toBe("is_null");
     }
-  });
-
-  it("keeps annotator, categorical, and direct ID filters multi-selectable", () => {
-    expect(
-      shouldUseSingleSelectValuePicker(
-        { field: "annotator", fieldType: "annotator" },
-        "equals",
-      ),
-    ).toBe(false);
-    expect(
-      shouldUseSingleSelectValuePicker(
-        { field: "quality", fieldType: "categorical" },
-        "equals",
-      ),
-    ).toBe(false);
-    expect(
-      shouldUseSingleSelectValuePicker(
-        { field: "trace_id", fieldType: "string" },
-        "in",
-      ),
-    ).toBe(false);
-    expect(
-      shouldUseSingleSelectValuePicker(
-        { field: "span_id", fieldType: "string" },
-        "not_in",
-      ),
-    ).toBe(false);
-    expect(
-      shouldUseSingleSelectValuePicker(
-        { field: "trace_name", fieldType: "string" },
-        "contains",
-      ),
-    ).toBe(true);
   });
 });
 

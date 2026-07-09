@@ -428,7 +428,7 @@ export default function NodeOutputDetail({ executionId, nodeExecutionId }) {
           bgcolor: "background.paper",
         }}
       >
-        <Typography typography="s2" color="text.disabled">
+        <Typography typography="s2" color="text.secondary">
           Select a node to view details
         </Typography>
       </Box>

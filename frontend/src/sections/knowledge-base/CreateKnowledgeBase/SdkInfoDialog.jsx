@@ -62,7 +62,7 @@ export default function SdkInfoDialog({ open, onClose, onSubmit }) {
           </Stack>
           <Typography
             variant="s1"
-            color={"text.disabled"}
+            color={"text.secondary"}
             fontWeight={"fontWeightRegular"}
           >
             Attachments larger than 5 MB should be used using SDK. For this use

@@ -56,7 +56,6 @@ from model_hub.models.choices import (
 )
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from simulate.models import Scenarios
-from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal.simulate.types import (  # Scenario Generation; Scenario Creation; Graph Scenario Sub-Activity Types (v2+v3)
     AddScenarioColumnsInput,
     CategorizeAndValidateInput,
@@ -1165,6 +1164,62 @@ def _build_sda_payload(
     }
 
 
+def _resolve_scenario_agent(scenario, source_type):
+    """Return the agent_definition (real or prompt-source adapter) for a
+    scenario. Mirrors the adapter pattern in `_create_graph_scenario_sync`
+    and `_create_script_scenario_sync` so the dataset path can accept
+    prompt sources too (TH-4891)."""
+    if source_type == "prompt" and scenario.prompt_template:
+        prompt_content = ""
+        prompt_version = scenario.prompt_version
+        if not prompt_version:
+            prompt_version = scenario.prompt_template.all_executions.filter(
+                is_default=True, deleted=False
+            ).first()
+
+        if prompt_version and prompt_version.prompt_config_snapshot:
+            config_snapshot = prompt_version.prompt_config_snapshot
+            config = (
+                config_snapshot[0]
+                if isinstance(config_snapshot, list)
+                else config_snapshot
+            )
+            if isinstance(config, dict):
+                messages = config.get("messages", [])
+                formatted_messages = []
+                for msg in messages:
+                    role = msg.get("role", "unknown")
+                    content = msg.get("content", "")
+                    if isinstance(content, list):
+                        text_parts = [
+                            p.get("text", "")
+                            for p in content
+                            if isinstance(p, dict) and p.get("type") == "text"
+                        ]
+                        content = "\n".join(text_parts)
+                    if content:
+                        formatted_messages.append(f"[{role}]: {content}")
+                prompt_content = "\n\n".join(formatted_messages)
+
+        agent_description = (
+            prompt_content or scenario.prompt_template.description or ""
+        )
+        return types.SimpleNamespace(
+            id=scenario.prompt_template.id,
+            agent_name=scenario.prompt_template.name,
+            description=agent_description,
+            agent_type="text",
+            languages=["en"],
+            language="en",
+            inbound=True,
+            contact_number=None,
+            organization=scenario.organization,
+            workspace=scenario.workspace,
+        )
+
+    return scenario.agent_definition
+
+
 def _create_dataset_scenario_sync(
     user_id: str,
     scenario_id: str,
@@ -1203,11 +1258,13 @@ def _create_dataset_scenario_sync(
 
         user = User.objects.get(id=user_id)
         scenario = Scenarios.objects.get(id=scenario_id)
-        agent_definition = scenario.agent_definition
+        source_type = validated_data.get("source_type", "agent_definition")
+        agent_definition = _resolve_scenario_agent(scenario, source_type)
 
         if not agent_definition:
             raise ValueError(
-                "agent_definition is required on the scenario for dataset scenario creation"
+                "Either agent_definition or prompt_template is required on "
+                "the scenario for dataset scenario creation"
             )
 
         # Usage pre-check
@@ -1236,12 +1293,13 @@ def _create_dataset_scenario_sync(
         except Exception:
             logger.warning("usage_precheck_failed", exc_info=True)
 
-        # Get the source dataset
+        # Scope by scenario.organization: the workspace-context thread-local is
+        # unset inside Temporal workers, and user.organization can differ from it.
         source_dataset = get_object_or_404(
             Dataset,
             id=validated_data["dataset_id"],
             deleted=False,
-            organization=get_current_organization() or user.organization,
+            organization=scenario.organization,
         )
 
         # Determine simulation mode
@@ -2464,7 +2522,6 @@ def _create_graph_scenario_sync(
                     name=f"{scenario.name} - Graph",
                     description=f"Graph for {scenario.name}",
                     organization=scenario.organization,
-                    workspace=scenario.workspace,
                     graph_config={"graph_data": graph_data, "source": "user_provided"},
                 )
 
@@ -2903,7 +2960,6 @@ def _setup_graph_scenario_sync(
                         name=f"{scenario.name} - Graph",
                         description=f"Graph for {scenario.name}",
                         organization=scenario.organization,
-                        workspace=scenario.workspace,
                         graph_config={
                             "graph_data": graph_data,
                             "source": "user_provided",

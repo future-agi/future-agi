@@ -21,9 +21,7 @@ class PaginationQuerySerializer(serializers.Serializer):
     """Shared query-params validator for eval-log endpoints."""
 
     page = serializers.IntegerField(required=False, default=0, min_value=0)
-    page_size = serializers.IntegerField(
-        required=False, default=25, min_value=1
-    )
+    page_size = serializers.IntegerField(required=False, default=25, min_value=1)
 
     def validate_page_size(self, value):
         return min(value, 100)
@@ -144,12 +142,10 @@ class EvalTaskSerializer(serializers.ModelSerializer):
         default=RowType.SPANS,
         help_text="Unit of evaluation: 'spans' (default), 'traces', or 'sessions'.",
     )
-    # Progress block so the UI can render an "X of Y complete" bar
-    # while a historical task is draining. Not persisted — computed
-    # on read from ``EvalTaskLogger.offset`` (dispatched) and the
-    # live ``EvalLogger`` row count (completed). ``None`` for
-    # continuous tasks, which run indefinitely and don't have a
-    # meaningful "expected" total.
+    # Progress block so the UI can render an "X of Y complete" bar while a
+    # historical task is draining. Not persisted — computed on read from the
+    # task's entry status counts. ``None`` for continuous tasks, which run
+    # indefinitely and don't have a meaningful "expected" total.
     progress = serializers.SerializerMethodField()
     filters = eval_task_filters_field(required=False, allow_null=True, default=dict)
 
@@ -179,20 +175,21 @@ class EvalTaskSerializer(serializers.ModelSerializer):
     def get_progress(self, obj):
         if obj.run_type != RunType.HISTORICAL:
             return None
-        # Import locally to avoid a circular dependency: ``eval_tasks``
-        # imports ``evaluate_observation_span_observe`` from
-        # ``tracer.utils.eval``, which in turn imports serializers
-        # transitively through the view layer.
-        from tracer.utils.eval_tasks import compute_drain_state
+        from tracer.selectors.eval_tasks.progress import count_by_status
 
-        state = compute_drain_state(obj)
-        dispatched = state["dispatched"]
-        completed = state["completed"]
-        percent = round(100.0 * completed / dispatched, 2) if dispatched else None
+        counts = count_by_status(obj)
+        done = (
+            counts.get("completed", 0)
+            + counts.get("errored", 0)
+            + counts.get("skipped", 0)
+        )
+        remaining = counts.get("pending", 0) + counts.get("running", 0)
+        total = done + remaining
+        percent = round(100.0 * done / total, 2) if total else None
         return {
-            "dispatched": dispatched,
-            "completed": completed,
-            "missing": state["missing"],
+            "dispatched": total,
+            "completed": done,
+            "missing": remaining,
             "percent": percent,
         }
 
@@ -220,7 +217,7 @@ class EvalTaskLoggerSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = EvalTaskLogger
-        fields = ["id", "eval_task", "offset", "status", "errors", "spanids_processed"]
+        fields = ["id", "eval_task", "status", "errors"]
 
 
 class EditEvalTaskSerializer(serializers.Serializer):

@@ -231,7 +231,7 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
                         fontSize={"12px"}
                         typography={"s2_1"}
                         fontWeight={"fontWeightRegular"}
-                        color={"text.disabled"}
+                        color={"text.secondary"}
                       >
                         Defines the percentage of data processed for agent
                         compass
@@ -353,12 +353,11 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
               aria-label="Cancel-configure-project"
               variant="outlined"
               color="inherit"
+              size="small"
               onClick={handleClose}
               sx={{
                 width: "90px",
-                height: "30px",
-                fontSize: "12px",
-                color: "text.disabled",
+                textTransform: "none",
               }}
             >
               Cancel
@@ -367,11 +366,11 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
               aria-label="delete-project"
               variant="outlined"
               color="inherit"
+              size="small"
               onClick={handleDeleteClick}
               sx={{
+                minWidth: "90px",
                 textTransform: "none",
-                fontSize: "14px",
-                color: "text.disabled",
               }}
             >
               Delete
@@ -379,12 +378,12 @@ const ConfigureProject = ({ open, onClose, id, refreshGrid, module }) => {
             <LoadingButton
               aria-label="update-project"
               type="submit"
+              size="small"
               loading={isUpdating}
               disabled={!isValid}
               sx={{
-                textTransform: "none",
-                fontSize: "14px",
                 minWidth: "90px",
+                textTransform: "none",
               }}
               variant="contained"
               color="primary"
@@ -417,8 +416,8 @@ ConfigureProject.propTypes = {
 };
 
 function getSamplingRatePercent(projectDetail, module) {
-  if (typeof projectDetail?.samplingRate === "number") {
-    return projectDetail.samplingRate * 100;
+  if (typeof projectDetail?.sampling_rate === "number") {
+    return projectDetail.sampling_rate * 100;
   }
-  return module === "observe" ? 100 : undefined;
+  return module === "observe" ? 0 : undefined;
 }

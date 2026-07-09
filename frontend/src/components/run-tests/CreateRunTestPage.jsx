@@ -333,14 +333,10 @@ const CreateRunTestPage = ({ open, onClose }) => {
       // Call-level runtime vocabulary — resolved server-side at eval run time
       "call.transcript",
       "call.agent_prompt",
-      "call.summary",
       "call.ended_reason",
       "call.duration_seconds",
       "call.status",
       "call.overall_score",
-      "call.phone_number",
-      "call.recording_url",
-      "call.stereo_recording_url",
       // Modality-specific runtime vocabulary
       ...(isText
         ? ["call.user_chat_transcript", "call.assistant_chat_transcript"]
@@ -349,6 +345,11 @@ const CreateRunTestPage = ({ open, onClose }) => {
             "call.stereo_recording",
             "call.assistant_recording",
             "call.customer_recording",
+            // Only the voice pipeline populates these; chat resolves them to "".
+            "call.summary",
+            "call.phone_number",
+            "call.recording_url",
+            "call.stereo_recording_url",
           ]),
     ];
     return keys.map((key) => ({
@@ -384,10 +385,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
   );
   const selectedAgentVersion = useMemo(() => {
     if (!selectedAgentDef) return null;
-    // Agent definition list response uses snake_case `agent_versions`
-    // / `versions`. camelCase aliases are dead post middleware removal.
-    const versions =
-      selectedAgentDef.versions ?? selectedAgentDef.agent_versions ?? [];
+    const versions = selectedAgentDef.versions ?? [];
     return (
       versions.find((v) => v.id === formData.agentDefinitionVersionId) || null
     );
@@ -404,8 +402,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
     // is an array of per-scenario entries; each has dataset_column_config.
     const scenarioColumns = {};
     (data?.data?.columnConfigs || []).forEach((detail) => {
-      const cfg =
-        detail?.dataset_column_config ?? detail?.datasetColumnConfig ?? {};
+      const cfg = detail?.dataset_column_config ?? {};
       Object.entries(cfg).forEach(([uuid, meta]) => {
         scenarioColumns[uuid] = meta;
       });
@@ -420,11 +417,10 @@ const CreateRunTestPage = ({ open, onClose }) => {
       id: s.id,
       name: s.name,
       description: s.description,
-      scenario_type: s.scenario_type ?? s.scenarioType,
+      scenario_type: s.scenario_type,
       source: s.source,
       persona: s.agent ?? null,
-      prompt_template:
-        s.prompt_template_detail ?? s.promptTemplateDetail ?? null,
+      prompt_template: s.prompt_template_detail ?? null,
     }));
 
     // First-scenario values power the flat vocabulary keys. The per-
@@ -503,6 +499,14 @@ const CreateRunTestPage = ({ open, onClose }) => {
   // on slow devices don't cause multiple api calls happening
   // on slower devices
   const isMutatingRef = useRef(false);
+  const executeTestMutation = useMutation({
+    mutationFn: (testId) =>
+      axios.post(endpoints.runTests.runTest(testId), {
+        select_all: false,
+        scenario_ids: formData?.selectedScenarios || [],
+      }),
+  });
+
   const createTestMutation = useMutation({
     /**
      *
@@ -518,11 +522,22 @@ const CreateRunTestPage = ({ open, onClose }) => {
     onSettled: () => {
       isMutatingRef.current = false;
     },
-    onSuccess: (data) => {
-      enqueueSnackbar("Test created successfully!", { variant: "success" });
+    onSuccess: async (data) => {
+      if (formData?.agentType === AGENT_TYPES.VOICE) {
+        try {
+          await executeTestMutation.mutateAsync(data.id);
+          enqueueSnackbar("Simulation run started", { variant: "success" });
+        } catch (error) {
+          enqueueSnackbar("Test created, but the run could not be started.", {
+            variant: "error",
+          });
+        }
+      } else {
+        enqueueSnackbar("Test created successfully!", { variant: "success" });
+      }
+
       onClose();
       navigate(`/dashboard/simulate/test/${data.id}/runs`);
-      // Navigate to run tests list page
     },
   });
   const handleSubmit = async () => {
@@ -704,7 +719,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
     return agentDefVersions?.pages?.reduce((acc, curr) => {
       const newOptions =
         curr.results?.map((result) => ({
-          label: result.versionNameDisplay,
+          label: result.version_name_display,
           value: result.id,
         })) ?? [];
       return [...acc, ...newOptions];
@@ -738,7 +753,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
   // Without this branch, LiveKit agents hit a false "missing credentials"
   // gate and can't enable tool-call eval at all. [TH-4130]
   /** @param {Record<string, any> | null | undefined} snapshot */
-  const hasToolCallCredentials = (snapshot) => {
+  const hasToolCallCredentials = (agentVersionDetails, snapshot) => {
     if (!snapshot) return false;
     if (isLiveKitProvider(snapshot.provider)) {
       return Boolean(
@@ -748,19 +763,19 @@ const CreateRunTestPage = ({ open, onClose }) => {
           snapshot.livekitAgentName,
       );
     }
-    return Boolean(snapshot.apiKey && snapshot.assistantId);
+    const apiKey = agentVersionDetails?.api_key;
+    const assistantId = snapshot.assistant_id;
+    return Boolean(apiKey && assistantId);
   };
 
   useEffect(() => {
     if (agentVersionDetails && formData?.enableToolEvaluation) {
-      const snapshot =
-        agentVersionDetails?.configuration_snapshot ??
-        agentVersionDetails?.configurationSnapshot;
-      const vapiApiKey = snapshot?.api_key ?? snapshot?.apiKey;
-      const vapiAssistantId = snapshot?.assistant_id ?? snapshot?.assistantId;
+      const snapshot = agentVersionDetails?.configuration_snapshot;
+      const apiKey = agentVersionDetails?.api_key;
+      const vapiAssistantId = snapshot?.assistant_id;
 
       if (
-        !hasToolCallCredentials(snapshot) &&
+        !hasToolCallCredentials(agentVersionDetails, snapshot) &&
         formData?.agentType !== AGENT_TYPES.CHAT
       ) {
         setFormData((prev) => ({
@@ -789,12 +804,10 @@ const CreateRunTestPage = ({ open, onClose }) => {
         });
         return;
       }
-      const snapshot =
-        agentVersionDetails?.configuration_snapshot ??
-        agentVersionDetails?.configurationSnapshot;
-      const vapiApiKey = snapshot?.api_key ?? snapshot?.apiKey;
-      const vapiAssistantId = snapshot?.assistant_id ?? snapshot?.assistantId;
-      if ((!vapiApiKey || !vapiAssistantId) && value) {
+      const snapshot = agentVersionDetails?.configuration_snapshot;
+      const apiKey = agentVersionDetails?.api_key;
+      const vapiAssistantId = snapshot?.assistant_id;
+      if ((!apiKey || !vapiAssistantId) && value) {
         setOpenUpdateKeysDialog(true);
         return;
       }
@@ -809,8 +822,8 @@ const CreateRunTestPage = ({ open, onClose }) => {
       });
       return;
     }
-    const snapshot = agentVersionDetails?.configurationSnapshot;
-    if (!hasToolCallCredentials(snapshot) && value) {
+    const snapshot = agentVersionDetails?.configuration_snapshot;
+    if (!hasToolCallCredentials(agentVersionDetails, snapshot) && value) {
       setOpenUpdateKeysDialog(true);
       return;
     }
@@ -904,9 +917,9 @@ const CreateRunTestPage = ({ open, onClose }) => {
                     agentDefinitionsLoading
                       ? []
                       : agentDefinitions?.map((agent) => ({
-                          label: agent?.agentName,
+                          label: agent?.agent_name,
                           value: agent?.id,
-                          type: agent?.agentType,
+                          type: agent?.agent_type,
                           component: (
                             <Box
                               sx={{
@@ -920,11 +933,11 @@ const CreateRunTestPage = ({ open, onClose }) => {
                               <SvgColor
                                 sx={{ width: 18 }}
                                 src={getIconForAgentDefinitions(
-                                  agent?.agentType,
+                                  agent?.agent_type,
                                 )}
                               />
-                              <Typography variant="s2_1">
-                                {agent?.agentName}
+                              <Typography typography="s2_1">
+                                {agent?.agent_name}
                               </Typography>
                             </Box>
                           ),
@@ -1196,7 +1209,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                               />
                             )}
                             <Typography variant="body2" fontWeight={600}>
-                              {scenario.datasetRows || 0}
+                              {scenario.dataset_rows || 0}
                             </Typography>
                           </Box>
                         </ListItem>
@@ -1492,14 +1505,14 @@ const CreateRunTestPage = ({ open, onClose }) => {
             >
               <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
                 <Typography
-                  variant="s1"
+                  typography="s1"
                   fontWeight={"fontWeightMedium"}
                   color={"text.primary"}
                 >
                   Enable tool call evaluation
                 </Typography>
                 <Typography
-                  variant="s2_1"
+                  typography="s2_1"
                   fontWeight={"fontWeightRegular"}
                   color={"text.primary"}
                 >
@@ -1631,9 +1644,9 @@ const CreateRunTestPage = ({ open, onClose }) => {
                                 flexWrap: "wrap",
                               }}
                             >
-                              <ShowComponent condition={!!evalItem?.groupName}>
+                              <ShowComponent condition={!!evalItem?.group_name}>
                                 <Chip
-                                  label={`Group name - ${evalItem?.groupName}.`}
+                                  label={`Group name - ${evalItem?.group_name}.`}
                                   size="small"
                                   sx={{
                                     height: "24px",
@@ -1765,7 +1778,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
               }}
               onClose={() => setOpenUpdateKeysDialog(false)}
               agentDetails={agentVersionDetails}
-              agentDefinitionId={agentVersionDetails?.agentDefinition}
+              agentDefinitionId={agentVersionDetails?.agent_definition}
             />
           </Box>
         );
@@ -1827,7 +1840,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                         agentDefinitions.filter(
                           (definition) =>
                             definition.id === formData.agentDefinitionId,
-                        )[0]?.agentName
+                        )[0]?.agent_name
                       }
                       &nbsp; (
                       {versionOptions.find(
@@ -1913,7 +1926,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                             </Typography>
                           </Box>
                           <Typography variant="body2" fontWeight={600}>
-                            {scenario.datasetRows || 0} rows
+                            {scenario.dataset_rows || 0} rows
                           </Typography>
                         </Box>
                       ) : null;
@@ -2229,7 +2242,7 @@ const CreateRunTestPage = ({ open, onClose }) => {
                             ? "text.primary"
                             : index <= activeStep
                               ? "primary.main"
-                              : "text.disabled"
+                              : "text.secondary"
                         }
                         sx={{
                           textAlign: "center",

@@ -400,7 +400,7 @@ const SamplingRateField = ({ control }) => {
 
       <Typography
         variant="caption"
-        color="text.disabled"
+        color="text.secondary"
         sx={{ fontSize: "11px", display: "block", mt: 0.25 }}
       >
         {samplingHelperText(numValue)}

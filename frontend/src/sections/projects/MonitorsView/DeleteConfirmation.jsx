@@ -74,7 +74,7 @@ const DeleteConfirmation = ({ open, onClose, onConfirm }) => {
         <Typography
           variant="s1"
           fontWeight={"fontWeightRegular"}
-          color="text.disabled"
+          color="text.secondary"
         >
           Are you sure you want to delete these Alerts?
         </Typography>

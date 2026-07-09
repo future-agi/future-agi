@@ -1,30 +1,56 @@
+import { GOOGLE_SITE_KEY } from "src/config-global";
+
 let recaptchaExecutor = null;
-let executorReadyPromise = null;
+// Callbacks waiting for the executor to become available.
+let waiters = [];
+
+
+export const RECAPTCHA_WAIT_MS = 8000;
+
+export class RecaptchaNotReadyError extends Error {
+  constructor() {
+    super("recaptcha-not-ready");
+    this.name = "RecaptchaNotReadyError";
+  }
+}
 
 export const setRecaptchaExecutor = (executorFn) => {
   recaptchaExecutor = executorFn;
-  // Resolve any pending waits
-  if (executorReadyPromise) {
-    executorReadyPromise.resolve();
-    executorReadyPromise = null;
-  }
+
+  const pending = waiters;
+  waiters = [];
+  pending.forEach((notify) => notify());
 };
 
-// Create a helper that waits for the executor
-const waitForExecutor = () => {
-  if (recaptchaExecutor) return Promise.resolve();
+// Resolves once the executor is available, or rejects after `timeoutMs`.
+const waitForExecutor = (timeoutMs) =>
+  new Promise((resolve, reject) => {
+    if (recaptchaExecutor) {
+      resolve();
+      return;
+    }
 
-  if (!executorReadyPromise) {
-    executorReadyPromise = {};
-    executorReadyPromise.promise = new Promise((resolve) => {
-      executorReadyPromise.resolve = resolve;
-    });
-  }
+    let settled = false;
 
-  return executorReadyPromise.promise;
-};
+    const onReady = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve();
+    };
 
-export const getRecaptchaToken = async (action) => {
-  await waitForExecutor();
-  return await recaptchaExecutor(action);
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      waiters = waiters.filter((w) => w !== onReady);
+      reject(new RecaptchaNotReadyError());
+    }, timeoutMs);
+
+    waiters.push(onReady);
+  });
+
+export const getRecaptchaToken = async (action, timeoutMs = RECAPTCHA_WAIT_MS) => {
+  if (!GOOGLE_SITE_KEY) return "";
+  await waitForExecutor(timeoutMs);
+  return recaptchaExecutor(action);
 };

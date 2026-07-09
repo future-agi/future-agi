@@ -19,6 +19,7 @@ from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from accounts.authentication import workspace_read_only
 from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
 from model_hub.constants import (
     EVAL_PLAYGROUND_CURL_CODE,
@@ -30,13 +31,16 @@ from model_hub.constants import (
 from model_hub.models.choices import EvalOutputType, EvalTemplateType
 from model_hub.models.develop_dataset import SourceChoices
 from model_hub.models.evals_metric import (
+    EvalGroundTruth,
     EvalSettings,
     EvalTemplate,
     Feedback,
     OwnerChoices,
     UserEvalMetric,
 )
+
 from model_hub.models.run_prompt import PromptEvalConfig
+from model_hub.selectors.feedback import resolve_feedback_edit_contexts
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     CellErrorLocalizerResponseSerializer,
@@ -75,18 +79,12 @@ from model_hub.serializers.contracts import (
     EvalTemplateVersionResponseSerializer,
     EvalTemplateVersionRestoreResponseSerializer,
     EvalUsageStatsResponseSerializer,
-    GroundTruthConfigRequestSerializer,
-    GroundTruthConfigResponseSerializer,
     GroundTruthDataResponseSerializer,
     GroundTruthDeleteResponseSerializer,
     GroundTruthEmbedResponseSerializer,
     GroundTruthListResponseSerializer,
-    GroundTruthMappingRequestSerializer,
-    GroundTruthMappingResponseSerializer,
-    GroundTruthRoleMappingRequestSerializer,
-    GroundTruthRoleMappingResponseSerializer,
-    GroundTruthSearchRequestSerializer,
-    GroundTruthSearchResponseSerializer,
+    GroundTruthSetupRequestSerializer,
+    GroundTruthSetupResponseSerializer,
     GroundTruthStatusResponseSerializer,
     GroundTruthUploadRequestSerializer,
     GroundTruthUploadResponseSerializer,
@@ -207,11 +205,8 @@ def apply_filters(row_data, filters):
                 }
 
                 if filter_op not in text_ops:
-                    message = (
-                        "Invalid filter operation. \
-                        Allowed operations are: "
-                        + ", ".join(text_ops.keys())
-                    )
+                    message = "Invalid filter operation. \
+                        Allowed operations are: " + ", ".join(text_ops.keys())
                     raise ValueError(message)
 
                 result = []
@@ -580,11 +575,8 @@ class GetAPICallLogView(APIView):
 
             config = json.loads(log_row.config)
             error_localizer = config.get("error_localizer", {})
-            # Look up the ErrorLocalizerTask keyed by this log_id so the
-            # frontend can distinguish "still running" from "never started"
-            # and from "completed". The task row is populated by
-            # `trigger_error_localization_for_playground` when the playground
-            # is called with error_localizer=true.
+            if not isinstance(error_localizer, dict):
+                error_localizer = {}
             error_localizer_status = None
             error_localizer_message = None
             try:
@@ -1131,6 +1123,7 @@ class EvalMetricView(APIView):
             return self._gm.bad_request(str(e))
 
 
+@workspace_read_only
 class GetEvalTemplateNameView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -1192,6 +1185,7 @@ class GetEvalTemplateNameView(APIView):
             return self._gm.bad_request(str(e))
 
 
+@workspace_read_only
 class GetEvalTemplates(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -1473,6 +1467,7 @@ class GetEvalTemplates(APIView):
             return self._gm.bad_request(str(e))
 
 
+@workspace_read_only
 class EvalTemplateListView(APIView):
     """
     POST /model-hub/eval-templates/list/
@@ -1649,6 +1644,7 @@ class EvalTemplateListView(APIView):
             return self._gm.bad_request(str(e))
 
 
+@workspace_read_only
 class EvalTemplateListChartsView(APIView):
     """
     POST /model-hub/eval-templates/list-charts/
@@ -1815,26 +1811,100 @@ class EvalTemplateBulkDeleteView(APIView):
                 getattr(request, "organization", None) or request.user.organization
             )
 
-            templates_to_delete = list(
-                EvalTemplate.objects.filter(
+            from model_hub.models.develop_dataset import Cell, Column, Dataset
+
+            with transaction.atomic():
+                deleted_count = EvalTemplate.objects.filter(
                     id__in=req.template_ids,
                     organization=organization,
                     owner=OwnerChoices.USER.value,
                     deleted=False,
-                ).values_list("id", flat=True)
-            )
+                ).update(deleted=True, deleted_at=timezone.now())
 
-            now = timezone.now()
-            deleted_count = EvalTemplate.objects.filter(
-                id__in=templates_to_delete,
-                organization=organization,
-                owner=OwnerChoices.USER.value,
-                deleted=False,
-            ).update(deleted=True, deleted_at=now)
-            EvalSettings.objects.filter(
-                eval_id__in=templates_to_delete,
-                deleted=False,
-            ).update(deleted=True, deleted_at=now)
+                # Fetch all UserEvalMetrics bound to these templates
+                # Scoped to the requesting org to prevent cross-tenant cascade
+                metrics = list(
+                    UserEvalMetric.objects.filter(
+                        template_id__in=req.template_ids,
+                        organization=organization,
+                        deleted=False,
+                    ).values_list("id", "dataset_id")
+                )
+
+                if metrics:
+                    metric_ids = {str(m[0]) for m in metrics}
+                    dataset_ids = {m[1] for m in metrics}
+
+                    # Find eval result columns scoped by dataset (indexed)
+                    eval_cols = list(
+                        Column.objects.filter(
+                            dataset_id__in=dataset_ids,
+                            source=SourceChoices.EVALUATION.value,
+                            source_id__in=metric_ids,
+                            deleted=False,
+                        ).values_list("id", "dataset_id", flat=False)
+                    )
+
+                    # Build set of eval column IDs for dependent column lookup
+                    eval_col_ids = {row[0] for row in eval_cols}
+                    all_col_ids = set(eval_col_ids)
+
+                    # Find dependent columns (reason, tags) scoped by dataset
+                    if eval_col_ids:
+                        eval_col_suffixes = {
+                            f"{ecid}-sourceid-"
+                            for ecid in (str(eid) for eid in eval_col_ids)
+                        }
+                        dep_cols = list(
+                            Column.objects.filter(
+                                dataset_id__in=dataset_ids,
+                                source__in=[
+                                    SourceChoices.EVALUATION_REASON.value,
+                                    SourceChoices.EVALUATION_TAGS.value,
+                                ],
+                                deleted=False,
+                            ).values_list("id", "source_id")
+                        )
+                        for col_id, source_id in dep_cols:
+                            if source_id and any(
+                                sfx in source_id for sfx in eval_col_suffixes
+                            ):
+                                all_col_ids.add(col_id)
+
+                    if all_col_ids:
+                        # Bulk soft-delete cells
+                        Cell.objects.filter(
+                            column_id__in=all_col_ids, deleted=False
+                        ).update(deleted=True, deleted_at=timezone.now())
+
+                        # Bulk soft-delete columns
+                        Column.objects.filter(id__in=all_col_ids).update(
+                            deleted=True, deleted_at=timezone.now()
+                        )
+
+                        # Fix column_order per affected dataset
+                        col_id_strs = {str(c) for c in all_col_ids}
+                        affected_datasets = list(
+                            Dataset.objects.filter(id__in=dataset_ids)
+                        )
+                        datasets_to_update = []
+                        for ds in affected_datasets:
+                            if ds.column_order:
+                                new_order = [
+                                    c for c in ds.column_order if c not in col_id_strs
+                                ]
+                                if len(new_order) != len(ds.column_order):
+                                    ds.column_order = new_order
+                                    datasets_to_update.append(ds)
+                        if datasets_to_update:
+                            Dataset.objects.bulk_update(
+                                datasets_to_update, ["column_order"]
+                            )
+
+                    # Soft-delete the metrics themselves
+                    UserEvalMetric.objects.filter(
+                        id__in=[m[0] for m in metrics]
+                    ).update(deleted=True, deleted_at=timezone.now())
 
             response = BulkDeleteResponse(deleted_count=deleted_count)
             return self._gm.success_response(response.model_dump())
@@ -1953,9 +2023,18 @@ class EvalTemplateCreateV2View(APIView):
                         if hasattr(req, "data_injection") and req.data_injection
                         else False
                     )
+                    # LLM evals can put the variable in any turn (System /
+                    # User / Assistant), so scan every message body, not
+                    # just req.instructions (which mirrors the System turn).
+                    _prompt_texts = [req.instructions or ""]
+                    if req.messages:
+                        for _m in req.messages:
+                            if isinstance(_m, dict):
+                                _prompt_texts.append(_m.get("content", "") or "")
+                    _combined_prompt = "\n".join(t for t in _prompt_texts if t)
                     if (
-                        req.instructions
-                        and not re.search(variable_pattern, req.instructions)
+                        _combined_prompt.strip()
+                        and not re.search(variable_pattern, _combined_prompt)
                         and not has_data_injection
                     ):
                         return self._gm.bad_request(
@@ -4339,23 +4418,37 @@ class GroundTruthListView(APIView):
                 .order_by("-created_at")
             )
 
-            items = [
-                GroundTruthItem(
-                    id=str(gt.id),
-                    name=gt.name,
-                    description=gt.description or "",
-                    file_name=gt.file_name or "",
-                    columns=gt.columns or [],
-                    row_count=gt.row_count,
-                    variable_mapping=gt.variable_mapping,
-                    role_mapping=gt.role_mapping,
-                    embedding_status=gt.embedding_status,
-                    embedded_row_count=gt.embedded_row_count,
-                    storage_type=gt.storage_type,
-                    created_at=gt.created_at.isoformat() if gt.created_at else "",
+            items = []
+            for gt in gts:
+                stale = bool(
+                    gt.embedded_row_count > 0
+                    and gt.embedding_status
+                    in (
+                        EvalGroundTruth.EmbeddingStatus.PENDING,
+                        EvalGroundTruth.EmbeddingStatus.FAILED,
+                    )
                 )
-                for gt in gts
-            ]
+                items.append(
+                    GroundTruthItem(
+                        id=str(gt.id),
+                        name=gt.name,
+                        description=gt.description or "",
+                        file_name=gt.file_name or "",
+                        columns=gt.columns or [],
+                        row_count=gt.row_count,
+                        variable_mapping=gt.variable_mapping,
+                        role_mapping=gt.role_mapping,
+                        embedding_status=gt.embedding_status,
+                        embedded_row_count=gt.embedded_row_count,
+                        storage_type=gt.storage_type,
+                        created_at=gt.created_at.isoformat() if gt.created_at else "",
+                        embeddings_stale=stale,
+                        is_active=gt.is_active,
+                        enabled=gt.enabled,
+                        max_examples=gt.max_examples,
+                        similarity_threshold=gt.similarity_threshold,
+                    )
+                )
 
             response = GroundTruthListResponse(
                 template_id=str(template_id),
@@ -4392,204 +4485,124 @@ class GroundTruthUploadView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request, template_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
-        from model_hub.types import GroundTruthUploadResponse
+        from model_hub.services.ground_truth_service import GroundTruthService
+        from model_hub.types import (
+            GroundTruthUploadRequest,
+            GroundTruthUploadResponse,
+        )
 
         try:
-            organization = _request_organization(request)
+            template = _get_accessible_eval_template_for_request(
+                template_id, request
+            )
+        except EvalTemplate.DoesNotExist:
+            return self._gm.not_found("Eval template not found.")
+
+        request_data = request.validated_data
+        uploaded_file = request_data.get("file")
+
+        if uploaded_file:
+            from model_hub.utils.ground_truth_parser import (
+                MAX_FILE_SIZE_BYTES,
+                parse_ground_truth_file,
+            )
+
+            if uploaded_file.size > MAX_FILE_SIZE_BYTES:
+                return self._gm.bad_request("File exceeds maximum size of 50MB.")
+            try:
+                columns, data = parse_ground_truth_file(
+                    uploaded_file, uploaded_file.name
+                )
+            except ValueError as exc:
+                return self._gm.bad_request(str(exc))
+            name = (
+                request_data.get("name") or uploaded_file.name.rsplit(".", 1)[0]
+            )
+            description = request_data.get("description", "")
+            file_name = uploaded_file.name
+            variable_mapping = request_data.get("variable_mapping")
+            role_mapping = request_data.get("role_mapping")
+        else:
+            from tfc.utils.errors import format_request_error
 
             try:
-                template = _get_accessible_eval_template_for_request(
-                    template_id, request
-                )
-            except EvalTemplate.DoesNotExist:
-                return self._gm.not_found("Eval template not found.")
+                payload = GroundTruthUploadRequest(**request_data)
+            except Exception as exc:
+                return self._gm.bad_request(format_request_error(exc))
+            if not payload.columns:
+                return self._gm.bad_request("Columns list is required.")
+            name = payload.name
+            description = payload.description
+            file_name = payload.file_name
+            columns = payload.columns
+            data = payload.data
+            variable_mapping = payload.variable_mapping
+            role_mapping = payload.role_mapping
 
-            request_data = request.validated_data
-            uploaded_file = request_data.get("file")
+        gt = GroundTruthService.create_from_upload(
+            eval_template=template,
+            name=name,
+            description=description,
+            file_name=file_name,
+            columns=columns,
+            data=data,
+            variable_mapping=variable_mapping,
+            role_mapping=role_mapping,
+            organization=_request_organization(request),
+            workspace=getattr(request, "workspace", None),
+        )
 
-            if uploaded_file:
-                # --- File upload mode ---
-                from model_hub.utils.ground_truth_parser import (
-                    MAX_FILE_SIZE_BYTES,
-                    parse_ground_truth_file,
-                )
-
-                if uploaded_file.size > MAX_FILE_SIZE_BYTES:
-                    return self._gm.bad_request("File exceeds maximum size of 50MB.")
-
-                name = request_data.get("name") or uploaded_file.name.rsplit(".", 1)[0]
-                description = request_data.get("description", "")
-
-                try:
-                    columns, data = parse_ground_truth_file(
-                        uploaded_file, uploaded_file.name
-                    )
-                except ValueError as e:
-                    return self._gm.bad_request(str(e))
-
-                file_name = uploaded_file.name
-                variable_mapping = request_data.get("variable_mapping")
-                role_mapping = request_data.get("role_mapping")
-            else:
-                # --- JSON body mode (backwards compatible) ---
-                from model_hub.types import GroundTruthUploadRequest
-
-                try:
-                    req = GroundTruthUploadRequest(**request_data)
-                except Exception as e:
-                    from tfc.utils.errors import format_request_error
-
-                    return self._gm.bad_request(format_request_error(e))
-
-                if not req.columns:
-                    return self._gm.bad_request("Columns list is required.")
-
-                name = req.name
-                description = req.description
-                file_name = req.file_name
-                columns = req.columns
-                data = req.data
-                variable_mapping = req.variable_mapping
-                role_mapping = req.role_mapping
-
-            gt = EvalGroundTruth.objects.create(
-                eval_template=template,
-                name=name,
-                description=description,
-                file_name=file_name,
-                columns=columns,
-                data=data,
-                row_count=len(data),
-                variable_mapping=variable_mapping,
-                role_mapping=role_mapping,
-                embedding_status="pending",
-                organization=organization,
-                workspace=getattr(request, "workspace", None),
-            )
-
-            response = GroundTruthUploadResponse(
-                id=str(gt.id),
-                name=gt.name,
-                row_count=gt.row_count,
-                columns=gt.columns,
-                embedding_status=gt.embedding_status,
-            )
-            return self._gm.success_response(response.model_dump())
-
-        except Exception as e:
-            logger.error(
-                f"Error in GroundTruthUploadView: {str(e)}\n{traceback.format_exc()}"
-            )
-            return self._gm.bad_request(str(e))
+        response = GroundTruthUploadResponse(
+            id=str(gt.id),
+            name=gt.name,
+            row_count=gt.row_count,
+            columns=gt.columns,
+            embedding_status=gt.embedding_status,
+        )
+        return self._gm.success_response(response.model_dump())
 
 
-class GroundTruthMappingView(APIView):
-    """PUT /model-hub/ground-truth/<id>/mapping/"""
+class GroundTruthSetupView(APIView):
+    """PUT /model-hub/ground-truth/<id>/setup/"""
 
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
     @validated_request(
-        request_serializer=GroundTruthMappingRequestSerializer,
+        request_serializer=GroundTruthSetupRequestSerializer,
         responses={
-            200: GroundTruthMappingResponseSerializer,
+            200: GroundTruthSetupResponseSerializer,
             **MODEL_HUB_ERROR_RESPONSES,
         },
         reject_unknown_fields=True,
     )
     def put(self, request, ground_truth_id, *args, **kwargs):
         from model_hub.models.evals_metric import EvalGroundTruth
-        from model_hub.types import VariableMappingRequest
+        from model_hub.services.ground_truth_service import (
+            GroundTruthService,
+            ServiceError,
+        )
+        from model_hub.types import GroundTruthSetupResult
 
         try:
-            try:
-                req = VariableMappingRequest(**request.validated_data)
-            except Exception as e:
-                from tfc.utils.errors import format_request_error
+            gt = _get_accessible_ground_truth(ground_truth_id, request)
+        except EvalGroundTruth.DoesNotExist:
+            return self._gm.not_found("Ground truth not found.")
 
-                return self._gm.bad_request(format_request_error(e))
-
-            try:
-                gt = _get_accessible_ground_truth(ground_truth_id, request)
-            except EvalGroundTruth.DoesNotExist:
-                return self._gm.not_found("Ground truth not found.")
-
-            gt.variable_mapping = req.variable_mapping
-            gt.save(update_fields=["variable_mapping", "updated_at"])
-
-            return self._gm.success_response(
-                {"id": str(gt.id), "variable_mapping": gt.variable_mapping}
-            )
-
-        except Exception as e:
-            logger.error(
-                f"Error in GroundTruthMappingView: {str(e)}\n{traceback.format_exc()}"
-            )
-            return self._gm.bad_request(str(e))
-
-
-class GroundTruthRoleMappingView(APIView):
-    """PUT /model-hub/ground-truth/<id>/role-mapping/"""
-
-    _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
-
-    @validated_request(
-        request_serializer=GroundTruthRoleMappingRequestSerializer,
-        responses={
-            200: GroundTruthRoleMappingResponseSerializer,
-            **MODEL_HUB_ERROR_RESPONSES,
-        },
-        reject_unknown_fields=True,
-    )
-    def put(self, request, ground_truth_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
-        from model_hub.types import RoleMappingRequest
-
-        try:
-            try:
-                req = RoleMappingRequest(**request.validated_data)
-            except Exception as e:
-                from tfc.utils.errors import format_request_error
-
-                return self._gm.bad_request(format_request_error(e))
-
-            valid_roles = {"input", "expected_output", "score", "reasoning"}
-            invalid = set(req.role_mapping.keys()) - valid_roles
-            if invalid:
-                return self._gm.bad_request(
-                    f"Invalid roles: {invalid}. Valid roles: {valid_roles}"
-                )
-
-            try:
-                gt = _get_accessible_ground_truth(ground_truth_id, request)
-            except EvalGroundTruth.DoesNotExist:
-                return self._gm.not_found("Ground truth not found.")
-
-            # Validate that mapped columns exist in the dataset
-            for role, col in req.role_mapping.items():
-                if col not in (gt.columns or []):
-                    return self._gm.bad_request(
-                        f"Column '{col}' (mapped to role '{role}') not found in dataset columns: {gt.columns}"
-                    )
-
-            gt.role_mapping = req.role_mapping
-            gt.save(update_fields=["role_mapping", "updated_at"])
-
-            return self._gm.success_response(
-                {
-                    "id": str(gt.id),
-                    "role_mapping": gt.role_mapping,
-                    "embedding_status": gt.embedding_status,
-                }
-            )
-
-        except Exception as e:
-            logger.error(
-                f"Error in GroundTruthRoleMappingView: {str(e)}\n{traceback.format_exc()}"
-            )
-            return self._gm.bad_request(str(e))
+        data = request.validated_data
+        result = GroundTruthService.update_setup(
+            gt=gt,
+            eval_template=gt.eval_template,
+            variable_mapping=data.get("variable_mapping") or {},
+            role_mapping=data.get("role_mapping") or {},
+            max_examples=int(data.get("max_examples")),
+            enabled=bool(data.get("enabled", True)),
+        )
+        if isinstance(result, ServiceError):
+            return self._gm.bad_request(result.message)
+        return self._gm.success_response(
+            GroundTruthSetupResult(**result).model_dump()
+        )
 
 
 class GroundTruthDataView(APIView):
@@ -4663,6 +4676,14 @@ class GroundTruthStatusView(APIView):
             total = gt.row_count or 0
             embedded = gt.embedded_row_count or 0
             progress = (embedded / total * 100) if total > 0 else 0.0
+            stale = bool(
+                embedded > 0
+                and gt.embedding_status
+                in (
+                    EvalGroundTruth.EmbeddingStatus.PENDING,
+                    EvalGroundTruth.EmbeddingStatus.FAILED,
+                )
+            )
 
             response = GroundTruthStatusResponse(
                 id=str(gt.id),
@@ -4670,6 +4691,7 @@ class GroundTruthStatusView(APIView):
                 embedded_row_count=embedded,
                 total_rows=total,
                 progress_percent=round(progress, 1),
+                embeddings_stale=stale,
             )
             return self._gm.success_response(response.model_dump())
 
@@ -4693,6 +4715,8 @@ class GroundTruthDeleteView(APIView):
         }
     )
     def delete(self, request, ground_truth_id, *args, **kwargs):
+        from django.db import transaction
+
         from model_hub.models.evals_metric import EvalGroundTruth
 
         try:
@@ -4701,198 +4725,17 @@ class GroundTruthDeleteView(APIView):
             except EvalGroundTruth.DoesNotExist:
                 return self._gm.not_found("Ground truth not found.")
 
-            gt.deleted = True
-            gt.deleted_at = timezone.now()
-            gt.save(update_fields=["deleted", "deleted_at", "updated_at"])
-
-            # Also soft-delete embeddings
-            gt.embeddings.update(ground_truth=gt)
+            with transaction.atomic():
+                gt.deleted = True
+                gt.deleted_at = timezone.now()
+                gt.is_active = False
+                gt.save(update_fields=["deleted", "deleted_at", "is_active", "updated_at"])
 
             return self._gm.success_response({"deleted": True, "id": str(gt.id)})
 
         except Exception as e:
             logger.error(
                 f"Error in GroundTruthDeleteView: {str(e)}\n{traceback.format_exc()}"
-            )
-            return self._gm.bad_request(str(e))
-
-
-class GroundTruthConfigView(APIView):
-    """
-    GET/PUT /model-hub/eval-templates/<id>/ground-truth-config/
-
-    Manages ground truth configuration on the eval template's config JSONField.
-    """
-
-    _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
-
-    @swagger_auto_schema(
-        responses={
-            200: GroundTruthConfigResponseSerializer,
-            **MODEL_HUB_ERROR_RESPONSES,
-        }
-    )
-    def get(self, request, template_id, *args, **kwargs):
-        try:
-            try:
-                template = _get_accessible_eval_template_for_request(
-                    template_id, request
-                )
-            except EvalTemplate.DoesNotExist:
-                return self._gm.not_found("Eval template not found.")
-
-            config = template.config or {}
-            gt_config = config.get(
-                "ground_truth",
-                {
-                    "enabled": False,
-                    "ground_truth_id": None,
-                    "mode": "auto",
-                    "max_examples": 3,
-                    "similarity_threshold": 0.7,
-                    "injection_format": "structured",
-                },
-            )
-
-            return self._gm.success_response({"ground_truth": gt_config})
-
-        except Exception as e:
-            logger.error(
-                f"Error in GroundTruthConfigView.get: {str(e)}\n{traceback.format_exc()}"
-            )
-            return self._gm.bad_request(str(e))
-
-    @validated_request(
-        request_serializer=GroundTruthConfigRequestSerializer,
-        responses={
-            200: GroundTruthConfigResponseSerializer,
-            **MODEL_HUB_ERROR_RESPONSES,
-        },
-        reject_unknown_fields=True,
-    )
-    def put(self, request, template_id, *args, **kwargs):
-        from model_hub.types import GroundTruthConfigRequest
-
-        try:
-            try:
-                request_data = dict(request.validated_data)
-                if request_data.get("ground_truth_id") is not None:
-                    request_data["ground_truth_id"] = str(
-                        request_data["ground_truth_id"]
-                    )
-                req = GroundTruthConfigRequest(**request_data)
-            except Exception as e:
-                from tfc.utils.errors import format_request_error
-
-                return self._gm.bad_request(format_request_error(e))
-
-            try:
-                template = _get_accessible_eval_template_for_request(
-                    template_id, request
-                )
-            except EvalTemplate.DoesNotExist:
-                return self._gm.not_found("Eval template not found.")
-
-            # Validate ground_truth_id exists if provided
-            if req.ground_truth_id:
-                from model_hub.models.evals_metric import EvalGroundTruth
-
-                try:
-                    ground_truth = _get_accessible_ground_truth(
-                        req.ground_truth_id, request
-                    )
-                except EvalGroundTruth.DoesNotExist:
-                    return self._gm.bad_request(
-                        "Ground truth dataset not found or does not belong to this eval template."
-                    )
-                if ground_truth.eval_template_id != template.id:
-                    return self._gm.bad_request(
-                        "Ground truth dataset not found or does not belong to this eval template."
-                    )
-
-            config = template.config or {}
-            config["ground_truth"] = {
-                "enabled": req.enabled,
-                "ground_truth_id": req.ground_truth_id,
-                "mode": req.mode,
-                "max_examples": req.max_examples,
-                "similarity_threshold": req.similarity_threshold,
-                "injection_format": req.injection_format,
-            }
-            template.config = config
-            template.save(update_fields=["config", "updated_at"])
-
-            return self._gm.success_response({"ground_truth": config["ground_truth"]})
-
-        except Exception as e:
-            logger.error(
-                f"Error in GroundTruthConfigView.put: {str(e)}\n{traceback.format_exc()}"
-            )
-            return self._gm.bad_request(str(e))
-
-
-class GroundTruthSearchView(APIView):
-    """POST /model-hub/ground-truth/<id>/search/ — test retrieval with a query."""
-
-    _gm = GeneralMethods()
-    permission_classes = [IsAuthenticated]
-
-    @validated_request(
-        request_serializer=GroundTruthSearchRequestSerializer,
-        responses={
-            200: GroundTruthSearchResponseSerializer,
-            **MODEL_HUB_ERROR_RESPONSES,
-        },
-        reject_unknown_fields=True,
-    )
-    def post(self, request, ground_truth_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
-        from model_hub.types import GroundTruthSearchRequest
-        from model_hub.utils.ground_truth_retrieval import (
-            generate_embedding,
-            retrieve_similar_examples,
-        )
-
-        try:
-            try:
-                req = GroundTruthSearchRequest(**request.validated_data)
-            except Exception as e:
-                from tfc.utils.errors import format_request_error
-
-                return self._gm.bad_request(format_request_error(e))
-
-            try:
-                gt = _get_accessible_ground_truth(ground_truth_id, request)
-            except EvalGroundTruth.DoesNotExist:
-                return self._gm.not_found("Ground truth not found.")
-
-            if gt.embedding_status != "completed":
-                return self._gm.bad_request(
-                    f"Embeddings not ready. Status: {gt.embedding_status}. "
-                    "Wait for embedding generation to complete."
-                )
-
-            query_embedding = generate_embedding(req.query)
-
-            results = retrieve_similar_examples(
-                ground_truth_id=str(gt.id),
-                query_embedding=query_embedding,
-                max_examples=req.max_results,
-                similarity_threshold=0.0,  # Return all for testing, let user see scores
-            )
-
-            return self._gm.success_response(
-                {
-                    "query": req.query,
-                    "results": results,
-                    "total": len(results),
-                }
-            )
-
-        except Exception as e:
-            logger.error(
-                f"Error in GroundTruthSearchView: {str(e)}\n{traceback.format_exc()}"
             )
             return self._gm.bad_request(str(e))
 
@@ -4920,7 +4763,7 @@ class GroundTruthTriggerEmbeddingView(APIView):
             except EvalGroundTruth.DoesNotExist:
                 return self._gm.not_found("Ground truth not found.")
 
-            if gt.embedding_status == "processing":
+            if gt.embedding_status == EvalGroundTruth.EmbeddingStatus.PROCESSING:
                 return self._gm.bad_request(
                     "Embedding generation is already in progress."
                 )
@@ -4928,8 +4771,14 @@ class GroundTruthTriggerEmbeddingView(APIView):
             if gt.row_count == 0:
                 return self._gm.bad_request("No data rows to embed.")
 
+            if not (gt.variable_mapping or {}):
+                return self._gm.bad_request(
+                    "Variable mapping is empty. Map at least one eval "
+                    "variable to a ground truth column before embedding."
+                )
+
             # Reset status
-            gt.embedding_status = "pending"
+            gt.embedding_status = EvalGroundTruth.EmbeddingStatus.PENDING
             gt.embedded_row_count = 0
             gt.save(
                 update_fields=["embedding_status", "embedded_row_count", "updated_at"]
@@ -4949,14 +4798,14 @@ class GroundTruthTriggerEmbeddingView(APIView):
                 workflow_run_id = "scheduled"
 
             if workflow_run_id is None:
-                gt.embedding_status = "failed"
+                gt.embedding_status = EvalGroundTruth.EmbeddingStatus.FAILED
                 gt.save(update_fields=["embedding_status", "updated_at"])
                 return self._gm.bad_request("Failed to trigger embedding generation.")
 
             return self._gm.success_response(
                 {
                     "id": str(gt.id),
-                    "embedding_status": "pending",
+                    "embedding_status": EvalGroundTruth.EmbeddingStatus.PENDING,
                     "message": "Embedding generation triggered.",
                 }
             )
@@ -5430,7 +5279,8 @@ class EvalFeedbackListView(APIView):
             )
 
             total = base_qs.count()
-            feedbacks = base_qs[page * page_size : (page + 1) * page_size]
+            feedbacks = list(base_qs[page * page_size : (page + 1) * page_size])
+            edit_contexts = resolve_feedback_edit_contexts(feedbacks)
 
             items = []
             for fb in feedbacks:
@@ -5438,6 +5288,11 @@ class EvalFeedbackListView(APIView):
                 if fb.user:
                     user_name = getattr(fb.user, "name", "") or fb.user.email
 
+                ctx = edit_contexts.get(fb.id) or {
+                    "user_eval_metric_id": "",
+                    "custom_eval_config_id": "",
+                    "experiment_id": "",
+                }
                 items.append(
                     {
                         "id": str(fb.id),
@@ -5450,6 +5305,9 @@ class EvalFeedbackListView(APIView):
                         "created_at": (
                             fb.created_at.isoformat() if fb.created_at else ""
                         ),
+                        "user_eval_metric_id": ctx["user_eval_metric_id"],
+                        "custom_eval_config_id": ctx["custom_eval_config_id"],
+                        "experiment_id": ctx["experiment_id"],
                     }
                 )
 
@@ -6293,9 +6151,26 @@ class EvalPlayGroundAPIView(APIView):
                         CallExecution,
                         CallTranscript,
                     )
+                    from simulate.utils.speaker_roles import SpeakerRoleResolver
 
                     _ce = CallExecution.objects.filter(id=_call_id).first()
                     if _ce:
+                        # Filter out system prompt and normalise speaker labels via
+                        # the resolver so the simulator persona never reaches the eval.
+                        _ce_provider = SpeakerRoleResolver.detect_provider(
+                            _ce.provider_call_data
+                        )
+                        _ce_is_outbound = SpeakerRoleResolver.detect_is_outbound(_ce)
+                        _conversational_roles = (
+                            SpeakerRoleResolver.get_conversational_roles()
+                        )
+                        _transcript_rows = (
+                            CallTranscript.objects.filter(
+                                call_execution_id=_ce.id,
+                                speaker_role__in=_conversational_roles,
+                            )
+                            .order_by("start_time_ms")[:200]
+                        )
                         call_context = {
                             "id": str(_ce.id),
                             "status": _ce.status,
@@ -6326,13 +6201,15 @@ class EvalPlayGroundAPIView(APIView):
                             "scenario": build_eval_playground_scenario_context(_ce),
                             "transcript": [
                                 {
-                                    "speaker": t.speaker_role,
+                                    "speaker": SpeakerRoleResolver.get_eval_role_label(
+                                        t.speaker_role,
+                                        provider=_ce_provider,
+                                        is_outbound=_ce_is_outbound,
+                                    ),
                                     "content": t.content,
                                     "start_ms": t.start_time_ms,
                                 }
-                                for t in CallTranscript.objects.filter(
-                                    call_execution_id=_ce.id
-                                ).order_by("start_time_ms")[:200]
+                                for t in _transcript_rows
                             ],
                         }
                 except Exception as _e:

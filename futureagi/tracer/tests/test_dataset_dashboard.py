@@ -140,6 +140,11 @@ class TestDatasetSystemMetricsConstants:
             "total_tokens",
             "response_time",
             "cell_error_rate",
+            "dataset",
+            "eval_template",
+            "column_name",
+            "column_source",
+            "cell_status",
         }
         assert set(DATASET_SYSTEM_METRICS.keys()) == expected
 
@@ -199,7 +204,13 @@ class TestDatasetDimensions:
     """Test breakdown and filter dimension maps."""
 
     def test_breakdown_dimensions(self):
-        expected = {"dataset", "eval_template", "column_name", "cell_status"}
+        expected = {
+            "dataset",
+            "eval_template",
+            "column_name",
+            "column_source",
+            "cell_status",
+        }
         assert set(DATASET_BREAKDOWN_COLUMNS.keys()) == expected
 
     def test_filter_dimensions(self):
@@ -258,6 +269,61 @@ class TestDatasetSystemMetricQueries:
         builder = DatasetQueryBuilder(base_query_config)
         sql, _ = builder.build_metric_query(base_query_config["metrics"][0])
         assert "CASE WHEN status = 'error'" in sql
+
+    def test_dataset_string_metric_defaults_to_count_distinct(
+        self, base_query_config
+    ):
+        base_query_config["metrics"] = [
+            {
+                "id": "dataset",
+                "name": "dataset",
+                "type": "system_metric",
+                "aggregation": "avg",
+            }
+        ]
+        builder = DatasetQueryBuilder(base_query_config)
+
+        queries = builder.build_all_queries()
+        sql, _, metric_info = queries[0]
+
+        assert "uniqIf(" in sql
+        assert "dataset_dict" in sql
+        assert metric_info["aggregation"] == "count_distinct"
+
+    def test_dataset_string_metric_count_counts_present_values(
+        self, base_query_config
+    ):
+        base_query_config["metrics"] = [
+            {
+                "id": "dataset",
+                "name": "dataset",
+                "type": "system_metric",
+                "aggregation": "count",
+            }
+        ]
+        builder = DatasetQueryBuilder(base_query_config)
+
+        sql, _ = builder.build_metric_query(base_query_config["metrics"][0])
+
+        assert "countIf(" in sql
+        assert "dataset_dict" in sql
+
+    def test_column_source_string_metric_is_queryable(self, base_query_config):
+        base_query_config["metrics"] = [
+            {
+                "id": "column_source",
+                "name": "column_source",
+                "type": "system_metric",
+                "aggregation": "count_distinct",
+            }
+        ]
+        builder = DatasetQueryBuilder(base_query_config)
+
+        sql, _ = builder.build_metric_query(base_query_config["metrics"][0])
+
+        assert "uniqIf(" in sql
+        assert "column_dict" in sql
+        assert "source" in sql
 
     def test_total_tokens_sum(self, base_query_config):
         base_query_config["metrics"] = [
@@ -490,7 +556,8 @@ class TestDatasetBreakdowns:
         builder = DatasetQueryBuilder(system_metric_config)
         sql, _ = builder.build_metric_query(system_metric_config["metrics"][0])
         assert "breakdown_value" in sql
-        assert "toString(c.dataset_id)" in sql
+        assert "dataset_dict" in sql
+        assert "name" in sql
         assert "GROUP BY" in sql
 
     def test_eval_template_breakdown(self, system_metric_config):
@@ -546,6 +613,8 @@ class TestDatasetFilters:
         builder = DatasetQueryBuilder(system_metric_config)
         sql, params = builder.build_metric_query(system_metric_config["metrics"][0])
         assert "FROM model_hub_dataset FINAL" in sql
+        assert "WHERE _peerdb_is_deleted = 0" in sql
+        assert "AND deleted = 0" in sql
         assert "AND name IN %(df_0_val)s" in sql
         assert "IN" in sql
         assert "df_0_val" in params
@@ -554,6 +623,8 @@ class TestDatasetFilters:
         builder = DatasetQueryBuilder(system_metric_config)
         sql, params = builder.build_metric_query(system_metric_config["metrics"][0])
         assert "SELECT id FROM model_hub_dataset FINAL" in sql
+        assert "WHERE _peerdb_is_deleted = 0" in sql
+        assert "AND deleted = 0" in sql
         assert "workspace_id = toUUID(%(workspace_id)s)" in sql
         assert "workspace_id" in params
 

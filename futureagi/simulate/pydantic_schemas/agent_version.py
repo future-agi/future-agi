@@ -1,4 +1,3 @@
-from typing import List, Optional
 
 from django.conf import settings
 from pydantic import BaseModel
@@ -10,25 +9,22 @@ class AgentConfigurationSnapshot(BaseModel):
     """
 
     # Core fields
-    api_key: Optional[str]
     inbound: bool
-    languages: List[str] = []
-    provider: Optional[str]
+    languages: list[str] = []
+    provider: str | None
     agent_name: str
     commit_message: str
-    contact_number: Optional[str]
+    contact_number: str | None
     authentication_method: str
-    language: Optional[str] = "en"
+    language: str | None = "en"
     observability_enabled: bool = False
-    description: Optional[str] = None
-    assistant_id: Optional[str] = None
-    knowledge_base: Optional[str] = None
-    model: Optional[str] = None
-    model_details: Optional[dict] = None
-    agent_type: Optional[str] = None
-    livekit_url: Optional[str] = None
-    livekit_api_key: Optional[str] = None
-    livekit_api_secret: Optional[str] = None
-    livekit_agent_name: Optional[str] = None
-    livekit_config_json: Optional[dict] = None
-    livekit_max_concurrency: Optional[int] = settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
+    description: str | None = None
+    assistant_id: str | None = None
+    knowledge_base: str | None = None
+    model: str | None = None
+    model_details: dict | None = None
+    agent_type: str | None = None
+    livekit_url: str | None = None
+    livekit_agent_name: str | None = None
+    livekit_config_json: dict | None = None
+    livekit_max_concurrency: int | None = settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY

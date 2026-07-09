@@ -18,8 +18,10 @@ import {
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import CellMarkdown from "src/sections/common/CellMarkdown";
+import { ShowComponent } from "src/components/show";
 import useVoiceAudioStore from "./voiceAudioStore";
 import { computeTotals, enrichTurns, formatClock } from "./transcriptUtils";
+import { DEFAULT_ROLE_LABELS } from "./constants";
 
 // Highlight query matches in a string — returns React nodes.
 const highlightMatches = (text, query) => {
@@ -85,7 +87,14 @@ const useSpeakerColors = () => {
 // same role in this legend. Any other role still shows up but trails.
 const TALK_ROLE_ORDER = ["user", "assistant", "system", "tool"];
 
-const TalkRatioBar = ({ totals, colors }) => {
+const TalkRatioBar = ({
+  totals,
+  colors,
+  hideLabel = false,
+  hidePercentages = false,
+  legendAlign = "left",
+  roleLabels = DEFAULT_ROLE_LABELS,
+}) => {
   const total = totals.total || 1;
   const segments = Object.entries(totals.byRole)
     .filter(([, v]) => v > 0)
@@ -98,40 +107,59 @@ const TalkRatioBar = ({ totals, colors }) => {
     });
 
   return (
-    <Stack direction="row" alignItems="center" gap={1} sx={{ minWidth: 0 }}>
-      <Typography
+    <Stack
+      direction="row"
+      alignItems="center"
+      gap={1}
+      sx={{ minWidth: 0, width: "100%" }}
+    >
+      {!hideLabel && (
+        <Typography
+          sx={{
+            typography: "s3",
+            color: "text.secondary",
+            textTransform: "uppercase",
+            letterSpacing: "0.04em",
+          }}
+        >
+          Talk ratio
+        </Typography>
+      )}
+      <Stack
+        direction="row"
+        gap={1.25}
         sx={{
-          fontSize: 10,
-          fontWeight: 600,
-          color: "text.secondary",
-          textTransform: "uppercase",
-          letterSpacing: "0.04em",
+          flexWrap: "wrap",
+          ...(legendAlign === "right" ? { ml: "auto" } : {}),
         }}
       >
-        Talk ratio
-      </Typography>
-      <Stack direction="row" gap={1.25} sx={{ flexWrap: "wrap" }}>
-        {segments.map(([role, val]) => (
-          <Stack key={role} direction="row" alignItems="center" gap={0.5}>
-            <Box
-              sx={{
-                width: 8,
-                height: 8,
-                borderRadius: "2px",
-                bgcolor: colors[role] || colors.unknown,
-              }}
-            />
-            <Typography
-              sx={{
-                fontSize: 10,
-                color: "text.secondary",
-                textTransform: "capitalize",
-              }}
-            >
-              {role} {Math.round((val / total) * 100)}%
-            </Typography>
-          </Stack>
-        ))}
+        {segments.map(([role, val]) => {
+          const label = roleLabels?.[role] || role;
+          const legendText = hidePercentages
+            ? label
+            : `${label} ${Math.round((val / total) * 100)}%`;
+          return (
+            <Stack key={role} direction="row" alignItems="center" gap={0.5}>
+              <Box
+                sx={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: "2px",
+                  bgcolor: colors[role] || colors.unknown,
+                }}
+              />
+              <Typography
+                sx={{
+                  fontSize: 10,
+                  color: "text.secondary",
+                  textTransform: "capitalize",
+                }}
+              >
+                {legendText}
+              </Typography>
+            </Stack>
+          );
+        })}
       </Stack>
     </Stack>
   );
@@ -140,6 +168,10 @@ const TalkRatioBar = ({ totals, colors }) => {
 TalkRatioBar.propTypes = {
   totals: PropTypes.object.isRequired,
   colors: PropTypes.object.isRequired,
+  hideLabel: PropTypes.bool,
+  hidePercentages: PropTypes.bool,
+  legendAlign: PropTypes.oneOf(["left", "right"]),
+  roleLabels: PropTypes.object,
 };
 
 const SpeakerTimelineStrip = ({
@@ -335,8 +367,18 @@ const TurnRow = React.forwardRef(
                   alignItems: "center",
                   gap: "2px",
                   px: 0.5,
-                  bgcolor: "error.lighter",
-                  color: "error.dark",
+                  // Theme-aware so the chip stays legible on both dark
+                  // and light backgrounds — same `lighter`/`darker` ↔
+                  // `darker`/`main` swap we use for diff highlights and
+                  // the KPI delta chips elsewhere in this drawer.
+                  bgcolor: (theme) =>
+                    theme.palette.mode === "dark"
+                      ? theme.palette.error.darker
+                      : theme.palette.error.lighter,
+                  color: (theme) =>
+                    theme.palette.mode === "dark"
+                      ? theme.palette.error.main
+                      : theme.palette.error.darker,
                   borderRadius: "2px",
                   fontSize: 9,
                   fontWeight: 600,
@@ -488,7 +530,30 @@ const FILTERS = [
   { id: "user", label: "Customer" },
 ];
 
-const TranscriptView = ({ transcript, onAnnotate }) => {
+const TranscriptView = ({
+  transcript,
+  onAnnotate,
+  embedded = false,
+  // Header-row customization hooks used by the chat drawer to repurpose
+  // the voice TalkRatioBar as a compact speaker legend:
+  //   - hideTimelineStrip: drop the orange/white bar below the TALK RATIO
+  //     row (chat doesn't have a speaker timeline derived from audio).
+  //   - hideTalkRatioPercentages: render only colored-dot + role label
+  //     (no percentage text) — keeps the row reading as a legend, not
+  //     a stats row.
+  //   - talkRatioLegendAlign: "right" pushes the legend chips to the end
+  //     of the row so TALK RATIO sits left-aligned with the legend on
+  //     the opposite side.
+  hideTimelineStrip = false,
+  hideTalkRatioLabel = false,
+  hideTalkRatioPercentages = false,
+  talkRatioLegendAlign = "left",
+  // "Silence" is a voice concept (dead air between speaker turns). For
+  // chat transcripts the gap between messages is just response latency,
+  // not silence — so the chat drawer passes true here to suppress the
+  // inline silence dividers.
+  hideSilenceMarkers = false,
+}) => {
   const colors = useSpeakerColors();
 
   const seekTo = useVoiceAudioStore((s) => s.seekTo);
@@ -566,23 +631,50 @@ const TranscriptView = ({ transcript, onAnnotate }) => {
     return () => document.removeEventListener("keydown", onKey);
   }, [filteredTurns.length]);
 
-  // Scroll focused row into view (j/k nav overrides autoScroll — it's an
-  // explicit navigation action)
+  // Scrolls a row into view *inside the list container only* using
+  // `listRef.scrollTo` — never `scrollIntoView`, which walks up scrollable
+  // ancestors and pulls the host page along when embedded.
   const rowRefs = useRef([]);
   const listRef = useRef(null);
+  const scrollRowIntoView = useCallback(
+    ({ idx, block = "center", behavior = "smooth" }) => {
+      const rowEl = rowRefs.current[idx];
+      if (!rowEl) return;
+      // Drawer keeps the original scrollIntoView behavior. Embedded mode
+      // scopes the scroll to the list container so it can never walk up
+      // and pull the host page along with it.
+      if (!embedded) {
+        rowEl.scrollIntoView({ block, behavior });
+        return;
+      }
+      const listEl = listRef.current;
+      if (!listEl) return;
+      const rowRect = rowEl.getBoundingClientRect();
+      const listRect = listEl.getBoundingClientRect();
+      const rowTop = rowRect.top - listRect.top + listEl.scrollTop;
+      const rowBottom = rowTop + rowRect.height;
+      const viewTop = listEl.scrollTop;
+      const viewBottom = viewTop + listEl.clientHeight;
+      let target;
+      if (block === "nearest") {
+        if (rowTop >= viewTop && rowBottom <= viewBottom) return;
+        target = rowTop < viewTop ? rowTop : rowBottom - listEl.clientHeight;
+      } else {
+        target = rowTop - listEl.clientHeight / 2 + rowRect.height / 2;
+      }
+      listEl.scrollTo({ top: Math.max(0, target), behavior });
+    },
+    [embedded],
+  );
+
+  // j/k nav — overrides autoScroll (explicit user action)
   useEffect(() => {
     if (focusIdx >= 0) {
-      rowRefs.current[focusIdx]?.scrollIntoView({
-        block: "nearest",
-        behavior: "smooth",
-      });
+      scrollRowIntoView({ idx: focusIdx, block: "nearest" });
     }
-  }, [focusIdx]);
+  }, [focusIdx, scrollRowIntoView]);
 
-  // Auto-scroll to playing row — debounced so that rapid playingIdx churn
-  // (e.g. the currentTime poller nudging by fractions of a second) does not
-  // trigger a scrollIntoView on every frame. We only actually scroll once
-  // the value has been stable for ~250ms, which matches how a human reads.
+  // Playback follow — debounced 250ms against currentTime poller churn.
   const lastScrolledIdxRef = useRef(-1);
   useEffect(() => {
     if (!autoScroll) return;
@@ -591,23 +683,18 @@ const TranscriptView = ({ transcript, onAnnotate }) => {
     const handle = setTimeout(() => {
       if (lastScrolledIdxRef.current === playingIdx) return;
       lastScrolledIdxRef.current = playingIdx;
-      rowRefs.current[playingIdx]?.scrollIntoView({
-        block: "center",
-        behavior: "smooth",
-      });
+      scrollRowIntoView({ idx: playingIdx, block: "center" });
     }, 250);
     return () => clearTimeout(handle);
-  }, [playingIdx, autoScroll]);
+  }, [playingIdx, autoScroll, scrollRowIntoView]);
 
-  // When the transcript source changes (user jumped to a different
-  // recording), move the view to wherever the audio is now — but only if
-  // autoScroll is still active. If the user had already disabled autoScroll
-  // on the previous call, preserve that preference across the jump.
+  // Transcript source changed — jump within the list to the current row.
   useEffect(() => {
     lastScrolledIdxRef.current = -1;
     if (!autoScroll) return;
     if (playingIdx >= 0) {
-      rowRefs.current[playingIdx]?.scrollIntoView({
+      scrollRowIntoView({
+        idx: playingIdx,
         block: "center",
         behavior: "auto",
       });
@@ -615,14 +702,11 @@ const TranscriptView = ({ transcript, onAnnotate }) => {
     } else {
       listRef.current?.scrollTo?.({ top: 0, behavior: "auto" });
     }
-    // Intentionally depending on `transcript` identity, not playingIdx, so
-    // this fires exactly once per new call.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [transcript]);
 
-  // Detect user-initiated scroll intent. Using wheel/touch/keydown (rather
-  // than the scroll event) lets us distinguish manual scrolling from the
-  // programmatic scrollIntoView calls above without fragile flag passing.
+  // wheel/touch/keydown lets us distinguish manual scroll from the
+  // programmatic scrollRowIntoView calls above.
   const handleUserScrollIntent = useCallback(() => {
     setAutoScroll(false);
   }, []);
@@ -656,12 +740,9 @@ const TranscriptView = ({ transcript, onAnnotate }) => {
   const handleResumeFollow = useCallback(() => {
     setAutoScroll(true);
     if (playingIdx >= 0) {
-      rowRefs.current[playingIdx]?.scrollIntoView({
-        block: "center",
-        behavior: "smooth",
-      });
+      scrollRowIntoView({ idx: playingIdx, block: "center" });
     }
-  }, [playingIdx]);
+  }, [playingIdx, scrollRowIntoView]);
 
   const handleCopyTurn = useCallback((turn) => {
     const text = `[${formatClock(turn.start)}] ${turn.rawRole || turn.role}: ${turn.content}`;
@@ -689,16 +770,26 @@ const TranscriptView = ({ transcript, onAnnotate }) => {
         flexDirection: "column",
       }}
     >
-      {/* Header: talk ratio + timeline strip — flat, no wrapper border */}
+      {/* Header: talk ratio + timeline strip — flat, no wrapper border.
+          Chat drawer hides the timeline strip (no audio-backed speaker
+          timeline) and uses the talk-ratio row as a compact legend. */}
       <Stack gap={0.75} sx={{ flexShrink: 0 }}>
-        <TalkRatioBar totals={totals} colors={colors} />
-        <SpeakerTimelineStrip
-          turns={turns}
+        <TalkRatioBar
+          totals={totals}
           colors={colors}
-          duration={duration}
-          currentTime={currentTime}
-          onSeek={handleSeek}
+          hideLabel={hideTalkRatioLabel}
+          hidePercentages={hideTalkRatioPercentages}
+          legendAlign={talkRatioLegendAlign}
         />
+        <ShowComponent condition={!hideTimelineStrip}>
+          <SpeakerTimelineStrip
+            turns={turns}
+            colors={colors}
+            duration={duration}
+            currentTime={currentTime}
+            onSeek={handleSeek}
+          />
+        </ShowComponent>
       </Stack>
 
       {/* Toolbar: search + filter pills */}
@@ -830,9 +921,11 @@ const TranscriptView = ({ transcript, onAnnotate }) => {
         ) : (
           filteredTurns.map((turn, i) => (
             <React.Fragment key={turn.id}>
-              {turn.silenceBefore != null && turn.silenceBefore > 0.3 && (
-                <SilenceGap seconds={turn.silenceBefore} />
-              )}
+              {!hideSilenceMarkers &&
+                turn.silenceBefore != null &&
+                turn.silenceBefore > 0.3 && (
+                  <SilenceGap seconds={turn.silenceBefore} />
+                )}
               <MemoTurnRow
                 ref={(el) => (rowRefs.current[i] = el)}
                 turn={turn}
@@ -896,6 +989,12 @@ const TranscriptView = ({ transcript, onAnnotate }) => {
 TranscriptView.propTypes = {
   transcript: PropTypes.array,
   onAnnotate: PropTypes.func,
+  hideTimelineStrip: PropTypes.bool,
+  hideTalkRatioLabel: PropTypes.bool,
+  hideTalkRatioPercentages: PropTypes.bool,
+  talkRatioLegendAlign: PropTypes.oneOf(["left", "right"]),
+  hideSilenceMarkers: PropTypes.bool,
+  embedded: PropTypes.bool,
 };
 
 export default TranscriptView;

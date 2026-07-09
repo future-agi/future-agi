@@ -187,11 +187,17 @@ class RunTestSerializer(serializers.ModelSerializer):
                             **snapshot,
                             "agent_type": instance.agent_definition.agent_type,
                         }
-                    data["agent_version"] = {
+                    agent_version_data = {
                         "id": instance.agent_version.id,
                         "name": instance.agent_version.version_name,
                         "configuration_snapshot": snapshot,
                     }
+                    try:
+                        creds = instance.agent_version.credentials
+                        agent_version_data["api_key"] = creds.get_masked_api_key()
+                    except Exception:
+                        pass
+                    data["agent_version"] = agent_version_data
                 else:
                     # Try to use prefetched versions first to avoid N+1.
                     # _prefetched_versions is set by RunTestListView.get() using:
@@ -215,11 +221,17 @@ class RunTestSerializer(serializers.ModelSerializer):
                                 **snapshot,
                                 "agent_type": instance.agent_definition.agent_type,
                             }
-                        data["agent_version"] = {
+                        agent_version_data = {
                             "id": latest_version.id,
                             "name": latest_version.version_name,
                             "configuration_snapshot": snapshot,
                         }
+                        try:
+                            creds = latest_version.credentials
+                            agent_version_data["api_key"] = creds.get_masked_api_key()
+                        except Exception:
+                            pass
+                        data["agent_version"] = agent_version_data
         except Exception as e:
             logger.exception(
                 f"Error getting agent version: {e} for run test {instance.id}"

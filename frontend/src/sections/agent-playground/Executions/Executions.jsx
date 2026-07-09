@@ -24,8 +24,8 @@ export default function Executions() {
         (page.data?.result?.executions ?? []).map((e) => ({
           id: e.id,
           status: e.status?.toLowerCase(),
-          startedAt: e.startedAt,
-          completedAt: e.completedAt,
+          startedAt: e.started_at,
+          completedAt: e.completed_at,
         })),
       ),
     [data],
@@ -65,7 +65,7 @@ export default function Executions() {
         <Typography typography="m3" color="text.disabled">
           No executions yet
         </Typography>
-        <Typography typography="s2" color="text.disabled">
+        <Typography typography="s2" color="text.secondary">
           Run your workflow from the Agent Builder to see results here
         </Typography>
       </Box>

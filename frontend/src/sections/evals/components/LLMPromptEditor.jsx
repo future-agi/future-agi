@@ -5,21 +5,40 @@ import {
   CircularProgress,
   IconButton,
   InputBase,
-  Tooltip,
+  MenuItem,
+  Popover,
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useCallback, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
 import SvgColor from "src/components/svg-color";
+import { ShowComponent } from "src/components/show";
 import axios, { endpoints } from "src/utils/axios";
 import MessageEditor from "./MessageEditor";
+
+const TEMPLATE_FORMATS = [
+  {
+    value: "mustache",
+    label: "Mustache",
+    icon: "{{x}}",
+    description: "{{variable}}",
+  },
+  {
+    value: "jinja",
+    label: "Jinja",
+    icon: "{% %}",
+    description: "{{ variable }}, {% if %}",
+  },
+];
 
 /**
  * LLM-As-A-Judge prompt editor with Falcon AI.
  *
- * Wraps MessageEditor with an AI bar that generates
- * or improves the full message chain (system + user + assistant).
+ * Wraps MessageEditor with an AI bar that generates or improves the full
+ * message chain (system + user + assistant). The header (label + template
+ * format) and the single bordered editor box mirror the agent
+ * InstructionEditor so both eval editors look visually identical.
  */
 const LLMPromptEditor = ({
   messages,
@@ -30,8 +49,6 @@ const LLMPromptEditor = ({
   datasetJsonSchemas = {},
   disabled = false,
   modelSelectorDisabled,
-  // Optional model selector — forwarded to MessageEditor's top bar so
-  // the model picker and template format picker share the same row.
   model,
   onModelChange,
 }) => {
@@ -40,6 +57,7 @@ const LLMPromptEditor = ({
   const [aiLoading, setAiLoading] = useState(false);
   const [hasResult, setHasResult] = useState(false);
   const [originalMessages, setOriginalMessages] = useState(null);
+  const [formatAnchor, setFormatAnchor] = useState(null);
   const followUpRef = useRef(null);
 
   const callAI = useCallback(
@@ -61,37 +79,18 @@ const LLMPromptEditor = ({
           description,
           output_format: "messages",
         });
-        const prompt = data?.result?.prompt;
-        if (!prompt) return null;
+        // Backend parses + validates the messages array for us now.
+        const msgs = data?.result?.messages;
+        if (!Array.isArray(msgs) || msgs.length === 0) return null;
 
-        // Backend returns a JSON string for messages format — parse it.
-        try {
-          let parsed = prompt;
-          if (typeof parsed === "string") {
-            let text = parsed.trim();
-            if (text.startsWith("```")) {
-              text = text.split("\n").slice(1).join("\n");
-              if (text.endsWith("```")) text = text.slice(0, -3);
-              text = text.trim();
-            }
-            parsed = JSON.parse(text);
-          }
-          if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].role) {
-            // Filter out assistant messages — those come from the actual eval, not the template
-            return parsed
-              .filter((m) => m.role !== "assistant")
-              .map((m) => ({
-                role: m.role || "system",
-                content: m.content || "",
-              }));
-          }
-        } catch (err) {
-          // eslint-disable-next-line no-console
-          console.warn("LLM-as-a-Judge AI: failed to parse JSON", err?.message);
-        }
-
-        // Fallback: keep the raw text as a system message so the user sees SOMETHING
-        return [{ role: "system", content: prompt }];
+        // Drop assistant messages — those come from the actual eval at run
+        // time, not the template.
+        return msgs
+          .filter((m) => m.role !== "assistant")
+          .map((m) => ({
+            role: m.role || "system",
+            content: m.content || "",
+          }));
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn("LLM-as-a-Judge AI: request failed", err?.message);
@@ -145,216 +144,288 @@ const LLMPromptEditor = ({
     setAiPrompt("");
   }, [hasResult, originalMessages, onMessagesChange]);
 
-  return (
-    <Box>
-      {/* ── Falcon AI bar ── */}
-      {aiOpen && (
-        <Box
-          sx={{
-            mb: 1,
-            borderRadius: "8px",
-            border: "1px solid",
-            borderColor: "divider",
-            backgroundColor: (theme) =>
-              theme.palette.mode === "dark" ? "#1a1a2e" : "#fafafe",
-          }}
-        >
-          {/* Row 1: Prompt + Reject/Accept */}
-          <Box sx={{ display: "flex", alignItems: "center", px: 1.5, py: 1 }}>
-            {aiLoading ? (
-              <Box
-                sx={{ display: "flex", alignItems: "center", gap: 1, flex: 1 }}
-              >
-                <CircularProgress size={14} />
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ fontSize: "13px" }}
-                >
-                  Generating messages...
-                </Typography>
-              </Box>
-            ) : !hasResult ? (
-              <>
-                <SvgColor
-                  src="/assets/icons/navbar/ic_falcon_ai.svg"
-                  sx={{
-                    width: 16,
-                    height: 16,
-                    color: "primary.main",
-                    mr: 1,
-                    flexShrink: 0,
-                  }}
-                />
-                <InputBase
-                  autoFocus
-                  fullWidth
-                  placeholder="Describe your eval — e.g. 'judge if chatbot responses are helpful and accurate'"
-                  value={aiPrompt}
-                  onChange={(e) => setAiPrompt(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      handleSubmit(aiPrompt);
-                    }
-                    if (e.key === "Escape") handleClose();
-                  }}
-                  sx={{ fontSize: "13px" }}
-                />
-                <IconButton
-                  size="small"
-                  onClick={() => handleSubmit(aiPrompt)}
-                  disabled={!aiPrompt.trim()}
-                  sx={{ p: 0.5 }}
-                >
-                  <Iconify
-                    icon="mdi:arrow-up-circle"
-                    width={20}
-                    sx={{
-                      color: aiPrompt.trim() ? "primary.main" : "text.disabled",
-                    }}
-                  />
-                </IconButton>
-              </>
-            ) : (
-              <Typography
-                variant="body2"
-                sx={{
-                  flex: 1,
-                  fontSize: "13px",
-                  color: "text.secondary",
-                  fontStyle: "italic",
-                }}
-              >
-                {aiPrompt}
-              </Typography>
-            )}
+  const currentFormat =
+    TEMPLATE_FORMATS.find((f) => f.value === templateFormat) ||
+    TEMPLATE_FORMATS[0];
 
-            <Box
+  // Falcon AI bar — rendered at the top of MessageEditor's bordered box
+  // (when open), matching the agent InstructionEditor's inline AI bar.
+  const aiBar = (
+    <Box
+      sx={{
+        borderBottom: "1px solid",
+        borderColor: "divider",
+        borderRadius: "8px 8px 0 0",
+        backgroundColor: "background.aiSurface",
+      }}
+    >
+      {/* Row 1: Prompt + Reject/Accept */}
+      <Box sx={{ display: "flex", alignItems: "center", px: 1.5, py: 1 }}>
+        {aiLoading ? (
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1, flex: 1 }}>
+            <CircularProgress size={14} />
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              sx={{ fontSize: "13px" }}
+            >
+              Generating messages...
+            </Typography>
+          </Box>
+        ) : !hasResult ? (
+          <>
+            <SvgColor
+              src="/assets/icons/navbar/ic_falcon_ai.svg"
               sx={{
-                display: "flex",
-                alignItems: "center",
-                gap: 0.5,
-                ml: 1,
+                width: 16,
+                height: 16,
+                color: "primary.main",
+                mr: 1,
                 flexShrink: 0,
               }}
+            />
+            <InputBase
+              autoFocus
+              fullWidth
+              placeholder="Describe your eval — e.g. 'judge if chatbot responses are helpful and accurate'"
+              value={aiPrompt}
+              onChange={(e) => setAiPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit(aiPrompt);
+                }
+                if (e.key === "Escape") handleClose();
+              }}
+              sx={{ fontSize: "13px" }}
+            />
+            <IconButton
+              size="small"
+              onClick={() => handleSubmit(aiPrompt)}
+              disabled={!aiPrompt.trim()}
+              sx={{ p: 0.5 }}
             >
-              {hasResult && (
-                <>
-                  <Button
-                    size="small"
-                    onClick={handleReject}
-                    sx={{
-                      textTransform: "none",
-                      fontSize: "12px",
-                      color: "text.secondary",
-                      minWidth: 0,
-                      px: 1,
-                    }}
-                  >
-                    Reject
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    onClick={handleAccept}
-                    sx={{
-                      textTransform: "none",
-                      fontSize: "12px",
-                      minWidth: 0,
-                      px: 1.5,
-                      fontWeight: 600,
-                    }}
-                  >
-                    Accept
-                  </Button>
-                </>
-              )}
-              <IconButton size="small" onClick={handleClose} sx={{ p: 0.25 }}>
-                <Iconify
-                  icon="mdi:close"
-                  width={16}
-                  sx={{ color: "text.disabled" }}
-                />
-              </IconButton>
-            </Box>
-          </Box>
-
-          {/* Row 2: Follow-up */}
-          {hasResult && (
-            <Box sx={{ px: 1.5, pb: 1, pt: 0.5 }}>
-              <InputBase
-                inputRef={followUpRef}
-                fullWidth
-                placeholder="Add a follow-up — e.g. 'add a user message with variable mapping'"
-                onKeyDown={(e) => {
-                  if (
-                    e.key === "Enter" &&
-                    !e.shiftKey &&
-                    e.target.value.trim()
-                  ) {
-                    e.preventDefault();
-                    handleSubmit(e.target.value);
-                    e.target.value = "";
-                  }
-                  if (e.key === "Escape") handleClose();
-                }}
+              <Iconify
+                icon="mdi:arrow-up-circle"
+                width={20}
                 sx={{
-                  fontSize: "13px",
-                  borderTop: "1px solid",
-                  borderColor: "divider",
-                  pt: 0.75,
+                  color: aiPrompt.trim() ? "primary.main" : "text.disabled",
                 }}
               />
-            </Box>
-          )}
-        </Box>
-      )}
+            </IconButton>
+          </>
+        ) : (
+          <Typography
+            variant="body2"
+            sx={{
+              flex: 1,
+              fontSize: "13px",
+              color: "text.secondary",
+              fontStyle: "italic",
+            }}
+          >
+            {aiPrompt}
+          </Typography>
+        )}
 
-      {/* ── Label + Falcon icon ── */}
-      {!aiOpen && (
         <Box
           sx={{
             display: "flex",
             alignItems: "center",
-            justifyContent: "space-between",
-            mb: 0.5,
+            gap: 0.5,
+            ml: 1,
+            flexShrink: 0,
           }}
         >
-          <Typography variant="body2" fontWeight={600}>
-            Prompt Messages<span style={{ color: "#d32f2f" }}>*</span>
-          </Typography>
-          <Tooltip title="Generate with Falcon AI" arrow placement="top">
-            <IconButton
-              size="small"
-              onClick={() => setAiOpen(true)}
-              disabled={disabled}
-              sx={{
-                width: 28,
-                height: 28,
-                "&:hover": { backgroundColor: "rgba(124,77,255,0.08)" },
-              }}
-            >
-              <SvgColor
-                src="/assets/icons/navbar/ic_falcon_ai.svg"
-                sx={{ width: 18, height: 18, color: "primary.main" }}
-              />
-            </IconButton>
-          </Tooltip>
+          {hasResult && (
+            <>
+              <Button
+                size="small"
+                onClick={handleReject}
+                sx={{
+                  textTransform: "none",
+                  fontSize: "12px",
+                  color: "text.secondary",
+                  minWidth: 0,
+                  px: 1,
+                }}
+              >
+                Reject
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={handleAccept}
+                sx={{
+                  textTransform: "none",
+                  fontSize: "12px",
+                  minWidth: 0,
+                  px: 1.5,
+                  fontWeight: 600,
+                }}
+              >
+                Accept
+              </Button>
+            </>
+          )}
+          <IconButton size="small" onClick={handleClose} sx={{ p: 0.25 }}>
+            <Iconify
+              icon="mdi:close"
+              width={16}
+              sx={{ color: "text.disabled" }}
+            />
+          </IconButton>
+        </Box>
+      </Box>
+
+      {/* Row 2: Follow-up */}
+      {hasResult && (
+        <Box sx={{ px: 1.5, pb: 1, pt: 0.5 }}>
+          <InputBase
+            inputRef={followUpRef}
+            fullWidth
+            placeholder="Add a follow-up — e.g. 'add a user message with variable mapping'"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey && e.target.value.trim()) {
+                e.preventDefault();
+                handleSubmit(e.target.value);
+                e.target.value = "";
+              }
+              if (e.key === "Escape") handleClose();
+            }}
+            sx={{
+              fontSize: "13px",
+              borderTop: "1px solid",
+              borderColor: "divider",
+              pt: 0.75,
+            }}
+          />
         </Box>
       )}
+    </Box>
+  );
+
+  return (
+    <Box>
+      {/* ── Header row: label (left) + template format (right) — matches
+          the agent InstructionEditor header. ── */}
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          mb: 0.5,
+        }}
+      >
+        <Typography typography="s1" fontWeight={600}>
+          Prompt Messages
+          <Box component="span" sx={{ color: "error.main" }}>
+            *
+          </Box>
+        </Typography>
+
+        <ShowComponent condition={Boolean(onTemplateFormatChange)}>
+          <Box
+            onClick={(e) => !disabled && setFormatAnchor(e.currentTarget)}
+            sx={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 0.75,
+              px: 1.25,
+              py: 0.35,
+              border: "1px solid",
+              borderColor: "divider",
+              borderRadius: "6px",
+              cursor: disabled ? "default" : "pointer",
+              "&:hover": disabled ? {} : { borderColor: "text.secondary" },
+            }}
+          >
+            <Typography
+              typography="s2"
+              sx={{
+                fontWeight: 600,
+                fontFamily: "monospace",
+                color: "text.secondary",
+              }}
+            >
+              {currentFormat.icon}
+            </Typography>
+            <Typography typography="s2">{currentFormat.label}</Typography>
+            <Iconify
+              icon={formatAnchor ? "mdi:chevron-up" : "mdi:chevron-down"}
+              width={14}
+              sx={{ color: "text.disabled" }}
+            />
+          </Box>
+          <Popover
+            open={Boolean(formatAnchor)}
+            anchorEl={formatAnchor}
+            onClose={() => setFormatAnchor(null)}
+            anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+            transformOrigin={{ vertical: "top", horizontal: "right" }}
+            slotProps={{
+              paper: { sx: { borderRadius: "8px", p: 0.5, minWidth: 220 } },
+            }}
+          >
+            {TEMPLATE_FORMATS.map((fmt) => (
+              <MenuItem
+                key={fmt.value}
+                selected={templateFormat === fmt.value}
+                onClick={() => {
+                  onTemplateFormatChange(fmt.value);
+                  setFormatAnchor(null);
+                }}
+                sx={{ borderRadius: "6px", py: 1, gap: 1.5 }}
+              >
+                <Typography
+                  sx={{
+                    fontSize: "14px",
+                    fontWeight: 700,
+                    fontFamily: "monospace",
+                    width: 40,
+                    textAlign: "center",
+                    color:
+                      templateFormat === fmt.value
+                        ? "primary.main"
+                        : "text.secondary",
+                  }}
+                >
+                  {fmt.icon}
+                </Typography>
+                <Box>
+                  <Typography
+                    variant="body2"
+                    sx={{ fontSize: "13px", fontWeight: 600 }}
+                  >
+                    {fmt.label}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontSize: "11px" }}
+                  >
+                    {fmt.description}
+                  </Typography>
+                </Box>
+              </MenuItem>
+            ))}
+          </Popover>
+        </ShowComponent>
+      </Box>
 
       <MessageEditor
         messages={messages}
         onChange={onMessagesChange}
         templateFormat={templateFormat}
-        onTemplateFormatChange={onTemplateFormatChange}
         model={model}
         onModelChange={onModelChange}
         datasetColumns={datasetColumns}
         datasetJsonSchemas={datasetJsonSchemas}
         disabled={disabled}
         modelSelectorDisabled={modelSelectorDisabled}
+        aiBar={aiOpen ? aiBar : null}
+        onFalconClick={() => setAiOpen(true)}
+        aiOpen={aiOpen}
       />
     </Box>
   );
