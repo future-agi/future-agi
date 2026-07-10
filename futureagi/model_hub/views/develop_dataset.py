@@ -6918,7 +6918,8 @@ class GetEvalsListView(APIView):
         # correct behaviour at request time.
 
         if search_text:
-            eval_templates = eval_templates.filter(name__icontains=search_text)
+            from model_hub.utils.eval_list import normalize_search_for_name
+            eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
 
         if validated_data.get("eval_tags"):
             eval_templates = eval_templates.filter(
@@ -7047,7 +7048,8 @@ class GetEvalsListView(APIView):
             )
 
         if search_text:
-            user_evals = user_evals.filter(name__icontains=search_text)
+            from model_hub.utils.eval_list import normalize_search_for_name
+            user_evals = user_evals.filter(normalize_search_for_name(search_text))
 
         if validated_data.get("eval_tags"):
             user_evals = user_evals.filter(
@@ -7098,7 +7100,7 @@ class GetEvalsListView(APIView):
         )
 
         if search_text:
-            eval_templates = eval_templates.filter(Q(name__icontains=search_text))
+            eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
 
         if validated_data.get("eval_tags"):
             eval_templates = eval_templates.filter(
@@ -7157,7 +7159,8 @@ class GetEvalsListView(APIView):
             organization=organization, deleted=False, visible_ui=True
         )
         if search_text:
-            eval_templates = eval_templates.filter(Q(name__icontains=search_text))
+            from model_hub.utils.eval_list import normalize_search_for_name
+            eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
 
         if validated_data.get("eval_tags"):
             eval_templates = eval_templates.filter(
@@ -14563,7 +14566,8 @@ class GetCompareEvalsListView(APIView):
         ).select_related("template")
 
         if search_text:
-            user_evals = user_evals.filter(name__icontains=search_text)
+            from model_hub.utils.eval_list import normalize_search_for_name
+            user_evals = user_evals.filter(normalize_search_for_name(search_text))
 
         # Count occurrences of eval names across datasets
         eval_name_count = defaultdict(int)

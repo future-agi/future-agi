@@ -101,4 +101,74 @@ describe("PrimaryGraph", () => {
       }),
     );
   });
+
+  const statusFilter = {
+    column_id: "status",
+    filter_config: {
+      col_type: "NORMAL",
+      filter_type: "text",
+      filter_op: "equals",
+      filter_value: "SUCCESS",
+    },
+  };
+
+  const metricFilter = {
+    id: "fe-react-key",
+    column_id: "latency",
+    filter_config: {
+      col_type: "SYSTEM_METRIC",
+      filter_type: "number",
+      filter_op: "greater_than",
+      filter_value: 2,
+    },
+  };
+
+  const postedFilters = () => axios.post.mock.calls.at(-1)[1].filters;
+
+  it("keeps non-date filters when extraFilters is omitted (users/sessions)", async () => {
+    // Regression guard for the round-1 review bug: UsersView and
+    // SessionsView render PrimaryGraph WITHOUT extraFilters, and their
+    // graph must receive the same chip filters as their table.
+    renderWithQueryClient(
+      <PrimaryGraph
+        observeIdOverride="project-override"
+        filters={[statusFilter]}
+      />,
+    );
+
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+
+    expect(postedFilters()).toEqual([statusFilter]);
+  });
+
+  it("strips col-level filters when extraFilters is passed, even empty (trace/span)", async () => {
+    // Regression guard for the round-2 review bug: the mode gate must be
+    // prop PRESENCE — an empty toolbar filter list is still trace mode.
+    renderWithQueryClient(
+      <PrimaryGraph
+        observeIdOverride="project-override"
+        filters={[statusFilter]}
+        extraFilters={[]}
+      />,
+    );
+
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+
+    expect(postedFilters()).toEqual([]);
+  });
+
+  it("forwards toolbar extraFilters and strips the FE-only id (trace/span)", async () => {
+    renderWithQueryClient(
+      <PrimaryGraph
+        observeIdOverride="project-override"
+        filters={[statusFilter]}
+        extraFilters={[metricFilter]}
+      />,
+    );
+
+    await waitFor(() => expect(axios.post).toHaveBeenCalled());
+
+    const { id: _id, ...metricFilterWithoutId } = metricFilter;
+    expect(postedFilters()).toEqual([metricFilterWithoutId]);
+  });
 });

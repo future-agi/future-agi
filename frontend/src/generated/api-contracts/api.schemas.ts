@@ -19923,6 +19923,13 @@ export interface ObserveGraphDataResponseApi {
   result: ObserveGraphDataResultApi;
 }
 
+export type RootSpansResponseApiResult = {[key: string]: string};
+
+export interface RootSpansResponseApi {
+  status?: boolean;
+  result: RootSpansResponseApiResult;
+}
+
 export type ProjectVersionApiMetadata = { [key: string]: unknown };
 
 export type ProjectVersionApiError = { [key: string]: unknown };
@@ -21065,6 +21072,66 @@ export interface TraceApi {
   /** @maxLength 255 */
   external_id?: string;
   tags?: TraceApiTags;
+}
+
+export interface TraceObserveListMetadataApi {
+  total_rows: number;
+}
+
+/**
+ * Any valid JSON value.
+ */
+export type TraceObserveColumnConfigApiSettings = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type TraceObserveColumnConfigApiChoicesMap = { [key: string]: unknown };
+
+/**
+ * Any valid JSON value.
+ */
+export type TraceObserveColumnConfigApiAnnotators = { [key: string]: unknown };
+
+export interface TraceObserveColumnConfigApi {
+  /** @minLength 1 */
+  id: string;
+  /** @minLength 1 */
+  name: string;
+  is_visible: boolean;
+  /** @minLength 1 */
+  group_by?: string;
+  /** @minLength 1 */
+  output_type?: string;
+  reverse_output?: boolean;
+  /** @minLength 1 */
+  annotation_label_type?: string;
+  choices?: string[];
+  /** Any valid JSON value. */
+  settings?: TraceObserveColumnConfigApiSettings;
+  /** Any valid JSON value. */
+  choices_map?: TraceObserveColumnConfigApiChoicesMap;
+  /** @minLength 1 */
+  eval_template_id?: string;
+  /** Any valid JSON value. */
+  annotators?: TraceObserveColumnConfigApiAnnotators;
+  /** @minLength 1 */
+  source_field?: string;
+  /** @minLength 1 */
+  parent_eval_id?: string;
+}
+
+export type TraceObserveListResultApiTableItem = {[key: string]: { [key: string]: unknown }};
+
+export interface TraceObserveListResultApi {
+  metadata: TraceObserveListMetadataApi;
+  table: TraceObserveListResultApiTableItem[];
+  config: TraceObserveColumnConfigApi[];
+}
+
+export interface TraceObserveListResponseApi {
+  status: boolean;
+  result: TraceObserveListResultApi;
 }
 
 export type TraceDetailResultApiTrace = { [key: string]: unknown };
@@ -26053,13 +26120,8 @@ page?: number;
  * Number of results to return per page.
  */
 limit?: number;
-};
-
-export type TracerObservationSpanRootSpans200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: ObservationSpanApi[];
+trace_ids: string[];
+project_ids?: string[];
 };
 
 export type TracerProjectVersionListParams = {
@@ -26596,13 +26658,6 @@ page_number?: number;
  */
 page_size?: number;
 interval?: string;
-};
-
-export type TracerTraceListTracesOfSession200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: TraceApi[];
 };
 
 export type TracerTraceListVoiceCallsParams = {

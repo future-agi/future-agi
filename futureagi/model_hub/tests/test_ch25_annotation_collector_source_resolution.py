@@ -144,10 +144,15 @@ class _ReaderCM:
             return None
         return self._span if str(span_id) == str(self._span.id) else None
 
-    def list_by_trace_ids(self, trace_ids):
-        if self._span is None:
-            return []
-        return [self._span] if str(self._span.trace_id) in set(trace_ids) else []
+    def root_ids_by_trace_ids(self, trace_ids, project_ids=None):
+        """Lean stub: ``{trace_id: (root_span_id, project_id)}``, roots only."""
+        ids = {str(t) for t in trace_ids}
+        if self._span is None or str(self._span.trace_id) not in ids:
+            return {}
+        if self._span.parent_span_id:  # roots only
+            return {}
+        pid = str(self._span.project_id) if self._span.project_id else None
+        return {str(self._span.trace_id): (str(self._span.id), pid)}
 
     def list_by_trace(self, trace_id, *, project_id=None):
         if self._span is None:
@@ -509,6 +514,70 @@ def test_allowed_root_spans_empty_input(organization):
         )
         == {}
     )
+
+
+@pytest.mark.django_db
+def test_allowed_root_spans_uses_lean_projection(organization, workspace):
+    """Root-spans gate must use the lean ``root_ids_by_trace_ids`` read, never
+    the wide ``list_by_trace_ids`` (which OOMs CH, code 241, on fat voice roots)."""
+    from unittest.mock import MagicMock
+
+    from django.db.models import Q
+
+    from tracer.views.observation_span import allowed_root_spans_for_request
+
+    project = _make_project(organization=organization, workspace=workspace)
+    trace_id = str(uuid.uuid4())
+    root_span_id = f"root-{uuid.uuid4().hex[:12]}"
+
+    fake_reader = MagicMock()
+    fake_reader.__enter__.return_value = fake_reader
+    fake_reader.__exit__.return_value = False
+    fake_reader.root_ids_by_trace_ids.return_value = {
+        trace_id: (root_span_id, str(project.id))
+    }
+    # The wide read must never be called on the root-spans path.
+    fake_reader.list_by_trace_ids.side_effect = AssertionError(
+        "root-spans must not read full span rows (OOMs shared ClickHouse)"
+    )
+
+    with mock.patch(CH_READER_PATH, return_value=fake_reader):
+        result = allowed_root_spans_for_request(
+            [trace_id], organization=organization, project_scope_q=Q()
+        )
+    fake_reader.root_ids_by_trace_ids.assert_called_once()
+    assert result == {trace_id: root_span_id}
+
+
+@pytest.mark.django_db
+def test_allowed_root_spans_forwards_project_ids(organization, workspace):
+    """``project_ids`` is passed to the reader to prune the CH scan (sort-key
+    prefix) — it must not change the fail-closed tenant result."""
+    from unittest.mock import MagicMock
+
+    from django.db.models import Q
+
+    from tracer.views.observation_span import allowed_root_spans_for_request
+
+    project = _make_project(organization=organization, workspace=workspace)
+    trace_id = str(uuid.uuid4())
+
+    fake_reader = MagicMock()
+    fake_reader.__enter__.return_value = fake_reader
+    fake_reader.__exit__.return_value = False
+    fake_reader.root_ids_by_trace_ids.return_value = {
+        trace_id: (f"root-{trace_id}", str(project.id))
+    }
+
+    with mock.patch(CH_READER_PATH, return_value=fake_reader):
+        allowed_root_spans_for_request(
+            [trace_id],
+            organization=organization,
+            project_scope_q=Q(),
+            project_ids=[str(project.id)],
+        )
+    _, kwargs = fake_reader.root_ids_by_trace_ids.call_args
+    assert kwargs.get("project_ids") == [str(project.id)]
 
 
 # ──────────────────────────── trace_session (Slice 2) ────────────────────────

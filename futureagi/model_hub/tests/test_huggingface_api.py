@@ -13,7 +13,6 @@ These tests verify the complete flow including:
 Run with: pytest model_hub/tests/test_huggingface_api.py -v
 """
 
-import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest

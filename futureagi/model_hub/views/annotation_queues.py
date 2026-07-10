@@ -4391,9 +4391,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 for src in sources
                 if src["source_type"] == "observation_span"
             ]
-            # Same N×M / OOM rationale for traces: a trace's project is a lean
-            # 2-column CH read (``project_by_trace_ids``), precomputed once so the
-            # scope branches below do an in-memory dict lookup instead of a PG
+            # Same N×M / OOM rationale for traces: a trace's project is a lean CH
+            # read of its root span (``root_ids_by_trace_ids``), precomputed once so
+            # the scope branches below do an in-memory dict lookup instead of a PG
             # ``Trace.objects`` join — the PG tracer tables are dropped.
             _ch_project_by_trace: dict[str, str | None] = {}
             _trace_source_ids = [
@@ -4408,9 +4408,12 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                     if _span_source_ids:
                         _ch_scope_by_span = _reader_bulk.scope_by_ids(_span_source_ids)
                     if _trace_source_ids:
-                        _ch_project_by_trace = _reader_bulk.project_by_trace_ids(
-                            _trace_source_ids
-                        )
+                        _ch_project_by_trace = {
+                            tid: pid
+                            for tid, (_root_id, pid) in _reader_bulk.root_ids_by_trace_ids(
+                                _trace_source_ids
+                            ).items()
+                        }
 
             for dq in missing_defaults:
                 if dq.id in seen_queues:

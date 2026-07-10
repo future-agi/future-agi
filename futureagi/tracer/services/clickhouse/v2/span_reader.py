@@ -43,6 +43,7 @@ from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
     resolved_id_expr,
 )
+from tracer.services.clickhouse.v2.query_settings import current_settings
 
 
 # Field list that the eval runner actually reads off of an ObservationSpan.
@@ -173,7 +174,8 @@ _READ_COLUMNS: tuple[str, ...] = (
     "span_events",
     "toJSONString(metadata) AS metadata",
     "toJSONString(resource_attrs) AS resource_attrs",
-    "toJSONString(attributes_extra) AS attributes_extra",
+    # attributes_extra is a plain String column (schema 013); no toJSONString wrapper.
+    "attributes_extra",
     "attrs_string",
     "attrs_number",
     "attrs_bool",
@@ -199,7 +201,7 @@ _SELECT_SQL = ", ".join(_READ_COLUMNS)
 _HEAVY_COLUMNS = {
     "span_events",
     "toJSONString(resource_attrs) AS resource_attrs",
-    "toJSONString(attributes_extra) AS attributes_extra",
+    "attributes_extra",
 }
 _LEAN_SELECT_SQL = ", ".join(
     "''" if col in _HEAVY_COLUMNS else col for col in _READ_COLUMNS
@@ -398,6 +400,7 @@ class CHSpanReader:
             password=password,
             database=database,
             send_receive_timeout=timeout_sec,
+            settings=current_settings() or None,
         )
 
     def close(self) -> None:
@@ -538,7 +541,11 @@ class CHSpanReader:
 
     # ─── All spans in a trace ────────────────────────────────────────────────
     def list_by_trace(
-        self, trace_id: str, *, project_id: str | None = None
+        self,
+        trace_id: str,
+        *,
+        include_heavy: bool = True,
+        project_id: str | None = None,
     ) -> list[CHSpan]:
         """Equivalent to ObservationSpan.objects.filter(trace=trace, deleted=False).
 
@@ -546,11 +553,16 @@ class CHSpanReader:
         logic sees spans in a deterministic chronological order. ``project_id``
         (optional) scopes the read to one tenant; omit for prior behavior.
 
+        With ``include_heavy=False`` the fat JSON columns (attributes_extra /
+        span_events / resource_attrs) come back as '' — opt out when only
+        scalar columns are needed (e.g. the lean-first eval path).
+
         ``trace_id`` sits below the primary-key prefix, so this prunes only via
         the ``idx_trace_id`` bloom — off under FINAL on CH 25.3 by default,
         leaving a full merge that OOMs on a fat (voice) trace's spans. Re-enable
         skip indexes (``trace_id`` is a stable sorting-key column, so safe).
         """
+        select = _SELECT_SQL if include_heavy else _LEAN_SELECT_SQL
         # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         where = ["trace_id = %(trace_id)s"]
         params: dict[str, Any] = {"trace_id": trace_id}
@@ -558,7 +570,7 @@ class CHSpanReader:
             where.append("project_id = %(pid)s")
             params["pid"] = str(project_id)
         rows = self._client.query(
-            f"SELECT {_SELECT_SQL} FROM spans FINAL "
+            f"SELECT {select} FROM spans FINAL "
             f"WHERE {' AND '.join(where)} "
             "ORDER BY start_time, id",
             parameters=params,
@@ -892,7 +904,7 @@ class CHSpanReader:
         ("attrs_string", "attrs_string"),
         ("attrs_number", "attrs_number"),
         ("attrs_bool", "attrs_bool"),
-        ("toJSONString(attributes_extra)", "attributes_extra"),
+        ("attributes_extra", "attributes_extra"),
         ("prompt_tokens", "prompt_tokens"),
         ("completion_tokens", "completion_tokens"),
         ("total_tokens", "total_tokens"),
@@ -1071,33 +1083,31 @@ class CHSpanReader:
             for sid, pid, tid in rows
         }
 
-    def project_by_trace_ids(self, trace_ids: list[str]) -> dict[str, str | None]:
-        """Map ``trace_id -> project_id``, reading ONLY those two columns.
-
-        The trace equivalent of :meth:`scope_by_ids`: the annotation ``for-source``
-        scope checks need each trace's project to match a default queue's scope, and
-        a single panel-open must not OOM the shared cluster on the wide JSON columns
-        (a voice root carries its whole raw log — code 241). Project is stable across
-        a trace's spans, so ``any(project_id)`` per trace answers it; ``FINAL`` +
-        ``is_deleted = 0`` mirror ``scope_by_ids`` and a two-column grouped read
-        stays well under the memory limit.
-        """
+    def root_ids_by_trace_ids(
+        self, trace_ids: list[str], project_ids: list[str] | None = None
+    ) -> dict[str, tuple[str, str | None]]:
+        """``{trace_id: (root_span_id, project_id)}`` reading only id/trace_id/
+        project_id — leaner than ``roots_by_trace_ids`` (whose lean select still
+        reads input/output), to dodge the CH OOM (code 241) on fat voice roots.
+        ``project_ids`` (optional) prunes the scan via the sort-key prefix.
+        Ordered so the first parentless span per trace wins."""
         if not trace_ids:
             return {}
-        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS (the two-arg
-        # ReplacingMergeTree drops deleted rows under FINAL; the setting re-arms the
-        # trace_id bloom that FINAL otherwise disables, so this prunes instead of
-        # full-scanning). GROUP BY (trace_id, project_id) returns the real pairs —
-        # collision-proof vs any() if two projects ever share a client-generated OTLP
-        # trace_id — and the dict keeps the first per trace (the normal 1:1).
+        where = [
+            "trace_id IN %(trace_ids)s",
+            "is_deleted = 0",
+            "(parent_span_id IS NULL OR parent_span_id = '')",
+        ]
+        params: dict[str, Any] = {"trace_ids": tuple(trace_ids)}
+        if project_ids:
+            where.append("project_id IN %(project_ids)s")
+            params["project_ids"] = tuple(project_ids)
         rows = self._client.query(
-            "SELECT toString(trace_id) AS trace_id, toString(project_id) AS project_id "
-            "FROM spans FINAL "
-            "WHERE trace_id IN %(ids)s "
-            "GROUP BY trace_id, project_id "
-            "ORDER BY trace_id, project_id",
-            parameters={"ids": tuple(trace_ids)},
-            settings=_FINAL_SKIP_INDEX_SETTINGS,
+            "SELECT id, toString(trace_id) AS trace_id, "
+            "toString(project_id) AS project_id FROM spans FINAL "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY trace_id, start_time, id",
+            parameters=params,
         ).result_rows
 
         def _norm(v: Any) -> str | None:
@@ -1107,9 +1117,11 @@ class CHSpanReader:
                 else str(v)
             )
 
-        result: dict[str, str | None] = {}
-        for tid, pid in rows:
-            result.setdefault(str(tid), _norm(pid))
+        result: dict[str, tuple[str, str | None]] = {}
+        for sid, tid, pid in rows:
+            tid = str(tid)
+            if tid not in result:  # first root per trace wins
+                result[tid] = (str(sid), _norm(pid))
         return result
 
     # ─── Aggregations across many traces ──────────────────────────────────────
@@ -2129,6 +2141,7 @@ class CHSpanReader:
         *,
         include_heavy: bool = True,
         observation_type: str | None = None,
+        project_id: str | None = None,
     ) -> dict[str, CHSpan]:
         """For each trace_id, return the root span (parent_span_id = '').
         Picks the earliest by (start_time, id) on ties. Returns a dict so
@@ -2140,12 +2153,10 @@ class CHSpanReader:
                                             deleted=False)
                 .order_by("trace_id", "start_time").distinct("trace_id")
 
-        Used by model_hub/services/bulk_selection.py for per-trace root
-        lookups + annotation_queues.py default-queue resolution.
-
         With ``include_heavy=False`` the fat JSON columns (attributes_extra /
         span_events / resource_attrs) come back as '' — opt out when only
-        id/scalar columns are needed.
+        id/scalar columns are needed. Pass ``project_id`` to prune the scan to
+        one project (avoids a full-table scan across every project's spans).
         """
         if not trace_ids:
             return {}
@@ -2156,23 +2167,23 @@ class CHSpanReader:
             "parent_span_id = ''",
         ]
         params: dict[str, Any] = {"tids": tuple(trace_ids)}
+        if project_id:
+            # Qualify with the table name: the SELECT aliases
+            # ``toString(project_id) AS project_id``, which otherwise shadows the
+            # sort-key column here and defeats primary-key partition pruning.
+            where.append("spans.project_id = %(pid)s")
+            params["pid"] = str(project_id)
         if observation_type:
             where.append("observation_type = %(otype)s")
             params["otype"] = observation_type
-        # Single CH query; ORDER BY trace_id, start_time, id; then dedupe by
-        # trace_id in Python keeping the first per trace_id (= earliest).
         rows = self._client.query(
             f"SELECT {select} FROM spans FINAL "
             f"WHERE {' AND '.join(where)} "
-            "ORDER BY trace_id, start_time, id",
+            "ORDER BY trace_id, start_time, id "
+            "LIMIT 1 BY trace_id",
             parameters=params,
         ).result_rows
-        result: dict[str, CHSpan] = {}
-        for r in rows:
-            span = _row_to_chspan(r)
-            if span.trace_id not in result:
-                result[span.trace_id] = span
-        return result
+        return {span.trace_id: span for span in map(_row_to_chspan, rows)}
 
     def aggregate_by_session_ids(
         self,

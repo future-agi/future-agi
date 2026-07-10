@@ -170,7 +170,11 @@ def _hybrid_load_from_ch(
 
 
 def filter_observation_spans_by_trace(
-    trace_id: str, deleted: bool = False, *, project_id: str | None = None
+    trace_id: str,
+    deleted: bool = False,
+    *,
+    project_id: str | None = None,
+    heavy_span_ids: set[str] | None = None,
 ):
     """v2 equivalent of `ObservationSpan.objects.filter(trace=trace, deleted=False)`.
 
@@ -181,6 +185,12 @@ def filter_observation_spans_by_trace(
     ``project_id`` scopes the CH read so ClickHouse can prune ``spans`` by the
     ``project_id`` sort-key prefix instead of scanning all projects for the
     trace's spans.
+
+    ``heavy_span_ids`` (optional): ids whose heavy columns (attributes_extra /
+    span_events / resource_attrs) are required. A lean pass loads all spans
+    first; a second heavy pass fetches only those spans in ``heavy_span_ids``
+    that actually appeared in the trace, merging them back in. Spans not in
+    the set stay lean. Pass ``None`` (default) for a fully lean load.
     """
     from tracer.models.observation_span import ObservationSpan
 
@@ -192,7 +202,20 @@ def filter_observation_spans_by_trace(
         from tracer.services.clickhouse.v2 import get_reader
 
         reader = get_reader()
-        ch_rows = reader.list_by_trace(trace_id, project_id=project_id)
+        ch_rows = reader.list_by_trace(
+            trace_id, include_heavy=False, project_id=project_id
+        )
+
+        # Second pass: replace lean rows for the requested heavy span ids.
+        wanted = set(heavy_span_ids or ()) & {r.id for r in ch_rows}
+        if wanted:
+            heavy_map = {
+                r.id: r
+                for r in reader.list_by_ids(
+                    list(wanted), include_heavy=True, project_id=project_id
+                )
+            }
+            ch_rows = [heavy_map.get(r.id, r) for r in ch_rows]
     except Exception as e:  # noqa: BLE001
         if _forced_clickhouse():
             raise
@@ -203,8 +226,6 @@ def filter_observation_spans_by_trace(
 
     out = []
     for ch_row in ch_rows:
-        # _hybrid_load_from_ch builds a single instance from a CHSpan;
-        # invoke the same shaping via a passthrough.
         obj = _construct_from_chspan(ch_row)
         out.append(obj)
     return out
@@ -212,7 +233,10 @@ def filter_observation_spans_by_trace(
 
 def _construct_from_chspan(ch_row) -> ObservationSpan:
     """Shared body of the hybrid-construct logic."""
+    import json as _j
+
     from tracer.models.observation_span import ObservationSpan
+    from tracer.services.clickhouse.v2.span_reader import _ch_span_attributes
 
     obj = ObservationSpan(
         id=ch_row.id,
@@ -242,13 +266,23 @@ def _construct_from_chspan(ch_row) -> ObservationSpan:
         semconv_source=ch_row.semconv_source,
     )
     try:
-        import json as _j
-
         obj.input = _j.loads(ch_row.input) if ch_row.input else None
         obj.output = _j.loads(ch_row.output) if ch_row.output else None
     except Exception:  # noqa: BLE001
         obj.input = ch_row.input or None
         obj.output = ch_row.output or None
+
+    obj.span_attributes = _ch_span_attributes(ch_row)
+
+    try:
+        obj.span_events = _j.loads(ch_row.span_events) if ch_row.span_events else []
+        obj.resource_attributes = (
+            _j.loads(ch_row.resource_attrs) if ch_row.resource_attrs else {}
+        )
+    except Exception:  # noqa: BLE001
+        obj.span_events = []
+        obj.resource_attributes = {}
+
     obj._state.adding = False
     obj._state.db = "default"
 
@@ -365,7 +399,9 @@ def get_trace_session(session_id: str, *, project: Project) -> TraceSession:
         resolve_session_fields,
     )
 
-    fields = resolve_session_fields([session_id]).get(str(session_id))
+    fields = resolve_session_fields([session_id], project_id=str(project.id)).get(
+        str(session_id)
+    )
     if not fields:
         if _forced_clickhouse():
             raise TraceSession.DoesNotExist(

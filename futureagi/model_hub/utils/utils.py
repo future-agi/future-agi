@@ -21,6 +21,7 @@ from nltk.stem import WordNetLemmatizer
 logger = structlog.get_logger(__name__)
 
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
+
 # (available_models always available)
 from model_hub.models.ai_model import AIModel
 from model_hub.models.api_key import ApiKey
@@ -742,6 +743,11 @@ def get_data_type_huggingface(column_info):
         "datetime": DataTypeChoices.DATETIME.value,
         "Image": DataTypeChoices.IMAGE.value,
         "Audio": DataTypeChoices.AUDIO.value,
+        "Pdf": DataTypeChoices.DOCUMENT.value,
+        "PDF": DataTypeChoices.DOCUMENT.value,
+        "pdf": DataTypeChoices.DOCUMENT.value,
+        "Document": DataTypeChoices.DOCUMENT.value,
+        "document": DataTypeChoices.DOCUMENT.value,
         "date32": DataTypeChoices.DATETIME.value,
         "date64": DataTypeChoices.DATETIME.value,
         "date": DataTypeChoices.DATETIME.value,
