@@ -33,6 +33,23 @@ except ImportError:
     log_and_deduct_cost_for_api_request = None
 
 
+def _canonical_playground_output(value, response, template, api_call_log_row):
+    output = {
+        "output": value,
+        "reason": response.get("reason"),
+        "model": response.get("model"),
+        "metadata": response.get("metadata"),
+        "output_type": template.config.get("output"),
+        "log_id": (
+            str(api_call_log_row.log_id) if api_call_log_row is not None else None
+        ),
+        "ground_truth_examples": response.get("ground_truth_examples") or [],
+    }
+    if response.get("warnings"):
+        output["warnings"] = response["warnings"]
+    return output
+
+
 def run_eval_func(
     config,
     mappings,
@@ -355,166 +372,141 @@ def run_eval_func(
                 logger.exception(f"Error in parsing metadata: {str(e)}")
                 metadata = {}
 
-        # Billing side effects (APICallLog write + UsageEvent emit) run only
-        # when a log row was created upstream — i.e. when the ee/ metering
-        # entry point was importable. The canonical response shape below is
-        # returned regardless, so both stripped-ee (OSS) and full builds hand
-        # the FE a payload it can render.
-        if api_call_log_row is not None:
-            config_dict = json.loads(api_call_log_row.config)
-            output_payload = {"output": value, "reason": response["reason"]}
-            # Mirror the dataset path: propagate partial-input warnings into
-            # the API call log so the eval usage view (which reads APICallLog)
-            # can surface them alongside the eval's output.
-            if response.get("warnings"):
-                output_payload["warnings"] = response["warnings"]
-            config_dict.update(
-                {
-                    "output": output_payload,
-                    "input": response["data"],
-                }
-            )
-            api_call_log_row.input_token_count = (
-                metadata.get("usage", {}).get("prompt_tokens") or 0 if metadata else 0
-            )
-            # default=str so trace/span values mapped into inputs (Decimal
-            # from clickhouse-driver, datetime, UUID) don't blow up the
-            # usage logger.
-            api_call_log_row.config = json.dumps(config_dict, default=str)
-            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-            api_call_log_row.save()
-
-            # Dual-write: emit usage event for new billing system (cost-based)
-            try:
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.config import BillingConfig
-                except ImportError:
-                    BillingConfig = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-                try:
-                    from ee.usage.utils.event_properties import (
-                        token_usage_properties,
-                    )
-                except ImportError:
-                    token_usage_properties = lambda token_usage: {}
-
-                billing_config = None
-                if BillingConfig is not None:
-                    billing_config = BillingConfig.get()
-                eval_cost = getattr(eval_instance, "cost", {})
-                llm_cost = eval_cost.get("total_cost", 0)
-                per_run_fee = (
-                    billing_config.get_eval_per_run_fee() if billing_config else 0
-                )
-                actual_cost = llm_cost + per_run_fee
-                _token_usage = getattr(eval_instance, "token_usage", {})
-
-                # Fallback cost for comparison logging and composite eval
-                # billing. Composite children can return token usage with a
-                # zero `cost`; in that case, charge model token pricing plus
-                # the per-run fee.
-                _fallback_cost = 0
-                _pricing_source = ""
-                try:
-                    from agentic_eval.core_evals.fi_utils.token_count_helper import (
-                        calculate_total_cost,
-                    )
-
-                    pricing_model = (
-                        model
-                        or getattr(template, "model", None)
-                        or ModelChoices.TURING_LARGE.value
-                    )
-                    _fallback = calculate_total_cost(pricing_model, _token_usage)
-                    _fallback_cost = _fallback.get("total_cost", 0)
-                    _pricing_source = _fallback.get("pricing_source", "")
-                except Exception:
-                    pass
-
-                is_composite_source = source in {
-                    "composite_eval",
-                    "composite_eval_adhoc",
-                    "composite_eval_dataset",
-                    "tracer_composite",
-                }
-                cost_properties = {}
-                if is_composite_source and not llm_cost and _fallback_cost:
-                    actual_cost = Decimal(str(_fallback_cost)) + Decimal(
-                        str(per_run_fee)
-                    )
-                    cost_properties = {
-                        "llm_cost_usd": str(_fallback_cost),
-                        "reported_llm_cost_usd": str(llm_cost),
-                        "llm_cost_source": "token_pricing",
-                        "pricing_source": _pricing_source,
-                    }
-
-                logger.info(
-                    "eval_cost_breakdown",
-                    template=template.name,
-                    model=model,
-                    llm_cost=cost_properties.get("llm_cost_usd", llm_cost),
-                    per_run_fee=per_run_fee,
-                    actual_cost=actual_cost,
-                    fallback_calculated_cost=_fallback_cost,
-                    llm_cost_source=cost_properties.get("llm_cost_source"),
-                    token_usage=getattr(eval_instance, "token_usage", {}),
-                )
-
-                credits = (
-                    billing_config.calculate_ai_credits(actual_cost)
-                    if billing_config
-                    else 0
-                )
-
-                if (
-                    emit is not None
-                    and UsageEvent is not None
-                    and BillingEventType is not None
-                ):
-                    emit(
-                        UsageEvent(
-                            org_id=str(org.id),
-                            event_type=api_call_type,
-                            amount=credits,
-                            properties={
-                                "source": source,
-                                "source_id": str(template.id),
-                                "raw_cost_usd": str(actual_cost),
-                                **cost_properties,
-                                **token_usage_properties(_token_usage),
-                            },
-                        )
-                    )
-            except Exception:
-                pass  # Metering failure must not break the action
-
-        output = {
-            "output": value,
-            "reason": response.get("reason"),
-            "model": response.get("model"),
-            "metadata": response.get("metadata"),
-            "output_type": template.config.get("output"),
-            "log_id": (
-                str(api_call_log_row.log_id) if api_call_log_row is not None else None
-            ),
-            "ground_truth_examples": response.get("ground_truth_examples") or [],
-        }
-        # Pass partial-input warning through to the playground UI so the
-        # yellow ⚠ badge can render alongside the result.
+        if api_call_log_row is None:
+            return _canonical_playground_output(value, response, template, None)
+        config_dict = json.loads(api_call_log_row.config)
+        output_payload = {"output": value, "reason": response["reason"]}
+        # Mirror the dataset path: propagate partial-input warnings into
+        # the API call log so the eval usage view (which reads APICallLog)
+        # can surface them alongside the eval's output.
         if response.get("warnings"):
-            output["warnings"] = response["warnings"]
+            output_payload["warnings"] = response["warnings"]
+        config_dict.update(
+            {
+                "output": output_payload,
+                "input": response["data"],
+            }
+        )
+        api_call_log_row.input_token_count = (
+            metadata.get("usage", {}).get("prompt_tokens") or 0 if metadata else 0
+        )
+        # default=str so trace/span values mapped into inputs (Decimal from
+        # clickhouse-driver, datetime, UUID) don't blow up the usage logger.
+        api_call_log_row.config = json.dumps(config_dict, default=str)
+        api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+        api_call_log_row.save()
 
-        # Error localizer wires results back into the APICallLog row, so it
-        # only runs when we actually have a log row to attach to.
-        if error_localizer and api_call_log_row is not None:
+        # Dual-write: emit usage event for new billing system (cost-based)
+        try:
+            try:
+                from ee.usage.schemas.events import UsageEvent
+            except ImportError:
+                UsageEvent = None
+            try:
+                from ee.usage.services.config import BillingConfig
+            except ImportError:
+                BillingConfig = None
+            try:
+                from ee.usage.services.emitter import emit
+            except ImportError:
+                emit = None
+            try:
+                from ee.usage.utils.event_properties import token_usage_properties
+            except ImportError:
+                token_usage_properties = lambda token_usage: {}
+
+            billing_config = None
+            if BillingConfig is not None:
+                billing_config = BillingConfig.get()
+            eval_cost = getattr(eval_instance, "cost", {})
+            llm_cost = eval_cost.get("total_cost", 0)
+            per_run_fee = billing_config.get_eval_per_run_fee() if billing_config else 0
+            actual_cost = llm_cost + per_run_fee
+            _token_usage = getattr(eval_instance, "token_usage", {})
+
+            # Fallback cost for comparison logging and composite eval billing.
+            # Composite children can return token usage with a zero `cost`;
+            # in that case, charge model token pricing plus the per-run fee.
+            _fallback_cost = 0
+            _pricing_source = ""
+            try:
+                from agentic_eval.core_evals.fi_utils.token_count_helper import (
+                    calculate_total_cost,
+                )
+
+                pricing_model = (
+                    model
+                    or getattr(template, "model", None)
+                    or ModelChoices.TURING_LARGE.value
+                )
+                _fallback = calculate_total_cost(pricing_model, _token_usage)
+                _fallback_cost = _fallback.get("total_cost", 0)
+                _pricing_source = _fallback.get("pricing_source", "")
+            except Exception:
+                pass
+
+            is_composite_source = source in {
+                "composite_eval",
+                "composite_eval_adhoc",
+                "composite_eval_dataset",
+                "tracer_composite",
+            }
+            cost_properties = {}
+            if is_composite_source and not llm_cost and _fallback_cost:
+                actual_cost = Decimal(str(_fallback_cost)) + Decimal(str(per_run_fee))
+                cost_properties = {
+                    "llm_cost_usd": str(_fallback_cost),
+                    "reported_llm_cost_usd": str(llm_cost),
+                    "llm_cost_source": "token_pricing",
+                    "pricing_source": _pricing_source,
+                }
+
+            logger.info(
+                "eval_cost_breakdown",
+                template=template.name,
+                model=model,
+                llm_cost=cost_properties.get("llm_cost_usd", llm_cost),
+                per_run_fee=per_run_fee,
+                actual_cost=actual_cost,
+                fallback_calculated_cost=_fallback_cost,
+                llm_cost_source=cost_properties.get("llm_cost_source"),
+                token_usage=getattr(eval_instance, "token_usage", {}),
+            )
+
+            credits = (
+                billing_config.calculate_ai_credits(actual_cost)
+                if billing_config
+                else 0
+            )
+
+            if (
+                emit is not None
+                and UsageEvent is not None
+                and BillingEventType is not None
+            ):
+
+                emit(
+                    UsageEvent(
+                        org_id=str(org.id),
+                        event_type=api_call_type,
+                        amount=credits,
+                        properties={
+                            "source": source,
+                            "source_id": str(template.id),
+                            "raw_cost_usd": str(actual_cost),
+                            **cost_properties,
+                            **token_usage_properties(_token_usage),
+                        },
+                    )
+                )
+        except Exception:
+            pass  # Metering failure must not break the action
+
+        output = _canonical_playground_output(
+            value, response, template, api_call_log_row
+        )
+
+        if error_localizer:
             from model_hub.tasks.user_evaluation import (
                 trigger_error_localization_for_playground,
             )

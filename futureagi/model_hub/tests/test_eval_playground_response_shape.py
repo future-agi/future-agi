@@ -1,14 +1,4 @@
-"""Regression tests for the eval-playground response shape (TH-6719).
-
-The playground endpoint feeds a single-page FE component that only knows
-one shape: `{output, output_type, log_id, ground_truth_examples,
-reason, model, metadata}` where `output` is the canonical verdict
-(e.g. "Passed" / "Failed") and `output_type` is the type descriptor
-(e.g. "Pass/Fail"). `run_eval_func` used to return a differently-shaped
-dict whenever the ee/ metering entry point was absent (OSS builds),
-which surfaced the type descriptor in the "Result" cell instead of
-the verdict. These tests pin the canonical shape on both paths.
-"""
+"""Playground response shape stays canonical on stripped-ee and full builds (TH-6719)."""
 
 from types import SimpleNamespace
 
@@ -104,11 +94,6 @@ def _patch_runner(monkeypatch, format_output_return):
 def test_response_shape_is_canonical_when_metering_is_stripped(
     monkeypatch, pass_fail_template, organization
 ):
-    """OSS mode: ee.usage entry point unavailable => api_call_log_row is
-    None. The response must still carry {output, output_type, log_id=None,
-    ground_truth_examples} so the FE renders the verdict, not the type
-    descriptor.
-    """
     _patch_runner(monkeypatch, format_output_return="Passed")
     # Simulate ee/ stripped: the metering entry point is None.
     monkeypatch.setattr(evals_module, "log_and_deduct_cost_for_api_request", None)
@@ -150,9 +135,6 @@ def test_response_shape_is_canonical_when_metering_is_stripped(
 def test_response_shape_is_canonical_when_metering_is_available(
     monkeypatch, pass_fail_template, organization
 ):
-    """EE mode: log_and_deduct_cost_for_api_request populates a log row.
-    Same canonical shape as the OSS case, with a concrete `log_id`.
-    """
     _patch_runner(monkeypatch, format_output_return="Failed")
 
     log_row = SimpleNamespace(
