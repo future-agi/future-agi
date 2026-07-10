@@ -110,10 +110,13 @@ _LABEL_ATTR = "external_session_id"
 
 _client = None
 _client_lock = threading.Lock()
-# Cached client for non-empty settings contexts. At most one live client per
-# distinct settings dict; replaced (old closed) when the key changes.
-_settings_client = None
-_settings_client_key = None
+# Per-thread cached client for non-empty settings contexts. Thread-local (not a
+# module global) so a concurrent caller with a different settings key can never
+# ``.close()`` a client another thread is mid-query on — ``_get_client`` returns
+# the cached handle and the caller queries it outside ``_client_lock``, so a
+# shared module-global client was a cross-thread close race. At most one live
+# settings-client per thread; replaced (old closed) when that thread's key changes.
+_settings_tls = threading.local()
 
 
 def _get_client():
@@ -121,37 +124,41 @@ def _get_client():
     ``end_user_dict_reader._get_client``; kept separate so a reset here can't
     disturb the enduser reader's or writer's cached handle).
 
-    When ``ch_query_settings`` is active, returns a cached client keyed by the
-    merged settings dict. Reuses it while the key matches; closes and replaces
-    the cached client when the key changes. At most one live settings-client at
-    any time, no per-call leak. The empty-settings path is unchanged."""
+    When ``ch_query_settings`` is active, returns a thread-local client keyed by
+    the merged settings dict. Reuses it while this thread's key matches; closes
+    and replaces this thread's cached client when the key changes. Thread-local,
+    so a settings-client is never shared across threads and a concurrent caller
+    with a different key cannot close a client this thread is mid-query on. The
+    empty-settings path is unchanged."""
     overrides = current_settings()
     if overrides:
-        global _settings_client, _settings_client_key
         key = tuple(sorted(overrides.items()))
-        with _client_lock:
-            if _settings_client_key == key and _settings_client is not None:
-                return _settings_client
-            # Key changed or no cached settings-client: close old, build new.
-            if _settings_client is not None:
-                try:
-                    _settings_client.close()
-                except Exception:
-                    pass
-            import clickhouse_connect
+        client = getattr(_settings_tls, "client", None)
+        if client is not None and getattr(_settings_tls, "key", None) == key:
+            return client
+        # Key changed or first use on this thread: close this thread's old
+        # client and build a new one. Only ever touches this thread's client,
+        # so no other thread's in-flight query can be closed out from under it.
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+        import clickhouse_connect
 
-            cfg = get_v2_config()
-            _settings_client = clickhouse_connect.get_client(
-                host=cfg["host"],
-                port=cfg["http_port"],
-                username=cfg["user"],
-                password=cfg["password"] or "",
-                database=cfg["database"],
-                send_receive_timeout=15,
-                settings=overrides,
-            )
-            _settings_client_key = key
-        return _settings_client
+        cfg = get_v2_config()
+        client = clickhouse_connect.get_client(
+            host=cfg["host"],
+            port=cfg["http_port"],
+            username=cfg["user"],
+            password=cfg["password"] or "",
+            database=cfg["database"],
+            send_receive_timeout=15,
+            settings=overrides,
+        )
+        _settings_tls.client = client
+        _settings_tls.key = key
+        return client
     global _client
     if _client is not None:
         return _client
@@ -172,7 +179,7 @@ def _get_client():
 
 
 def _reset_client() -> None:
-    global _client, _settings_client, _settings_client_key
+    global _client
     with _client_lock:
         try:
             if _client is not None:
@@ -180,13 +187,15 @@ def _reset_client() -> None:
         except Exception:
             pass
         _client = None
+    # Settings-clients are thread-local; only the calling thread's is reachable.
+    client = getattr(_settings_tls, "client", None)
+    if client is not None:
         try:
-            if _settings_client is not None:
-                _settings_client.close()
+            client.close()
         except Exception:
             pass
-        _settings_client = None
-        _settings_client_key = None
+    _settings_tls.client = None
+    _settings_tls.key = None
 
 
 def resolve_external_session_ids(

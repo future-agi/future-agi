@@ -456,6 +456,7 @@ def eval_task_factory(db, organization, workspace):
         run_type: str = RunType.HISTORICAL,
         spans_limit: int = 1_000_000,
         n_evals: int = 1,
+        custom_eval: bool = False,
     ) -> EvalTask:
         project, _ = Project.objects.get_or_create(
             id=project_id,
@@ -471,12 +472,18 @@ def eval_task_factory(db, organization, workspace):
                 ],
             },
         )
+        template_config = {"type": "pass_fail", "criteria": "stress"}
+        if custom_eval:
+            # Flip on the custom-eval branch in _process_trace_mapping /
+            # _process_session_mapping: a missing attribute resolves to "" instead
+            # of raising, which is what the lean-first heavy-field regression needs.
+            template_config["custom_eval"] = True
         template = EvalTemplate.objects.create(
             name=f"stress-eval-{uuid.uuid4().hex[:8]}",
             description="stress",
             organization=organization,
             workspace=workspace,
-            config={"type": "pass_fail", "criteria": "stress"},
+            config=template_config,
         )
         configs = [
             CustomEvalConfig.objects.create(

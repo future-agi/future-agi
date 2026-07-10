@@ -7,6 +7,11 @@ Parity: a TRACE run_entry whose mapping references a heavy span field
 (``spans.first.llm.messages.transcript``) produces the same resolved
 mapping params as running through a wholesale include_heavy=True load.
 
+Custom-eval parity: the same heavy-field mapping under a ``custom_eval`` template
+— whose missing-attribute branch returns ``""`` instead of raising — must still
+resolve the real transcript under lean-first loading, guarding the up-front
+heavy-id computation that replaced the old ValueError-gated retry.
+
 Session parity: a SESSION run_entry whose mapping references a heavy inner-span
 field (``traces.first.spans.first.llm.messages.transcript``) produces the same
 resolved params whether the eval path uses lean-first loading or a wholesale
@@ -129,6 +134,91 @@ def test_trace_eval_lean_heavy_parity(
         finally:
             _loader_mod.filter_observation_spans_by_trace = _orig
 
+    assert set(lean_params.keys()) == set(heavy_params.keys()), (
+        f"key mismatch: lean={set(lean_params)} heavy={set(heavy_params)}"
+    )
+    for key in lean_params:
+        assert lean_params[key] == heavy_params[key], (
+            f"field '{key}' mismatch\n"
+            f"  lean : {lean_params[key]!r:.200}\n"
+            f"  heavy: {heavy_params[key]!r:.200}"
+        )
+
+
+@pytest.mark.django_db
+def test_trace_eval_custom_lean_heavy_parity(
+    stress_dataset, eval_task_factory, stub_run_eval, stub_cost_log
+):
+    """Regression: a ``custom_eval`` template whose mapping references the heavy
+    field ``spans.first.llm.messages.transcript`` must resolve to the real
+    transcript under lean-first loading — NOT silently to ``""``.
+
+    A custom template's ``_process_trace_mapping`` resolves a missing attribute
+    to ``""`` *without* raising ``ValueError``. The old lean-first wrapper only
+    triggered its heavy second pass on ``ValueError``, so a custom eval never
+    retried and evaluated the transcript as empty. Computing the heavy span ids
+    up front fixes it: the single pass loads the referenced span heavy.
+
+    ``test_trace_eval_lean_heavy_parity`` cannot catch this — its factory
+    template is non-custom (``pass_fail``), which raises and retries correctly.
+    """
+    import tracer.services.clickhouse.v2.eval_loader as _loader_mod
+    from tracer.services.clickhouse.v2 import get_reader
+    from tracer.services.clickhouse.v2.eval_loader import (
+        _construct_from_chspan,
+        eval_read_source,
+        get_trace,
+    )
+    from tracer.utils.eval import (
+        _process_trace_mapping,
+        resolve_trace_mapping_lean_first,
+    )
+
+    manifest = stress_dataset.voice
+    trace_id = manifest.trace_ids[0]
+
+    task = eval_task_factory(
+        VOICE_PROJECT_ID, row_type="traces", n_evals=1, custom_eval=True
+    )
+    template_id = task.evals.first().eval_template_id
+
+    with eval_read_source("clickhouse"):
+        trace = get_trace(trace_id, project_id=VOICE_PROJECT_ID)
+
+        # lean-first through the custom template (the previously-broken path).
+        lean_params = resolve_trace_mapping_lean_first(
+            _TRANSCRIPT_MAPPING.copy(), trace, template_id
+        )
+
+        # Reference: wholesale heavy load through the same custom template.
+        with get_reader() as reader:
+            heavy_ch_rows = reader.list_by_trace(
+                trace_id, include_heavy=True, project_id=VOICE_PROJECT_ID
+            )
+        heavy_spans = sorted(
+            [_construct_from_chspan(r) for r in heavy_ch_rows],
+            key=lambda s: (s.start_time is None, s.start_time, str(s.id)),
+        )
+
+        _orig = _loader_mod.filter_observation_spans_by_trace
+
+        def _always_heavy(tid, deleted=False, *, project_id=None, heavy_span_ids=None):
+            return list(heavy_spans)
+
+        _loader_mod.filter_observation_spans_by_trace = _always_heavy
+        try:
+            trace_heavy = get_trace(trace_id, project_id=VOICE_PROJECT_ID)
+            heavy_params = _process_trace_mapping(
+                _TRANSCRIPT_MAPPING.copy(), trace_heavy, template_id
+            )
+        finally:
+            _loader_mod.filter_observation_spans_by_trace = _orig
+
+    # The specific regression: the heavy field must not come back empty.
+    assert lean_params.get("input"), (
+        "custom-eval lean-first resolved the heavy transcript to empty — the "
+        "heavy pass did not fire for the custom template"
+    )
     assert set(lean_params.keys()) == set(heavy_params.keys()), (
         f"key mismatch: lean={set(lean_params)} heavy={set(heavy_params)}"
     )

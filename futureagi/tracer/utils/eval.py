@@ -2661,6 +2661,19 @@ def _resolve_trace_path(trace: Trace, path: str):
     return _MISSING
 
 
+# Per-``resolve_session_mapping_lean_first`` memo for ``_session_traces_ch``:
+# maps ``(project_id, session_id)`` → the ordered hydrated trace list so the
+# session heavy path resolves the trace list once — reused by the up-front
+# heavy-id computation and by every ``traces.*`` lookup in
+# ``_resolve_session_path`` — instead of re-running ``session_trace_ids`` +
+# ``per_trace_root_span_start_times`` + a ``get_trace`` per trace each time.
+# Default None = no active scope → always recompute (behaviour outside the
+# wrapper is unchanged).
+_session_traces_memo: ContextVar[dict | None] = ContextVar(
+    "eval_session_traces_memo", default=None
+)
+
+
 def _session_traces_ch(trace_session) -> list:
     """Return the session's CH traces ordered by earliest root-span start_time.
 
@@ -2680,6 +2693,11 @@ def _session_traces_ch(trace_session) -> list:
     _session_id = getattr(trace_session, "id", None)
     if _project_id is None or _session_id is None:
         return []
+
+    memo = _session_traces_memo.get()
+    cache_key = (str(_project_id), str(_session_id))
+    if memo is not None and cache_key in memo:
+        return memo[cache_key]
 
     with get_reader() as reader:
         _trace_ids = reader.session_trace_ids(str(_project_id), str(_session_id))
@@ -2702,6 +2720,9 @@ def _session_traces_ch(trace_session) -> list:
         return (key is None, key, str(t.id))
 
     traces.sort(key=_trace_order)
+
+    if memo is not None:
+        memo[cache_key] = traces
     return traces
 
 
@@ -2882,11 +2903,29 @@ def _heavy_span_ids_for_trace_mapping(mapping: dict | None, trace) -> frozenset[
     """Return the span ids referenced by heavy-tail ``spans.<sel>.<tail>``
     paths in *mapping*, resolved against *trace*'s lean spans.
 
-    Iterates the mapping values; any value of the form
-    ``spans.<sel>.<tail>`` where ``_is_heavy_span_tail(tail)`` selects a
-    span from the trace's sorted lean list and adds its id to the result.
+    Scans the mapping values for ``spans.<sel>.<tail>`` paths where
+    ``_is_heavy_span_tail(tail)`` and collects their selectors. If none
+    reference a heavy tail, returns empty *without touching CH* — a mapping that
+    only reads ``input``/``output``/scalar fields pays no span load here. When at
+    least one does, loads the trace's sorted lean spans once (same sort key as
+    ``_resolve_trace_path``) and resolves each selector to a span id.
     """
     if not mapping:
+        return frozenset()
+
+    selectors: list[str] = []
+    for attribute in mapping.values():
+        if not attribute or not attribute.startswith("spans."):
+            continue
+        # path: "spans.<sel>[.<tail>]"
+        remainder = attribute[len("spans.") :]
+        parts = remainder.split(".", 1)
+        sel = parts[0]
+        tail = parts[1] if len(parts) > 1 else ""
+        if not tail or not _is_heavy_span_tail(tail):
+            continue
+        selectors.append(sel)
+    if not selectors:
         return frozenset()
 
     from tracer.services.clickhouse.v2.eval_loader import (
@@ -2901,16 +2940,7 @@ def _heavy_span_ids_for_trace_mapping(mapping: dict | None, trace) -> frozenset[
     n = len(spans)
 
     heavy_ids: set[str] = set()
-    for attribute in mapping.values():
-        if not attribute or not attribute.startswith("spans."):
-            continue
-        # path: "spans.<sel>[.<tail>]"
-        remainder = attribute[len("spans.") :]
-        parts = remainder.split(".", 1)
-        sel = parts[0]
-        tail = parts[1] if len(parts) > 1 else ""
-        if not tail or not _is_heavy_span_tail(tail):
-            continue
+    for sel in selectors:
         idx = _selector_index(sel, n)
         if idx is None:
             continue
@@ -2920,17 +2950,24 @@ def _heavy_span_ids_for_trace_mapping(mapping: dict | None, trace) -> frozenset[
 
 
 def resolve_trace_mapping_lean_first(mapping: dict | None, trace, template_id) -> dict:
-    """Two-pass wrapper around ``_process_trace_mapping`` for the CH eval path.
+    """Lean-first wrapper around ``_process_trace_mapping`` for the CH eval path.
 
-    Pass 1 (lean): attempt mapping resolution with all spans loaded lean
-    (heavy JSON columns absent). This suffices for mappings that only touch
-    ``input``/``output``/scalar span fields.
+    Computes the span ids whose heavy columns (attributes_extra / span_events /
+    resource_attrs) the mapping references *up front*, sets the contextvar so
+    ``_resolve_trace_path`` fetches exactly those spans with full columns (all
+    others stay lean), then resolves in a single pass. When the mapping
+    references no heavy field (the common ``input``/``output`` case)
+    ``_heavy_span_ids_for_trace_mapping`` short-circuits without a span load and
+    every span loads lean — so the memory win is preserved.
 
-    Pass 2 (heavy on miss): if pass 1 raises ``ValueError`` (required-key
-    miss), compute the exact span ids whose heavy columns the mapping
-    references, set the contextvar so ``_resolve_trace_path`` fetches those
-    spans with full columns on the second call, then retry once.  If no
-    heavy span ids can be resolved, re-raise the original error.
+    Computing the heavy set up front — rather than gating a heavy retry on a
+    ``ValueError`` from a lean first pass — is required for correctness with
+    custom evals: ``_process_trace_mapping`` resolves a missing attribute to
+    ``""`` for a ``custom_eval`` template *without raising*, so a lean-only first
+    pass would silently evaluate a heavy overflow field (e.g.
+    ``spans.first.llm.messages.transcript``) as empty and never retry. It is also
+    strictly cheaper on the heavy path (one lean + one heavy load, versus the
+    old lean + lean + heavy).
 
     Falls through to plain ``_process_trace_mapping`` when not in CH mode
     (PG path already has full columns).
@@ -2940,18 +2977,10 @@ def resolve_trace_mapping_lean_first(mapping: dict | None, trace, template_id) -
     if _read_source() != "clickhouse":
         return _process_trace_mapping(mapping, trace, template_id)
 
-    token = _heavy_span_ids.set(None)
+    heavy_ids = _heavy_span_ids_for_trace_mapping(mapping, trace)
+    token = _heavy_span_ids.set(heavy_ids or None)
     try:
         return _process_trace_mapping(mapping, trace, template_id)
-    except ValueError:
-        heavy_ids = _heavy_span_ids_for_trace_mapping(mapping, trace)
-        if not heavy_ids:
-            raise
-        retry_token = _heavy_span_ids.set(heavy_ids)
-        try:
-            return _process_trace_mapping(mapping, trace, template_id)
-        finally:
-            _heavy_span_ids.reset(retry_token)
     finally:
         _heavy_span_ids.reset(token)
 
@@ -2972,25 +3001,16 @@ def _heavy_span_ids_for_session_mapping(
     all paths (span ids are globally unique, so a flat set across traces is
     correct for the ``_heavy_span_ids`` contextvar).
 
-    Must be called with ``_heavy_span_ids`` set to ``None`` so the per-trace
-    span loads stay lean — the outer ``resolve_session_mapping_lean_first``
-    guarantees this ordering.
+    Loads each trace's spans lean (it never sets ``_heavy_span_ids``), and the
+    outer ``resolve_session_mapping_lean_first`` calls it before setting that
+    contextvar — so the id computation itself never triggers a heavy fetch.
     """
     if not mapping:
         return frozenset()
 
-    from tracer.services.clickhouse.v2.eval_loader import (
-        filter_observation_spans_by_trace,
-    )
-
-    traces = _session_traces_ch(trace_session)
-    n_traces = len(traces)
-
-    # Cache lean spans per trace index — avoid re-loading for multiple paths
-    # that reference different spans within the same trace.
-    _spans_cache: dict[int, list] = {}
-
-    heavy_ids: set[str] = set()
+    # Parse the heavy-referencing paths first; only touch CH if at least one
+    # ``traces.<sel_t>.spans.<sel_s>.<tail>`` value names a heavy span tail.
+    pairs: list[tuple[str, str]] = []
     for attribute in mapping.values():
         if not attribute or not attribute.startswith("traces."):
             continue
@@ -3007,7 +3027,23 @@ def _heavy_span_ids_for_session_mapping(
         tail = parts_s[1] if len(parts_s) > 1 else ""
         if not tail or not _is_heavy_span_tail(tail):
             continue
+        pairs.append((sel_t, sel_s))
+    if not pairs:
+        return frozenset()
 
+    from tracer.services.clickhouse.v2.eval_loader import (
+        filter_observation_spans_by_trace,
+    )
+
+    traces = _session_traces_ch(trace_session)
+    n_traces = len(traces)
+
+    # Cache lean spans per trace index — avoid re-loading for multiple paths
+    # that reference different spans within the same trace.
+    _spans_cache: dict[int, list] = {}
+
+    heavy_ids: set[str] = set()
+    for sel_t, sel_s in pairs:
         trace_idx = _selector_index(sel_t, n_traces)
         if trace_idx is None:
             continue
@@ -3032,18 +3068,21 @@ def _heavy_span_ids_for_session_mapping(
 def resolve_session_mapping_lean_first(
     mapping: dict | None, trace_session, template_id
 ) -> dict:
-    """Two-pass wrapper around ``_process_session_mapping`` for the CH eval path.
+    """Lean-first wrapper around ``_process_session_mapping`` for the CH eval path.
 
-    Pass 1 (lean): attempt mapping resolution with all spans loaded lean
-    (heavy JSON columns absent). This suffices for mappings that only touch
-    scalar span fields or trace-level fields.
+    Session twin of ``resolve_trace_mapping_lean_first``: computes the inner-span
+    ids the mapping's ``traces.<sel_t>.spans.<sel_s>.<tail>`` paths reference *up
+    front*, sets the contextvar so ``_resolve_trace_path`` heavy-fetches exactly
+    those spans, then resolves in a single pass. Up-front (rather than a
+    ``ValueError``-gated retry) is required for the same custom-eval reason as the
+    trace path — a missing attribute resolves to ``""`` without raising, so a
+    lean-only pass would silently evaluate a heavy overflow field as empty.
 
-    Pass 2 (heavy on miss): if pass 1 raises ``ValueError`` (required-key
-    miss), compute the exact span ids whose heavy columns the mapping
-    references via ``_heavy_span_ids_for_session_mapping``, set the contextvar
-    so ``_resolve_trace_path`` fetches those spans with full columns on retry,
-    then retry once. If no heavy span ids can be resolved, re-raise the
-    original error.
+    Wraps the whole resolution in a ``_session_traces_memo`` scope so the
+    session's ordered trace list is hydrated once and reused by both the
+    heavy-id computation and every ``traces.*`` lookup in ``_resolve_session_path``
+    — the session heavy branch previously re-ran ``session_trace_ids`` +
+    ``per_trace_root_span_start_times`` + a ``get_trace`` per trace several times.
 
     Falls through to plain ``_process_session_mapping`` when not in CH mode
     (PG path already has full columns).
@@ -3053,20 +3092,16 @@ def resolve_session_mapping_lean_first(
     if _read_source() != "clickhouse":
         return _process_session_mapping(mapping, trace_session, template_id)
 
-    token = _heavy_span_ids.set(None)
+    memo_token = _session_traces_memo.set({})
     try:
-        return _process_session_mapping(mapping, trace_session, template_id)
-    except ValueError:
         heavy_ids = _heavy_span_ids_for_session_mapping(mapping, trace_session)
-        if not heavy_ids:
-            raise
-        retry_token = _heavy_span_ids.set(heavy_ids)
+        token = _heavy_span_ids.set(heavy_ids or None)
         try:
             return _process_session_mapping(mapping, trace_session, template_id)
         finally:
-            _heavy_span_ids.reset(retry_token)
+            _heavy_span_ids.reset(token)
     finally:
-        _heavy_span_ids.reset(token)
+        _session_traces_memo.reset(memo_token)
 
 
 def _process_session_mapping(

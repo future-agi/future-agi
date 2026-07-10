@@ -231,39 +231,12 @@ def filter_observation_spans_by_trace(
     return out
 
 
-def _span_attributes_from_chspan(ch_row) -> dict:
-    """Reconstruct the span_attributes bag from CH typed Map columns.
-
-    Merges the three typed maps (string / number / bool) with the overflow
-    JSON bag (attributes_extra). In lean mode attributes_extra is '' so only
-    the typed maps contribute — heavy overflow fields stay absent until a
-    second heavy fetch replaces the row.
-    """
-    import json as _j
-
-    attrs: dict = {}
-    if ch_row.attrs_string:
-        attrs.update(ch_row.attrs_string)
-    if ch_row.attrs_number:
-        attrs.update(ch_row.attrs_number)
-    if ch_row.attrs_bool:
-        attrs.update({k: bool(v) for k, v in ch_row.attrs_bool.items()})
-    extra_raw = ch_row.attributes_extra
-    if extra_raw:
-        try:
-            extra = _j.loads(extra_raw)
-            if isinstance(extra, dict):
-                attrs.update(extra)
-        except Exception:  # noqa: BLE001
-            pass
-    return attrs
-
-
 def _construct_from_chspan(ch_row) -> ObservationSpan:
     """Shared body of the hybrid-construct logic."""
     import json as _j
 
     from tracer.models.observation_span import ObservationSpan
+    from tracer.services.clickhouse.v2.span_reader import _ch_span_attributes
 
     obj = ObservationSpan(
         id=ch_row.id,
@@ -299,7 +272,7 @@ def _construct_from_chspan(ch_row) -> ObservationSpan:
         obj.input = ch_row.input or None
         obj.output = ch_row.output or None
 
-    obj.span_attributes = _span_attributes_from_chspan(ch_row)
+    obj.span_attributes = _ch_span_attributes(ch_row)
 
     try:
         obj.span_events = _j.loads(ch_row.span_events) if ch_row.span_events else []
