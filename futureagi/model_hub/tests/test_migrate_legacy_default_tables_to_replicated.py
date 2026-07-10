@@ -122,7 +122,9 @@ def test_refuses_unknown_table():
 def test_runs_on_single_node_ch():
     """Single-node CH is a valid target: the engine choice per env is
     owned by the per-table ``ensure_*`` helpers, which fall back to plain
-    engines when the cluster has one replica.
+    engines when the cluster has one replica. The CREATE DATABASE
+    bootstrap also drops ``ON CLUSTER`` on the same signal so the
+    Keeper-less local CH accepts the DDL.
     """
     db_client, executed, _ = _make_db_client(
         clustered=False, replicas=("ch-0",), source_count=5
@@ -130,6 +132,9 @@ def test_runs_on_single_node_ch():
     out, _ = _run("cluster_centroids", db_client=db_client)
     assert "cluster_centroids:" in out
     assert any(s.lower().lstrip().startswith("insert into") for s in executed)
+    create_db_sql = [s for s in executed if "create database" in s.lower()]
+    assert create_db_sql, "CREATE DATABASE should still run on single-node"
+    assert all("on cluster" not in s.lower() for s in create_db_sql)
 
 
 # ---------------------------------------------------------------------------

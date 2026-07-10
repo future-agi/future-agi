@@ -91,8 +91,12 @@ class Command(BaseCommand):
 
         if not dry_run:
             # Bootstrap the target DB on every replica before any CREATE TABLE.
+            # ON CLUSTER requires Keeper; drop it on single-node CH.
+            on_cluster = (
+                f" ON CLUSTER '{cluster}'" if db_client._is_clustered() else ""
+            )
             db_client.client.execute(
-                f"CREATE DATABASE IF NOT EXISTS {target_db} ON CLUSTER '{cluster}'"
+                f"CREATE DATABASE IF NOT EXISTS {target_db}{on_cluster}"
             )
 
         logger.info(

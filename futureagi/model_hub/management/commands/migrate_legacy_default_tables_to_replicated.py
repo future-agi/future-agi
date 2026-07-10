@@ -164,8 +164,11 @@ class Command(BaseCommand):
         )
 
         if not dry_run:
+            on_cluster = (
+                f" ON CLUSTER '{cluster}'" if db_client._is_clustered() else ""
+            )
             db_client.client.execute(
-                f"CREATE DATABASE IF NOT EXISTS {target_db} ON CLUSTER '{cluster}'"
+                f"CREATE DATABASE IF NOT EXISTS {target_db}{on_cluster}"
             )
 
         logger.info(

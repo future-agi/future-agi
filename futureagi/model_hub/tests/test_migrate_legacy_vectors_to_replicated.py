@@ -131,14 +131,21 @@ def test_refuses_when_source_equals_target():
 
 def test_runs_on_single_node_ch():
     """Single-node CH is a valid target: create_table's own engine probe
-    emits plain ``ReplacingMergeTree`` when there's only one replica, so
-    the migration proceeds without forcing a Replicated engine on a
-    non-clustered environment.
+    emits plain ``ReplacingMergeTree`` when there's only one replica, and
+    the CREATE DATABASE bootstrap drops ``ON CLUSTER`` (which would
+    require Keeper) on the same signal.
     """
     db_client, _ = _build_mock_db_client(clustered=False, expected_replicas=1)
     out = _run("feedbacks", db_client=db_client)
     assert "feedbacks:" in out
     db_client.create_table.assert_called_once()
+    create_db_sql = [
+        call.args[0]
+        for call in db_client.client.execute.call_args_list
+        if "create database" in call.args[0].lower()
+    ]
+    assert create_db_sql, "CREATE DATABASE should still run on single-node"
+    assert all("on cluster" not in s.lower() for s in create_db_sql)
 
 
 def test_refuses_unknown_table_name():
