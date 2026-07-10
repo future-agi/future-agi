@@ -173,3 +173,30 @@ def test_response_shape_is_canonical_when_metering_is_available(
     assert output["output_type"] == "Pass/Fail"
     assert output["log_id"] == "log-abc"
     assert output["ground_truth_examples"] == []
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        0.7,
+        "Good",
+        ["A", "B"],
+        {"score": 0.7, "choice": "Good"},
+        {"score": 0.5, "choices": ["A", "B"]},
+    ],
+    ids=["float", "str-choice", "list-multi", "dict-single-pick", "dict-multi-choice"],
+)
+def test_response_output_preserves_polymorphic_shapes(
+    monkeypatch, pass_fail_template, organization, value
+):
+    _patch_runner(monkeypatch, format_output_return=value)
+    monkeypatch.setattr(evals_module, "log_and_deduct_cost_for_api_request", None)
+
+    output = run_eval_func(
+        {"config": {}, "params": {}},
+        {"input": "hello"},
+        pass_fail_template,
+        organization,
+        source="eval_playground",
+    )
+    assert output["output"] == value
