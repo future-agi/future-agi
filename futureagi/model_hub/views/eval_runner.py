@@ -82,6 +82,7 @@ from tfc.utils.error_codes import (
     get_error_for_api_status,
     get_error_message,
     get_specific_error_message,
+    get_usage_error_code,
 )
 from tfc.utils.functions import get_eval_stats
 from tfc.utils.general_methods import GeneralMethods
@@ -1320,6 +1321,10 @@ class EvaluationRunner:
             error_message = get_specific_error_message(e)
 
             response, status, value = self._handle_error(error_message)
+           
+            usage_error_code = get_usage_error_code(e)
+            if usage_error_code:
+                response["error_code"] = usage_error_code
             self._handle_api_call_status(api_call_log_row, CellStatus.ERROR.value)
 
             # Create reason column and cell with error status. Always-on for
@@ -3109,6 +3114,13 @@ class EvaluationRunner:
                 if not usage_check.allowed:
                     self.user_eval_metric.status = StatusType.FAILED.value
                     self.user_eval_metric.save(update_fields=["status"])
+                    from model_hub.tasks.user_evaluation import (
+                        _mark_cells_usage_limit_error,
+                    )
+
+                    _mark_cells_usage_limit_error(
+                        self.user_eval_metric, usage_check
+                    )
                     raise ValueError(usage_check.reason or "Usage limit exceeded")
 
             self.update_cell(row_ids=row_ids)
