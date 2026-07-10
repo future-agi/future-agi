@@ -1,4 +1,4 @@
-"""Tests for migration 0113_backfill_eval_version_is_default.
+"""Tests for migration 0114_backfill_eval_version_is_default.
 
 Data-migration guarantees under test:
   * A template with zero is_default=True versions gets its highest-numbered
@@ -18,7 +18,7 @@ from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 
 
 backfill_module = importlib.import_module(
-    "model_hub.migrations.0113_backfill_eval_version_is_default"
+    "model_hub.migrations.0114_backfill_eval_version_is_default"
 )
 backfill_is_default = backfill_module.backfill_is_default
 

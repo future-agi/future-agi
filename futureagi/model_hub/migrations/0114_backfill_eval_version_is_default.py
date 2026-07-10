@@ -43,7 +43,7 @@ def backfill_is_default(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("model_hub", "0112_eval_ground_truth_tenant_scope"),
+        ("model_hub", "0113_annotation_queue_label_required_default"),
     ]
 
     operations = [

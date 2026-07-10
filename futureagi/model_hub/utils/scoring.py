@@ -218,11 +218,12 @@ def validate_pass_threshold(threshold) -> list[str]:
 def score_eval_output(
     value_or_result: Any,
     eval_template: Any,
-    default_score: float = 0.0,
-) -> float:
-    """Canonical eval-output → normalized 0-1 score. Accepts raw ``eval_instance.run()``
-    or a formatted value; falls back to ``default_score`` on inputs that cannot
-    be interpreted under the template's output type."""
+    default_score: float | None = 0.0,
+) -> float | None:
+    """Canonical eval-output → normalized 0-1 score. Falls back to
+    ``default_score`` when the value cannot be interpreted under the
+    template's output type; pass ``default_score=None`` to surface that
+    case as ``None`` instead of a hard 0.0."""
     if hasattr(value_or_result, "eval_results"):
         from evaluations.engine.formatting import (
             extract_raw_result,
