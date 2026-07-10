@@ -8,6 +8,7 @@ import axios, { endpoints } from "src/utils/axios";
 import EvalTypesSkeleton from "src/sections/develop-detail/Common/EvaluationType/EvalTypesSkeleton";
 import EvaluationTypeCard from "src/sections/develop-detail/Common/EvaluationTypeCard";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
+import { normalizeEvalSearchText } from "../utils/search";
 
 const categories = [
   { label: "Conversation", value: "CONVERSATION" },
@@ -26,13 +27,17 @@ const CustomEvalDrawer = ({ onClose, onOptionClick }) => {
   const theme = useTheme();
   const [searchText, setSearchText] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const normalizedSearchText = useMemo(
+    () => normalizeEvalSearchText(searchText),
+    [searchText],
+  );
 
   const {
     data: evalList,
     isLoading: loadingEvalList,
     isFetching,
   } = useQuery({
-    queryKey: ["develop", "preset-eval-list"],
+    queryKey: ["develop", "preset-eval-list", normalizedSearchText],
     queryFn: () =>
       axios.get(
         endpoints.develop.eval.getEvalsList(
@@ -41,7 +46,7 @@ const CustomEvalDrawer = ({ onClose, onOptionClick }) => {
         {
           params: {
             eval_type: "preset",
-            search_text: searchText || "",
+            search_text: normalizedSearchText || "",
           },
         },
       ),
@@ -53,25 +58,25 @@ const CustomEvalDrawer = ({ onClose, onOptionClick }) => {
     if (selectedCategory === "all") {
       return evalList.filter(
         (each) =>
-          !searchText ||
-          each.name.toLowerCase().includes(searchText.toLowerCase()),
+          !normalizedSearchText ||
+          each.name.toLowerCase().includes(normalizedSearchText),
       );
     }
     return evalList.filter(
       (each) =>
         each.eval_template_tags.includes(selectedCategory) &&
-        (!searchText ||
-          each.name.toLowerCase().includes(searchText.toLowerCase())),
+        (!normalizedSearchText ||
+          each.name.toLowerCase().includes(normalizedSearchText)),
     );
-  }, [selectedCategory, evalList, searchText]);
+  }, [selectedCategory, evalList, normalizedSearchText]);
 
   const categoryCount = useMemo(() => {
     if (!evalList) return {};
     return evalList
       .filter(
         (each) =>
-          !searchText ||
-          each.name.toLowerCase().includes(searchText.toLowerCase()),
+          !normalizedSearchText ||
+          each.name.toLowerCase().includes(normalizedSearchText),
       )
       .reduce(
         (acc, each) => {
@@ -83,7 +88,7 @@ const CustomEvalDrawer = ({ onClose, onOptionClick }) => {
         },
         { all: 0 },
       );
-  }, [evalList, searchText]);
+  }, [evalList, normalizedSearchText]);
 
   const handleSearchChange = (event) => {
     const value = event.target.value;

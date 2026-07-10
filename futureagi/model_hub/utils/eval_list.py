@@ -20,6 +20,7 @@ from agentic_eval.core_evals.fi_evals.eval_type import (
 )
 from model_hub.models.choices import EvalOutputType, OwnerChoices
 from model_hub.types import EvalListFilters, ThirtyDayDataPoint
+from model_hub.utils.eval_search import normalize_eval_search_text
 from tfc.constants.api_calls import APICallStatusChoices
 
 if TYPE_CHECKING:
@@ -378,7 +379,9 @@ def build_eval_list_queryset(
 
     # Search by name
     if search:
-        qs = qs.filter(name__icontains=search.strip())
+        normalized_search = normalize_eval_search_text(search)
+        if normalized_search:
+            qs = qs.filter(name__icontains=normalized_search)
 
     # Advanced filters
     if filters:

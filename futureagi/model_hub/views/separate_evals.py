@@ -110,6 +110,7 @@ from model_hub.utils.eval_playground_call_context import (
     build_eval_playground_scenario_context,
 )
 from model_hub.utils.evals import prepare_user_eval_config
+from model_hub.utils.eval_search import normalize_eval_search_text
 from model_hub.utils.function_eval_params import (
     has_function_params_schema,
     normalize_eval_runtime_config,
@@ -1170,7 +1171,11 @@ class GetEvalTemplateNameView(APIView):
                 .order_by("name")
             )
             if search_text:
-                eval_templates = eval_templates.filter(name__icontains=search_text)
+                normalized_search_text = normalize_eval_search_text(search_text)
+                if normalized_search_text:
+                    eval_templates = eval_templates.filter(
+                        name__icontains=normalized_search_text
+                    )
             eval_template_names = [
                 {
                     "id": str(eval_template.id),

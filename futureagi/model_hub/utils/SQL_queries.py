@@ -4,6 +4,7 @@ import pandas as pd
 from django.db import connection
 
 from accounts.models.workspace import Workspace
+from model_hub.utils.eval_search import normalize_eval_search_text
 from tracer.models.observation_span import EndUser
 
 # Shared SQL expression for calculating model costs
@@ -344,6 +345,7 @@ class SQLQueryHandler:
         )
         limit = limit if limit else 10
         offset = offset if offset else 0
+        search_name = normalize_eval_search_text(search_name) or None
         query = f"""
         WITH filtered_templates AS (
             SELECT *

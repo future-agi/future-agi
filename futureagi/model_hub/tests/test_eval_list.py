@@ -10,6 +10,7 @@ import pytest
 
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
+from model_hub.utils.eval_search import normalize_eval_search_text
 from model_hub.utils.eval_list import (
     build_eval_list_queryset,
     derive_eval_type,
@@ -273,6 +274,16 @@ class TestEvalTemplateListAPI:
         items = response.data["result"]["items"]
         for item in items:
             assert "user_custom" in item["name"].lower()
+
+    def test_list_search_matches_human_readable_spaces(
+        self, auth_client, user_eval_template
+    ):
+        """Human-readable search text should match underscore-stored eval names."""
+        response = auth_client.post(self.url, {"search": "User Custom"}, format="json")
+        assert response.status_code == 200
+
+        item_names = {item["name"] for item in response.data["result"]["items"]}
+        assert "user_custom_eval" in item_names
 
     def test_list_owner_filter_user(
         self, auth_client, system_eval_template, user_eval_template
@@ -820,6 +831,17 @@ class TestEvalListOutputTypeFilter:
             filters={},
         )
         assert qs.count() >= 6
+
+
+class TestEvalSearchNormalization:
+    def test_normalizes_human_readable_eval_names(self):
+        assert normalize_eval_search_text(" Context   Adherence ") == "context_adherence"
+
+    def test_preserves_underscore_searches(self):
+        assert normalize_eval_search_text("context_adherence") == "context_adherence"
+
+    def test_empty_search_stays_empty(self):
+        assert normalize_eval_search_text("") == ""
 
 
 # =============================================================================

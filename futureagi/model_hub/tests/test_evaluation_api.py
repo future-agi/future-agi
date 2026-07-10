@@ -566,6 +566,29 @@ class TestGetEvalsListView:
         }
         assert names == {"visible-user-eval"}
 
+    def test_get_evals_list_search_matches_human_readable_spaces(
+        self, auth_client, dataset, organization, workspace
+    ):
+        """Picker search should match underscore-stored eval names."""
+        EvalTemplate.objects.create(
+            name="context_adherence",
+            organization=organization,
+            workspace=workspace,
+            owner="user",
+            visible_ui=True,
+            config={},
+            eval_tags=["TEXT"],
+        )
+
+        response = auth_client.get(
+            f"/model-hub/develops/{dataset.id}/get_evals_list/",
+            {"search_text": "Context Adherence"},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        names = {item["name"] for item in response.data["result"]["evals"]}
+        assert "context_adherence" in names
+
     def test_get_evals_list_invalid_dataset(self, auth_client):
         """Test that invalid dataset_id returns error."""
         fake_dataset_id = uuid.uuid4()

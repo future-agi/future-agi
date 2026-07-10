@@ -229,6 +229,7 @@ from model_hub.utils.eval_reasons import (
     MIN_ROWS_FOR_CRITICAL_ISSUES,
     get_explanation_summary,
 )
+from model_hub.utils.eval_search import normalize_eval_search_text
 from model_hub.utils.eval_result_columns import infer_eval_result_column_data_type
 from model_hub.utils.evals import (
     FUNCTION_CONFIG_EVALS,
@@ -6660,7 +6661,9 @@ class GetEvalsListView(APIView):
     ):  # Changed from 'post' to 'get'
         try:
             # Get parameters from query params instead of request body
-            search_text = request.GET.get("search_text", "").strip()
+            search_text = normalize_eval_search_text(
+                request.GET.get("search_text", "")
+            )
             eval_categories = request.GET.get("eval_categories")
             eval_type = request.GET.get("eval_type")
             eval_tags = request.GET.getlist("eval_tags[]") or request.GET.getlist(
@@ -6680,7 +6683,7 @@ class GetEvalsListView(APIView):
                 "eval_tags": eval_tags,
                 "use_cases": use_cases,
             }
-            search_text = validated_data.get("search_text", "").strip()
+            search_text = validated_data.get("search_text", "")
             eval_categories = validated_data.get("eval_categories")
             eval_type = validated_data.get("eval_type")
             eval_tags = validated_data.get("eval_tags")
