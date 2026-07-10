@@ -426,10 +426,6 @@ const Executions = lazyWithRetry(
   () => import("src/sections/agent-playground/Executions/Executions"),
 );
 
-// TODO: Remove after verifying the error boundary
-const ErrorBoundaryTest = () => {
-  throw new Error("This is a test error to preview the error boundary UI");
-};
 
 const DashboardRoutes = () => {
   const location = useLocation();
@@ -1422,11 +1418,6 @@ export const dashboardRoutes = (
     {
       path: "dashboards/:dashboardId/widget/:widgetId",
       element: <WidgetEditorView />,
-    },
-    // TODO: Remove this test route after verifying the error boundary
-    {
-      path: "error-test",
-      element: <ErrorBoundaryTest />,
     },
   ];
 
