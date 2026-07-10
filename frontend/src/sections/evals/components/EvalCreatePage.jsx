@@ -193,6 +193,7 @@ const EvalCreatePage = () => {
   const errorLocalizerActive =
     errorLocalizerEnabled && !agentEvalLocked && errorLocalizerAvailable;
   const [tags, setTags] = useState([]);
+  const [customTagInput, setCustomTagInput] = useState("");
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
   const [templateFormat, setTemplateFormat] = useState("mustache");
@@ -482,14 +483,22 @@ const EvalCreatePage = () => {
       return;
     }
     try {
+      const pendingCustomTag = customTagInput.trim();
+      const tagsToSave =
+        pendingCustomTag && !tags.includes(pendingCustomTag)
+          ? [...tags, pendingCustomTag]
+          : tags;
+
       // Publish the draft: set name, mark visible
       await updateDraft.mutateAsync({
         name: name.trim(),
         ...buildUpdatePayload(),
         description: description || null,
-        tags,
+        tags: tagsToSave,
         publish: true,
       });
+      setTags(tagsToSave);
+      setCustomTagInput("");
       publishedRef.current = true;
       enqueueSnackbar("Evaluation saved successfully", { variant: "success" });
       navigate(`/dashboard/evaluations/${draftId}`);
@@ -504,6 +513,7 @@ const EvalCreatePage = () => {
     name,
     description,
     tags,
+    customTagInput,
     buildUpdatePayload,
     updateDraft,
     enqueueSnackbar,
@@ -1219,7 +1229,55 @@ const EvalCreatePage = () => {
                           />
                         );
                       })}
+                      {tags
+                        .filter(
+                          (tag) =>
+                            !EVAL_TAGS.some(
+                              (predefinedTag) => predefinedTag.value === tag,
+                            ),
+                        )
+                        .map((tag) => (
+                          <Chip
+                            key={tag}
+                            icon={<Iconify icon="mdi:tag-outline" width={14} />}
+                            label={tag}
+                            size="small"
+                            color="primary"
+                            onDelete={() =>
+                              setTags((prev) =>
+                                prev.filter((item) => item !== tag),
+                              )
+                            }
+                            sx={{
+                              fontSize: "12px",
+                              "& .MuiChip-icon": { fontSize: "14px" },
+                            }}
+                          />
+                        ))}
                     </Box>
+                    <TextField
+                      size="small"
+                      placeholder="Add custom tag..."
+                      helperText="Press Enter to add"
+                      inputProps={{ "aria-label": "Add custom tag" }}
+                      value={customTagInput}
+                      onChange={(event) => setCustomTagInput(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (
+                          event.key !== "Enter" ||
+                          event.nativeEvent.isComposing
+                        )
+                          return;
+                        event.preventDefault();
+                        const newTag = customTagInput.trim();
+                        if (!newTag) return;
+                        setTags((prev) =>
+                          prev.includes(newTag) ? prev : [...prev, newTag],
+                        );
+                        setCustomTagInput("");
+                      }}
+                      sx={{ mt: 1.5, minWidth: 200 }}
+                    />
                   </Box>
                 </>
               ) : (
