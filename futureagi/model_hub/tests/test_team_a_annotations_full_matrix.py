@@ -241,12 +241,13 @@ def observation_span(db, project, trace):
 
 
 def _seed_ch_trace_root(trace):
-    """Seed a CH root span so a *bare* trace resolves under CH-native annotation
-    (trace resolution reads the trace's root span from CH, not the PG row)."""
+    """Seed a CH-only root span so a *bare* trace resolves under CH-native annotation
+    (trace resolution reads the trace's root span from CH, not the PG row). Built in
+    memory and seeded to CH — never written to PG (the tracer tables are dropped)."""
     from tracer.models.observation_span import ObservationSpan
     from tracer.tests._ch_seed import seed_ch_span
 
-    span = ObservationSpan.objects.create(
+    span = ObservationSpan(
         id=f"chroot_{uuid.uuid4().hex[:16]}",
         project=trace.project,
         trace=trace,
@@ -256,7 +257,7 @@ def _seed_ch_trace_root(trace):
         end_time=timezone.now(),
         status="OK",
     )
-    seed_ch_span(span)
+    seed_ch_span(span)  # CH only — NOT ObservationSpan.objects.create
 
 
 @pytest.fixture

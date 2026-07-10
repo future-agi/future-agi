@@ -1472,6 +1472,12 @@ class TestScoreOnCollectorOnlySpan:
         )
 
         class _R:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
             def get(self, sid):
                 return fake if str(sid) == ch_span_id else None
 
@@ -1493,6 +1499,12 @@ class TestScoreOnCollectorOnlySpan:
         )
 
         class _R:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
             def get(self, sid):
                 return fake if str(sid) == ch_span_id else None
 
@@ -1501,21 +1513,31 @@ class TestScoreOnCollectorOnlySpan:
 
         monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: _R())
 
-    @pytest.mark.parametrize("foreign_org", ["", str(uuid.uuid4())])
     def test_ch_only_span_denied_cross_org(
         self,
         auth_client,
-        observe_project,
         trace,
         organization,
         star_label,
         monkeypatch,
-        foreign_org,
     ):
-        """CH span with empty/foreign org_id must 404 (the org-scope guard failed OPEN on empty org)."""
+        """A CH span whose PROJECT belongs to another org must 404. The project is
+        the tenant boundary (``_tenant_scoped_project``) — a span is cross-org iff
+        its project is, so seed the span under a foreign-org project."""
+        from accounts.models.organization import Organization
+        from model_hub.models.ai_model import AIModel
+        from tracer.models.project import Project
+
+        foreign_org = Organization.objects.create(name=f"Foreign {uuid.uuid4().hex[:8]}")
+        foreign_project = Project.objects.create(
+            name="Foreign project",
+            organization=foreign_org,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
         ch_span_id = "ch_" + uuid.uuid4().hex[:16]
         self._fake_reader_with_org(
-            monkeypatch, ch_span_id, observe_project, foreign_org, trace
+            monkeypatch, ch_span_id, foreign_project, str(foreign_org.id), trace
         )
         payload = {
             "source_type": "observation_span",
@@ -1584,6 +1606,7 @@ class TestScoreOnCollectorOnlyTrace:
             trace_id=str(trace_id),
             parent_span_id="",  # root span
             observation_type="agent",
+            status="OK",  # terminal → not "in progress"
         )
 
         class _R:
@@ -1595,6 +1618,11 @@ class TestScoreOnCollectorOnlyTrace:
 
             def list_by_trace(self_inner, tid, *, project_id=None):
                 return [root_span] if str(tid) == str(trace_id) else []
+
+            def roots_by_trace_ids(
+                self_inner, tids, *, include_heavy=False, project_id=None, org_id=None
+            ):
+                return [root_span] if str(trace_id) in {str(t) for t in tids} else []
 
             def close(self_inner):
                 pass

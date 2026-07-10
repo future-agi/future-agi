@@ -47,6 +47,7 @@ from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.span_notes import SpanNotes
 from tracer.models.trace import Trace
+from tracer.tests._ch_seed import seed_ch_span
 
 
 @pytest.fixture
@@ -72,7 +73,7 @@ def observe_trace(db, observe_project):
 
 @pytest.fixture
 def root_conversation_span(db, observe_project, observe_trace):
-    return ObservationSpan.objects.create(
+    span = ObservationSpan.objects.create(
         id=f"voice_root_{uuid.uuid4().hex[:16]}",
         project=observe_project,
         trace=observe_trace,
@@ -85,6 +86,10 @@ def root_conversation_span(db, observe_project, observe_trace):
         latency_ms=1000,
         status="OK",
     )
+    # Tracer sources resolve CH-native; mirror this root span into ClickHouse so
+    # the trace/span resolves (the PG row alone is no longer read).
+    seed_ch_span(span)
+    return span
 
 
 @pytest.fixture
@@ -285,7 +290,7 @@ class TestVoiceAnnotationRegressionE2E:
             project=observe_project,
             name="In-progress voice call trace",
         )
-        ObservationSpan.objects.create(
+        in_progress_span = ObservationSpan.objects.create(
             id=f"voice_in_progress_{uuid.uuid4().hex[:16]}",
             project=observe_project,
             trace=in_progress_trace,
@@ -295,6 +300,7 @@ class TestVoiceAnnotationRegressionE2E:
             parent_span_id=None,
             status="UNSET",
         )
+        seed_ch_span(in_progress_span)
 
         resp = auth_client.post(
             _add_items_url(queue),
@@ -341,7 +347,7 @@ class TestVoiceAnnotationRegressionE2E:
             project=observe_project,
             name="In-progress voice call trace",
         )
-        ObservationSpan.objects.create(
+        in_progress_span = ObservationSpan.objects.create(
             id=f"voice_filter_in_progress_{uuid.uuid4().hex[:16]}",
             project=observe_project,
             trace=in_progress_trace,
@@ -351,6 +357,7 @@ class TestVoiceAnnotationRegressionE2E:
             parent_span_id=None,
             status="UNSET",
         )
+        seed_ch_span(in_progress_span)
 
         resp = auth_client.post(
             _add_items_url(queue),
@@ -1101,8 +1108,9 @@ class TestVoiceAnnotationRegressionE2E:
         simulation_agent_definition,
         simulation_call_execution,
     ):
-        root_conversation_span.response_time = 123.5
-        root_conversation_span.save(update_fields=["response_time"])
+        # CH has no separate response_time column — a span's response_time_ms
+        # collapses to latency_ms (the only CH timing signal). The call_execution
+        # branch is PG-backed and keeps its distinct response_time_ms.
         simulation_call_execution.response_time_ms = 456
         simulation_call_execution.avg_agent_latency_ms = 789
         simulation_call_execution.save(
@@ -1141,7 +1149,7 @@ class TestVoiceAnnotationRegressionE2E:
         span_preview = next(p for p in previews if p["type"] == "observation_span")
         call_preview = next(p for p in previews if p["type"] == "call_execution")
         assert span_preview["latency_ms"] == 1000
-        assert span_preview["response_time_ms"] == 123.5
+        assert span_preview["response_time_ms"] == 1000  # == latency_ms (CH-native)
         assert call_preview["latency_ms"] == 789
         assert call_preview["response_time_ms"] == 456
         assert call_preview["duration_seconds"] == 42
@@ -1162,6 +1170,9 @@ class TestVoiceAnnotationRegressionE2E:
         }
         root_conversation_span.response_time = 321.0
         root_conversation_span.save(update_fields=["span_attributes", "response_time"])
+        # Re-seed CH after mutating the span: export fields read span_attributes
+        # CH-native, so the PG-only write above must be mirrored.
+        seed_ch_span(root_conversation_span)
         queue = _queue(
             "TH-4735 export queue",
             organization,
@@ -1502,6 +1513,8 @@ class TestVoiceAnnotationRegressionE2E:
     ):
         root_conversation_span.span_attributes = {"score": 7}
         root_conversation_span.save(update_fields=["span_attributes"])
+        # Re-seed CH after mutating span_attributes: export reads them CH-native.
+        seed_ch_span(root_conversation_span)
         queue = _queue(
             "Existing dataset export queue",
             organization,

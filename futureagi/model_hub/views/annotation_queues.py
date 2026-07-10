@@ -4432,11 +4432,26 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 for src in sources
                 if src["source_type"] == "observation_span"
             ]
-            if _span_source_ids:
+            # Same N×M / OOM rationale for traces: a trace's project is a lean
+            # 2-column CH read (``project_by_trace_ids``), precomputed once so the
+            # scope branches below do an in-memory dict lookup instead of a PG
+            # ``Trace.objects`` join — the PG tracer tables are dropped.
+            _ch_project_by_trace: dict[str, str | None] = {}
+            _trace_source_ids = [
+                str(src["source_id"])
+                for src in sources
+                if src["source_type"] == "trace"
+            ]
+            if _span_source_ids or _trace_source_ids:
                 from tracer.services.clickhouse.v2 import get_reader as _gr_bulk
 
                 with _gr_bulk() as _reader_bulk:
-                    _ch_scope_by_span = _reader_bulk.scope_by_ids(_span_source_ids)
+                    if _span_source_ids:
+                        _ch_scope_by_span = _reader_bulk.scope_by_ids(_span_source_ids)
+                    if _trace_source_ids:
+                        _ch_project_by_trace = _reader_bulk.project_by_trace_ids(
+                            _trace_source_ids
+                        )
 
             for dq in missing_defaults:
                 if dq.id in seen_queues:
@@ -4454,19 +4469,13 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                         "observation_span",
                         "trace_session",
                     ):
-                        from tracer.models.trace import Trace
-
                         if st == "trace":
-                            # PG-only on purpose: a collector trace (no PG row)
-                            # returns False here, but the trace-detail panel always
-                            # co-sends its root observation_span (both gated on the
-                            # same spanId in buildTraceAnnotationSources), which
-                            # matches this same project-scoped queue via the
-                            # CH-aware branch below. Making this CH-aware would add
-                            # the N×M per-(queue,trace) round-trips codex P2 removed.
-                            exists = Trace.objects.filter(
-                                id=sid, project_id=dq.project_id, deleted=False
-                            ).exists()
+                            # CH-only: the trace's project (lean 2-column read,
+                            # prefetched above) must match this project-scoped
+                            # default queue. No PG ``Trace`` row exists to join.
+                            exists = _ch_project_by_trace.get(str(sid)) == str(
+                                dq.project_id
+                            )
                         elif st == "observation_span":
                             # Bulk-prefetched above; in-memory dict lookup
                             # (avoids N×M CH round-trips per codex P2).
@@ -4526,14 +4535,19 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                         "observation_span",
                         "trace_session",
                     ):
-                        from tracer.models.trace import Trace
-
                         if st == "trace":
-                            exists = Trace.objects.filter(
-                                id=sid,
-                                project__observability_providers__agent_definition=dq.agent_definition_id,
-                                deleted=False,
-                            ).exists()
+                            # CH-only: read the trace's project from CH (prefetched)
+                            # then verify the agent-definition linkage in PG
+                            # (Project → ObservabilityProvider → AgentDefinition),
+                            # mirroring the observation_span branch below.
+                            _pid = _ch_project_by_trace.get(str(sid))
+                            exists = (
+                                _pid is not None
+                                and Project.objects.filter(
+                                    id=_pid,
+                                    observability_providers__agent_definition=dq.agent_definition_id,
+                                ).exists()
+                            )
                         elif st == "observation_span":
                             # Bulk-prefetched above. FK traversal
                             # `project__observability_providers__agent_definition`

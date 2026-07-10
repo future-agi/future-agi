@@ -154,6 +154,18 @@ class _ReaderCM:
             return []
         return [self._span] if str(self._span.trace_id) == str(trace_id) else []
 
+    def roots_by_trace_ids(
+        self, trace_ids, *, include_heavy=False, project_id=None, org_id=None
+    ):
+        # Mirror the real reader: parentless spans for the given traces.
+        if self._span is None or getattr(self._span, "parent_span_id", None):
+            return []
+        return (
+            [self._span]
+            if str(self._span.trace_id) in {str(t) for t in trace_ids}
+            else []
+        )
+
 
 # ─────────────────────────── observation_span: resolve ───────────────────────
 

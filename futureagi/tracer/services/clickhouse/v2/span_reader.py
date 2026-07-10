@@ -1071,6 +1071,36 @@ class CHSpanReader:
             for sid, pid, tid in rows
         }
 
+    def project_by_trace_ids(self, trace_ids: list[str]) -> dict[str, str | None]:
+        """Map ``trace_id -> project_id``, reading ONLY those two columns.
+
+        The trace equivalent of :meth:`scope_by_ids`: the annotation ``for-source``
+        scope checks need each trace's project to match a default queue's scope, and
+        a single panel-open must not OOM the shared cluster on the wide JSON columns
+        (a voice root carries its whole raw log — code 241). Project is stable across
+        a trace's spans, so ``any(project_id)`` per trace answers it; ``FINAL`` +
+        ``is_deleted = 0`` mirror ``scope_by_ids`` and a two-column grouped read
+        stays well under the memory limit.
+        """
+        if not trace_ids:
+            return {}
+        rows = self._client.query(
+            "SELECT toString(trace_id) AS trace_id, "
+            "toString(any(project_id)) AS project_id FROM spans FINAL "
+            "WHERE trace_id IN %(ids)s AND is_deleted = 0 "
+            "GROUP BY trace_id",
+            parameters={"ids": tuple(trace_ids)},
+        ).result_rows
+
+        def _norm(v: Any) -> str | None:
+            return (
+                None
+                if v in (None, "", "NULL", "00000000-0000-0000-0000-000000000000")
+                else str(v)
+            )
+
+        return {str(tid): _norm(pid) for tid, pid in rows}
+
     # ─── Aggregations across many traces ──────────────────────────────────────
     def aggregate_by_trace_ids(self, trace_ids: list[str]) -> dict[str, Any]:
         """Sum(tokens, cost) + count across multiple traces in one query.
