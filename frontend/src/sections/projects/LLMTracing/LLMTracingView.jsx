@@ -215,6 +215,7 @@ const USER_DETAIL_TAB_TYPE = "user_detail";
 import TraceGrid from "./TraceGrid";
 import SpanGrid from "./SpanGrid";
 import { useAgentGraph } from "src/api/project/agent-graph";
+import { fetchSpanAttributeKeys } from "src/api/project/llm-tracing";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 
 // Lazy load graph components — only loaded when viewMode changes
@@ -1242,14 +1243,9 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     },
   );
 
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", observeId],
-    queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          filters: JSON.stringify({ project_id: observeId }),
-        },
-      }),
+  const { data: spanAttributes } = useQuery({
+    queryKey: ["span-attribute-keys", observeId],
+    queryFn: () => fetchSpanAttributeKeys(observeId),
     select: (data) => data.data?.result,
     enabled: Boolean(observeId),
   });
@@ -1447,8 +1443,8 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
   const [attributes, setAttributes] = useState([]);
 
   useEffect(() => {
-    setAttributes(evalAttributes || []);
-  }, [evalAttributes]);
+    setAttributes(spanAttributes || []);
+  }, [spanAttributes]);
 
   // User mode only — project mode already scopes to a single project.
   const projectFilterField = useProjectFilterField({ enabled: isUserMode });
