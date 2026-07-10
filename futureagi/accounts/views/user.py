@@ -1,5 +1,4 @@
 # views.py
-from django.utils.crypto import constant_time_compare
 from datetime import datetime, timedelta
 
 import requests
@@ -8,6 +7,7 @@ from django.contrib.auth.hashers import check_password
 from django.core.cache import cache
 from django.db import transaction
 from django.utils import timezone
+from django.utils.crypto import constant_time_compare
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -56,8 +56,8 @@ def manage_redis_key(request):
     gm = GeneralMethods()
     try:
         # Verify access token
-       if not constant_time_compare(access_token_id or '', settings.SECRET_KEY):
-        if access_token_id != settings.SECRET_KEY:
+        access_token_id = request.data.get("access_token_id")
+        if not constant_time_compare(access_token_id or '', settings.SECRET_KEY):
             return gm.bad_request("Invalid or expired token")
 
         key = request.data.get("key")
@@ -756,6 +756,7 @@ def get_user_info(request):
             except WorkspaceMembership.DoesNotExist:
                 workspace_role = None
 
+            # Determine effective role based on hierarchy
             data["default_workspace_role"] = get_effective_workspace_role(
                 current_org_role, workspace_role
             )
