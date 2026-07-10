@@ -182,7 +182,7 @@ def test_dry_run_does_not_create_table_or_insert():
     assert not any(s.lower().lstrip().startswith("insert into") for s in executed_sqls), (
         "dry-run must not emit any INSERT statement"
     )
-    assert "would_insert" in stdout.lower() or "dry run" in stdout.lower()
+    assert "would_insert" in stdout.lower()
 
 
 def test_creates_target_table_when_source_is_absent_so_future_writes_have_a_home():

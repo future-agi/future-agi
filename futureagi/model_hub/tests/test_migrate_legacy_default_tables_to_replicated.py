@@ -152,6 +152,75 @@ def test_dry_run_issues_no_writes():
     assert "dry run" in out.lower()
 
 
+def _make_oneshot_dry_run_mock(*, per_replica: list[tuple[str, int]], source: int):
+    """Minimal mock exposing just enough for one-shot dry-run branch tests."""
+    db = MagicMock()
+
+    def ex(sql, params=None, settings=None):
+        lc = sql.lower()
+        if "from system.clusters" in lc:
+            return [(3,)]
+        if "from system.tables" in lc:
+            return [(1,)]
+        if "from system.columns" in lc:
+            return [("id",)]
+        if "hostname()" in lc and "clusterallreplicas" in lc:
+            return per_replica
+        if "clusterallreplicas" in lc:
+            return [(source,)]
+        return []
+
+    db.client.execute.side_effect = ex
+    db._is_clustered = MagicMock(return_value=True)
+    return db
+
+
+def test_dry_run_one_shot_treats_missing_replicas_as_created_empty():
+    """Kartik's scenario: target on 2 of 3 replicas, all empty.
+    ``ensure_target ON CLUSTER`` would create on the 3rd on the real run,
+    landing on all-empty -> COPY. Dry-run must not falsely REFUSE + TRUNCATE.
+    """
+    db = _make_oneshot_dry_run_mock(
+        per_replica=[("ch-0", 0), ("ch-1", 0)], source=5
+    )
+    out, err = _run("llm_logs", db_client=db, dry_run=True)
+    assert "would_insert=5" in out
+    assert "REFUSE" not in err
+    assert "TRUNCATE" not in err
+
+
+def test_dry_run_one_shot_reports_copy_when_empty_on_all_replicas():
+    """Full replica set, all empty -> COPY branch."""
+    db = _make_oneshot_dry_run_mock(
+        per_replica=[("ch-0", 0), ("ch-1", 0), ("ch-2", 0)], source=5
+    )
+    out, err = _run("llm_logs", db_client=db, dry_run=True)
+    assert "empty everywhere" in out
+    assert "would_insert=5" in out
+    assert "REFUSE" not in err
+
+
+def test_dry_run_one_shot_reports_noop_when_already_done():
+    """Full replica set, all at >= source_count -> NOOP branch."""
+    db = _make_oneshot_dry_run_mock(
+        per_replica=[("ch-0", 5), ("ch-1", 5), ("ch-2", 5)], source=5
+    )
+    out, err = _run("llm_logs", db_client=db, dry_run=True)
+    assert "already populated" in out
+    assert "would_insert=0" in out
+    assert "REFUSE" not in err
+
+
+def test_dry_run_one_shot_reports_refuse_when_partial_target():
+    """Full replica set, mixed counts -> REFUSE branch with TRUNCATE guidance."""
+    db = _make_oneshot_dry_run_mock(
+        per_replica=[("ch-0", 42), ("ch-1", 42), ("ch-2", 0)], source=5
+    )
+    out, err = _run("llm_logs", db_client=db, dry_run=True)
+    assert "REFUSE" in err
+    assert "TRUNCATE" in err
+
+
 # ---------------------------------------------------------------------------
 # Real run — keyed tables
 # ---------------------------------------------------------------------------

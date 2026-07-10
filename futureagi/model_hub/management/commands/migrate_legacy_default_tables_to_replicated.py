@@ -51,11 +51,14 @@ from agentic_eval.core.database.ch_vector import (
     get_clickhouse_cluster_name,
 )
 from model_hub.services.ch_migration import (
+    OneShotDecision,
     expected_replica_count,
+    one_shot_decision,
     per_replica_counts,
     poll_replica_parity,
     require_identifier,
     shared_columns,
+    simulated_post_ensure_counts,
 )
 from model_hub.services.legacy_ch_tables import (
     EVENTS_TABLE,
@@ -334,20 +337,17 @@ class Command(BaseCommand):
                 f"SELECT {count_expr} FROM clusterAllReplicas("
                 f"'{cluster}', {source_qualified})"
             )[0][0]
-            target_exists = db_client.client.execute(
-                "SELECT count() FROM system.tables "
-                "WHERE database = %(db)s AND name = %(t)s",
-                {"db": target_db, "t": spec.name},
-            )[0][0]
-            if not target_exists:
+            # Target visibility via clusterAllReplicas; empty dict means
+            # ``ensure_target`` will create it cluster-wide on the real run.
+            before_counts = per_replica_counts(
+                db_client.client, target_db, spec.name, cluster
+            )
+            if not before_counts:
                 self.stdout.write(
                     f"  {spec.name}:  source={source_count}  target does not exist "
                     f"(would be created)  would_insert={source_count}  [{mode_label}]"
                 )
                 return source_count, True
-            before_counts = per_replica_counts(
-                db_client.client, target_db, spec.name, cluster
-            )
             if spec.is_keyed:
                 new_rows = db_client.client.execute(
                     f"SELECT count() FROM clusterAllReplicas("
@@ -361,21 +361,18 @@ class Command(BaseCommand):
                     f"would_insert={new_rows}  [{mode_label}]"
                 )
                 return new_rows, True
-            # One-shot append-only: simulate the real decision.
-            complete = len(before_counts) == expected_replicas
-            empty_everywhere = complete and all(c == 0 for c in before_counts.values())
-            already_done = (
-                complete
-                and source_count > 0
-                and all(c >= source_count for c in before_counts.values())
+            # One-shot append-only: pad + decide against post-ensure state.
+            sim_counts = simulated_post_ensure_counts(
+                before_counts, expected_replicas
             )
-            if already_done:
+            decision = one_shot_decision(sim_counts, expected_replicas, source_count)
+            if decision == OneShotDecision.NOOP:
                 self.stdout.write(
                     f"  {spec.name}:  source={source_count}  target already populated "
                     f"({before_counts})  would_insert=0 (no-op)  [{mode_label}]"
                 )
                 return 0, True
-            if empty_everywhere:
+            if decision == OneShotDecision.COPY:
                 self.stdout.write(
                     f"  {spec.name}:  source={source_count}  target empty everywhere  "
                     f"would_insert={source_count}  [{mode_label}]"
@@ -428,31 +425,18 @@ class Command(BaseCommand):
         )
 
         if not spec.is_keyed:
-            # Append-only log with no dedup key. Three outcomes, decided by the
-            # FULL replica set (a replica missing from the result, or holding a
-            # different count, is never treated as "empty" or "done"):
-            #   - empty on every replica            -> safe to copy
-            #   - already >= source on every replica -> already migrated, no-op ok
-            #   - anything else (partial / diverged) -> refuse; re-copy would
-            #     duplicate the keyless log, so this needs a manual TRUNCATE.
-            # (min() across replicas would let one empty/lagging replica wave the
-            # copy through and duplicate the whole log.)
-            complete = len(before_counts) == expected_replicas
-            empty_everywhere = complete and all(
-                c == 0 for c in before_counts.values()
+            # Append-only log: keyless copy is not idempotent, so refuse
+            # unless the target is confirmed empty on every replica.
+            decision = one_shot_decision(
+                before_counts, expected_replicas, source_count
             )
-            already_done = (
-                complete
-                and source_count > 0
-                and all(c >= source_count for c in before_counts.values())
-            )
-            if already_done:
+            if decision == OneShotDecision.NOOP:
                 self.stdout.write(
                     f"  {spec.name}: already populated and converged on all "
                     f"{expected_replicas} replicas ({before_counts}); one-shot no-op."
                 )
                 return 0, True
-            if not empty_everywhere:
+            if decision == OneShotDecision.REFUSE:
                 self.stderr.write(
                     self.style.WARNING(
                         f"  {spec.name}: append-only table is not confirmed empty on "
