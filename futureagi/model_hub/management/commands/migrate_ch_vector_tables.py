@@ -85,16 +85,20 @@ class Command(BaseCommand):
             )
 
         db_client = ClickHouseVectorDB()
-        expected_replicas = (
-            0 if dry_run else expected_replica_count(db_client.client, cluster)
-        )
+        is_clustered = db_client._is_clustered()
+        # Probe replicas even in dry-run so the preview matches the real path.
+        expected_replicas = expected_replica_count(db_client.client, cluster)
 
-        if not dry_run:
+        if dry_run:
+            self._print_dry_run_header(
+                source_db=source_db, target_db=target_db, cluster=cluster,
+                is_clustered=is_clustered, expected_replicas=expected_replicas,
+                tables=tables,
+            )
+        else:
             # Bootstrap the target DB on every replica before any CREATE TABLE.
             # ON CLUSTER requires Keeper; drop it on single-node CH.
-            on_cluster = (
-                f" ON CLUSTER '{cluster}'" if db_client._is_clustered() else ""
-            )
+            on_cluster = f" ON CLUSTER '{cluster}'" if is_clustered else ""
             db_client.client.execute(
                 f"CREATE DATABASE IF NOT EXISTS {target_db}{on_cluster}"
             )
@@ -110,6 +114,7 @@ class Command(BaseCommand):
         )
 
         total_copied = 0
+        total_dry_new = 0
         failures: list[str] = []
         for table in tables:
             copied, ok = self._migrate_one_table(
@@ -119,9 +124,13 @@ class Command(BaseCommand):
                 target_db=target_db,
                 cluster=cluster,
                 expected_replicas=expected_replicas,
+                is_clustered=is_clustered,
                 dry_run=dry_run,
             )
-            total_copied += copied
+            if dry_run:
+                total_dry_new += copied
+            else:
+                total_copied += copied
             if not ok:
                 failures.append(table)
 
@@ -132,6 +141,15 @@ class Command(BaseCommand):
             failures=failures,
             dry_run=dry_run,
         )
+
+        if dry_run:
+            self._print_dry_run_footer(
+                source_db=source_db, target_db=target_db, cluster=cluster,
+                tables=tables, total_estimated_new=total_dry_new,
+                refused=failures,
+            )
+            return
+
         if failures:
             # Non-zero exit so an exit-code-gated cutover can't flip
             # CH_DATABASE before every replicated copy has converged.
@@ -147,6 +165,58 @@ class Command(BaseCommand):
             )
         )
 
+    _BAR = "=" * 68
+
+    def _print_dry_run_header(
+        self, *, source_db: str, target_db: str, cluster: str,
+        is_clustered: bool, expected_replicas: int, tables: list[str],
+    ) -> None:
+        mode = (
+            f"clustered  (Replicated* engines; CREATE ... ON CLUSTER '{cluster}')"
+            if is_clustered
+            else "single-node  (plain engines; no ON CLUSTER, Keeper absent)"
+        )
+        bootstrap = (
+            f"CREATE DATABASE IF NOT EXISTS {target_db} ON CLUSTER '{cluster}'"
+            if is_clustered
+            else f"CREATE DATABASE IF NOT EXISTS {target_db}"
+        )
+        self.stdout.write("")
+        self.stdout.write(self._BAR)
+        self.stdout.write("CH Migration DRY RUN  (no writes will occur)")
+        self.stdout.write(self._BAR)
+        self.stdout.write(f"Command:            migrate_ch_vector_tables")
+        self.stdout.write(f"Source database:    {source_db}")
+        self.stdout.write(f"Target database:    {target_db}")
+        self.stdout.write(f"Cluster:            {cluster}")
+        self.stdout.write(f"Mode:               {mode}")
+        self.stdout.write(f"Expected replicas:  {expected_replicas}")
+        self.stdout.write(f"Tables:             {', '.join(tables)}")
+        self.stdout.write(f"Bootstrap step:     {bootstrap}")
+        self.stdout.write(self._BAR)
+
+    def _print_dry_run_footer(
+        self, *, source_db: str, target_db: str, cluster: str,
+        tables: list[str], total_estimated_new: int, refused: list[str],
+    ) -> None:
+        refused_line = (
+            "Would refuse:       none"
+            if not refused
+            else f"Would refuse:       {', '.join(refused)}  (see per-table warnings above)"
+        )
+        self.stdout.write(self._BAR)
+        self.stdout.write("Summary")
+        self.stdout.write(f"  Tables scanned:     {len(tables)}")
+        self.stdout.write(f"  New rows to insert: {total_estimated_new}")
+        self.stdout.write(f"  {refused_line}")
+        self.stdout.write("")
+        self.stdout.write("Real run:  same command without --dry-run:")
+        self.stdout.write(f"  python manage.py migrate_ch_vector_tables \\")
+        self.stdout.write(f"    --source-database {source_db} \\")
+        self.stdout.write(f"    --target-database {target_db} \\")
+        self.stdout.write(f"    --cluster {cluster}")
+        self.stdout.write(self._BAR)
+
     def _migrate_one_table(
         self,
         *,
@@ -156,9 +226,14 @@ class Command(BaseCommand):
         target_db: str,
         cluster: str,
         expected_replicas: int,
+        is_clustered: bool = True,
         dry_run: bool,
     ) -> tuple[int, bool]:
-        """Return ``(rows_copied, converged_ok)``."""
+        """Return ``(rows_copied_or_estimated, converged_ok)``.
+
+        In dry-run, the first element is the estimated new-row count
+        (source distinct rows that are not yet in the target).
+        """
         source_qualified = f"{source_db}.{table}"
         target_qualified = f"{target_db}.{table}"
 
@@ -169,22 +244,45 @@ class Command(BaseCommand):
         )[0][0]
 
         if dry_run:
+            engine_hint = (
+                "ReplicatedReplacingMergeTree ON CLUSTER"
+                if is_clustered
+                else "ReplacingMergeTree() [plain, single-node]"
+            )
             if not source_exists:
                 self.stdout.write(
-                    f"  dry-run: source {source_qualified} missing; "
-                    f"would create empty target {target_qualified}"
+                    f"  {table}:  source MISSING; target would be created empty  "
+                    f"[engine: {engine_hint}]"
                 )
                 return 0, True
-            source_count_row = db_client.client.execute(
+            source_distinct_count = db_client.client.execute(
                 f"SELECT uniqExact({_DEDUP_COLUMN}) FROM clusterAllReplicas("
                 f"'{cluster}', {source_qualified})"
-            )
-            source_distinct_count = source_count_row[0][0] if source_count_row else 0
+            )[0][0]
+            target_exists = db_client.client.execute(
+                "SELECT count() FROM system.tables "
+                "WHERE database = %(db)s AND name = %(t)s",
+                {"db": target_db, "t": table},
+            )[0][0]
+            if target_exists:
+                target_now = db_client.client.execute(
+                    f"SELECT count() FROM {target_qualified}"
+                )[0][0]
+                new_rows = db_client.client.execute(
+                    f"SELECT count() FROM clusterAllReplicas("
+                    f"'{cluster}', {source_qualified}) "
+                    f"WHERE {_DEDUP_COLUMN} NOT IN "
+                    f"(SELECT {_DEDUP_COLUMN} FROM {target_qualified})"
+                )[0][0]
+            else:
+                target_now = 0
+                new_rows = source_distinct_count
             self.stdout.write(
-                f"  dry-run: would copy {source_distinct_count} rows from "
-                f"{source_qualified} -> {target_qualified}"
+                f"  {table}:  source={source_distinct_count}  "
+                f"target_now={target_now}  would_insert={new_rows}  "
+                f"[engine: {engine_hint}]"
             )
-            return 0, True
+            return new_rows, True
 
         # Create target unconditionally; ground_truths may have no source yet.
         # Qualify the table explicitly with database= rather than mutating

@@ -148,7 +148,8 @@ def test_dry_run_issues_no_writes():
     assert "create database" not in joined
     assert "insert into" not in joined
     assert "create table" not in joined
-    assert "would copy" in out
+    assert "would_insert" in out
+    assert "dry run" in out.lower()
 
 
 # ---------------------------------------------------------------------------

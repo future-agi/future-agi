@@ -73,6 +73,16 @@ def _build_mock_db_client(
             return [(1 if table_exists else 0,)]
         if "uniqexact(id)" in sql_lc and "clusterallreplicas" in sql_lc:
             return [(source_distinct,)]
+        # Dry-run anti-join preview: count() FROM clusterAllReplicas(...) WHERE id NOT IN
+        if (
+            "clusterallreplicas" in sql_lc
+            and "not in" in sql_lc
+            and "count()" in sql_lc
+        ):
+            return [(max(0, source_distinct - target_count_state["value"]),)]
+        # Dry-run target row count: plain count() FROM {target_qualified}
+        if sql_lc.lstrip().startswith("select count()") and "clusterallreplicas" not in sql_lc:
+            return [(target_count_state["value"],)]
         if sql_lc.lstrip().startswith("insert into"):
             target_count_state["value"] = max(
                 target_count_state["value"], source_distinct
@@ -173,7 +183,7 @@ def test_dry_run_does_not_create_table_or_insert():
     assert not any(s.lower().lstrip().startswith("insert into") for s in executed_sqls), (
         "dry-run must not emit any INSERT statement"
     )
-    assert "would copy" in stdout.lower()
+    assert "would_insert" in stdout.lower() or "dry run" in stdout.lower()
 
 
 def test_creates_target_table_when_source_is_absent_so_future_writes_have_a_home():
