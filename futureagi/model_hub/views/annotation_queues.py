@@ -141,7 +141,7 @@ from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.email import email_helper
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
-from tracer.models.observation_span import EvalLogger, ObservationSpan
+from tracer.models.observation_span import EvalLogger
 from tracer.models.project import Project
 from tracer.models.span_notes import SpanNotes
 
@@ -162,14 +162,12 @@ MAX_SELECTION_CAP = 10_000
 
 
 def _queue_item_export_prefetches():
+    # Tracer sources (trace / observation_span) render CH-native via
+    # CollectorSourceCache, so there is no PG trace-span prefetch here — a
+    # ``trace__observation_spans`` Prefetch would query the dropped tracer tables.
+    # call_execution is a simulate model (not tracer), so its transcript prefetch
+    # stays.
     return (
-        Prefetch(
-            "trace__observation_spans",
-            queryset=ObservationSpan.objects.filter(deleted=False).order_by(
-                "start_time", "created_at"
-            ),
-            to_attr="_queue_export_spans",
-        ),
         Prefetch(
             "call_execution__transcripts",
             queryset=CallTranscript.objects.filter(
@@ -1269,44 +1267,27 @@ def _reopen_items_missing_required_labels(queue):
 def _span_notes_target_for_queue_item(item):
     """Return the span that stores whole-item notes for queue annotation.
 
-    Span-source items return the PG ``ObservationSpan`` (writes still live in
-    PG), falling back to the CH span for collector data with no PG row.
-    Trace-source items pick the trace's root span from
-    CH 25 — preference order is ``observation_type="conversation"`` root span
-    (voice projects) → first root span by start_time → ``None``.
+    CH-native: span-source items resolve the span from CH by its soft id;
+    trace-source items pick the trace's root span from CH (lean) — preference
+    order ``observation_type="conversation"`` root (voice) → first root span →
+    ``None``. Downstream only reads ``.id``. Never query PG (tables are dropped).
     """
-    if item.source_type == "observation_span" and item.observation_span_id:
-        try:
-            return item.observation_span
-        except ObservationSpan.DoesNotExist:
-            # Collector span: no PG row. Resolve from CH — downstream only reads
-            # `.id` (CHSpan exposes it), same as the trace-root CH spans below.
-            from tracer.services.clickhouse.v2 import get_reader
+    from tracer.services.clickhouse.v2 import get_reader
 
-            with get_reader() as reader:
-                return reader.get(str(item.observation_span_id))
+    if item.source_type == "observation_span" and item.observation_span_id:
+        with get_reader() as reader:
+            return reader.get(str(item.observation_span_id))
     if item.source_type != "trace" or not item.trace_id:
         return None
 
-    # CH read replaces the prior PG path:
-    #   root_spans = ObservationSpan.objects.filter(trace_id=item.trace_id,
-    #       deleted=False).filter(Q(parent_span_id__isnull=True) |
-    #       Q(parent_span_id=""))
-    #   conversation root → start_time root → None
-    # CHSpanReader.list_by_trace drops deleted rows (via FINAL) and orders by
-    # (start_time, id). Root spans have empty parent_span_id (CH stores it
-    # as a non-nullable String — see schema 001), so we filter in Python.
-    from tracer.services.clickhouse.v2 import get_reader
-
     with get_reader() as reader:
-        spans = reader.list_by_trace(str(item.trace_id))
-    root_spans = [s for s in spans if not s.parent_span_id]
-    if not root_spans:
+        roots = reader.roots_by_trace_ids([str(item.trace_id)], include_heavy=False)
+    if not roots:
         return None
-    for s in root_spans:
+    for s in roots:
         if s.observation_type == "conversation":
             return s
-    return root_spans[0]
+    return roots[0]
 
 
 def _serialize_queue_item_note(note):
@@ -2172,29 +2153,16 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
         fields.append(field)
 
     if sample_items is None:
-        # KEEP-PG (transitional bridge): the Prefetch hydrates
-        # `trace._queue_export_spans` which downstream callers
-        # (`_trace_primary_span`, `resolve_source_content`) read as a list of
-        # Django ObservationSpan objects with `.span_attributes` /
-        # `.resource_attributes` dict access. Migrating that chain requires
-        # either teaching `resolve_source_content` about CHSpan or attaching
-        # CHSpan objects through `Prefetch.to_attr`, which Django's prefetch
-        # machinery does not support for non-model objects. Wave-3
-        # (commit 93c5c415f) added 9 new reader methods but none hydrate
-        # CHSpan via Prefetch.to_attr (that's structurally a Django ORM
-        # concept that doesn't bridge to dataclasses). Deferred to a
-        # follow-up commit that refactors the export path to assemble its
-        # own per-trace span maps via CHSpanReader instead of leaning on
-        # Prefetch — see also DECISIONS.
+        # Tracer sources (trace / observation_span / trace_session) resolve
+        # CH-native via CollectorSourceCache below — no PG select_related on them
+        # (a join to the dropped tracer tables would 500). dataset_row /
+        # prototype_run / call_execution stay PG-backed.
         sample_items = (
             QueueItem.objects.filter(queue=queue, deleted=False)
             .select_related(
-                "trace",
-                "observation_span",
                 "dataset_row",
                 "prototype_run",
                 "call_execution",
-                "trace_session",
             )
             .prefetch_related(*_queue_item_export_prefetches())
             .order_by("order", "created_at")[:100]
@@ -3367,22 +3335,17 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         query_params = request.validated_query_data
 
         queue = self.get_object()
-        # KEEP-PG (transitional bridge): same Prefetch pattern as
-        # `_build_annotation_queue_export_fields` — see the comment there for
-        # the deferral rationale. The exported rows flow through
-        # `resolve_source_content`/`_trace_primary_span` which expect Django
-        # ObservationSpan objects.
+        # Tracer sources resolve CH-native via CollectorSourceCache below, so no
+        # PG select_related on trace / observation_span / trace_session (a join to
+        # the dropped tracer tables would 500).
         items_qs = (
             QueueItem.objects.filter(queue=queue, deleted=False)
             .select_related(
                 "queue",
                 "reviewed_by",
-                "trace",
-                "observation_span",
                 "dataset_row",
                 "prototype_run",
                 "call_execution",
-                "trace_session",
             )
             .prefetch_related(*_queue_item_export_prefetches())
         )
@@ -3687,21 +3650,17 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 user=request.user,
             )
 
-        # KEEP-PG (transitional bridge): same Prefetch pattern as
-        # `_build_annotation_queue_export_fields` and `export_annotations` —
-        # `resolve_source_content` reads Django ObservationSpan attrs off the
-        # prefetched chain. See the comment on the first occurrence above.
+        # Tracer sources resolve CH-native via CollectorSourceCache below — no PG
+        # select_related on trace / observation_span / trace_session (a join to the
+        # dropped tracer tables would 500).
         items_qs = (
             QueueItem.objects.filter(queue=queue, deleted=False)
             .select_related(
                 "queue",
                 "reviewed_by",
-                "trace",
-                "observation_span",
                 "dataset_row",
                 "prototype_run",
                 "call_execution",
-                "trace_session",
             )
             .prefetch_related(*_queue_item_export_prefetches())
         )
@@ -5807,11 +5766,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         query_params = request.validated_query_data
 
         try:
+            # Tracer sources (trace / observation_span) resolve CH-native — no PG
+            # select_related on them (a join to the dropped tracer tables would 500).
             item = QueueItem.objects.select_related(
                 "dataset_row",
-                "trace",
-                "trace__project",
-                "observation_span",
                 "prototype_run",
                 "call_execution",
                 "assigned_to",
