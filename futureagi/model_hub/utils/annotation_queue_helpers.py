@@ -159,25 +159,26 @@ def is_source_available_for_annotation(source_type, source_obj):
 
 
 def filter_available_source_ids_for_annotation(
-    source_type, source_ids, *, organization=None, workspace=None
+    source_type, source_ids, *, organization=None, workspace=None, project_id=None
 ):
     """Split resolved filter-mode trace IDs into available / unavailable.
 
     CH-native mirror of :func:`is_source_available_for_annotation` for the bulk
     filter path: a trace is in progress while its CH root span is not terminal.
-    Reads the roots LEAN and org-scoped in one batched call (OOM-safe) via
-    :func:`_batch_ch_trace_roots`; a trace with no CH root reads as available
-    (it was never resolvable as in-progress). FAIL OPEN on a CH error — a
-    transient read must not silently drop every add. Returns
-    ``(available_ids, unavailable_count, unavailable_message)`` preserving input
-    order. Never query PG.
+    Reads the roots LEAN in one batched call (OOM-safe) via
+    :func:`_batch_ch_trace_roots`, scoped by ``project_id`` (the filter selection is
+    per-project). A trace with no CH root reads as available (it was never resolvable
+    as in-progress). FAIL OPEN on a CH error — a transient read must not silently
+    drop every add. ``organization`` / ``workspace`` are already applied upstream by
+    ``resolve_filtered_trace_ids``. Returns ``(available_ids, unavailable_count,
+    unavailable_message)`` preserving input order. Never query PG.
     """
     ordered_ids = [str(source_id) for source_id in source_ids]
     if source_type != QueueItemSourceType.TRACE.value or not ordered_ids:
         return ordered_ids, 0, None
 
     roots_by_trace = _batch_ch_trace_roots(
-        ordered_ids, org_id=str(organization.pk) if organization is not None else None
+        ordered_ids, project_id=str(project_id) if project_id else None
     )
 
     def _available(trace_id):
@@ -523,11 +524,11 @@ def _tenant_scoped_project(project_id, *, organization=None, workspace=None):
 class _CHTraceSource:
     """Duck-typed collector trace for annotation resolution (no PG ``Trace`` row).
 
-    Exposes the soft id the add path stores (``.id`` / ``.pk`` = trace_id) plus the
-    ``.project_id`` and resolved root :class:`CHSpan` the availability/render paths
-    read. Mirrors how a collector observation_span is duck-typed as a bare CHSpan.
-    Deliberately has no ``.observation_spans`` reverse relation — availability keys
-    off its absence to skip the PG in-progress check.
+    Exposes the soft id the add path stores (``.id`` / ``.pk`` = trace_id), the
+    ``.project_id``, and the resolved ``.root_span`` (:class:`CHSpan`). Mirrors how a
+    collector observation_span is duck-typed as a bare CHSpan. The in-progress guard
+    reads ``.root_span.status`` (terminal = addable) — the trace already resolved
+    from its CH root, so no extra read is needed.
     """
 
     def __init__(self, trace_id, root_span):
@@ -740,19 +741,23 @@ def _batch_ch_spans(span_ids):
 _CH_TRACE_ID_BATCH = 500
 
 
-def _batch_ch_trace_roots(trace_ids, *, org_id=None):
-    """Batch CH read of each trace's root span for a render/export path:
+def _batch_ch_trace_roots(trace_ids, *, project_id=None):
+    """Batch CH read of each trace's root span for a render/availability path:
     ``{str(trace_id): CHSpan}`` over *trace_ids* (chunked, LEAN).
 
     Reads the parentless (root) spans LEAN — input / output / metadata /
     span_attributes stay real; the heavy ``resource_attributes`` and ``events`` come
     back empty. That is a deliberate trade against ClickHouse OOM: those columns
     carry the voice raw_log on the CONVERSATION ROOT, and a batched heavy read of
-    many roots is exactly the code-241 shape on the shared cluster. ``org_id`` scopes
-    the read to one tenant. CH error → ``{}`` (FAIL OPEN — the per-item collector
-    branch then does its own point-read or renders the ``deleted`` sentinel). Backs
-    :class:`CollectorSourceCache` so a list/export over CH traces does one read per
-    chunk, not one per item."""
+    many roots is exactly the code-241 shape on the shared cluster. ``project_id``
+    (optional) scopes the read to one tenant on the non-null PK-prefix column — do
+    NOT scope by ``org_id`` here: a collector span row may carry a NULL ``org_id``
+    (``ObservationSpan.org_id`` is nullable and copied verbatim in the backfill), so
+    an org filter would silently drop those roots and read them as "no root". When
+    *project_id* is omitted the ``trace_ids`` are already tenant-scoped by the caller.
+    CH error → ``{}`` (FAIL OPEN — the per-item branch then does its own point-read
+    or renders the ``deleted`` sentinel). Backs :class:`CollectorSourceCache` so a
+    list page over CH traces does one read per chunk, not one per item."""
     if not trace_ids:
         return {}
     from tracer.services.clickhouse.v2 import get_reader
@@ -764,7 +769,7 @@ def _batch_ch_trace_roots(trace_ids, *, org_id=None):
             for start in range(0, len(ids), _CH_TRACE_ID_BATCH):
                 chunk = ids[start : start + _CH_TRACE_ID_BATCH]
                 for span in reader.roots_by_trace_ids(
-                    chunk, include_heavy=False, org_id=org_id
+                    chunk, include_heavy=False, project_id=project_id
                 ):
                     roots_by_trace.setdefault(str(span.trace_id), []).append(span)
     except Exception as exc:
@@ -820,7 +825,6 @@ class CollectorSourceCache:
         sessions by soft id. Empty id-sets short-circuit, so a page with no items of
         a kind pays for no read of that kind."""
         span_ids, session_ids, trace_ids = set(), set(), set()
-        org_id = None
         for item in items or []:
             source_type = getattr(item, "source_type", None)
             if (
@@ -833,17 +837,15 @@ class CollectorSourceCache:
                 and item.trace_session_id
             ):
                 session_ids.add(str(item.trace_session_id))
-            elif (
-                source_type == QueueItemSourceType.TRACE.value and item.trace_id
-            ):
+            elif source_type == QueueItemSourceType.TRACE.value and item.trace_id:
                 trace_ids.add(str(item.trace_id))
-                org_id = org_id or getattr(item, "organization_id", None)
+        # A page's items can span projects, so the trace-root read isn't project-
+        # scoped; the ids are the tenant's own queue items. (No org_id scoping —
+        # a collector span row may carry a NULL org_id; see _batch_ch_trace_roots.)
         return cls(
             spans=_batch_ch_spans(span_ids),
             sessions=_batch_ch_session_fields(session_ids),
-            trace_roots=_batch_ch_trace_roots(
-                trace_ids, org_id=str(org_id) if org_id else None
-            ),
+            trace_roots=_batch_ch_trace_roots(trace_ids),
         )
 
     def span(self, span_id):

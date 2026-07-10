@@ -5004,6 +5004,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             resolved_ids,
             organization=request.organization,
             workspace=getattr(request, "workspace", None),
+            project_id=project_id,
         )
         errors = [unavailable_error] if unavailable_error else []
 

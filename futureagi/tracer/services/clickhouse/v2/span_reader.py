@@ -1084,12 +1084,20 @@ class CHSpanReader:
         """
         if not trace_ids:
             return {}
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS (the two-arg
+        # ReplacingMergeTree drops deleted rows under FINAL; the setting re-arms the
+        # trace_id bloom that FINAL otherwise disables, so this prunes instead of
+        # full-scanning). GROUP BY (trace_id, project_id) returns the real pairs —
+        # collision-proof vs any() if two projects ever share a client-generated OTLP
+        # trace_id — and the dict keeps the first per trace (the normal 1:1).
         rows = self._client.query(
-            "SELECT toString(trace_id) AS trace_id, "
-            "toString(any(project_id)) AS project_id FROM spans FINAL "
-            "WHERE trace_id IN %(ids)s AND is_deleted = 0 "
-            "GROUP BY trace_id",
+            "SELECT toString(trace_id) AS trace_id, toString(project_id) AS project_id "
+            "FROM spans FINAL "
+            "WHERE trace_id IN %(ids)s "
+            "GROUP BY trace_id, project_id "
+            "ORDER BY trace_id, project_id",
             parameters={"ids": tuple(trace_ids)},
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
 
         def _norm(v: Any) -> str | None:
@@ -1099,7 +1107,10 @@ class CHSpanReader:
                 else str(v)
             )
 
-        return {str(tid): _norm(pid) for tid, pid in rows}
+        result: dict[str, str | None] = {}
+        for tid, pid in rows:
+            result.setdefault(str(tid), _norm(pid))
+        return result
 
     # ─── Aggregations across many traces ──────────────────────────────────────
     def aggregate_by_trace_ids(self, trace_ids: list[str]) -> dict[str, Any]:
