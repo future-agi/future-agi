@@ -430,25 +430,14 @@ class CustomPromptEvaluator(LLM):
             detected_modalities=list(detected_media_types.values()) if detected_media_types else [],
         )
 
-        # Surface the missing-client case before the LLM try/except so the
-        # error message isn't replaced by the block's generic fallback.
-        if self._is_turing:
-            try:
-                from ee.turing.client import TuringClient  # noqa: F401
-            except ImportError as exc:
-                if settings.DEBUG:
-                    logger.warning(
-                        "Could not import ee.turing.client", exc_info=True
-                    )
-                raise ValueError(
-                    f"Turing model {self._model!r} is not available on this "
-                    "build. Select a bring-your-own model in the eval "
-                    "settings and rerun."
-                ) from exc
-
         try:
             if self._is_turing:
-                from ee.turing.client import TuringClient
+                try:
+                    from ee.turing.client import TuringClient
+                except ImportError:
+                    if settings.DEBUG:
+                        logger.warning("Could not import ee.turing.client", exc_info=True)
+                    return None
 
                 turing_client = TuringClient()
                 # TuringClient handles model upgrade (e.g. turing_large → turing_large_xl

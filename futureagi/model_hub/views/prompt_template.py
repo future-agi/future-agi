@@ -2620,9 +2620,20 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 else data_config.get("config", {}).copy()
             )
             config = evaluation_runner.update_config_list_values(config)
+            # Resolve the model the FE actually picked. `PromptEvalConfig`
+            # has no top-level model field, so it lives in `evaluation.config`
+            # (or `evaluation.config["run_config"]`). Falls back to the
+            # eval template's stored model when the config carries none.
+            runtime_config = evaluation.config or {}
+            selected_model = (
+                runtime_config.get("model")
+                or (runtime_config.get("run_config") or {}).get("model")
+                or eval_template.config.get("model")
+            )
             eval_instance = evaluation_runner._create_eval_instance(
                 config=config,
                 eval_class=eval_class,
+                model=selected_model,
                 runtime_config=evaluation.config,
             )
             # Setup evaluation parameters using the helper method
