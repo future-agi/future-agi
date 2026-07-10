@@ -1326,10 +1326,10 @@ def _item_note_rows(item):
 def _span_note_rows(span):
     """Return SpanNotes for the given span.
 
-    *span* may be a Django ``ObservationSpan`` (span-source items, still PG)
-    or a ``CHSpan`` dataclass (trace-source items, loaded from CH 25 via
-    ``_span_notes_target_for_queue_item``). Both expose a string ``.id``
-    that the ``SpanNotes.span`` FK accepts as an ``span_id=`` filter value.
+    *span* is a ``CHSpan`` resolved from CH via
+    ``_span_notes_target_for_queue_item`` (or a Django ``ObservationSpan`` on the
+    legacy path); both expose a string ``.id`` that the ``SpanNotes.span`` FK
+    accepts as a ``span_id=`` filter value.
     """
     if span is None:
         return []
@@ -1434,54 +1434,6 @@ def _latest_item_note(item):
         .first()
     )
     return queue_note.notes if queue_note else ""
-
-
-def _span_note_targets_for_queue_items(items):
-    """Resolve whole-item note spans in bulk for export.
-
-    Pairs ``_span_notes_target_for_queue_item`` semantics with a bulk fetch:
-    span-source items use the FK Django ``ObservationSpan`` (still PG);
-    trace-source items pick the trace root span from CH 25 in one bulk
-    query (conversation root preferred, then first-by-(start_time, id)).
-    Currently unused — kept for the export builders that may re-adopt it.
-    """
-    targets = {}
-    trace_ids = []
-    for item in items:
-        if item.source_type == "observation_span" and item.observation_span_id:
-            targets[item.id] = item.observation_span
-        elif item.source_type == "trace" and item.trace_id:
-            trace_ids.append(str(item.trace_id))
-
-    if trace_ids:
-        # CH read replaces:
-        #   ObservationSpan.objects.filter(trace_id__in=trace_ids, deleted=False)
-        #     .filter(Q(parent_span_id__isnull=True) | Q(parent_span_id=""))
-        #     .order_by("trace_id", "start_time", "created_at")
-        # CHSpanReader.list_by_trace_ids already excludes is_deleted=1 and
-        # orders by (trace_id, start_time, id). Root-span filtering happens
-        # in Python (parent_span_id is non-nullable string in CH 25 schema).
-        from tracer.services.clickhouse.v2 import get_reader
-
-        with get_reader() as reader:
-            spans = reader.list_by_trace_ids(trace_ids)
-        first_root_by_trace = {}
-        first_conversation_by_trace = {}
-        for span in spans:
-            if span.parent_span_id:
-                continue
-            first_root_by_trace.setdefault(span.trace_id, span)
-            if span.observation_type == "conversation":
-                first_conversation_by_trace.setdefault(span.trace_id, span)
-        for item in items:
-            if item.source_type == "trace" and item.trace_id:
-                target = first_conversation_by_trace.get(
-                    str(item.trace_id)
-                ) or first_root_by_trace.get(str(item.trace_id))
-                if target is not None:
-                    targets[item.id] = target
-
-    return targets
 
 
 def _latest_item_notes_for_queue_items(items):
@@ -4606,12 +4558,12 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 "reviewed_by",
             )
             .prefetch_related(
+                # Tracer sources (trace / observation_span / trace_session) render
+                # CH-native via the serializer's CollectorSourceCache — no PG
+                # prefetch on them (a SELECT from the dropped tracer tables would 500).
                 "dataset_row",
-                "trace",
-                "observation_span",
                 "prototype_run",
                 "call_execution",
-                "trace_session",
                 Prefetch(
                     "assignments",
                     queryset=QueueItemAssignment.objects.filter(
@@ -5382,38 +5334,16 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 ).update(deleted=True, deleted_at=now, updated_at=now)
 
         if span_notes_target is not None and item_notes is not None:
-            # `span_notes_target` is either a Django ObservationSpan (span
-            # source items) or a CHSpan dataclass (trace source items, root
-            # span loaded from CH). Both expose a string `.id` that the
-            # SpanNotes.span FK accepts as the `span_id=` argument; the FK
-            # column itself remains a PG CharField pointing at
-            # tracer_observation_span.id.
-            #
-            # Codex consolidated review P1 (2026-05-26): if the CH span has
-            # no matching PG ObservationSpan row (e.g. dual-write skew, or
-            # OTel-direct-to-CH cutover before PG dual-write removed),
-            # SpanNotes.update_or_create raises ForeignKey IntegrityError
-            # AFTER scores + queue-notes were already committed earlier in
-            # this submit handler. Catch and degrade gracefully — span notes
-            # are annotator commentary, not load-bearing; the operator gets
-            # a warning log and the user still sees their annotation land.
+            # `span_notes_target` is a Django ObservationSpan (span-source items)
+            # or a CHSpan (trace-source items, root loaded from CH); both expose a
+            # string `.id`. SpanNotes.span is a db_constraint=False soft FK, so the
+            # write must NOT gate on a PG ObservationSpan lookup — a CH-only
+            # collector span has no PG row, and the PG tracer tables are dropped.
+            # Write the soft id directly; the try/except stays defensive.
             from django.db import IntegrityError
 
-            from tracer.models.observation_span import ObservationSpan
-
             target_id = span_notes_target.id
-            pg_span_exists = ObservationSpan.no_workspace_objects.filter(
-                id=target_id
-            ).exists()
-            if not pg_span_exists:
-                logger.warning(
-                    "span_notes_skipped_no_pg_row",
-                    span_id=str(target_id),
-                    queue_item_id=str(item.id),
-                    user_id=str(request.user.id),
-                    reason="CH has the span but PG ObservationSpan FK target missing",
-                )
-            elif item_notes:
+            if item_notes:
                 try:
                     SpanNotes.objects.update_or_create(
                         span_id=target_id,
