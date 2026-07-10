@@ -4,7 +4,6 @@ import {
   buildDefaultDateEntry,
   combineGraphFilters,
   selectPanelGraphFilters,
-  stripFilterId,
 } from "../graphFilterUtils";
 import { FILTER_FOR_HAS_EVAL } from "../../common";
 
@@ -76,16 +75,6 @@ describe("combineGraphFilters", () => {
     expect(result.map((f) => f.column_id)).toEqual(["latency", CREATED_AT]);
   });
 
-  it("strips the FE-only id key from every filter", () => {
-    const result = combineGraphFilters({
-      filters: [createdAtFilter],
-      extraFilters: [metricFilter],
-      dateFilter,
-      hasEvalFilter: false,
-    });
-    expect(result.every((f) => !("id" in f))).toBe(true);
-  });
-
   it("adds a default created_at entry only when none exists", () => {
     const withExplicit = combineGraphFilters({
       filters: [createdAtFilter],
@@ -127,19 +116,6 @@ describe("buildDefaultDateEntry", () => {
   it("returns empty when the date range is incomplete", () => {
     expect(buildDefaultDateEntry([], { dateFilter: [null, null] })).toEqual([]);
     expect(buildDefaultDateEntry([], undefined)).toEqual([]);
-  });
-});
-
-describe("stripFilterId", () => {
-  it("removes id and keeps everything else", () => {
-    expect(stripFilterId(statusFilter)).toEqual({
-      column_id: "status",
-      filter_config: statusFilter.filter_config,
-    });
-  });
-
-  it("passes through falsy values", () => {
-    expect(stripFilterId(null)).toBeNull();
   });
 });
 

@@ -6,14 +6,6 @@ export const CREATED_AT = "created_at";
 
 export const isCreatedAtFilter = (f) => f?.column_id === CREATED_AT;
 
-// Strip the FE-only React-key `id` before POSTing — the backend
-// FILTER_ITEM_SCHEMA has additionalProperties:false and would reject it.
-export const stripFilterId = (f) => {
-  if (!f) return f;
-  const { id: _id, ...rest } = f;
-  return rest;
-};
-
 // Default created_at entry derived from the date picker, added only when the
 // combined filters don't already carry an explicit created_at filter.
 export const buildDefaultDateEntry = (existingFilters, dateFilter) => {
@@ -52,7 +44,9 @@ export const buildDefaultDateEntry = (existingFilters, dateFilter) => {
  * empty extraFilters array is a valid trace-mode state (toolbar filters
  * cleared) and must still strip col-level filters.
  *
- * In both modes, the FE-only `id` key is stripped before sending to the API.
+ * UI-only keys (the FE React-key `id`, etc.) are NOT stripped here — callers
+ * pass the result through `toBackendFilters` (../common) at the POST
+ * boundary, the single place that owns that concern.
  */
 export const combineGraphFilters = ({
   filters,
@@ -70,7 +64,7 @@ export const combineGraphFilters = ({
     ...base,
     ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
     ...buildDefaultDateEntry(base, dateFilter),
-  ].map(stripFilterId);
+  ];
 };
 
 // Which filter list hydrates the shared filter panel (ObserveToolbar):
