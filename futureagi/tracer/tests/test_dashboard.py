@@ -261,18 +261,23 @@ class TestDashboardCRUD:
         assert dashboard_widget.deleted is False
 
     @pytest.mark.django_db
-    def test_delete_dashboard_allowed_for_org_admin_non_owner(
+    def test_delete_dashboard_rejected_for_org_admin_non_owner_with_live_owner(
         self, admin_auth_client, dashboard, dashboard_widget
     ):
-        # scenario: an org admin who did NOT create the dashboard deletes it
-        # (e.g. cleaning up a departed teammate's content).
-        # red if the admin bypass is missing: 403, nothing deleted.
+        # scenario: an org admin who did NOT create the dashboard tries to
+        # delete it, but the dashboard still has a live (non-null) owner.
+        # The admin bypass is scoped to orphaned dashboards only — deleting
+        # someone else's active dashboard just because you're an admin was
+        # never asked for by TH-6306 and isn't a confirmed product policy
+        # (see Jaya Surya's review on PR #1153: his suggested snippet was a
+        # flagged open question, not a sign-off on a blanket admin bypass).
+        # red if the bypass is too broad: 200, dashboard actually deleted.
         response = admin_auth_client.delete(f"/tracer/dashboard/{dashboard.id}/")
-        assert response.status_code == 200
+        assert response.status_code == 403
         dashboard.refresh_from_db()
         dashboard_widget.refresh_from_db()
-        assert dashboard.deleted is True
-        assert dashboard_widget.deleted is True
+        assert dashboard.deleted is False
+        assert dashboard_widget.deleted is False
 
     @pytest.mark.django_db
     def test_delete_dashboard_with_null_owner_allowed_for_admin(
@@ -940,9 +945,7 @@ class TestMetricsEndpoint:
     # suggestions for Trace Name / Span Name filters.
     # ------------------------------------------------------------------
 
-    @pytest.mark.parametrize(
-        "metric_name", ["name", "span_name", "service_name"]
-    )
+    @pytest.mark.parametrize("metric_name", ["name", "span_name", "service_name"])
     @pytest.mark.django_db
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
     @patch("tracer.views.dashboard.AnalyticsQueryService")
@@ -1765,8 +1768,14 @@ class TestDashboardAttrRollupRouting:
     _COVERED_SINCE = datetime(2000, 1, 1, tzinfo=UTC)
 
     @staticmethod
-    def _config(metric_name="latency", aggregation="avg", breakdowns=None,
-                metric_filters=None, global_filters=None, granularity="day"):
+    def _config(
+        metric_name="latency",
+        aggregation="avg",
+        breakdowns=None,
+        metric_filters=None,
+        global_filters=None,
+        granularity="day",
+    ):
         metric = {
             "id": metric_name,
             "name": metric_name,
@@ -1916,9 +1925,7 @@ class TestDashboardAttrRollupRouting:
     def test_non_avg_aggregation_falls_back_to_spans(self, settings):
         # [FALLBACK] non-avg (p95) → spans path.
         self._enable(settings)
-        config = self._config(
-            aggregation="p95", breakdowns=[self._bd("final_status")]
-        )
+        config = self._config(aggregation="p95", breakdowns=[self._bd("final_status")])
         sql, _, _ = self._v2(config).build_all_queries()[0]
         assert "dashboard_attr_rollup" not in sql
         assert "FROM spans" in sql
@@ -1926,9 +1933,7 @@ class TestDashboardAttrRollupRouting:
     def test_non_latency_metric_falls_back_to_spans(self, settings):
         # [FALLBACK] non-latency (cost) → spans path.
         self._enable(settings)
-        config = self._config(
-            metric_name="cost", breakdowns=[self._bd("final_status")]
-        )
+        config = self._config(metric_name="cost", breakdowns=[self._bd("final_status")])
         sql, _, _ = self._v2(config).build_all_queries()[0]
         assert "dashboard_attr_rollup" not in sql
         assert "cost" in sql.lower()
@@ -1964,9 +1969,7 @@ class TestDashboardAttrRollupRouting:
     def test_hour_granularity_routes_to_rollup(self, settings):
         # [FIX] hour granularity is covered (>= the rollup's hour resolution).
         self._enable(settings)
-        config = self._config(
-            breakdowns=[self._bd("final_status")], granularity="hour"
-        )
+        config = self._config(breakdowns=[self._bd("final_status")], granularity="hour")
         sql, _, _ = self._v2(config).build_all_queries()[0]
         assert "dashboard_attr_rollup" in sql
 
@@ -2820,8 +2823,7 @@ class TestDashboardQueryExecution:
 
     @pytest.mark.django_db
     @patch(
-        "tracer.services.clickhouse.v2.trace_session_dict_reader."
-        "resolve_session_fields"
+        "tracer.services.clickhouse.v2.trace_session_dict_reader.resolve_session_fields"
     )
     @patch("tracer.views.dashboard.AnalyticsQueryService")
     @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)

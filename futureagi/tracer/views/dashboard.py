@@ -1,5 +1,6 @@
-import structlog
 from concurrent.futures import ThreadPoolExecutor
+
+import structlog
 from django.http import Http404
 from django.utils import timezone
 from rest_framework.decorators import action
@@ -178,7 +179,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                 metric_info["error"] = str(e)
                 return (metric_info, [])
             except Exception as e:
-                logger.warning("metric_query_failed", metric=metric_info.get("name"), error=str(e)[:200])
+                logger.warning(
+                    "metric_query_failed",
+                    metric=metric_info.get("name"),
+                    error=str(e)[:200],
+                )
                 return (metric_info, [])
 
         if len(metrics) == 1:
@@ -331,12 +336,15 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         try:
             instance = self.get_object()
             is_owner = instance.created_by_id == request.user.id
-            is_admin = IsOrganizationAdminOrWorkspaceAdmin().has_permission(
-                request, self
+            is_orphaned = instance.created_by_id is None
+            is_admin_on_orphan = (
+                is_orphaned
+                and IsOrganizationAdminOrWorkspaceAdmin().has_permission(request, self)
             )
-            if not (is_owner or is_admin):
+            if not (is_owner or is_admin_on_orphan):
                 return self._gm.forbidden_response(
-                    "Only the dashboard owner or a workspace admin can delete this dashboard."
+                    "Only the dashboard owner, or a workspace admin for an "
+                    "orphaned dashboard, can delete this dashboard."
                 )
             deleted_at = timezone.now()
             DashboardWidget.objects.filter(
@@ -465,9 +473,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     self._run_metric_queries(
                         builder,
                         "traces",
-                        lambda sql, params: analytics.execute_ch_query(
-                            sql, params, timeout_ms=query_timeout
-                        ).data,
+                        lambda sql, params: (
+                            analytics.execute_ch_query(
+                                sql, params, timeout_ms=query_timeout
+                            ).data
+                        ),
                     )
                 )
 
@@ -496,9 +506,11 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     self._run_metric_queries(
                         builder,
                         "datasets",
-                        lambda sql, params: analytics.execute_ch_query(
-                            sql, params, timeout_ms=10000
-                        ).data,
+                        lambda sql, params: (
+                            analytics.execute_ch_query(
+                                sql, params, timeout_ms=10000
+                            ).data
+                        ),
                     )
                 )
 
@@ -1840,7 +1852,9 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 return [dict(zip(col_names, row, strict=True)) for row in rows]
 
             metric_results.extend(
-                DashboardViewSet._run_metric_queries(builder, "traces", _fetch_trace_rows)
+                DashboardViewSet._run_metric_queries(
+                    builder, "traces", _fetch_trace_rows
+                )
             )
 
         if dataset_metrics:
@@ -1854,7 +1868,9 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                 return [dict(zip(col_names, row, strict=True)) for row in rows]
 
             metric_results.extend(
-                DashboardViewSet._run_metric_queries(builder, "datasets", _fetch_ds_rows)
+                DashboardViewSet._run_metric_queries(
+                    builder, "datasets", _fetch_ds_rows
+                )
             )
 
         if simulation_metrics:
