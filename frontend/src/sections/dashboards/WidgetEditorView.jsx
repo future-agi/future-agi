@@ -466,14 +466,22 @@ function AxisSection({ title, config, onChange, theme, showReset, onReset }) {
         <TextField
           select
           size="small"
-          value={UNIT_PRESETS.some((u) => u.value === config.unit) ? config.unit : "custom"}
+          value={
+            UNIT_PRESETS.some((u) => u.value === config.unit)
+              ? config.unit
+              : "custom"
+          }
           onChange={(e) =>
             onChange("unit", e.target.value === "custom" ? "" : e.target.value)
           }
           sx={{ width: 180, "& .MuiOutlinedInput-root": { fontSize: "13px" } }}
         >
           {UNIT_PRESETS.map((opt) => (
-            <MenuItem key={opt.value} value={opt.value} sx={{ fontSize: "13px" }}>
+            <MenuItem
+              key={opt.value}
+              value={opt.value}
+              sx={{ fontSize: "13px" }}
+            >
               {opt.label}
             </MenuItem>
           ))}
@@ -2045,9 +2053,13 @@ export default function WidgetEditorView() {
   }, [chartType]);
   const isStacked = chartType.startsWith("stacked_");
   const isHorizontal = chartType === "bar" || chartType === "stacked_bar";
+  const isStackedBar = chartType === "stacked_bar";
   const isPie = chartType === "pie";
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
+
+  const activeBreakdowns = breakdowns.filter((b) => b.id);
+  const hasBreakdowns = activeBreakdowns.length > 0;
 
   // Filtered series for chart — respects checkbox visibility, preserving original colors
   const chartSeries = useMemo(() => {
@@ -2055,7 +2067,10 @@ export default function WidgetEditorView() {
     return previewSeries.filter((_, i) => visibleSeries.has(i));
   }, [previewSeries, visibleSeries]);
 
-  const autoDecimals = useMemo(() => getAutoDecimals(chartSeries), [chartSeries]);
+  const autoDecimals = useMemo(
+    () => getAutoDecimals(chartSeries),
+    [chartSeries],
+  );
   const suggestedLeftAxisUnit = useMemo(
     () => getSuggestedUnitConfig(metrics),
     [metrics],
@@ -2092,11 +2107,7 @@ export default function WidgetEditorView() {
       },
     }));
     setAutoAppliedLeftAxisUnit(suggested || null);
-  }, [
-    axisConfig.leftY.unit,
-    autoAppliedLeftAxisUnit,
-    suggestedLeftAxisUnit,
-  ]);
+  }, [axisConfig.leftY.unit, autoAppliedLeftAxisUnit, suggestedLeftAxisUnit]);
 
   // Colors that match chartSeries — preserves original color assignment even when series are filtered out
   const chartColors = useMemo(() => {
@@ -2656,10 +2667,98 @@ export default function WidgetEditorView() {
     });
     return {
       categories,
-      series: [{ name: "Value", data: values.map((item) => item.numericValue) }],
+      series: [
+        { name: "Value", data: values.map((item) => item.numericValue) },
+      ],
       rows: values,
     };
   }, [isHorizontal, chartSeries]);
+
+  // Structured bar data for breakdown-aware rendering
+  const BREAKDOWN_DELIM = " / ";
+  const structuredBarData = useMemo(() => {
+    if (!isHorizontal || !hasBreakdowns || !previewResult?.metrics) return null;
+    const numBreakdowns = activeBreakdowns.length;
+    const breakdownDisplayNames = activeBreakdowns.map(
+      (b) => b.name || "Breakdown",
+    );
+
+    const segmentNameSet = new Set();
+    const rows = [];
+
+    for (const metric of previewResult.metrics) {
+      const metricLabel = `${metric.name} (${metric.aggregation})`;
+      const nonTotalSeries = (metric.series || []).filter(
+        (s) => s.name !== "total",
+      );
+
+      if (isStackedBar && numBreakdowns === 1) {
+        const segments = nonTotalSeries.map((s) => {
+          const total = (s.data || []).reduce(
+            (sum, pt) => sum + (pt.value != null ? Number(pt.value) : 0),
+            0,
+          );
+          const avg = s.data?.length ? total / s.data.length : 0;
+          segmentNameSet.add(s.name);
+          return { name: s.name, value: avg };
+        });
+        const totalValue = segments.reduce((s, seg) => s + seg.value, 0);
+        rows.push({ metricLabel, breakdownColumns: [], segments, totalValue });
+      } else if (isStackedBar && numBreakdowns >= 2) {
+        const grouped = {};
+        for (const s of nonTotalSeries) {
+          const parts = s.name.split(BREAKDOWN_DELIM);
+          const colValue = parts[0] || s.name;
+          const stackName = parts.slice(1).join(BREAKDOWN_DELIM) || s.name;
+          if (!grouped[colValue]) grouped[colValue] = [];
+          const total = (s.data || []).reduce(
+            (sum, pt) => sum + (pt.value != null ? Number(pt.value) : 0),
+            0,
+          );
+          const avg = s.data?.length ? total / s.data.length : 0;
+          segmentNameSet.add(stackName);
+          grouped[colValue].push({ name: stackName, value: avg });
+        }
+        for (const [colValue, segments] of Object.entries(grouped)) {
+          const totalValue = segments.reduce((s, seg) => s + seg.value, 0);
+          rows.push({
+            metricLabel,
+            breakdownColumns: [colValue],
+            segments,
+            totalValue,
+          });
+        }
+      } else {
+        for (const s of nonTotalSeries) {
+          const parts =
+            numBreakdowns >= 2 ? s.name.split(BREAKDOWN_DELIM) : [s.name];
+          const total = (s.data || []).reduce(
+            (sum, pt) => sum + (pt.value != null ? Number(pt.value) : 0),
+            0,
+          );
+          const avg = s.data?.length ? total / s.data.length : 0;
+          rows.push({
+            metricLabel,
+            breakdownColumns: parts,
+            segments: [{ name: s.name, value: avg }],
+            totalValue: avg,
+          });
+        }
+      }
+    }
+
+    return {
+      segmentNames: [...segmentNameSet],
+      breakdownDisplayNames,
+      rows,
+    };
+  }, [
+    isHorizontal,
+    hasBreakdowns,
+    isStackedBar,
+    previewResult,
+    activeBreakdowns,
+  ]);
 
   const showChart = viewMode !== "table" && chartHeight > 0;
   const _showTable = true;
@@ -3366,7 +3465,9 @@ export default function WidgetEditorView() {
                               const pct =
                                 maxVal > 0 ? (Math.abs(val) / maxVal) * 100 : 0;
                               const fmtVal =
-                                row.value == null ? "—" : formatValFn(row.value);
+                                row.value == null
+                                  ? "—"
+                                  : formatValFn(row.value);
                               return (
                                 <Box
                                   key={i}
@@ -3624,9 +3725,7 @@ export default function WidgetEditorView() {
                                   color: chartColors[i % chartColors.length],
                                 }}
                               >
-                                {avg == null
-                                  ? "—"
-                                  : formatValFn(avg)}
+                                {avg == null ? "—" : formatValFn(avg)}
                               </Typography>
                               <Typography
                                 variant="body2"
@@ -4357,9 +4456,7 @@ export default function WidgetEditorView() {
                                     borderLeft: `1px solid ${theme.palette.divider}`,
                                   }}
                                 >
-                                  {avg == null
-                                    ? "—"
-                                    : formatValFn(avg)}
+                                  {avg == null ? "—" : formatValFn(avg)}
                                 </td>
                                 {s.data.map((pt, ci) => {
                                   if (!displayIndicesSet.has(ci)) return null;
