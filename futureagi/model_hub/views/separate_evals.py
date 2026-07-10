@@ -1,3 +1,4 @@
+import copy
 import json
 import math
 import traceback
@@ -2486,8 +2487,10 @@ class EvalTemplateUpdateView(APIView):
                 )
 
             # Snapshot for update_fields diffing at save() below.
+            # deepcopy so in-place JSONField mutations (template.config[...] = ...)
+            # register as changes; a shallow reference would alias the same dict.
             _original_field_values = {
-                f.attname: getattr(template, f.attname)
+                f.attname: copy.deepcopy(getattr(template, f.attname))
                 for f in template._meta.concrete_fields
             }
 
