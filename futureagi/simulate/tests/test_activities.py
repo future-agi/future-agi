@@ -683,3 +683,84 @@ class TestDatasetCopyLogic:
         ).count()
 
         assert final_cell_count == initial_cell_count + len(new_cells)
+
+
+@pytest.mark.integration
+class TestDatasetScenarioSourceOrgScope:
+    """Source-dataset lookup must be scoped to ``scenario.organization``.
+
+    In a Temporal worker the workspace-context thread-local is unset and
+    ``user.organization`` can differ from the scenario's org for multi-org
+    users; either previously silently 404'd the dataset.
+    """
+
+    def test_lookup_uses_scenario_org(
+        self, db, organization, workspace, source_dataset, user
+    ):
+        from accounts.models.organization import Organization
+        from simulate.models.simulator_agent import SimulatorAgent
+        from tfc.middleware.workspace_context import clear_workspace_context
+        from tfc.temporal.simulate.activities import (
+            _create_dataset_scenario_sync,
+        )
+
+        # user's primary org differs from the scenario's org.
+        user.organization = Organization.objects.create(name="primary-other-org")
+        user.save(update_fields=["organization"])
+
+        agent_def = AgentDefinition.objects.create(
+            agent_name="A",
+            agent_type=AgentDefinition.AgentTypeChoices.VOICE,
+            contact_number="+1",
+            inbound=True,
+            description="A",
+            organization=organization,
+            workspace=workspace,
+            languages=["en"],
+        )
+        sim_agent = SimulatorAgent.objects.create(
+            name="sa", prompt="p", organization=organization, workspace=workspace,
+        )
+        scenario = Scenarios.objects.create(
+            name="s",
+            source="src",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            source_type="agent_definition",
+            organization=organization,
+            workspace=workspace,
+            simulator_agent=sim_agent,
+            agent_definition=agent_def,
+            status=StatusType.PROCESSING.value,
+        )
+
+        clear_workspace_context()  # mimic worker thread
+
+        captured = {}
+
+        def _capture_and_stop(model, *args, **kwargs):
+            captured["kwargs"] = kwargs
+            raise RuntimeError("stop_after_capture")
+
+        result = None
+        # close_old_connections() in the activity tears down the pytest test
+        # transaction; skip it under test.
+        with (
+            patch("django.shortcuts.get_object_or_404", side_effect=_capture_and_stop),
+            patch("django.db.close_old_connections"),
+        ):
+            result = _create_dataset_scenario_sync(
+                user_id=str(user.id),
+                scenario_id=str(scenario.id),
+                validated_data={
+                    "dataset_id": str(source_dataset.id),
+                    "source_type": "agent_definition",
+                },
+            )
+
+        assert "kwargs" in captured, (
+            f"source-dataset lookup never invoked; activity returned {result!r}"
+        )
+        assert captured["kwargs"].get("organization") == organization, (
+            "lookup must be scoped to scenario.organization, got "
+            f"{captured['kwargs'].get('organization')!r}"
+        )

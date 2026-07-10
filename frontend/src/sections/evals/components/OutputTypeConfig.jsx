@@ -294,7 +294,6 @@ const OutputTypeConfig = ({
                 size="small"
                 valueLabelDisplay="auto"
                 valueLabelFormat={(v) => `${Math.round(v)}%`}
-                disabled={disabled}
               />
               <Typography variant="caption">100%</Typography>
             </Box>

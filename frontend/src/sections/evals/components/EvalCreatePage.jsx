@@ -36,7 +36,9 @@ import { useCompositeChildrenUnionKeys } from "../hooks/useCompositeChildrenKeys
 import CodeEvalEditor, { PYTHON_CODE_TEMPLATE } from "./CodeEvalEditor";
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
-import { extractVariables } from "src/utils/utils";
+import { extractVariables, extractVariablesFromMessages } from "src/utils/utils";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 
 const EVAL_TYPE_TABS = [
@@ -136,6 +138,9 @@ const resolveContextOptions = (dataInjection) => {
 const EvalCreatePage = () => {
   const { draftId: urlDraftId } = useParams();
   const navigate = useNavigate();
+  const { role } = useAuthContext();
+  const canEditEvals =
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
   const { enqueueSnackbar } = useSnackbar();
   const { isOSS } = useDeploymentMode();
   const createEval = useCreateEval();
@@ -614,10 +619,18 @@ const EvalCreatePage = () => {
   }, []);
   // Mirrors the Test button's content rules: prompt-based single evals must
   // have a template that actually references inputs, otherwise the saved
-  // eval can't be run against real data.
+  // eval can't be run against real data. For LLM evals the variable can
+  // live in any turn (System / User / Assistant), so scan the whole
+  // messages array in addition to instructions.
   const singleHasInstructionVariables =
-    !!instructions.trim() &&
-    extractVariables(instructions, templateFormat).length > 0;
+    evalType === "llm"
+      ? extractVariablesFromMessages(
+          instructions,
+          messages,
+          templateFormat,
+        ).length > 0
+      : !!instructions.trim() &&
+        extractVariables(instructions, templateFormat).length > 0;
   const canSaveSingle =
     !!name.trim() &&
     (evalType === "code" ? !!code.trim() : singleHasInstructionVariables);
@@ -625,7 +638,8 @@ const EvalCreatePage = () => {
   // Single evals require a successful test run before save. Composites
   // don't have a test flow in the create page — their children already exist
   // and can be tested individually.
-  const canSave = mode === "single" ? canSaveSingle : canSaveComposite;
+  const canSave =
+    canEditEvals && (mode === "single" ? canSaveSingle : canSaveComposite);
 
   return (
     <Box
@@ -1215,6 +1229,7 @@ const EvalCreatePage = () => {
                   ref={testPlaygroundRef}
                   templateId={draftId}
                   model={model}
+                  evalName={name || ""}
                   instructions={
                     mode === "composite" || evalType === "code"
                       ? ""
@@ -1312,10 +1327,26 @@ const EvalCreatePage = () => {
                 {(() => {
                   const hasCompositeChildren = selectedChildren.length > 0;
                   const hasCode = !!code.trim();
-                  const hasInstructions = !!instructions.trim();
-                  const instructionVariables = hasInstructions
-                    ? extractVariables(instructions, templateFormat)
-                    : [];
+                  // For LLM evals, prompt content and its variables can live
+                  // in any turn (System / User / Assistant), not just the
+                  // instructions field (which mirrors the System turn).
+                  const hasAnyPromptContent =
+                    evalType === "llm"
+                      ? !!instructions.trim() ||
+                        (Array.isArray(messages) &&
+                          messages.some((m) => (m?.content || "").trim()))
+                      : !!instructions.trim();
+                  const hasInstructions = hasAnyPromptContent;
+                  const instructionVariables =
+                    evalType === "llm"
+                      ? extractVariablesFromMessages(
+                          instructions,
+                          messages,
+                          templateFormat,
+                        )
+                      : hasInstructions
+                        ? extractVariables(instructions, templateFormat)
+                        : [];
                   const hasInstructionVariables =
                     instructionVariables.length > 0;
                   const instructionsReady =
@@ -1326,10 +1357,14 @@ const EvalCreatePage = () => {
                       : evalType === "code"
                         ? hasCode
                         : instructionsReady;
-                  const testDisabled = isTesting || !hasTestInput;
+                  const testDisabled =
+                    isTesting || !hasTestInput || !canEditEvals;
 
                   let testDisabledReason = "";
-                  if (isTesting) {
+                  if (!canEditEvals) {
+                    testDisabledReason =
+                      "You don't have permission to create or edit evaluations.";
+                  } else if (isTesting) {
                     testDisabledReason = "Test is already running.";
                   } else if (mode === "composite" && !hasCompositeChildren) {
                     testDisabledReason =
@@ -1393,7 +1428,10 @@ const EvalCreatePage = () => {
                 {(() => {
                   const saveDisabled = isLoading || !canSave;
                   let saveDisabledReason = "";
-                  if (isLoading) {
+                  if (!canEditEvals) {
+                    saveDisabledReason =
+                      "You don't have permission to create or edit evaluations.";
+                  } else if (isLoading) {
                     saveDisabledReason = "Save is already in progress.";
                   } else if (mode === "composite") {
                     if (!compositeName.trim()) {
@@ -1408,7 +1446,15 @@ const EvalCreatePage = () => {
                       "Give this evaluation a name before saving.";
                   } else if (evalType === "code" && !code.trim()) {
                     saveDisabledReason = "Write some code before saving.";
-                  } else if (evalType !== "code" && !instructions.trim()) {
+                  } else if (
+                    evalType !== "code" &&
+                    !instructions.trim() &&
+                    !(
+                      evalType === "llm" &&
+                      Array.isArray(messages) &&
+                      messages.some((m) => (m?.content || "").trim())
+                    )
+                  ) {
                     saveDisabledReason = "Add instructions before saving.";
                   } else if (
                     evalType !== "code" &&

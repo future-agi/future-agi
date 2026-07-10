@@ -278,7 +278,7 @@ def test_reservation_blocks_other_user_until_timeout(
     blocked_resp = api_client.get(
         _annotate_detail_url(queue.id, item.id), {"reserve": "true"}
     )
-    assert blocked_resp.status_code == status.HTTP_400_BAD_REQUEST
+    assert blocked_resp.status_code == status.HTTP_409_CONFLICT
     assert "reserved" in str(blocked_resp.data).lower()
 
     item.reservation_expires_at = timezone.now() - timedelta(minutes=1)

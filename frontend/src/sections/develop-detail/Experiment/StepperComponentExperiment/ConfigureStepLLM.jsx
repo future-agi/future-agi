@@ -22,7 +22,11 @@ import { PROMPT_CONFIG_TYPE, PROMPT_CONFIG_TYPES } from "../common";
 
 const transformPromptToFormSchema = (listPrompt) => {
   const modelArray = [
-    { id: getRandomId(), value: listPrompt?.model, ...listPrompt?.modelDetail },
+    {
+      id: getRandomId(),
+      value: listPrompt?.model,
+      ...listPrompt?.model_detail,
+    },
   ];
   return {
     _itemId: getRandomId(),

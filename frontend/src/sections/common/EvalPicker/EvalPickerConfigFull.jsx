@@ -65,7 +65,7 @@ import {
   normalizeEvalPickerEval,
 } from "./evalPickerValue";
 import { getEvalBaseName } from "src/sections/common/EvaluationDrawer/common";
-import { canonicalEntries } from "src/utils/utils";
+import { canonicalEntries, extractVariablesFromMessages } from "src/utils/utils";
 import { format } from "date-fns";
 import {
   buildEvalTemplateConfig,
@@ -171,6 +171,12 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [evalName, setEvalName] = useState("");
   const [dataReady, setDataReady] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
+  useEffect(() => {
+    const pinned = evalData?.pinned_version_id ?? evalData?.pinnedVersionId ?? null;
+    if (pinned && !selectedVersionId && !isDirty) {
+      setSelectedVersionId(pinned);
+    }
+  }, [evalData?.pinned_version_id, evalData?.pinnedVersionId, selectedVersionId, isDirty]);
   const [isTesting, setIsTesting] = useState(false);
   const [testPassed, setTestPassed] = useState(false);
   const [testError, setTestError] = useState(null);
@@ -317,16 +323,22 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       return [...new Set(requiredKeys)];
     }
 
-    // User evals (mustache): prefer live extraction so mapping updates as user types.
-    const matches =
-      (instructions || "").match(/\{\{\s*([^{}]+?)\s*\}\}/g) || [];
-    const templateVars = matches.map((m) => m.replace(/\{\{|\}\}/g, "").trim());
+    // User evals (mustache): prefer live extraction so mapping updates as user
+    // types. For LLM evals, scan every turn (System / User / Assistant), not
+    // just the System-derived instructions field.
+    const templateVars =
+      evalType === "llm"
+        ? extractVariablesFromMessages(instructions, messages, "mustache")
+        : (
+            (instructions || "").match(/\{\{\s*([^{}]+?)\s*\}\}/g) || []
+          ).map((m) => m.replace(/\{\{|\}\}/g, "").trim());
     if (templateVars.length > 0) return [...new Set(templateVars)];
     // Fallback: stored required_keys (before instructions hydrate)
     if (requiredKeys.length > 0) return [...new Set(requiredKeys)];
     return [];
   }, [
     instructions,
+    messages,
     normalizedFullEval,
     normalizedEvalData,
     evalType,
@@ -380,41 +392,64 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     () => evalType !== "llm" || hasNonEmptyPromptMessage(messages),
     [evalType, messages],
   );
-  // ── Load pinned version content on mount (edit mode) ──
-  const pinnedVersionLoadDone = useRef(false);
   useEffect(() => {
-    if (
-      selectedVersionId &&
-      versions.length > 0 &&
-      !pinnedVersionLoadDone.current &&
-      !isDirty
-    ) {
-      const version = versions.find((v) => v.id === selectedVersionId);
-      if (version) {
-        pinnedVersionLoadDone.current = true;
-        const config = version.config_snapshot || version.configSnapshot || {};
-        const promptText = config.rule_prompt || version.criteria || "";
-        const _type =
-          normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
-        if (_type === "code") {
-          setInstructions("");
-          setCode(config.code || "");
-        } else {
-          setInstructions(promptText);
-          setCode("");
-        }
-        setModel(config.model || fullEval?.model || "turing_large");
-        if (config.messages?.length > 0) {
-          setMessages(config.messages);
-        } else if (_type === "llm" && promptText) {
-          setMessages([{ role: "system", content: promptText }]);
-        }
-        if (isEditMode) setEvalName(evalData?.name || fullEval?.name || "");
-        setIsDirty(false);
-        setDataReady(true);
-        initialLoadDone.current = true;
-      }
+    if (!selectedVersionId || !versions.length || isDirty) return;
+    const version = versions.find((v) => v.id === selectedVersionId);
+    if (!version) return;
+
+    const config = version.config_snapshot || version.configSnapshot || {};
+    const promptText = config.rule_prompt || version.criteria || "";
+    const _type =
+      normalizedFullEval?.evalType || normalizedEvalData?.evalType || "llm";
+
+    if (_type === "code") {
+      setInstructions("");
+      setCode(config.code || "");
+    } else {
+      setInstructions(promptText);
+      setCode("");
     }
+    if (config.messages?.length > 0) {
+      setMessages(config.messages);
+    } else if (_type === "llm" && promptText) {
+      setMessages([{ role: "system", content: promptText }]);
+    }
+
+    setModel(config.model || fullEval?.model || "turing_large");
+    if (config.output) setOutputType(config.output);
+    if (config.pass_threshold != null) setPassThreshold(config.pass_threshold);
+    if (config.choice_scores) setChoiceScores(config.choice_scores);
+    if (config.multi_choice != null) setMultiChoice(!!config.multi_choice);
+    if (config.template_format) setTemplateFormat(config.template_format);
+    if (Array.isArray(config.few_shot_examples))
+      setFewShotExamples(config.few_shot_examples);
+
+    if (config.agent_mode) setAgentMode(config.agent_mode);
+    if (config.check_internet != null) setUseInternet(!!config.check_internet);
+    const summaryVal =
+      typeof config.summary === "object"
+        ? config.summary?.type
+        : config.summary;
+    if (summaryVal) setSummaryType(summaryVal);
+    if (Array.isArray(config.tools)) setConnectorIds(config.tools);
+    else if (config.tools && typeof config.tools === "object")
+      setConnectorIds(Object.keys(config.tools));
+    if (Array.isArray(config.knowledge_bases))
+      setKnowledgeBaseIds(config.knowledge_bases);
+    if (config.data_injection && typeof config.data_injection === "object") {
+      const opts = Object.entries(config.data_injection)
+        .filter(([, v]) => v)
+        .map(([k]) => k);
+      setContextOptions(opts.length ? opts : ["variables_only"]);
+    }
+    if (config.error_localizer_enabled != null) {
+      setErrorLocalizerEnabled(!!config.error_localizer_enabled);
+    }
+
+    if (isEditMode) setEvalName(evalData?.name || fullEval?.name || "");
+    setIsDirty(false);
+    setDataReady(true);
+    initialLoadDone.current = true;
   }, [selectedVersionId, versions, isDirty, fullEval, normalizedFullEval, normalizedEvalData, isEditMode, evalData]);
 
   // ── Populate from eval detail (same logic as EvalDetailPage) ──
@@ -482,7 +517,15 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           evalData?.multi_choice ??
           evalData?.multiChoice,
         params: rawRunConfig.params ?? evalData?.params,
-        messages: rawRunConfig.messages ?? evalData?.messages,
+        // Multi-turn LLM evals store the full message chain on the template
+        // config (fullEval.config.messages). Fall through every source so a
+        // dataset / simulate / task / experiment scoped copy of a template
+        // doesn't collapse into just the System turn on hydration.
+        messages:
+          rawRunConfig.messages ??
+          evalData?.messages ??
+          evalData?.config?.messages ??
+          fullEval?.config?.messages,
       };
       const config = {
         ...(fullEval.config || {}),
@@ -767,7 +810,8 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     }
     try {
       const payload = {
-        instructions: evalType === "code" ? "" : instructions,
+        instructions:
+          evalType === "code" ? undefined : instructions || undefined,
         code: evalType === "code" ? code : undefined,
         code_language: evalType === "code" ? codeLanguage : undefined,
         model,
@@ -775,6 +819,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         pass_threshold: passThreshold,
         choice_scores:
           Object.keys(choiceScores || {}).length > 0 ? choiceScores : null,
+        multi_choice: multiChoice,
         messages: evalType === "llm" ? messages : undefined,
         few_shot_examples:
           evalType === "llm" && fewShotExamples.length > 0
@@ -798,6 +843,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
         pass_threshold: passThreshold,
         choice_scores:
           Object.keys(choiceScores || {}).length > 0 ? choiceScores : undefined,
+        multi_choice: multiChoice,
         messages: evalType === "llm" ? messages : undefined,
         few_shot_examples:
           evalType === "llm" && fewShotExamples.length > 0
@@ -837,6 +883,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     outputType,
     passThreshold,
     choiceScores,
+    multiChoice,
     messages,
     fewShotExamples,
     fullEval,
@@ -911,7 +958,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     const templateType =
       fullEval?.template_type ||
       fullEval?.templateType ||
-      evalData?.templateType;
+      evalData?.template_type;
 
     const resolvedConfig = buildEvalTemplateConfig({
       baseConfig: fullEval?.config || evalData?.config || {},
@@ -924,6 +971,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
       outputType,
       passThreshold,
       choiceScores,
+      multiChoice,
       templateFormat,
     });
 
@@ -1120,7 +1168,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           <Typography variant="subtitle1" fontWeight={600} noWrap>
             {fullEval?.name || evalData?.name}
           </Typography>
-          <VersionBadge version={currentVersion} />
+          <ShowComponent condition={!isSystemEval}>
+            <VersionBadge version={currentVersion} />
+          </ShowComponent>
           <EvalTypeBadge type={evalType} />
           {isDirty && (
             <Chip
@@ -1596,7 +1646,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     setPassThreshold(v);
                     setIsDirty(true);
                   }}
-                  disabled={false}
+                  disabled={isSystemEval}
                   categoryLocked={isOutputTypeCategoryLocked}
                 />
               )}
@@ -1821,6 +1871,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TestPlayground
                     ref={sourceRef}
                     templateId={templateId}
+                    evalName={evalName || ""}
                     instructions={evalType === "code" ? "" : instructions}
                     evalType={evalType}
                     isSystemEval={isSystemEval}
@@ -1958,8 +2009,15 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
 
         {source !== "composite" &&
           source !== "workbench" &&
+          source !== "create-simulate" &&
           (() => {
-            const hasInstructions = !!(instructions || "").trim();
+            // LLM evals may keep prompt content in User / Assistant turns
+            // even if the System-derived instructions field is empty.
+            const hasInstructions =
+              !!(instructions || "").trim() ||
+              (evalType === "llm" &&
+                Array.isArray(messages) &&
+                messages.some((m) => (m?.content || "").trim()));
             const hasVariables =
               Array.isArray(variables) && variables.length > 0;
 
@@ -2046,7 +2104,13 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
           })()}
 
         {(() => {
-          const hasInstructions = !!(instructions || "").trim();
+          // LLM evals may keep prompt content in User / Assistant turns
+          // even if the System-derived instructions field is empty.
+          const hasInstructions =
+            !!(instructions || "").trim() ||
+            (evalType === "llm" &&
+              Array.isArray(messages) &&
+              messages.some((m) => (m?.content || "").trim()));
           const hasVariables = Array.isArray(variables) && variables.length > 0;
           const actionLabel =
             source === "composite"

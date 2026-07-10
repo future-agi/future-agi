@@ -1,6 +1,4 @@
 import re
-from dataclasses import dataclass
-from typing import Any
 
 from django.conf import settings
 from django.core.validators import URLValidator
@@ -10,10 +8,10 @@ from rest_framework import serializers
 from model_hub.models.develop_dataset import KnowledgeBaseFile
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.models.agent_definition import AgentTypeChoices
+from simulate.services.agent_definition import is_masked, sync_provider_credentials
+from simulate.services.types.agent_definition import ProviderCredentialsInput
 from simulate.temporal.constants import DEFAULT_ORG_LIMIT
 from tracer.models.observability_provider import ProviderChoices
-
-MASKED_VALUE = "********"
 
 # LiveKit URLs are valid in either WebSocket form (wss://, ws://) or HTTP
 # form (https://, http://). The frontend stores whatever the user typed
@@ -24,69 +22,17 @@ MASKED_VALUE = "********"
 _LIVEKIT_URL_VALIDATOR = URLValidator(schemes=["http", "https", "ws", "wss"])
 
 
-def _is_masked(value: str) -> bool:
-    """Detect whether ``value`` is one of the mask strings the backend returns
-    on read, so we can avoid re-encrypting a masked display string as if it
-    were a real credential.
-
-    Must match every output of:
-    - :func:`agentcc.services.credential_manager.mask_key` which returns
-      ``""`` for empty, ``"****"`` for keys of length <= 8, and
-      ``"<first4>...<last4>"`` (11 chars, ``...`` at index 4) for longer keys.
-    - :meth:`ProviderCredentials.get_masked_api_secret` which returns the
-      constant ``"********"`` (``MASKED_VALUE``) when a secret is set.
-    """
-    if not value:
-        return False
-    if value == MASKED_VALUE:  # secret mask
-        return True
-    if value == "****":  # short-key mask
-        return True
-    # Long-key mask: exactly 11 chars, `...` at index 4
-    if len(value) == 11 and value[4:7] == "...":
-        return True
-    return False
-
-
-@dataclass
-class ProviderCredentialsInput:
-    """Typed payload for :meth:`AgentDefinitionSerializer._sync_provider_credentials`.
-
-    Captures every field that can land in a ``ProviderCredentials`` row,
-    regardless of provider. ``provider`` is the discriminator:
-
-    - ``livekit`` / ``livekit_bridge`` → uses the six ``livekit_*`` fields.
-    - ``retell`` / default (``vapi``) → uses ``api_key`` + ``assistant_id``.
-
-    Fields are ``Optional`` because DRF may or may not include them in
-    ``validated_data`` depending on the request payload. Missing values are
-    treated as "don't touch" by the sync logic (secrets are never cleared
-    by a missing key).
-    """
-
-    provider: str
-    api_key: str | None = None
-    assistant_id: str | None = None
-    livekit_url: str | None = None
-    livekit_api_key: str | None = None
-    livekit_api_secret: str | None = None
-    livekit_agent_name: str | None = None
-    livekit_config_json: dict[str, Any] | None = None
-    livekit_max_concurrency: int | None = None
-    provider_was_provided: bool = False
-
-
 def _extract_credentials_input(
     validated_data: dict, fallback_provider: str
 ) -> ProviderCredentialsInput:
     """Pop the write-only livekit_* fields out of ``validated_data`` and
-    return a :class:`ProviderCredentialsInput` dataclass.
+    return a :class:`ProviderCredentialsInput`.
 
     Call this **before** ``super().create()``/``update()`` — the livekit
     fields must be removed from ``validated_data`` so ``ModelSerializer``
     doesn't try to write them to non-existent columns on
     ``AgentDefinition``. ``api_key`` and ``assistant_id`` stay in place
-    (they're real model columns) and are copied into the dataclass by
+    (they're real model columns) and are copied into the input model by
     read-only lookup.
     """
     return ProviderCredentialsInput(
@@ -194,7 +140,7 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         return super().to_internal_value(data)
 
     def to_representation(self, instance):
-        """Read credentials from ProviderCredentials, fall back to AgentDefinition.
+        """Read credentials from the latest version's ProviderCredentials.
 
         Serialized ``api_key`` / ``assistant_id`` describe the VAPI/Retell
         credentials and are populated from ``ProviderCredentials`` only when
@@ -204,10 +150,13 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
         key into a VAPI-shaped field.
         """
         data = super().to_representation(instance)
-        try:
-            creds = instance.credentials
-        except AgentDefinition.credentials.RelatedObjectDoesNotExist:
-            creds = None
+        version = instance.active_version or instance.latest_version
+        creds = None
+        if version:
+            try:
+                creds = version.credentials
+            except AgentVersion.credentials.RelatedObjectDoesNotExist:
+                pass
 
         if creds:
             if creds.provider_type == "livekit":
@@ -218,9 +167,6 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
                 data["livekit_max_concurrency"] = (
                     creds.max_concurrency or settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
                 )
-                # Generic VAPI/Retell fields are not meaningful for
-                # LiveKit — clear them rather than leaking a masked
-                # LiveKit key through ``api_key``.
                 data["api_key"] = ""
                 data["assistant_id"] = ""
             else:
@@ -228,8 +174,6 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
                 data["assistant_id"] = creds.assistant_id or data.get(
                     "assistant_id", ""
                 )
-        # Never expose raw secrets (write_only already strips them, but
-        # be defensive in case a subclass adds them back).
         data.pop("livekit_api_secret", None)
         return data
 
@@ -454,26 +398,24 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
     @transaction.atomic
     def create(self, validated_data):
         creds_input = _extract_credentials_input(validated_data, fallback_provider="")
-        # Drop masked api_key on create (user never legitimately sends a
-        # masked value when creating fresh).
-        if _is_masked(validated_data.get("api_key") or ""):
+        if is_masked(validated_data.get("api_key") or ""):
             validated_data.pop("api_key", None)
 
         instance = super().create(validated_data)
 
-        # Provider was unknown until super().create() ran if the client
-        # omitted it (unusual). Backfill from the instance.
         creds_input.provider = instance.provider or creds_input.provider
-        AgentDefinitionSerializer._sync_provider_credentials(instance, creds_input)
+        version = instance.latest_version
+        if not version:
+            version = instance.create_version(
+                description="",
+                commit_message="Initial version",
+                status="draft",
+            )
+        sync_provider_credentials(version, creds_input)
         return instance
 
     @transaction.atomic
     def update(self, instance, validated_data):
-        # Serialize concurrent writes on the same agent. Without this,
-        # two simultaneous PUTs can both read "creds exists", both mutate,
-        # and last-writer-wins races leave the row in an inconsistent
-        # state (e.g. provider_type from one writer, api_key from the
-        # other). select_for_update blocks inside @transaction.atomic.
         instance = AgentDefinition.objects.select_for_update(of=("self",)).get(
             pk=instance.pk
         )
@@ -482,133 +424,17 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
             validated_data, fallback_provider=instance.provider or ""
         )
 
-        # Preserve the existing api_key when the client round-trips a
-        # masked display value (``****`` / ``abcd...wxyz`` / ``********``).
         new_api_key = validated_data.get("api_key")
-        if new_api_key is not None and _is_masked(new_api_key):
+        if new_api_key is not None and is_masked(new_api_key):
             validated_data.pop("api_key")
 
         instance = super().update(instance, validated_data)
 
-        # If the client sent a new provider, ``super().update`` just
-        # applied it — resync ``creds_input.provider`` from the fresh
-        # instance so ``_sync_provider_credentials`` routes to the
-        # correct branch.
         creds_input.provider = instance.provider or creds_input.provider
-        AgentDefinitionSerializer._sync_provider_credentials(instance, creds_input)
+        version = instance.active_version or instance.latest_version
+        if version:
+            sync_provider_credentials(version, creds_input)
         return instance
-
-    @staticmethod
-    def _sync_provider_credentials(instance, data: ProviderCredentialsInput):
-        """Write the agent's credentials to the ``ProviderCredentials`` table.
-
-        ``data.api_key`` / ``data.assistant_id`` come from the main
-        ``validated_data`` (they map to real model columns for VAPI/Retell,
-        kept for backward compat). The ``data.livekit_*`` fields are the
-        write-only fields popped out before the base ``ModelSerializer``
-        save and routed exclusively to ``ProviderCredentials``.
-        """
-        from simulate.models.agent_definition import ProviderCredentials
-
-        credential_field_was_provided = data.provider_was_provided or any(
-            value is not None
-            for value in [
-                data.api_key,
-                data.assistant_id,
-                data.livekit_url,
-                data.livekit_api_key,
-                data.livekit_api_secret,
-                data.livekit_agent_name,
-                data.livekit_config_json,
-                data.livekit_max_concurrency,
-            ]
-        )
-        if not credential_field_was_provided:
-            return
-
-        provider = (data.provider or "").strip()
-
-        if provider in ("livekit", "livekit_bridge"):
-            provider_type = ProviderCredentials.ProviderType.LIVEKIT
-            api_key = (data.livekit_api_key or "").strip()
-            api_secret = (data.livekit_api_secret or "").strip()
-            assistant_id = ""
-            server_url = (data.livekit_url or "").strip()
-            agent_name = (data.livekit_agent_name or "").strip()
-            config_json = data.livekit_config_json
-            max_concurrency = data.livekit_max_concurrency
-        elif provider == "retell":
-            provider_type = ProviderCredentials.ProviderType.RETELL
-            api_key = (data.api_key or "").strip()
-            api_secret = ""
-            assistant_id = (data.assistant_id or "").strip()
-            server_url = ""
-            agent_name = ""
-            config_json = None
-            max_concurrency = None
-        else:
-            provider_type = ProviderCredentials.ProviderType.VAPI
-            api_key = (data.api_key or "").strip()
-            api_secret = ""
-            assistant_id = (data.assistant_id or "").strip()
-            server_url = ""
-            agent_name = ""
-            config_json = None
-            max_concurrency = None
-
-        creds = ProviderCredentials.objects.filter(agent_definition=instance).first()
-        if creds is None:
-            creds = ProviderCredentials(
-                agent_definition=instance,
-                provider_type=provider_type,
-            )
-        # When the agent's provider changes (e.g. vapi → livekit), wipe
-        # stale per-provider fields on the existing creds row so old
-        # values don't leak through. When the provider is unchanged,
-        # preserve existing values and only overwrite fields actually
-        # present in the payload.
-        provider_changed = creds.provider_type != provider_type
-        creds.provider_type = provider_type
-
-        # Secrets: overwrite on non-empty, non-masked input, OR clear
-        # when the provider just changed (the old secret belongs to a
-        # different provider).
-        if api_key and not _is_masked(api_key):
-            creds.api_key = api_key  # save() encrypts
-        elif provider_changed:
-            creds.api_key = ""
-        if api_secret and not _is_masked(api_secret):
-            creds.api_secret = api_secret  # save() encrypts
-        elif provider_changed:
-            creds.api_secret = ""
-
-        # Non-secret fields. On a provider change the branch-computed
-        # values (which include explicit `""` for non-applicable fields)
-        # are written unconditionally so stale data is wiped. On a
-        # same-provider update, only write when the field was present
-        # in the payload (preserves existing values).
-        if provider_changed:
-            creds.assistant_id = assistant_id
-            creds.server_url = server_url
-            creds.agent_name = agent_name
-            creds.config_json = config_json if config_json is not None else {}
-            creds.max_concurrency = (
-                int(max_concurrency)
-                if max_concurrency is not None
-                else settings.DEFAULT_LIVEKIT_MAX_CONCURRENCY
-            )
-        else:
-            if assistant_id:
-                creds.assistant_id = assistant_id
-            if server_url:
-                creds.server_url = server_url
-            if agent_name:
-                creds.agent_name = agent_name
-            if config_json is not None:
-                creds.config_json = config_json
-            if max_concurrency is not None:
-                creds.max_concurrency = int(max_concurrency)
-        creds.save()
 
 
 class AgentDefinitionListSerializer(serializers.ModelSerializer):
@@ -646,31 +472,17 @@ class AgentDefinitionListSerializer(serializers.ModelSerializer):
 
     def get_latest_version(self, obj):
         """Get the latest version number for the agent"""
-        # Use annotated field if available (from view's Subquery optimization)
         if hasattr(obj, "_latest_version"):
             return obj._latest_version
-        # Fallback for non-optimized querysets
-        latest_version = (
-            AgentVersion.objects.filter(agent_definition=obj)
-            .order_by("-version_number")
-            .values_list("version_number", flat=True)
-            .first()
-        )
-        return latest_version
+        version = obj.latest_version
+        return version.version_number if version else None
 
     def get_latest_version_id(self, obj):
         """Get the latest version id for the agent"""
-        # Use annotated field if available (from view's Subquery optimization)
         if hasattr(obj, "_latest_version_id"):
             return obj._latest_version_id
-        # Fallback for non-optimized querysets
-        latest_version = (
-            AgentVersion.objects.filter(agent_definition=obj)
-            .order_by("-version_number")
-            .values_list("id", flat=True)
-            .first()
-        )
-        return latest_version
+        version = obj.latest_version
+        return version.id if version else None
 
 
 class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
@@ -796,7 +608,9 @@ class AgentDefinitionUpdateSerializer(serializers.ModelSerializer):
         instance.save()
 
         creds_input.provider = instance.provider or creds_input.provider
-        AgentDefinitionSerializer._sync_provider_credentials(instance, creds_input)
+        version = instance.active_version or instance.latest_version
+        if version:
+            sync_provider_credentials(version, creds_input)
         return instance
 
     def to_representation(self, instance):

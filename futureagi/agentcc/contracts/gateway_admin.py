@@ -3,40 +3,63 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class GatewayAdminContractModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_input_aliases(cls, data):
+        if not isinstance(data, dict):
+            return data
+
+        result = dict(data)
+        for field_name, field in cls.model_fields.items():
+            validation_alias = field.validation_alias
+            if validation_alias is None:
+                continue
+
+            choices = getattr(validation_alias, "choices", (validation_alias,))
+            present = [choice for choice in choices if isinstance(choice, str) and choice in result]
+            if not present:
+                continue
+
+            result[field_name] = result[present[0]]
+            for alias in present:
+                if alias != field_name:
+                    result.pop(alias, None)
+        return result
+
 
 class ProviderConfig(GatewayAdminContractModel):
-    api_key: str | None = None
-    base_url: str | None = None
-    api_format: str | None = None
+    api_key: str | None = Field(None, validation_alias=AliasChoices('api_key', 'apiKey'))
+    base_url: str | None = Field(None, validation_alias=AliasChoices('base_url', 'baseUrl', 'baseURL'))
+    api_format: str | None = Field(None, validation_alias=AliasChoices('api_format', 'apiFormat'))
     models: list[str] | None = None
     timeout: int | None = None
     weight: float | None = None
     enabled: bool | None = None
-    max_concurrent: int | None = None
-    conn_pool_size: int | None = None
-    aws_access_key_id: str | None = None
-    aws_secret_access_key: str | None = None
-    aws_region: str | None = None
-    aws_session_token: str | None = None
+    max_concurrent: int | None = Field(None, validation_alias=AliasChoices('max_concurrent', 'maxConcurrent'))
+    conn_pool_size: int | None = Field(None, validation_alias=AliasChoices('conn_pool_size', 'connPoolSize'))
+    aws_access_key_id: str | None = Field(None, validation_alias=AliasChoices('aws_access_key_id', 'awsAccessKeyId', 'awsAccessKeyID'))
+    aws_secret_access_key: str | None = Field(None, validation_alias=AliasChoices('aws_secret_access_key', 'awsSecretAccessKey'))
+    aws_region: str | None = Field(None, validation_alias=AliasChoices('aws_region', 'awsRegion'))
+    aws_session_token: str | None = Field(None, validation_alias=AliasChoices('aws_session_token', 'awsSessionToken'))
 
 
 class GuardrailCheck(GatewayAdminContractModel):
     enabled: bool | None = None
     action: str | None = None
-    confidence_threshold: float | None = None
+    confidence_threshold: float | None = Field(None, validation_alias=AliasChoices('confidence_threshold', 'confidenceThreshold'))
     config: dict[str, Any] | None = None
 
 
 class GuardrailConfig(GatewayAdminContractModel):
-    pipeline_mode: str | None = None
-    fail_open: bool | None = None
-    timeout_ms: int | None = None
+    pipeline_mode: str | None = Field(None, validation_alias=AliasChoices('pipeline_mode', 'pipelineMode'))
+    fail_open: bool | None = Field(None, validation_alias=AliasChoices('fail_open', 'failOpen'))
+    timeout_ms: int | None = Field(None, validation_alias=AliasChoices('timeout_ms', 'timeoutMs'))
     checks: dict[str, GuardrailCheck] | None = None
 
 
@@ -48,53 +71,53 @@ class ConditionalRoute(GatewayAdminContractModel):
 
 
 class ComplexityTier(GatewayAdminContractModel):
-    max_score: int | None = None
+    max_score: int | None = Field(None, validation_alias=AliasChoices('max_score', 'maxScore'))
     model: str | None = None
     provider: str | None = None
 
 
 class ComplexityRoutingConfig(GatewayAdminContractModel):
     enabled: bool | None = None
-    default_tier: str | None = None
+    default_tier: str | None = Field(None, validation_alias=AliasChoices('default_tier', 'defaultTier'))
     tiers: dict[str, ComplexityTier] | None = None
     weights: dict[str, float] | None = None
 
 
 class FastestResponseConfig(GatewayAdminContractModel):
     enabled: bool | None = None
-    max_concurrent: int | None = None
-    cancel_delay: str | None = None
-    excluded_providers: list[str] | None = None
+    max_concurrent: int | None = Field(None, validation_alias=AliasChoices('max_concurrent', 'maxConcurrent'))
+    cancel_delay: str | None = Field(None, validation_alias=AliasChoices('cancel_delay', 'cancelDelay'))
+    excluded_providers: list[str] | None = Field(None, validation_alias=AliasChoices('excluded_providers', 'excludedProviders'))
 
 
 class ScheduledConfig(GatewayAdminContractModel):
     enabled: bool | None = None
-    max_pending_jobs: int | None = None
-    result_ttl: str | None = None
-    max_schedule_ahead: str | None = None
-    retry_attempts: int | None = None
-    worker_count: int | None = None
+    max_pending_jobs: int | None = Field(None, validation_alias=AliasChoices('max_pending_jobs', 'maxPendingJobs'))
+    result_ttl: str | None = Field(None, validation_alias=AliasChoices('result_ttl', 'resultTtl', 'resultTTL'))
+    max_schedule_ahead: str | None = Field(None, validation_alias=AliasChoices('max_schedule_ahead', 'maxScheduleAhead'))
+    retry_attempts: int | None = Field(None, validation_alias=AliasChoices('retry_attempts', 'retryAttempts'))
+    worker_count: int | None = Field(None, validation_alias=AliasChoices('worker_count', 'workerCount'))
 
 
 class SignalWeights(GatewayAdminContractModel):
     latency: float | None = None
-    error_rate: float | None = None
+    error_rate: float | None = Field(None, validation_alias=AliasChoices('error_rate', 'errorRate'))
     cost: float | None = None
 
 
 class AdaptiveRoutingConfig(GatewayAdminContractModel):
     enabled: bool | None = None
-    learning_requests: int | None = None
-    update_interval: str | None = None
-    smoothing_factor: float | None = None
-    min_weight: float | None = None
-    signal_weights: SignalWeights | None = None
+    learning_requests: int | None = Field(None, validation_alias=AliasChoices('learning_requests', 'learningRequests'))
+    update_interval: str | None = Field(None, validation_alias=AliasChoices('update_interval', 'updateInterval'))
+    smoothing_factor: float | None = Field(None, validation_alias=AliasChoices('smoothing_factor', 'smoothingFactor'))
+    min_weight: float | None = Field(None, validation_alias=AliasChoices('min_weight', 'minWeight'))
+    signal_weights: SignalWeights | None = Field(None, validation_alias=AliasChoices('signal_weights', 'signalWeights'))
 
 
 class ProviderLockConfig(GatewayAdminContractModel):
     enabled: bool | None = None
-    allowed_providers: list[str] | None = None
-    deny_providers: list[str] | None = None
+    allowed_providers: list[str] | None = Field(None, validation_alias=AliasChoices('allowed_providers', 'allowedProviders'))
+    deny_providers: list[str] | None = Field(None, validation_alias=AliasChoices('deny_providers', 'denyProviders'))
 
 
 class AccessGroup(GatewayAdminContractModel):
@@ -105,35 +128,35 @@ class AccessGroup(GatewayAdminContractModel):
 
 class FailoverConfig(GatewayAdminContractModel):
     enabled: bool | None = None
-    max_attempts: int | None = None
-    on_status_codes: list[int] | None = None
-    on_timeout: bool | None = None
-    per_attempt_timeout: str | None = None
+    max_attempts: int | None = Field(None, validation_alias=AliasChoices('max_attempts', 'maxAttempts'))
+    on_status_codes: list[int] | None = Field(None, validation_alias=AliasChoices('on_status_codes', 'onStatusCodes'))
+    on_timeout: bool | None = Field(None, validation_alias=AliasChoices('on_timeout', 'onTimeout'))
+    per_attempt_timeout: str | None = Field(None, validation_alias=AliasChoices('per_attempt_timeout', 'perAttemptTimeout'))
 
 
 class CircuitBreakerConfig(GatewayAdminContractModel):
     enabled: bool | None = None
-    failure_threshold: int | None = None
-    success_threshold: int | None = None
+    failure_threshold: int | None = Field(None, validation_alias=AliasChoices('failure_threshold', 'failureThreshold'))
+    success_threshold: int | None = Field(None, validation_alias=AliasChoices('success_threshold', 'successThreshold'))
     cooldown: str | None = None
-    on_status_codes: list[int] | None = None
+    on_status_codes: list[int] | None = Field(None, validation_alias=AliasChoices('on_status_codes', 'onStatusCodes'))
 
 
 class RetryConfig(GatewayAdminContractModel):
     enabled: bool | None = None
-    max_retries: int | None = None
-    initial_delay: str | None = None
-    max_delay: str | None = None
+    max_retries: int | None = Field(None, validation_alias=AliasChoices('max_retries', 'maxRetries'))
+    initial_delay: str | None = Field(None, validation_alias=AliasChoices('initial_delay', 'initialDelay'))
+    max_delay: str | None = Field(None, validation_alias=AliasChoices('max_delay', 'maxDelay'))
     multiplier: float | None = None
-    on_status_codes: list[int] | None = None
-    on_timeout: bool | None = None
+    on_status_codes: list[int] | None = Field(None, validation_alias=AliasChoices('on_status_codes', 'onStatusCodes'))
+    on_timeout: bool | None = Field(None, validation_alias=AliasChoices('on_timeout', 'onTimeout'))
 
 
 class MirrorRule(GatewayAdminContractModel):
-    source_model: str | None = None
-    target_provider: str | None = None
-    target_model: str | None = None
-    sample_rate: float | None = None
+    source_model: str | None = Field(None, validation_alias=AliasChoices('source_model', 'sourceModel'))
+    target_provider: str | None = Field(None, validation_alias=AliasChoices('target_provider', 'targetProvider'))
+    target_model: str | None = Field(None, validation_alias=AliasChoices('target_model', 'targetModel'))
+    sample_rate: float | None = Field(None, validation_alias=AliasChoices('sample_rate', 'sampleRate'))
 
 
 class MirrorConfig(GatewayAdminContractModel):
@@ -143,29 +166,29 @@ class MirrorConfig(GatewayAdminContractModel):
 
 class RoutingConfig(GatewayAdminContractModel):
     strategy: str | None = None
-    fallback_enabled: bool | None = None
-    fallback_on_status_codes: list[int] | None = None
-    model_fallbacks: dict[str, list[str]] | None = None
-    conditional_routes: list[ConditionalRoute] | None = None
-    default_model: str | None = None
+    fallback_enabled: bool | None = Field(None, validation_alias=AliasChoices('fallback_enabled', 'fallbackEnabled'))
+    fallback_on_status_codes: list[int] | None = Field(None, validation_alias=AliasChoices('fallback_on_status_codes', 'fallbackOnStatusCodes'))
+    model_fallbacks: dict[str, list[str]] | None = Field(None, validation_alias=AliasChoices('model_fallbacks', 'modelFallbacks'))
+    conditional_routes: list[ConditionalRoute] | None = Field(None, validation_alias=AliasChoices('conditional_routes', 'conditionalRoutes'))
+    default_model: str | None = Field(None, validation_alias=AliasChoices('default_model', 'defaultModel'))
     complexity: ComplexityRoutingConfig | None = None
     fastest: FastestResponseConfig | None = None
     scheduled: ScheduledConfig | None = None
     adaptive: AdaptiveRoutingConfig | None = None
-    provider_lock: ProviderLockConfig | None = None
-    access_groups: dict[str, AccessGroup] | None = None
+    provider_lock: ProviderLockConfig | None = Field(None, validation_alias=AliasChoices('provider_lock', 'providerLock'))
+    access_groups: dict[str, AccessGroup] | None = Field(None, validation_alias=AliasChoices('access_groups', 'accessGroups'))
     failover: FailoverConfig | None = None
-    circuit_breaker: CircuitBreakerConfig | None = None
+    circuit_breaker: CircuitBreakerConfig | None = Field(None, validation_alias=AliasChoices('circuit_breaker', 'circuitBreaker'))
     retry: RetryConfig | None = None
     mirror: MirrorConfig | None = None
-    model_timeouts: dict[str, str] | None = None
+    model_timeouts: dict[str, str] | None = Field(None, validation_alias=AliasChoices('model_timeouts', 'modelTimeouts'))
 
 
 class DiskCacheConfig(GatewayAdminContractModel):
     directory: str | None = None
-    max_size_bytes: int | None = None
+    max_size_bytes: int | None = Field(None, validation_alias=AliasChoices('max_size_bytes', 'maxSizeBytes'))
     compress: bool | None = None
-    cleanup_interval: str | None = None
+    cleanup_interval: str | None = Field(None, validation_alias=AliasChoices('cleanup_interval', 'cleanupInterval'))
 
 
 class RedisCacheConfig(GatewayAdminContractModel):
@@ -174,9 +197,9 @@ class RedisCacheConfig(GatewayAdminContractModel):
     password: str | None = None
     db: int | None = None
     mode: str | None = None
-    pool_size: int | None = None
+    pool_size: int | None = Field(None, validation_alias=AliasChoices('pool_size', 'poolSize'))
     tls: bool | None = None
-    key_prefix: str | None = None
+    key_prefix: str | None = Field(None, validation_alias=AliasChoices('key_prefix', 'keyPrefix'))
     compress: bool | None = None
 
 
@@ -184,16 +207,16 @@ class S3CacheConfig(GatewayAdminContractModel):
     bucket: str | None = None
     prefix: str | None = None
     region: str | None = None
-    access_key_id: str | None = None
-    secret_access_key: str | None = None
+    access_key_id: str | None = Field(None, validation_alias=AliasChoices('access_key_id', 'accessKeyId', 'accessKeyID'))
+    secret_access_key: str | None = Field(None, validation_alias=AliasChoices('secret_access_key', 'secretAccessKey'))
     compress: bool | None = None
 
 
 class AzureBlobCacheConfig(GatewayAdminContractModel):
     container: str | None = None
     prefix: str | None = None
-    connection_string: str | None = None
-    sas_token: str | None = None
+    connection_string: str | None = Field(None, validation_alias=AliasChoices('connection_string', 'connectionString'))
+    sas_token: str | None = Field(None, validation_alias=AliasChoices('sas_token', 'sasToken'))
     compress: bool | None = None
 
 
@@ -201,25 +224,25 @@ class GCSCacheConfig(GatewayAdminContractModel):
     bucket: str | None = None
     prefix: str | None = None
     project: str | None = None
-    credentials_file: str | None = None
+    credentials_file: str | None = Field(None, validation_alias=AliasChoices('credentials_file', 'credentialsFile'))
     compress: bool | None = None
 
 
 class QdrantConfig(GatewayAdminContractModel):
     url: str | None = None
     collection: str | None = None
-    api_key: str | None = None
+    api_key: str | None = Field(None, validation_alias=AliasChoices('api_key', 'apiKey'))
 
 
 class WeaviateConfig(GatewayAdminContractModel):
     url: str | None = None
-    class_: str | None = Field(None, alias="class")
-    api_key: str | None = None
+    class_: str | None = Field(None, alias="class", validation_alias=AliasChoices('class'))
+    api_key: str | None = Field(None, validation_alias=AliasChoices('api_key', 'apiKey'))
 
 
 class PineconeConfig(GatewayAdminContractModel):
     url: str | None = None
-    api_key: str | None = None
+    api_key: str | None = Field(None, validation_alias=AliasChoices('api_key', 'apiKey'))
 
 
 class SemanticCacheConfig(GatewayAdminContractModel):
@@ -227,7 +250,7 @@ class SemanticCacheConfig(GatewayAdminContractModel):
     backend: str | None = None
     threshold: float | None = None
     dimensions: int | None = None
-    max_entries: int | None = None
+    max_entries: int | None = Field(None, validation_alias=AliasChoices('max_entries', 'maxEntries'))
     qdrant: QdrantConfig | None = None
     weaviate: WeaviateConfig | None = None
     pinecone: PineconeConfig | None = None
@@ -235,21 +258,21 @@ class SemanticCacheConfig(GatewayAdminContractModel):
 
 class EdgeCacheConfig(GatewayAdminContractModel):
     enabled: bool | None = None
-    default_ttl: int | None = None
-    max_size: int | None = None
-    cacheable_models: list[str] | None = None
-    require_opt_in: bool | None = None
+    default_ttl: int | None = Field(None, validation_alias=AliasChoices('default_ttl', 'defaultTtl', 'defaultTTL'))
+    max_size: int | None = Field(None, validation_alias=AliasChoices('max_size', 'maxSize'))
+    cacheable_models: list[str] | None = Field(None, validation_alias=AliasChoices('cacheable_models', 'cacheableModels'))
+    require_opt_in: bool | None = Field(None, validation_alias=AliasChoices('require_opt_in', 'requireOptIn'))
 
 
 class CacheConfig(GatewayAdminContractModel):
     enabled: bool | None = None
     backend: str | None = None
-    default_ttl: int | None = None
-    max_entries: int | None = None
+    default_ttl: int | None = Field(None, validation_alias=AliasChoices('default_ttl', 'defaultTtl', 'defaultTTL'))
+    max_entries: int | None = Field(None, validation_alias=AliasChoices('max_entries', 'maxEntries'))
     disk: DiskCacheConfig | None = None
     redis: RedisCacheConfig | None = None
     s3: S3CacheConfig | None = None
-    azure_blob: AzureBlobCacheConfig | None = None
+    azure_blob: AzureBlobCacheConfig | None = Field(None, validation_alias=AliasChoices('azure_blob', 'azureBlob'))
     gcs: GCSCacheConfig | None = None
     semantic: SemanticCacheConfig | None = None
     edge: EdgeCacheConfig | None = None
@@ -257,12 +280,12 @@ class CacheConfig(GatewayAdminContractModel):
 
 class RateLimitConfig(GatewayAdminContractModel):
     enabled: bool | None = None
-    global_rpm: int | None = None
-    global_tpm: int | None = None
-    per_key_rpm: int | None = None
-    per_key_tpm: int | None = None
-    per_model_rpm: int | None = None
-    per_user_rpm: int | None = None
+    global_rpm: int | None = Field(None, validation_alias=AliasChoices('global_rpm', 'globalRpm', 'globalRPM'))
+    global_tpm: int | None = Field(None, validation_alias=AliasChoices('global_tpm', 'globalTpm', 'globalTPM'))
+    per_key_rpm: int | None = Field(None, validation_alias=AliasChoices('per_key_rpm', 'perKeyRpm', 'perKeyRPM'))
+    per_key_tpm: int | None = Field(None, validation_alias=AliasChoices('per_key_tpm', 'perKeyTpm', 'perKeyTPM'))
+    per_model_rpm: int | None = Field(None, validation_alias=AliasChoices('per_model_rpm', 'perModelRpm', 'perModelRPM'))
+    per_user_rpm: int | None = Field(None, validation_alias=AliasChoices('per_user_rpm', 'perUserRpm', 'perUserRPM'))
 
 
 class BudgetLevelConfig(GatewayAdminContractModel):
@@ -270,21 +293,21 @@ class BudgetLevelConfig(GatewayAdminContractModel):
     period: str | None = None
     hard: bool | None = None
     action: str | None = None
-    action_mode: str | None = None
-    on_exceed: str | None = None
-    per_model: dict[str, float] | None = None
+    action_mode: str | None = Field(None, validation_alias=AliasChoices('action_mode', 'actionMode'))
+    on_exceed: str | None = Field(None, validation_alias=AliasChoices('on_exceed', 'onExceed'))
+    per_model: dict[str, float] | None = Field(None, validation_alias=AliasChoices('per_model', 'perModel'))
 
 
 class BudgetsConfig(GatewayAdminContractModel):
     enabled: bool | None = None
-    default_period: str | None = None
-    warn_threshold: float | None = None
-    org_limit: float | None = None
-    org_period: str | None = None
-    hard_limit: bool | None = None
+    default_period: str | None = Field(None, validation_alias=AliasChoices('default_period', 'defaultPeriod'))
+    warn_threshold: float | None = Field(None, validation_alias=AliasChoices('warn_threshold', 'warnThreshold'))
+    org_limit: float | None = Field(None, validation_alias=AliasChoices('org_limit', 'orgLimit'))
+    org_period: str | None = Field(None, validation_alias=AliasChoices('org_period', 'orgPeriod'))
+    hard_limit: bool | None = Field(None, validation_alias=AliasChoices('hard_limit', 'hardLimit'))
     action: str | None = None
-    action_mode: str | None = None
-    on_exceed: str | None = None
+    action_mode: str | None = Field(None, validation_alias=AliasChoices('action_mode', 'actionMode'))
+    on_exceed: str | None = Field(None, validation_alias=AliasChoices('on_exceed', 'onExceed'))
     organization: BudgetLevelConfig | None = None
     org: BudgetLevelConfig | None = None
     teams: dict[str, BudgetLevelConfig] | None = None
@@ -294,13 +317,13 @@ class BudgetsConfig(GatewayAdminContractModel):
 
 
 class CustomPricing(GatewayAdminContractModel):
-    input_per_mtok: float | None = None
-    output_per_mtok: float | None = None
+    input_per_mtok: float | None = Field(None, validation_alias=AliasChoices('input_per_mtok', 'inputPerMtok', 'inputPerMTok'))
+    output_per_mtok: float | None = Field(None, validation_alias=AliasChoices('output_per_mtok', 'outputPerMtok', 'outputPerMTok'))
 
 
 class CostTrackingConfig(GatewayAdminContractModel):
     enabled: bool | None = None
-    custom_pricing: dict[str, CustomPricing] | None = None
+    custom_pricing: dict[str, CustomPricing] | None = Field(None, validation_alias=AliasChoices('custom_pricing', 'customPricing'))
 
 
 class IPACLConfig(GatewayAdminContractModel):
@@ -340,13 +363,13 @@ class RedactPatternConfig(GatewayAdminContractModel):
 class PrivacyConfig(GatewayAdminContractModel):
     enabled: bool | None = None
     mode: str | None = None
-    redact_patterns: list[RedactPatternConfig] | None = None
+    redact_patterns: list[RedactPatternConfig] | None = Field(None, validation_alias=AliasChoices('redact_patterns', 'redactPatterns'))
 
 
 class ToolPolicyConfig(GatewayAdminContractModel):
     enabled: bool | None = None
-    max_tools_per_request: int | None = None
-    default_action: str | None = None
+    max_tools_per_request: int | None = Field(None, validation_alias=AliasChoices('max_tools_per_request', 'maxToolsPerRequest'))
+    default_action: str | None = Field(None, validation_alias=AliasChoices('default_action', 'defaultAction'))
     allow: list[str] | None = None
     deny: list[str] | None = None
 
@@ -362,16 +385,16 @@ class MCPServerOrgConfig(GatewayAdminContractModel):
     url: str | None = None
     transport: str | None = None
     auth: MCPAuthOrgConfig | None = None
-    tools_cache_ttl: str | None = None
+    tools_cache_ttl: str | None = Field(None, validation_alias=AliasChoices('tools_cache_ttl', 'toolsCacheTtl', 'toolsCacheTTL'))
 
 
 class MCPGuardrailOrgConfig(GatewayAdminContractModel):
     enabled: bool | None = None
-    blocked_tools: list[str] | None = None
-    allowed_servers: list[str] | None = None
-    validate_inputs: bool | None = None
-    validate_outputs: bool | None = None
-    tool_rate_limits: dict[str, int] | None = None
+    blocked_tools: list[str] | None = Field(None, validation_alias=AliasChoices('blocked_tools', 'blockedTools'))
+    allowed_servers: list[str] | None = Field(None, validation_alias=AliasChoices('allowed_servers', 'allowedServers'))
+    validate_inputs: bool | None = Field(None, validation_alias=AliasChoices('validate_inputs', 'validateInputs'))
+    validate_outputs: bool | None = Field(None, validation_alias=AliasChoices('validate_outputs', 'validateOutputs'))
+    tool_rate_limits: dict[str, int] | None = Field(None, validation_alias=AliasChoices('tool_rate_limits', 'toolRateLimits'))
 
 
 class MCPOrgConfig(GatewayAdminContractModel):
@@ -389,7 +412,7 @@ class AuditSinkConfig(GatewayAdminContractModel):
 
 class AuditOrgConfig(GatewayAdminContractModel):
     enabled: bool | None = None
-    min_severity: str | None = None
+    min_severity: str | None = Field(None, validation_alias=AliasChoices('min_severity', 'minSeverity'))
     categories: list[str] | None = None
     sinks: list[AuditSinkConfig] | None = None
 
@@ -426,30 +449,30 @@ class A2AOrgConfig(GatewayAdminContractModel):
 
 
 class PricingOverrideOrg(GatewayAdminContractModel):
-    input_per_token: float | None = None
-    output_per_token: float | None = None
-    cached_input_per_token: float | None = None
-    batch_input_per_token: float | None = None
-    batch_output_per_token: float | None = None
+    input_per_token: float | None = Field(None, validation_alias=AliasChoices('input_per_token', 'inputPerToken'))
+    output_per_token: float | None = Field(None, validation_alias=AliasChoices('output_per_token', 'outputPerToken'))
+    cached_input_per_token: float | None = Field(None, validation_alias=AliasChoices('cached_input_per_token', 'cachedInputPerToken'))
+    batch_input_per_token: float | None = Field(None, validation_alias=AliasChoices('batch_input_per_token', 'batchInputPerToken'))
+    batch_output_per_token: float | None = Field(None, validation_alias=AliasChoices('batch_output_per_token', 'batchOutputPerToken'))
 
 
 class CapabilityOverrideOrg(GatewayAdminContractModel):
-    function_calling: bool | None = None
-    parallel_tool_calls: bool | None = None
+    function_calling: bool | None = Field(None, validation_alias=AliasChoices('function_calling', 'functionCalling'))
+    parallel_tool_calls: bool | None = Field(None, validation_alias=AliasChoices('parallel_tool_calls', 'parallelToolCalls'))
     vision: bool | None = None
-    audio_input: bool | None = None
-    audio_output: bool | None = None
-    pdf_input: bool | None = None
+    audio_input: bool | None = Field(None, validation_alias=AliasChoices('audio_input', 'audioInput'))
+    audio_output: bool | None = Field(None, validation_alias=AliasChoices('audio_output', 'audioOutput'))
+    pdf_input: bool | None = Field(None, validation_alias=AliasChoices('pdf_input', 'pdfInput'))
     streaming: bool | None = None
-    response_schema: bool | None = None
-    system_messages: bool | None = None
-    prompt_caching: bool | None = None
+    response_schema: bool | None = Field(None, validation_alias=AliasChoices('response_schema', 'responseSchema'))
+    system_messages: bool | None = Field(None, validation_alias=AliasChoices('system_messages', 'systemMessages'))
+    prompt_caching: bool | None = Field(None, validation_alias=AliasChoices('prompt_caching', 'promptCaching'))
     reasoning: bool | None = None
 
 
 class ModelOverrideOrgConfig(GatewayAdminContractModel):
-    max_input_tokens: int | None = None
-    max_output_tokens: int | None = None
+    max_input_tokens: int | None = Field(None, validation_alias=AliasChoices('max_input_tokens', 'maxInputTokens'))
+    max_output_tokens: int | None = Field(None, validation_alias=AliasChoices('max_output_tokens', 'maxOutputTokens'))
     pricing: PricingOverrideOrg | None = None
     capabilities: CapabilityOverrideOrg | None = None
 
@@ -463,18 +486,18 @@ class OrgConfig(GatewayAdminContractModel):
     guardrails: GuardrailConfig | None = None
     routing: RoutingConfig | None = None
     cache: CacheConfig | None = None
-    rate_limiting: RateLimitConfig | None = None
+    rate_limiting: RateLimitConfig | None = Field(None, validation_alias=AliasChoices('rate_limiting', 'rateLimiting'))
     budgets: BudgetsConfig | None = None
-    cost_tracking: CostTrackingConfig | None = None
-    ip_acl: IPACLConfig | None = None
+    cost_tracking: CostTrackingConfig | None = Field(None, validation_alias=AliasChoices('cost_tracking', 'costTracking'))
+    ip_acl: IPACLConfig | None = Field(None, validation_alias=AliasChoices('ip_acl', 'ipAcl', 'ipACL'))
     alerting: AlertingConfig | None = None
     privacy: PrivacyConfig | None = None
-    tool_policy: ToolPolicyConfig | None = None
+    tool_policy: ToolPolicyConfig | None = Field(None, validation_alias=AliasChoices('tool_policy', 'toolPolicy'))
     mcp: MCPOrgConfig | None = None
     audit: AuditOrgConfig | None = None
     a2a: A2AOrgConfig | None = None
-    model_database: ModelDatabaseOrgConfig | None = None
-    model_map: dict[str, str] | None = None
+    model_database: ModelDatabaseOrgConfig | None = Field(None, validation_alias=AliasChoices('model_database', 'modelDatabase'))
+    model_map: dict[str, str] | None = Field(None, validation_alias=AliasChoices('model_map', 'modelMap'))
 
 
 class CreateKeyRequest(GatewayAdminContractModel):
@@ -496,20 +519,20 @@ class UpdateKeyRequest(GatewayAdminContractModel):
 class KeyResponse(GatewayAdminContractModel):
     id: str | None = None
     key: str | None = None
-    key_prefix: str | None = None
+    key_prefix: str | None = Field(None, validation_alias=AliasChoices('key_prefix', 'keyPrefix'))
     name: str | None = None
     owner: str | None = None
     status: str | None = None
-    key_type: str | None = None
+    key_type: str | None = Field(None, validation_alias=AliasChoices('key_type', 'keyType'))
     models: list[str] | None = None
     providers: list[str] | None = None
-    allowed_models: list[str] | None = None
-    allowed_providers: list[str] | None = None
+    allowed_models: list[str] | None = Field(None, validation_alias=AliasChoices('allowed_models', 'allowedModels'))
+    allowed_providers: list[str] | None = Field(None, validation_alias=AliasChoices('allowed_providers', 'allowedProviders'))
     metadata: dict[str, str] | None = None
-    created_at: str | None = None
-    updated_at: str | None = None
-    last_used_at: str | None = None
-    credit_balance: float | None = None
+    created_at: str | None = Field(None, validation_alias=AliasChoices('created_at', 'createdAt'))
+    updated_at: str | None = Field(None, validation_alias=AliasChoices('updated_at', 'updatedAt'))
+    last_used_at: str | None = Field(None, validation_alias=AliasChoices('last_used_at', 'lastUsedAt'))
+    credit_balance: float | None = Field(None, validation_alias=AliasChoices('credit_balance', 'creditBalance'))
 
 
 class KeyListResponse(GatewayAdminContractModel):
@@ -519,7 +542,7 @@ class KeyListResponse(GatewayAdminContractModel):
 
 class StatusResponse(GatewayAdminContractModel):
     status: str | None = None
-    org_id: str | None = None
+    org_id: str | None = Field(None, validation_alias=AliasChoices('org_id', 'orgId', 'orgID'))
     deleted: bool | None = None
     loaded: int | None = None
 

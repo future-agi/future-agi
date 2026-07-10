@@ -11,6 +11,8 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
 import axios, { endpoints } from "src/utils/axios";
+import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
+import { getEvalNonScoreStatus } from "src/utils/evalStatus";
 
 const ScoreChip = ({ value }) => {
   if (value == null) {
@@ -28,9 +30,17 @@ const ScoreChip = ({ value }) => {
 };
 ScoreChip.propTypes = { value: PropTypes.any };
 
-const StatusChip = ({ status, result }) => {
-  if (status === "error") {
-    return <Chip label="Error" size="small" color="error" />;
+const StatusChip = ({ status, result, evalStatus, skippedReason }) => {
+  // Not-yet-completed evals (pending/running/skipped) render a loading /
+  // queued / skipped indicator instead of a terminal result chip.
+  const nonScore = getEvalNonScoreStatus(evalStatus || status);
+  if (nonScore) {
+    return (
+      <EvalStatusIndicator status={nonScore} skippedReason={skippedReason} />
+    );
+  }
+  if (status === "error" || evalStatus === "errored") {
+    return <EvalStatusIndicator status="errored" />;
   }
   if (result === "Passed") {
     return <Chip label="Passed" size="small" color="success" />;
@@ -43,6 +53,8 @@ const StatusChip = ({ status, result }) => {
 StatusChip.propTypes = {
   status: PropTypes.string,
   result: PropTypes.string,
+  evalStatus: PropTypes.string,
+  skippedReason: PropTypes.string,
 };
 
 const Row = ({ item }) => {
@@ -66,7 +78,12 @@ const Row = ({ item }) => {
         {item.eval_name || "—"}
       </Typography>
       <ScoreChip value={item.score} />
-      <StatusChip status={item.status} result={item.result} />
+      <StatusChip
+        status={item.status}
+        result={item.result}
+        evalStatus={item.eval_status}
+        skippedReason={item.skipped_reason || item.reason}
+      />
       <Typography
         variant="caption"
         color="text.secondary"
@@ -93,10 +110,12 @@ const SessionEvalsList = ({ sessionId }) => {
     queryKey: ["sessionEvalLogs", sessionId],
     queryFn: () =>
       axios
+        // page is 0-indexed on the backend (offset = page * page_size); the
+        // response shape is { total, page, page_size, items }.
         .get(endpoints.project.getSessionEvalLogs(sessionId), {
-          params: { page: 1, page_size: 100 },
+          params: { page: 0, page_size: 100 },
         })
-        .then((res) => res.data?.result || { results: [], count: 0 }),
+        .then((res) => res.data?.result || { items: [], total: 0 }),
     enabled: Boolean(sessionId),
   });
 
@@ -118,7 +137,7 @@ const SessionEvalsList = ({ sessionId }) => {
     );
   }
 
-  const items = data?.results || [];
+  const items = data?.items || [];
 
   if (items.length === 0) {
     return (

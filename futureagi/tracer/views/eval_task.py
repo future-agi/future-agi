@@ -3,7 +3,6 @@ import traceback
 import uuid as uuid_module
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
-from random import sample
 
 import structlog
 from django.db import models, transaction
@@ -14,6 +13,38 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from model_hub.models.evals_metric import EvalTemplate
+from tfc.temporal.eval_tasks.client import (
+    signal_pause_eval_task_workflow,
+    start_eval_task_workflow_sync,
+)
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import EmptyRequestSerializer
+from tfc.utils.base_viewset import BaseModelViewSetMixin
+from tfc.utils.general_methods import GeneralMethods
+from tfc.utils.pagination import ExtendedPageNumberPagination
+from tracer.models.custom_eval_config import CustomEvalConfig
+from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
+from tracer.models.observation_span import EvalEntryStatus, EvalLogger
+from tracer.models.project import Project
+from tracer.serializers.eval_task import (
+    EditEvalTaskSerializer,
+    EvalTaskCreateResponseSerializer,
+    EvalTaskDeleteRequestSerializer,
+    EvalTaskIdQuerySerializer,
+    EvalTaskListQuerySerializer,
+    EvalTaskListWithProjectNameQuerySerializer,
+    EvalTaskMessageResponseSerializer,
+    EvalTaskSerializer,
+    EvalTaskUpdateRequestSerializer,
+    EvalTaskUpdateResponseSerializer,
+    PaginationQuerySerializer,
+)
+from tracer.services.eval_tasks.edit_options import validate_edit_action
+from tracer.services.eval_tasks.entries import soft_delete_live
+from tracer.utils.filters import FilterEngine
+from tracer.utils.helper import get_default_eval_task_config
+
+logger = structlog.get_logger(__name__)
 
 
 class _RegexpReplace(Func):
@@ -239,42 +270,6 @@ def _compute_span_aggregation(base_qs):
     return dict(result)
 
 
-logger = structlog.get_logger(__name__)
-from tfc.utils.api_contracts import validated_request
-from tfc.utils.api_serializers import EmptyRequestSerializer
-from tfc.utils.base_viewset import BaseModelViewSetMixin
-from tfc.utils.general_methods import GeneralMethods
-from tfc.utils.pagination import ExtendedPageNumberPagination
-from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.eval_task import EvalTask, EvalTaskLogger, EvalTaskStatus, RunType
-from tracer.models.observation_span import EvalLogger, ObservationSpan
-from tracer.models.project import Project
-from tracer.serializers.eval_task import (
-    EvalTaskCreateResponseSerializer,
-    EvalTaskDeleteRequestSerializer,
-    EvalTaskIdQuerySerializer,
-    EvalTaskMessageResponseSerializer,
-    EvalTaskUpdateRequestSerializer,
-    EvalTaskUpdateResponseSerializer,
-    EditEvalTaskSerializer,
-    EvalTaskListQuerySerializer,
-    EvalTaskListWithProjectNameQuerySerializer,
-    EvalTaskSerializer,
-    PaginationQuerySerializer,
-)
-from tracer.utils.annotations import build_annotation_subqueries
-from tracer.utils.eval_tasks import (
-    annotation_source_q_for_row_type,
-    parsing_evaltask_filters,
-    run_for_processed_spans,
-)
-from tracer.utils.filters import FilterEngine
-from tracer.utils.helper import (
-    get_annotation_labels_for_project,
-    get_default_eval_task_config,
-)
-
-
 class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
@@ -465,6 +460,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 )
             eval_task = serializer.save()
 
+            # The workflow's first step materializes entries, so create returns
+            # immediately even for large tasks.
+            start_eval_task_workflow_sync(eval_task)
+
             return self._gm.success_response({"id": eval_task.id})
 
         except Exception as e:
@@ -579,16 +578,22 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 id=eval_task_id,
             )
 
-            # Pass/fail counts — cheap aggregate, two indexed COUNTs.
+            # Progress counts — cheap aggregate, indexed COUNTs. Counted by the
+            # entry's lifecycle ``status`` (not the ``error``/``skipped_reason``
+            # result columns): a pending/running entry has error=False and
+            # skipped_reason=null, so result-column counting would tally every
+            # not-yet-run entry as a success. ``total_count`` is every
+            # materialized entry (the manager already excludes soft-deleted),
+            # so while a task is pending Total shows the full set and success/
+            # errors start at 0 and climb as the drain executes.
             counts = EvalLogger.objects.filter(eval_task_id=eval_task_id).aggregate(
-                errors_count=Count("id", filter=Q(error=True)),
-                success_count=Count(
-                    "id", filter=Q(error=False, skipped_reason__isnull=True)
-                ),
+                total_count=Count("id"),
+                success_count=Count("id", filter=Q(status=EvalEntryStatus.COMPLETED)),
+                errors_count=Count("id", filter=Q(status=EvalEntryStatus.ERRORED)),
                 # Skipped: the eval never ran (e.g. a mapped span attribute
                 # was absent). Counted separately so it stays out of the
                 # success and failure tallies.
-                skipped_count=Count("id", filter=Q(skipped_reason__isnull=False)),
+                skipped_count=Count("id", filter=Q(status=EvalEntryStatus.SKIPPED)),
                 # Partial-input warnings live in
                 # output_metadata.warnings as a JSON array. has_key on
                 # the JSONField gives us a cheap "any warnings?" filter
@@ -688,20 +693,23 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 reverse=True,
             )[: self._WARNING_GROUPS_LIMIT]
 
-            total_count = (
-                counts["errors_count"]
-                + counts["success_count"]
-                + counts["skipped_count"]
-            )
-
             result = {
                 "start_time": eval_task.start_time,
                 "end_time": eval_task.end_time,
+                # Task status travels with the counts (same response) so the
+                # frontend can keep polling until it observes a terminal status,
+                # and the fetch that first sees "completed" already carries the
+                # final tallies — no off-by-one-tick stale count.
+                "status": eval_task.status,
+                # Duration is only meaningful for historical runs (which finalize
+                # with an end_time). Continuous tasks never end, so the frontend
+                # hides the Duration card based on this.
+                "run_type": eval_task.run_type,
                 "errors_count": counts["errors_count"],
                 "success_count": counts["success_count"],
                 "skipped_count": counts["skipped_count"],
                 "warnings_count": counts["warnings_count"],
-                "total_count": total_count,
+                "total_count": counts["total_count"],
                 "error_groups": error_groups,
                 "warning_groups": warning_groups,
                 # Indicates whether we capped at _ERROR_GROUPS_LIMIT — the
@@ -749,11 +757,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             if not eval_task_id:
                 return self._gm.bad_request("eval_task_id is required")
 
-            try:
-                eval_task = self._scope_eval_task_queryset(EvalTask.objects).get(
-                    id=eval_task_id,
-                )
-            except EvalTask.DoesNotExist:
+            if (
+                not self._scope_eval_task_queryset(EvalTask.objects)
+                .filter(id=eval_task_id)
+                .exists()
+            ):
                 return self._gm.bad_request(
                     f"EvalTask with id {eval_task_id} not found."
                 )
@@ -1253,6 +1261,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             eval_task.status = EvalTaskStatus.PAUSED
             eval_task.save()
 
+            # Nudge the running workflow to stop launching new evals immediately.
+            # Best-effort: the paused status above is the durable signal the
+            # workflow also honours at its next batch boundary.
+            signal_pause_eval_task_workflow(eval_task.id)
+
             return self._gm.success_response(
                 {"message": "Eval task paused successfully"}
             )
@@ -1287,19 +1300,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
             eval_task.status = EvalTaskStatus.PENDING
-            filters = eval_task.filters.copy() if eval_task.filters else {}
-            filters["created_at"] = timezone.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-            eval_task.filters = filters
-            eval_task.save()
+            eval_task.save(update_fields=["status"])
 
-            try:
-                eval_task_logger = EvalTaskLogger.objects.get(eval_task_id=eval_task_id)
-            except EvalTaskLogger.DoesNotExist:
-                eval_task_logger = EvalTaskLogger.objects.create(
-                    eval_task_id=eval_task_id, offset=0, status=EvalTaskStatus.PENDING
-                )
-            eval_task_logger.offset = 0
-            eval_task_logger.save()
+            # Pause exits the workflow; resuming starts a fresh run that picks up
+            # the remaining pending/running entries.
+            start_eval_task_workflow_sync(eval_task)
 
             return self._gm.success_response(
                 {"message": "Eval task unpaused successfully"}
@@ -1443,32 +1448,11 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                         "Cannot update a deleted evaluation task."
                     )
 
-                # Get or create eval task logger
-                eval_task_logger, created = EvalTaskLogger.objects.get_or_create(
-                    eval_task_id=eval_task.id,
-                    defaults={
-                        "offset": 0,
-                        "status": EvalTaskStatus.PENDING,
-                        "spanids_processed": [],
-                    },
-                )
-
-                # Store original state for comparison and logging
-                original_state = {
-                    "evals": set(eval_task.evals.values_list("id", flat=True)),
-                    "name": eval_task.name,
-                    "filters": eval_task.filters,
-                    "sampling_rate": eval_task.sampling_rate,
-                    "spans_limit": eval_task.spans_limit,
-                    "run_type": eval_task.run_type,
-                }
-
-                spanids_processed = eval_task_logger.spanids_processed or []
-
-                # Extract and validate update fields
+                original_evals = set(eval_task.evals.values_list("id", flat=True))
+                original_run_type = eval_task.run_type
                 update_fields = self._extract_update_fields(validated_data)
 
-                # Handle evaluation changes first
+                # Validate the requested evals belong to the task's project.
                 requested_evals = validated_data.get("evals")
                 if requested_evals is not None:
                     invalid_eval_ids = self._invalid_eval_ids_for_project(
@@ -1479,54 +1463,67 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                             "Eval configs not found for task project: "
                             + ", ".join(invalid_eval_ids)
                         )
-                new_evals = set(requested_evals or [])
-                if new_evals and new_evals != original_state["evals"]:
-                    self._update_eval_assignments(eval_task, new_evals)
 
-                # Process update based on edit type
+                new_evals = (
+                    set(requested_evals)
+                    if requested_evals is not None
+                    else original_evals
+                )
+                evals_changed = (
+                    requested_evals is not None and new_evals != original_evals
+                )
+                rows_changed = any(
+                    field in update_fields
+                    and update_fields[field] != getattr(eval_task, field)
+                    for field in ("filters", "sampling_rate", "spans_limit")
+                )
+                new_run_type = update_fields.get("run_type")
+
+                # Enforce which rerun action is allowed for what changed.
+                action_error = validate_edit_action(
+                    edit_type,
+                    original_run_type=original_run_type,
+                    new_run_type=new_run_type,
+                    evals_changed=evals_changed,
+                    rows_changed=rows_changed,
+                )
+                if action_error:
+                    return self._gm.bad_request(action_error)
+
+                # Switching continuous -> historical needs a row limit (continuous
+                # never had one).
+                if (
+                    new_run_type == RunType.HISTORICAL
+                    and original_run_type == RunType.CONTINUOUS
+                    and not update_fields.get("spans_limit")
+                    and not eval_task.spans_limit
+                ):
+                    return self._gm.bad_request(
+                        "Switching to a historical task requires a row limit."
+                    )
+
+                # Write the desired config (evals are an m2m the serializer sets).
+                update_fields["status"] = EvalTaskStatus.PENDING
+                update_fields["last_run"] = timezone.now()
+                task_serializer = self.get_serializer(
+                    eval_task, data=update_fields, partial=True
+                )
+                task_serializer.is_valid(raise_exception=True)
+                eval_task = task_serializer.save()
+
+                # Delete & rerun wipes live entries first; the workflow then
+                # reconciles (materialize/diff) and drains for both cases, so the
+                # request returns without doing that work synchronously.
                 if edit_type == "fresh_run":
-                    self._handle_fresh_run(eval_task, eval_task_logger)
-                    logger.info(f"Fresh run initiated for eval task {eval_task_id}")
+                    soft_delete_live(eval_task)
+                start_eval_task_workflow_sync(eval_task)
 
-                elif edit_type == "edit_rerun":
-                    changes_made = self._handle_edit_rerun(
-                        eval_task,
-                        eval_task_logger,
-                        update_fields,
-                        original_state,
-                        new_evals,
-                        spanids_processed,
-                    )
-                    logger.info(
-                        f"Edit & re-run completed for eval task {eval_task_id}, changes: {changes_made}"
-                    )
-
-                # Apply field updates to eval task
-                updated_instance = None
-                if update_fields:
-                    update_fields.update(
-                        {"status": EvalTaskStatus.PENDING, "last_run": timezone.now()}
-                    )
-
-                    task_serializer = self.get_serializer(
-                        eval_task, data=update_fields, partial=True
-                    )
-                    task_serializer.is_valid(raise_exception=True)
-                    updated_instance = task_serializer.save()
-
-                # Log the update for audit purposes
-                self._log_eval_task_update(
-                    eval_task_id, edit_type, original_state, update_fields, request.user
-                )
-
-                task_name = (
-                    updated_instance.name if updated_instance else eval_task.name
-                )
-                eval_task.status = EvalTaskStatus.PENDING
-                eval_task.save(update_fields=["status"])
                 return self._gm.success_response(
                     {
-                        "message": f"Evaluation task '{task_name}' has been updated successfully.",
+                        "message": (
+                            f"Evaluation task '{eval_task.name}' has been "
+                            "updated successfully."
+                        ),
                         "edit_type": edit_type,
                         "task_id": str(eval_task_id),
                     }
@@ -1562,284 +1559,6 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 update_fields[field] = value
 
         return update_fields
-
-    def _update_eval_assignments(self, eval_task, new_evals):
-        """Update evaluation assignments and mark removed ones as deleted"""
-        if not new_evals:
-            return
-
-        # Mark evaluations not in new set as deleted
-        deleted_count = (
-            EvalLogger.objects.filter(eval_task_id=eval_task.id, deleted=False)
-            .exclude(custom_eval_config_id__in=new_evals)
-            .update(deleted=True, deleted_at=timezone.now())
-        )
-
-        # Update eval task assignments
-        eval_task.evals.set(new_evals)
-
-        if deleted_count > 0:
-            logger.info(
-                f"Marked {deleted_count} evaluation results as deleted for task {eval_task.id}"
-            )
-
-    def _handle_fresh_run(self, eval_task, eval_task_logger):
-        """Handle fresh run logic - delete all results and reset state"""
-        # Mark all existing evaluation results as deleted
-        deleted_count = EvalLogger.objects.filter(
-            eval_task_id=eval_task.id, deleted=False
-        ).update(deleted=True, deleted_at=timezone.now())
-
-        # Reset logger state
-        eval_task_logger.spanids_processed = []
-        eval_task_logger.offset = 0
-        eval_task_logger.status = EvalTaskStatus.PENDING
-        eval_task_logger.save(update_fields=["spanids_processed", "offset", "status"])
-
-        logger.info(
-            f"Fresh run: Deleted {deleted_count} evaluation results for task {eval_task.id}"
-        )
-
-    def _handle_edit_rerun(
-        self,
-        eval_task,
-        eval_task_logger,
-        update_fields,
-        original_state,
-        new_evals,
-        spanids_processed,
-    ):
-        """Handle edit and rerun logic with intelligent evaluation scheduling"""
-
-        changes_made = []
-
-        # Only process historical runs with existing processed spans
-        if (
-            update_fields.get("run_type", eval_task.run_type) != RunType.HISTORICAL
-            or not spanids_processed
-        ):
-            return changes_made
-
-        try:
-            # Calculate new sampling parameters
-            new_span_limit = update_fields.get("spans_limit", eval_task.spans_limit)
-            new_sampling_rate = update_fields.get(
-                "sampling_rate", eval_task.sampling_rate
-            )
-            filters = update_fields.get("filters") or eval_task.filters
-
-            # Validate filters and get total spans count.
-            #
-            # CH25 migration (D-027): spans live in ClickHouse. The reader
-            # exposes a narrow ``count_with_filters`` (project_id /
-            # trace_ids / observation_type / session_id / created_at_*)
-            # that matches the keys ``parsing_evaltask_filters_for_ch``
-            # emits. Routing the keep-PG ``parsing_evaltask_filters → Q``
-            # through CH in full would require a Q→CH translator; here
-            # we only need a count so the narrow companion is sufficient.
-            #
-            # session_id filter semantics: ``parsing_evaltask_filters`` on
-            # the PG side materializes ``Trace.objects.filter(session_id=)
-            # .values_list("id")`` and filters by ``trace_id__in=…``. The
-            # CH spans table denormalizes ``trace_session_id`` onto every
-            # row, so the reader's ``session_id`` kwarg (which becomes
-            # ``trace_session_id = %s``) is the direct equivalent — no PG
-            # Trace round-trip needed.
-            #
-            # span_attributes_filters guard: ``_for_ch`` IGNORES
-            # span_attributes_filters because translating JSON-field Q
-            # objects to CH typed-Map predicates needs the v2 FilterEngine.
-            # If a caller passed them, ``count_with_filters`` would
-            # otherwise OVERCOUNT (running with the looser filter set
-            # only), inflating ``target_sample_size`` against the legacy
-            # PG denominator. Fall back to PG for that case so the count
-            # is tight; remove the fallback once the v2 FilterEngine
-            # ships CH attribute-filter support.
-            # CH25-TODO(span_attributes_filters_for_ch): wire a v2-
-            # FilterEngine-backed ``count_with_attr_filters`` so 100% of
-            # evaltask filter shapes route through CH.
-            from tracer.services.clickhouse.v2 import get_reader
-            from tracer.services.clickhouse.v2.span_reader import CHSpanReader
-
-            has_span_attr_filters = bool(
-                filters
-                and isinstance(filters, dict)
-                and filters.get("span_attributes_filters")
-            )
-            # Tenant gate: force-scope by the eval_task's own project_id
-            # regardless of what the edit payload's ``filters`` carry.
-            # The PG ``parsing_evaltask_filters`` honors ``project_id``
-            # if present in ``filters`` but does NOT inject the
-            # eval_task's project_id when absent — which means an edit
-            # payload that omits or rewrites ``filters.project_id``
-            # produces an untenanted count (and an over-sampled rerun).
-            # Codex P1 (mid-views-chunk review).
-            tenant_project_id = str(eval_task.project_id)
-            if has_span_attr_filters:
-                # PG fallback (KEEP-PG until the v2 FilterEngine lands).
-                # row_type + build_annotation_subqueries carried over from
-                # origin/main (TH-5645): per-label ANNOTATION filters
-                # reference columns the subqueries add (else FieldError),
-                # and parsing_evaltask_filters now requires row_type.
-                parsed_filters, parsed_filter_anns = parsing_evaltask_filters(
-                    filters, row_type=eval_task.row_type
-                )
-                parsed_filters &= Q(project_id=tenant_project_id)
-                annotation_labels = get_annotation_labels_for_project(
-                    eval_task.project_id
-                )
-                span_qs = build_annotation_subqueries(
-                    ObservationSpan.objects.all(),
-                    annotation_labels,
-                    eval_task.project.organization,
-                    source_q=annotation_source_q_for_row_type(eval_task.row_type),
-                )
-                total_spans = (
-                    span_qs.annotate(**parsed_filter_anns)
-                    .filter(parsed_filters)
-                    .count()
-                )
-            else:
-                # TODO(CH25 / TH-5645): the CH count path ignores row_type
-                # and annotation filters — parsing_evaltask_filters_for_ch
-                # only handles project_id/trace_ids/observation_type/
-                # session_id/created_at. origin/main's row_type-scoped
-                # annotation count does NOT apply here. Revisit once the v2
-                # FilterEngine lands CH annotation/row_type support so this
-                # branch matches the PG fallback's semantics.
-                ch_kwargs = CHSpanReader.parsing_evaltask_filters_for_ch(filters or {})
-                # Override any caller-supplied project_id with the
-                # eval_task's project_id — defense-in-depth against an
-                # edit payload that swaps it out.
-                ch_kwargs["project_id"] = tenant_project_id
-                with get_reader() as reader:
-                    total_spans = reader.count_with_filters(**ch_kwargs)
-
-            if total_spans == 0:
-                logger.warning(
-                    f"No spans found for eval task {eval_task.id} with current filters"
-                )
-                return changes_made
-
-            # Calculate target sample parameters
-            target_sample_size = int((new_sampling_rate / 100) * total_spans)
-            max_spans = min(new_span_limit or float("inf"), target_sample_size)
-
-            # Determine final span set to work with
-            if max_spans >= len(spanids_processed):
-                final_spans = spanids_processed
-            else:
-                final_spans = sample(spanids_processed, int(max_spans))
-                changes_made.append(f"Resampled to {len(final_spans)} spans")
-
-            if not final_spans:
-                logger.info(f"No spans to process for eval task {eval_task.id}")
-                return changes_made
-
-            # Handle existing evaluations - fill gaps
-            existing_eval_ids = list(original_state["evals"].intersection(new_evals))
-            if existing_eval_ids:
-                missing_count = self._schedule_missing_evaluations(
-                    eval_task.id, existing_eval_ids, final_spans
-                )
-                if missing_count > 0:
-                    changes_made.append(
-                        f"Scheduled {missing_count} missing evaluations"
-                    )
-
-            # Handle completely new evaluations
-            new_eval_ids = list(new_evals - original_state["evals"])
-            if new_eval_ids:
-                self._schedule_new_evaluations(final_spans, new_eval_ids, eval_task.id)
-                changes_made.append(
-                    f"Scheduled {len(new_eval_ids)} new evaluation types"
-                )
-
-        except Exception as e:
-            logger.error(f"Error in edit_rerun for task {eval_task.id}: {str(e)}")
-            raise
-
-        return changes_made
-
-    def _schedule_missing_evaluations(self, eval_task_id, eval_ids, target_spans):
-        """Schedule evaluations only for spans that haven't been evaluated yet"""
-
-        total_missing = 0
-
-        for eval_id in eval_ids:
-            try:
-                # Get spans already evaluated for this eval (not deleted)
-                evaluated_spans = set(
-                    EvalLogger.objects.filter(
-                        eval_task_id=eval_task_id,
-                        custom_eval_config_id=eval_id,
-                        deleted=False,
-                    ).values_list("observation_span_id", flat=True)
-                )
-
-                # Find spans that need evaluation
-                missing_spans = [
-                    span_id
-                    for span_id in target_spans
-                    if span_id not in evaluated_spans
-                ]
-
-                if missing_spans:
-                    # Schedule evaluation for missing spans
-                    run_for_processed_spans.delay(
-                        missing_spans, [eval_id], eval_task_id
-                    )
-                    total_missing += len(missing_spans)
-                    logger.info(
-                        f"Scheduled {len(missing_spans)} missing evaluations for eval {eval_id}"
-                    )
-
-            except Exception as e:
-                logger.error(
-                    f"Error scheduling missing evaluations for eval {eval_id}: {str(e)}"
-                )
-                continue
-
-        return total_missing
-
-    def _schedule_new_evaluations(self, span_ids, eval_ids, eval_task_id):
-        """Schedule evaluations for completely new evaluation types"""
-        try:
-            if span_ids and eval_ids:
-                run_for_processed_spans.delay(span_ids, eval_ids, eval_task_id)
-                logger.info(
-                    f"Scheduled {len(span_ids)} spans for {len(eval_ids)} new evaluations"
-                )
-        except Exception as e:
-            logger.error(f"Error scheduling new evaluations: {str(e)}")
-            raise
-
-    def _log_eval_task_update(
-        self, eval_task_id, edit_type, original_state, update_fields, user
-    ):
-        """Log evaluation task updates for audit purposes"""
-        try:
-            changes = []
-            for field, new_value in update_fields.items():
-                if field in original_state:
-                    old_value = original_state[field]
-                    if old_value != new_value:
-                        changes.append(f"{field}: {old_value} -> {new_value}")
-                else:
-                    changes.append(f"{field}: -> {new_value}")
-
-            log_message = (
-                f"Eval task {eval_task_id} updated by {user.email} "
-                f"(edit_type: {edit_type})"
-            )
-
-            if changes:
-                log_message += f" - Changes: {'; '.join(changes)}"
-
-            logger.info(log_message)
-
-        except Exception as e:
-            logger.error(f"Error logging eval task update: {str(e)}")
 
     @action(detail=False, methods=["get"])
     def get_eval_details(self, request, *args, **kwargs):

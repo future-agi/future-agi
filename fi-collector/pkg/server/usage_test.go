@@ -128,3 +128,35 @@ func TestCountDistinctTracesMultipleScopeSpans(t *testing.T) {
 		t.Errorf("2 traces across 3 scope spans: got %d, want 2", n)
 	}
 }
+
+func TestDistinctTraceIDsReturnsSingleID(t *testing.T) {
+	traces := ptrace.NewTraces()
+	rs := traces.ResourceSpans().AppendEmpty()
+	ss := rs.ScopeSpans().AppendEmpty()
+	tid := [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}
+	// two spans, same trace -> one distinct id (the billing dedup key for a call)
+	ss.Spans().AppendEmpty().SetTraceID(pcommon.TraceID(tid))
+	ss.Spans().AppendEmpty().SetTraceID(pcommon.TraceID(tid))
+
+	ids := distinctTraceIDs(traces)
+	if len(ids) != 1 {
+		t.Fatalf("got %d distinct ids, want 1", len(ids))
+	}
+	if ids[0] != tid {
+		t.Errorf("distinct id = %x, want %x", ids[0], tid)
+	}
+}
+
+func TestDistinctTraceIDsMultiple(t *testing.T) {
+	traces := ptrace.NewTraces()
+	for i := 0; i < 3; i++ {
+		rs := traces.ResourceSpans().AppendEmpty()
+		ss := rs.ScopeSpans().AppendEmpty()
+		tid := [16]byte{}
+		tid[0] = byte(i + 1)
+		ss.Spans().AppendEmpty().SetTraceID(pcommon.TraceID(tid))
+	}
+	if got := len(distinctTraceIDs(traces)); got != 3 {
+		t.Errorf("got %d distinct ids, want 3", got)
+	}
+}

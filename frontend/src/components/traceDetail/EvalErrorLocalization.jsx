@@ -8,6 +8,8 @@ import axios, { endpoints } from "src/utils/axios";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
+import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
+import SkippedLocalizationBanner from "src/sections/common/SkippedLocalizationBanner";
 import { canonicalEntries } from "src/utils/utils";
 
 /**
@@ -209,6 +211,9 @@ const EvalErrorLocalization = ({
       // Empty object — analysis ran but found no segments. Fall through
       // to the "run" card so users can re-trigger if they suspect it.
     } else {
+      const isAudioLocalization = entries.some(([, value]) =>
+        (Array.isArray(value) ? value : []).some((e) => e?.orgSegment),
+      );
       return (
         <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
           <Typography
@@ -223,15 +228,22 @@ const EvalErrorLocalization = ({
           >
             Possible Error
           </Typography>
-          {entries.map(([key, value]) => (
-            <ErrorLocalizeCard
-              key={key}
-              value={value}
-              column={selectedInputKey || key}
-              tabValue="raw"
-              datapoint={datapoint}
+          {isAudioLocalization ? (
+            <AudioErrorCard
+              valueInfos={{ errorAnalysis: analysis }}
+              column={selectedInputKey || "input"}
             />
-          ))}
+          ) : (
+            entries.map(([key, value]) => (
+              <ErrorLocalizeCard
+                key={key}
+                value={value}
+                column={selectedInputKey || key}
+                tabValue="raw"
+                datapoint={datapoint}
+              />
+            ))
+          )}
         </Box>
       );
     }
@@ -330,14 +342,7 @@ const EvalErrorLocalization = ({
   // ── State 4: skipped ─────────────────────────────────────────────────────
   if (effectiveStatus === "skipped") {
     return (
-      <Typography
-        variant="caption"
-        color="text.secondary"
-        sx={{ fontSize: 10, fontStyle: "italic" }}
-      >
-        Error localization was skipped — input data isn&apos;t available to
-        localize on.
-      </Typography>
+      <SkippedLocalizationBanner message={cellPollData?.error_message} />
     );
   }
 

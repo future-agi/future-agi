@@ -618,53 +618,71 @@ const LabelPanel = forwardRef(function LabelPanel(
 
       // Number keys → dispatch to focused label
       const num = parseInt(e.key, 10);
-      if (num >= 1 && num <= 9 && labels.length > 0) {
-        const ql = labels[focusedIndex];
-        if (!ql) return;
-        const labelId = ql.label_id;
-        const currentVal = displayValues[labelId] ?? null;
+      if (Number.isNaN(num) || labels.length === 0) return;
+
+      const ql = labels[focusedIndex];
+      if (!ql) return;
+      const labelId = ql.label_id;
+      const currentVal = displayValues[labelId] ?? null;
+
+      if (ql.type === "star") {
+        const max = ql.settings?.no_of_stars || 5;
+        // A single keypress can't produce "10", so the "0" key maps to a
+        // rating of 10 (the max). Digits 1-9 map to themselves.
+        const rating = num === 0 ? 10 : num;
+        if (rating >= 1 && rating <= max) {
+          e.preventDefault();
+          const current = currentVal?.rating || 0;
+          handleChange(labelId, { rating: rating === current ? 0 : rating });
+        }
+        return;
+      }
+
+      if (ql.type === "thumbs_up_down") {
+        if (num === 1) {
+          e.preventDefault();
+          handleChange(labelId, {
+            value: currentVal?.value === "up" ? null : "up",
+          });
+        } else if (num === 2) {
+          e.preventDefault();
+          handleChange(labelId, {
+            value: currentVal?.value === "down" ? null : "down",
+          });
+        }
+        return;
+      }
+
+      if (ql.type === "categorical") {
+        const rawOptions = ql.settings?.options || [];
+        const options = rawOptions
+          .map((opt) =>
+            typeof opt === "string" ? opt : opt?.label || opt?.value || "",
+          )
+          .filter(Boolean);
+        // Number shortcuts are only offered for up to 10 options: digits 1-9
+        // select options 1-9 and "0" selects the 10th (same as the star
+        // "0 = 10" mapping). With more than 10 options the mapping is
+        // ambiguous, so number shortcuts are disabled entirely.
+        if (options.length > 10) return;
+        let optIndex = -1;
+        if (num >= 1 && num <= 9) optIndex = num - 1;
+        else if (num === 0 && options.length === 10) optIndex = 9;
+        if (optIndex < 0 || optIndex >= options.length) return;
 
         e.preventDefault();
-
-        if (ql.type === "star") {
-          const max = ql.settings?.no_of_stars || 5;
-          if (num <= max) {
-            const current = currentVal?.rating || 0;
-            handleChange(labelId, { rating: num === current ? 0 : num });
-          }
-        } else if (ql.type === "thumbs_up_down") {
-          if (num === 1) {
-            handleChange(labelId, {
-              value: currentVal?.value === "up" ? null : "up",
-            });
-          } else if (num === 2) {
-            handleChange(labelId, {
-              value: currentVal?.value === "down" ? null : "down",
-            });
-          }
-        } else if (ql.type === "categorical") {
-          const rawOptions = ql.settings?.options || [];
-          const options = rawOptions
-            .map((opt) =>
-              typeof opt === "string" ? opt : opt?.label || opt?.value || "",
-            )
-            .filter(Boolean);
-          const optIndex = num - 1;
-          if (optIndex < options.length) {
-            const opt = options[optIndex];
-            const selected = currentVal?.selected || [];
-            const isMulti = ql.settings?.multi_choice || false;
-            if (isMulti) {
-              const next = selected.includes(opt)
-                ? selected.filter((v) => v !== opt)
-                : [...selected, opt];
-              handleChange(labelId, { selected: next });
-            } else {
-              handleChange(labelId, {
-                selected: selected[0] === opt ? [] : [opt],
-              });
-            }
-          }
+        const opt = options[optIndex];
+        const selected = currentVal?.selected || [];
+        const isMulti = ql.settings?.multi_choice || false;
+        if (isMulti) {
+          const next = selected.includes(opt)
+            ? selected.filter((v) => v !== opt)
+            : [...selected, opt];
+          handleChange(labelId, { selected: next });
+        } else {
+          handleChange(labelId, {
+            selected: selected[0] === opt ? [] : [opt],
+          });
         }
       }
     };

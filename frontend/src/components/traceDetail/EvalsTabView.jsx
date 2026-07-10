@@ -6,6 +6,8 @@ import Markdown from "react-markdown";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import EvalErrorLocalization from "./EvalErrorLocalization";
+import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
+import { EVAL_STATUS, getEvalNonScoreStatus } from "src/utils/evalStatus";
 
 // Kept locally so callers that don't supply an onFixWithFalcon handler still
 // see the informational toast — preserves pre-integration behavior.
@@ -120,6 +122,14 @@ const EvalTableRow = ({
   const [expanded, setExpanded] = useState(false);
   const isSkipped = ev?.skipped === true;
   const hasError = ev?.error === true && !isSkipped;
+  // Every non-score state (queued / evaluating / skipped / errored) renders
+  // through the shared EvalStatusIndicator so the drawer matches the tables:
+  // Queued pill, full-cell Evaluating skeleton, Skipped chip, Error chip.
+  const indicatorStatus = isSkipped
+    ? EVAL_STATUS.SKIPPED
+    : hasError
+      ? EVAL_STATUS.ERRORED
+      : getEvalNonScoreStatus(ev?.status);
   const sc = isSkipped
     ? {
         bg: (theme) => alpha(theme.palette.text.disabled, 0.08),
@@ -147,13 +157,16 @@ const EvalTableRow = ({
     ? "Skipped"
     : hasError
       ? "Error"
-      : (ev.score_label ??
+      : ev.score_label ??
         passFailLabel ??
-        (ev.score != null ? `${ev.score}%` : "—"));
+        (ev.score != null ? `${ev.score}%` : "—");
 
   // Error localization visibility — surfaced for every eval that has
   // enough identifiers to drive either the cell-based or trace-based
   // flow. Rows with just an explanation still expand without it.
+  // Composite evals have no localizable input of their own — skip the whole
+  // localization flow before computing any of its identifiers.
+  const isComposite = ev?.template_type === "composite";
   const initialAnalysis = ev.error_analysis || ev.errorAnalysis || null;
   const cellId = ev.cell_id || ev.cellId;
   const observationSpanId =
@@ -168,10 +181,11 @@ const EvalTableRow = ({
   const initialStatus =
     ev.error_localizer_status || ev.errorLocalizerStatus || null;
   const hasErrorLocalization =
-    !!initialAnalysis ||
-    !!cellId ||
-    !!initialStatus ||
-    !!(observationSpanId && customEvalConfigId);
+    !isComposite &&
+    (!!initialAnalysis ||
+      !!cellId ||
+      !!initialStatus ||
+      !!(observationSpanId && customEvalConfigId));
   const canExpand = !!explanation || hasErrorLocalization;
 
   return (
@@ -220,9 +234,24 @@ const EvalTableRow = ({
           {evalName}
         </Typography>
 
-        {/* Score — choices render as violet chips, else a colored badge */}
-        <Box sx={{ width: "15%", display: "flex", flexWrap: "wrap", gap: 0.5 }}>
-          {ev.score_items?.length ? (
+        {/* Score — non-score states (queued/evaluating/skipped/errored) show
+            the shared indicator; choices render as violet chips; else a
+            colored badge */}
+        <Box
+          sx={{
+            width: "15%",
+            minHeight: 22,
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 0.5,
+          }}
+        >
+          {indicatorStatus ? (
+            <EvalStatusIndicator
+              status={indicatorStatus}
+              skippedReason={ev.skipped_reason}
+            />
+          ) : ev.score_items?.length ? (
             ev.score_items.map((item, i) => (
               <Chip
                 key={i}

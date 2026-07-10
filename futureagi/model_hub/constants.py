@@ -1,4 +1,13 @@
+from model_hub.models.choices import AnnotationTypeChoices
 from tfc.settings.settings import BASE_URL
+
+ANNOTATION_LABEL_VALUE_KEYS = {
+    AnnotationTypeChoices.TEXT.value: "text",
+    AnnotationTypeChoices.NUMERIC.value: "value",
+    AnnotationTypeChoices.STAR.value: "rating",
+    AnnotationTypeChoices.THUMBS_UP_DOWN.value: "value",
+    AnnotationTypeChoices.CATEGORICAL.value: "selected",
+}
 
 # ---------------------------------------------------------------------------
 # Dataset validation constants
@@ -7,8 +16,8 @@ MAX_DATASET_NAME_LENGTH = 2000
 MAX_MANUAL_ROWS = 100
 MAX_MANUAL_COLUMNS = 100
 MAX_EMPTY_DATASET_ROWS = 10
-MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
-MAX_FILE_SIZE_MB = 10
+MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024  # 25 MB
+MAX_FILE_SIZE_MB = 25
 MAX_BATCH_DELETE_SIZE = 50
 MAX_PAGE_SIZE = 100
 ALLOWED_FILE_EXTENSIONS = {".csv", ".xls", ".xlsx", ".json", ".jsonl"}

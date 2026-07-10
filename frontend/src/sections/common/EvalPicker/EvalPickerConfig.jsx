@@ -427,8 +427,8 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
             Evaluation Summary
           </Typography>
           <Typography variant="body2" sx={{ fontSize: "12px" }}>
-            {evalData?.name} ({evalData?.evalType || "LLM"} eval,{" "}
-            {evalData?.outputType || "pass_fail"} output)
+            {evalData?.name} ({evalData?.eval_type || "LLM"} eval,{" "}
+            {evalData?.output_type || "pass_fail"} output)
           </Typography>
           {evalData?.description && (
             <Typography

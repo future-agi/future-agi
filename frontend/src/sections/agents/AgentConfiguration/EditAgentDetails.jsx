@@ -147,7 +147,6 @@ const EditAgentDetails = ({
         shouldDirty: true,
       });
       setValue("description", providerData?.prompt, { shouldDirty: true });
-      setValue("apiKey", providerData?.api_key, { shouldDirty: true });
       setLastFetchedAt(new Date());
       setShowSyncSuccess(true);
     },
@@ -206,6 +205,7 @@ const EditAgentDetails = ({
         api_key: apiKey,
         assistant_id: assistantId,
         provider: provider,
+        agent_id: agentDefinitionId,
       });
     }
   };
@@ -469,6 +469,7 @@ const EditAgentDetails = ({
                           api_key: apiKey,
                           assistant_id: value,
                           provider: selectedProvider,
+                          agent_id: agentDefinitionId,
                         });
                       }
                     }}
@@ -591,6 +592,7 @@ const EditAgentDetails = ({
                       api_key: value,
                       assistant_id: assistantId,
                       provider: selectedProvider,
+                      agent_id: agentDefinitionId,
                     });
                   }
                 }}

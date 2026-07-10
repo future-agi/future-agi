@@ -13,6 +13,7 @@ import { ShowComponent } from "../../../components/show";
 import { getLabel, getStatusColor } from "../../develop-detail/DataTab/common";
 import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
+import SkippedLocalizationBanner from "src/sections/common/SkippedLocalizationBanner";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import Iconify from "src/components/iconify";
@@ -40,6 +41,7 @@ const ERROR_LOCALIZER_TASK_STATUS = {
   RUNNING: "running",
   COMPLETED: "completed",
   FAILED: "failed",
+  SKIPPED: "skipped",
 };
 
 const ERROR_LOCALIZER_REFETCH_STATUS = [ERROR_LOCALIZER_TASK_STATUS.RUNNING];
@@ -98,6 +100,8 @@ const EvalDrawerSection = () => {
   );
   const isErrorLocalizerTaskFailed =
     errorLocalizerTaskStatus === ERROR_LOCALIZER_TASK_STATUS.FAILED;
+  const isErrorLocalizerTaskSkipped =
+    errorLocalizerTaskStatus === ERROR_LOCALIZER_TASK_STATUS.SKIPPED;
 
   return (
     <Box
@@ -254,12 +258,18 @@ const EvalDrawerSection = () => {
               </Typography>
             </WrapperBox>
           </ShowComponent>
+          <ShowComponent condition={isErrorLocalizerTaskSkipped}>
+            <SkippedLocalizationBanner
+              message={errorLocalizerTask?.error_message}
+            />
+          </ShowComponent>
           <ShowComponent
             condition={
               errorAnalysis &&
               errorAnalysis?.input1?.length &&
               !isErrorLocalizerTaskRunning &&
-              !isErrorLocalizerTaskFailed
+              !isErrorLocalizerTaskFailed &&
+              !isErrorLocalizerTaskSkipped
             }
           >
             <Box

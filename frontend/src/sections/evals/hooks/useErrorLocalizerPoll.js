@@ -24,7 +24,7 @@ import axios, { endpoints } from "src/utils/axios";
  */
 export function useErrorLocalizerPoll({
   intervalMs = 2000,
-  timeoutMs = 300000,
+  timeoutMs = 120000,
 } = {}) {
   const [state, setState] = useState({
     status: null,

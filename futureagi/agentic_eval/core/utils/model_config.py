@@ -129,10 +129,14 @@ class ModelConfigs:
 
     VERTEX_GEMINI_3_5_FLASH: Final[ModelConfig] = ModelConfig(
         provider=LiteLlmProvider.VERTEX_AI.value,
-        # `gemini-3.5-flash` is not a real Vertex publisher model and 404s
-        # ("Publisher Model gemini-3.5-flash was not found"). Use the real
-        # Gemini-3 flash preview model.
-        model_name="vertex_ai/gemini-3-flash-preview",
+        model_name="vertex_ai/gemini-3.5-flash",
+        temperature=0.2,
+        max_tokens=8100,
+    )
+
+    VERTEX_GEMINI_3_1_FLASH_LITE: Final[ModelConfig] = ModelConfig(
+        provider=LiteLlmProvider.VERTEX_AI.value,
+        model_name="vertex_ai/gemini-3.1-flash-lite",
         temperature=0.2,
         max_tokens=8100,
     )

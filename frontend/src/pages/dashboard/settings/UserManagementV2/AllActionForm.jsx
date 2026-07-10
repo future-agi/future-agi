@@ -506,17 +506,20 @@ const AllActionForm = ({
     if (formData.orgLevel != null) {
       payload.org_level = formData.orgLevel;
     }
-    if (formData.wsLevel != null && workspaceId) {
-      payload.ws_level = formData.wsLevel;
-      payload.workspace_id = workspaceId;
-    }
-    // Include workspace_access for Member/Viewer roles
+    // Org-level edits with a workspace selection use `workspace_access` as
+    // the authoritative desired set. Sending `ws_level + workspace_id` from
+    // the page's URL context alongside it creates a contradictory payload —
+    // the backend ends up keeping the URL-context workspace active even if
+    // the user excluded it from their selection.
     if (needsWorkspaces && formData.workspaceIds?.length > 0) {
       const wsLevel = formData.wsLevel_edit ?? LEVELS.WORKSPACE_MEMBER;
       payload.workspace_access = formData.workspaceIds.map((wsId) => ({
         workspace_id: wsId,
         level: wsLevel,
       }));
+    } else if (formData.wsLevel != null && workspaceId) {
+      payload.ws_level = formData.wsLevel;
+      payload.workspace_id = workspaceId;
     }
     updateRoleMutate(payload);
   };

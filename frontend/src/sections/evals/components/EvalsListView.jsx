@@ -16,6 +16,8 @@ import {
 } from "src/hooks/use-local-storage";
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
 import {
   useBulkDeleteEvals,
@@ -310,6 +312,9 @@ const SORT_FIELD_MAP = {
 
 const EvalsListView = () => {
   const navigate = useNavigate();
+  const { role } = useAuthContext();
+  const canEditEvals =
+    RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS][role];
 
   // State
   const [searchQuery, setSearchQuery] = useState("");
@@ -855,6 +860,7 @@ const EvalsListView = () => {
               selectedCount={selectedItems.length}
               onDelete={() => setDeleteDialogOpen(true)}
               onCancel={handleCancelSelection}
+              canEditEvals={canEditEvals}
             />
           ) : (
             <Button
@@ -862,6 +868,7 @@ const EvalsListView = () => {
               color="primary"
               startIcon={<Iconify icon="mingcute:add-line" width={18} />}
               onClick={() => navigate("/dashboard/evaluations/create")}
+              disabled={!canEditEvals}
               sx={{ px: 2.5, typography: "body2", textTransform: "none" }}
             >
               Create evals

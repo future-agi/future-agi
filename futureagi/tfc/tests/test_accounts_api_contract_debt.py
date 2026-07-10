@@ -116,7 +116,9 @@ def test_accounts_endpoints_have_response_contracts():
         ("POST", "/accounts/passkey/register/options/"): "PasskeyOptionsResponse",
         ("PATCH", "/accounts/passkeys/{id}/"): "PasskeyRenameResponse",
         ("POST", "/accounts/token/refresh/"): "AccountsAccessTokenResponse",
-        ("GET", "/accounts/workspace/{workspace_id}/members/"): ("MemberListResponse"),
+        ("GET", "/accounts/workspace/{workspace_id}/members/"): (
+            "WorkspaceMemberListResponse"
+        ),
         ("DELETE", "/accounts/workspace/{workspace_id}/members/remove/"): (
             "MemberUserMutationResponse"
         ),

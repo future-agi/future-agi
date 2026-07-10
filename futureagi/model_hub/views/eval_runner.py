@@ -1295,6 +1295,11 @@ class EvaluationRunner:
                     response=response,
                     cell=cell,
                     log_id=str(api_call_log_row.log_id) if api_call_log_row else None,
+                    eval_config=(
+                        self.user_eval_metric.config
+                        if self.user_eval_metric
+                        else None
+                    ),
                 )
 
         except Exception as e:
@@ -2154,52 +2159,15 @@ class EvaluationRunner:
             required_field=required_field, mapping=mapping, config=config
         )
 
-        # Inject ground truth config if enabled on the template
         if getattr(self.eval_template, "config", None):
-            gt_config_in_template = self.eval_template.config.get("ground_truth")
-            if gt_config_in_template and gt_config_in_template.get("enabled"):
-                from model_hub.utils.ground_truth_retrieval import (
-                    format_few_shot_examples,
-                    get_ground_truth_few_shot_examples,
-                    load_ground_truth_config,
-                )
+            from model_hub.services.ground_truth_service import GroundTruthService
 
-                gt_config = load_ground_truth_config(self.eval_template)
-                if gt_config:
-                    try:
-                        from model_hub.models.evals_metric import EvalGroundTruth
-
-                        gt_obj = EvalGroundTruth.objects.filter(
-                            id=gt_config["ground_truth_id"], deleted=False
-                        ).first()
-                        if gt_obj:
-                            gt_config["embedding_status"] = gt_obj.embedding_status
-                    except Exception:
-                        gt_obj = None
-
-                    template_eval_type_id = self.eval_template.config.get(
-                        "eval_type_id", ""
-                    )
-                    if (
-                        template_eval_type_id == "CustomPromptEvaluator"
-                        and gt_obj
-                        and gt_obj.embedding_status == "completed"
-                    ):
-                        gt_examples = get_ground_truth_few_shot_examples(
-                            gt_config, _mapped
-                        )
-                        if gt_examples:
-                            injection_format = gt_config.get(
-                                "injection_format", "structured"
-                            )
-                            formatted = format_few_shot_examples(
-                                gt_examples,
-                                gt_obj.role_mapping,
-                                injection_format,
-                            )
-                            _mapped["ground_truth_few_shot"] = formatted
-                    else:
-                        _mapped["ground_truth_config"] = gt_config
+            GroundTruthService.inject_context(
+                _mapped,
+                self.eval_template,
+                organization_id=self.organization_id,
+                workspace_id=self.workspace_id,
+            )
 
         # For code evals, inject static user-defined params stored in the
         # UserEvalMetric config so they reach evaluate() as **kwargs.

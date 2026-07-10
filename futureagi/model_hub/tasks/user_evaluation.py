@@ -1,5 +1,6 @@
 import json
 import uuid
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from django.db import close_old_connections
@@ -22,6 +23,7 @@ from analytics.utils import (
     get_mixpanel_properties,
     track_mixpanel_event,
 )
+from evaluations.engine.instance import resolve_pass_threshold
 from model_hub.models.choices import CellStatus, ModelChoices, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from model_hub.models.error_localizer_model import (
@@ -29,7 +31,7 @@ from model_hub.models.error_localizer_model import (
     ErrorLocalizerStatus,
     ErrorLocalizerTask,
 )
-from model_hub.models.evals_metric import UserEvalMetric
+from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
 from model_hub.models.evaluation import Evaluation
 from model_hub.models.run_prompt import RunPrompter
 from model_hub.services.error_localizer_service import should_run_error_localizer
@@ -45,6 +47,10 @@ from tfc.utils.distributed_state import evaluation_tracker
 from tfc.utils.error_codes import get_error_for_api_status
 from tracer.models.observation_span import EvalLogger
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+
+if TYPE_CHECKING:
+    from simulate.models.eval_config import SimulateEvalConfig
+    from simulate.models.test_execution import CallExecution
 
 try:
     from ee.usage.models.usage import APICallLog
@@ -694,17 +700,24 @@ def _has_localized_segments(error_analysis: dict | list | None) -> bool:
 
 
 def trigger_error_localization_for_column(
-    eval_template,
-    config,
-    required_field,
-    mapping,
-    eval_result,
-    response,
-    cell,
-    log_id=None,
-):
+    eval_template: EvalTemplate,
+    config: dict,
+    required_field: list,
+    mapping: list,
+    eval_result: Any,
+    response: dict,
+    cell: Cell,
+    log_id: str | None = None,
+    eval_config: dict | None = None,
+) -> None:
     """
     Helper function to create ErrorLocalizerTask records for cells.
+
+    `config` is the per-evaluator prepared config (used for input variables
+    and rule_prompt fallback). `eval_config` is the caller's runtime config
+    (typically ``UserEvalMetric.config``) so the pass_threshold resolver can
+    honour ``run_config`` overrides instead of the template default the
+    prepared config carries.
     """
     input_data_dict = {}
     required_keys = []
@@ -748,10 +761,12 @@ def trigger_error_localization_for_column(
         rule_prompt, input_data_dict, eval_result
     )
 
+    pass_threshold = resolve_pass_threshold(eval_template, eval_config)
+
     if task_exists:
         task = ErrorLocalizerTask.objects.get(source_id=cell.id)
-        metadata = task.metadata
-        metadata.update({"log_id": log_id})
+        metadata = task.metadata or {}
+        metadata.update({"log_id": log_id, "pass_threshold": pass_threshold})
         task.eval_result = eval_result
         task.eval_explanation = response.get("reason", "")
         task.input_data = input_data_dict
@@ -776,7 +791,7 @@ def trigger_error_localization_for_column(
             rule_prompt=rule_prompt,
             organization=cell.dataset.organization,
             workspace=workspace,
-            metadata={"log_id": log_id},
+            metadata={"log_id": log_id, "pass_threshold": pass_threshold},
             status=initial_status,
             error_message=error_message,
         )
@@ -786,8 +801,14 @@ def trigger_error_localization_for_column(
 
 
 def trigger_error_localization_for_span(
-    eval_template, eval_logger, value, mapping, eval_explanation, log_id=None
-):
+    eval_template: EvalTemplate,
+    eval_logger: EvalLogger,
+    value: Any,
+    mapping: dict,
+    eval_explanation: str,
+    log_id: str | None = None,
+    eval_config: dict | None = None,
+) -> None:
     try:
         """
         Helper function to create ErrorLocalizerTask records for spans.
@@ -818,10 +839,14 @@ def trigger_error_localization_for_span(
             rule_prompt, input_data_dict, value
         )
 
+        pass_threshold = resolve_pass_threshold(eval_template, eval_config)
+
         if task_exists:
             task = ErrorLocalizerTask.objects.get(source_id=eval_logger.id)
-            metadata = task.metadata
-            metadata.update({"log_id": str(log_id)})
+            metadata = task.metadata or {}
+            metadata.update(
+                {"log_id": str(log_id), "pass_threshold": pass_threshold}
+            )
             task.eval_result = value
             task.eval_explanation = eval_explanation
             task.input_data = input_data_dict
@@ -845,7 +870,7 @@ def trigger_error_localization_for_span(
                 eval_explanation=eval_explanation,
                 rule_prompt=rule_prompt,
                 organization=eval_logger.observation_span.project.organization,
-                metadata={"log_id": log_id},
+                metadata={"log_id": log_id, "pass_threshold": pass_threshold},
                 workspace=workspace,
                 status=initial_status,
                 error_message=error_message,
@@ -903,6 +928,11 @@ def trigger_error_localization_for_standalone(evaluation: Evaluation):
             workspace=workspace,
             status=initial_status,
             error_message=error_message,
+            metadata={
+                "pass_threshold": resolve_pass_threshold(
+                    evaluation.eval_template, evaluation.eval_config
+                )
+            },
         )
 
         logger.info(
@@ -916,8 +946,13 @@ def trigger_error_localization_for_standalone(evaluation: Evaluation):
 
 
 def trigger_error_localization_for_playground(
-    eval_template, log, value, mapping, eval_explanation
-):
+    eval_template: EvalTemplate,
+    log: "APICallLog",
+    value: Any,
+    mapping: dict,
+    eval_explanation: str,
+    eval_config: dict | None = None,
+) -> None:
     try:
         """
         Helper function to create ErrorLocalizerTask records for playground.
@@ -943,6 +978,8 @@ def trigger_error_localization_for_playground(
             rule_prompt, input_data_dict, value
         )
 
+        pass_threshold = resolve_pass_threshold(eval_template, eval_config)
+
         try:
             task = ErrorLocalizerTask.objects.get(source_id=log.log_id)
             task.eval_result = value
@@ -953,6 +990,9 @@ def trigger_error_localization_for_playground(
             task.status = initial_status
             task.rule_prompt = rule_prompt
             task.error_message = error_message
+            metadata = task.metadata or {}
+            metadata.update({"pass_threshold": pass_threshold})
+            task.metadata = metadata
         except ErrorLocalizerTask.DoesNotExist:
             task = ErrorLocalizerTask(
                 eval_template=eval_template,
@@ -968,6 +1008,7 @@ def trigger_error_localization_for_playground(
                 workspace=workspace,
                 status=initial_status,
                 error_message=error_message,
+                metadata={"pass_threshold": pass_threshold},
             )
 
         task.save()
@@ -977,14 +1018,14 @@ def trigger_error_localization_for_playground(
 
 
 def trigger_error_localization_for_simulate(
-    eval_template,
-    call_execution,
-    eval_config,
-    value,
-    mapping,
-    eval_explanation,
-    log_id=None,
-):
+    eval_template: EvalTemplate,
+    call_execution: "CallExecution",
+    eval_config: "SimulateEvalConfig",
+    value: Any,
+    mapping: dict,
+    eval_explanation: str,
+    log_id: str | None = None,
+) -> None:
     try:
         """
         Helper function to create ErrorLocalizerTask records for simulate evaluations.
@@ -1056,6 +1097,9 @@ def trigger_error_localization_for_simulate(
                     "log_id": log_id,
                     "call_execution_id": str(call_execution.id),
                     "eval_config_id": str(eval_config.id),
+                    "pass_threshold": resolve_pass_threshold(
+                        eval_template, config
+                    ),
                 },
                 "status": initial_status,
                 "error_message": error_message,
@@ -1081,6 +1125,7 @@ def process_single_error_localization(task_id):
         should_run, reason = should_run_error_localizer(
             task.eval_result,
             task.eval_template,
+            runtime_threshold=(task.metadata or {}).get("pass_threshold"),
         )
         if not should_run:
             logger.info(

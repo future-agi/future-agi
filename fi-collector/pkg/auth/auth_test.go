@@ -929,9 +929,71 @@ func TestNewUsageEmitterNilRedis(t *testing.T) {
 
 func TestUsageEmitterEmitIngestionNil(t *testing.T) {
 	var u *UsageEmitter
-	u.EmitIngestion("org-1", 10, 50, 1024)
+	u.EmitIngestion("org-1", 10, 50, 1024, "")
 }
 
+func TestBillingEventIDDeterministic(t *testing.T) {
+	a := billingEventID("trace-abc", "tracing_event")
+	if a != billingEventID("trace-abc", "tracing_event") {
+		t.Error("same dedupKey+eventType must yield the same event_id (re-poll must dedup)")
+	}
+	if billingEventID("trace-abc", "observe_add") == a {
+		t.Error("different eventType must yield distinct ids (else the two events collide on unique event_id)")
+	}
+	if billingEventID("trace-xyz", "tracing_event") == a {
+		t.Error("different dedupKey must yield distinct ids")
+	}
+}
+
+func TestBillingEventIDEmptyKeyIsRandom(t *testing.T) {
+	if billingEventID("", "tracing_event") == billingEventID("", "tracing_event") {
+		t.Error("empty dedupKey must fall back to a random event_id (SDK batches)")
+	}
+}
+
+// TestEmitIngestionEventIDDedupViaRedis is an end-to-end check of the emit path
+// against a real (in-memory) Redis stream: a re-poll of the same call must land
+// the SAME event_id (so the consumer dedups), a different call a different id,
+// and an SDK batch (empty dedupKey) a random id.
+func TestEmitIngestionEventIDDedupViaRedis(t *testing.T) {
+	mr, err := miniredis.Run()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	u := NewUsageEmitter(rdb, slog.Default())
+
+	// Order: same call twice (re-poll), a different call, then an SDK batch twice.
+	u.EmitIngestion("org-1", 1, 1, 100, "trace-A")
+	u.EmitIngestion("org-1", 1, 1, 100, "trace-A")
+	u.EmitIngestion("org-1", 1, 1, 100, "trace-B")
+	u.EmitIngestion("org-1", 2, 5, 200, "")
+	u.EmitIngestion("org-1", 2, 5, 200, "")
+
+	msgs, err := rdb.XRange(context.Background(), usageStreamKey, "-", "+").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, m := range msgs {
+		if m.Values["event_type"] == "tracing_event" {
+			ids = append(ids, m.Values["event_id"].(string))
+		}
+	}
+	if len(ids) != 5 {
+		t.Fatalf("want 5 tracing_event entries, got %d", len(ids))
+	}
+	if ids[0] != ids[1] {
+		t.Errorf("re-poll of the same call must reuse event_id: %s vs %s", ids[0], ids[1])
+	}
+	if ids[0] == ids[2] {
+		t.Error("a different call must get a different event_id")
+	}
+	if ids[3] == ids[4] {
+		t.Error("SDK batch (empty dedupKey) must get random event_ids")
+	}
+}
 
 // ---------------------------------------------------------------------------
 // formatIndices

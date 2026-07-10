@@ -40,6 +40,7 @@ import _ from "lodash";
 import GraphSkeleton from "./GraphSkeleton";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
+import { toBackendFilters } from "../common";
 import { combineGraphFilters } from "./graphFilterUtils";
 
 // ---------------------------------------------------------------------------
@@ -325,7 +326,7 @@ const PrimaryGraph = ({
     queryFn: () =>
       axios.post(apiEndpoint, {
         interval: selectedInterval,
-        filters: combinedFilters,
+        filters: toBackendFilters(combinedFilters),
         property: "average",
         req_data_config: {
           id: metricDef.id,

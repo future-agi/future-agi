@@ -189,13 +189,13 @@ const EvalDetailPanel = ({ evalData }) => {
     staleTime: 30000,
   });
 
-  // `templateType` tells us single vs composite; `evalType` splits single
+  // `template_type` tells us single vs composite; `eval_type` splits single
   // into llm / agent / code. Fall back to the row data (evalData) when the
   // detail fetch hasn't resolved yet so the panel still renders something.
   const templateType =
     configData?.template_type ||
     configData?.templateType ||
-    evalData?.templateType ||
+    evalData?.template_type ||
     "single";
   const isComposite = templateType === "composite";
 
@@ -541,7 +541,7 @@ const EvalPickerList = ({ onSelectEval }) => {
     setExpandedEvalId((prev) => (prev === evalId ? null : evalId));
   }, []);
 
-  const sortField = sorting[0]?.id || "lastUpdated";
+  const sortField = sorting[0]?.id || "last_updated";
   const sortDesc = sorting[0]?.desc ?? true;
   const handleSort = useCallback(
     (field) => {
@@ -845,12 +845,12 @@ const EvalPickerList = ({ onSelectEval }) => {
 
                     {/* Type */}
                     <TableCell sx={{ ...bodyCellSx, width: 80 }}>
-                      <TypeBadge type={evalItem.templateType} />
+                      <TypeBadge type={evalItem.template_type} />
                     </TableCell>
 
                     {/* Eval Type */}
                     <TableCell sx={{ ...bodyCellSx, width: 80 }}>
-                      <EvalTypeBadge type={evalItem.evalType} />
+                      <EvalTypeBadge type={evalItem.eval_type} />
                     </TableCell>
 
                     {/* Output */}

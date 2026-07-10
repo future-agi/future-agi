@@ -222,6 +222,18 @@ class TestFilterSerializerContracts:
             "project-b",
         ]
 
+    def test_dashboard_filter_values_query_accepts_sessions_source(self):
+        serializer = DashboardFilterValuesQuerySerializer(
+            data={
+                "metric_name": "model",
+                "metric_type": "system_metric",
+                "source": "sessions",
+            }
+        )
+
+        assert serializer.is_valid(), serializer.errors
+        assert serializer.validated_data["source"] == "sessions"
+
     def test_session_filter_values_query_accepts_canonical_columns_only(self):
         serializer = TraceSessionFilterValuesQuerySerializer(
             data={

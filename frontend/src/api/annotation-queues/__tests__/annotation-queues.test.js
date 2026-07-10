@@ -917,6 +917,37 @@ describe("Annotation Queues API", () => {
           .result.item.assigned_users,
       ).toEqual([{ id: "user-2", name: "Nikhil" }]);
     });
+
+    it("surfaces the backend's specific message as the sole error toast", async () => {
+      // Regression: the old onError showed a hardcoded "Failed to assign items"
+      // beside the global handler's specific message, so two toasts stacked. The
+      // mutation now sets meta.errorHandled (global handler stays out) and its
+      // onError surfaces the backend's specific message as the single toast.
+      enqueueSnackbar.mockClear();
+      axios.post.mockRejectedValueOnce({
+        result: "Only queue managers can manage queue item assignments.",
+        statusCode: 403,
+      });
+
+      const { result } = renderHook(() => useAssignQueueItems(), {
+        wrapper: createQueryWrapper(),
+      });
+
+      result.current.mutate({
+        queueId: "queue-1",
+        itemIds: ["item-1"],
+        userIds: ["user-1"],
+        action: "set",
+      });
+
+      await waitFor(() => {
+        expect(result.current.isError).toBe(true);
+      });
+      expect(enqueueSnackbar).toHaveBeenCalledWith(
+        "Only queue managers can manage queue item assignments.",
+        { variant: "error" },
+      );
+    });
   });
 
   describe("useCompleteItem", () => {
