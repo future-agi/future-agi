@@ -22,6 +22,66 @@ def get_clickhouse_client_kwargs() -> dict[str, str | int]:
     }
 
 
+def get_clickhouse_cluster_name() -> str:
+    """Cluster name used in `ON CLUSTER` / `clusterAllReplicas(...)` DDL and reads.
+
+    Default is `'cluster'`: every Future AGI deployment (US AWS, US GCP, EU GCP)
+    pins `name: "cluster"` in the ClickHouseInstallation manifest. Override per
+    environment via `CH_CLUSTER_NAME` if a future deployment uses a different
+    name in its `remote_servers` config.
+    """
+    return os.getenv("CH_CLUSTER_NAME") or "cluster"
+
+
+_MERGE_TREE_ENGINE_RE = re.compile(
+    r"^\s*(?P<family>[A-Za-z]*MergeTree)\s*(?:\((?P<args>.*)\))?\s*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def build_replicated_engine(
+    base_engine: str,
+    table_name: str,
+    *,
+    clustered: bool,
+    database: str | None = None,
+    cluster: str | None = None,
+) -> tuple[str, str]:
+    """Return ``(engine_clause, on_cluster_clause)`` for a ``CREATE TABLE``.
+
+    On a multi-replica cluster a plain ``*MergeTree[(args)]`` engine is rewritten
+    to its ``Replicated*`` form, preserving the sub-family and any version/sign
+    argument: ``MergeTree`` -> ``ReplicatedMergeTree``,
+    ``ReplacingMergeTree(ts)`` -> ``ReplicatedReplacingMergeTree('<zk>', '{replica}', ts)``.
+    The Keeper path follows the deployment convention
+    ``/clickhouse/tables/{shard}/<database>/<table>`` so two tables with the same
+    short name in different databases never share a znode.
+
+    On single-node CH the base engine is returned unchanged with an empty
+    ``ON CLUSTER`` clause, so dev and single-replica deployments keep plain
+    engines. One engine-selection rule for every legacy ``default.*`` table;
+    ``ClickHouseVectorDB.create_table`` is built on the same helper.
+    """
+    if not clustered:
+        return base_engine, ""
+    match = _MERGE_TREE_ENGINE_RE.match(base_engine)
+    if not match:
+        raise ValueError(
+            f"build_replicated_engine: {base_engine!r} is not a recognised "
+            "*MergeTree engine, so no Replicated* form can be derived."
+        )
+    family = match.group("family")
+    inner = (match.group("args") or "").strip()
+    zk_database_segment = f"{database}/" if database else ""
+    zk_path = f"/clickhouse/tables/{{shard}}/{zk_database_segment}{table_name}"
+    engine_args = [f"'{zk_path}'", "'{replica}'"]
+    if inner:
+        engine_args.append(inner)
+    engine = f"Replicated{family}({', '.join(engine_args)})"
+    on_cluster = f" ON CLUSTER '{cluster or get_clickhouse_cluster_name()}'"
+    return engine, on_cluster
+
+
 def sanitize_sql_value(value: str) -> str:
     """
     Sanitize and escape a string value to make it safe for SQL queries.
@@ -97,10 +157,51 @@ def sanitize_keys(keys: list[str]) -> list[str]:
 
 
 class ClickHouseVectorDB:
+    # Process-level cache: each Django/Celery process sees one CH cluster shape
+    # for its lifetime, so the probe can run once per process and re-use the
+    # answer across every instance.
+    _is_clustered_cached: bool | None = None
+
     def __init__(
         self,
     ):
         self.client = clickhouse_driver.Client(**get_clickhouse_client_kwargs())
+
+    @classmethod
+    def is_clustered(cls, client) -> bool:
+        """True iff CH has a genuinely multi-replica cluster; fails safe to False.
+
+        Checking `system.macros` for the `replica` macro was too lenient: a
+        single-node dev CH set up via Helm / docker-compose can have the macro
+        too (it's a 1-replica cluster with the macro pre-baked). Such a node
+        has no DDLWorker, so any `ON CLUSTER ...` query fails at runtime.
+
+        Using `system.clusters.replica_num` is the precise check: prod multi-
+        replica clusters have rows with `replica_num > 1`; a single-node
+        cluster only has `replica_num = 1`.
+
+        Classmethod taking any client with `.execute`, so callers that hold a
+        raw driver client (boot-time DDL, the LLM usage logger) share the same
+        per-process answer instead of each re-probing.
+        """
+        if cls._is_clustered_cached is not None:
+            return cls._is_clustered_cached
+        try:
+            rows = client.execute(
+                "SELECT count() FROM system.clusters WHERE replica_num > 1"
+            )
+        except Exception:
+            # Only cache successful probes: a transient CH outage on the very
+            # first call would otherwise poison the process cache with False,
+            # and every later table create in this worker would silently emit
+            # a non-replicated engine on what is actually a clustered CH.
+            logger.warning("ch_vector_cluster_detect_failed", exc_info=True)
+            return False
+        cls._is_clustered_cached = bool(rows and rows[0][0])
+        return cls._is_clustered_cached
+
+    def _is_clustered(self) -> bool:
+        return self.is_clustered(self.client)
 
     def drop_table(self,table_name: str) -> None:
         """
@@ -115,12 +216,43 @@ class ClickHouseVectorDB:
         elapsed_time = (end_time - start_time).total_seconds()
         logger.info(f"create query took {elapsed_time:.2f} seconds to execute")
 
-    def create_table(self, table_name: str) -> None:
+    def create_table(
+        self,
+        table_name: str,
+        *,
+        cluster: str | None = None,
+        database: str | None = None,
+    ) -> None:
+        """Create a vector table. Replicated engine on clustered CH, plain otherwise.
+
+        `cluster` overrides the deployment-wide default returned by
+        `get_clickhouse_cluster_name()`. Migration paths pass it explicitly;
+        runtime callers (EmbeddingManager) use the env-driven default.
+
+        `database` qualifies the CREATE TABLE target and the Keeper path.
+        When unset the table lands in the connection's current database
+        (`CH_DATABASE`); passing it explicitly is the only way to create the
+        table in a different database on the same connection — the
+        `clickhouse-driver` HELLO-time database setting cannot be rebound by
+        mutating the connection attribute. Including the database in the
+        Keeper path matches the deployment-wide
+        `<default_replica_path>/clickhouse/tables/{shard}/{database}/{table}</default_replica_path>`
+        convention so two replicated tables with the same short name in
+        different databases do not coordinate on the same znode.
         """
-        Creates a table in ClickHouse if it does not already exist.
-        """
+        clustered = self._is_clustered()
+        cluster_name = cluster or get_clickhouse_cluster_name()
+        qualified = f"{database}.{table_name}" if database else table_name
+        engine, on_cluster = build_replicated_engine(
+            "ReplacingMergeTree()",
+            table_name,
+            clustered=clustered,
+            database=database,
+            cluster=cluster_name,
+        )
+
         create_table_query = f"""
-        CREATE TABLE IF NOT EXISTS {table_name} (
+        CREATE TABLE IF NOT EXISTS {qualified}{on_cluster} (
             id UUID,
             eval_id UUID,
             vector Array(Float32),
@@ -129,7 +261,7 @@ class ClickHouseVectorDB:
                 value Nullable(String)
             ),
             deleted UInt8 DEFAULT 0
-        ) ENGINE = MergeTree()
+        ) ENGINE = {engine}
         ORDER BY id
         """
         start_time = datetime.now()
@@ -140,7 +272,13 @@ class ClickHouseVectorDB:
         )
         end_time = datetime.now()
         elapsed_time = (end_time - start_time).total_seconds()
-        logger.info(f"create query took {elapsed_time:.2f} seconds to execute")
+        logger.info(
+            "ch_vector_create_table_done",
+            table=qualified,
+            engine="ReplicatedReplacingMergeTree" if clustered else "ReplacingMergeTree",
+            cluster=cluster_name if clustered else None,
+            elapsed_sec=round(elapsed_time, 3),
+        )
 
     def get_or_create_collection(self, table_name: str) -> None:
         """
@@ -173,7 +311,6 @@ class ClickHouseVectorDB:
         Returns the ID of the newly inserted or updated entry.
         """
         new_id = str(uuid.uuid4())
-        # print( "metadata" ,metadata)
         metadata = sanitize_metadata(metadata)
         unique_keys = sanitize_keys(unique_keys)
         if exclude_keys:
@@ -443,13 +580,8 @@ class ClickHouseVectorDB:
         results = None
         # Execute the query
         try:
-
             results = self.client.execute(query)
-            # print("Executing success query:", query)
         except Exception:
-            #print traceback
-            # print("Executing broken query:", query)
-            # print("len of q vector:", len(query_vector))
             import traceback
             traceback.print_exc()
         end_time = datetime.now()

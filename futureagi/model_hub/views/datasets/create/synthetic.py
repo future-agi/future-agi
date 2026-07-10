@@ -394,7 +394,10 @@ class UpdateSyntheticDatasetConfigView(APIView):
                             status=CellStatus.RUNNING.value,
                         )
 
-                dataset.synthetic_dataset_config = validated_data
+                config_data = dict(validated_data)
+                if config_data.get("kb_id"):
+                    config_data["kb_id"] = str(config_data["kb_id"])
+                dataset.synthetic_dataset_config = config_data
                 dataset.save()
 
                 request_uuid = task_manager.start_task(str(dataset.id))

@@ -76,6 +76,16 @@ export const StatusTypes = {
   ERROR: "error",
 };
 
+// Column-level statuses meaning the column is still computing. Shared with the
+// grid polling gate in DevelopDataV2.
+export const RefreshStatus = [
+  "Running",
+  "NotStarted",
+  "Editing",
+  "ExperimentEvaluation",
+  "PartialRun",
+];
+
 export const OriginTypes = {
   EVALUATION: "evaluation",
   RUN_PROMPT: "run_prompt",

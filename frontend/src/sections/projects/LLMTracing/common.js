@@ -897,6 +897,10 @@ export const FILTER_FOR_HAS_EVAL = {
   },
 };
 
+// Strip UI-only keys per UI_FILTER_ITEM_KEYS in src/api/contracts/filter-contract.js.
+export const toBackendFilters = (filters) =>
+  (filters || []).map(({ id, _meta, col_type, ...rest }) => rest);
+
 export const FILTER_FOR_ERRORS = {
   column_id: "status",
   filter_config: {
