@@ -1,9 +1,13 @@
-"""Workbench eval passes the FE-selected model to the evaluator (TH-6725)."""
+"""Workbench eval respects FE inputs + surfaces template metadata (TH-6725)."""
 
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+
+from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.choices import OwnerChoices
+from model_hub.models.run_prompt import PromptEvalConfig, PromptTemplate
 
 
 class _CapturedInstance:
@@ -48,3 +52,43 @@ def test_model_resolution_precedence(eval_config, template_config, expected):
     evaluation = SimpleNamespace(config=eval_config)
     template = SimpleNamespace(config=template_config)
     assert _resolve_model_via_view_slice(evaluation, template) == expected
+
+
+@pytest.mark.django_db
+def test_evaluation_configs_endpoint_returns_template_id_and_eval_type(
+    auth_client, user, workspace
+):
+    """FE reads `template_id` for the edit-drawer and `eval_type` for the
+    badge; the endpoint used to omit both, so edits silently failed and
+    every eval rendered as the fallback badge type."""
+    template = EvalTemplate.objects.create(
+        name="workbench-fixture-llm",
+        description="",
+        owner=OwnerChoices.USER.value,
+        organization=user.organization,
+        workspace=workspace,
+        eval_type="llm",
+        config={"eval_type_id": "CustomPromptEvaluator", "output": "Pass/Fail"},
+        eval_tags=["llm"],
+    )
+    prompt_template = PromptTemplate.objects.create(
+        name="Workbench Prompt",
+        organization=user.organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    PromptEvalConfig.objects.create(
+        name="toxicity_binding",
+        eval_template=template,
+        prompt_template=prompt_template,
+        mapping={"output": "model_output"},
+        config={},
+    )
+
+    response = auth_client.get(
+        f"/model-hub/prompt-templates/{prompt_template.id}/evaluation-configs/"
+    )
+    assert response.status_code == 200
+    row = response.json()["result"]["evaluation_configs"][0]
+    assert row["template_id"] == str(template.id)
+    assert row["eval_type"] == "llm"

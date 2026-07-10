@@ -2134,6 +2134,11 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     {
                         "id": str(config.id),
                         "eval_template_id": str(config.eval_template.id),
+                        # `template_id` is what the FE edit-drawer + evals
+                        # badge read; keep `eval_template_id` too for
+                        # backwards compat with existing consumers.
+                        "template_id": str(config.eval_template.id),
+                        "eval_type": config.eval_template.eval_type,
                         "name": config.name,
                         "mapping": config.mapping,
                         "config": config.eval_template.config,
