@@ -62,7 +62,6 @@ const ErrorCellRenderer = ({
     cellData?.value_infos ?? cellData?.valueInfos,
   );
   const errorCode = valueInfos?.error_code;
-  console.log({props})
   const isUsageLimit = USAGE_LIMIT_ERROR_CODES.has(errorCode);
   const upgradeCta = valueInfos?.upgrade_cta || valueInfos?.upgradeCta;
   const ctaText =
