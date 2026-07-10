@@ -278,12 +278,15 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         return query, self.params
 
     def build_content_query(self, span_ids: list) -> tuple[str, dict[str, Any]]:
-        """Fetch input/output for a page of span IDs."""
+        """Fetch input/output + typed attr maps for a page of span IDs."""
         if not span_ids:
             return "", {}
         params = {**self.params, "content_span_ids": tuple(span_ids)}
         query = f"""
-        SELECT id, input, output, attributes_extra
+        SELECT id, input, output, attributes_extra,
+               span_attr_str AS attrs_string,
+               span_attr_num AS attrs_number,
+               span_attr_bool AS attrs_bool
         FROM {self.TABLE}
         PREWHERE id IN %(content_span_ids)s
         WHERE {self.project_filter_sql()} AND is_deleted = 0

@@ -17,6 +17,7 @@ from simulate.models import (
 )
 from simulate.serializers.chat_message import ChatMessageSerializer
 from simulate.utils.eval_summary import iter_live_eval_outputs
+from simulate.utils.test_execution_utils import canonical_scenario_column_name
 from tracer.serializers.filters import (
     StrictInputSerializer,
     filter_list_query_param_field,
@@ -902,12 +903,13 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
                         persona_data = {}
                     cell_value = persona_data
 
-                scenario_data[str(dataset_column.id)] = {
+                canonical_name = canonical_scenario_column_name(dataset_column.name)
+                scenario_data[canonical_name] = {
                     "value": cell_value,
                     "visible": True,
                     "dataset_column_id": str(dataset_column.id),
                     "dataset_id": str(row.dataset.id),
-                    "column_name": dataset_column.name,
+                    "column_name": canonical_name,
                     "data_type": dataset_column.data_type,
                 }
         else:

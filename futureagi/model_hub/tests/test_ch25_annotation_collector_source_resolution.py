@@ -37,6 +37,7 @@ Each test FAILS if the fix is reverted:
 from __future__ import annotations
 
 import contextlib
+import json
 import uuid
 from datetime import UTC, datetime
 from unittest import mock
@@ -81,9 +82,13 @@ def _make_project(*, organization, workspace, name="ch25-collector-proj"):
     )
 
 
-def _make_chspan(*, project_id, span_id=None, trace_id=None, parent_span_id=""):
+def _make_chspan(
+    *, project_id, span_id=None, trace_id=None, parent_span_id="", org_id=None
+):
     """A fully-populated CHSpan dataclass standing in for a collector span row
-    (the shape ``CHSpanReader.get`` returns). No PG row exists for it."""
+    (the shape ``CHSpanReader.get`` returns). No PG row exists for it. ``org_id``
+    is populated for the org-scoped ``resolve_ch_span_source`` gate; the
+    project-scoped fallback path ignores it, so it defaults to None."""
     return CHSpan(
         id=span_id or f"ch-span-{uuid.uuid4().hex[:12]}",
         project_id=str(project_id),
@@ -103,7 +108,7 @@ def _make_chspan(*, project_id, span_id=None, trace_id=None, parent_span_id=""):
         cost=0.0021,
         status="OK",
         status_message="",
-        org_id=None,
+        org_id=str(org_id) if org_id is not None else None,
         project_version_id=None,
         end_user_id=None,
         trace_session_id=None,
@@ -146,6 +151,11 @@ class _ReaderCM:
         if self._span is None:
             return []
         return [self._span] if str(self._span.trace_id) in set(trace_ids) else []
+
+    def list_by_trace(self, trace_id, *, project_id=None):
+        if self._span is None:
+            return []
+        return [self._span] if str(self._span.trace_id) == str(trace_id) else []
 
 
 # ─────────────────────────── observation_span: resolve ───────────────────────
@@ -731,6 +741,77 @@ def test_collector_span_round_trips_create_to_annotate(
     assert not ObservationSpan.objects.filter(id=span.id).exists()
 
 
+# ─────────── for_source: collector trace span_notes (TH-6622) ────────────────
+
+
+@pytest.mark.django_db
+def test_for_source_collector_trace_span_notes_resolves_via_ch(
+    auth_client, organization, workspace, user
+):
+    """The trace-detail annotate panel calls ``for-source`` with a trace source
+    carrying ``span_notes_source_id`` = the (collector, CH-only) root span. Pre-fix
+    the endpoint resolved that span via PG only and 404'd with "Span notes source
+    not found"; the CH fallback makes the panel load. Revert → PG miss → 404
+    (TH-6622)."""
+    project = _make_project(organization=organization, workspace=workspace)
+    # org_id must match the requester — resolve_ch_span_source is org-gated.
+    span = _make_chspan(project_id=project.id, org_id=organization.pk)
+    reader = _ReaderCM(span)
+
+    with mock.patch(CH_READER_PATH, return_value=reader):
+        resp = auth_client.get(
+            "/model-hub/annotation-queues/for-source/",
+            {
+                "sources": json.dumps(
+                    [
+                        {
+                            "source_type": "trace",
+                            "source_id": str(uuid.uuid4()),
+                            "span_notes_source_id": span.id,
+                        }
+                    ]
+                ),
+            },
+        )
+
+    assert resp.status_code == 200, resp.data
+    # The CH fallback actually ran (proves it's not a lucky PG hit)...
+    assert str(span.id) in reader.get_calls
+    # ...and no PG ObservationSpan backs the collector root span.
+    assert not ObservationSpan.objects.filter(id=span.id).exists()
+
+
+@pytest.mark.django_db
+def test_for_source_collector_span_notes_cross_org_denied(
+    auth_client, organization, workspace
+):
+    """The CH span-notes fallback re-checks org scope: a collector root span owned
+    by a DIFFERENT org must still 404 — no cross-org leak into ``for_source``."""
+    from accounts.models.organization import Organization
+
+    other_org = Organization.objects.create(name="Other Org (for_source span_notes)")
+    other_project = _make_project(organization=other_org, workspace=None)
+    span = _make_chspan(project_id=other_project.id, org_id=other_org.pk)
+
+    with mock.patch(CH_READER_PATH, return_value=_ReaderCM(span)):
+        resp = auth_client.get(
+            "/model-hub/annotation-queues/for-source/",
+            {
+                "sources": json.dumps(
+                    [
+                        {
+                            "source_type": "trace",
+                            "source_id": str(uuid.uuid4()),
+                            "span_notes_source_id": span.id,
+                        }
+                    ]
+                ),
+            },
+        )
+
+    assert resp.status_code == 404, resp.data
+
+
 # ───────────────────── N+1 batch (CollectorSourceCache) ───────────────────────
 
 
@@ -832,6 +913,165 @@ def test_list_serializer_batches_collector_ch_reads(organization, workspace, use
     assert all(p["name"] == "collector root span" for p in span_previews)
 
 
+# ─────────────────────────────── trace (TH-6647) ─────────────────────────────
+# A non-voice grid "Add to annotation queue" stores a `source_type=trace` item.
+# For a collector trace (no PG row) the add/render paths must resolve it from CH
+# via its root span, instead of the old PG miss → "Not found: trace=…".
+
+
+def _collector_trace_item(*, organization, workspace, queue, trace_id):
+    """A QueueItem whose trace_id points at a collector trace (NO PG Trace row)."""
+    return QueueItem.objects.create(
+        queue=queue,
+        source_type=QueueItemSourceType.TRACE.value,
+        trace_id=trace_id,
+        organization=organization,
+        workspace=workspace,
+        status=QueueItemStatus.PENDING.value,
+    )
+
+
+@pytest.mark.django_db
+def test_collector_trace_resolves_via_ch(organization, workspace):
+    """A collector trace (no PG row) resolves through the CH fallback via its root
+    span, returning a soft-id source (``.id`` = trace_id). FAILS on revert (the
+    trace branch bailed → None → "Not found: trace=…", the TH-6647 bug)."""
+    project = _make_project(organization=organization, workspace=workspace)
+    trace_id = str(uuid.uuid4())
+    root_span = _make_chspan(project_id=project.id, trace_id=trace_id)
+
+    with mock.patch(CH_READER_PATH, return_value=_ReaderCM(root_span)):
+        resolved = helpers.resolve_source_object(
+            QueueItemSourceType.TRACE.value,
+            trace_id,
+            organization=organization,
+            workspace=workspace,
+            allow_ch_fallback=True,
+        )
+    assert resolved is not None
+    assert str(resolved.id) == trace_id
+    assert str(resolved.project_id) == str(project.id)
+
+
+@pytest.mark.django_db
+def test_collector_trace_cross_org_denied(organization, workspace):
+    """A collector trace whose root span belongs to a DIFFERENT org is denied (the
+    CH fallback re-checks tenant scope against PG). FAILS if the gate is removed."""
+    from accounts.models.organization import Organization
+
+    other_org = Organization.objects.create(name="Other Org (trace)")
+    other_project = _make_project(organization=other_org, workspace=None)
+    trace_id = str(uuid.uuid4())
+    root_span = _make_chspan(project_id=other_project.id, trace_id=trace_id)
+
+    with mock.patch(CH_READER_PATH, return_value=_ReaderCM(root_span)):
+        resolved = helpers.resolve_source_object(
+            QueueItemSourceType.TRACE.value,
+            trace_id,
+            organization=organization,  # requesting org != other_org
+            allow_ch_fallback=True,
+        )
+    assert resolved is None
+
+
+@pytest.mark.django_db
+def test_collector_trace_absent_returns_none(organization):
+    """A trace with no spans in CH (nothing to annotate) resolves to None."""
+    with mock.patch(CH_READER_PATH, return_value=_ReaderCM(None)):
+        resolved = helpers.resolve_source_object(
+            QueueItemSourceType.TRACE.value,
+            str(uuid.uuid4()),
+            organization=organization,
+            allow_ch_fallback=True,
+        )
+    assert resolved is None
+
+
+@pytest.mark.django_db
+def test_ch_trace_source_always_available(organization, workspace):
+    """A CH-resolved collector trace has no PG reverse relation, so the in-progress
+    availability guard treats it as available (it's surfaced from CH once done)."""
+    project = _make_project(organization=organization, workspace=workspace)
+    trace_id = str(uuid.uuid4())
+    root_span = _make_chspan(project_id=project.id, trace_id=trace_id)
+    ch_source = helpers._CHTraceSource(trace_id, root_span)
+
+    available, reason = helpers.is_source_available_for_annotation(
+        QueueItemSourceType.TRACE.value, ch_source
+    )
+    assert available is True
+    assert reason is None
+
+
+@pytest.mark.django_db
+def test_collector_trace_preview_renders_from_ch(organization, workspace, user):
+    """Preview of a collector trace (no PG row) renders from the CH root span, NOT
+    the deleted sentinel. FAILS on revert (FK access → deleted/error dict)."""
+    project = _make_project(organization=organization, workspace=workspace)
+    queue = _queue(
+        organization=organization, workspace=workspace, user=user, project=project
+    )
+    trace_id = str(uuid.uuid4())
+    root_span = _make_chspan(project_id=project.id, trace_id=trace_id)
+    item = _collector_trace_item(
+        organization=organization, workspace=workspace, queue=queue, trace_id=trace_id
+    )
+
+    with mock.patch(CH_READER_PATH, return_value=_ReaderCM(root_span)):
+        preview = helpers.resolve_source_preview(item)
+
+    assert preview["type"] == "trace"
+    assert "deleted" not in preview
+    assert preview["name"] == "collector root span"
+    assert preview["latency_ms"] == 2000
+
+
+@pytest.mark.django_db
+def test_collector_trace_content_renders_from_ch(organization, workspace, user):
+    """Content of a collector trace returns type=trace with the CH-resolved
+    root_span_id (the non-voice render focus) and the root span's fields."""
+    project = _make_project(organization=organization, workspace=workspace)
+    queue = _queue(
+        organization=organization, workspace=workspace, user=user, project=project
+    )
+    trace_id = str(uuid.uuid4())
+    root_span = _make_chspan(project_id=project.id, trace_id=trace_id)
+    item = _collector_trace_item(
+        organization=organization, workspace=workspace, queue=queue, trace_id=trace_id
+    )
+
+    with mock.patch(CH_READER_PATH, return_value=_ReaderCM(root_span)):
+        content = helpers.resolve_source_content(item)
+
+    assert content["type"] == "trace"
+    assert "deleted" not in content
+    assert content["trace_id"] == trace_id
+    # trace items render via InlineTraceView(trace_id); span_id is dropped so a
+    # score never mis-attaches to the root span as if it were a span item.
+    assert "span_id" not in content
+    assert content["status"] == "OK"
+
+
+@pytest.mark.django_db
+def test_collector_trace_content_deleted_when_ch_missing(organization, workspace, user):
+    """If the trace has no spans in CH either, content returns the deleted
+    sentinel (same shape as today) rather than raising."""
+    project = _make_project(organization=organization, workspace=workspace)
+    queue = _queue(
+        organization=organization, workspace=workspace, user=user, project=project
+    )
+    item = _collector_trace_item(
+        organization=organization,
+        workspace=workspace,
+        queue=queue,
+        trace_id=str(uuid.uuid4()),
+    )
+
+    with mock.patch(CH_READER_PATH, return_value=_ReaderCM(None)):
+        content = helpers.resolve_source_content(item)
+    assert content == {"type": "trace", "deleted": True}
+
+
 # ─────────────────────── drop-safety: legacy tables dropped ───────────────────
 # The legacy tracer PG tables (tracer_trace / tracer_observation_span /
 # trace_session) are being dropped as their data moves to ClickHouse. The
@@ -926,7 +1166,7 @@ def test_safe_related_returns_none_on_dropped_table(organization, workspace, use
         organization=organization, workspace=workspace, queue=queue, span=span
     )
     with _dropped_table(ObservationSpan):
-        assert helpers.safe_related(item, "observation_span") is None
+        assert helpers._safe_related(item, "observation_span") is None
 
 
 @pytest.mark.django_db
@@ -1020,7 +1260,7 @@ def test_content_degrades_to_deleted_on_dropped_span_table(
 @pytest.mark.django_db
 def test_span_notes_target_survives_dropped_span_table(organization, workspace, user):
     """The submit/annotate path's span-notes target resolver (in the views module)
-    reads the span table via ``safe_related``; a dropped table falls through to CH
+    reads the span table via ``_safe_related``; a dropped table falls through to CH
     (returns the CHSpan) instead of raising ProgrammingError. FAILS if reverted."""
     from model_hub.views.annotation_queues import _span_notes_target_for_queue_item
 
@@ -1039,3 +1279,33 @@ def test_span_notes_target_survives_dropped_span_table(organization, workspace, 
         target = _span_notes_target_for_queue_item(item)
     assert target is not None
     assert str(target.id) == str(span.id)
+
+
+@pytest.mark.django_db
+def test_for_source_view_survives_dropped_trace_table(
+    auth_client, organization, workspace, user
+):
+    """End-to-end: the ``for-source`` endpoint's default-queue auto-match probes
+    ``Trace.objects`` for a ``trace`` source (the trace-detail panel co-sends it).
+    A dropped legacy trace table must degrade to "no PG match" — not 500 the whole
+    endpoint. FAILS if the probe guards revert (42P01 propagates → 500 / raises)."""
+    project = _make_project(organization=organization, workspace=workspace)
+    # A default queue (open to all org members) with NO QueueItem for our source, so
+    # the missing-default auto-match loop runs and hits the project-scoped Trace probe.
+    AnnotationQueue.objects.create(
+        name="default drop-safe queue",
+        is_default=True,
+        status=AnnotationQueueStatusChoices.ACTIVE.value,
+        project=project,
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+    )
+
+    trace_id = str(uuid.uuid4())
+    with _dropped_table(Trace):
+        resp = auth_client.get(
+            "/model-hub/annotation-queues/for-source/",
+            {"sources": json.dumps([{"source_type": "trace", "source_id": trace_id}])},
+        )
+    assert resp.status_code == 200, getattr(resp, "data", resp.content)

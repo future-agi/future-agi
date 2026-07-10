@@ -88,6 +88,17 @@ export const getSuggestedUnitConfig = (metricConfigs = []) => {
   return { unit: "", prefixSuffix: "prefix" };
 };
 
+export const getAggColumnLabel = (metrics, allAggregations) => {
+  if (!metrics?.length) return "Average";
+  const uniqueAggs = [...new Set(metrics.map((m) => m.aggregation || "avg"))];
+  if (uniqueAggs.length === 1) {
+    return (
+      allAggregations.find((a) => a.value === uniqueAggs[0])?.label ?? "Average"
+    );
+  }
+  return "Agg.";
+};
+
 // ApexCharts silently clips any series point outside yaxis min/max — if
 // every point in every series falls outside the configured bounds, the
 // chart renders fully blank with no indication why. Surface that as a

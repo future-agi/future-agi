@@ -13,7 +13,11 @@ export { default as BaseStatusCellRenderer } from "./components/BaseStatusCellRe
 export { default as BaseSelectionActions } from "./components/BaseSelectionActions";
 
 // Constants
-export { statusStyles, STOPPABLE_STATUSES } from "./constants/statusStyles";
+export {
+  statusStyles,
+  STOPPABLE_STATUSES,
+  TERMINAL_STATUSES,
+} from "./constants/statusStyles";
 
 // Store factories
 export {

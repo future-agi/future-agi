@@ -21,7 +21,10 @@ def test_oss_path_returns_fallbacks_when_ee_absent():
         # Passthroughs → the SAME object back, untouched (identity proves the
         # guard returned before any ee call / CH read).
         key_moments = [{"verbatim": "x"}]
-        assert ee_boundary.attribute_key_moments(key_moments, "trace-1") is key_moments
+        assert (
+            ee_boundary.attribute_key_moments(key_moments, "trace-1", "proj-1")
+            is key_moments
+        )
 
         results: list = []
         assert ee_boundary.distill_eval_failure_phrases(results) is results

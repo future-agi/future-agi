@@ -116,6 +116,7 @@ from model_hub.services.bulk_selection import (
 )
 from model_hub.utils.annotation_queue_helpers import (
     CollectorSourceCache,
+    _safe_related,
     assign_items_to_all_annotators,
     auto_assign_items,
     calculate_agreement,
@@ -127,13 +128,13 @@ from model_hub.utils.annotation_queue_helpers import (
     get_fk_field_name,
     is_source_available_for_annotation,
     is_undefined_table_error,
+    resolve_ch_span_source,
     resolve_source_content,
     resolve_source_object,
-    safe_related,
 )
+from model_hub.utils.utils import send_message_to_channel
 from simulate.models.test_execution import CallTranscript
 from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
-from model_hub.utils.utils import send_message_to_channel
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
     ApiSelectionTooLargeErrorSerializer,
@@ -1278,7 +1279,7 @@ def _span_notes_target_for_queue_item(item):
     (voice projects) → first root span by start_time → ``None``.
     """
     if item.source_type == "observation_span" and item.observation_span_id:
-        span = safe_related(item, "observation_span")
+        span = _safe_related(item, "observation_span")
         if span is not None:
             return span
         # No PG row (collector span) or dropped legacy table: resolve from CH —
@@ -1296,7 +1297,7 @@ def _span_notes_target_for_queue_item(item):
     #       deleted=False).filter(Q(parent_span_id__isnull=True) |
     #       Q(parent_span_id=""))
     #   conversation root → start_time root → None
-    # CHSpanReader.list_by_trace already filters is_deleted=0 and orders by
+    # CHSpanReader.list_by_trace drops deleted rows (via FINAL) and orders by
     # (start_time, id). Root spans have empty parent_span_id (CH stores it
     # as a non-nullable String — see schema 001), so we filter in Python.
     from tracer.services.clickhouse.v2 import get_reader
@@ -4082,8 +4083,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         queue = self.get_object()
         data = request.validated_data
         label_id = data.get("label_id")
-        required = _is_truthy(data.get("required", True))
+        required = _is_truthy(data.get("required", False))
 
+        # Only marking a label *required* is the gated feature; a plain add
+        # (required omitted/false) must never trip the entitlement gate.
         if required:
             from tfc.ee_gating import EEFeature, check_ee_feature
 
@@ -4185,8 +4188,14 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             sid = src.get("source_id")
             span_notes_source_id = src.get("span_notes_source_id")
             if span_notes_source_id:
+                # A collector root span lives only in CH (no PG row), so the PG
+                # resolve misses; fall back to the CH resolver (matches scores.py)
+                # so the trace-detail annotate panel loads instead of 404ing.
                 span_notes_source = resolve_source_object(
                     "observation_span",
+                    span_notes_source_id,
+                    organization=request.organization,
+                ) or resolve_ch_span_source(
                     span_notes_source_id,
                     organization=request.organization,
                 )
@@ -4457,9 +4466,32 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                         from tracer.models.trace import Trace
 
                         if st == "trace":
-                            exists = Trace.objects.filter(
-                                id=sid, project_id=dq.project_id, deleted=False
-                            ).exists()
+                            # PG-only on purpose: a collector trace (no PG row)
+                            # returns False here, but the trace-detail panel always
+                            # co-sends its root observation_span (both gated on the
+                            # same spanId in buildTraceAnnotationSources), which
+                            # matches this same project-scoped queue via the
+                            # CH-aware branch below. Making this CH-aware would add
+                            # the N×M per-(queue,trace) round-trips codex P2 removed.
+                            # The legacy trace table may be dropped (data in CH): read
+                            # a dropped table as "no PG row" (exists=False) and lean on
+                            # the co-sent span's CH-aware match. Own savepoint so the
+                            # abort can't poison this request's transaction.
+                            try:
+                                with transaction.atomic():
+                                    exists = Trace.objects.filter(
+                                        id=sid,
+                                        project_id=dq.project_id,
+                                        deleted=False,
+                                    ).exists()
+                            except ProgrammingError as exc:
+                                if not is_undefined_table_error(exc):
+                                    raise
+                                logger.warning(
+                                    "annotation_read_dropped_legacy_table",
+                                    error=str(exc),
+                                )
+                                exists = False
                         elif st == "observation_span":
                             # Bulk-prefetched above; in-memory dict lookup
                             # (avoids N×M CH round-trips per codex P2).
@@ -4522,11 +4554,25 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                         from tracer.models.trace import Trace
 
                         if st == "trace":
-                            exists = Trace.objects.filter(
-                                id=sid,
-                                project__observability_providers__agent_definition=dq.agent_definition_id,
-                                deleted=False,
-                            ).exists()
+                            # Legacy trace table may be dropped (data in CH): read a
+                            # dropped table as "no PG row" (exists=False); the co-sent
+                            # span matches via the CH-aware branch above. Own savepoint
+                            # so the abort can't poison this request's transaction.
+                            try:
+                                with transaction.atomic():
+                                    exists = Trace.objects.filter(
+                                        id=sid,
+                                        project__observability_providers__agent_definition=dq.agent_definition_id,
+                                        deleted=False,
+                                    ).exists()
+                            except ProgrammingError as exc:
+                                if not is_undefined_table_error(exc):
+                                    raise
+                                logger.warning(
+                                    "annotation_read_dropped_legacy_table",
+                                    error=str(exc),
+                                )
+                                exists = False
                         elif st == "observation_span":
                             # Bulk-prefetched above. FK traversal
                             # `project__observability_providers__agent_definition`
@@ -4628,7 +4674,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 # are intentionally NOT prefetched: their PG tables are being dropped
                 # (data lives in ClickHouse), and a prefetch 500s at list
                 # materialization once gone. source_preview resolves them drop-safely
-                # via safe_related + the batched CH CollectorSourceCache.
+                # via _safe_related + the batched CH CollectorSourceCache.
                 "prototype_run",
                 "call_execution",
                 Prefetch(
@@ -5803,7 +5849,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             # Legacy tracer tables (trace / observation_span) are NOT select_related:
             # their PG tables are being dropped (data in ClickHouse), and a JOIN 500s
             # every detail open once gone — even for non-tracer source types. This is
-            # one item, so the drop-safe render path (safe_related + CH) reads them
+            # one item, so the drop-safe render path (_safe_related + CH) reads them
             # lazily without an N+1.
             item = QueueItem.objects.select_related(
                 "dataset_row",

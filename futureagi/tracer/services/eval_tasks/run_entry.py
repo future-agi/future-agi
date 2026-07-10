@@ -104,6 +104,7 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
                     "project__organization",
                     "project__workspace",
                 ),
+                project_id=config.project_id,
             )
             run_params = _process_mapping(config.mapping, span, template_id)
             result = _execute_evaluation(
@@ -125,6 +126,7 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
                     "project__organization",
                     "project__workspace",
                 ),
+                project_id=config.project_id,
             )
             run_params = _process_trace_mapping(config.mapping, trace, template_id)
             _execute_evaluation_for_trace(

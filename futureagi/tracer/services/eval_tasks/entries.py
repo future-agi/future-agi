@@ -219,12 +219,16 @@ def _resolve_entry_fks(
     target_type. Rows that can't be shaped (missing span / rootless trace) are
     absent from the result and skipped by the caller."""
     if row_type in (RowType.SPANS, RowType.VOICE_CALLS):
-        spans = reader.list_by_ids(list(identities))
+        # Only id + trace_id are used, so skip the fat JSON columns.
+        spans = reader.list_by_ids(list(identities), include_heavy=False)
         return {
             s.id: {"observation_span_id": s.id, "trace_id": s.trace_id} for s in spans
         }
     if row_type == RowType.TRACES:
-        roots = reader.list_root_spans_by_trace_ids(list(identities))
+        # Only root.id is used below, so skip the fat JSON columns.
+        roots = reader.list_root_spans_by_trace_ids(
+            list(identities), include_heavy=False
+        )
         return {
             trace_id: {"observation_span_id": root.id, "trace_id": trace_id}
             for trace_id, root in roots.items()

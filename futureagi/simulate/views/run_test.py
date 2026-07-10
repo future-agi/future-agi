@@ -162,7 +162,10 @@ from simulate.utils.test_execution import (
     DEFAULT_VOICE_SIM_COL,
     LEGACY_SIM_COLUMN_ID_MAP,
 )
-from simulate.utils.test_execution_utils import TestExecutionUtils
+from simulate.utils.test_execution_utils import (
+    TestExecutionUtils,
+    reconcile_scenario_column_order,
+)
 from simulate.views.scoping import run_test_workspace_filter
 from tfc.ee_gates import strip_turing_from_config_options
 from tfc.settings import settings as app_settings
@@ -1822,9 +1825,7 @@ class RunTestCallExecutionsView(APIView):
                 if item_type == "call_execution":
                     call_exec = call_executions_dict.get(str(item_id))
                     if call_exec:
-                        serializer = CallExecutionDetailSerializer(
-                            call_exec, context={"detail_mode": False}
-                        )
+                        serializer = CallExecutionDetailSerializer(call_exec)
                         call_data = serializer.data
                         call_data["is_snapshot"] = False
                         # Remove rerun_snapshots since we're flattening
@@ -1837,9 +1838,7 @@ class RunTestCallExecutionsView(APIView):
                     if snapshot:
                         # Get the original call execution for context
                         original_call_exec = snapshot.call_execution
-                        serializer = CallExecutionDetailSerializer(
-                            original_call_exec, context={"detail_mode": False}
-                        )
+                        serializer = CallExecutionDetailSerializer(original_call_exec)
                         original_data = serializer.data
 
                         # Convert snapshot to call execution format
@@ -2030,8 +2029,12 @@ class TestExecutionDetailView(APIView):
             eval_configs_map = {str(config.id): config for config in eval_configs}
 
             # Get scenarios for dynamic columns
-            scenarios = Scenarios.objects.filter(
-                id__in=test_execution.scenario_ids, deleted=False
+            scenarios = list(
+                Scenarios.objects.filter(
+                    id__in=test_execution.scenario_ids, deleted=False
+                )
+                .select_related("dataset")
+                .order_by("name")
             )
             scenarios_map = {str(scenario.id): scenario for scenario in scenarios}
 
@@ -2088,119 +2091,17 @@ class TestExecutionDetailView(APIView):
                 test_execution.execution_metadata["column_order"] = column_order
                 test_execution.save(update_fields=["execution_metadata"])
 
-            # Check if column_order has any scenario columns
-            has_scenario_columns = any(
-                col.get("type") == "scenario_dataset_column" for col in column_order
-            )
-
-            if (
-                not column_order
-                or not test_execution.execution_metadata.get("Provider", False)
-                or not has_scenario_columns
+            if not column_order or not test_execution.execution_metadata.get(
+                "Provider", False
             ):
                 # Create default column order based on agent type
                 if agent_type == AgentDefinition.AgentTypeChoices.VOICE:
                     default_columns = copy.deepcopy(DEFAULT_VOICE_SIM_COL)
-
                 else:
                     # Chat (text) agent type columns with chat metrics from conversation_metrics_data
                     logger.info("Creating default column order for chat agent")
                     default_columns = copy.deepcopy(DEFAULT_CHAT_SIM_COL)
 
-                # Get all scenarios used in this test execution
-                scenarios = (
-                    Scenarios.objects.filter(
-                        id__in=test_execution.scenario_ids, deleted=False
-                    )
-                    .select_related("dataset")
-                    .order_by("name")
-                )
-
-                # Collect all column IDs from all scenarios first (batch fetch)
-                all_column_ids = set()
-                scenario_column_map = {}  # scenario_id -> (dataset_id, column_order)
-                for scenario in scenarios:
-                    if scenario.dataset and scenario.dataset.column_order:
-                        all_column_ids.update(scenario.dataset.column_order)
-                        scenario_column_map[scenario.id] = (
-                            scenario.dataset.id,
-                            scenario.dataset.column_order,
-                        )
-
-                # Fetch all columns in a single query
-                columns_by_id = {}
-                if all_column_ids:
-                    columns_by_id = {
-                        col.id: col
-                        for col in Column.objects.filter(
-                            id__in=all_column_ids, deleted=False
-                        )
-                    }
-
-                # Add scenario columns based on source type
-                added_column_ids = set()
-                for scenario in scenarios:
-                    if scenario.id in scenario_column_map:
-                        dataset_id, column_order = scenario_column_map[scenario.id]
-                        for col_id in column_order:
-                            dataset_column = columns_by_id.get(col_id)
-                            if not dataset_column:
-                                continue
-                            # Skip columns that have already been added to avoid duplicates
-                            if dataset_column.id in added_column_ids:
-                                continue
-                            added_column_ids.add(dataset_column.id)
-                            default_columns.append(
-                                {
-                                    "id": str(dataset_column.id),
-                                    "column_name": (
-                                        "Ideal Outcome"
-                                        if dataset_column.name == "outcome"
-                                        else f"{dataset_column.name}"
-                                    ),
-                                    "visible": True,
-                                    "data_type": dataset_column.data_type,
-                                    "type": "scenario_dataset_column",
-                                    "scenario_id": str(scenario.id),
-                                    "dataset_id": str(dataset_id),
-                                }
-                            )
-
-                # If no columns from scenarios, get from call executions' row datasets
-                if not added_column_ids:
-                    first_call = call_executions.first()
-                    row_id = (
-                        first_call.call_metadata.get("row_id")
-                        if first_call and first_call.call_metadata
-                        else None
-                    )
-                    if row_id:
-                        row = (
-                            Row.all_objects.filter(id=row_id)
-                            .select_related("dataset")
-                            .first()
-                        )
-                        if row and row.dataset and row.dataset.column_order:
-                            row_columns = Column.all_objects.filter(
-                                id__in=row.dataset.column_order, deleted=False
-                            )
-                            for col in row_columns:
-                                default_columns.append(
-                                    {
-                                        "id": str(col.id),
-                                        "column_name": (
-                                            "Ideal Outcome"
-                                            if col.name == "outcome"
-                                            else col.name
-                                        ),
-                                        "visible": True,
-                                        "data_type": col.data_type,
-                                        "type": "scenario_dataset_column",
-                                        "dataset_id": str(row.dataset.id),
-                                    }
-                                )
-
-                # Add evaluation metrics columns
                 for eval_config in eval_configs:
                     default_columns.append(
                         {
@@ -2217,6 +2118,15 @@ class TestExecutionDetailView(APIView):
                 test_execution.execution_metadata["Provider"] = True
                 test_execution.save(update_fields=["execution_metadata"])
                 column_order = default_columns
+
+            column_order, scenario_columns_changed = reconcile_scenario_column_order(
+                scenarios=scenarios,
+                call_executions=call_executions,
+                column_order=column_order,
+            )
+            if scenario_columns_changed:
+                test_execution.execution_metadata["column_order"] = column_order
+                test_execution.save(update_fields=["execution_metadata"])
 
             # Collect any missing tool evaluation columns from call executions' evaluation_data
             # This ensures that tool columns that were added during execution are included
@@ -4116,7 +4026,9 @@ class RunTestComponentsUpdateView(APIView):
                             not agent_type
                             or agent_type == AgentDefinition.AgentTypeChoices.VOICE
                         ):
-                            api_key = resolve_api_key_for_version(agent_version_to_check)
+                            api_key = resolve_api_key_for_version(
+                                agent_version_to_check
+                            )
                             assistant_id = None
                             try:
                                 creds = agent_version_to_check.credentials
@@ -4125,7 +4037,13 @@ class RunTestComponentsUpdateView(APIView):
                             except AgentVersion.credentials.RelatedObjectDoesNotExist:
                                 pass
                             if not assistant_id:
-                                assistant_id = agent_version_to_check.configuration_snapshot.get("assistant_id") if agent_version_to_check.configuration_snapshot else None
+                                assistant_id = (
+                                    agent_version_to_check.configuration_snapshot.get(
+                                        "assistant_id"
+                                    )
+                                    if agent_version_to_check.configuration_snapshot
+                                    else None
+                                )
 
                             missing_fields = []
                             if not api_key:
@@ -4726,16 +4644,55 @@ class UpdateEvalConfigView(APIView):
 
             run = validated.get("run", False)
 
+            # Resolve new template if provided so config normalization uses the
+            # right template schema.
+            new_template = None
+            if "template_id" in validated:
+                template_id = validated.get("template_id")
+                try:
+                    new_template = EvalTemplate.no_workspace_objects.get(
+                        _visible_eval_template_query(
+                            user_organization,
+                            getattr(request, "workspace", None),
+                        ),
+                        id=template_id,
+                    )
+                except EvalTemplate.DoesNotExist:
+                    return self._gm.bad_request("Evaluation template not found")
+
             # Update config if provided (similar to EditAndRunUserEvalView)
             new_config = validated.get("config")
             if new_config:
-                eval_config.config = normalize_eval_runtime_config(
-                    eval_config.eval_template.config, new_config
+                template_config = (
+                    new_template.config
+                    if new_template
+                    else eval_config.eval_template.config
                 )
+                try:
+                    eval_config.config = normalize_eval_runtime_config(
+                        template_config, new_config
+                    )
+                except ValueError as e:
+                    return self._gm.bad_request(str(e))
+            elif new_template:
+                # Template changed without new config: re-normalize existing config
+                # against the new template's schema so it stays valid after the switch.
+                try:
+                    eval_config.config = normalize_eval_runtime_config(
+                        new_template.config, eval_config.config
+                    )
+                except ValueError as e:
+                    return self._gm.bad_request(
+                        f"Cannot switch template: existing config is incompatible with new template. {str(e)}"
+                    )
 
             # Update mapping if provided at top level
             if "mapping" in validated:
                 eval_config.mapping = validated.get("mapping")
+
+            # Update filters if provided
+            if "filters" in validated:
+                eval_config.filters = validated.get("filters") or []
 
             # Update other fields if provided
             if "name" in validated:
@@ -4771,6 +4728,31 @@ class UpdateEvalConfigView(APIView):
                 else:
                     eval_config.kb_id = None
 
+            # Re-validate mapping against the new template's input variables.
+            # When template switches without an explicit mapping, the old
+            # mapping keys can diverge from what the new template expects.
+            if new_template and "mapping" not in validated and eval_config.mapping:
+                template_config = new_template.config or {}
+                required_keys = template_config.get("required_keys", []) or []
+                optional_keys = template_config.get("optional_keys", []) or []
+                valid_keys = set(required_keys) | set(optional_keys)
+                invalid_keys = set(eval_config.mapping.keys()) - valid_keys
+                if invalid_keys:
+                    return self._gm.bad_request(
+                        f"Keys {sorted(invalid_keys)} are not valid input variables for the selected template. Valid keys: {sorted(valid_keys)}"
+                    )
+
+            # Re-validate kb_id: clear it on template switch when not
+            # explicitly provided, since the new template may not be
+            # compatible with the old knowledge base.
+            if new_template and "kb_id" not in validated:
+                eval_config.kb_id = None
+
+            # Switch template after config normalization so the existing config
+            # is validated against the new template's schema.
+            if new_template:
+                eval_config.eval_template = new_template
+
             # Save the eval config
             eval_config.save()
 
@@ -4802,13 +4784,16 @@ class UpdateEvalConfigView(APIView):
                 )
 
                 if not call_executions.exists():
-                    return self._gm.success_response(
-                        {
-                            "message": "Evaluation config updated successfully. No call executions found to rerun.",
-                            "eval_config_id": str(eval_config.id),
-                            "run_test_id": str(run_test_id),
-                            "test_execution_id": str(test_execution_id),
-                        }
+                    return Response(
+                        EvalConfigUpdateResponseSerializer(
+                            {
+                                "message": "Evaluation config updated successfully. No call executions found to rerun.",
+                                "eval_config_id": str(eval_config.id),
+                                "run_test_id": str(run_test_id),
+                                "test_execution_id": str(test_execution_id),
+                            }
+                        ).data,
+                        status=status.HTTP_200_OK,
                     )
 
                 call_execution_ids = [str(ce.id) for ce in call_executions]

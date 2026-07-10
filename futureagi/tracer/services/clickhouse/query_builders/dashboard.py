@@ -68,7 +68,7 @@ SYSTEM_METRICS: dict[str, tuple[str, str]] = {
     # String dimensions (for breakdown/filter)
     "model": ("spans", "model"),
     "status": ("spans", "status"),
-    "service_name": ("spans", "trace_name"),
+    "service_name": ("spans", "service_name"),
     "span_kind": ("spans", "observation_type"),
     "provider": ("spans", "provider"),
     "session": ("spans", "trace_session_id"),
@@ -327,14 +327,13 @@ _ID_RESOLVED_NAMES = frozenset(
 # Spans columns that are MATERIALIZED/ALIAS in the CH25 schema AND referenced by
 # the dashboard's column maps — these are DROPPED by `SELECT sp.*` (ClickHouse
 # omits MATERIALIZED/ALIAS columns from `*`), so the derived table must re-project
-# them explicitly or an outer reference errors ("Unknown identifier"). `trace_name`
-# (MATERIALIZED: dictGet trace_dict name) is the dashboard's `service_name`
-# dimension (SYSTEM_METRICS / _BREAKDOWN_COL_MAP / _STRING_FILTER_COL). Named
-# explicitly it IS selectable (only `*` skips it) and `*` won't duplicate it. The
-# v2 rewriter leaves `trace_name` untouched. (`_peerdb_is_deleted` is ALSO an
-# ALIAS, but the dashboard only uses it in WHERE where the v2 rewrite maps it to
-# the real `is_deleted` column, which `sp.*` keeps — so it needs no re-projection.)
-_MATERIALIZED_DASHBOARD_COLS = ("trace_name",)
+# them explicitly or an outer reference errors ("Unknown identifier"). Currently
+# empty: every dashboard dimension resolves to a real (non-materialized) column
+# that `sp.*` keeps. (`_peerdb_is_deleted` is an ALIAS, but the dashboard only
+# uses it in WHERE where the v2 rewrite maps it to the real `is_deleted` column,
+# which `sp.*` keeps — so it needs no re-projection.) Add a column here if a
+# future dimension reads a MATERIALIZED/ALIAS column.
+_MATERIALIZED_DASHBOARD_COLS: tuple[str, ...] = ()
 
 
 def _resolved_spans_source(alias: str | None = None) -> str:
@@ -349,9 +348,9 @@ def _resolved_spans_source(alias: str | None = None) -> str:
 
     The inner subquery joins the remap under DISTINCT aliases (``eu_remap`` /
     ``ts_remap``) hanging off the SAME inner span row ``sp`` — the default
-    ``id_remap`` alias would collide across the two joins. MATERIALIZED columns
-    the dashboard reads (``trace_name``) are re-projected explicitly because
-    ``sp.*`` drops them (see ``_MATERIALIZED_DASHBOARD_COLS``).
+    ``id_remap`` alias would collide across the two joins. Any MATERIALIZED
+    columns the dashboard reads are re-projected explicitly because ``sp.*``
+    drops them (see ``_MATERIALIZED_DASHBOARD_COLS`` — currently empty).
     """
     out_alias = alias or "spans"
     eu_join = remap_left_join("sp.end_user_id", "end_user_id_remap", "eu_remap")
@@ -891,7 +890,7 @@ class DashboardQueryBuilder:
                 _span_col_map = {
                     "model": "model",
                     "status": "status",
-                    "service_name": "name",
+                    "service_name": "service_name",
                     "span_kind": "observation_type",
                     "provider": "provider",
                     "session": "trace_session_id",
@@ -1378,7 +1377,7 @@ class DashboardQueryBuilder:
         "project": "toString(project_id)",
         "model": "model",
         "status": "status",
-        "service_name": "trace_name",
+        "service_name": "service_name",
         "span_kind": "observation_type",
         "provider": "provider",
         "session": "toString(trace_session_id)",
@@ -1607,7 +1606,7 @@ class DashboardQueryBuilder:
             "project": "toString(project_id)",
             "status": "status",
             "model": "model",
-            "service_name": "trace_name",
+            "service_name": "service_name",
             "span_kind": "observation_type",
             "provider": "provider",
             "session": "toString(trace_session_id)",

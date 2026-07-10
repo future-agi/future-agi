@@ -96,7 +96,7 @@ export const useGraphStore = create((set, get) => ({
         type: MarkerType.ArrowClosed,
       },
       data: {
-        condition: "Default condition",
+        prompt: "Default condition",
       },
     };
 
