@@ -904,13 +904,17 @@ class CollectorSourceCache:
 class _CHTraceSessionSource:
     """Duck-typed stand-in for a PG ``TraceSession`` resolved from CH. Carries only
     the attributes the annotation scope/store/render path reads off a session
-    (``id`` / ``project_id`` / ``name`` / ``first_seen``); it is NOT a Django model
-    and must never be assigned to a relation (the store path uses the soft id)."""
+    (``id`` / ``pk`` / ``project_id`` / ``name`` / ``first_seen``); it is NOT a Django
+    model and must never be assigned to a relation (the store path uses the soft id).
 
-    __slots__ = ("id", "project_id", "name", "first_seen")
+    ``pk`` mirrors ``id`` for Django-model parity — the score store reads
+    ``source_obj.pk`` (same as :class:`CHSpan` and :class:`_CHTraceSource`)."""
+
+    __slots__ = ("id", "pk", "project_id", "name", "first_seen")
 
     def __init__(self, *, id, project_id, name, first_seen):
         self.id = id
+        self.pk = str(id)
         self.project_id = project_id
         self.name = name
         self.first_seen = first_seen
