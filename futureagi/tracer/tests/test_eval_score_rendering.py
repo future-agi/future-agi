@@ -554,3 +554,72 @@ class TestEvalMetricEntryIntegration:
 
         assert score == ["toxic", "spam"]
         assert output_type == "str_list"
+
+
+@pytest.mark.unit
+class TestFlattenEvalScoreIntoEntry:
+    """The list grids bind eval columns to flat row keys. ``flatten_eval_score_
+    into_entry`` maps a pivoted (trace, config) score onto them: PASS_FAIL → pass
+    rate, SCORE → numeric avg, CHOICES → per-choice %. Regression cover for the
+    inversion bug where a Pass/Fail eval carrying an ``output_float`` rendered the
+    score field instead of the pass rate."""
+
+    def _flatten(self, scores, output_type, config_id="cfg-1"):
+        from tracer.utils.helper import flatten_eval_score_into_entry
+
+        entry: dict = {}
+        flatten_eval_score_into_entry(entry, config_id, scores, output_type)
+        return entry
+
+    def test_pass_fail_uses_pass_rate_not_score(self):
+        # Passed eval that also wrote output_float (avg_score=0) → pass rate 100,
+        # not the score field 0.
+        entry = self._flatten(
+            {"avg_score": 0.0, "pass_rate": 100.0, "count": 1}, "Pass/Fail"
+        )
+        assert entry == {"cfg-1": 100.0}
+
+    def test_pass_fail_failed_uses_pass_rate(self):
+        entry = self._flatten(
+            {"avg_score": 100.0, "pass_rate": 0.0, "count": 1}, "Pass/Fail"
+        )
+        assert entry == {"cfg-1": 0.0}
+
+    def test_pass_fail_output_type_normalized(self):
+        for ot in ("Pass/Fail", "pass_fail", "PASS_FAIL", "pass fail"):
+            entry = self._flatten({"avg_score": 0.0, "pass_rate": 100.0}, ot)
+            assert entry["cfg-1"] == 100.0, ot
+
+    def test_pass_fail_none_when_no_completed_rows(self):
+        entry = self._flatten({"avg_score": None, "pass_rate": None}, "Pass/Fail")
+        assert entry == {"cfg-1": None}
+
+    def test_score_uses_avg_score(self):
+        entry = self._flatten(
+            {"avg_score": 60.0, "pass_rate": None, "count": 3}, "score"
+        )
+        assert entry == {"cfg-1": 60.0}
+
+    def test_score_zero_is_preserved(self):
+        # A legitimate SCORE of 0 must not fall through to pass_rate.
+        entry = self._flatten({"avg_score": 0.0, "pass_rate": None}, "score")
+        assert entry == {"cfg-1": 0.0}
+
+    def test_choices_spread_into_flat_keys(self):
+        entry = self._flatten(
+            {"per_choice": {"neutral": 100.0, "joy": 0.0}}, "choices"
+        )
+        assert entry == {"cfg-1**neutral": 100.0, "cfg-1**joy": 0.0}
+
+    def test_error_marker_passthrough(self):
+        entry = self._flatten({"error": True}, "Pass/Fail")
+        assert entry == {"cfg-1": {"error": True}}
+
+    def test_skipped_marker_passthrough(self):
+        marker = {"status": "skipped", "skipped_reason": "missing_attr"}
+        entry = self._flatten(marker, "score")
+        assert entry == {"cfg-1": marker}
+
+    def test_non_dict_passthrough(self):
+        entry = self._flatten(42, "score")
+        assert entry == {"cfg-1": 42}

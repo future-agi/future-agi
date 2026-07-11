@@ -6736,10 +6736,10 @@ class TestVoiceCallListPhase1bMigration:
         Reverting to the CDC mirror means voice attributes go stale the
         moment we cut PeerDB. Catch that statically.
 
-        Scope: the *Phase 1b* query specifically. The view legitimately
-        keeps `_peerdb_is_deleted` for the unrelated `tracer_eval_logger`
-        CDC query earlier in the same method — that mirror still flows
-        through PeerDB and is out of scope for this cutover.
+        Scope: the *Phase 1b* query specifically. The eval-config discovery
+        query earlier in the same method reads the legacy `tracer_eval_logger`
+        CDC mirror but filters soft-deletes via `deleted` (not
+        `_peerdb_is_deleted`) — out of scope for this Phase 1b check.
         """
         import re
 
