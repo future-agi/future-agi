@@ -78,6 +78,9 @@ const Share = ({ open, title = "Share as link", body, onClose }) => {
         >
           {body}
         </Typography>
+        <Typography mb={2} variant="caption" color="text.secondary">
+          Note: This creates a direct link without access control.
+        </Typography>
 
         <Box display="flex" alignItems="center" gap={theme.spacing(1)} mt={2}>
           <Box flex={8}>
@@ -152,9 +155,9 @@ const Share = ({ open, title = "Share as link", body, onClose }) => {
             Cancel
           </Button>
           <Button
-            aria-label="finish-share-project"
-            variant="contained"
-            color="primary"
+            aria-label="close-share-project"
+            variant="outlined"
+            color="inherit"
             onClick={onClose}
             sx={{
               flex: 1,
@@ -162,7 +165,7 @@ const Share = ({ open, title = "Share as link", body, onClose }) => {
               fontSize: "13px",
             }}
           >
-            Done
+            Close
           </Button>
         </Box>
       </DialogActions>
