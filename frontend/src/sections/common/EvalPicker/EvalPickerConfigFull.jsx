@@ -1783,6 +1783,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TracingTestMode
                     ref={sourceRef}
                     templateId={templateId}
+                    model={model}
                     variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
@@ -1799,6 +1800,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <SimulationTestMode
                     ref={sourceRef}
                     templateId={templateId}
+                    model={model}
                     variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
@@ -1827,6 +1829,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TracingTestMode
                     ref={sourceRef}
                     templateId={templateId}
+                    model={model}
                     variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}

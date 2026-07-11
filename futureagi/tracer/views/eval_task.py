@@ -900,10 +900,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 if earliest:
                     start_date = earliest
 
-            success_count = period_qs.filter(error=False).count()
+            skipped_count = period_qs.filter(status="skipped").count()
+            success_count = period_qs.filter(error=False).exclude(status="skipped").count()
             error_count = period_qs.filter(error=True).count()
+            scorable = runs_period - skipped_count
             pass_rate = (
-                round((success_count / runs_period * 100), 2) if runs_period > 0 else 0
+                round((success_count / scorable * 100), 2) if scorable > 0 else 0
             )
 
             # ── Chart data — bucket by period and aggregate ──
@@ -1013,6 +1015,33 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
             paginator.page_size = page_size
             logs_page = paginator.paginate_queryset(logs_qs, self.request, view=self)
 
+            # Peerdb-less deploys never populate tracer_observation_span, so
+            # log.observation_span is None. Batch-fetch this page's spans from
+            # CH so the Input column has something to render.
+            _ch_span_attrs: dict[str, dict] = {}
+            _ch_span_names: dict[str, str] = {}
+            _missing_span_ids = list(
+                {
+                    log.observation_span_id
+                    for log in logs_page
+                    if log.observation_span_id and log.observation_span is None
+                }
+            )
+            if _missing_span_ids:
+                try:
+                    from tracer.services.clickhouse.v2 import get_reader
+
+                    with get_reader() as _reader:
+                        for _ch in _reader.list_by_ids(
+                            _missing_span_ids, include_heavy=False
+                        ):
+                            _ch_span_attrs[_ch.id] = _ch.attrs_string or {}
+                            _ch_span_names[_ch.id] = _ch.name or ""
+                except Exception as _e:  # noqa: BLE001
+                    logger.warning(
+                        "eval_task_usage_ch_span_fallback_failed", error=str(_e)
+                    )
+
             log_items = []
             for log in logs_page:
                 # Derive a Pass/Fail label and a normalized 0-1 score from
@@ -1023,6 +1052,10 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     result_label = "Error"
                     score = None
                     status = "error"
+                elif log.status == "skipped":
+                    result_label = "Skipped"
+                    score = None
+                    status = "skipped"
                 elif log.output_bool is True:
                     result_label = "Passed"
                     score = 1.0
@@ -1053,12 +1086,21 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 # rows both have an observation_span (trace target = root
                 # span); session-target rows fall back to the session name.
                 input_str = ""
+                _span_attrs: dict = {}
+                _span_name = ""
                 if obs_span:
-                    span_attrs = obs_span.span_attributes or {}
+                    _span_attrs = obs_span.span_attributes or {}
+                    _span_name = obs_span.name or ""
+                elif log.observation_span_id in _ch_span_attrs:
+                    _span_attrs = _ch_span_attrs[log.observation_span_id]
+                    _span_name = _ch_span_names.get(log.observation_span_id, "")
+
+                if _span_attrs or _span_name:
                     input_val = (
-                        span_attrs.get("input")
-                        or span_attrs.get("input.value")
-                        or obs_span.name
+                        _span_attrs.get("input")
+                        or _span_attrs.get("input.value")
+                        or _span_attrs.get("gen_ai.input.messages.0.message.content")
+                        or _span_name
                         or ""
                     )
                     if isinstance(input_val, dict):
@@ -1068,7 +1110,12 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                 elif trace_session:
                     input_str = (trace_session.name or "")[:200]
 
-                reason = log.eval_explanation or log.error_message or ""
+                reason = (
+                    log.eval_explanation
+                    or log.error_message
+                    or log.skipped_reason
+                    or ""
+                )
 
                 # Partial-input warnings stored on output_metadata by the
                 # tracer eval path. Surface at the row level so the FE
@@ -1088,6 +1135,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                         "score": score,
                         "reason": reason,
                         "status": status,
+                        "skipped_reason": log.skipped_reason or None,
                         "source": "eval_task",
                         "warnings": warnings or [],
                         "created_at": (
@@ -1157,6 +1205,7 @@ class EvalTaskView(BaseModelViewSetMixin, ModelViewSet):
                     "total_runs": total_runs,
                     "runs_period": runs_period,
                     "success_count": success_count,
+                    "skipped_count": skipped_count,
                     "error_count": error_count,
                     "pass_rate": pass_rate,
                 },
