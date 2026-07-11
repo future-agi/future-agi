@@ -453,14 +453,10 @@ def create_eval_instance(
     # Apply version overrides
     config, criteria = apply_version_overrides(config, resolved_version, criteria)
 
-    # FunctionEvaluator subclasses reject pass_threshold as a ctor kwarg;
-    # verdict conversion reads eval_template.pass_threshold downstream.
     from agentic_eval.core_evals.fi_evals.eval_type import is_function_eval
 
-    eval_type_id_for_pass = eval_template.config.get("eval_type_id", "")
-    if (
-        not (eval_template.config or {}).get("function_eval")
-        and not is_function_eval(eval_type_id_for_pass)
+    if not (eval_template.config or {}).get("function_eval") and not is_function_eval(
+        eval_template.config.get("eval_type_id", "")
     ):
         config["pass_threshold"] = resolve_pass_threshold(
             eval_template, runtime_config, resolved_version

@@ -1,5 +1,3 @@
-"""Workbench eval respects FE inputs + surfaces template metadata (TH-6725)."""
-
 from types import SimpleNamespace
 
 import pytest

@@ -173,7 +173,6 @@ def merge_code_eval_kwargs(
     eval_template,
     binding_config: dict | None,
 ) -> dict:
-    """Inject saved code-eval params into `mapped_kwargs` so the sandbox sees them."""
     if getattr(eval_template, "eval_type", "") != "code":
         return mapped_kwargs
     params = (binding_config or {}).get("params") or {}
