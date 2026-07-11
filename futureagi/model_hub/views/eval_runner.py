@@ -2169,16 +2169,19 @@ class EvaluationRunner:
                 workspace_id=self.workspace_id,
             )
 
-        # For code evals, inject static user-defined params stored in the
-        # UserEvalMetric config so they reach evaluate() as **kwargs.
+        # For code evals, static user-defined params stored on the binding
+        # config reach evaluate() as **kwargs via the shared merger so
+        # every surface (dataset, workbench, ...) honours the same layering.
+        from model_hub.utils.function_eval_params import merge_code_eval_kwargs
+
+        binding_config = (
+            self.user_eval_metric.config
+            if self.user_eval_metric
+            else config if isinstance(config, dict) else None
+        )
+        _mapped = merge_code_eval_kwargs(_mapped, self.eval_template, binding_config)
+
         if getattr(self.eval_template, "eval_type", "") == "code":
-            user_metric_params = {}
-            if self.user_eval_metric:
-                user_metric_params = self.user_eval_metric.config.get("params", {})
-            elif isinstance(config, dict):
-                user_metric_params = config.get("params", {})
-            if isinstance(user_metric_params, dict):
-                _mapped.update(user_metric_params)
 
             # Preprocess inputs for code evals that need external data (e.g. CLIP embeddings)
             from evaluations.engine.preprocessing import preprocess_inputs

@@ -2683,6 +2683,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 config=config,
                 eval_class=eval_class,
                 model=selected_model,
+                kb_id=str(evaluation.kb_id) if evaluation.kb_id else None,
                 runtime_config=evaluation.config,
             )
             # Setup evaluation parameters using the helper method
@@ -2757,24 +2758,35 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             partial_input_warning, _mapped_kwargs = validate_eval_inputs(
                 eval_template,
                 _mapped_kwargs,
-                mapped_keys=_mapped_kwargs.keys(),
+                mapped_keys=run_params.keys(),
             )
 
-            # Run evaluation
+            from model_hub.services.ground_truth_service import GroundTruthService
+
+            GroundTruthService.inject_context(
+                _mapped_kwargs,
+                eval_template,
+                organization_id=organization_id,
+                workspace_id=ws_id,
+            )
+
+            from model_hub.utils.function_eval_params import merge_code_eval_kwargs
+
+            _mapped_kwargs = merge_code_eval_kwargs(
+                _mapped_kwargs, eval_template, evaluation.config
+            )
+
+            if getattr(eval_template, "eval_type", "") == "code":
+                from evaluations.engine.preprocessing import preprocess_inputs
+
+                _mapped_kwargs = preprocess_inputs(eval_template.name, _mapped_kwargs)
+
             eval_result = eval_instance.run(**_mapped_kwargs)
 
-            # Format response
-            response = {
-                "name": eval_template.name,
-                "data": eval_result.eval_results[0].get("data"),
-                "failure": eval_result.eval_results[0].get("failure"),
-                "reason": eval_result.eval_results[0].get("reason"),
-                "runtime": eval_result.eval_results[0].get("runtime"),
-                "model": eval_result.eval_results[0].get("model"),
-                "metrics": eval_result.eval_results[0].get("metrics"),
-                "metadata": eval_result.eval_results[0].get("metadata", {}),
-                "output": eval_template.config.get("output"),
-            }
+            from evaluations.engine.formatting import extract_raw_result
+
+            response = extract_raw_result(eval_result, eval_template)
+            response["name"] = eval_template.name
             if partial_input_warning:
                 response["warnings"] = [partial_input_warning]
             metadata = response.get("metadata") or {}
