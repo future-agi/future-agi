@@ -151,11 +151,10 @@ def test_get_trace_input_data_scopes_embed_read():
     with (
         patch("tracer.queries.scan_clustering.get_reader", return_value=reader),
         patch("tracer.queries.scan_clustering.TraceScanResult") as tsr,
-        patch("tracer.queries.scan_clustering.Trace") as trace_model,
     ):
-        # one scanned trace so we reach the reader; no PG-input fallback rows
+        # one scanned trace so we reach the reader (CH root input is the sole
+        # source post-cutover — no PG Trace.input fallback).
         tsr.objects.filter.return_value.values_list.return_value = [("t-1", True)]
-        trace_model.objects.filter.return_value.values_list.return_value = []
         get_trace_input_data(["t-1"], "proj-embed")
     assert sink["project_id"] == "proj-embed"
 
