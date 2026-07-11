@@ -2132,10 +2132,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 )
                 from model_hub.utils.eval_list import build_run_config_view
 
-                run_config = build_run_config_view(
-                    config.config,
-                    error_localizer_enabled=config.error_localizer,
-                )
+                run_config = build_run_config_view(config)
                 response.append(
                     {
                         "id": str(config.id),

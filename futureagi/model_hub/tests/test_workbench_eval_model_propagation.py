@@ -51,8 +51,12 @@ def test_resolve_binding_model_template_config_none():
     assert resolve_binding_model({}, template) is None
 
 
-def test_build_run_config_view_shape():
-    result = build_run_config_view(None)
+def _fake_binding(config=None, error_localizer=False):
+    return SimpleNamespace(config=config, error_localizer=error_localizer)
+
+
+def test_build_run_config_view_shape_defaults():
+    result = build_run_config_view(_fake_binding())
     assert set(result.keys()) == set(_RUN_CONFIG_KEYS)
     assert result["agent_mode"] == "agent"
     assert result["check_internet"] is False
@@ -64,40 +68,48 @@ def test_build_run_config_view_shape():
     assert result["tools"] == {}
 
 
-def test_build_run_config_view_error_localizer_from_column_not_json():
-    binding = {"run_config": {"error_localizer_enabled": True}}
-    assert build_run_config_view(binding, error_localizer_enabled=False)[
-        "error_localizer_enabled"
-    ] is False
-    assert build_run_config_view(binding, error_localizer_enabled=True)[
-        "error_localizer_enabled"
-    ] is True
+def test_build_run_config_view_error_localizer_column_wins_over_json():
+    binding = _fake_binding(
+        config={"run_config": {"error_localizer_enabled": False}}, error_localizer=True
+    )
+    assert build_run_config_view(binding)["error_localizer_enabled"] is True
+
+
+def test_build_run_config_view_error_localizer_falls_back_to_json_flag():
+    binding = _fake_binding(
+        config={"error_localizer_enabled": True}, error_localizer=False
+    )
+    assert build_run_config_view(binding)["error_localizer_enabled"] is True
 
 
 def test_build_run_config_view_summary_dict_normalized_to_type_string():
-    binding = {"run_config": {"summary": {"type": "detailed", "extra": 1}}}
+    binding = _fake_binding(
+        config={"run_config": {"summary": {"type": "detailed", "extra": 1}}}
+    )
     assert build_run_config_view(binding)["summary"] == "detailed"
 
 
 def test_build_run_config_view_summary_dict_without_type_falls_back():
-    binding = {"run_config": {"summary": {"other": "value"}}}
+    binding = _fake_binding(config={"run_config": {"summary": {"other": "value"}}})
     assert build_run_config_view(binding)["summary"] == "concise"
 
 
 def test_build_run_config_view_reads_all_saved_keys():
-    binding = {
-        "run_config": {
-            "agent_mode": "protect",
-            "check_internet": True,
-            "summary": "detailed",
-            "pass_threshold": 0.75,
-            "data_injection": {"full_row": True},
-            "knowledge_bases": ["kb-1", "kb-2"],
-            "tools": {"web": {"enabled": True}},
-        }
-    }
-    result = build_run_config_view(binding, error_localizer_enabled=True)
-    assert result == {
+    binding = _fake_binding(
+        config={
+            "run_config": {
+                "agent_mode": "protect",
+                "check_internet": True,
+                "summary": "detailed",
+                "pass_threshold": 0.75,
+                "data_injection": {"full_row": True},
+                "knowledge_bases": ["kb-1", "kb-2"],
+                "tools": {"web": {"enabled": True}},
+            }
+        },
+        error_localizer=True,
+    )
+    assert build_run_config_view(binding) == {
         "agent_mode": "protect",
         "check_internet": True,
         "summary": "detailed",
@@ -110,7 +122,8 @@ def test_build_run_config_view_reads_all_saved_keys():
 
 
 def test_build_run_config_view_ignores_top_level_run_config_none():
-    result = build_run_config_view({"run_config": None}, error_localizer_enabled=False)
+    binding = _fake_binding(config={"run_config": None})
+    result = build_run_config_view(binding)
     assert result["agent_mode"] == "agent"
     assert result["pass_threshold"] == 0.5
 

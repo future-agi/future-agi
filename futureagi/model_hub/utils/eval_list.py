@@ -26,22 +26,19 @@ _RUN_CONFIG_DEFAULTS: dict = {
 _RUN_CONFIG_KEYS: tuple[str, ...] = tuple(_RUN_CONFIG_DEFAULTS)
 
 
-def build_run_config_view(
-    binding_config: dict | None,
-    *,
-    error_localizer_enabled: bool = False,
-) -> dict:
-    """Canonical run_config sub-dict returned to the FE across every eval-binding surface.
+def build_run_config_view(eval_config) -> dict:
+    """Canonical run_config sub-dict returned to the FE across every eval-binding surface."""
+    from model_hub.services.error_localizer_service import (
+        error_localizer_enabled as _resolve_localizer,
+    )
 
-    error_localizer_enabled is authoritative from the caller's column, not from
-    binding_config, since the JSON copy can drift.
-    """
-    run_config = (binding_config or {}).get("run_config") or {}
+    binding_json = getattr(eval_config, "config", None) or {}
+    run_config = binding_json.get("run_config") or {}
     view = {k: run_config.get(k, deepcopy(v)) for k, v in _RUN_CONFIG_DEFAULTS.items()}
     summary = view["summary"]
     if isinstance(summary, dict):
         view["summary"] = summary.get("type", _RUN_CONFIG_DEFAULTS["summary"])
-    view["error_localizer_enabled"] = bool(error_localizer_enabled)
+    view["error_localizer_enabled"] = _resolve_localizer(eval_config)
     return view
 
 
@@ -354,10 +351,7 @@ def build_user_eval_list_items(
             "mapping": (user_eval.config or {}).get("mapping", {}),
             "params": (user_eval.config or {}).get("params", {}),
             "error_localizer": user_eval.error_localizer,
-            "run_config": build_run_config_view(
-                user_eval.config,
-                error_localizer_enabled=user_eval.error_localizer,
-            ),
+            "run_config": build_run_config_view(user_eval),
             "output_type": template.output_type_normalized or "pass_fail",
             "pinned_version_id": str(user_eval.pinned_version_id)
             if user_eval.pinned_version_id
