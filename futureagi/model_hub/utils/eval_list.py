@@ -7,10 +7,35 @@ Handles: queryset building, eval type derivation, output type derivation,
 
 from collections import defaultdict
 from collections.abc import Iterable
+from copy import deepcopy
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from django.db.models import Count, Q, QuerySet
+
+_RUN_CONFIG_DEFAULTS: dict = {
+    "agent_mode": "agent",
+    "check_internet": False,
+    "summary": "concise",
+    "pass_threshold": 0.5,
+    "error_localizer_enabled": False,
+    "data_injection": {},
+    "knowledge_bases": [],
+    "tools": {},
+}
+
+
+def build_run_config_view(eval_config) -> dict:
+    from model_hub.services.error_localizer_service import error_localizer_enabled
+
+    binding_json = getattr(eval_config, "config", None) or {}
+    run_config = binding_json.get("run_config") or {}
+    view = {k: run_config.get(k, deepcopy(v)) for k, v in _RUN_CONFIG_DEFAULTS.items()}
+    summary = view["summary"]
+    if isinstance(summary, dict):
+        view["summary"] = summary.get("type", _RUN_CONFIG_DEFAULTS["summary"])
+    view["error_localizer_enabled"] = error_localizer_enabled(eval_config)
+    return view
 
 
 def normalize_search_for_name(search: str) -> Q:
@@ -294,10 +319,7 @@ def build_user_eval_list_items(
         if not template or template.name in NOT_UI_EVALS:
             continue
 
-        run_config = (user_eval.config or {}).get("run_config", {}) or {}
-        summary = run_config.get("summary", "concise")
-        if isinstance(summary, dict):
-            summary = summary.get("type", "concise")
+        run_config_raw = (user_eval.config or {}).get("run_config", {}) or {}
 
         item = {
             "id": user_eval.id,
@@ -308,7 +330,7 @@ def build_user_eval_list_items(
             "eval_template_tags": template.eval_tags,
             "description": template.description,
             "config": user_eval.config or {},
-            "model": run_config.get("model")
+            "model": run_config_raw.get("model")
             or (user_eval.config or {}).get("config", {}).get("model", ""),
             "column_id": column_map.get(str(user_eval.id)),
             "updated_at": user_eval.updated_at,
@@ -325,16 +347,7 @@ def build_user_eval_list_items(
             "mapping": (user_eval.config or {}).get("mapping", {}),
             "params": (user_eval.config or {}).get("params", {}),
             "error_localizer": user_eval.error_localizer,
-            "run_config": {
-                "agent_mode": run_config.get("agent_mode", "agent"),
-                "check_internet": run_config.get("check_internet", False),
-                "summary": summary,
-                "pass_threshold": run_config.get("pass_threshold", 0.5),
-                "error_localizer_enabled": user_eval.error_localizer,
-                "data_injection": run_config.get("data_injection", {}),
-                "knowledge_bases": run_config.get("knowledge_bases", []),
-                "tools": run_config.get("tools", {}),
-            },
+            "run_config": build_run_config_view(user_eval),
             "output_type": template.output_type_normalized or "pass_fail",
             "pinned_version_id": str(user_eval.pinned_version_id)
             if user_eval.pinned_version_id

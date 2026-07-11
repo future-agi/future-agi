@@ -578,6 +578,9 @@ const SpanGrid = React.forwardRef(
         if (event?.column?.colId === "status") {
           return;
         }
+        if (RENDERER_CONFIG.tagColumns.includes(event?.column?.getColId())) {
+          return;
+        }
         if (
           event.column.getColId() === APP_CONSTANTS.AG_GRID_SELECTION_COLUMN
         ) {
