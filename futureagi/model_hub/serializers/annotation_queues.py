@@ -582,7 +582,6 @@ class QueueItemSerializer(serializers.ModelSerializer):
                     source_id,
                     organization=organization,
                     workspace=workspace,
-                    allow_ch_fallback=True,
                 )
                 if source_obj:
                     # Store the soft id, not the FK object: a CH-resolved source

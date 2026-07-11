@@ -27,12 +27,11 @@ import pytest
 from django.utils import timezone
 from rest_framework import status
 
-from conftest import create_categorical_label
-
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import User
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from conftest import create_categorical_label
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
     AnnotationQueueAnnotator,
@@ -53,7 +52,6 @@ from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.middleware.workspace_context import set_workspace_context
 from tracer.models.project import Project
-
 
 SCORE_URL = "/model-hub/scores/"
 LABEL_URL = "/model-hub/annotations-labels/"
@@ -807,6 +805,7 @@ class TestSubmitNextItemRoundTrip:
         )
         from tracer.models.observation_span import ObservationSpan
         from tracer.models.trace import Trace
+        from tracer.tests._ch_seed import seed_ch_span
 
         # Two spans on the same project so we can have two queue items
         traces = [
@@ -839,6 +838,9 @@ class TestSubmitNextItemRoundTrip:
             )
             for i in range(2)
         ]
+        # Tracer sources resolve CH-native — mirror the spans into ClickHouse.
+        for _span in spans:
+            seed_ch_span(_span)
 
         # Active queue with one required label and the user as annotator
         queue = AnnotationQueue.objects.create(
@@ -1174,6 +1176,7 @@ def observation_span_factory(db, project, organization, workspace):
     """Factory fixture so tests can mint multiple spans on demand."""
     from tracer.models.observation_span import ObservationSpan
     from tracer.models.trace import Trace
+    from tracer.tests._ch_seed import seed_ch_span
 
     def _make():
         trace = Trace.objects.create(
@@ -1183,7 +1186,7 @@ def observation_span_factory(db, project, organization, workspace):
             output={},
         )
         span_id = f"span_{uuid.uuid4().hex[:16]}"
-        return ObservationSpan.objects.create(
+        span = ObservationSpan.objects.create(
             id=span_id,
             project=project,
             trace=trace,
@@ -1201,6 +1204,9 @@ def observation_span_factory(db, project, organization, workspace):
             latency_ms=10,
             status="OK",
         )
+        # Tracer sources resolve CH-native — mirror the span into ClickHouse.
+        seed_ch_span(span)
+        return span
 
     return _make
 
