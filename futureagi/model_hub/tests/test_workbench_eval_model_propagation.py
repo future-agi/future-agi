@@ -245,3 +245,50 @@ def test_evaluation_configs_endpoint_error_localizer_column_wins(
     )
     row = response.json()["result"]["evaluation_configs"][0]
     assert row["run_config"]["error_localizer_enabled"] is True
+
+
+@pytest.mark.django_db
+def test_update_evaluation_configs_persists_error_localizer_from_fe(
+    auth_client, user, workspace
+):
+    template = EvalTemplate.objects.create(
+        name="workbench-fixture-el-save",
+        description="",
+        owner=OwnerChoices.SYSTEM.value,
+        organization=None,
+        workspace=None,
+        eval_type="llm",
+        config={"eval_type_id": "CustomPromptEvaluator", "output": "Pass/Fail"},
+        eval_tags=["llm"],
+    )
+    prompt_template = PromptTemplate.objects.create(
+        name="Workbench Prompt",
+        organization=user.organization,
+        workspace=workspace,
+        created_by=user,
+    )
+
+    payload = {
+        "id": str(template.id),
+        "name": "eval_with_localizer",
+        "mapping": {"output": "model_output"},
+        "config": {},
+        "error_localizer": True,
+    }
+    save_response = auth_client.post(
+        f"/model-hub/prompt-templates/{prompt_template.id}/update-evaluation-configs/",
+        data=payload,
+        format="json",
+    )
+    assert save_response.status_code == 200, save_response.content
+
+    saved = PromptEvalConfig.objects.get(
+        prompt_template=prompt_template, deleted=False
+    )
+    assert saved.error_localizer is True
+
+    read_response = auth_client.get(
+        f"/model-hub/prompt-templates/{prompt_template.id}/evaluation-configs/"
+    )
+    row = read_response.json()["result"]["evaluation_configs"][0]
+    assert row["run_config"]["error_localizer_enabled"] is True
