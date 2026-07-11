@@ -5479,7 +5479,7 @@ class VersionCompareView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, template_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalTemplateVersion
+        from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
         from model_hub.types import VersionCompareResponse, VersionDiff
 
         try:
@@ -5490,6 +5490,19 @@ class VersionCompareView(APIView):
                 return self._gm.bad_request(
                     "Query params 'a' and 'b' (version numbers) are required."
                 )
+
+            # Cross-tenant guard (3B authz audit): EvalTemplateVersion uses a
+            # plain Manager and carries no tenancy fields, so verify the
+            # PARENT template is visible to the caller (org filter + the
+            # workspace-scoped default manager) before reading versions.
+            organization = getattr(request, "organization", None) or getattr(
+                request.user, "organization", None
+            )
+            template_qs = EvalTemplate.objects.filter(id=template_id)
+            if organization is not None:
+                template_qs = template_qs.filter(organization=organization)
+            if not template_qs.exists():
+                return self._gm.not_found("Eval template not found.")
 
             try:
                 va = EvalTemplateVersion.objects.get(

@@ -1375,12 +1375,28 @@ class ExperimentFeedbackSubmitRequestSerializer(serializers.Serializer):
             "recalculate_row",
             "recalculate_dataset",
             "retune_recalculate",
-        ]
+        ],
+        help_text=(
+            "'retune' queues the metric for retuning; 'recalculate_row' "
+            "re-runs the eval on the feedback's row; 'recalculate_dataset' "
+            "re-runs it on all rows; 'retune_recalculate' does both."
+        ),
     )
-    feedback_id = serializers.UUIDField()
-    user_eval_metric_id = serializers.UUIDField()
-    value = serializers.CharField(required=False, allow_blank=True)
-    explanation = serializers.CharField(required=False, allow_blank=True)
+    feedback_id = serializers.UUIDField(
+        help_text="Feedback UUID returned by create_experiment_feedback."
+    )
+    user_eval_metric_id = serializers.UUIDField(
+        help_text="UUID of the eval metric the feedback applies to."
+    )
+    value = serializers.JSONField(
+        required=False,
+        help_text="Optionally update the feedback's corrected value.",
+    )
+    explanation = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Optionally update the feedback's explanation text.",
+    )
 
 
 class RunPromptForRowsRequestSerializer(serializers.Serializer):
@@ -2895,27 +2911,81 @@ class DatasetRowDataRequestSerializer(StrictInputSerializer):
 
 
 class DatasetRowDiffRequestSerializer(serializers.Serializer):
-    experiment_id = serializers.UUIDField()
-    column_ids = serializers.ListField(child=serializers.UUIDField())
-    row_ids = serializers.ListField(child=serializers.UUIDField())
-    compare_column_ids = serializers.ListField(child=serializers.UUIDField())
+    experiment_id = serializers.UUIDField(
+        help_text="V2 experiment UUID (from list_experiments)."
+    )
+    column_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        help_text=(
+            "Snapshot-dataset column UUIDs whose cells to diff (from "
+            "list_dataset_experiments)."
+        ),
+    )
+    row_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        help_text="Snapshot-dataset row UUIDs to diff.",
+    )
+    compare_column_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        help_text="Column UUIDs to diff AGAINST (the comparison side).",
+    )
 
 
 class UserEvalMutationRequestSerializer(serializers.Serializer):
-    name = serializers.CharField(max_length=50)
-    template_id = serializers.CharField(max_length=500)
-    config = serializers.JSONField()
-    kb_id = serializers.UUIDField(required=False)
-    error_localizer = serializers.BooleanField(required=False, default=False)
-    model = serializers.CharField(max_length=100, required=False, allow_blank=True)
-    eval_type = serializers.CharField(required=False, allow_blank=True)
-    run = serializers.BooleanField(required=False, default=False)
-    save_as_template = serializers.BooleanField(required=False, default=False)
-    experiment_id = serializers.UUIDField(required=False)
+    name = serializers.CharField(
+        max_length=50,
+        help_text="Unique name for the new eval metric on this dataset/experiment.",
+    )
+    template_id = serializers.CharField(
+        max_length=500,
+        help_text="Eval template UUID to instantiate (from list_eval_templates).",
+    )
+    config = serializers.JSONField(
+        help_text=(
+            "Eval runtime config: {'mapping': {required_key: column/field}, "
+            "'config': {...}, 'params': {...}} per the template's "
+            "required_keys."
+        )
+    )
+    kb_id = serializers.UUIDField(
+        required=False,
+        help_text="Optional knowledge-base file UUID used by RAG-style evals.",
+    )
+    error_localizer = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Also run error localization on failing cells.",
+    )
+    model = serializers.CharField(
+        max_length=100,
+        required=False,
+        allow_blank=True,
+        help_text="LLM used to run the eval (default turing_large).",
+    )
+    eval_type = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Eval type tag (usually inferred from the template).",
+    )
+    run = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Execute the eval immediately after attaching it.",
+    )
+    save_as_template = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Also save a reusable copy of the template under 'name'.",
+    )
+    experiment_id = serializers.UUIDField(
+        required=False,
+        help_text="Experiment UUID when attaching via the generic eval endpoint.",
+    )
     composite_weight_overrides = serializers.JSONField(
         required=False,
         allow_null=True,
         default=None,
+        help_text="Per-child weight overrides for composite eval templates.",
     )
 
 
@@ -2965,9 +3035,21 @@ class ExperimentRerunRequestSerializer(serializers.Serializer):
     experiment_ids = serializers.ListField(
         child=serializers.UUIDField(),
         allow_empty=False,
+        help_text=(
+            "Experiment UUIDs to re-run (from list_experiments). Previous "
+            "results are overwritten."
+        ),
     )
-    use_temporal = serializers.BooleanField(required=False, default=True)
-    max_concurrent_rows = serializers.IntegerField(required=False, min_value=1)
+    use_temporal = serializers.BooleanField(
+        required=False,
+        default=True,
+        help_text="Run via the Temporal workflow engine (default true).",
+    )
+    max_concurrent_rows = serializers.IntegerField(
+        required=False,
+        min_value=1,
+        help_text="Max rows processed concurrently per experiment (default 10).",
+    )
 
 
 class ExperimentComparisonWeightsRequestSerializer(serializers.Serializer):
@@ -2975,12 +3057,24 @@ class ExperimentComparisonWeightsRequestSerializer(serializers.Serializer):
         child=serializers.UUIDField(),
         required=False,
         default=list,
+        help_text="Optional eval metric UUIDs to restrict the comparison to.",
     )
-    weights = serializers.JSONField(required=False, default=dict)
+    weights = serializers.JSONField(
+        required=False,
+        default=dict,
+        help_text=(
+            "Metric weights for the weighted ranking, e.g. {'scores': 0.4, "
+            "'response_time': 0.3, 'total_tokens': 0.3}. Empty = defaults."
+        ),
+    )
 
 
 class ExperimentAdditionalEvaluationsRequestSerializer(serializers.Serializer):
     eval_template_ids = serializers.ListField(
         child=serializers.UUIDField(),
         allow_empty=False,
+        help_text=(
+            "UserEvalMetric UUIDs (already attached to the experiment's "
+            "dataset) to run; their eval columns are reset and recomputed."
+        ),
     )

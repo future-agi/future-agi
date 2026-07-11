@@ -1,4 +1,3 @@
-from typing import Optional
 from uuid import UUID
 
 from pydantic import BaseModel as PydanticBaseModel
@@ -11,13 +10,13 @@ from ai_tools.registry import register_tool
 
 class UpdateEvalGroupInput(PydanticBaseModel):
     eval_group_id: UUID = Field(description="The UUID of the eval group to update")
-    name: Optional[str] = Field(
+    name: str | None = Field(
         default=None,
         description="New name for the eval group",
         min_length=1,
         max_length=255,
     )
-    description: Optional[str] = Field(
+    description: str | None = Field(
         default=None, description="New description for the eval group"
     )
 

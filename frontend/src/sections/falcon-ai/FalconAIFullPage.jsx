@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Navigate } from "react-router-dom";
 import Box from "@mui/material/Box";
+import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import useFalconStore from "./store/useFalconStore";
 import useFalconSocket from "./hooks/useFalconSocket";
 import { useFalconContext } from "./hooks/useFalconContext";
@@ -16,10 +17,17 @@ import ChatInput from "./components/ChatInput";
 import ChatListPanel from "./components/ChatListPanel";
 import SkillPicker from "./components/SkillPicker";
 import CustomizePanel from "./components/CustomizePanel";
+import prependConversation from "./helpers/prependConversation";
 
 export default function FalconAIFullPage() {
   const { conversationId: urlConversationId } = useParams();
   const navigate = useNavigate();
+  // Falcon AI is not available on self-hosted/OSS. If an OSS user reaches this
+  // route directly, redirect them away instead of rendering the "feature not
+  // available / upgrade your plan" screen (TH-4698). (The FAB and the dashboard
+  // index redirect already keep OSS users off Falcon; this closes the
+  // direct-URL gap.)
+  const { isOSS } = useDeploymentMode();
 
   const currentConversationId = useFalconStore((s) => s.currentConversationId);
   const setCurrentConversation = useFalconStore(
@@ -34,7 +42,8 @@ export default function FalconAIFullPage() {
   const messages = useFalconStore((s) => s.messages);
   const showCustomize = useFalconStore((s) => s.showCustomize);
 
-  const { sendChat, sendStop, sendFeedback } = useFalconSocket();
+  const { sendChat, sendStop, sendFeedback, sendReconnect, sendConfirmAction } =
+    useFalconSocket();
   const context = useFalconContext();
 
   const loadSkillsAndConnectors = useCallback(async () => {
@@ -96,16 +105,9 @@ export default function FalconAIFullPage() {
           const newConv = resp.result || resp;
           convId = newConv.id;
           setCurrentConversation(convId);
-          // Add to sidebar list immediately
-          const store = useFalconStore.getState();
-          store.setConversations([
-            {
-              id: convId,
-              title: newConv.title || text.slice(0, 50),
-              created_at: new Date().toISOString(),
-            },
-            ...(store.conversations || []),
-          ]);
+          // Add to the conversations list immediately so title_generated
+          // finds a row to update
+          prependConversation(newConv, text.slice(0, 50));
         } catch {
           return;
         }
@@ -163,6 +165,12 @@ export default function FalconAIFullPage() {
     [setPendingPrompt],
   );
 
+  // OSS users never see the Falcon page (and thus never the upgrade screen) —
+  // bounce them to the default dashboard route. (TH-4698)
+  if (isOSS) {
+    return <Navigate to="/dashboard/prototype" replace />;
+  }
+
   return (
     <Box
       sx={{
@@ -172,7 +180,7 @@ export default function FalconAIFullPage() {
         bgcolor: "background.default",
       }}
     >
-      <ChatListPanel />
+      <ChatListPanel sendReconnect={sendReconnect} />
 
       {showCustomize ? (
         <CustomizePanel />
@@ -197,6 +205,7 @@ export default function FalconAIFullPage() {
             <MessageList
               onQuickAction={handleQuickAction}
               onFeedback={sendFeedback}
+              onConfirmAction={sendConfirmAction}
             />
             {messages.length === 0 && (
               <Box sx={{ maxWidth: 600, mx: "auto", width: "100%", pb: 2 }}>

@@ -1,5 +1,3 @@
-from typing import Optional
-
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -16,7 +14,7 @@ from ai_tools.registry import register_tool
 class ListEvalGroupsInput(PydanticBaseModel):
     limit: int = Field(default=20, ge=1, le=100, description="Max results to return")
     offset: int = Field(default=0, ge=0, description="Offset for pagination")
-    search: Optional[str] = Field(
+    search: str | None = Field(
         default=None,
         description="Search eval groups by name (case-insensitive)",
     )

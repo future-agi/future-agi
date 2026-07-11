@@ -4,6 +4,23 @@ import { useShallow } from "zustand/react/shallow";
 let _blockIdCounter = 0;
 
 /**
+ * Rebuild chat widgets from a persisted render_widget tool call. The backend
+ * persists tool_calls (incl. result_full = the render_widget JSON ≤2000
+ * chars) but not blocks, so history reloads reconstruct the chart cards from
+ * the tool result. Truncated/older payloads simply yield no widgets.
+ */
+function _widgetsFromToolCall(tc) {
+  if (tc?.tool_name !== "render_widget" || !tc.result_full) return [];
+  try {
+    const parsed = JSON.parse(tc.result_full);
+    const widgets = parsed.widgets || (parsed.widget ? [parsed.widget] : []);
+    return widgets.filter((w) => w && w.id && w.type);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Build an ordered blocks array from legacy content + tool_calls fields.
  * Used when loading historical messages that don't have blocks yet.
  */
@@ -16,6 +33,11 @@ function _buildBlocksFromLegacy(msg) {
         type: "tool_call",
         id: tc.call_id || `tc-${blocks.length}`,
         toolCall: tc,
+      });
+      // Chat-side widget answers (Phase 4C): re-materialize chart cards
+      // right after the render_widget call that produced them.
+      _widgetsFromToolCall(tc).forEach((w) => {
+        blocks.push({ type: "widget", id: `widget-${w.id}`, widget: w });
       });
     });
   }
@@ -199,6 +221,68 @@ const useFalconStore = create((set, _get) => ({
             }
           : m,
       ),
+    })),
+
+  // Widget answers in chat (Phase 4C): a widget_render event for a NON-Imagine
+  // conversation lands here as widget blocks on the streaming message, so the
+  // chart renders inline in the chat (useFalconSocket routes the event).
+  // add/update upsert by widget id; replace_all swaps every widget block on
+  // the message; remove drops one. content/tool_calls are untouched.
+  applyWidgetEvent: (messageId, action, widget, widgets) =>
+    set((s) => ({
+      messages: s.messages.map((m) => {
+        if (m.id !== messageId) return m;
+        const blocks = m.blocks || [];
+        const act = action || "add";
+
+        if (act === "replace_all") {
+          const next = widgets || (widget ? [widget] : []);
+          return {
+            ...m,
+            blocks: [
+              ...blocks.filter((b) => b.type !== "widget"),
+              ...next
+                .filter((w) => w && w.id)
+                .map((w) => ({
+                  type: "widget",
+                  id: `widget-${w.id}`,
+                  widget: w,
+                })),
+            ],
+          };
+        }
+
+        if (act === "remove") {
+          if (!widget?.id) return m;
+          return {
+            ...m,
+            blocks: blocks.filter(
+              (b) => !(b.type === "widget" && b.id === `widget-${widget.id}`),
+            ),
+          };
+        }
+
+        // add / update / unknown-with-widget → upsert by widget id
+        if (!widget?.id) return m;
+        const blockId = `widget-${widget.id}`;
+        const existing = blocks.find(
+          (b) => b.type === "widget" && b.id === blockId,
+        );
+        if (existing) {
+          return {
+            ...m,
+            blocks: blocks.map((b) =>
+              b.type === "widget" && b.id === blockId
+                ? { ...b, widget: { ...b.widget, ...widget } }
+                : b,
+            ),
+          };
+        }
+        return {
+          ...m,
+          blocks: [...blocks, { type: "widget", id: blockId, widget }],
+        };
+      }),
     })),
 
   // Streaming

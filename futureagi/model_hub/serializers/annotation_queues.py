@@ -65,11 +65,26 @@ class QueueAnnotatorNestedSerializer(serializers.ModelSerializer):
 
 
 class AnnotationQueueSerializer(serializers.ModelSerializer):
+    """An annotation queue collects items (trace rows, dataset rows, evals)
+    for human review and labeling.
+
+    Each queue has a label set (define what reviewers can submit) and an
+    assignee list with roles (annotator, reviewer, manager). Items move
+    through pending -> in_progress -> completed states. Use queues to
+    coordinate labeling work, ground-truth gathering, and quality reviews.
+    Names are unique per workspace.
+    """
+
     label_ids = serializers.ListField(
         child=serializers.UUIDField(),
         write_only=True,
         required=True,
         min_length=1,
+        help_text=(
+            "UUIDs of labels (AnnotationsLabels) to attach to this queue. "
+            "**How to get them:** call `list_annotation_labels` first. "
+            "Reviewers can only submit values from these labels."
+        ),
         error_messages={
             "required": "At least one label is required.",
             "min_length": "At least one label is required.",
@@ -453,7 +468,27 @@ class QueueItemListSerializer(serializers.ListSerializer):
 
 
 class QueueItemSerializer(serializers.ModelSerializer):
-    source_id = serializers.CharField(write_only=True, required=False)
+    """A single unit of work inside an annotation queue — one source record
+    (a trace, span, trace session, dataset row, prototype run, or simulator
+    call execution) queued for human review and labeling.
+
+    Each item belongs to one queue and points at exactly one source record
+    (set ``source_type`` + ``source_id`` on create). Items carry a workflow
+    ``status`` (pending -> in_progress -> completed/skipped) plus a separate
+    review state, and can be assigned to annotators, reserved, and reviewed.
+    Listed/read via list_queue_items / get_queue_item; assign annotators with
+    assign_queue_items.
+    """
+
+    source_id = serializers.CharField(
+        write_only=True,
+        required=False,
+        help_text=(
+            "ID of the source record to queue (UUID for most source types; a "
+            "string key for observation_span). Paired with source_type on "
+            "create; resolved to the matching source object."
+        ),
+    )
     source_preview = serializers.SerializerMethodField()
     workflow_status = serializers.SerializerMethodField()
     workflow_status_label = serializers.SerializerMethodField()
@@ -501,6 +536,64 @@ class QueueItemSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["queue"]
         list_serializer_class = QueueItemListSerializer
+        extra_kwargs = {
+            "queue": {
+                "help_text": (
+                    "UUID of the annotation queue this item belongs to "
+                    "(from list_annotation_queues). Set from the queue route, "
+                    "read-only on the item."
+                )
+            },
+            "source_type": {
+                "help_text": (
+                    "Kind of source record this item wraps: 'dataset_row', "
+                    "'trace', 'observation_span', 'prototype_run', "
+                    "'call_execution', or 'trace_session'."
+                )
+            },
+            "status": {
+                "help_text": (
+                    "Annotation workflow status: 'pending', 'in_progress', "
+                    "'completed', or 'skipped'."
+                )
+            },
+            "priority": {
+                "help_text": "Sort priority; higher values surface first (default 0)."
+            },
+            "order": {
+                "help_text": "Manual ordering position within the queue (default 0)."
+            },
+            "metadata": {
+                "help_text": "Free-form JSON metadata attached to this item."
+            },
+            "assigned_to": {
+                "help_text": (
+                    "Deprecated single-assignee user UUID; use assigned_users / "
+                    "assign_queue_items for multi-annotator assignment."
+                )
+            },
+            "reserved_by": {
+                "help_text": (
+                    "UUID of the annotator who has temporarily reserved this "
+                    "item to work on it (null if unreserved)."
+                )
+            },
+            "reservation_expires_at": {
+                "help_text": "When the current reservation lapses and the item frees up."
+            },
+            "review_status": {
+                "help_text": (
+                    "Reviewer decision state, e.g. 'pending_review' or "
+                    "'rejected' (null when no review is in flight)."
+                )
+            },
+            "reviewed_by": {
+                "help_text": "UUID of the reviewer who last actioned this item."
+            },
+            "review_notes": {
+                "help_text": "Free-text notes left by the reviewer."
+            },
+        }
 
     def get_assigned_users(self, obj):
         assignments = getattr(obj, "active_assignments", None)
@@ -1859,10 +1952,28 @@ class AnnotateDetailSerializer(serializers.Serializer):
 
 
 class AutomationRuleSerializer(serializers.ModelSerializer):
+    """A rule that auto-routes matching source records into an annotation
+    queue, so qualifying traces/spans/etc. are enqueued for review without
+    manual selection.
+
+    A rule is scoped to one queue and one ``source_type``, and matches records
+    using ``conditions`` (a canonical filter list). ``trigger_frequency``
+    controls how often it runs (manual, hourly, daily, weekly, monthly) and
+    ``enabled`` toggles it on/off. Managed via create/list/get/update/
+    delete_automation_rule; requires queue-manager permission to write.
+    """
+
     created_by_name = serializers.CharField(
         source="created_by.name", read_only=True, default=None
     )
-    conditions = AutomationRuleConditionsSerializer(required=False)
+    conditions = AutomationRuleConditionsSerializer(
+        required=False,
+        help_text=(
+            "Matching criteria for the rule. Use conditions.filter with the "
+            "canonical filter list (optionally conditions.scope); records "
+            "matching the filter within this source_type are enqueued."
+        ),
+    )
 
     class Meta:
         model = AutomationRule
@@ -1888,6 +1999,38 @@ class AutomationRuleSerializer(serializers.ModelSerializer):
             "trigger_count",
             "last_triggered_at",
         ]
+        extra_kwargs = {
+            "name": {"help_text": "Human-readable name for this automation rule."},
+            "queue": {
+                "help_text": (
+                    "UUID of the annotation queue records are routed into "
+                    "(from list_annotation_queues). Set from the queue route, "
+                    "read-only on the rule."
+                )
+            },
+            "source_type": {
+                "help_text": (
+                    "Kind of source record this rule matches and enqueues: "
+                    "'dataset_row', 'trace', 'observation_span', "
+                    "'prototype_run', 'call_execution', or 'trace_session'."
+                )
+            },
+            "enabled": {
+                "help_text": "Whether the rule is active (default true)."
+            },
+            "trigger_frequency": {
+                "help_text": (
+                    "How often the rule runs: 'manual' (default), 'hourly', "
+                    "'daily', 'weekly', or 'monthly'."
+                )
+            },
+            "last_triggered_at": {
+                "help_text": "When the rule last ran (read-only)."
+            },
+            "trigger_count": {
+                "help_text": "Number of times the rule has run (read-only)."
+            },
+        }
 
     def validate_conditions(self, value):
         if value in (None, ""):

@@ -675,8 +675,30 @@ evals_template = [
             "output": "Pass/Fail",
             "eval_type_id": "DeterministicEvaluator",
             "config": {},
+            # PII detection accepts an optional list of PII types to look for.
+            # Without this schema entry, normalize_function_params rejected
+            # `detect_types` as an "Unknown function param", blocking creation
+            # via MCP/API (TH-5409). Untyped (passthrough) so a list, a
+            # comma-separated string, or a JSON array are all accepted —
+            # matching what regex_pii_detection() parses.
+            "function_params_schema": {
+                "detect_types": {
+                    "default": None,
+                    "nullable": True,
+                    "description": (
+                        "Optional PII types to detect, e.g. ['email', 'phone', "
+                        "'ssn', 'credit_card', 'ip_address']. Accepts a list, a "
+                        "comma-separated string, or a JSON array. Omit to detect "
+                        "all supported types."
+                    ),
+                }
+            },
             "config_params_desc": {
                 "input": "The input content to be evaluated for PII",
+                "detect_types": (
+                    "Optional list of PII types to detect (email, phone, ssn, "
+                    "credit_card, ip_address). Omit to check all types."
+                ),
             },
             "param_modalities": {
                 "input": MODALITY_DICT["MULTIMODAL"],

@@ -52,6 +52,21 @@ from tracer.services.clickhouse.v2.query_settings import current_settings
 #   tracer/utils/eval.py:210, 219, 271, 289, 306, 2218 → .filter(...) aggregates
 # Adding a field here is cheap; removing one is a breaking change for callers.
 @dataclass(frozen=True)
+class RootSpanRef:
+    """Minimal root-span identity (F3 ``get_root_span_for_trace``).
+
+    Only the columns a root-span lookup needs — ``.id`` (used as a SpanNote
+    ``span_id`` filter), ``.parent_span_id`` (always "" for a root) and
+    ``.observation_type``. Deliberately NOT a full ``CHSpan`` so the query can
+    skip the wide JSON-blob columns that make a whole-trace fetch OOM.
+    """
+
+    id: str
+    parent_span_id: str
+    observation_type: str
+
+
+@dataclass(frozen=True)
 class CHSpan:
     id: str
     project_id: str
@@ -577,6 +592,37 @@ class CHSpanReader:
             settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         return [_row_to_chspan(r) for r in rows]
+
+    def get_root_span_for_trace(self, trace_id: str) -> RootSpanRef | None:
+        """Return the trace's root span as a lightweight ``RootSpanRef``.
+
+        F3: ``list_by_trace`` selects ~40 wide columns (input/output/metadata/
+        attribute JSON blobs) for EVERY span in the trace — for a trace with many
+        large spans that materialization can blow ClickHouse's per-query memory
+        budget (server error code 241, MEMORY_LIMIT_EXCEEDED). Callers that only
+        need to identify the ROOT span (e.g. the annotation-workspace span-notes
+        target) don't need any of that: select just the three id/type columns and
+        cap the scan. Root spans have an empty ``parent_span_id`` (CH stores it as
+        a non-nullable String); preference order mirrors the legacy PG path —
+        ``observation_type='conversation'`` root → earliest root by start_time.
+        """
+        rows = self._client.query(
+            "SELECT id, parent_span_id, observation_type "
+            "FROM spans FINAL "
+            "WHERE trace_id = %(trace_id)s AND is_deleted = 0 "
+            "AND parent_span_id = '' "
+            "ORDER BY observation_type = 'conversation' DESC, start_time, id "
+            "LIMIT 1",
+            parameters={"trace_id": trace_id},
+        ).result_rows
+        if not rows:
+            return None
+        span_id, parent_span_id, observation_type = rows[0]
+        return RootSpanRef(
+            id=str(span_id),
+            parent_span_id=str(parent_span_id or ""),
+            observation_type=str(observation_type or ""),
+        )
 
     def first_span_by_type(self, trace_id: str, observation_type: str) -> CHSpan | None:
         """First span of a given type in a trace, ordered by start_time.

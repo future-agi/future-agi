@@ -1,0 +1,31 @@
+# Phase 3A — confirmation-gated destructive bridges (PHASES.md 3A) plus the
+# add-side pairs required for one-click Undo. All destructive tools carry
+# execution_policy="destructive" and run behind the server-held confirmation
+# gate in BaseTool.run (ai_tools/confirmations.py).
+#
+# Deliberate exclusions (binding, design §1.11): AgentccAPIKeyViewSet.revoke
+# (cluster-7 sign-off, 3B), GraphViewSet.bulk_delete (agent_playground has no
+# bridge module), QueueItemViewSet.discussion_* (skipped family),
+# SecretKeyAPIViewSet.delete_secret_key (cluster 7), and
+# AgentccGatewayViewSet.update_provider (add-side pair of
+# remove_gateway_provider; takes raw credentials — blocked on UX_UI 7.6
+# secret masking, undo_note-only instead).
+bulk_delete_prompt_templates
+hard_delete_annotation_queue
+bulk_remove_queue_items
+bulk_delete_eval_tasks
+bulk_delete_test_executions
+bulk_delete_eval_templates
+delete_project_version_runs
+remove_shared_link_access
+bulk_delete_annotations
+reset_annotations
+remove_prompt_label_from_version
+assign_prompt_labels_to_version
+remove_blocklist_words
+add_blocklist_words
+remove_gateway_provider
+remove_gateway_budget
+set_gateway_budget
+remove_gateway_mcp_server
+update_gateway_mcp_server

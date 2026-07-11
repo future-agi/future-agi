@@ -134,6 +134,10 @@ class CreateAgentVersionView(APIView):
 
             validated = request.validated_data
             commit_message = validated.get("commit_message", "")
+            # Only mutate observability when the caller explicitly sends the flag;
+            # otherwise inherit the previous version's setting so creating a new
+            # version does not silently disable observability (TH-5374).
+            observability_provided = "observability_enabled" in request.data
             observability_enabled = validated.get("observability_enabled", False)
 
             incoming_api_key = validated.get("api_key")
@@ -192,29 +196,32 @@ class CreateAgentVersionView(APIView):
                 changed = True
             if changed:
                 agent.save()
-            provider = agent.observability_provider
+            if observability_provided:
+                provider = agent.observability_provider
 
-            if provider:
-                is_project_deleted = provider.project.deleted
-                if is_project_deleted:
-                    agent.observability_provider = None
-                    agent.save()
+                if provider:
+                    is_project_deleted = provider.project.deleted
+                    if is_project_deleted:
+                        agent.observability_provider = None
+                        agent.save()
+                    else:
+                        provider.enabled = observability_enabled
+                        provider.save()
                 else:
-                    provider.enabled = observability_enabled
-                    provider.save()
-            else:
-                if observability_enabled:
-                    provider = create_observability_provider(
-                        enabled=True,
-                        user_id=str(request.user.id),
-                        organization=getattr(request, "organization", None)
-                        or request.user.organization,
-                        workspace=getattr(request.user, "workspace", None),
-                        project_name=agent.agent_name,
-                        provider=agent.provider,
-                    )
-                    agent.observability_provider = provider
-                    agent.save()
+                    if observability_enabled:
+                        provider = create_observability_provider(
+                            enabled=True,
+                            user_id=str(request.user.id),
+                            organization=getattr(request, "organization", None)
+                            or request.user.organization,
+                            workspace=getattr(request.user, "workspace", None),
+                            project_name=agent.agent_name,
+                            provider=agent.provider,
+                        )
+                        agent.observability_provider = provider
+                        agent.save()
+            # else: leave the existing observability_provider + enabled state
+            # untouched so the new version inherits the prior setting.
 
             # Resolve the API key *before* creating the new version so we
             # read from the active version rather than the brand-new one.

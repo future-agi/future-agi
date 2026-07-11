@@ -19,6 +19,17 @@ export const useFalconSocket = () => {
   const timerRef = useRef(null);
   const pingRef = useRef(null);
   const mountedRef = useRef(true);
+  // Holds a chat payload sent while the socket was not yet OPEN, so it can be
+  // flushed once the connection opens instead of being silently dropped
+  // (otherwise the UI streams forever with no reply — TH-4873).
+  const pendingChatRef = useRef(null);
+  // Resume-after-drop guard: a `reconnect` (which asks the server to replay a
+  // stream) must fire ONLY when the socket closed DURING a stream — never on a
+  // fresh send. A fresh send also sets isStreaming=true, so an ungated
+  // reconnect there gets a `reconnect_status: "none"` reply that clears the
+  // live streaming state — dropping the answer or leaving the spinner stuck.
+  const droppedDuringStreamRef = useRef(false);
+  const reconnectSentRef = useRef(false);
 
   const {
     appendTextDelta,
@@ -65,16 +76,34 @@ export const useFalconSocket = () => {
         }
       }, 30000);
 
-      // On reconnect, check if there is an active stream to resume
+      // Flush a chat that was queued while the socket was still connecting
+      // (e.g. the first message right after page load, or during a slow
+      // handshake). Without this the frame was silently dropped and the UI
+      // streamed forever with no reply (TH-4873).
+      if (pendingChatRef.current) {
+        ws.send(JSON.stringify(pendingChatRef.current));
+        pendingChatRef.current = null;
+        return;
+      }
+
+      // Resume a stream ONLY after a genuine mid-stream drop — never on a fresh
+      // send (which also has isStreaming=true). A spurious reconnect there gets
+      // a `reconnect_status: "none"` reply that wipes the live streaming state.
       const store = useFalconStore.getState();
-      if (store.currentConversationId && store.isStreaming) {
+      if (
+        droppedDuringStreamRef.current &&
+        store.currentConversationId &&
+        store.isStreaming
+      ) {
         ws.send(
           JSON.stringify({
             type: "reconnect",
             conversation_id: store.currentConversationId,
           }),
         );
+        reconnectSentRef.current = true;
       }
+      droppedDuringStreamRef.current = false;
     };
 
     ws.onmessage = (event) => {
@@ -82,13 +111,16 @@ export const useFalconSocket = () => {
         const parsed = JSON.parse(event.data);
         const { type, data } = parsed;
 
-        // Filter: ignore events from a different conversation
-        if (data?.conversation_id) {
+        // Filter: ignore events from a different conversation. Strict on
+        // purpose — an event tagged with a conversation that isn't the one on
+        // screen (including "no conversation selected") must never mutate
+        // messages or remap streamingMessageId. Events that legitimately lack
+        // conversation_id (e.g. pong, direct consumer errors) still pass.
+        // title_generated is exempt: it updates the conversation LIST, which
+        // must work even after the user switched away mid-titling.
+        if (data?.conversation_id && type !== "title_generated") {
           const store = useFalconStore.getState();
-          if (
-            store.currentConversationId &&
-            data.conversation_id !== store.currentConversationId
-          ) {
+          if (data.conversation_id !== store.currentConversationId) {
             // Event belongs to a different conversation — ignore it
             return;
           }
@@ -96,7 +128,10 @@ export const useFalconSocket = () => {
 
         // Map backend message_id to frontend's placeholder message
         // Frontend creates "assistant-<timestamp>", backend sends "<uuid>"
-        if (data?.message_id) {
+        // confirmation_resolved is exempt: its message_id points at the PAST
+        // message holding the confirm card, never the in-flight placeholder —
+        // remapping there would collide two messages onto one id.
+        if (data?.message_id && type !== "confirmation_resolved") {
           const store = useFalconStore.getState();
           if (
             store.streamingMessageId &&
@@ -121,18 +156,58 @@ export const useFalconSocket = () => {
               params: data.params,
               status: "running",
               step: data.step,
+              // read | mutate | destructive — drives the write badge (UX_UI 7.1)
+              execution_policy: data.execution_policy,
               result_summary: null,
               result_full: null,
             });
             break;
 
-          case "tool_call_result":
-            updateToolCall(data.message_id, data.call_id, {
+          case "tool_call_result": {
+            const updates = {
               status: data.status,
               result_summary: data.result_summary,
               result_full: data.result_full,
-            });
+            };
+            // Destructive phase-1: structured confirmation payload
+            // ({token, tool_name, args, preview, expires_at, policy, undo_note})
+            // renders the inline Confirm/Cancel card.
+            if (data.confirmation) {
+              updates.confirmation = data.confirmation;
+            }
+            // Executed phase-2 leg may carry a compensating-action hint.
+            if (data.undo) {
+              updates.undo = data.undo;
+            }
+            updateToolCall(data.message_id, data.call_id, updates);
             break;
+          }
+
+          case "confirmation_resolved": {
+            // Server-held approval resolved (Confirm/Cancel button, or the
+            // token expired). Flip the card state on the original message…
+            if (data.message_id && data.call_id) {
+              updateToolCall(data.message_id, data.call_id, {
+                confirmation_status: data.decision,
+              });
+            }
+            // …and for confirmed/cancelled the consumer persists a synthetic
+            // user message and starts a NEW agent turn — arm a placeholder so
+            // the follow-up stream has a message to land in (same idiom as
+            // handleSend; without this the new turn's events are dropped).
+            if (data.decision === "confirmed" || data.decision === "cancelled") {
+              const store = useFalconStore.getState();
+              const assistantMsgId = `assistant-${Date.now()}`;
+              store.addMessage({
+                id: assistantMsgId,
+                role: "assistant",
+                content: "",
+                created_at: new Date().toISOString(),
+              });
+              setStreaming(true, assistantMsgId);
+            }
+            break;
+          }
 
           case "iteration_start":
             updateMessage(data.message_id, {
@@ -173,17 +248,40 @@ export const useFalconSocket = () => {
                 c.id === convId ? { ...c, title } : c,
               );
               store.setConversations(updated);
-              document.title = `${title} | Falcon AI`;
+              // This event bypasses the conversation filter (list update),
+              // so only retitle the tab for the conversation on screen.
+              if (convId === store.currentConversationId) {
+                document.title = `${title} | Falcon AI`;
+              }
             }
             break;
           }
 
-          case "error":
+          case "error": {
+            // Consumer errors carry data.error, agent LLM-stream errors carry
+            // data.message — accept both.
+            const errorText =
+              data?.error || data?.message || "An error occurred";
+            const store = useFalconStore.getState();
+            // Errors without message_id (e.g. the usage-limit pre-check) must
+            // still render: fall back to the in-flight message, else append a
+            // standalone assistant error message. Read streamingMessageId
+            // BEFORE setStreaming(false) clears it.
+            const targetId = data?.message_id || store.streamingMessageId;
             setStreaming(false);
-            updateMessage(data.message_id, {
-              error: data.error || "An error occurred",
-            });
+            if (targetId && store.messages.some((m) => m.id === targetId)) {
+              updateMessage(targetId, { error: errorText });
+            } else {
+              store.addMessage({
+                id: `assistant-error-${Date.now()}`,
+                role: "assistant",
+                content: "",
+                error: errorText,
+                created_at: new Date().toISOString(),
+              });
+            }
             break;
+          }
 
           case "skill_activated":
             if (data.skill) {
@@ -192,15 +290,40 @@ export const useFalconSocket = () => {
             break;
 
           case "reconnect_status":
-            if (data.status === "running") {
-              // Stream is still active — replayed events will follow, then live events
-              setStreaming(true, useFalconStore.getState().streamingMessageId);
-            } else if (data.status === "done") {
-              // Stream completed while disconnected — events will replay, then done
-              // (the "done" event is part of the buffered events)
-            } else if (data.status === "none" || data.status === "cancelled") {
-              // No active stream — stop any loading indicators
-              setStreaming(false);
+            // Defensive: only honor a status we actually solicited (after a real
+            // drop). Otherwise a stray/late reconnect_status could clear a live,
+            // freshly-sent stream — the exact dropped-answer / stuck-spinner bug.
+            if (reconnectSentRef.current) {
+              if (data.status === "running" || data.status === "done") {
+                // The server replays EVERY buffered event from the start of
+                // the stream after this status. Reset the in-flight message so
+                // the replay rebuilds it exactly once — appendTextDelta is not
+                // idempotent and would duplicate any already-rendered prefix.
+                const { streamingMessageId } = useFalconStore.getState();
+                if (streamingMessageId) {
+                  updateMessage(streamingMessageId, {
+                    content: "",
+                    tool_calls: [],
+                    blocks: [],
+                    completion_card: null,
+                  });
+                }
+                if (data.status === "running") {
+                  // Stream is still active — replayed events follow, then live events
+                  setStreaming(true, streamingMessageId);
+                }
+                // For "done" the replay ends with the buffered "done" event,
+                // which clears streaming.
+              } else if (
+                data.status === "none" ||
+                data.status === "cancelled" ||
+                data.status === "error"
+              ) {
+                // No active stream — stop any loading indicators ("error" has
+                // no buffered done event, so it would otherwise stick)
+                setStreaming(false);
+              }
+              reconnectSentRef.current = false;
             }
             break;
 
@@ -212,10 +335,31 @@ export const useFalconSocket = () => {
             break;
 
           case "widget_render": {
+            // Route by surface (Phase 4C): events for the Imagine canvas
+            // conversation drive the canvas store; events from ANY other
+            // conversation render as chart cards inline in the chat —
+            // previously they were silently swallowed into the (unmounted)
+            // Imagine store and the user saw nothing.
             import("src/components/imagine/useImagineStore").then(
               ({ default: useImagineStore }) => {
                 const store = useImagineStore.getState();
                 const action = data.action || "add";
+                const isImagineConversation =
+                  !!store.conversationId &&
+                  store.conversationId === data.conversation_id;
+
+                if (!isImagineConversation) {
+                  useFalconStore
+                    .getState()
+                    .applyWidgetEvent(
+                      data.message_id,
+                      action,
+                      data.widget,
+                      data.widgets,
+                    );
+                  return;
+                }
+
                 if (action === "add" && data.widget) {
                   store.addWidget(data.widget);
                 } else if (action === "update" && data.widget) {
@@ -250,6 +394,13 @@ export const useFalconSocket = () => {
       clearInterval(pingRef.current);
       if (socketRef.current !== ws) return;
       socketRef.current = null;
+
+      // The active socket dropped mid-stream — mark it so the NEXT onopen
+      // resumes via `reconnect`. (A fresh send never closes here, so it won't
+      // set this flag and won't trigger the stream-wiping spurious reconnect.)
+      if (useFalconStore.getState().isStreaming) {
+        droppedDuringStreamRef.current = true;
+      }
 
       // Auth-related errors - do NOT retry
       if ([4001, 4401, 4403, 1008].includes(event.code)) {
@@ -287,8 +438,8 @@ export const useFalconSocket = () => {
     };
   }, [connect]);
 
-  const sendChat = useCallback((message, conversationId, context, fileIds) => {
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+  const sendChat = useCallback(
+    (message, conversationId, context, fileIds) => {
       const store = useFalconStore.getState();
       const selectedCtx = store.selectedContext;
       const activeSkill = store.activeSkill;
@@ -311,15 +462,41 @@ export const useFalconSocket = () => {
         payload.skill_id = activeSkill.id;
       }
 
-      socketRef.current.send(JSON.stringify(payload));
-    }
-  }, []);
+      if (
+        socketRef.current &&
+        socketRef.current.readyState === WebSocket.OPEN
+      ) {
+        socketRef.current.send(JSON.stringify(payload));
+      } else {
+        // Socket not open yet (first message after load / slow handshake).
+        // Queue it and flush on open instead of silently dropping it, which
+        // left the UI streaming forever with no reply (TH-4873).
+        pendingChatRef.current = payload;
+        connect();
+      }
+    },
+    [connect],
+  );
 
   const sendActivateSkill = useCallback((skillId) => {
     if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
       socketRef.current.send(
         JSON.stringify({ type: "activate_skill", skill_id: skillId }),
       );
+    }
+  }, []);
+
+  // Solicited resume: ask the server to replay the buffered stream for a
+  // conversation (used when selecting a conversation whose stream is still
+  // running). Sets reconnectSentRef so the resulting reconnect_status is
+  // honored — the same gate that blocks spurious connection-open reconnects.
+  const sendReconnect = useCallback((conversationId) => {
+    if (!conversationId) return;
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(
+        JSON.stringify({ type: "reconnect", conversation_id: conversationId }),
+      );
+      reconnectSentRef.current = true;
     }
   }, []);
 
@@ -343,7 +520,26 @@ export const useFalconSocket = () => {
     }
   }, []);
 
-  return { sendChat, sendStop, sendFeedback, sendActivateSkill };
+  // Resolve a destructive-action confirmation. The button is the ONLY
+  // approver (typed "yes" never approves — server-enforced); decision is
+  // "confirm" or "cancel". The server replies with `confirmation_resolved`.
+  const sendConfirmAction = useCallback((token, decision) => {
+    if (!token) return;
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(
+        JSON.stringify({ type: "confirm_action", token, decision }),
+      );
+    }
+  }, []);
+
+  return {
+    sendChat,
+    sendStop,
+    sendFeedback,
+    sendActivateSkill,
+    sendReconnect,
+    sendConfirmAction,
+  };
 };
 
 export default useFalconSocket;

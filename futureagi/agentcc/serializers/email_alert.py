@@ -12,7 +12,15 @@ VALID_PROVIDERS = [p[0] for p in AgentccEmailAlert.PROVIDER_CHOICES]
 
 
 class AgentccEmailAlertSerializer(serializers.ModelSerializer):
-    provider_config = serializers.SerializerMethodField()
+    """Email alert configuration that notifies recipients when gateway events
+    fire (budget exceeded, error spikes, guardrail triggers, latency/cost
+    thresholds). Use it to set up email notifications via SendGrid, Resend, or
+    SMTP. Listed/read via list_agentcc_email_alerts / get_agentcc_email_alert;
+    provider_config is returned with secrets masked."""
+
+    provider_config = serializers.SerializerMethodField(
+        help_text="Provider credentials/settings, returned with secrets masked (read-only)."
+    )
 
     class Meta:
         model = AgentccEmailAlert
@@ -38,6 +46,24 @@ class AgentccEmailAlertSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+        extra_kwargs = {
+            "name": {"help_text": "Unique (per org) name for this alert."},
+            "recipients": {"help_text": "JSON array of recipient email addresses."},
+            "events": {
+                "help_text": "JSON array of event types to alert on (e.g. budget.exceeded, error.rate_spike, guardrail.triggered)."
+            },
+            "thresholds": {
+                "help_text": "JSON object of per-event threshold values that gate when an alert fires."
+            },
+            "provider": {"help_text": "Email provider: sendgrid, resend, or smtp."},
+            "is_active": {"help_text": "Whether this alert is enabled."},
+            "cooldown_minutes": {
+                "help_text": "Minimum minutes between consecutive alerts of the same kind."
+            },
+            "last_triggered_at": {
+                "help_text": "Timestamp the alert last fired (read-only)."
+            },
+        }
 
     def get_provider_config(self, obj):
         """Return masked config (hide sensitive values)."""

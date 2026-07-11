@@ -1366,15 +1366,19 @@ class TestSubmitAnnotations:
         assert item.status == QueueItemStatus.IN_PROGRESS.value
 
     def test_submit_invalid_label_id(self, auth_client, queue_with_items):
-        """Invalid label_id is silently skipped (submitted=0)."""
+        """A submission matching NO queue label is rejected with a recoverable
+        400 (F3 / TH-5467) — previously this silently returned submitted=0 and
+        stranded the caller, who then could not complete the item."""
         queue_id, item_ids, _ = queue_with_items
         resp = auth_client.post(
             submit_annotations_url(queue_id, item_ids[0]),
             {"annotations": [{"label_id": str(uuid.uuid4()), "value": "x"}]},
             format="json",
         )
-        assert resp.status_code == status.HTTP_200_OK
-        assert _result(resp)["submitted"] == 0
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        # the error names the valid label_id values so the caller can resubmit
+        body = str(resp.json()).lower()
+        assert "label_id" in body or "label" in body
 
     def test_submit_for_nonexistent_item(self, auth_client, queue_with_items):
         queue_id, _, label = queue_with_items

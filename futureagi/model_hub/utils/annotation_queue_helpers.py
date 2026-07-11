@@ -65,6 +65,30 @@ def _automation_rule_filter_error_message(exc):
     return AUTOMATION_RULE_FILTER_ERROR_MESSAGE
 
 
+# F3: a ClickHouse MEMORY_LIMIT_EXCEEDED (server error code 241) surfaced raw
+# in the annotator workspace endpoint — the user saw "...Code: 241..." instead
+# of a usable message. clickhouse_connect / clickhouse_driver put the numeric
+# code in the exception text ("Code: 241. DB::Exception: Memory limit ...
+# (MEMORY_LIMIT_EXCEEDED)"), so match on that text rather than a driver-specific
+# exception class (which differs across the http/native clients).
+def is_clickhouse_memory_error(exc) -> bool:
+    """True if ``exc`` is (or wraps) a ClickHouse out-of-memory / code-241 error."""
+    seen = set()
+    cur = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        text = str(cur).lower()
+        if (
+            "code: 241" in text
+            or "memory_limit_exceeded" in text
+            or "memory limit" in text
+            and "exceeded" in text
+        ):
+            return True
+        cur = getattr(cur, "__cause__", None) or getattr(cur, "__context__", None)
+    return False
+
+
 def _trace_primary_span(trace):
     if not trace:
         return None

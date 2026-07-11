@@ -44,6 +44,7 @@ export const paths = {
         `${ROOTS.DASHBOARD}/settings/workspace/${workspaceId}/integrations/${id}`,
       mcpServer: `${ROOTS.DASHBOARD}/settings/mcp-server`,
       falconAIConnectors: `${ROOTS.DASHBOARD}/settings/falcon-ai-connectors`,
+      falconAIMemory: `${ROOTS.DASHBOARD}/settings/falcon-ai-memory`,
       orgSettings: `${ROOTS.DASHBOARD}/settings/org-settings`,
       usageSummary: `${ROOTS.DASHBOARD}/settings/usage-summary`,
       billing: `${ROOTS.DASHBOARD}/settings/billing`,

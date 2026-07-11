@@ -45,6 +45,15 @@ class ToolRegistry:
                 f"vs {type(tool).__module__}.{type(tool).__name__})"
             )
 
+        # Phase 3A: backfill execution_policy for hand-written tools that
+        # don't declare one (bridge tools are classified at registration in
+        # drf_bridge.py with action/method context). Name-only fallback —
+        # delete_*/remove_*/bulk_* etc. land behind the confirmation gate.
+        if not getattr(tool, "execution_policy", ""):
+            from ai_tools.confirmations import classify_name_only
+
+            type(tool).execution_policy = classify_name_only(tool.name)
+
         self._tools[tool.name] = tool
 
         if tool.category not in self._categories:

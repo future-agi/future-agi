@@ -89,7 +89,53 @@ class CustomEvalConfigView(BaseModelViewSetMixin, ModelViewSet):
             serializer.validated_data["mapping"] = mapping
             custom_eval_config = serializer.save()
 
-            return self._gm.success_response({"id": str(custom_eval_config.id)})
+            # Non-blocking warning: if a required eval input is mapped to a span
+            # field that has no matching data anywhere in the project, the eval
+            # task will error on every span at run time. Surface that at
+            # creation so the user can fix the mapping instead of finding out
+            # only after the task fails (TH-5413).
+            response = {"id": str(custom_eval_config.id)}
+            try:
+                required_keys = eval_template.config.get("required_keys", []) or []
+                if required_keys and custom_eval_config.project_id:
+                    from tracer.utils.sql_queries import SQL_query_handler
+
+                    available = set(
+                        SQL_query_handler.get_span_attributes_for_project(
+                            str(custom_eval_config.project_id)
+                        )
+                        or []
+                    )
+
+                    def _has_data(field):
+                        if not field:
+                            return True
+                        f = str(field)
+                        return any(
+                            a == f or a.startswith(f + ".") or f.startswith(a + ".")
+                            for a in available
+                        )
+
+                    missing = [
+                        key
+                        for key in required_keys
+                        if mapping.get(key) and not _has_data(mapping.get(key))
+                    ]
+                    # Only warn when we actually have attribute data to compare
+                    # against, so we don't false-warn when ClickHouse is empty.
+                    if missing and available:
+                        response["warning"] = (
+                            "These required fields are mapped to span attributes "
+                            "with no matching data in this project, so the eval "
+                            "will error on every span until the mapping is fixed: "
+                            f"{', '.join(missing)}."
+                        )
+            except Exception:
+                logger.warning(
+                    "eval_config_field_validation_skipped", exc_info=True
+                )
+
+            return self._gm.success_response(response)
 
         except Exception as e:
             traceback.print_exc()

@@ -9,7 +9,11 @@ import UserMessage from "./UserMessage";
 import AssistantMessage from "./AssistantMessage";
 import QuickActions from "./QuickActions";
 
-export default function MessageList({ onQuickAction, onFeedback }) {
+export default function MessageList({
+  onQuickAction,
+  onFeedback,
+  onConfirmAction,
+}) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const messages = useFalconStore((s) => s.messages);
@@ -25,9 +29,14 @@ export default function MessageList({ onQuickAction, onFeedback }) {
     isNearBottomRef.current = scrollHeight - scrollTop - clientHeight < 120;
   };
 
-  // Auto-scroll only when near bottom or streaming
+  // Auto-scroll to follow new output ONLY while the user is near the bottom.
+  // Previously this also fired on `|| isStreaming`, which snapped the view back
+  // down on every token even after the user scrolled up mid-generation, making
+  // it impossible to read earlier content (TH-3613). `isNearBottomRef` is kept
+  // current by `handleScroll`, so scrolling up now pauses auto-scroll and
+  // returning to the bottom resumes it.
   useEffect(() => {
-    if (scrollRef.current && (isNearBottomRef.current || isStreaming)) {
+    if (scrollRef.current && isNearBottomRef.current) {
       scrollRef.current.scrollTo({
         top: scrollRef.current.scrollHeight,
         behavior: isStreaming ? "auto" : "smooth",
@@ -115,18 +124,34 @@ export default function MessageList({ onQuickAction, onFeedback }) {
         px: 3,
       }}
     >
-      {messages.map((msg) => {
-        if (msg.role === "user") {
-          return <UserMessage key={msg.id} message={msg} />;
+      {(() => {
+        // De-emphasize older history so the CURRENT exchange (the latest
+        // question + its answer) reads as the focused, full-contrast one.
+        // Everything before the last user message is the "old chat" — given a
+        // subtle, static lower contrast (no interactivity, stays legible).
+        let lastUserIdx = -1;
+        for (let i = messages.length - 1; i >= 0; i -= 1) {
+          if (messages[i].role === "user") {
+            lastUserIdx = i;
+            break;
+          }
         }
-        return (
-          <AssistantMessage
-            key={msg.id}
-            message={msg}
-            onFeedback={onFeedback}
-          />
-        );
-      })}
+        return messages.map((msg, idx) => {
+          const dimmed = lastUserIdx > 0 && idx < lastUserIdx;
+          if (msg.role === "user") {
+            return <UserMessage key={msg.id} message={msg} dimmed={dimmed} />;
+          }
+          return (
+            <AssistantMessage
+              key={msg.id}
+              message={msg}
+              onFeedback={onFeedback}
+              onConfirmAction={onConfirmAction}
+              dimmed={dimmed}
+            />
+          );
+        });
+      })()}
     </Box>
   );
 }
@@ -134,4 +159,5 @@ export default function MessageList({ onQuickAction, onFeedback }) {
 MessageList.propTypes = {
   onQuickAction: PropTypes.func,
   onFeedback: PropTypes.func,
+  onConfirmAction: PropTypes.func,
 };

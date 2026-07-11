@@ -5,7 +5,38 @@ import IconButton from "@mui/material/IconButton";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { alpha, useTheme } from "@mui/material/styles";
+import { useRouter } from "src/routes/hooks";
 import Iconify from "src/components/iconify";
+
+// Links in assistant markdown: internal deep links (/dashboard/...) navigate
+// client-side (no full reload, SPA state preserved); external links open in a
+// new tab so the user never loses the conversation.
+function MarkdownLink({ href, children, router }) {
+  if (href && href.startsWith("/")) {
+    return (
+      <a
+        href={href}
+        onClick={(e) => {
+          e.preventDefault();
+          router.push(href);
+        }}
+      >
+        {children}
+      </a>
+    );
+  }
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer">
+      {children}
+    </a>
+  );
+}
+
+MarkdownLink.propTypes = {
+  href: PropTypes.string,
+  children: PropTypes.node,
+  router: PropTypes.object.isRequired,
+};
 
 function CodeBlockWrapper({ children, className }) {
   const theme = useTheme();
@@ -123,6 +154,7 @@ CodeBlockWrapper.propTypes = {
 
 export default function TextBlock({ content }) {
   const theme = useTheme();
+  const router = useRouter();
   const isDark = theme.palette.mode === "dark";
 
   if (!content) return null;
@@ -151,11 +183,15 @@ export default function TextBlock({ content }) {
         "& h1": { fontSize: 20 },
         "& h2": { fontSize: 17 },
         "& h3": { fontSize: 15 },
-        // Tables
+        // Tables — width: max-content + the scroll wrapper (components.table
+        // below) lets wide tables scroll horizontally instead of crushing
+        // columns into unreadable slivers; minWidth keeps small tables
+        // full-width. Cell maxWidth still wraps very long text.
         "& table": {
           borderCollapse: "collapse",
-          width: "100%",
-          my: 1.5,
+          minWidth: "100%",
+          width: "max-content",
+          my: 0,
           fontSize: 13,
           borderRadius: "8px",
           overflow: "hidden",
@@ -163,6 +199,9 @@ export default function TextBlock({ content }) {
           borderColor: isDark
             ? alpha(theme.palette.common.white, 0.08)
             : alpha(theme.palette.common.black, 0.08),
+        },
+        "& td, & th": {
+          maxWidth: 360,
         },
         "& th": {
           bgcolor: isDark
@@ -265,6 +304,23 @@ export default function TextBlock({ content }) {
           pre({ children }) {
             // Let CodeBlockWrapper handle the pre styling
             return <>{children}</>;
+          },
+          table({ children }) {
+            // Horizontal scroll container — wide tables overflow the chat
+            // column (800px full page, ~380px sidebar) instead of being
+            // squeezed; data stays readable via scroll.
+            return (
+              <Box sx={{ overflowX: "auto", maxWidth: "100%", my: 1.5 }}>
+                <table>{children}</table>
+              </Box>
+            );
+          },
+          a({ href, children }) {
+            return (
+              <MarkdownLink href={href} router={router}>
+                {children}
+              </MarkdownLink>
+            );
           },
         }}
       >

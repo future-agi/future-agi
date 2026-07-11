@@ -9,6 +9,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 from accounts.utils import get_request_organization
+from ai_tools.drf_bridge import expose_to_mcp
 from tfc.middleware.db_health_check import db_connection_required
 from tfc.middleware.query_timeout import monitor_query_performance
 from tfc.routers import uses_db
@@ -64,6 +65,142 @@ from tracer.utils.helper import get_default_project_version_config, get_sort_que
 logger = structlog.get_logger(__name__)
 
 
+def _project_list_scope_label(params, data):
+    """F1 scope-honesty label for ``list_trace_projects``.
+
+    The view's ``total_count`` reflects (a) the active workspace and (b)
+    whichever ``project_type`` the model passed — or BOTH types when it
+    passed none. Without this label the model reads "Showing N of 47" and
+    echoes "47 observe projects", conflating a cross-type, all-workspace
+    feel with a scoped observe count. Stating the exact scope inline makes
+    that conflation impossible.
+    """
+    total = None
+    if isinstance(data, dict):
+        total = data.get("total_count")
+        if total is None:
+            projects = data.get("projects")
+            if isinstance(projects, list):
+                total = len(projects)
+
+    ptype = (params or {}).get("project_type")
+    if ptype == "observe":
+        type_phrase = "observe (live tracing) projects"
+    elif ptype == "experiment":
+        type_phrase = "experiment (offline eval) projects"
+    else:
+        type_phrase = (
+            "projects of BOTH types (observe + experiment) — pass "
+            "project_type='observe' or 'experiment' to count one type"
+        )
+
+    name_filter = (params or {}).get("name")
+    name_phrase = f", name contains '{name_filter}'" if name_filter else ""
+
+    count_phrase = f"{total} " if total is not None else ""
+    return (
+        f"Scope: {count_phrase}{type_phrase} in the current workspace"
+        f"{name_phrase}. This count is workspace- and type-scoped; do not "
+        f"present it as an org-wide or cross-type total."
+    )
+
+
+@expose_to_mcp(
+    category="tracing",
+    tools={
+        "list": {
+            "name": "list_trace_projects",
+            "result_scope": _project_list_scope_label,
+            "query_params": {
+                "name": {
+                    "type": str,
+                    "description": "Filter projects by name (case-insensitive substring match). Example: 'chatbot' matches 'production-chatbot-v2'.",
+                    "required": False,
+                },
+                "project_type": {
+                    "type": str,
+                    "description": "Filter by project type. One of: 'experiment' (offline eval runs) or 'observe' (live production tracing). Omit to return both.",
+                    "required": False,
+                },
+                "page_number": {
+                    "type": int,
+                    "default": 0,
+                    "description": "Page number, 0-indexed. Example: 0 for first page, 1 for second page.",
+                    "required": False,
+                },
+                "page_size": {
+                    "type": int,
+                    "default": 20,
+                    "description": "Number of projects per page. Range 1-100. Default 20.",
+                    "required": False,
+                },
+            },
+        },
+        "retrieve": {
+            "name": "get_trace_project",
+        },
+        "create": {
+            "name": "create_trace_project",
+            "include_fields": ["name", "model_type", "trace_type", "source", "tags"],
+        },
+        "update_project_name": {
+            "name": "rename_trace_project",
+            "serializer": "ProjectNameUpdateSerializer",
+            "method": "POST",
+        },
+        # --- Phase 2A Packet D additions -------------------------------
+        "get_graph_data": {
+            "name": "get_project_graph_data",
+            "description": (
+                "Fetch ALL system-metric time series for a project in one "
+                "call (latency, cost, tokens, ... bucketed by interval) — "
+                "the project overview graph. For a single chosen metric "
+                "use `get_trace_graph_methods` instead."
+            ),
+            "query_params": {
+                "project_id": {
+                    "type": str,
+                    "required": True,
+                    "description": (
+                        "UUID of the project. **How to get it:** call "
+                        "`list_trace_projects`."
+                    ),
+                },
+                "interval": {
+                    "type": str,
+                    "required": False,
+                    "description": (
+                        "Bucket size: hour (default), day, week, or month."
+                    ),
+                },
+                "filters": {
+                    "type": str,
+                    "required": False,
+                    "description": (
+                        "Optional JSON-encoded filter list (the same shape "
+                        "the Observe UI sends); omit for no filtering."
+                    ),
+                },
+            },
+        },
+        "get_user_metrics": {
+            "name": "get_project_user_metrics",
+            "description": (
+                "Get per-end-user usage metrics for one end user of an "
+                "observe project: active days, cost, tokens, LLM calls, "
+                "session/latency averages, errors and guardrail triggers."
+            ),
+        },
+        "fetch_system_metrics": {
+            "name": "get_project_system_metrics",
+            "description": (
+                "List the system metric names available for project "
+                "graphing (latency, cost, tokens). Takes no required "
+                "arguments."
+            ),
+        },
+    },
+)
 class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()

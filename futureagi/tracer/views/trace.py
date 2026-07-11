@@ -113,7 +113,14 @@ ERROR_RESPONSES = {
 
 
 class TraceTagsUpdateSerializer(serializers.Serializer):
-    tags = serializers.ListField(child=serializers.CharField(), allow_empty=True)
+    tags = serializers.ListField(
+        child=serializers.CharField(),
+        allow_empty=True,
+        help_text=(
+            "The FULL replacement list of tag strings (read current tags "
+            "via get_trace first; an empty list clears all tags)."
+        ),
+    )
 
 
 def _sanitize_nonfinite_floats(value):

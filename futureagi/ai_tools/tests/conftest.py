@@ -31,12 +31,26 @@ def fresh_registry():
 def run_tool(name: str, params: dict, context: ToolContext) -> ToolResult:
     """Convenience: look up a tool by name and run it.
 
+    Phase 3A: destructive tools answer the first call with a
+    CONFIRMATION_REQUIRED preview (zero side effects). Tests are the
+    approver here, so simulate the Confirm button (flip the server-held
+    record to approved) and re-call with confirm=true — every existing
+    delete-path test now exercises the real two-phase gate.
+
     Usage:
         result = run_tool("create_dataset", {"name": "ds", "columns": ["a"]}, tool_context)
     """
     tool = registry.get(name)
     assert tool is not None, f"Tool '{name}' not found in registry"
-    return tool.run(params, context)
+    result = tool.run(params, context)
+    if getattr(result, "error_code", None) == "CONFIRMATION_REQUIRED":
+        from ai_tools import confirmations
+
+        token = (result.data or {}).get("confirmation", {}).get("token")
+        assert token, f"CONFIRMATION_REQUIRED without token for '{name}'"
+        confirmations.set_status(token, "approved")
+        result = tool.run({**params, "confirm": True}, context)
+    return result
 
 
 @pytest.fixture

@@ -166,6 +166,28 @@ export async function deleteSkill(id) {
   await axiosInstance.delete(endpoints.falconAI.skill(id));
 }
 
+// ---------- Workspace Memory CRUD (Phase 5A) ----------
+
+export async function fetchMemories() {
+  const { data } = await axiosInstance.get(endpoints.falconAI.memories);
+  return data;
+}
+
+// POST upserts by key on the server (unique workspace+key) and forces
+// source="user" — editing an agent-saved memory makes it user-owned.
+export async function saveMemory(key, value) {
+  const { data } = await axiosInstance.post(endpoints.falconAI.memories, {
+    key,
+    value,
+  });
+  return data;
+}
+
+export async function deleteMemory(id) {
+  const { data } = await axiosInstance.delete(endpoints.falconAI.memory(id));
+  return data;
+}
+
 // ---------- File Upload ----------
 
 export async function uploadFile(file) {

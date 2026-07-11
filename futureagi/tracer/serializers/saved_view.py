@@ -13,6 +13,13 @@ class SavedViewCreatorSerializer(serializers.Serializer):
 
 
 class SavedViewListSerializer(serializers.ModelSerializer):
+    """A saved view: a reusable, named set of filters/columns/sort for one of the
+    Observe tabs (traces, spans, voice, etc.), scoped to a project or to the
+    workspace. Listed/read via list_saved_views / get_saved_view and created/edited
+    via create_saved_view / update_saved_view. `tab_type` picks the tab it applies
+    to, `visibility` is 'personal' or 'project' (shared), and `config` holds the
+    saved filters/columns/sort/display state."""
+
     created_by = SavedViewCreatorSerializer(read_only=True)
 
     class Meta:
@@ -35,6 +42,29 @@ class SavedViewListSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+        extra_kwargs = {
+            "name": {"help_text": "Human-readable name of the saved view."},
+            "tab_type": {
+                "help_text": (
+                    "Observe tab this view applies to: traces, spans, voice, imagine, "
+                    "users, user_detail, or sessions."
+                ),
+            },
+            "visibility": {
+                "help_text": (
+                    "'personal' (only you) or 'project' (shared with the project). "
+                    "Workspace-scoped views are always personal."
+                ),
+            },
+            "position": {"help_text": "Ordering index of the view within its tab."},
+            "icon": {"help_text": "Optional icon name for the view."},
+            "config": {
+                "help_text": (
+                    "JSON view state: filters, columns, sort, display, and related "
+                    "settings (allowed keys only)."
+                ),
+            },
+        }
 
 
 class SavedViewDetailSerializer(serializers.ModelSerializer):

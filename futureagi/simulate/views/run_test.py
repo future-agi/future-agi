@@ -509,11 +509,14 @@ class CreateRunTestView(APIView):
                                 # Skip if template doesn't exist
                                 continue
 
-                # Add existing evaluation configs if provided
+                # Add existing evaluation configs if provided.
+                # Attach the referenced eval configs to this run test. Without the
+                # .update() the queryset was evaluated and discarded, so the
+                # eval_config_ids were silently ignored (TH-5376).
                 if eval_config_ids:
                     SimulateEvalConfig.objects.filter(
                         id__in=eval_config_ids, run_test__organization=user_organization
-                    )
+                    ).update(run_test=run_test)
 
                 replay_session_id = validated_data.get("replay_session_id")
                 if replay_session_id:
@@ -3081,8 +3084,14 @@ class RunTestAnalyticsView(APIView):
 
 
 class CallExecutionDetailView(APIView):
-    """
-    API View to retrieve a specific call execution with all its details
+    """Retrieve one call execution — a single simulated call/chat that ran inside a test execution — with its full detail.
+
+    Use this to inspect a specific simulated conversation: its status, duration,
+    full transcript, recording/audio URLs, the simulator agent and agent
+    definition that were used, evaluation outputs/metrics, and conversation
+    analytics (turn count, agent latency, talk ratio, interruption timing,
+    token/CSAT for chat). Provide the call execution id; discover ids by reading
+    a test execution (get_test_execution) whose calls list these executions.
     """
 
     permission_classes = [IsAuthenticated]

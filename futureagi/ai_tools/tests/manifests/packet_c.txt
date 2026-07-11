@@ -1,0 +1,73 @@
+# Phase 2A Packet C — simulate app: simulation tail (cluster 3) +
+# personas/agents tails (cluster 8 part) + simulate-side optimiser @actions
+# (cluster 6 part). NET-NEW tools only — same-name HW->bridge conversions are
+# count-neutral and stay in baseline.txt (23 conversions: list_scenarios,
+# update_scenario, delete_scenario, cancel_test_execution, get_test_execution,
+# list_test_executions, get_test_execution_analytics, delete_test_execution,
+# delete_run_test, rerun_call_execution, get_call_transcript, get_call_logs,
+# list_simulator_agents, create_simulator_agent, update_simulator_agent,
+# get_agent_version, activate_agent_version, delete_simulate_eval_config,
+# update_simulate_eval_config, execute_prompt_simulation,
+# update_prompt_simulation, delete_prompt_simulation, list_prompt_scenarios).
+#
+# Deferred to Phase 3A (destructive bulk): TestExecutionBulkDeleteView.
+# Kept as hand-written (no DRF endpoint; §6.3-style endpoint-first work):
+#   compare_agent_versions, duplicate_agent_definition,
+#   list_simulate_eval_configs, list_eval_mapping_options.
+# Retired (removed from baseline.txt): delete_agent_definition — exact
+#   duplicate of the bridged delete_agent (ViewSet destroy).
+#
+# 3B cross-tenant flag: persona create/update/destroy guard system-vs-
+#   workspace IN-METHOD (runs on bridge path); simulate views scope by
+#   request.organization in-method — include all in the 3B negative sweep.
+#
+# --- scenarios (simulate/views/scenarios.py) ---
+add_scenario_rows
+add_scenario_columns
+update_scenario_prompts
+# --- run tests / test executions (simulate/views/run_test.py) ---
+list_active_tests
+get_run_test_kpis
+get_performance_summary
+rerun_test_execution
+run_new_evals_on_test_execution
+update_run_test_components
+list_run_test_scenarios
+get_call_error_localizer_tasks
+# --- simulate eval configs (run_test.py) ---
+create_simulate_eval_config
+get_simulate_eval_config_structure
+get_run_test_eval_summary
+compare_run_test_eval_summaries
+refresh_eval_explanation_summary
+refresh_optimiser_analysis
+# --- call transcripts (simulate/views/call_transcript.py) ---
+get_test_execution_transcripts
+get_call_branch_analysis
+# --- simulator agents (simulate/views/simulator_agent.py) ---
+get_simulator_agent
+delete_simulator_agent
+# --- agent versions (simulate/views/agent_version.py) ---
+list_agent_versions
+create_agent_version
+delete_agent_version
+restore_agent_version
+get_agent_version_eval_summary
+list_agent_version_call_executions
+# --- agent definitions (simulate/views/agent_definition.py) ---
+fetch_assistant_from_provider
+# --- personas (simulate/views/persona.py) ---
+get_persona
+create_persona
+update_persona
+delete_persona
+list_system_personas
+list_workspace_personas
+get_persona_field_options
+duplicate_persona
+# --- agent prompt optimiser runs (simulate/views/agent_prompt_optimiser.py) ---
+get_optimiser_run_steps
+get_optimiser_run_graph
+get_optimiser_trial_prompt
+get_optimiser_trial_evaluations
+get_optimiser_trial_scenarios

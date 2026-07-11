@@ -150,6 +150,13 @@ class DashboardBreakdownSerializer(StrictInputSerializer):
 
 
 class DashboardWidgetSerializer(serializers.ModelSerializer):
+    """A single chart on a dashboard — it pairs a `query_config` (the metrics,
+    filters, breakdowns, and time range to query) with a `chart_config` (how to
+    render the result, e.g. chart_type line/bar/pie/table/metric). Listed/read via
+    list_dashboard_widgets / get_dashboard_widget and created/edited via
+    create_dashboard_widget / update_dashboard_widget; `position`, `width` (1-12
+    grid columns), and `height` control its placement on the dashboard grid."""
+
     class Meta:
         model = DashboardWidget
         fields = [
@@ -166,6 +173,25 @@ class DashboardWidgetSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["id", "created_by", "created_at", "updated_at"]
+        extra_kwargs = {
+            "name": {"help_text": "Title shown on the widget."},
+            "description": {"help_text": "Optional description of the widget."},
+            "position": {"help_text": "Ordering index of the widget within the dashboard."},
+            "width": {"help_text": "Widget width in grid columns (1-12)."},
+            "height": {"help_text": "Widget height in grid rows (>= 1)."},
+            "query_config": {
+                "help_text": (
+                    "JSON query definition (metrics, filters, breakdowns, time_range) "
+                    "that produces the widget's data."
+                ),
+            },
+            "chart_config": {
+                "help_text": (
+                    "JSON render config; chart_type must be one of line, stacked_line, "
+                    "column, stacked_column, bar, stacked_bar, pie, table, metric."
+                ),
+            },
+        }
 
     def validate_width(self, value):
         if value < 1 or value > 12:
@@ -208,6 +234,12 @@ class DashboardWidgetSerializer(serializers.ModelSerializer):
 
 
 class DashboardSerializer(serializers.ModelSerializer):
+    """An analytics dashboard in the current workspace — a named container of chart
+    widgets that visualise trace, dataset, and simulation metrics. Listed/read via
+    list_dashboards / get_dashboard and created/edited via create_dashboard /
+    update_dashboard; manage its charts with the dashboard_widget tools.
+    `widget_count` is the number of widgets it currently holds."""
+
     created_by = UserSerializer(read_only=True)
     updated_by = UserSerializer(read_only=True)
     widget_count = serializers.SerializerMethodField()
@@ -233,6 +265,10 @@ class DashboardSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+        extra_kwargs = {
+            "name": {"help_text": "Human-readable name of the dashboard."},
+            "description": {"help_text": "Optional free-text description of the dashboard."},
+        }
 
     def get_widget_count(self, obj):
         return obj.widgets.filter(deleted=False).count()

@@ -1,0 +1,229 @@
+# Falcon Gates — the per-merge deterministic rows of the Falcon regression
+# gate matrix (internal-docs/falcon/TEST_PLAN.md §8.1, Phase 1B deliverable).
+#
+# What runs here (zero LLM spend, deterministic):
+#   - backend-falcon-gates  — G1 (falcon ai_tools subset) + G3 (registry count
+#     manifest, schema drift, keeper list) + the 3A confirmation gate and 3B
+#     authz suites + navigate tool, PLUS a strict-registration import check
+#     (AI_TOOLS_STRICT_BRIDGE=1: swallowed bridge_registration_failed events
+#     become hard failures).
+#   - frontend-falcon-gates — G4 scoped to src/sections/falcon-ai (store,
+#     socket suite §5 tests 52-56, components) + the Phase 5A memory settings
+#     screen (src/sections/settings/falcon-ai-memory). Full `yarn test:unit`
+#     remains in frontend-develop.yml.
+#
+# EE LIMITATION (documented, deliberate):
+#   ee/falcon_ai is a separate private repo (future-agi/ee) and the
+#   EE_REPO_READ_TOKEN secret is currently missing/red on dev
+#   (see api-contracts.yml). This workflow therefore runs WITHOUT the EE
+#   checkout: tfc/ee_loader.py gates `ee.falcon_ai` on importability, the
+#   registry simply lacks the 3 EE memory tools (save/list/delete_memory),
+#   and test_registry_manifest.py guards those assertions with
+#   `apps.is_installed("ee.falcon_ai")`. Verified in-container by masking the
+#   ee package with a meta_path import blocker (exact no-checkout simulation):
+#   strict import = 558 tools (561 - 3), five gate files = 205 passed +
+#   1 skipped (the guarded ee assertion) in ~24s; with ee present: 561 tools,
+#   206 passed.
+#   Consequences:
+#     - ee/falcon_ai/tests (consumer/agent/llm_client suites, §2.1-2.4) are
+#       NOT enforced here — they ride the ee repo's own CI; ee-side breakage
+#       reaches this repo only via the cadence suites (falcon-cadence.yml).
+#     - If EE_REPO_READ_TOKEN lands later, add the api-contracts.yml EE
+#       checkout pattern and extend the pytest list with ee/falcon_ai/tests.
+#
+# PATHS LIMITATION (documented, deliberate): the schema-drift test
+# introspects serializers across the whole backend, but this workflow is
+# paths-filtered to futureagi/ai_tools/**. A serializer change outside
+# ai_tools/ can drift a bridged tool schema without triggering this workflow
+# on that PR; the nightly bridge sweeps (falcon-cadence.yml, G6) and the next
+# ai_tools-touching PR catch it. Widening the filter to every bridged
+# ViewSet/serializer would make it equivalent to "always run".
+
+name: Falcon Gates
+
+on:
+  pull_request:
+    branches: [main, develop, dev]
+    paths:
+      - "futureagi/ai_tools/**"
+      - "frontend/src/sections/falcon-ai/**"
+      - "frontend/src/sections/settings/falcon-ai-memory/**"
+      - ".github/workflows/falcon-gates.yml"
+  push:
+    branches: [develop, dev]
+    paths:
+      - "futureagi/ai_tools/**"
+      - "frontend/src/sections/falcon-ai/**"
+      - "frontend/src/sections/settings/falcon-ai-memory/**"
+      - ".github/workflows/falcon-gates.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: falcon-gates-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Per-job paths filtering: the workflow-level `paths:` is the union of both
+  # jobs' surfaces; this job decides which gate jobs actually need to run so
+  # a frontend-only Falcon PR does not pay for postgres + uv sync and vice
+  # versa. Skipped on workflow_dispatch (manual run = run everything).
+  changes:
+    if: github.event_name != 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # On push, compare against the previous push to the same branch
+          # (default would diff against the repo default branch).
+          base: ${{ github.event_name == 'push' && github.ref || '' }}
+          filters: |
+            backend:
+              - 'futureagi/ai_tools/**'
+              - '.github/workflows/falcon-gates.yml'
+            frontend:
+              - 'frontend/src/sections/falcon-ai/**'
+              - 'frontend/src/sections/settings/falcon-ai-memory/**'
+              - '.github/workflows/falcon-gates.yml'
+
+  backend-falcon-gates:
+    name: Backend Falcon gates (G1 subset + G3 + strict registry import)
+    needs: changes
+    if: >-
+      !cancelled() && (
+        github.event_name == 'workflow_dispatch' ||
+        needs.changes.outputs.backend == 'true'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: futureagi
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_tfc
+        ports:
+          - 15432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DJANGO_SETTINGS_MODULE: tfc.settings.test
+      PG_HOST: localhost
+      PG_PORT: 15432
+      PG_USER: test_user
+      PG_PASSWORD: test_password
+      PG_DB: test_tfc
+      PG_TEST_DB: test_tfc_test
+      REDIS_URL: redis://localhost:16379/0
+      REDIS_LOCK_URL: redis://localhost:16379/2
+      # The falcon gates never touch ClickHouse; skip the CH25 schema apply
+      # hook in conftest.py instead of paying for a CH service container.
+      FI_SKIP_CH25_SCHEMA_APPLY: "1"
+      # drf_bridge.py: registration failures raise instead of being swallowed
+      # (the D1 "green tests, broken tool" counter at import time).
+      AI_TOOLS_STRICT_BRIDGE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install backend dependencies
+        run: uv sync --frozen
+
+      - name: Strict registry import check (no EE checkout)
+        # Fresh interpreter, AI_TOOLS_STRICT_BRIDGE=1: any
+        # bridge_registration_failed raises; the count floor reuses
+        # MINIMUM_TOOL_COUNT from the manifest gate so there is one pin.
+        # Without the EE checkout the registry lacks exactly the 3 EE memory
+        # tools — the floor (>=390) already accounts for that.
+        run: |
+          uv run python - <<'PY'
+          import django
+          django.setup()
+          from django.apps import apps
+          import ai_tools.tools  # noqa: F401  — triggers all registration, strict
+          from ai_tools.registry import registry
+          from ai_tools.tests.test_registry_manifest import MINIMUM_TOOL_COUNT
+          count = registry.count()
+          print(f"REGISTRY_COUNT={count}")
+          print(f"ee.falcon_ai installed: {apps.is_installed('ee.falcon_ai')}")
+          assert count >= MINIMUM_TOOL_COUNT, (
+              f"registry has {count} tools, floor is {MINIMUM_TOOL_COUNT}"
+          )
+          PY
+
+      - name: Falcon deterministic pytest gates
+        # G1 falcon ai_tools subset + G3 manifest/schema/keeper + 3A
+        # confirmations + 3B authz + navigate. ee/falcon_ai/tests are NOT
+        # here (private repo, no token) — see header comment.
+        run: >
+          uv run pytest -q -p no:cacheprovider
+          ai_tools/tests/test_registry_manifest.py
+          ai_tools/tests/test_drf_bridge.py
+          ai_tools/tests/test_confirmations.py
+          ai_tools/tests/test_authz_negative.py
+          ai_tools/tests/test_navigate_tool.py
+
+  frontend-falcon-gates:
+    name: Frontend Falcon gates (G4 — falcon-ai vitest suite)
+    needs: changes
+    if: >-
+      !cancelled() && (
+        github.event_name == 'workflow_dispatch' ||
+        needs.changes.outputs.frontend == 'true'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # Pinned to match frontend-develop.yml — local node mismatch is the
+          # common "works on my machine" cause (TEST_PLAN.md §11).
+          node-version: "22.18"
+          cache: "yarn"
+          cache-dependency-path: frontend/yarn.lock
+
+      - name: Install frontend dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Falcon frontend unit suite
+        # Scoped run: store reducers, socket suite (§5 tests 52-56 incl. the
+        # b05edf30d reconnect-race pin), chat components, widget cards, and
+        # the Phase 5A memory settings screen.
+        run: npx vitest run src/sections/falcon-ai src/sections/settings/falcon-ai-memory
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096

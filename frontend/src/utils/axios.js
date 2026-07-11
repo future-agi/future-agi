@@ -2132,6 +2132,8 @@ export const endpoints = {
       }),
     skills: apiPath("/falcon-ai/skills/"),
     skill: (id) => apiPath("/falcon-ai/skills/{skill_id}/", { skill_id: id }),
+    memories: apiPath("/falcon-ai/memory/"),
+    memory: (id) => apiPath("/falcon-ai/memory/{memory_id}/", { memory_id: id }),
     fileUpload: apiPath("/falcon-ai/files/upload/"),
     quickAnalysis: apiPath("/falcon-ai/quick-analysis/"),
   },

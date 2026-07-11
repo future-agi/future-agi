@@ -57,6 +57,13 @@ def _decrypt_secrets(encrypted_blob):
 
 
 class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
+    """A reusable, named guardrail policy — a collection of checks scoped to the
+    whole org (global), specific projects, or specific keys, run in enforce or
+    monitor mode. Policies are merged into the org config and pushed to the
+    gateway. Listed/read via list_agentcc_guardrail_policies /
+    get_agentcc_guardrail_policy; secret values inside checks are stored
+    encrypted and returned as a sentinel."""
+
     class Meta:
         model = AgentccGuardrailPolicy
         fields = [
@@ -80,6 +87,29 @@ class AgentccGuardrailPolicySerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+        extra_kwargs = {
+            "name": {"help_text": "Unique (per org) name for this policy."},
+            "description": {"help_text": "Optional description of the policy."},
+            "scope": {
+                "help_text": "Where the policy applies: global, project, or key."
+            },
+            "checks": {
+                "help_text": "JSON array of check objects; each must have a 'name' and optional 'config'."
+            },
+            "mode": {
+                "help_text": "enforce (block violations) or monitor (log only)."
+            },
+            "is_active": {"help_text": "Whether this policy is enabled."},
+            "priority": {
+                "help_text": "Evaluation order; lower numbers are applied first (default 100)."
+            },
+            "applied_keys": {
+                "help_text": "JSON array of API key ids this policy applies to (when scope=key)."
+            },
+            "applied_projects": {
+                "help_text": "JSON array of project ids this policy applies to (when scope=project)."
+            },
+        }
 
     def validate_checks(self, value):
         if not isinstance(value, list):

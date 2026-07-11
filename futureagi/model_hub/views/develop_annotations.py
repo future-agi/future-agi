@@ -565,8 +565,13 @@ class AnnotationsViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet
                 dataset=dataset,
             )
 
-            # Then set M2M fields and validate them
+            # Then set M2M fields and validate them. If the caller did not
+            # specify assignees, default to the creating user so they can
+            # annotate the task they just created — otherwise submission fails
+            # with "You are not assigned to this annotation task" (TH-5398).
             assigned_users = request.data.get("assigned_users", [])
+            if not assigned_users and getattr(request, "user", None):
+                assigned_users = [request.user.id]
             if assigned_users:
                 annotation.assigned_users.set(assigned_users)
                 # Explicitly run M2M validations

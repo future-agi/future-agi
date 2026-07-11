@@ -6,7 +6,12 @@ from tracer.serializers.filters import StrictInputSerializer
 
 
 class ScoreSerializer(serializers.ModelSerializer):
-    """Read serializer for Score — used in list/detail responses."""
+    """A Score is one annotation value placed on a single source object (a trace,
+    span, session, voice call, dataset row, or prototype run) for a given
+    annotation label. It records what was scored (label + JSON value), who scored
+    it (annotator, or score_source='human'/'api'), free-text notes, and the queue
+    item it belongs to. Read via get_score / list_scores; edit a score's value or
+    notes via update_score (PATCH)."""
 
     label_id = serializers.UUIDField(source="label.id", read_only=True)
     label_name = serializers.CharField(source="label.name", read_only=True)
@@ -54,6 +59,36 @@ class ScoreSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = ["annotator", "queue_item"]
+        extra_kwargs = {
+            "source_type": {
+                "help_text": (
+                    "Kind of object this score is attached to: 'trace', "
+                    "'observation_span', 'trace_session', 'call_execution', "
+                    "'dataset_row', or 'prototype_run'."
+                )
+            },
+            "value": {
+                "help_text": (
+                    "The score value as JSON — shape depends on the label's type "
+                    "(e.g. a boolean, a category string, or a numeric rating)."
+                )
+            },
+            "value_history": {
+                "help_text": (
+                    "Append-only log of previous values for this score, recorded "
+                    "automatically whenever the value changes (read-only context)."
+                )
+            },
+            "score_source": {
+                "help_text": (
+                    "Origin of the score: 'human' for a manual annotation or 'api' "
+                    "for a programmatic one."
+                )
+            },
+            "notes": {
+                "help_text": "Optional free-text note the annotator left on this score."
+            },
+        }
 
     def get_source_id(self, obj):
         return str(obj.get_source_id()) if obj.get_source_id() else None
@@ -63,26 +98,69 @@ class ScoreSerializer(serializers.ModelSerializer):
 
 
 class CreateScoreSerializer(StrictInputSerializer):
-    """Write serializer for creating/updating scores."""
+    """Create (or upsert) a single Score: attach one annotation label's value to
+    one source object (a trace, span, session, voice call, dataset row, or
+    prototype run). Identify the target with source_type + source_id, the label
+    with label_id, and pass the value as JSON. Re-scoring the same source/label by
+    the same annotator updates the existing score rather than duplicating it."""
 
     source_type = serializers.ChoiceField(
         choices=list(SCORE_SOURCE_FK_MAP.keys()),
+        help_text=(
+            "Kind of object to score: 'trace', 'observation_span', "
+            "'trace_session', 'call_execution', 'dataset_row', or "
+            "'prototype_run'. Paired with source_id."
+        ),
     )
     # CharField because some sources (e.g. ObservationSpan) use non-UUID IDs
-    source_id = serializers.CharField()
-    label_id = serializers.UUIDField()
-    value = serializers.JSONField()
-    notes = serializers.CharField(required=False, allow_blank=True, default="")
+    source_id = serializers.CharField(
+        help_text=(
+            "ID of the object being scored, matching source_type (e.g. the trace "
+            "id when source_type='trace'). Usually a UUID; observation spans use a "
+            "non-UUID string id."
+        )
+    )
+    label_id = serializers.UUIDField(
+        help_text=(
+            "UUID of the annotation label being applied (from "
+            "list_annotation_labels)."
+        )
+    )
+    value = serializers.JSONField(
+        help_text=(
+            "The score value as JSON — shape depends on the label's type (e.g. a "
+            "boolean, a category string, or a numeric rating)."
+        )
+    )
+    notes = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        help_text="Optional free-text note to attach to this score.",
+    )
     score_source = serializers.ChoiceField(
         choices=ScoreSource.get_choices(),
         required=False,
         default=ScoreSource.HUMAN.value,
+        help_text=(
+            "Origin of the score: 'human' (default) for a manual annotation or "
+            "'api' for a programmatic one."
+        ),
     )
     # Optional explicit queue context. When omitted, the view falls back to
     # the source's default queue (auto-created if missing) so every Score
     # row has a non-null queue_item — required by the new (source, label,
     # annotator, queue_item) uniqueness.
-    queue_item_id = serializers.UUIDField(required=False, allow_null=True, default=None)
+    queue_item_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text=(
+            "Optional UUID of the annotation queue item this score belongs to. If "
+            "omitted, the source's default queue item is used (auto-created if "
+            "needed)."
+        ),
+    )
 
 
 class UpdateScoreSerializer(StrictInputSerializer):

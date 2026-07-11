@@ -142,12 +142,34 @@ class PreviewAnnotationsResponseSerializer(serializers.Serializer):
 
 
 class AnnotationsLabelsSerializer(serializers.ModelSerializer):
+    """A reusable annotation label (question/criterion) that human annotators answer when reviewing
+    dataset rows or trace spans — e.g. a categorical "Is this helpful?", a numeric quality score, a
+    free-text note, a star rating, or a thumbs up/down. The label's `type` and `settings` define the
+    expected answer shape; labels are then attached to annotation tasks (see create_annotation) and to
+    trace annotations. Created/listed/edited via create_annotation_label / list_annotation_labels /
+    get_annotation_label / update_annotation_label; delete_annotation_label soft-archives the label."""
+
     project = serializers.PrimaryKeyRelatedField(
-        queryset=Project.objects.all(), many=False, required=False
+        queryset=Project.objects.all(),
+        many=False,
+        required=False,
+        help_text="Optional UUID of the trace project this label belongs to (from list_projects); leave null for a global/projectless label.",
     )
-    trace_annotations_count = serializers.IntegerField(read_only=True, required=False)
-    annotation_count = serializers.IntegerField(read_only=True, required=False)
-    archived = serializers.BooleanField(source="deleted", read_only=True)
+    trace_annotations_count = serializers.IntegerField(
+        read_only=True,
+        required=False,
+        help_text="Read-only count of trace annotations using this label (only returned when include_usage_count=true).",
+    )
+    annotation_count = serializers.IntegerField(
+        read_only=True,
+        required=False,
+        help_text="Read-only count of scores recorded against this label (only returned when include_usage_count=true).",
+    )
+    archived = serializers.BooleanField(
+        source="deleted",
+        read_only=True,
+        help_text="Read-only: true if this label has been soft-deleted/archived.",
+    )
 
     class Meta:
         model = AnnotationsLabels
@@ -166,6 +188,27 @@ class AnnotationsLabelsSerializer(serializers.ModelSerializer):
             "archived",
         ]
         read_only_fields = ["organization"]
+        extra_kwargs = {
+            "name": {
+                "help_text": "Human-readable label name; must be unique per (organization, project, type)."
+            },
+            "type": {
+                "help_text": "Answer type for this label: 'text', 'numeric', 'categorical', 'star', or 'thumbs_up_down'."
+            },
+            "settings": {
+                "help_text": (
+                    "Type-specific configuration object. numeric: {min, max, step_size, display_type:'slider'|'button'}; "
+                    "text: {placeholder, min_length, max_length}; categorical: {options:[{label}], multi_choice, rule_prompt, "
+                    "auto_annotate, strategy}; star: {no_of_stars}; thumbs_up_down: none."
+                )
+            },
+            "description": {
+                "help_text": "Optional longer description shown to annotators explaining what this label means."
+            },
+            "allow_notes": {
+                "help_text": "If true, annotators may attach a free-text note alongside their answer for this label."
+            },
+        }
 
     def validate(self, attrs):
         """Ensure `name` is unique within the same project and type.
@@ -230,11 +273,30 @@ class AnnotationLabelCreateResponseSerializer(serializers.Serializer):
 
 
 class AnnotationsSerializer(serializers.ModelSerializer):
-    assigned_users = serializers.SerializerMethodField()
-    summary = serializers.SerializerMethodField()
-    label_requirements = serializers.SerializerMethodField()
-    lowest_unfinished_row = serializers.SerializerMethodField()
-    labels = serializers.SerializerMethodField()
+    """A dataset annotation task: assigns one or more annotators to answer a set of annotation labels
+    over the rows of a dataset (see create_annotation / list_annotations / get_annotation). To create
+    one, pass `name`, `dataset` (a dataset UUID from list_datasets), and `labels` — either a list of
+    label UUIDs (from list_annotation_labels) or a list of {"id": <uuid>, "required": <bool>} objects.
+    `assigned_users` is optional (defaults to the creator) and `responses` sets how many independent
+    annotators must answer each row (must be <= number of assigned users). Once created, annotators
+    record answers via submit_annotation. Note: `labels` and `assigned_users` are returned as enriched
+    read-only objects here even though they are written as id lists."""
+
+    assigned_users = serializers.SerializerMethodField(
+        help_text="Read-only list of assigned annotators ({id, name, email}). On create/update pass `assigned_users` as a list of user UUIDs; if omitted on create it defaults to the calling user."
+    )
+    summary = serializers.SerializerMethodField(
+        help_text="Read-only progress summary for the requesting annotator: {completed, total} rows."
+    )
+    label_requirements = serializers.SerializerMethodField(
+        help_text="Read-only map of label UUID -> whether that label is required to mark a row complete."
+    )
+    lowest_unfinished_row = serializers.SerializerMethodField(
+        help_text="Read-only order index of the first row not yet fully annotated (used to resume annotation)."
+    )
+    labels = serializers.SerializerMethodField(
+        help_text="Read-only list of attached labels ({id, name}). On create/update pass `labels` as a list of label UUIDs (from list_annotation_labels) or [{'id': <uuid>, 'required': <bool>}]."
+    )
 
     class Meta:
         model = Annotations
@@ -255,6 +317,24 @@ class AnnotationsSerializer(serializers.ModelSerializer):
             "label_requirements",
         ]
         read_only_fields = ["organization"]
+        extra_kwargs = {
+            "name": {"help_text": "Human-readable name for this annotation task."},
+            "dataset": {
+                "help_text": "UUID of the dataset whose rows will be annotated (from list_datasets); required on create."
+            },
+            "columns": {
+                "help_text": "Dataset column UUIDs auto-managed for this task (label/response columns); normally set by the system, not supplied directly."
+            },
+            "static_fields": {
+                "help_text": "Optional list of read-only context columns shown to annotators, each {column_id, type:'plain_text'|'markdown', view:'default_collapsed'|'default_open'}."
+            },
+            "response_fields": {
+                "help_text": "Optional list of model-response columns annotators review/edit, each {column_id, type, view, edit:'editable'|'not_editable'}."
+            },
+            "responses": {
+                "help_text": "Number of independent annotators required per row (default 1); must be <= the number of assigned_users."
+            },
+        }
 
     def create(self, validated_data):
         labels = self.initial_data.get("labels", [])

@@ -1007,6 +1007,26 @@ class AIFilterView(APIView):
             if mode not in ("build_filters", "select_fields", "smart"):
                 return self._gm.bad_request("Invalid mode")
 
+            # AI filter needs the Haiku model (routed via the Agentcc gateway).
+            # If the deployment hasn't configured it, BEDROCK_HAIKU_ARN is empty
+            # → the downstream LLM call fails deep inside the gateway/litellm
+            # path and surfaces as an opaque 400 with no actionable message,
+            # which the UI shows as a bare "no results" (TH-4517). Fail fast
+            # with a clear 503 so the user knows to fall back to manual filters.
+            from agentic_eval.core.utils.model_config import ModelConfigs
+
+            if not (ModelConfigs.HAIKU_4_5_BEDROCK_ARN.model_name or "").strip():
+                logger.error(
+                    "ai_filter_model_unconfigured", missing_env="BEDROCK_HAIKU_ARN"
+                )
+                return self._gm.custom_error_response(
+                    503,
+                    "AI filter is unavailable because the AI model isn't "
+                    "configured on this environment. Please use the manual "
+                    "filters instead, or ask an admin to configure the AI "
+                    "filter model.",
+                )
+
             # ------------------------------------------------------------
             # Smart mode — agentic tool-use loop
             # ------------------------------------------------------------

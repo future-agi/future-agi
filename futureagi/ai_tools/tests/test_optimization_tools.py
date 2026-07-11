@@ -24,6 +24,28 @@ def optimization_run(tool_context):
 
 
 @pytest.fixture
+def org_scoped_optimization_run(tool_context):
+    """OptimizeDataset reachable through the BRIDGED DatasetOptimizationViewSet,
+    whose queryset scopes by column -> dataset -> organization (Phase 2A)."""
+    from model_hub.models.develop_dataset import Column
+    from model_hub.models.optimize_dataset import OptimizeDataset
+
+    ds = make_dataset(tool_context, name="Opt Dataset")
+    column = Column.objects.filter(dataset=ds, deleted=False).first()
+    return OptimizeDataset.objects.create(
+        name="Scoped Optimization",
+        optimize_type="PromptTemplate",
+        environment="Training",
+        version="v1",
+        status="completed",
+        optimizer_algorithm="random_search",
+        best_score=0.85,
+        baseline_score=0.70,
+        column=column,
+    )
+
+
+@pytest.fixture
 def running_optimization(tool_context):
     """Create a running OptimizeDataset record."""
     from model_hub.models.optimize_dataset import OptimizeDataset
@@ -74,50 +96,43 @@ class TestListOptimizationRunsTool:
         assert len(result.data["runs"]) <= 1
 
 
+# Phase 2A note: this class previously called "get_optimization_run", a tool
+# name that was never registered (not in any manifest) — every test failed on
+# registry lookup. The detail read is the bridged get_dataset_optimization
+# (DatasetOptimizationViewSet.retrieve, org-scoped via column -> dataset).
 class TestGetOptimizationRunTool:
-    def test_get_existing(self, tool_context, optimization_run):
+    def test_get_existing(self, tool_context, org_scoped_optimization_run):
         result = run_tool(
-            "get_optimization_run",
-            {"optimization_id": str(optimization_run.id)},
+            "get_dataset_optimization",
+            {"id": str(org_scoped_optimization_run.id)},
             tool_context,
         )
 
-        assert not result.is_error
-        assert "Test Optimization" in result.content
-        assert result.data["id"] == str(optimization_run.id)
-        assert result.data["algorithm"] == "random_search"
+        assert not result.is_error, result.content
+        # The retrieve payload reports the run by name + scores (no id echo).
+        assert result.data["optimiser_name"] == "Scoped Optimization"
         assert result.data["best_score"] == 0.85
-        assert result.data["baseline_score"] == 0.70
+        assert result.data["baseline_score"] == 0.7
 
     def test_get_nonexistent(self, tool_context):
         result = run_tool(
-            "get_optimization_run",
-            {"optimization_id": str(uuid.uuid4())},
+            "get_dataset_optimization",
+            {"id": str(uuid.uuid4())},
             tool_context,
         )
 
         assert result.is_error
-        assert "Not Found" in result.content
 
-    def test_get_without_trials(self, tool_context, optimization_run):
+    def test_get_unscoped_run_not_visible(self, tool_context, optimization_run):
+        """A run with no column->dataset->org linkage is outside the bridged
+        queryset — the detail tool must not leak it."""
         result = run_tool(
-            "get_optimization_run",
-            {"optimization_id": str(optimization_run.id), "include_trials": False},
+            "get_dataset_optimization",
+            {"id": str(optimization_run.id)},
             tool_context,
         )
 
-        assert not result.is_error
-        assert result.data["trials"] == []
-
-    def test_get_without_steps(self, tool_context, optimization_run):
-        result = run_tool(
-            "get_optimization_run",
-            {"optimization_id": str(optimization_run.id), "include_steps": False},
-            tool_context,
-        )
-
-        assert not result.is_error
-        assert result.data["steps"] == []
+        assert result.is_error
 
 
 # ===================================================================

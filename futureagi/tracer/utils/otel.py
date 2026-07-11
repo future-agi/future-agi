@@ -817,7 +817,11 @@ def convert_otel_span_to_observation_span(
         trace_id = otel_span.get("trace_id")
         span_id = otel_span.get("span_id")
         latency = otel_span.get("latency")
-        session_name = attributes.get(SpanAttributes.SESSION_ID)
+        # Resolve session id across conventions: "session.id" (OpenInference) and
+        # "gen_ai.conversation.id" (OTEL GenAI). Using get_attribute ensures GenAI
+        # traces are grouped into named sessions instead of the null-UUID session
+        # (TH-5403).
+        session_name = get_attribute(attributes, "session_id")
 
         attributes[SpanAttributes.RESPONSE] = decoder.parse_json_string(
             attributes.get("fi.llm.output")
@@ -1618,7 +1622,7 @@ def _convert_single_span(otel_span, projects, project_versions, organization_id)
         "project": project,
         "project_version": project_version,
         "eval_tags": project_version.eval_tags if project_version else [],
-        "session_name": attributes.get(SpanAttributes.SESSION_ID),
+        "session_name": get_attribute(attributes, "session_id"),  # TH-5403
         "project_type": project_type if project_type else "experiment",
     }
 

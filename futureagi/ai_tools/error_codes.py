@@ -12,7 +12,12 @@ TIMEOUT_ERROR = "TIMEOUT_ERROR"
 EXCEPTION_TO_CODE = {
     "DoesNotExist": NOT_FOUND,
     "ObjectDoesNotExist": NOT_FOUND,
+    "Http404": NOT_FOUND,
+    "NotFound": NOT_FOUND,  # rest_framework.exceptions.NotFound
     "PermissionDenied": PERMISSION_DENIED,
+    "NotAuthenticated": PERMISSION_DENIED,
+    "AuthenticationFailed": PERMISSION_DENIED,
+    "Throttled": RATE_LIMITED,
     "ValidationError": VALIDATION_ERROR,
     "ValueError": VALIDATION_ERROR,
     "TypeError": VALIDATION_ERROR,

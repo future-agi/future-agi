@@ -97,9 +97,11 @@ class TestGetTestExecutionTool:
 
 class TestGetCallExecutionTool:
     def test_get_nonexistent(self, tool_context):
+        # get_call_execution is now the DRF-bridged CallExecutionDetailView
+        # (id param), surfacing full call detail incl. analytics (TH-5397).
         result = run_tool(
             "get_call_execution",
-            {"execution_id": str(uuid.uuid4())},
+            {"id": str(uuid.uuid4())},
             tool_context,
         )
 

@@ -1308,10 +1308,24 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             )
             compare = request.query_params.get("compare", "false").lower() == "true"
 
-            versions = request.query_params.get("versions", [])
+            # Accept all the shapes clients send: a JSON array string
+            # '["v1","v2"]' (FE), repeated query keys ?versions=v1&versions=v2
+            # (DRF bridge list params), a comma-separated 'v1,v2', or a bare
+            # 'v1'. Backward compatible — the JSON path is tried first.
+            getlist = getattr(request.query_params, "getlist", None)
+            raw_versions = getlist("versions") if getlist else None
+            if raw_versions and len(raw_versions) > 1:
+                versions = raw_versions
+            else:
+                versions = request.query_params.get("versions", [])
 
             if versions and isinstance(versions, str):
-                versions = json.loads(versions)
+                try:
+                    versions = json.loads(versions)
+                except json.JSONDecodeError:
+                    versions = [v.strip() for v in versions.split(",") if v.strip()]
+            if isinstance(versions, str):
+                versions = [versions]
 
             if not versions:
                 return self._gm.bad_request(get_error_message("VERSIONS_REQUIRED"))

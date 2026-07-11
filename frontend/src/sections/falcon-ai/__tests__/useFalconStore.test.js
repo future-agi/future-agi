@@ -258,4 +258,127 @@ describe("useFalconStore", () => {
     expect(useFalconStore.getState().messages).toHaveLength(0);
     expect(useFalconStore.getState().isStreaming).toBe(false);
   });
+
+  // --- Widget answers in chat (Phase 4C) ---
+
+  describe("applyWidgetEvent", () => {
+    const W1 = { id: "w-1", type: "bar_chart", title: "Tokens", config: {} };
+    const W2 = { id: "w-2", type: "metric_card", title: "Cost", config: {} };
+
+    function widgetBlocks() {
+      return useFalconStore
+        .getState()
+        .messages[0].blocks.filter((b) => b.type === "widget");
+    }
+
+    beforeEach(() => {
+      useFalconStore
+        .getState()
+        .addMessage({ id: "msg1", role: "assistant", content: "" });
+    });
+
+    it("add appends a widget block to the message", () => {
+      useFalconStore.getState().applyWidgetEvent("msg1", "add", W1);
+      const blocks = widgetBlocks();
+      expect(blocks).toHaveLength(1);
+      expect(blocks[0].id).toBe("widget-w-1");
+      expect(blocks[0].widget).toEqual(W1);
+    });
+
+    it("add with an existing widget id upserts instead of duplicating", () => {
+      useFalconStore.getState().applyWidgetEvent("msg1", "add", W1);
+      useFalconStore
+        .getState()
+        .applyWidgetEvent("msg1", "add", { ...W1, title: "Tokens v2" });
+      const blocks = widgetBlocks();
+      expect(blocks).toHaveLength(1);
+      expect(blocks[0].widget.title).toBe("Tokens v2");
+    });
+
+    it("update merges into the existing widget", () => {
+      useFalconStore.getState().applyWidgetEvent("msg1", "add", W1);
+      useFalconStore
+        .getState()
+        .applyWidgetEvent("msg1", "update", { id: "w-1", title: "Renamed" });
+      const blocks = widgetBlocks();
+      expect(blocks).toHaveLength(1);
+      expect(blocks[0].widget.title).toBe("Renamed");
+      expect(blocks[0].widget.type).toBe("bar_chart"); // merged, not replaced
+    });
+
+    it("replace_all swaps every widget block on the message", () => {
+      useFalconStore.getState().applyWidgetEvent("msg1", "add", W1);
+      useFalconStore
+        .getState()
+        .applyWidgetEvent("msg1", "replace_all", null, [W2]);
+      const blocks = widgetBlocks();
+      expect(blocks).toHaveLength(1);
+      expect(blocks[0].id).toBe("widget-w-2");
+    });
+
+    it("remove drops the widget block by id", () => {
+      useFalconStore.getState().applyWidgetEvent("msg1", "add", W1);
+      useFalconStore.getState().applyWidgetEvent("msg1", "add", W2);
+      useFalconStore.getState().applyWidgetEvent("msg1", "remove", { id: "w-1" });
+      const blocks = widgetBlocks();
+      expect(blocks).toHaveLength(1);
+      expect(blocks[0].id).toBe("widget-w-2");
+    });
+
+    it("ignores events for other messages and widgets without ids", () => {
+      useFalconStore.getState().applyWidgetEvent("other", "add", W1);
+      useFalconStore.getState().applyWidgetEvent("msg1", "add", { type: "x" });
+      expect(widgetBlocks()).toHaveLength(0);
+    });
+
+    it("does not touch text content or tool_calls", () => {
+      useFalconStore.getState().appendTextDelta("msg1", "Here's your chart:");
+      useFalconStore.getState().applyWidgetEvent("msg1", "add", W1);
+      const msg = useFalconStore.getState().messages[0];
+      expect(msg.content).toBe("Here's your chart:");
+      expect(msg.blocks.map((b) => b.type)).toEqual(["text", "widget"]);
+    });
+  });
+
+  describe("legacy blocks rebuild widgets from render_widget tool calls", () => {
+    it("setMessages re-materializes chart cards from persisted result_full", () => {
+      const widget = { id: "w-9", type: "pie_chart", config: { series: [1] } };
+      useFalconStore.getState().setMessages([
+        {
+          id: "m1",
+          role: "assistant",
+          content: "Done",
+          tool_calls: [
+            {
+              call_id: "tc_1",
+              tool_name: "render_widget",
+              result_full: JSON.stringify({ action: "add", widget }),
+            },
+          ],
+        },
+      ]);
+      const blocks = useFalconStore.getState().messages[0].blocks;
+      expect(blocks.map((b) => b.type)).toEqual(["tool_call", "widget", "text"]);
+      expect(blocks[1].widget).toEqual(widget);
+    });
+
+    it("tolerates truncated/invalid result_full JSON", () => {
+      useFalconStore.getState().setMessages([
+        {
+          id: "m1",
+          role: "assistant",
+          content: "Done",
+          tool_calls: [
+            {
+              call_id: "tc_1",
+              tool_name: "render_widget",
+              result_full: '{"action": "add", "widget": {"id": "w-1", "ty', // truncated at 2000
+            },
+          ],
+        },
+      ]);
+      const blocks = useFalconStore.getState().messages[0].blocks;
+      expect(blocks.map((b) => b.type)).toEqual(["tool_call", "text"]);
+    });
+  });
 });

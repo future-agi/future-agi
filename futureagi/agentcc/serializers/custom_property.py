@@ -5,6 +5,12 @@ from agentcc.validators import validate_safe_agentcc_name
 
 
 class AgentccCustomPropertySchemaSerializer(serializers.ModelSerializer):
+    """Defines a custom metadata property that gateway request logs can carry,
+    with a type and optional validation (enum allowed_values, required flag,
+    default). Use it to declare structured tags you want to attach to and
+    validate on requests. Listed/read via list_agentcc_custom_property_schemas /
+    get_agentcc_custom_property_schema."""
+
     class Meta:
         model = AgentccCustomPropertySchema
         fields = [
@@ -26,6 +32,25 @@ class AgentccCustomPropertySchemaSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+        extra_kwargs = {
+            "project": {
+                "help_text": "UUID of the AgentCC project this schema is scoped to (optional)."
+            },
+            "name": {"help_text": "Unique (per org) property name."},
+            "description": {"help_text": "Optional description of the property."},
+            "property_type": {
+                "help_text": "Value type: string, number, boolean, or enum."
+            },
+            "required": {
+                "help_text": "Whether this property must be present on requests."
+            },
+            "allowed_values": {
+                "help_text": "JSON array of permitted values; required when property_type is enum."
+            },
+            "default_value": {
+                "help_text": "Default value applied when the property is absent; must match property_type."
+            },
+        }
 
     def validate_allowed_values(self, value):
         if not isinstance(value, list):

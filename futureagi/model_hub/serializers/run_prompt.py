@@ -40,6 +40,12 @@ class ApiKeySuccessResponseSerializer(serializers.Serializer):
 
 
 class ApiKeySerializer(serializers.ModelSerializer):
+    """A stored model-provider API key/credential for the organization, used by
+    prompt runs and evals to call an LLM provider (OpenAI, Anthropic, etc.).
+    Create one per provider via create_api_key; the secret is encrypted at rest
+    and only ever returned masked. List/read via list_api_keys / get_api_key and
+    rotate or remove via update_api_key / delete_api_key."""
+
     key = serializers.CharField(
         max_length=2500,
         required=False,
@@ -68,6 +74,18 @@ class ApiKeySerializer(serializers.ModelSerializer):
             "config_json",
         ]
         read_only_fields = ["organization"]
+        extra_kwargs = {
+            "id": {"help_text": "UUID of this API key (from list_api_keys)."},
+            "provider": {
+                "help_text": "Model provider this key authenticates, e.g. 'openai', 'anthropic', 'gemini', or 'custom'.",
+            },
+            "key": {
+                "help_text": "The provider secret/API key to store; encrypted at rest and returned only as masked_actual_key.",
+            },
+            "organization": {
+                "help_text": "UUID of the owning organization; set automatically from the request, read-only.",
+            },
+        }
 
 
 class LitellmSerializer(serializers.Serializer):

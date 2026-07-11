@@ -14,20 +14,37 @@ from tracer.serializers.filters import (
 
 
 class TraceSerializer(serializers.ModelSerializer):
+    """A trace: one end-to-end request/run recorded in a trace project, grouping the
+    spans (LLM calls, tools, retrievals) emitted for it. Listed/read via
+    list_traces / get_trace and created/edited via create_trace / update_trace.
+    `input`/`output` hold the trace's request and response payloads, `error` the
+    failure detail if any, `metadata`/`tags` arbitrary annotations, and `session`
+    links it to a multi-turn conversation."""
+
     project = serializers.PrimaryKeyRelatedField(
-        queryset=Project.objects.all(), many=False
+        queryset=Project.objects.all(),
+        many=False,
+        help_text="UUID of the trace project this trace belongs to (from list_projects).",
     )
     project_version = serializers.PrimaryKeyRelatedField(
         queryset=ProjectVersion.objects.all(),
         many=False,
         required=False,
         allow_null=True,
+        help_text=(
+            "Optional UUID of the project version this trace was recorded "
+            "against (from list_project_versions); must belong to the same project."
+        ),
     )
     session = serializers.PrimaryKeyRelatedField(
         queryset=TraceSession.objects.all(),
         many=False,
         required=False,
         allow_null=True,
+        help_text=(
+            "Optional UUID of the trace session that groups this trace into a "
+            "multi-turn conversation (from list_sessions); must belong to the same project."
+        ),
     )
 
     class Meta:
@@ -45,6 +62,15 @@ class TraceSerializer(serializers.ModelSerializer):
             "external_id",
             "tags",
         ]
+        extra_kwargs = {
+            "name": {"help_text": "Human-readable name of the trace (e.g. the operation or endpoint)."},
+            "metadata": {"help_text": "Arbitrary JSON metadata attached to the trace."},
+            "input": {"help_text": "JSON input/request payload that started the trace."},
+            "output": {"help_text": "JSON output/response payload the trace produced."},
+            "error": {"help_text": "JSON error detail if the trace failed; null otherwise."},
+            "external_id": {"help_text": "Optional external/caller-supplied identifier for the trace."},
+            "tags": {"help_text": "List of string tags used to label and filter the trace."},
+        }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

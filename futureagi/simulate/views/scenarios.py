@@ -581,8 +581,14 @@ class CreateScenarioView(APIView):
 
 
 class ScenarioDetailView(APIView):
-    """
-    API View to get details of a specific scenario
+    """Get the full detail of one simulation scenario by its id (from list_scenarios).
+
+    A scenario is the test setup that drives Simulate test executions: it pairs an
+    agent (or prompt) with the persona/conversation data used to challenge it. Returns
+    name, description, source, scenario_type (dataset / script / graph), status, the
+    linked dataset id and dataset row count, agent_type (voice / text), and — for
+    graph scenarios — the conversation graph (nodes/edges) plus the simulator agent's
+    system prompt(s).
     """
 
     permission_classes = [IsAuthenticated]

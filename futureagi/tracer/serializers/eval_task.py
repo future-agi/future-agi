@@ -87,22 +87,60 @@ class EvalTaskUpdateResponseSerializer(serializers.Serializer):
 
 
 class EvalTaskSerializer(serializers.ModelSerializer):
+    """An evaluation task that runs one or more configured evals over a trace
+    project's spans/traces. Create it to start evaluation; read it (with a live
+    ``progress`` block) to track completion. ``run_type`` is the key choice:
+    ``historical`` evaluates the existing matching spans once and then completes;
+    ``continuous`` keeps evaluating new spans as they arrive and never
+    auto-completes.
+    """
+
     project = serializers.PrimaryKeyRelatedField(
-        queryset=Project.objects.all(), many=False
+        queryset=Project.objects.all(),
+        many=False,
+        help_text="UUID of the trace project to evaluate (from list_projects).",
     )
     evals = serializers.PrimaryKeyRelatedField(
-        queryset=CustomEvalConfig.objects.all(), many=True
+        queryset=CustomEvalConfig.objects.all(),
+        many=True,
+        help_text=(
+            "List of custom_eval_config UUIDs to run on the project "
+            "(from list_custom_eval_configs)."
+        ),
     )
-    name = serializers.CharField(min_length=1, max_length=255)
-    sampling_rate = serializers.FloatField(min_value=1.0, max_value=100.0)
+    name = serializers.CharField(
+        min_length=1,
+        max_length=255,
+        help_text="Human-readable name for this eval task.",
+    )
+    sampling_rate = serializers.FloatField(
+        min_value=1.0,
+        max_value=100.0,
+        help_text="Percentage (1-100) of matching spans to evaluate.",
+    )
     spans_limit = serializers.IntegerField(
-        min_value=1, max_value=1000000, required=False, allow_null=True
+        min_value=1,
+        max_value=1000000,
+        required=False,
+        allow_null=True,
+        help_text=(
+            "Max number of spans to evaluate. Required for a 'historical' run "
+            "(it bounds the one-time pass)."
+        ),
     )
-    run_type = serializers.ChoiceField(choices=RunType.choices)
+    run_type = serializers.ChoiceField(
+        choices=RunType.choices,
+        help_text=(
+            "'historical' = evaluate the existing matching spans once, then the "
+            "task completes; 'continuous' = keep evaluating new spans as they "
+            "arrive (runs indefinitely, never auto-completes)."
+        ),
+    )
     row_type = serializers.ChoiceField(
         choices=RowType.choices,
         required=False,
         default=RowType.SPANS,
+        help_text="Unit of evaluation: 'spans' (default), 'traces', or 'sessions'.",
     )
     # Progress block so the UI can render an "X of Y complete" bar while a
     # historical task is draining. Not persisted — computed on read from the

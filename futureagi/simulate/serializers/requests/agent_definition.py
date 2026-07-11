@@ -208,9 +208,11 @@ class AgentDefinitionCreateRequestSerializer(serializers.Serializer):
                         }
                     )
 
-                # Validate contact number format when provided
+                # Validate contact number format when provided.
+                # Strip spaces so human-readable formats like "+1 5598887142"
+                # are accepted (TH-5373).
                 if contact_number and contact_number.strip():
-                    cleaned = contact_number.lstrip("+")
+                    cleaned = contact_number.lstrip("+").replace(" ", "")
                     if not re.match(r"^\d+$", cleaned):
                         raise serializers.ValidationError(
                             {

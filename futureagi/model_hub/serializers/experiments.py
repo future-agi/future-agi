@@ -330,25 +330,39 @@ class ExperimentRerunCellsSerializer(serializers.Serializer):
         child=serializers.UUIDField(),
         required=False,
         default=list,
+        help_text=(
+            "Experiment-dataset (EDT/variant) UUIDs — reruns ALL rows of "
+            "those variant columns."
+        ),
     )
     cells = RerunCellEntrySerializer(
         many=True,
         required=False,
         default=list,
+        help_text=(
+            "Specific cells to rerun: [{'column_id': ..., 'row_id': ...}]. "
+            "The backend infers output vs eval rerun from the column."
+        ),
     )
     user_eval_metric_ids = serializers.ListField(
         child=serializers.UUIDField(),
         required=False,
         default=list,
+        help_text=(
+            "Eval metric UUIDs — reruns only those evaluations (cannot be "
+            "combined with source_ids)."
+        ),
     )
     failed_only = serializers.BooleanField(
         required=False,
         default=False,
+        help_text="Restrict the rerun to failed cells only.",
     )
     max_concurrent_rows = serializers.IntegerField(
         required=False,
         min_value=1,
         default=10,
+        help_text="Max rows processed concurrently by the workflow (default 10).",
     )
 
     def validate(self, attrs):
@@ -550,15 +564,55 @@ class ExperimentCreateV2Serializer(serializers.Serializer):
     an ExperimentPromptConfig record.
     """
 
-    name = serializers.CharField(max_length=255)
-    dataset_id = serializers.UUIDField()
-    column_id = serializers.UUIDField(required=False, allow_null=True)
+    name = serializers.CharField(
+        max_length=255,
+        help_text=(
+            "Unique experiment name within the dataset (see "
+            "suggest_experiment_name / validate_experiment_name)."
+        ),
+    )
+    dataset_id = serializers.UUIDField(
+        help_text="Dataset UUID to run the experiment on (from list_datasets)."
+    )
+    column_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "Optional base/reference column UUID in the dataset to compare "
+            "variants against."
+        ),
+    )
     experiment_type = serializers.ChoiceField(
         choices=["llm", "tts", "stt", "image"],
         default="llm",
+        help_text="Experiment modality (default 'llm').",
     )
-    prompt_config = PromptConfigEntrySerializer(many=True)
-    user_eval_metrics = EvalMetricEntrySerializer(many=True)
+    prompt_config = PromptConfigEntrySerializer(
+        many=True,
+        help_text=(
+            "Variant entries (min 1). LLM prompt entry: {'name', "
+            "'prompt_id', 'prompt_version', 'model', 'configuration'}. "
+            "prompt_version must be a COMMITTED version (drafts are rejected "
+            "with 'is in draft state and cannot be used in experiments' — "
+            "commit one first), and it must belong to prompt_id. "
+            "Agent entry: {'name', 'agent_id', 'agent_version'}. tts/stt/"
+            "image entries use inline 'messages' instead of prompt refs."
+        ),
+    )
+    user_eval_metrics = EvalMetricEntrySerializer(
+        many=True,
+        help_text=(
+            "Evaluations to attach (min 1). Each entry: {'template_id' "
+            "(from list_eval_templates), 'name' (unique), 'config'}. "
+            "config MUST contain a 'mapping' dict that supplies EVERY required "
+            "input key of the chosen eval template (see the template's "
+            "required_keys via get_eval_template) — common keys are 'input', "
+            "'output', 'context'. Map each key to a dataset column NAME, e.g. "
+            "config={'mapping': {'input': 'question', 'output': 'answer', "
+            "'context': 'docs'}}. A missing key fails with 'Missing required "
+            "mapping keys: <key>'."
+        ),
+    )
 
     def validate_user_eval_metrics(self, value):
         if not value:
@@ -890,6 +944,28 @@ class ExperimentUpdateV2Serializer(serializers.Serializer):
     NOT editable: name, experiment_type (set at creation time).
     """
 
-    column_id = serializers.UUIDField(required=False, allow_null=True)
-    prompt_config = PromptConfigEntrySerializer(many=True, required=False)
-    user_eval_metrics = EvalMetricEntrySerializer(many=True, required=False)
+    column_id = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "New base/reference column UUID (null clears it). Changing it "
+            "re-runs base evals."
+        ),
+    )
+    prompt_config = PromptConfigEntrySerializer(
+        many=True,
+        required=False,
+        help_text=(
+            "FULL desired variant list (diffed against current state: new/"
+            "changed entries are re-run, missing ones are removed). Same "
+            "entry shape as create_experiment."
+        ),
+    )
+    user_eval_metrics = EvalMetricEntrySerializer(
+        many=True,
+        required=False,
+        help_text=(
+            "FULL desired eval list (diffed; new/changed evals are re-run). "
+            "Same entry shape as create_experiment."
+        ),
+    )

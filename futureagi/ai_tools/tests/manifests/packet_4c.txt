@@ -1,0 +1,2 @@
+# Phase 4C — agent-driven navigation (navigate event emitter)
+navigate_to_page

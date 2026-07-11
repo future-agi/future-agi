@@ -33,6 +33,11 @@ class DatasetView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
     serializer_class = ObserveDatasetSerializer
+    # TH-4667 (ai_tools bridge): get_queryset honors a `name` query param
+    # (name__icontains below) — the bridged list_datasets tool advertises
+    # `search` and remaps it onto `name`.
+    # See ai_tools.drf_bridge._detect_collection_params.
+    mcp_list_params = {"search": "name"}
 
     def get_queryset(self):
         dataset_id = self.kwargs.get("pk")

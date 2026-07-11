@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, Suspense, lazy } from "react";
 import PropTypes from "prop-types";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
@@ -9,7 +9,16 @@ import TextBlock from "./TextBlock";
 import ToolCallCard from "./ToolCallCard";
 import CompletionCard from "./CompletionCard";
 
-export default function AssistantMessage({ message, onFeedback }) {
+// Lazy: WidgetBlock pulls the Imagine widget registry (chart libs) — only
+// load it when a message actually carries a widget answer (Phase 4C).
+const WidgetBlock = lazy(() => import("./WidgetBlock"));
+
+export default function AssistantMessage({
+  message,
+  onFeedback,
+  onConfirmAction,
+  dimmed,
+}) {
   const [hovered, setHovered] = useState(false);
   const [feedback, setFeedback] = useState(message.feedback || null);
   const toolCalls = message.tool_calls || [];
@@ -29,6 +38,8 @@ export default function AssistantMessage({ message, onFeedback }) {
         maxWidth: 800,
         width: "100%",
         mx: "auto",
+        opacity: dimmed ? 0.62 : 1,
+        transition: "opacity 0.3s ease",
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -83,17 +94,46 @@ export default function AssistantMessage({ message, onFeedback }) {
               return <TextBlock key={block.id} content={block.content} />;
             }
             if (block.type === "tool_call") {
-              return <ToolCallCard key={block.id} toolCall={block.toolCall} />;
+              return (
+                <ToolCallCard
+                  key={block.id}
+                  toolCall={block.toolCall}
+                  onConfirmAction={onConfirmAction}
+                />
+              );
             }
             if (block.type === "completion_card" && block.card) {
               return <CompletionCard key={block.id} card={block.card} />;
+            }
+            if (block.type === "widget" && block.widget) {
+              return (
+                <Suspense
+                  key={block.id}
+                  fallback={
+                    <Box
+                      sx={{
+                        my: 1,
+                        height: 120,
+                        borderRadius: 1.5,
+                        bgcolor: "action.hover",
+                      }}
+                    />
+                  }
+                >
+                  <WidgetBlock widget={block.widget} />
+                </Suspense>
+              );
             }
             return null;
           })
         ) : (
           <>
             {toolCalls.map((tc) => (
-              <ToolCallCard key={tc.call_id} toolCall={tc} />
+              <ToolCallCard
+                key={tc.call_id}
+                toolCall={tc}
+                onConfirmAction={onConfirmAction}
+              />
             ))}
             <TextBlock content={message.content} />
           </>
@@ -250,12 +290,15 @@ AssistantMessage.propTypes = {
     blocks: PropTypes.arrayOf(
       PropTypes.shape({
         id: PropTypes.string,
-        type: PropTypes.oneOf(["text", "tool_call", "completion_card"]),
+        type: PropTypes.oneOf(["text", "tool_call", "completion_card", "widget"]),
         content: PropTypes.string,
         toolCall: PropTypes.object,
         card: PropTypes.object,
+        widget: PropTypes.object,
       }),
     ),
   }).isRequired,
   onFeedback: PropTypes.func,
+  onConfirmAction: PropTypes.func,
+  dimmed: PropTypes.bool,
 };

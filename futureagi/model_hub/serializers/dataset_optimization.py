@@ -253,7 +253,13 @@ class DatasetOptimizationCreateSerializer(serializers.ModelSerializer):
 
 
 class DatasetOptimizationSerializer(serializers.ModelSerializer):
-    """Full serializer for dataset optimization run."""
+    """A dataset optimization run — it iteratively rewrites the prompt for one
+    dataset column using an optimizer algorithm (e.g. bayesian, metaprompt,
+    GEPA), scoring each trial against the configured eval metrics. Create one to
+    auto-improve a column's prompt; read it back to track status and the
+    best/baseline scores. The status, score, and optimized-prompt fields are run
+    outputs populated as the run executes.
+    """
 
     def _scoped_column_queryset(self):
         organization, workspace = _request_org_workspace(self)
@@ -304,6 +310,51 @@ class DatasetOptimizationSerializer(serializers.ModelSerializer):
             "optimized_k_prompts",
             "created_at",
         ]
+        extra_kwargs = {
+            "id": {
+                "help_text": "UUID of this optimization run (from list_dataset_optimizations)."
+            },
+            "name": {"help_text": "Human-readable name for this optimization run."},
+            "column": {
+                "help_text": "UUID of the dataset column whose prompt is being optimized."
+            },
+            "optimizer_algorithm": {
+                "help_text": (
+                    "Optimization algorithm to use. One of: random_search, "
+                    "bayesian, metaprompt, protegi, promptwizard, gepa."
+                )
+            },
+            "optimizer_model": {
+                "help_text": (
+                    "UUID of the AI model that runs the optimization (the model "
+                    "used to generate candidate prompts), separate from the eval model."
+                )
+            },
+            "optimizer_config": {
+                "help_text": (
+                    "Optimizer-specific JSON configuration, e.g. {'num_trials': 10}."
+                )
+            },
+            "status": {
+                "help_text": (
+                    "Run status (output). One of: not_started, pending, running, "
+                    "completed, failed, cancelled."
+                )
+            },
+            "error_message": {
+                "help_text": "Failure reason populated when the run errors or is cancelled (output)."
+            },
+            "best_score": {
+                "help_text": "Best eval score achieved across all trials in this run (output)."
+            },
+            "baseline_score": {
+                "help_text": "Eval score of the original (un-optimized) prompt, for comparison (output)."
+            },
+            "optimized_k_prompts": {
+                "help_text": "List of the top optimized prompt candidates produced by the run (output)."
+            },
+            "created_at": {"help_text": "When the optimization run was created."},
+        }
 
 
 class DatasetOptimizationListSerializer(serializers.ModelSerializer):

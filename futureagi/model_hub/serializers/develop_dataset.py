@@ -15,6 +15,54 @@ from model_hub.models.evals_metric import Feedback
 
 
 class DatasetSerializer(serializers.ModelSerializer):
+    """A dataset is a workspace-scoped collection of rows and columns used as
+    input or ground-truth for evaluations, experiments, and prompt runs.
+
+    Datasets have columns (typed fields like text, json, image, choice) and
+    rows (records). They power experiments (run a prompt against every row)
+    and evaluations (score model output against expected fields). Names are
+    unique per (organization, model_type). Use list_datasets to discover,
+    list_dataset_evals to see what evals are attached, get_dataset_columns
+    to inspect schema.
+    """
+
+    id = serializers.UUIDField(
+        read_only=True,
+        help_text=(
+            "Unique dataset identifier (UUID v4). **How to get it:** call "
+            "`list_datasets` (optionally with name filter) and copy the 'id' field."
+        ),
+    )
+    name = serializers.CharField(
+        max_length=255,
+        help_text=(
+            "Human-readable dataset name. Must be unique within the "
+            "organization for the same model_type. Use kebab-case. "
+            "Examples: 'rag-eval-set-v3', 'summarization-golden', "
+            "'safety-red-team-prompts'."
+        ),
+    )
+    model_type = serializers.CharField(
+        required=False,
+        help_text=(
+            "Type of AI model the dataset is designed for. Common values: "
+            "'GenerativeLLM' (chat/completion), 'GenerativeImage', 'TTS', "
+            "'STT', 'MultiModal'. Determines which evaluators apply."
+        ),
+    )
+    source = serializers.CharField(
+        required=False,
+        help_text=(
+            "How the dataset was created. Common values: 'prototype' (user "
+            "created in UI), 'imported' (CSV/HuggingFace), 'synthetic' "
+            "(LLM-generated), 'observe' (sampled from production traces)."
+        ),
+    )
+    organization = serializers.UUIDField(
+        read_only=True,
+        help_text="Organization UUID, auto-set from the authenticated user.",
+    )
+
     class Meta:
         model = Dataset
         fields = ["id", "name", "organization", "model_type", "source", "user"]
@@ -99,6 +147,14 @@ class SyntheticDatasetConfigSerializer(serializers.Serializer):
 
 
 class FeedbackSerializer(serializers.ModelSerializer):
+    """Human feedback on a single evaluated item — e.g. agreeing or disagreeing
+    with an eval result on a dataset row, prompt, trace, or experiment. Create
+    feedback to record a reviewer's judgement (the value) plus an optional
+    explanation; it ties back to the eval metric or custom eval config it
+    corrects and the specific row it applies to. Used to curate eval quality and
+    drive improvements.
+    """
+
     def validate_source(self, value):
         valid_choices = [choice[0] for choice in FeedbackSourceChoices.get_choices()]
         if value not in valid_choices:
@@ -121,6 +177,45 @@ class FeedbackSerializer(serializers.ModelSerializer):
             "feedback_improvement",
             "action_type",
         ]
+        extra_kwargs = {
+            "id": {"help_text": "UUID of this feedback record (output)."},
+            "source_id": {
+                "help_text": (
+                    "ID of the originating object the feedback is about (e.g. the "
+                    "dataset, prompt, trace, or experiment id)."
+                )
+            },
+            "source": {
+                "help_text": (
+                    "Where the feedback originated. One of: dataset, prompt, sdk, "
+                    "trace, experiment, observe, eval_playground."
+                )
+            },
+            "user_eval_metric": {
+                "help_text": "UUID of the eval metric this feedback applies to (optional)."
+            },
+            "value": {
+                "help_text": "The feedback value, e.g. the corrected score or label, stored as text."
+            },
+            "explanation": {
+                "help_text": "Optional free-text reason the reviewer gave for this feedback."
+            },
+            "row_id": {
+                "help_text": "Identifier of the specific dataset/result row the feedback applies to."
+            },
+            "custom_eval_config_id": {
+                "help_text": (
+                    "UUID of the custom eval config this feedback corrects (from "
+                    "list_custom_eval_configs), if applicable."
+                )
+            },
+            "feedback_improvement": {
+                "help_text": "Optional suggested improvement or corrected output text."
+            },
+            "action_type": {
+                "help_text": "Optional tag describing the action this feedback represents."
+            },
+        }
 
 
 class SecretSerializer(serializers.ModelSerializer):

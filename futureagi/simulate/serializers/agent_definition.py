@@ -314,8 +314,10 @@ class AgentDefinitionSerializer(serializers.ModelSerializer):
 
             if not is_livekit:
                 # If contact_number is provided, enforce format/length.
+                # Strip spaces so human-readable formats like "+1 5598887142"
+                # are accepted (TH-5373).
                 if contact_number and contact_number.strip():
-                    cleaned = contact_number.lstrip("+")
+                    cleaned = contact_number.lstrip("+").replace(" ", "")
                     if not re.match(r"^\d+$", cleaned):
                         raise serializers.ValidationError(
                             {

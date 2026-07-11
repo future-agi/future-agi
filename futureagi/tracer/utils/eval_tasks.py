@@ -748,6 +748,50 @@ def process_eval_task(eval_task_id: str):
                     str(eval_config.id),
                     str(eval_task.id),
                 )
+
+        # TH-5410: residual-completion guard.
+        #
+        # The dispatch-quota branch above only flips a HISTORICAL task to
+        # COMPLETED when ``offset >= span_limit`` or ``offset >= sample_size``.
+        # That gate can never trip when ``offset`` legitimately undershoots
+        # ``sample_size`` even though every matching entity has already been
+        # processed — e.g. the matching-span universe shrank between ticks
+        # (spans deleted / filtered out), ``sample_size`` rounded up past the
+        # number of entities that actually exist, or set-dedup collapsed the
+        # processed list below the sampled count. In all of those cases the
+        # task re-runs the dispatch block every cron tick, finds zero pending
+        # entities, dispatches nothing, and stays RUNNING forever — the
+        # "stuck running after all spans processed" symptom (TH-5410).
+        #
+        # Make completion derived from "processed == total" rather than from
+        # the offset>=sample_size gate alone: once nothing is left to dispatch
+        # AND the already-dispatched work is fully drained, the task is done.
+        # Continuous tasks are exempt (they run indefinitely by design); the
+        # quota branch already owns the stall/partial-drain bookkeeping, so we
+        # only act on the happy "fully drained, nothing pending" case here.
+        if (
+            eval_task.run_type == RunType.HISTORICAL
+            and not filtered_spans
+            and eval_task.status != EvalTaskStatus.COMPLETED
+        ):
+            state = compute_drain_state(eval_task, eval_task_logger)
+            if state["is_fully_drained"]:
+                with transaction.atomic():
+                    _et = EvalTask.objects.select_for_update().get(id=eval_task.id)
+                    if _et.status not in (
+                        EvalTaskStatus.COMPLETED,
+                        EvalTaskStatus.DELETED,
+                    ):
+                        _et.status = EvalTaskStatus.COMPLETED
+                        _et.save(update_fields=["status", "updated_at"])
+                        eval_task_logger.status = EvalTaskStatus.COMPLETED
+                        eval_task_logger.save(update_fields=["status", "updated_at"])
+                        logger.info(
+                            "eval_task_completed_no_pending",
+                            eval_task_id=str(eval_task.id),
+                            dispatched=state["dispatched"],
+                            completed=state["completed"],
+                        )
     except Exception as e:
         logger.exception(f"{e}")
         eval_task.status = EvalTaskStatus.FAILED

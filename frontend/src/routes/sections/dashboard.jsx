@@ -65,6 +65,9 @@ const MCPServerPage = lazyWithRetry(
 const FalconAIConnectorsPage = lazyWithRetry(
   () => import("src/pages/dashboard/settings/FalconAIConnectors"),
 );
+const FalconAIMemoryPage = lazyWithRetry(
+  () => import("src/pages/dashboard/settings/FalconAIMemory"),
+);
 const IntegrationDetailPage = lazyWithRetry(
   () => import("src/sections/settings/integrations/IntegrationDetail"),
 );
@@ -688,6 +691,22 @@ export const dashboardRoutes = (
                 ]}
               >
                 <FalconAIConnectorsPage />
+              </RoleProtection>
+            ),
+          },
+          {
+            path: "falcon-ai-memory",
+            element: (
+              <RoleProtection
+                allowedRoles={[
+                  "Owner",
+                  "Admin",
+                  "Member",
+                  "workspace_admin",
+                  "workspace_member",
+                ]}
+              >
+                <FalconAIMemoryPage />
               </RoleProtection>
             ),
           },

@@ -55,9 +55,16 @@ class MCPToolCallView(APIView):
         session_id = request.validated_data.get("session_id")
 
         user = request.user
-        organization = getattr(request, "organization", None) or getattr(
-            user, "organization", None
-        )
+        # Phase 7A seam S2: no stale-FK fallback. When the auth layer didn't
+        # bind an org (request.organization is None), resolve via ACTIVE
+        # membership with accounts/authentication.py::_resolve_organization
+        # semantics (legacy FK only for accounts with zero membership rows).
+        # A user revoked from every org gets 403, not their old FK org.
+        organization = getattr(request, "organization", None)
+        if organization is None:
+            from mcp_server.org_resolution import resolve_membership_org
+
+            organization = resolve_membership_org(user)
         workspace = getattr(request, "workspace", None)
 
         if not organization:
@@ -109,6 +116,9 @@ class MCPToolCallView(APIView):
             user=user,
             organization=organization,
             workspace=workspace,
+            # Phase 3A: the MCP client is the (human-operated) approver for
+            # destructive tools — preview-first still enforced by the gate.
+            transport="mcp",
         )
 
         start_time = time.time()
@@ -179,9 +189,13 @@ class MCPToolListView(APIView):
     )
     def get(self, request):
         user = request.user
-        organization = getattr(request, "organization", None) or getattr(
-            user, "organization", None
-        )
+        # Phase 7A seam S2: same membership-verified resolution as
+        # MCPToolCallView — never the stale user.organization FK.
+        organization = getattr(request, "organization", None)
+        if organization is None:
+            from mcp_server.org_resolution import resolve_membership_org
+
+            organization = resolve_membership_org(user)
         workspace = getattr(request, "workspace", None)
 
         if not organization:

@@ -3505,6 +3505,16 @@ class ExperimentComparisonDetailsView(APIView):
     )
     def get(self, request, experiment_id):
         try:
+            # Cross-tenant guard (3B authz audit): ExperimentComparison has
+            # no tenancy fields, so verify the experiment itself is in the
+            # caller's workspace (via its dataset) before reading.
+            if not ExperimentsTable.objects.filter(
+                _request_workspace_filter(request),
+                id=experiment_id,
+                deleted=False,
+            ).exists():
+                return self._gm.not_found("Experiment not found.")
+
             # Get the latest comparison per dataset for this experiment
             latest_ids = (
                 ExperimentComparison.objects.filter(
@@ -3710,13 +3720,15 @@ class DownloadExperimentsView(APIView):
     )
     def get(self, request, experiment_id, *args, **kwargs):
         try:
-            # Get dataset and verify it exists
+            # Get dataset and verify it exists. The workspace Q is the
+            # cross-tenant guard (3B authz audit): ExperimentsTable has no
+            # tenancy fields of its own, so scope through its dataset.
             experiment = ExperimentsTable.objects.prefetch_related(
                 "experiments_datasets",
                 "experiments_datasets__columns",
                 "experiments_datasets__columns__cell_set",
                 "user_eval_template_ids",
-            ).get(id=experiment_id)
+            ).get(_request_workspace_filter(request), id=experiment_id)
 
             # Get all columns in the correct order
             # Allowed column source types to display from the dataset.
@@ -3811,6 +3823,9 @@ class DownloadExperimentsView(APIView):
 
             return response
 
+        except ExperimentsTable.DoesNotExist:
+            # Unknown id OR cross-tenant id (workspace Q above) — same 404.
+            return self._gm.not_found("Experiment not found.")
         except Exception as e:
             logger.exception(f"Error in downloading the dataset: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -4505,12 +4520,19 @@ def _validate_eval_metric_mapping(template, config):
         validate_required_key_mapping,
     )
 
+    required_keys = get_required_mapping_keys_for_template(template)
     missing_keys = validate_required_key_mapping(
         (config or {}).get("mapping", {}),
-        get_required_mapping_keys_for_template(template),
+        required_keys,
     )
     if missing_keys:
-        raise ValueError(f"Missing required mapping keys: {', '.join(missing_keys)}")
+        raise ValueError(
+            f"Missing required mapping keys: {', '.join(missing_keys)}. "
+            f"Eval template '{getattr(template, 'name', '')}' requires mapping "
+            f"keys {required_keys}; set config.mapping for each (map every key "
+            f"to a dataset column name), e.g. "
+            f"config={{'mapping': {{{', '.join(repr(k) + ': <column_name>' for k in required_keys)}}}}}."
+        )
 
 
 def _with_default_reason_column(config):

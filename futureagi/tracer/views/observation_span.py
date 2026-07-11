@@ -115,10 +115,34 @@ logger = structlog.get_logger(__name__)
 
 
 class AddObservationSpanAnnotationsSerializer(serializers.Serializer):
-    observation_span_id = serializers.CharField(required=False, allow_blank=True)
-    trace_id = serializers.UUIDField(required=False)
-    annotation_values = serializers.DictField(child=serializers.JSONField())
-    notes = serializers.CharField(required=False, allow_blank=True)
+    observation_span_id = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text=(
+            "ID of the observation span to annotate (from list_spans). "
+            "Give this OR trace_id."
+        ),
+    )
+    trace_id = serializers.UUIDField(
+        required=False,
+        help_text=(
+            "UUID of a trace — annotates the trace's ROOT span. "
+            "Give this OR observation_span_id."
+        ),
+    )
+    annotation_values = serializers.DictField(
+        child=serializers.JSONField(),
+        help_text=(
+            "Map of annotation label UUID -> value valid for the label's "
+            "type (text/numeric/categorical/star/thumbs). Get label ids "
+            "from get_annotation_labels."
+        ),
+    )
+    notes = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text="Optional free-text note saved alongside the annotation.",
+    )
 
     def validate(self, attrs):
         if not attrs.get("observation_span_id") and not attrs.get("trace_id"):

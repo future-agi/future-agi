@@ -111,7 +111,10 @@ class TestToolRegistry:
         assert registry.get("list_workspaces") is not None
         assert registry.get("list_evaluations") is not None
         assert registry.get("list_datasets") is not None
-        assert registry.get("search_traces") is not None
+        # search_traces was retired in Phase 2A Packet D (replaced by the
+        # list_traces / list_session_traces bridges); render_widget is a
+        # hand-written keeper.
+        assert registry.get("render_widget") is not None
 
     def test_global_registry_categories(self):
         cats = registry.categories()

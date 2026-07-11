@@ -26,7 +26,13 @@ logger = structlog.get_logger(__name__)
 
 
 class VersionDefaultSerializer(serializers.Serializer):
-    version_name = serializers.CharField(required=True)
+    version_name = serializers.CharField(
+        required=True,
+        help_text=(
+            "Version label to make the template's default, e.g. 'v2' "
+            "(format v<number>; see list_prompt_versions)."
+        ),
+    )
 
     def validate(self, data):
         version = data.get("version_name")
@@ -147,10 +153,28 @@ class UserResponseSchemaSerializer(serializers.ModelSerializer):
 
 
 class CommitSerializer(serializers.Serializer):
-    message = serializers.CharField(required=True, allow_blank=True)
-    is_draft = serializers.BooleanField(required=False, default=False)
-    set_default = serializers.BooleanField(required=False, default=False)
-    version_name = serializers.CharField(required=True)
+    message = serializers.CharField(
+        required=True,
+        allow_blank=True,
+        help_text="Commit message describing what changed in this version.",
+    )
+    is_draft = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Keep the version a draft after saving (default false = commit).",
+    )
+    set_default = serializers.BooleanField(
+        required=False,
+        default=False,
+        help_text="Also make this version the template's default.",
+    )
+    version_name = serializers.CharField(
+        required=True,
+        help_text=(
+            "Version label to commit, e.g. 'v2' (format v<number>; see "
+            "list_prompt_versions)."
+        ),
+    )
 
     def validate(self, data):
         set_default = data.get("set_default", False)
@@ -174,14 +198,41 @@ class CommitSerializer(serializers.Serializer):
 
 
 class DraftSerializer(serializers.Serializer):
-    prompt_config = serializers.ListField()
-    variable_names = serializers.DictField()
-    evaluation_configs = serializers.ListField()
-    metadata = serializers.JSONField(required=False, default=dict)
+    prompt_config = serializers.ListField(
+        help_text=(
+            "Prompt configuration array (first item used): [{'messages': "
+            "[{'role': 'system'|'user'|'assistant', 'content': [{'text': "
+            "'...', 'type': 'text'}]}], 'configuration': {'model': ..., "
+            "'temperature': ..., 'max_tokens': ..., 'response_format': "
+            "'text'}, 'placeholders': []}]."
+        )
+    )
+    variable_names = serializers.DictField(
+        help_text=(
+            "Sample values for {{variable}} placeholders: "
+            "{'var': ['value1', ...]}. Pass {} when the prompt has none."
+        )
+    )
+    evaluation_configs = serializers.ListField(
+        help_text="Evaluation configs to store on the draft (often [])."
+    )
+    metadata = serializers.JSONField(
+        required=False,
+        default=dict,
+        help_text="Optional metadata object stored on the version.",
+    )
 
 
 class MultipleDraftSerializer(serializers.Serializer):
-    new_prompts = serializers.ListField(child=DraftSerializer(), required=True)
+    new_prompts = serializers.ListField(
+        child=DraftSerializer(),
+        required=True,
+        help_text=(
+            "Draft versions to create (auto-numbered v2, v3, ...). Each "
+            "item: {'prompt_config': [...], 'variable_names': {...}, "
+            "'evaluation_configs': []}."
+        ),
+    )
 
 
 class UploadFileSerializer(serializers.Serializer):
@@ -207,8 +258,18 @@ class UploadFileSerializer(serializers.Serializer):
 
 
 class CompareVersionsSerializer(serializers.Serializer):
-    versions = serializers.ListField(child=serializers.CharField(), required=True)
-    is_run = serializers.CharField(required=False)
+    versions = serializers.ListField(
+        child=serializers.CharField(),
+        required=True,
+        help_text=(
+            "Version labels to compare side by side, e.g. ['v1', 'v2'] "
+            "(max 3; see list_prompt_versions)."
+        ),
+    )
+    is_run = serializers.CharField(
+        required=False,
+        help_text="Set 'true' to also run the compared versions' prompts.",
+    )
 
     def validate(self, data):
         versions = data.get("versions")
@@ -217,7 +278,127 @@ class CompareVersionsSerializer(serializers.Serializer):
         return data
 
 
+class PromptTemplateListRequestSerializer(serializers.Serializer):
+    """Query parameters for listing prompt templates in the workspace.
+
+    Returns paginated prompt template records (id, name, folder, modality,
+    updated_at). Use this for any "list prompt templates", "show my
+    prompts", "find prompt named X" query. Filter by search (matches name),
+    modality (chat/completion/image/etc.), or page through results.
+    """
+
+    search = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text=(
+            "Filter by template name (case-insensitive substring match). "
+            "Example: 'summari' matches 'summarization-v3'."
+        ),
+    )
+    page = serializers.IntegerField(
+        min_value=1,
+        default=1,
+        help_text="Page number, 1-indexed. Default 1.",
+    )
+    page_size = serializers.IntegerField(
+        min_value=1,
+        max_value=100,
+        default=20,
+        help_text="Number of templates per page. Range 1-100. Default 20.",
+    )
+    ordering = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        help_text=(
+            "Sort order. One of: 'name', '-name', 'created_at', "
+            "'-created_at'. Prefix with '-' for descending."
+        ),
+    )
+    modality = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text=(
+            "Filter by model modality. List of strings, e.g. ['chat'], "
+            "['completion'], ['image']. Omit to include all modalities."
+        ),
+    )
+
+
 class PromptTemplateSerializer(serializers.ModelSerializer):
+    """A prompt template is a reusable, versioned LLM prompt definition.
+
+    Templates have versions (drafts, defaults, named labels) that capture
+    the actual messages, model config, and execution settings. Use prompt
+    folders to organise templates into groups.
+    """
+
+    id = serializers.UUIDField(
+        read_only=True,
+        help_text=(
+            "Unique prompt template identifier. UUID v4 format. "
+            "Example: '550e8400-e29b-41d4-a716-446655440000'. "
+            "**How to get it:** call `list_prompt_templates` to discover "
+            "template IDs (optionally filter by 'search' query param to find "
+            "by name)."
+        ),
+    )
+    name = serializers.CharField(
+        max_length=255,
+        help_text=(
+            "Human-readable prompt template name. Must be unique within the "
+            "workspace. Use kebab-case or descriptive phrases. "
+            "Examples: 'customer-support-greeting', 'summarization-v3', "
+            "'rag-final-answer'."
+        ),
+    )
+    description = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        help_text=(
+            "Optional free-form description of what the prompt is for. "
+            "Example: 'Generates polite customer support replies given a "
+            "ticket summary and tone tag.'"
+        ),
+    )
+    variable_names = serializers.JSONField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "List of variable names referenced inside the prompt messages, "
+            "e.g. ['user_name', 'ticket_summary', 'tone']. These are the "
+            "placeholders that callers must provide at runtime. Auto-derived "
+            "from the prompt body if omitted."
+        ),
+    )
+    placeholders = serializers.JSONField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "Optional default values for the template's variables. "
+            "Object with shape {variable_name: default_value}. Example: "
+            "{'tone': 'friendly', 'user_name': 'there'}. Used in playgrounds "
+            "and previews when no explicit value is supplied."
+        ),
+    )
+    prompt_folder = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text=(
+            "UUID of the folder to place this template in. **How to get it:** "
+            "call `list_prompt_folders` first. Omit or pass null to leave at "
+            "workspace root."
+        ),
+    )
+    organization = serializers.UUIDField(
+        read_only=True,
+        help_text="Organization UUID. Auto-set from the authenticated user.",
+    )
+    created_by = serializers.UUIDField(
+        read_only=True,
+        help_text="UUID of the user who created the template. Auto-set on create.",
+    )
+
     class Meta:
         model = PromptTemplate
         fields = [

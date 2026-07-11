@@ -40,6 +40,26 @@ ERROR_RESPONSES = {
 }
 
 
+def _project_access_error(request, project_id):
+    """Cross-tenant guard (3B authz audit): ``project_id`` is caller-supplied
+    and keys the ClickHouse queries below directly, so verify the project
+    belongs to the caller's organization (workspace scoping additionally
+    applies via the ContextVar-aware default manager) BEFORE touching
+    ClickHouse. Returns a 404 response when the caller cannot see the
+    project, else None.
+    """
+    from accounts.utils import get_request_organization
+    from tracer.models.project import Project
+
+    qs = Project.objects.filter(id=project_id)
+    organization = get_request_organization(request)
+    if organization is not None:
+        qs = qs.filter(organization=organization)
+    if not qs.exists():
+        return GeneralMethods().not_found("Project not found.")
+    return None
+
+
 class SpanAttributeKeysView(APIView):
     """
     Discover all span attribute keys for a project.
@@ -62,6 +82,10 @@ class SpanAttributeKeysView(APIView):
             return self._gm.custom_error_response(503, "ClickHouse is not enabled")
 
         project_id = str(request.validated_query_data["project_id"])
+
+        denied = _project_access_error(request, project_id)
+        if denied is not None:
+            return denied
 
         try:
             keys = list_attribute_keys_for_project(project_id)
@@ -105,6 +129,10 @@ class SpanAttributeValuesView(APIView):
         key = query_params["key"]
         q = query_params.get("q")
         limit = query_params.get("limit", 50)
+
+        denied = _project_access_error(request, project_id)
+        if denied is not None:
+            return denied
 
         params = {
             "project_id": project_id,
@@ -192,6 +220,10 @@ class SpanAttributeDetailView(APIView):
         query_params = request.validated_query_data
         project_id = str(query_params["project_id"])
         key = query_params["key"]
+
+        denied = _project_access_error(request, project_id)
+        if denied is not None:
+            return denied
 
         params = {"project_id": project_id, "key": key}
 

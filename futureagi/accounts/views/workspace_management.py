@@ -72,6 +72,7 @@ from accounts.utils import (
     resolve_org,
     resolve_org_role,
 )
+from ai_tools.drf_bridge import expose_to_mcp
 from analytics.mixpanel_util import mixpanel_tracker
 from analytics.utils import (
     MixpanelEvents,
@@ -159,6 +160,7 @@ def clear_user_redis_cache(user_id):
         return False
 
 
+@expose_to_mcp(category="users", tools=["get"])
 class WorkspaceListAPIView(APIView):
     """API for getting paginated list of workspaces"""
 
@@ -676,6 +678,7 @@ class WorkspaceInviteAPIView(APIView):
             return self._gm.bad_request("Error in inviting users to workspace")
 
 
+@expose_to_mcp(category="users", tools=["get"])
 class UserListAPIView(APIView):
     """API for getting paginated list of users with filtering at workspace level"""
 

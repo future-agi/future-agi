@@ -183,7 +183,7 @@ ConversationItem.propTypes = {
 // ---------------------------------------------------------------------------
 const PAGE_SIZE = 30;
 
-export default function ChatListPanel() {
+export default function ChatListPanel({ sendReconnect }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const navigate = useNavigate();
@@ -291,8 +291,30 @@ export default function ChatListPanel() {
         setMessages(msgs);
         try {
           const s = await checkStreamStatus(id);
-          if (["running", "done"].includes(s.result?.stream_status))
-            setStreaming(true, null);
+          const streamStatus = s.result?.stream_status;
+          const lastMsg = msgs[msgs.length - 1];
+          // "running": the in-flight assistant answer is never persisted yet.
+          // "done" with a trailing user message: the answer was persisted
+          // after our history fetch. In both cases give the stream a fresh
+          // placeholder — the socket's message_id remap adopts the backend
+          // id — and request a replay so the buffered events rebuild the
+          // answer instead of being dropped against a null streaming id.
+          // "done" with the answer already in history needs nothing (setting
+          // streaming with no incoming events would stick the spinner).
+          if (
+            streamStatus === "running" ||
+            (streamStatus === "done" && lastMsg?.role === "user")
+          ) {
+            const placeholderId = `assistant-${Date.now()}`;
+            useFalconStore.getState().addMessage({
+              id: placeholderId,
+              role: "assistant",
+              content: "",
+              created_at: new Date().toISOString(),
+            });
+            setStreaming(true, placeholderId);
+            sendReconnect?.(id);
+          }
         } catch {
           /* non-critical */
         }
@@ -304,6 +326,7 @@ export default function ChatListPanel() {
       setCurrentConversation,
       setMessages,
       setStreaming,
+      sendReconnect,
       isOnFalconPage,
       navigate,
     ],
@@ -598,3 +621,7 @@ export default function ChatListPanel() {
     </Box>
   );
 }
+
+ChatListPanel.propTypes = {
+  sendReconnect: PropTypes.func,
+};

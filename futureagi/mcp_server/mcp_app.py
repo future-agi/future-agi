@@ -56,8 +56,13 @@ mcp = FastMCP(
 
 def _authenticate_and_set_context(api_key: str, secret_key: str) -> ToolContext | None:
     """Authenticate via API key and set per-request context."""
-    from accounts.models.user import OrgApiKey, User
-    from accounts.models.workspace import Workspace
+    from accounts.models.user import OrgApiKey
+
+    from mcp_server.org_resolution import (
+        WorkspaceAccessDenied,
+        resolve_accessible_workspace,
+        resolve_system_key_principal,
+    )
 
     try:
         # Use .all() to bypass BaseModelManager workspace filtering
@@ -71,13 +76,10 @@ def _authenticate_and_set_context(api_key: str, secret_key: str) -> ToolContext 
         return None
 
     if org_api_key.type == "system":
-        user = (
-            User.objects.all()
-            .select_related("organization")
-            .filter(organization=org_api_key.organization)
-            .order_by("created_at")
-            .first()
-        )
+        # Phase 7A seam S4: a deliberate principal — the org's longest-
+        # standing ACTIVE owner-level member — never an arbitrary (possibly
+        # revoked) User row.
+        user = resolve_system_key_principal(org_api_key.organization)
     else:
         user = org_api_key.user
 
@@ -90,23 +92,47 @@ def _authenticate_and_set_context(api_key: str, secret_key: str) -> ToolContext 
         return None
 
     organization = org_api_key.organization
-    workspace = (
-        org_api_key.workspace
-        or Workspace.objects.all()
-        .filter(organization=organization, is_default=True, is_active=True)
-        .first()
-    )
+    # Phase 7A seam S3: every workspace bind (explicit key workspace OR the
+    # default-workspace fallback) is access-verified; inaccessible ⇒ reject.
+    try:
+        workspace = resolve_accessible_workspace(
+            user,
+            organization,
+            workspace_id=org_api_key.workspace_id,
+        )
+    except WorkspaceAccessDenied:
+        logger.warning(
+            "mcp_auth_workspace_denied",
+            key_type=org_api_key.type,
+            user_id=str(user.id),
+            org=str(organization.id),
+        )
+        return None
 
     set_workspace_context(workspace=workspace, organization=organization, user=user)
 
-    return ToolContext(user=user, organization=organization, workspace=workspace)
+    return ToolContext(
+        user=user, organization=organization, workspace=workspace, transport="mcp"
+    )
 
 
 def _authenticate_via_oauth(token: str) -> ToolContext | None:
-    """Authenticate via OAuth Bearer token and set per-request context."""
+    """Authenticate via OAuth Bearer token and set per-request context.
+
+    Phase 7A seam S1: the org encrypted into the token at approval
+    (``oauth_utils.generate_oauth_token``) is the binding authority — NOT the
+    legacy ``user.organization`` FK — and an ACTIVE ``OrganizationMembership``
+    is re-verified on every request, so removing a member revokes effective
+    access without waiting for token expiry. Mismatch/revoked ⇒ ``None`` ⇒
+    the transport answers with a clean 401 ``invalid_token`` MCP error.
+    """
     from accounts.models.user import User
-    from accounts.models.workspace import Workspace
     from mcp_server.oauth_utils import decrypt_oauth_token
+    from mcp_server.org_resolution import (
+        WorkspaceAccessDenied,
+        resolve_accessible_workspace,
+        resolve_membership_org,
+    )
 
     payload = decrypt_oauth_token(token)
     if not payload or payload.get("type") != "mcp_oauth":
@@ -119,27 +145,39 @@ def _authenticate_via_oauth(token: str) -> ToolContext | None:
     except User.DoesNotExist:
         return None
 
-    organization = user.organization
+    if not user.is_active:
+        logger.warning("mcp_oauth_inactive_user", user_id=str(user.id))
+        return None
 
-    workspace = None
-    if payload.get("workspace_id"):
-        workspace = (
-            Workspace.objects.all()
-            .filter(
-                id=payload["workspace_id"], organization=organization, is_active=True
-            )
-            .first()
+    organization = resolve_membership_org(user, org_id=payload.get("org_id"))
+    if organization is None:
+        logger.warning(
+            "mcp_oauth_org_binding_rejected",
+            user_id=str(user.id),
+            token_org_id=str(payload.get("org_id")),
         )
-    if not workspace:
-        workspace = (
-            Workspace.objects.all()
-            .filter(organization=organization, is_default=True, is_active=True)
-            .first()
+        return None
+
+    # Phase 7A seam S3: token workspace verified (in-org + access); the
+    # default-workspace fallback is access-verified too — a workspace-
+    # restricted user binds their own workspace or is rejected.
+    try:
+        workspace = resolve_accessible_workspace(
+            user, organization, workspace_id=payload.get("workspace_id")
         )
+    except WorkspaceAccessDenied:
+        logger.warning(
+            "mcp_oauth_workspace_denied",
+            user_id=str(user.id),
+            workspace_id=str(payload.get("workspace_id")),
+        )
+        return None
 
     set_workspace_context(workspace=workspace, organization=organization, user=user)
 
-    return ToolContext(user=user, organization=organization, workspace=workspace)
+    return ToolContext(
+        user=user, organization=organization, workspace=workspace, transport="mcp"
+    )
 
 
 def _register_ai_tools():
@@ -185,26 +223,38 @@ def _register_ai_tools():
                         access = get_access_token()
                         if isinstance(access, FutureAGIAccessToken):
                             from accounts.models.user import User
-                            from accounts.models.workspace import Workspace
+
+                            from mcp_server.org_resolution import (
+                                resolve_accessible_workspace,
+                                resolve_membership_org,
+                            )
 
                             usr = (
                                 User.objects.all()
                                 .select_related("organization")
                                 .get(id=access.user_id)
                             )
-                            org = usr.organization
-                            ws = (
-                                Workspace.objects.all()
-                                .filter(id=access.workspace_id)
-                                .first()
-                                if access.workspace_id
-                                else None
+                            # Phase 7A seam S1: bind the token's org with an
+                            # active-membership check — never the legacy FK.
+                            # Seam S3: the workspace lookup is org-scoped and
+                            # access-verified (the old lookup didn't even
+                            # filter by org). WorkspaceAccessDenied propagates
+                            # to the generic except ⇒ unauthenticated.
+                            org = resolve_membership_org(
+                                usr, org_id=access.organization_id
                             )
-                            set_workspace_context(
-                                workspace=ws, organization=org, user=usr
-                            )
+                            if org is None:
+                                usr = None
+                            else:
+                                ws = resolve_accessible_workspace(
+                                    usr, org, workspace_id=access.workspace_id
+                                )
+                                set_workspace_context(
+                                    workspace=ws, organization=org, user=usr
+                                )
                     except Exception:
-                        pass
+                        usr = None
+                        org = None
 
                 if not org or not usr:
                     return "Error: Not authenticated."
@@ -216,7 +266,9 @@ def _register_ai_tools():
                 except RateLimitExceededError as e:
                     return f"Error: {e} (retry after {e.retry_after}s)"
 
-                context = ToolContext(user=usr, organization=org, workspace=ws)
+                context = ToolContext(
+                    user=usr, organization=org, workspace=ws, transport="mcp"
+                )
 
                 start = time.time()
                 result = t.run(kwargs_dict, context)
@@ -279,6 +331,19 @@ def _register_ai_tools():
                         inspect.Parameter.KEYWORD_ONLY,
                         default=default,
                         annotation=field_info.annotation,
+                    )
+                )
+
+            # Phase 3A: destructive tools take an extra optional `confirm`
+            # bool (popped before validation in BaseTool.run). Without it in
+            # the signature, FastMCP would reject the phase-2 call.
+            if getattr(t, "execution_policy", "") == "destructive":
+                params.append(
+                    inspect.Parameter(
+                        "confirm",
+                        inspect.Parameter.KEYWORD_ONLY,
+                        default=False,
+                        annotation=bool,
                     )
                 )
 

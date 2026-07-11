@@ -124,6 +124,7 @@ from model_hub.utils.annotation_queue_helpers import (
     evaluate_rule,
     filter_available_source_ids_for_annotation,
     get_fk_field_name,
+    is_clickhouse_memory_error,
     is_source_available_for_annotation,
     resolve_ch_span_source,
     resolve_source_content,
@@ -1293,20 +1294,27 @@ def _span_notes_target_for_queue_item(item):
     #       deleted=False).filter(Q(parent_span_id__isnull=True) |
     #       Q(parent_span_id=""))
     #   conversation root → start_time root → None
-    # CHSpanReader.list_by_trace drops deleted rows (via FINAL) and orders by
-    # (start_time, id). Root spans have empty parent_span_id (CH stores it
-    # as a non-nullable String — see schema 001), so we filter in Python.
+    # F3: this used to call list_by_trace() and filter root spans in Python —
+    # which materialized EVERY span (with its wide input/output/metadata JSON
+    # blobs) and OOM'd ClickHouse (code 241) on big traces, 500-ing the whole
+    # annotate-detail step. get_root_span_for_trace selects only the three
+    # id/type columns with a LIMIT 1, doing the conversation-root preference in
+    # SQL. A CH memory error (or any reader failure) degrades to "no span-notes
+    # target" rather than failing the annotator workspace.
     from tracer.services.clickhouse.v2 import get_reader
 
-    with get_reader() as reader:
-        spans = reader.list_by_trace(str(item.trace_id))
-    root_spans = [s for s in spans if not s.parent_span_id]
-    if not root_spans:
-        return None
-    for s in root_spans:
-        if s.observation_type == "conversation":
-            return s
-    return root_spans[0]
+    try:
+        with get_reader() as reader:
+            return reader.get_root_span_for_trace(str(item.trace_id))
+    except Exception as exc:
+        if is_clickhouse_memory_error(exc):
+            logger.warning(
+                "span_notes_target_ch_memory_error",
+                trace_id=str(item.trace_id),
+                error=str(exc),
+            )
+            return None
+        raise
 
 
 def _serialize_queue_item_note(note):
@@ -5332,17 +5340,31 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         else:
             label_notes_fallback = legacy_notes
 
-        # Pre-fetch valid label IDs for this queue
-        queue_label_ids = set(
-            item.queue.queue_labels.filter(deleted=False).values_list(
-                "label_id", flat=True
-            )
-        )
+        # Pre-fetch valid label IDs for this queue. Build BOTH a set of the
+        # real AnnotationsLabels ids AND a map from the queue-label junction-row
+        # id (AnnotationQueueLabel.id) to that real label id. The annotate
+        # workspace surfaces a queue label by BOTH ids (QueueLabelNestedSerializer
+        # emits `id` = the junction row + `label_id` = the underlying label);
+        # callers that pick up the junction `id` (notably the MCP
+        # get_queue_item_annotate_detail tool, whose table renders that `id`
+        # column) would otherwise have their annotation SILENTLY dropped here
+        # and then be unable to complete the item (F3 / TH-5467). Accept the
+        # junction id as an alias so the submitted label always resolves.
+        queue_label_ids = set()
+        junction_to_label_id = {}
+        for ql_id, lbl_id in item.queue.queue_labels.filter(
+            deleted=False
+        ).values_list("id", "label_id"):
+            queue_label_ids.add(lbl_id)
+            junction_to_label_id[ql_id] = lbl_id
 
         annotations_to_save = []
         for ann_data in annotations_data:
             label_id = ann_data["label_id"]
             value = ann_data["value"]
+
+            # Resolve a queue-label junction id to its underlying label id.
+            label_id = junction_to_label_id.get(label_id, label_id)
 
             try:
                 label = AnnotationsLabels.objects.get(pk=label_id, deleted=False)
@@ -5360,6 +5382,21 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             except ValueError as exc:
                 return self._gm.bad_request(str(exc))
             annotations_to_save.append((ann_data, label, value))
+
+        # A non-empty submission that matched NO queue label is almost always a
+        # wrong-id submission (e.g. an AnnotationsLabels id from another queue,
+        # or a stale id). Returning success with "submitted: 0" silently strands
+        # the caller — the item never gets a Score and complete_queue_item then
+        # rejects it. Surface a recoverable error naming the valid label ids
+        # instead (F3 / TH-5467).
+        if annotations_data and not annotations_to_save:
+            valid_ids = ", ".join(str(lid) for lid in sorted(map(str, queue_label_ids)))
+            return self._gm.bad_request(
+                "None of the submitted annotations matched a label on this "
+                f"queue. Use one of this queue's label_id values: [{valid_ids}] "
+                "(get them from get_queue_item_annotate_detail — submit the "
+                "`label_id` field, not the queue-label row `id`)."
+            )
 
         for ann_data, label, value in annotations_to_save:
             per_label_notes = (
@@ -5466,6 +5503,26 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     created_by_user=request.user,
                 ).delete()
 
+        # F3 (TH-5467): a submission that persisted NO score is a silent
+        # no-op that traps an MCP/agent caller — it then calls
+        # complete_queue_item and is rejected with "You must submit
+        # annotations before completing", with no signal that the submit
+        # itself did nothing. Reject an empty/all-blank/all-invalid
+        # submission with an actionable message instead, UNLESS the caller
+        # was only (re)setting item-level notes.
+        if submitted == 0 and item_notes is None:
+            valid_labels = ", ".join(str(lid) for lid in sorted(queue_label_ids)) or (
+                "none configured — add labels to the queue first"
+            )
+            return self._gm.bad_request(
+                "No annotations were saved: `annotations` must contain at "
+                "least one {label_id, value} with a non-blank value, where "
+                "label_id is one of this queue's labels and value matches the "
+                "label's type. Read the queue's labels (and their types) with "
+                "get_queue_item_annotate_detail, then resubmit. "
+                f"Valid label_id(s) for this queue: {valid_labels}."
+            )
+
         # Update item status to in_progress if pending
         if item.status == QueueItemStatus.PENDING.value:
             item.status = QueueItemStatus.IN_PROGRESS.value
@@ -5544,8 +5601,40 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         item_scores = _scores_for_queue_item(item)
         user_has_annotated = item_scores.filter(annotator=request.user).exists()
         if not user_has_annotated:
+            # F3 (TH-5467): name the EXACT recovery call + the queue's labels
+            # (id + type) inline so an MCP/agent caller can self-submit a
+            # concrete value without re-reading or asking the user. This only
+            # fires on the error path and still requires a real submit, so it
+            # does not weaken the evidence-before-claim guarantee.
+            label_rows = list(
+                queue.queue_labels.filter(deleted=False)
+                .select_related("label")
+                .order_by("order")
+            )
+            if label_rows:
+                label_desc = "; ".join(
+                    f"label_id={ql.label_id} "
+                    f"(name={ql.label.name!r}, type={ql.label.type})"
+                    for ql in label_rows
+                )
+                hint = (
+                    "Call submit_queue_annotations now (queue_id="
+                    f"{queue_id}, item_id={pk}) with annotations=[{{label_id, "
+                    "value}] — one entry per label below, value matching the "
+                    "label's type (text->a short note, score/number->a number, "
+                    "categorical->a valid choice, boolean->true/false, "
+                    "star->1-5). Choose a concrete value yourself; do not ask "
+                    f"the user. Queue labels: {label_desc}. Then retry "
+                    "complete_queue_item."
+                )
+            else:
+                hint = (
+                    "This queue has no labels configured, so the item cannot "
+                    "be annotated/completed — add labels to the queue first."
+                )
             return self._gm.bad_request(
-                "You must submit annotations before completing."
+                "You must submit annotations before completing this item. "
+                + hint
             )
 
         # Multi-annotator: every required label must have enough annotator

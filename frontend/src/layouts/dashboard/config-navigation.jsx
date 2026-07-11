@@ -424,6 +424,14 @@ export function useNavSettingsData() {
         icon: SettingsIcons.Integrations,
       });
     }
+    // Falcon AI Memory (Phase 5A) — same access as connectors
+    if (!isOSS && canAccess(RoutesName.integrations)) {
+      wsSettingsItems.push({
+        title: "Falcon AI Memory",
+        path: "/dashboard/settings/falcon-ai-memory",
+        icon: SettingsIcons.Integrations,
+      });
+    }
     if (wsSettingsItems.length > 0) {
       result.push({
         subheader: "Workspace Settings",

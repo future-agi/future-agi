@@ -65,7 +65,7 @@ RenderContent.propTypes = {
   theme: PropTypes.object.isRequired,
 };
 
-export default function UserMessage({ message }) {
+export default function UserMessage({ message, dimmed }) {
   const theme = useTheme();
   const [hovered, setHovered] = useState(false);
 
@@ -79,6 +79,8 @@ export default function UserMessage({ message }) {
         maxWidth: 800,
         width: "100%",
         mx: "auto",
+        opacity: dimmed ? 0.62 : 1,
+        transition: "opacity 0.3s ease",
       }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -161,4 +163,5 @@ UserMessage.propTypes = {
       }),
     ),
   }).isRequired,
+  dimmed: PropTypes.bool,
 };

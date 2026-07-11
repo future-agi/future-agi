@@ -25,11 +25,20 @@ import { uploadFile } from "../hooks/useFalconAPI";
 import ContextSelector from "./ContextSelector";
 import SlashCommandPicker from "./SlashCommandPicker";
 import AttachedFileChip from "./AttachedFileChip";
+const MAX_LENGTH = 10000;
+const MAX_FILE_BYTES = 10 * 1024 * 1024; // mirrors backend views.py MAX_FILE_SIZE
+const MAX_DROPPED_FILES = 5;
+
 export default function ChatInput({ onSend, onStop }) {
   const [text, setText] = useState("");
   const [slashDismissed, setSlashDismissed] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  // Inline notice for silently-impossible inputs (oversized files, dropped
+  // extras). These used to fail with NO feedback — an accuracy-of-presentation
+  // bug: the user believed the file was attached when it wasn't.
+  const [inputNotice, setInputNotice] = useState(null);
   const theme = useTheme();
+  const router = useRouter();
   const inputContainerRef = useRef(null);
   const fileInputRef = useRef(null);
   const pickerRef = useRef(null);
@@ -93,17 +102,28 @@ export default function ChatInput({ onSend, onStop }) {
     return 1;
   }, [text]);
 
-  const placeholder = currentConversationId
-    ? "Ask a follow-up..."
-    : "Message Falcon AI...";
+  // While the assistant is streaming the textarea is disabled (see
+  // `disabled={isStreaming}` below). Reflect that in the placeholder so the
+  // field doesn't keep inviting input with no signal it's locked (TH-5232).
+  const placeholder = isStreaming
+    ? "Falcon is responding…"
+    : currentConversationId
+      ? "Ask a follow-up..."
+      : "Message Falcon AI...";
 
-  const MAX_LENGTH = 10000;
+  // Over-limit messages are BLOCKED (with a visible explanation), never
+  // silently sliced — the old `.slice(0, MAX_LENGTH)` cut user text without
+  // any signal, so the model answered a different question than the user
+  // believed they asked.
+  const overLimit = text.length > MAX_LENGTH;
+  const nearLimit = text.length >= MAX_LENGTH * 0.9;
 
   const handleSend = useCallback(() => {
     const trimmed = text.trim();
     const hasFiles = useFalconStore.getState().attachedFiles.length > 0;
     if (!trimmed && !hasFiles) return;
-    onSend?.(trimmed.slice(0, MAX_LENGTH) || "See attached files");
+    if (text.length > MAX_LENGTH) return; // blocked — counter explains why
+    onSend?.(trimmed || "See attached files");
     setText("");
   }, [text, onSend]);
 
@@ -114,11 +134,14 @@ export default function ChatInput({ onSend, onStop }) {
       // Reset input so same file can be re-selected
       e.target.value = "";
 
-      if (file.size > 10 * 1024 * 1024) {
-        // Could show a snackbar; for now just alert
+      if (file.size > MAX_FILE_BYTES) {
+        setInputNotice(
+          `"${file.name}" is larger than 10 MB and was not attached.`,
+        );
         return;
       }
 
+      setInputNotice(null);
       setIsUploading(true);
       try {
         const resp = await uploadFile(file);
@@ -164,13 +187,19 @@ export default function ChatInput({ onSend, onStop }) {
       if (cmd.command === "/clear") {
         resetChat();
         setCurrentConversation(null);
+        // Drop the conversation id from the URL too — otherwise a refresh
+        // re-hydrates the cleared conversation from the route param.
+        // (window.location, not a hook: ChatInput also renders in the
+        // sidebar on arbitrary pages, where no navigation should happen.)
+        if (window.location.pathname.startsWith("/dashboard/falcon-ai")) {
+          router.replace("/dashboard/falcon-ai");
+        }
       }
     },
-    [onSend, triggerSkillsMenu, resetChat, setCurrentConversation],
+    [onSend, triggerSkillsMenu, resetChat, setCurrentConversation, router],
   );
 
   const isDark = theme.palette.mode === "dark";
-  const router = useRouter();
   const connectors = useFalconStore((s) => s.connectors);
   const [plusMenuAnchor, setPlusMenuAnchor] = useState(null);
   const [connectorsSubmenu, setConnectorsSubmenu] = useState(null);
@@ -194,9 +223,29 @@ export default function ChatInput({ onSend, onStop }) {
       e.stopPropagation();
       setIsDragging(false);
       const files = Array.from(e.dataTransfer?.files || []);
-      const validFiles = files
-        .filter((f) => f.size <= 10 * 1024 * 1024)
-        .slice(0, 5);
+      const sized = files.filter((f) => f.size <= MAX_FILE_BYTES);
+      const validFiles = sized.slice(0, MAX_DROPPED_FILES);
+
+      // Surface every silently-dropped file — oversized AND over-count.
+      const notices = [];
+      const oversized = files.filter((f) => f.size > MAX_FILE_BYTES);
+      if (oversized.length > 0) {
+        notices.push(
+          `${oversized.map((f) => `"${f.name}"`).join(", ")} ${
+            oversized.length === 1 ? "is" : "are"
+          } larger than 10 MB and ${
+            oversized.length === 1 ? "was" : "were"
+          } not attached.`,
+        );
+      }
+      if (sized.length > MAX_DROPPED_FILES) {
+        notices.push(
+          `Only the first ${MAX_DROPPED_FILES} files were attached (${
+            sized.length - MAX_DROPPED_FILES
+          } skipped).`,
+        );
+      }
+      setInputNotice(notices.length > 0 ? notices.join(" ") : null);
       if (validFiles.length === 0) return;
 
       setIsUploading(true);
@@ -326,6 +375,40 @@ export default function ChatInput({ onSend, onStop }) {
                 </Typography>
               </Box>
             )}
+          </Box>
+        )}
+
+        {/* Inline input notice — files rejected/skipped are never silent */}
+        {inputNotice && (
+          <Box
+            role="status"
+            sx={{
+              display: "flex",
+              alignItems: "flex-start",
+              gap: 0.75,
+              px: 2,
+              pt: 1.25,
+              pb: 0,
+            }}
+          >
+            <Iconify
+              icon="mdi:alert-circle-outline"
+              width={14}
+              sx={{ color: "warning.main", flexShrink: 0, mt: "1px" }}
+            />
+            <Typography
+              sx={{ fontSize: 12, color: "text.secondary", lineHeight: 1.5 }}
+            >
+              {inputNotice}
+            </Typography>
+            <IconButton
+              size="small"
+              title="Dismiss notice"
+              onClick={() => setInputNotice(null)}
+              sx={{ p: 0.25, ml: "auto", color: "text.disabled" }}
+            >
+              <Iconify icon="mdi:close" width={12} />
+            </IconButton>
           </Box>
         )}
 
@@ -588,59 +671,83 @@ export default function ChatInput({ onSend, onStop }) {
             </Menu>
           </Box>
 
-          {isStreaming ? (
-            <IconButton
-              size="small"
-              onClick={onStop}
-              title="Stop"
-              sx={{
-                bgcolor: "error.main",
-                color: "error.contrastText",
-                width: 32,
-                height: 32,
-                "&:hover": {
-                  bgcolor: "error.dark",
-                },
-              }}
-            >
-              <Iconify icon="mdi:stop" width={16} />
-            </IconButton>
-          ) : (
-            <IconButton
-              size="small"
-              onClick={handleSend}
-              disabled={!text.trim() && attachedFiles.length === 0}
-              title="Send"
-              sx={{
-                bgcolor:
-                  text.trim() || attachedFiles.length > 0
-                    ? "text.primary"
-                    : "transparent",
-                color:
-                  text.trim() || attachedFiles.length > 0
-                    ? isDark
-                      ? "common.black"
-                      : "common.white"
-                    : "text.disabled",
-                width: 32,
-                height: 32,
-                transition: "all 0.15s ease",
-                "&:hover": {
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            {/* Character budget — visible from 90%; over-limit blocks send
+                with an explanation instead of silently truncating */}
+            {nearLimit && (
+              <Typography
+                component="span"
+                role="status"
+                sx={{
+                  fontSize: 11,
+                  fontVariantNumeric: "tabular-nums",
+                  color: overLimit ? "error.main" : "text.disabled",
+                  fontWeight: overLimit ? 600 : 400,
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {overLimit
+                  ? `Message too long — ${text.length.toLocaleString()} / ${MAX_LENGTH.toLocaleString()} characters. Shorten it or attach it as a file.`
+                  : `${text.length.toLocaleString()} / ${MAX_LENGTH.toLocaleString()}`}
+              </Typography>
+            )}
+
+            {isStreaming ? (
+              <IconButton
+                size="small"
+                onClick={onStop}
+                title="Stop"
+                sx={{
+                  bgcolor: "error.main",
+                  color: "error.contrastText",
+                  width: 32,
+                  height: 32,
+                  "&:hover": {
+                    bgcolor: "error.dark",
+                  },
+                }}
+              >
+                <Iconify icon="mdi:stop" width={16} />
+              </IconButton>
+            ) : (
+              <IconButton
+                size="small"
+                onClick={handleSend}
+                disabled={
+                  (!text.trim() && attachedFiles.length === 0) || overLimit
+                }
+                title="Send"
+                sx={{
                   bgcolor:
-                    text.trim() || attachedFiles.length > 0
-                      ? isDark
-                        ? "grey.300"
-                        : "grey.800"
+                    (text.trim() || attachedFiles.length > 0) && !overLimit
+                      ? "text.primary"
                       : "transparent",
-                },
-                "&.Mui-disabled": {
-                  color: "text.disabled",
-                },
-              }}
-            >
-              <Iconify icon="mdi:arrow-up" width={18} />
-            </IconButton>
-          )}
+                  color:
+                    (text.trim() || attachedFiles.length > 0) && !overLimit
+                      ? isDark
+                        ? "common.black"
+                        : "common.white"
+                      : "text.disabled",
+                  width: 32,
+                  height: 32,
+                  transition: "all 0.15s ease",
+                  "&:hover": {
+                    bgcolor:
+                      (text.trim() || attachedFiles.length > 0) && !overLimit
+                        ? isDark
+                          ? "grey.300"
+                          : "grey.800"
+                        : "transparent",
+                  },
+                  "&.Mui-disabled": {
+                    color: "text.disabled",
+                  },
+                }}
+              >
+                <Iconify icon="mdi:arrow-up" width={18} />
+              </IconButton>
+            )}
+          </Box>
         </Box>
       </Box>
 
