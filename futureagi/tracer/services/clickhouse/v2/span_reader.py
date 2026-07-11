@@ -1048,6 +1048,34 @@ class CHSpanReader:
         ).result_rows
         return [str(row[0]) for row in rows]
 
+    def recent_root_trace_ids_by_project(
+        self,
+        project_id: str,
+        *,
+        limit: int,
+        exclude_trace_ids: list[str] | None = None,
+    ) -> list[str]:
+        """Distinct trace_ids for a project, newest first, capped at ``limit`` —
+        one row per trace (root span). Replaces the PG
+        ``Trace.objects.filter(project=…).order_by('-created_at')[:limit]`` walk
+        used to pick recent traces to analyze. ``exclude_trace_ids`` drops
+        already-handled traces CH-side."""
+        if not project_id or limit <= 0:
+            return []
+        where = ["project_id = %(pid)s", "is_deleted = 0", "parent_span_id = ''"]
+        params: dict[str, Any] = {"pid": str(project_id), "lim": int(limit)}
+        if exclude_trace_ids:
+            where.append("trace_id NOT IN %(exclude)s")
+            params["exclude"] = tuple(exclude_trace_ids)
+        rows = self._client.query(
+            "SELECT toString(trace_id) AS tid, max(start_time) AS st "
+            "FROM spans FINAL "
+            f"WHERE {' AND '.join(where)} "
+            "GROUP BY tid ORDER BY st DESC LIMIT %(lim)s",
+            parameters=params,
+        ).result_rows
+        return [str(r[0]) for r in rows]
+
     def scope_by_ids(self, span_ids: list[str]) -> dict[str, SpanScope]:
         """Map ``span_id -> SpanScope(project_id, trace_id)``, reading ONLY those
         two columns instead of the full span row.
@@ -1122,6 +1150,51 @@ class CHSpanReader:
             tid = str(tid)
             if tid not in result:  # first root per trace wins
                 result[tid] = (str(sid), _norm(pid))
+        return result
+
+    def trace_session_ids_by_trace_ids(
+        self, trace_ids: list[str], project_ids: list[str] | None = None
+    ) -> dict[str, str | None]:
+        """``{trace_id: trace_session_id}`` read from each trace's root span,
+        ids only — the reverse of ``session_trace_ids``. Lets callers count
+        distinct sessions across trace members without the dropped PG
+        ``Trace.session`` FK. The session id is resolved new→old (remap) so a
+        cross-cutover straddler's turns collapse to one session downstream."""
+        if not trace_ids:
+            return {}
+        join = remap_left_join(
+            "spans.trace_session_id", "trace_session_id_remap", "ts_remap"
+        )
+        resolved_ts = resolved_id_expr("spans.trace_session_id", "ts_remap")
+        where = [
+            "trace_id IN %(trace_ids)s",
+            "is_deleted = 0",
+            "(parent_span_id IS NULL OR parent_span_id = '')",
+        ]
+        params: dict[str, Any] = {"trace_ids": tuple(trace_ids)}
+        if project_ids:
+            where.append("project_id IN %(project_ids)s")
+            params["project_ids"] = tuple(project_ids)
+        rows = self._client.query(
+            f"SELECT toString(trace_id) AS trace_id, toString({resolved_ts}) AS tsid "
+            f"FROM spans FINAL {join} "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY trace_id, start_time, id",
+            parameters=params,
+        ).result_rows
+
+        def _norm(v: Any) -> str | None:
+            return (
+                None
+                if v in (None, "", "NULL", "00000000-0000-0000-0000-000000000000")
+                else str(v)
+            )
+
+        result: dict[str, str | None] = {}
+        for tid, tsid in rows:
+            tid = str(tid)
+            if tid not in result:  # first root per trace wins
+                result[tid] = _norm(tsid)
         return result
 
     # ─── Aggregations across many traces ──────────────────────────────────────
@@ -1619,6 +1692,7 @@ class CHSpanReader:
         session_id: str | list[str] | None = None,
         created_at_gte: datetime | None = None,
         created_at_range: tuple[datetime, datetime] | None = None,
+        roots_only: bool = False,
     ) -> int:
         """Replaces ObservationSpan.objects.filter(<Q-object>).count() for
         the specific filter set produced by parsing_evaltask_filters().
@@ -1626,6 +1700,10 @@ class CHSpanReader:
         Equivalent to building a Q with those kwargs and counting. NOT
         a general-purpose Q→CH translator; intentionally narrow to the
         eval-task filter shape so behavior is testable in isolation.
+
+        ``roots_only`` counts one row per trace (root span = empty parent),
+        turning this into a trace count — used where the PG path counted
+        ``Trace`` rows in a window rather than spans.
 
         Codex wave-2 fixes (2026-05-26):
           • P1: created_at_* predicates target the CH `created_at` column
@@ -1638,6 +1716,8 @@ class CHSpanReader:
         where = ["is_deleted = 0"]
         params: dict[str, Any] = {}
         session_join = ""
+        if roots_only:
+            where.append("parent_span_id = ''")
         if project_id:
             where.append("project_id = %(pid)s")
             params["pid"] = project_id
