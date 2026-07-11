@@ -12,16 +12,21 @@ from model_hub.utils.eval_list import _RUN_CONFIG_KEYS, build_run_config_view
 @pytest.mark.parametrize(
     "eval_config, template_config, expected",
     [
-        ({"model": "gpt-4.1"}, {"model": "turing_large"}, "gpt-4.1"),
         (
             {"run_config": {"model": "claude-3-5-sonnet-latest"}},
             {"model": "turing_large"},
             "claude-3-5-sonnet-latest",
         ),
+        ({"model": "gpt-4.1"}, {"model": "turing_large"}, "gpt-4.1"),
+        (
+            {"model": "gpt-4.1", "run_config": {"model": "claude-3-5"}},
+            {"model": "turing_large"},
+            "claude-3-5",
+        ),
         ({}, {"model": "turing_large"}, "turing_large"),
         (None, {"model": "turing_large"}, "turing_large"),
         (
-            {"model": "gpt-4.1", "run_config": {"model": "claude-3-5"}},
+            {"run_config": {"model": ""}, "model": "gpt-4.1"},
             {"model": "turing_large"},
             "gpt-4.1",
         ),
@@ -30,13 +35,14 @@ from model_hub.utils.eval_list import _RUN_CONFIG_KEYS, build_run_config_view
         ({}, {}, None),
     ],
     ids=[
-        "top-level-model-wins",
-        "run_config-model-fallback",
+        "run_config-nested-wins-alone",
+        "top-level-model-when-no-nested",
+        "run_config-nested-wins-over-top-level",
         "template-default-when-runtime-empty",
         "template-default-when-runtime-none",
-        "top-level-wins-over-run-config-when-both-set",
+        "empty-nested-falls-through-to-top-level",
         "empty-string-top-level-falls-through",
-        "none-run-config-falls-through",
+        "none-run-config-falls-through-to-top-level-or-template",
         "no-model-anywhere-returns-none",
     ],
 )
