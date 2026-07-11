@@ -10,11 +10,6 @@ from model_hub.models.run_prompt import PromptEvalConfig, PromptTemplate
 
 
 def _resolve_model_via_view_slice(evaluation, eval_template):
-    """Mirror of the model-resolution slice inside
-    PromptTemplateView.run_evaluation. Kept as a pure helper so the
-    precedence order can be pinned without spinning up a full HTTP
-    request.
-    """
     runtime_config = evaluation.config or {}
     return (
         runtime_config.get("model")
@@ -52,9 +47,6 @@ def test_model_resolution_precedence(eval_config, template_config, expected):
 def test_evaluation_configs_endpoint_returns_template_id_and_eval_type(
     auth_client, user, workspace
 ):
-    """FE reads `template_id` for the edit-drawer and `eval_type` for the
-    badge; the endpoint used to omit both, so edits silently failed and
-    every eval rendered as the fallback badge type."""
     template = EvalTemplate.objects.create(
         name="workbench-fixture-llm",
         description="",
@@ -92,9 +84,6 @@ def test_evaluation_configs_endpoint_returns_template_id_and_eval_type(
 def test_evaluation_configs_endpoint_surfaces_run_config(
     auth_client, user, workspace
 ):
-    """FE edit-drawer reads `evalData.run_config` for the model, agent_mode,
-    tools, etc. Without it the drawer falls back to the template default
-    (e.g. `turing_large`) even after the user saved `gpt-4.1`."""
     template = EvalTemplate.objects.create(
         name="workbench-fixture-runtime",
         description="",

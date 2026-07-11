@@ -173,11 +173,7 @@ def merge_code_eval_kwargs(
     eval_template,
     binding_config: dict | None,
 ) -> dict:
-    """Merge stored code-eval params (min_sentences, ...) into the mapped
-    input kwargs before eval_instance.run(**). Every surface that runs a
-    CustomCodeEval binding must call this so `function_params_schema`
-    values reach the sandboxed code as **kwargs.
-    """
+    """Inject saved code-eval params into `mapped_kwargs` so the sandbox sees them."""
     if getattr(eval_template, "eval_type", "") != "code":
         return mapped_kwargs
     params = (binding_config or {}).get("params") or {}

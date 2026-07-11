@@ -2169,9 +2169,6 @@ class EvaluationRunner:
                 workspace_id=self.workspace_id,
             )
 
-        # For code evals, static user-defined params stored on the binding
-        # config reach evaluate() as **kwargs via the shared merger so
-        # every surface (dataset, workbench, ...) honours the same layering.
         from model_hub.utils.function_eval_params import merge_code_eval_kwargs
 
         binding_config = (
