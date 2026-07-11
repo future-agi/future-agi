@@ -23,7 +23,6 @@ _RUN_CONFIG_DEFAULTS: dict = {
     "knowledge_bases": [],
     "tools": {},
 }
-_RUN_CONFIG_KEYS: tuple[str, ...] = tuple(_RUN_CONFIG_DEFAULTS)
 
 
 def build_run_config_view(eval_config) -> dict:

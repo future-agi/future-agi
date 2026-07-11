@@ -6,7 +6,7 @@ from evaluations.engine.instance import resolve_binding_model
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.run_prompt import PromptEvalConfig, PromptTemplate
-from model_hub.utils.eval_list import _RUN_CONFIG_KEYS, build_run_config_view
+from model_hub.utils.eval_list import _RUN_CONFIG_DEFAULTS, build_run_config_view
 
 
 @pytest.mark.parametrize(
@@ -63,7 +63,7 @@ def _fake_binding(config=None, error_localizer=False):
 
 def test_build_run_config_view_shape_defaults():
     result = build_run_config_view(_fake_binding())
-    assert set(result.keys()) == set(_RUN_CONFIG_KEYS)
+    assert set(result.keys()) == set(_RUN_CONFIG_DEFAULTS)
     assert result["agent_mode"] == "agent"
     assert result["check_internet"] is False
     assert result["summary"] == "concise"
@@ -208,7 +208,7 @@ def test_evaluation_configs_endpoint_surfaces_run_config(
     row = response.json()["result"]["evaluation_configs"][0]
     assert row["run_config"]["agent_mode"] == "agent"
     assert row["run_config"]["pass_threshold"] == 0.5
-    assert set(row["run_config"].keys()) == set(_RUN_CONFIG_KEYS)
+    assert set(row["run_config"].keys()) == set(_RUN_CONFIG_DEFAULTS)
 
 
 @pytest.mark.django_db
