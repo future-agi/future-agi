@@ -57,44 +57,10 @@ const EvaluationCell = ({ value, column }) => {
     return <NumericCell value={value} sx={{ padding: "0 12px" }} />;
   }
 
-  // Pass/Fail type
-  if (column?.outputType === "Pass/Fail") {
-    if (isMissing) {
-      return (
-        <div
-          style={{
-            padding: "0 12px",
-            display: "flex",
-            alignItems: "center",
-            height: "100%",
-          }}
-        >
-          -
-        </div>
-      );
-    }
-    const isPass = !!value;
-    const { bgcolor: backgroundColor, color } =
-      interpolateColorTokenBasedOnScore(isPass ? 100 : 0, 100);
-
-    return (
-      <div
-        style={{
-          height: "100%",
-          width: "100%",
-          display: "flex",
-          alignItems: "center",
-          backgroundColor,
-          padding: "0 12px",
-          margin: 0,
-          fontSize: "14px",
-          color,
-        }}
-      >
-        {isPass ? "Pass" : "Fail"}
-      </div>
-    );
-  }
+  // Pass/Fail columns carry the averaged pass rate (0-100) in the list — a trace
+  // with 2 of 3 spans passing arrives as 66.67 — so they render through the
+  // numeric-percentage path below ("66.67%"). Collapsing to a binary
+  // "Pass"/"Fail" label would drop the average across the trace's spans.
 
   // Array of values
   if (Array.isArray(value)) {

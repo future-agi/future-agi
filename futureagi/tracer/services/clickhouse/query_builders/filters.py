@@ -11,6 +11,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.utils.constants import (
     LIST_OPS,
     NO_VALUE_OPS,
@@ -1422,6 +1423,8 @@ class ClickHouseFilterBuilder:
             outer_col = "trace_id"
             inner_col = "trace_id"
 
+        eval_table, eval_not_deleted = eval_logger_source()
+
         def eval_value_subquery(
             match_condition: str,
             *,
@@ -1430,9 +1433,9 @@ class ClickHouseFilterBuilder:
             outer_operator = "NOT IN" if negate_outer else "IN"
             return (
                 f"{outer_col} {outer_operator} ("
-                f"SELECT {inner_col} FROM tracer_eval_logger FINAL "
+                f"SELECT {inner_col} FROM {eval_table} FINAL "
                 f"WHERE custom_eval_config_id IN %({param_cfg})s "
-                f"AND is_deleted = 0 "
+                f"AND {eval_not_deleted} "
                 f"{error_clause} "
                 f"AND {match_condition}"
                 f")"
@@ -1516,9 +1519,12 @@ class ClickHouseFilterBuilder:
                         f"(has({choice_array}, %({param})s) "
                         f"OR output_str = %({param})s)"
                     )
-            combined = " OR ".join(choice_conditions)
+            # Wrap the OR-join so it binds as one unit — otherwise the subquery's
+            # `AND config/deleted/error` guards only scope the first value and
+            # the rest escape via SQL AND/OR precedence.
+            combined = "(" + " OR ".join(choice_conditions) + ")"
             if filter_op in negative_ops:
-                combined = f"{choice_exists} AND NOT ({combined})"
+                combined = f"{choice_exists} AND NOT {combined}"
             return eval_value_subquery(combined)
 
         # SCORE (default) — numeric on output_float. UI displays scores as
@@ -1890,11 +1896,12 @@ class ClickHouseFilterBuilder:
         # (seeded by ``BaseQueryBuilder.__init__``), matching the pattern
         # used by ``_build_span_attr_condition`` above.
         # toString() casts UUID → String to match spans.trace_id (String type).
+        eval_table, eval_not_deleted = eval_logger_source("el")
         return (
             "trace_id IN ("
-            "SELECT DISTINCT toString(el.trace_id) FROM tracer_eval_logger AS el FINAL "
+            f"SELECT DISTINCT toString(el.trace_id) FROM {eval_table} AS el FINAL "
             f"INNER JOIN {self.table} AS sp ON sp.trace_id = toString(el.trace_id) "
-            "WHERE el.is_deleted = 0 AND el.trace_id IS NOT NULL "
+            f"WHERE {eval_not_deleted} AND el.trace_id IS NOT NULL "
             "AND sp.is_deleted = 0 "
             f"AND {self._project_scope_predicate('sp')})"
         )

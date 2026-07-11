@@ -94,6 +94,8 @@ from tracer.utils.annotations import (
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
+    eval_output_type_for_config,
+    flatten_eval_score_into_entry,
     get_annotation_labels_for_project,
     get_default_trace_config,
     update_column_config_based_on_eval_config,
@@ -3646,24 +3648,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 config_id = str(config.id)
                 if config_id not in trace_evals:
                     continue
-                scores = trace_evals[config_id]
-                # CHOICES eval: spread per-choice percentages into
-                # separate columns keyed ``{config_id}**{choice}``.
-                if isinstance(scores, dict) and scores.get("per_choice"):
-                    for choice, pct in scores["per_choice"].items():
-                        entry[f"{config_id}**{choice}"] = pct
-                elif isinstance(scores, dict) and "avg_score" in scores:
-                    # Prefer ``avg_score`` when it's present. A plain
-                    # ``avg_score or pass_rate`` drops a legitimate 0.0
-                    # (Fail) because ``0.0`` is falsy — use an explicit
-                    # ``None`` check so Fail doesn't silently fall
-                    # through to ``pass_rate``.
-                    avg_val = scores.get("avg_score")
-                    entry[config_id] = (
-                        avg_val if avg_val is not None else scores.get("pass_rate")
-                    )
-                else:
-                    entry[config_id] = scores
+                flatten_eval_score_into_entry(
+                    entry,
+                    config_id,
+                    trace_evals[config_id],
+                    eval_output_type_for_config(config),
+                )
 
             # Add annotations
             trace_annotations = annotation_map.get(trace_id, {})
@@ -4027,6 +4017,21 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                         metrics[config_id] = metric_entry
                 if metrics:
                     entry["eval_outputs"] = metrics
+
+                # Flatten eval values onto the row too — the list grid reads
+                # params.data["{config_id}**{choice}"] (CHOICES) / params.data[config_id]
+                # (score/pass-fail) directly, like the annotations below. Nested
+                # eval_outputs alone leaves every eval column blank in the UI.
+                for eval_config in eval_configs:
+                    cid = str(eval_config.id)
+                    if cid not in trace_evals:
+                        continue
+                    flatten_eval_score_into_entry(
+                        entry,
+                        cid,
+                        trace_evals[cid],
+                        eval_output_type_for_config(eval_config),
+                    )
 
             # Add annotation outputs — flatten onto the row for frontend grid compatibility
             # Frontend valueGetter reads params.data[labelId] directly

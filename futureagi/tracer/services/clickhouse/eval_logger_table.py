@@ -28,6 +28,9 @@ def eval_logger_source(alias: str = "") -> tuple[str, str]:
         # v2: single is_deleted marker, no peerdb CDC columns.
         predicate = f"{p}is_deleted = 0"
     else:
-        # legacy peerdb CDC table.
-        predicate = f"{p}_peerdb_is_deleted = 0 AND ({p}deleted = 0 OR {p}deleted IS NULL)"
+        # legacy peerdb CDC table. Filter on the app `deleted` column, not
+        # `_peerdb_is_deleted`: the v2 rewriter renames `_peerdb_is_deleted` →
+        # `is_deleted` (which this legacy table lacks), so `deleted` is the
+        # rewrite-safe soft-delete marker (mirrors the model_hub_score reads).
+        predicate = f"({p}deleted = 0 OR {p}deleted IS NULL)"
     return table, predicate

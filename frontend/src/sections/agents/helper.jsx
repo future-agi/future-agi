@@ -11,6 +11,7 @@ import CallLogsHeaderCellRenderer from "./CallLogs/CallLogsHeaderCellRenderer";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { Box, Skeleton } from "@mui/material";
+import EvaluationCell from "src/sections/projects/LLMTracing/Renderers/EvaluationCell";
 import { AGENT_TYPES, isLiveKitProvider } from "./constants";
 import AnnotationHeaderCellRenderer from "./CallLogs/AnnotationHeaderCellRenderer";
 import NewAnnotationCellRenderer from "./NewAnnotationCellRenderer";
@@ -385,6 +386,39 @@ export const generateEvalColumnsFromConfig = (items = []) => {
     const displayName = item.name?.replace(/_/g, " ") || evalId;
     const isReason = item.source_field === "reason";
     const dataKey = isReason ? item.parent_eval_id : evalId;
+
+    // CHOICES evals render one column per choice (id `${configId}**${choice}`)
+    // carrying the per-choice percentage as a FLAT row key — the same contract
+    // list_traces_of_session uses. Nested `eval_outputs` is keyed by config id
+    // and never matches a per-choice column id, so read the flat key directly.
+    if (evalId.includes("**")) {
+      return {
+        headerName: displayName,
+        field: evalId,
+        flex: 1,
+        minWidth: 140,
+        hide: item.is_visible === false,
+        headerComponent: CallLogsHeaderCellRenderer,
+        headerComponentParams: { displayName },
+        valueGetter: (params) => {
+          const v = params.data?.[evalId];
+          return v === null || v === undefined || v === "" ? null : Number(v);
+        },
+        // Reuse the trace list's eval cell for identical rendering (percentage
+        // + interpolated background). The per-choice value is numeric, so it
+        // takes the numeric-percentage path.
+        cellRenderer: (params) => (
+          <EvaluationCell
+            value={params.value}
+            column={{
+              outputType: item.output_type,
+              reverseOutput: item.reverse_output,
+            }}
+          />
+        ),
+      };
+    }
+
     return {
       headerName: displayName,
       field: `eval_outputs.${evalId}`,

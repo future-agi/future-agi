@@ -323,6 +323,59 @@ def update_column_config_based_on_eval_config(
     return column_config
 
 
+def _normalize_eval_output_type(output_type: str | None) -> str:
+    """Normalize an eval ``output`` type for comparison (``Pass/Fail`` → ``PASS_FAIL``)."""
+    return (output_type or "").replace("/", "_").replace(" ", "_").upper()
+
+
+def flatten_eval_score_into_entry(
+    entry: dict,
+    config_id: str,
+    scores: Any,
+    output_type: str | None,
+) -> None:
+    """Flatten one pivoted ``(trace, config)`` eval score onto a list-grid row.
+
+    ``scores`` is the per-``(trace, config)`` value from
+    ``TraceListQueryBuilder.pivot_eval_results`` — already averaged across the
+    trace's spans (SQL ``avgIf``/``groupArray`` grouped by
+    ``trace_id, custom_eval_config_id``). The list grids bind eval columns to
+    flat row keys, so spread it:
+
+    * CHOICES   → ``{config_id}**{choice}`` = per-choice percentage.
+    * PASS_FAIL → ``{config_id}`` = pass rate (avg of ``output_bool``).
+    * SCORE     → ``{config_id}`` = numeric avg (avg of ``output_float`` × 100).
+
+    PASS_FAIL must use the pass rate, never the score: an eval that also wrote an
+    ``output_float`` (e.g. deterministic evaluators) would otherwise surface the
+    score field — frequently inverted vs the real pass/fail result. Non-dict /
+    error / non-terminal markers are passed through under ``{config_id}`` so the
+    grid can render an error/loading state.
+    """
+    if not isinstance(scores, dict):
+        entry[config_id] = scores
+        return
+    if scores.get("per_choice"):
+        for choice, pct in scores["per_choice"].items():
+            entry[f"{config_id}**{choice}"] = pct
+        return
+    if "avg_score" in scores or "pass_rate" in scores:
+        if _normalize_eval_output_type(output_type) == "PASS_FAIL":
+            entry[config_id] = scores.get("pass_rate")
+        else:
+            entry[config_id] = scores.get("avg_score")
+        return
+    entry[config_id] = scores
+
+
+def eval_output_type_for_config(config: Any) -> str | None:
+    """Read an eval config's configured ``output`` type from its template."""
+    template = getattr(config, "eval_template", None)
+    if template is None:
+        return None
+    return (getattr(template, "config", None) or {}).get("output")
+
+
 def _validate_span_attribute_filter(column_id, filter_config):
     """Enforce the SPAN_ATTRIBUTE type/op/value contract; raise on mismatch."""
     ftype = (filter_config.get("filter_type") or "").lower()
