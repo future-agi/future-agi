@@ -81,11 +81,19 @@ def test_build_run_config_view_error_localizer_column_wins_over_json():
     assert build_run_config_view(binding)["error_localizer_enabled"] is True
 
 
-def test_build_run_config_view_error_localizer_falls_back_to_json_flag():
+def test_build_run_config_view_error_localizer_falls_back_to_nested_run_config():
+    binding = _fake_binding(
+        config={"run_config": {"error_localizer_enabled": True}},
+        error_localizer=False,
+    )
+    assert build_run_config_view(binding)["error_localizer_enabled"] is True
+
+
+def test_build_run_config_view_error_localizer_ignores_legacy_top_level_flag():
     binding = _fake_binding(
         config={"error_localizer_enabled": True}, error_localizer=False
     )
-    assert build_run_config_view(binding)["error_localizer_enabled"] is True
+    assert build_run_config_view(binding)["error_localizer_enabled"] is False
 
 
 def test_build_run_config_view_summary_dict_normalized_to_type_string():

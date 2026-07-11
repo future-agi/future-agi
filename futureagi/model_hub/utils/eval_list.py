@@ -34,10 +34,6 @@ def build_run_config_view(eval_config) -> dict:
     summary = view["summary"]
     if isinstance(summary, dict):
         view["summary"] = summary.get("type", _RUN_CONFIG_DEFAULTS["summary"])
-    # The shared resolver falls back to a top-level `config["error_localizer_enabled"]`
-    # after checking the column. Workbench save paths use that top-level key; dataset
-    # write paths never do (column or nested `run_config.error_localizer_enabled` only),
-    # so the fallback is workbench-intended.
     view["error_localizer_enabled"] = error_localizer_enabled(eval_config)
     return view
 
