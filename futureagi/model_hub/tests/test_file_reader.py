@@ -183,3 +183,84 @@ class TestReadCsvSmartQuotes:
         assert len(df) == 2
         assert df.iloc[0]["first_name"] == "John"
         assert df.iloc[0]["bot_response"] == "Hello, John. How can I help you today?"
+
+
+@pytest.mark.unit
+class TestReadCsvCurlyQuotesAsContent:
+    """Curly quotes as literal *content* inside properly-quoted fields.
+
+    The smart-quote normalization (TH-3546) used to run unconditionally
+    before parsing. That rescues files whose field *wrappers* are curly
+    quotes, but corrupts files where curly quotes are ordinary text inside
+    straight-quoted fields: the rewrite injects unescaped '"' mid-field,
+    desyncing the reader's quoting state until every delimiter yields
+    inconsistent column counts and the upload fails. The parser now tries
+    the file as-is first and only falls back to the normalized text, keeping
+    whichever candidate parses widest.
+    """
+
+    def _make_file(self, content: str) -> io.BytesIO:
+        f = io.BytesIO(content.encode("utf-8"))
+        f.name = "test.csv"
+        return f
+
+    def test_curly_quotes_inside_straight_quoted_fields(self):
+        """The regression: curly quotes as content must not break parsing."""
+        csv = (
+            "id,transcript\n"
+            '1,"The agent said \u201cplease hold, sir\u201d and hung up."\n'
+            '2,"She replied \u201cno, thanks\u201d twice."\n'
+        )
+        df, err = FileProcessor.process_file(self._make_file(csv))
+        assert err is None
+        assert list(df.columns) == ["id", "transcript"]
+        assert len(df) == 2
+        # Content is preserved verbatim — the normalization candidate must
+        # not win and rewrite the curly quotes.
+        assert df.iloc[0]["transcript"] == (
+            "The agent said \u201cplease hold, sir\u201d and hung up."
+        )
+
+    def test_quoted_json_cells_with_colons_newlines_and_curly_quotes(self):
+        """Mimics the failing production dataset: JSON blobs in quoted cells.
+
+        Covers three old failure modes at once: the unrestricted Sniffer
+        picking ':' from the JSON as delimiter, embedded newlines inside
+        quoted fields, and curly quotes as literal content.
+        """
+        json_cell = (
+            '"{""role"": ""system"", ""content"": ""Say \u201chi\u201d to the\n'
+            'customer, then stop.""}"'
+        )
+        csv = (
+            "id,assistant,score\n"
+            f"a1,{json_cell},0.9\n"
+            f"a2,{json_cell},0.7\n"
+        )
+        df, err = FileProcessor.process_file(self._make_file(csv))
+        assert err is None
+        assert list(df.columns) == ["id", "assistant", "score"]
+        assert len(df) == 2
+        assert df.iloc[0]["assistant"].startswith('{"role": "system"')
+        assert "\u201chi\u201d" in df.iloc[0]["assistant"]
+
+    def test_widest_consistent_parse_wins_over_single_column(self):
+        """A delimiter absent from the file always yields a 'consistent'
+        1-column parse; the true delimiter's wider parse must win."""
+        csv = (
+            "a;b;c\n"
+            "1;2;3\n"
+            "4;5;6\n"
+        )
+        df, err = FileProcessor.process_file(self._make_file(csv))
+        assert err is None
+        assert list(df.columns) == ["a", "b", "c"]
+        assert len(df) == 2
+
+    def test_single_column_csv_still_parses(self):
+        """Genuine single-column files remain accepted."""
+        csv = "only_column\nvalue one\nvalue two\n"
+        df, err = FileProcessor.process_file(self._make_file(csv))
+        assert err is None
+        assert list(df.columns) == ["only_column"]
+        assert len(df) == 2
