@@ -160,6 +160,15 @@ const VoiceRightPanel = ({
       aiInterruptionCount: data?.ai_interruption_count,
     };
 
+    // Chat simulations don't have audio interruptions — suppress
+    // voice-only metrics ("User Int.", "AI Int.") so the KPI strip
+    // doesn't display misleading zeros.
+    const isChatSim = data?.simulation_call_type === "text";
+    if (isChatSim) {
+      delete apiMetrics.userInterruptionCount;
+      delete apiMetrics.aiInterruptionCount;
+    }
+
     if (isSimulate) {
       return {
         transcript: data?.transcript,
