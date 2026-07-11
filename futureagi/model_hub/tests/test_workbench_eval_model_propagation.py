@@ -1,18 +1,12 @@
 """Workbench eval respects FE inputs + surfaces template metadata (TH-6725)."""
 
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 
 from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.choices import OwnerChoices
 from model_hub.models.run_prompt import PromptEvalConfig, PromptTemplate
-
-
-class _CapturedInstance:
-    def __init__(self, **kwargs):
-        self.received = kwargs
 
 
 def _resolve_model_via_view_slice(evaluation, eval_template):
@@ -92,3 +86,55 @@ def test_evaluation_configs_endpoint_returns_template_id_and_eval_type(
     row = response.json()["result"]["evaluation_configs"][0]
     assert row["template_id"] == str(template.id)
     assert row["eval_type"] == "llm"
+
+
+@pytest.mark.django_db
+def test_evaluation_configs_endpoint_surfaces_run_config(
+    auth_client, user, workspace
+):
+    """FE edit-drawer reads `evalData.run_config` for the model, agent_mode,
+    tools, etc. Without it the drawer falls back to the template default
+    (e.g. `turing_large`) even after the user saved `gpt-4.1`."""
+    template = EvalTemplate.objects.create(
+        name="workbench-fixture-runtime",
+        description="",
+        owner=OwnerChoices.SYSTEM.value,
+        organization=None,
+        workspace=None,
+        eval_type="llm",
+        config={"eval_type_id": "CustomPromptEvaluator", "output": "Pass/Fail"},
+        eval_tags=["llm"],
+    )
+    prompt_template = PromptTemplate.objects.create(
+        name="Workbench Prompt",
+        organization=user.organization,
+        workspace=workspace,
+        created_by=user,
+    )
+    PromptEvalConfig.objects.create(
+        name="toxicity_binding",
+        eval_template=template,
+        prompt_template=prompt_template,
+        mapping={"output": "model_output"},
+        config={
+            "params": {},
+            "run_config": {"model": "gpt-4.1", "agent_mode": "agent"},
+        },
+    )
+
+    response = auth_client.get(
+        f"/model-hub/prompt-templates/{prompt_template.id}/evaluation-configs/"
+    )
+    row = response.json()["result"]["evaluation_configs"][0]
+    assert row["run_config"]["agent_mode"] == "agent"
+    assert row["run_config"]["pass_threshold"] == 0.5
+    assert set(row["run_config"].keys()) == {
+        "agent_mode",
+        "check_internet",
+        "summary",
+        "pass_threshold",
+        "error_localizer_enabled",
+        "data_injection",
+        "knowledge_bases",
+        "tools",
+    }

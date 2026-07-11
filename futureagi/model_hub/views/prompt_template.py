@@ -2130,18 +2130,22 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     config.eval_template.config,
                     config.config,
                 )
+                from model_hub.serializers.eval_list import RunConfigSerializer
+
+                run_config = RunConfigSerializer(
+                    instance=config.config,
+                    context={"error_localizer_enabled": config.error_localizer},
+                ).data
                 response.append(
                     {
                         "id": str(config.id),
                         "eval_template_id": str(config.eval_template.id),
-                        # `template_id` is what the FE edit-drawer + evals
-                        # badge read; keep `eval_template_id` too for
-                        # backwards compat with existing consumers.
                         "template_id": str(config.eval_template.id),
                         "eval_type": config.eval_template.eval_type,
                         "name": config.name,
                         "mapping": config.mapping,
                         "config": config.eval_template.config,
+                        "run_config": run_config,
                         "params": params,
                         "function_params_schema": function_params_schema,
                         "eval_required_keys": config.eval_template.config.get(
@@ -2195,6 +2199,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             eval_id = new_config.get("id")
             is_run = request.data.get("is_run", False)
             version_to_run = request.data.get("version_to_run", [])
+            user_eval_id = request.data.get("user_eval_id")
 
             try:
                 eval_template = EvalTemplate.no_workspace_objects.get(id=eval_id)
@@ -2204,9 +2209,12 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 )
 
             eval_name = new_config.get("name")
-            if PromptEvalConfig.objects.filter(
+            name_clash_qs = PromptEvalConfig.objects.filter(
                 name=eval_name, prompt_template=template, deleted=False
-            ).exists():
+            )
+            if user_eval_id:
+                name_clash_qs = name_clash_qs.exclude(id=user_eval_id)
+            if name_clash_qs.exists():
                 return self._gm.bad_request(
                     get_error_message("PROMPT_EVAL_TEMPLATE_EXISTS")
                 )
@@ -2221,26 +2229,58 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     kb = KnowledgeBaseFile.objects.get(id=new_config.get("kb_id"))
                 except KnowledgeBaseFile.DoesNotExist:
                     pass
-            prompt_eval = PromptEvalConfig.objects.create(
-                name=eval_name,
-                prompt_template=template,
-                eval_template=eval_template,
-                mapping=new_config.get("mapping", {}),
-                config=normalize_eval_runtime_config(
-                    eval_template.config,
-                    {
-                        **(new_config.get("config", {}) or {}),
-                        "params": (
-                            new_config.get("params", {})
-                            if new_config.get("params", {})
-                            else (new_config.get("config", {}) or {}).get("params", {})
-                        ),
-                    },
-                ),
-                user=request.user,
-                kb=kb,
-                error_localizer=new_config.get("error_localizer", False),
+            normalized_config = normalize_eval_runtime_config(
+                eval_template.config,
+                {
+                    **(new_config.get("config", {}) or {}),
+                    "params": (
+                        new_config.get("params", {})
+                        if new_config.get("params", {})
+                        else (new_config.get("config", {}) or {}).get("params", {})
+                    ),
+                },
             )
+            if user_eval_id:
+                try:
+                    prompt_eval = PromptEvalConfig.objects.get(
+                        id=user_eval_id,
+                        prompt_template=template,
+                        deleted=False,
+                    )
+                except PromptEvalConfig.DoesNotExist:
+                    return self._gm.bad_request(
+                        f"Evaluation config with ID {user_eval_id} does not exist."
+                    )
+                prompt_eval.name = eval_name
+                prompt_eval.eval_template = eval_template
+                prompt_eval.mapping = new_config.get("mapping", {})
+                prompt_eval.config = normalized_config
+                prompt_eval.kb = kb
+                prompt_eval.error_localizer = new_config.get(
+                    "error_localizer", False
+                )
+                prompt_eval.save(
+                    update_fields=[
+                        "name",
+                        "eval_template",
+                        "mapping",
+                        "config",
+                        "kb",
+                        "error_localizer",
+                        "updated_at",
+                    ]
+                )
+            else:
+                prompt_eval = PromptEvalConfig.objects.create(
+                    name=eval_name,
+                    prompt_template=template,
+                    eval_template=eval_template,
+                    mapping=new_config.get("mapping", {}),
+                    config=normalized_config,
+                    user=request.user,
+                    kb=kb,
+                    error_localizer=new_config.get("error_localizer", False),
+                )
 
             # If is_run is true, run evaluations on specified versions
             if is_run:
@@ -2548,6 +2588,7 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
         organization_id,
         template=None,
     ):
+        api_call_log_row = None
         try:
             eval_template = None
             try:
@@ -2573,12 +2614,15 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 if eval_template.config.get("eval_type_id") in FUTUREAGI_EVAL_TYPES
                 else False
             )
+            ws_id = getattr(template, "workspace_id", None) if template else None
             evaluation_runner = EvaluationRunner(
                 eval_template.config.get("eval_type_id"),
                 format_output=True,
                 futureagi_eval=futureagi_eval,
                 source="prompt_template",
                 source_id=eval_template.id,
+                organization_id=organization_id,
+                workspace_id=ws_id,
             )
             evaluation_runner.eval_template = eval_template
 
@@ -2684,7 +2728,6 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 }
             )
             org = Organization.objects.get(id=organization_id)
-            api_call_log_row = None
             if log_and_deduct_cost_for_api_request is not None:
                 api_call_log_row = log_and_deduct_cost_for_api_request(
                     organization=org,
@@ -2746,16 +2789,17 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 result_data=response, eval_template=eval_template
             )
 
-            config_dict = json.loads(api_call_log_row.config)
-            config_dict.update(
-                {"output": {"output": value, "reason": response["reason"]}}
-            )
-            api_call_log_row.input_token_count = (
-                metadata.get("usage", {}).get("prompt_tokens") or 0
-            )
-            api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-            api_call_log_row.config = json.dumps(config_dict)
-            api_call_log_row.save()
+            if api_call_log_row is not None:
+                config_dict = json.loads(api_call_log_row.config)
+                config_dict.update(
+                    {"output": {"output": value, "reason": response["reason"]}}
+                )
+                api_call_log_row.input_token_count = (
+                    metadata.get("usage", {}).get("prompt_tokens") or 0
+                )
+                api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+                api_call_log_row.config = json.dumps(config_dict)
+                api_call_log_row.save()
 
             # Dual-write: emit usage event for new billing system
             try:
@@ -2798,14 +2842,15 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             return value, response
 
         except Exception as e:
-            try:
-                api_call_log_row.status = APICallStatusChoices.ERROR.value
-                config_dict = json.loads(api_call_log_row.config)
-                config_dict.update({"output": {"output": None, "reason": str(e)}})
-                api_call_log_row.config = json.dumps(config_dict)
-                api_call_log_row.save()
-            except Exception:
-                pass
+            if api_call_log_row is not None:
+                try:
+                    api_call_log_row.status = APICallStatusChoices.ERROR.value
+                    config_dict = json.loads(api_call_log_row.config)
+                    config_dict.update({"output": {"output": None, "reason": str(e)}})
+                    api_call_log_row.config = json.dumps(config_dict)
+                    api_call_log_row.save()
+                except Exception:
+                    pass
             logger.exception(f"{e} error")
             raise e
 

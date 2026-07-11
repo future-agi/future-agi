@@ -273,6 +273,7 @@ def build_user_eval_list_items(
 ) -> list[dict]:
     """Build the canonical user-eval item shape used by get_evals_list."""
     from model_hub.models.develop_dataset import Column, SourceChoices
+    from model_hub.serializers.eval_list import RunConfigSerializer
     from model_hub.utils.evals import NOT_UI_EVALS
 
     user_evals = list(user_evals)
@@ -294,10 +295,7 @@ def build_user_eval_list_items(
         if not template or template.name in NOT_UI_EVALS:
             continue
 
-        run_config = (user_eval.config or {}).get("run_config", {}) or {}
-        summary = run_config.get("summary", "concise")
-        if isinstance(summary, dict):
-            summary = summary.get("type", "concise")
+        run_config_raw = (user_eval.config or {}).get("run_config", {}) or {}
 
         item = {
             "id": user_eval.id,
@@ -308,7 +306,7 @@ def build_user_eval_list_items(
             "eval_template_tags": template.eval_tags,
             "description": template.description,
             "config": user_eval.config or {},
-            "model": run_config.get("model")
+            "model": run_config_raw.get("model")
             or (user_eval.config or {}).get("config", {}).get("model", ""),
             "column_id": column_map.get(str(user_eval.id)),
             "updated_at": user_eval.updated_at,
@@ -325,16 +323,10 @@ def build_user_eval_list_items(
             "mapping": (user_eval.config or {}).get("mapping", {}),
             "params": (user_eval.config or {}).get("params", {}),
             "error_localizer": user_eval.error_localizer,
-            "run_config": {
-                "agent_mode": run_config.get("agent_mode", "agent"),
-                "check_internet": run_config.get("check_internet", False),
-                "summary": summary,
-                "pass_threshold": run_config.get("pass_threshold", 0.5),
-                "error_localizer_enabled": user_eval.error_localizer,
-                "data_injection": run_config.get("data_injection", {}),
-                "knowledge_bases": run_config.get("knowledge_bases", []),
-                "tools": run_config.get("tools", {}),
-            },
+            "run_config": RunConfigSerializer(
+                instance=user_eval.config,
+                context={"error_localizer_enabled": user_eval.error_localizer},
+            ).data,
             "output_type": template.output_type_normalized or "pass_fail",
             "pinned_version_id": str(user_eval.pinned_version_id)
             if user_eval.pinned_version_id
