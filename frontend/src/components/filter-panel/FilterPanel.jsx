@@ -621,6 +621,11 @@ const QueryInput = forwardRef(function QueryInput(
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [focused, setFocused] = useState(false);
   const inputRef = useRef(null);
+  const [logicOperator, setLogicOperator] = useState("AND");
+
+  const toggleLogicOperator = useCallback(() => {
+    setLogicOperator((prev) => (prev === "AND" ? "OR" : "AND"));
+  }, []);
   const initialTokensKey = useMemo(
     () => JSON.stringify(initialTokens || []),
     [initialTokens],
@@ -1247,8 +1252,101 @@ const QueryInput = forwardRef(function QueryInput(
             ...params.InputProps,
             startAdornment: (
               <>
-                {tokenChips}
-                {prefixChips}
+                {tokens.map((token, idx) => (
+                  <React.Fragment key={idx}>
+                    {idx > 0 && (
+                      <Box
+                        component="span"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleLogicOperator();
+                        }}
+                        sx={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          color: "warning.main",
+                          mx: 0.25,
+                          cursor: "pointer",
+                          px: 0.5,
+                          py: 0.1,
+                          borderRadius: "3px",
+                          border: "1px solid",
+                          borderColor: (theme) =>
+                            alpha(theme.palette.warning.main, 0.3),
+                          bgcolor: (theme) =>
+                            alpha(theme.palette.warning.main, 0.08),
+                          transition: (theme) =>
+                            theme.transitions.create(
+                              ["background-color", "border-color"],
+                              {
+                                duration:
+                                  theme.transitions.duration.shortest,
+                              },
+                            ),
+                          "&:hover": {
+                            bgcolor: (theme) =>
+                              alpha(theme.palette.warning.main, 0.16),
+                            borderColor: (theme) =>
+                              alpha(theme.palette.warning.main, 0.5),
+                          },
+                          userSelect: "none",
+                        }}
+                      >
+                        {logicOperator}
+                      </Box>
+                    )}
+                    <Chip
+                      key={idx}
+                      label={`${fieldMap[token.field]?.label || token.field} ${opDefFor(token.field, token.operator)?.label || token.operator} ${Array.isArray(token.value) ? token.value.join(" – ") : token.value}`}
+                    size="small"
+                    onClick={() => editToken(idx)}
+                    onDelete={() => handleDeleteToken(idx)}
+                    deleteIcon={<Iconify icon="mdi:close" width={10} />}
+                    sx={{
+                      height: 22,
+                      fontSize: 11,
+                      mr: 0.25,
+                      bgcolor: (theme) =>
+                        alpha(theme.palette.primary.main, 0.08),
+                      color: "primary.main",
+                      border: "1px solid",
+                      borderColor: (theme) =>
+                        alpha(theme.palette.primary.main, 0.2),
+                      cursor: "pointer",
+                      transition: (theme) =>
+                        theme.transitions.create(
+                          ["background-color", "border-color"],
+                          { duration: theme.transitions.duration.shortest },
+                        ),
+                      "&:hover": {
+                        bgcolor: (theme) =>
+                          alpha(theme.palette.primary.main, 0.16),
+                        borderColor: (theme) =>
+                          alpha(theme.palette.primary.main, 0.4),
+                      },
+                      "& .MuiChip-deleteIcon": {
+                        color: "primary.main",
+                        "&:hover": { color: "primary.dark" },
+                      },
+                    }}
+                  />
+                  </React.Fragment>
+                ))}
+                {inlinePrefix.map((p, i) => (
+                  <Box
+                    key={i}
+                    component="span"
+                    sx={{
+                      fontSize: 13,
+                      fontWeight: 600,
+                      color: p.color,
+                      mr: 0.5,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {p.text}
+                  </Box>
+                ))}
               </>
             ),
             endAdornment:
