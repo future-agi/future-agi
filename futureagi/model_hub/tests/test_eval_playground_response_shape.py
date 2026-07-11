@@ -1,4 +1,4 @@
-"""Playground response shape stays canonical on stripped-ee and full builds (TH-6719)."""
+"""Playground response shape stays canonical whether or not the metering helper is loaded (TH-6719)."""
 
 from types import SimpleNamespace
 
@@ -92,11 +92,11 @@ def _patch_runner(monkeypatch, format_output_return):
 
 
 @pytest.mark.django_db
-def test_response_shape_is_canonical_when_metering_is_stripped(
+def test_response_shape_is_canonical_when_metering_helper_absent(
     monkeypatch, pass_fail_template, organization
 ):
     _patch_runner(monkeypatch, format_output_return="Passed")
-    # Simulate ee/ stripped: the metering entry point is None.
+    # Simulate the build where the metering entry point is not loaded.
     monkeypatch.setattr(evals_module, "log_and_deduct_cost_for_api_request", None)
 
     output = run_eval_func(
@@ -150,7 +150,7 @@ def test_response_shape_is_canonical_when_metering_is_available(
         "log_and_deduct_cost_for_api_request",
         lambda **_kwargs: log_row,
     )
-    # ee.usage sub-imports called inside run_eval_func; stub the ones
+    # Metering sub-imports called inside run_eval_func; stub the ones
     # that would otherwise hit real services.
     monkeypatch.setattr(
         "ee.usage.services.metering.check_usage",
