@@ -2199,7 +2199,14 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             user_eval_id = request.data.get("user_eval_id")
 
             try:
-                eval_template = EvalTemplate.no_workspace_objects.get(id=eval_id)
+                eval_template = EvalTemplate.no_workspace_objects.get(
+                    Q(owner=OwnerChoices.SYSTEM.value)
+                    | Q(
+                        owner=OwnerChoices.USER.value,
+                        organization=template.organization,
+                    ),
+                    id=eval_id,
+                )
             except EvalTemplate.DoesNotExist:
                 return self._gm.bad_request(
                     f"Evaluation template with ID {eval_id} does not exist."
