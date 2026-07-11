@@ -73,7 +73,7 @@ const TransferChatNode = ({ id, data, isConnectable }) => {
             : theme.palette.orange[600],
         }}
       />
-      <NodeHeader type="transferChat" title={data?.name} />
+      <NodeHeader id={id} type="transferChat" title={data?.name} />
       <Box>
         <Typography typography="s1" fontWeight="fontWeightMedium">
           Message
