@@ -76,38 +76,6 @@ class EvalListFiltersSerializer(serializers.Serializer):
     )
 
 
-class RunConfigSerializer(serializers.Serializer):
-    """Canonical `run_config` sub-shape used by every eval binding surface."""
-
-    agent_mode = serializers.CharField(default="agent")
-    check_internet = serializers.BooleanField(default=False)
-    summary = serializers.CharField(default="concise")
-    pass_threshold = serializers.FloatField(default=0.5)
-    error_localizer_enabled = serializers.BooleanField(default=False)
-    data_injection = serializers.JSONField(default=dict)
-    knowledge_bases = serializers.JSONField(default=list)
-    tools = serializers.JSONField(default=dict)
-
-    def to_representation(self, instance):
-        binding_config = instance or {}
-        run_config = binding_config.get("run_config") or {}
-        summary = run_config.get("summary", "concise")
-        if isinstance(summary, dict):
-            summary = summary.get("type", "concise")
-        return {
-            "agent_mode": run_config.get("agent_mode", "agent"),
-            "check_internet": run_config.get("check_internet", False),
-            "summary": summary,
-            "pass_threshold": run_config.get("pass_threshold", 0.5),
-            "error_localizer_enabled": self.context.get(
-                "error_localizer_enabled", False
-            ),
-            "data_injection": run_config.get("data_injection", {}),
-            "knowledge_bases": run_config.get("knowledge_bases", []),
-            "tools": run_config.get("tools", {}),
-        }
-
-
 class EvalListRequestSerializer(serializers.Serializer):
     page = serializers.IntegerField(default=0, min_value=0)
     page_size = serializers.IntegerField(default=25, min_value=1, max_value=100)

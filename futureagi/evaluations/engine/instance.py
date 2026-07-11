@@ -167,6 +167,25 @@ def resolve_pass_threshold(
     return 0.5
 
 
+def resolve_binding_model(
+    runtime_config: dict | None,
+    eval_template,
+) -> str | None:
+    """Priority: runtime_config[model] > runtime_config[run_config][model] > eval_template.config[model]."""
+    if isinstance(runtime_config, dict):
+        top_level = runtime_config.get("model")
+        if top_level:
+            return top_level
+        run_config = runtime_config.get("run_config") or {}
+        if isinstance(run_config, dict):
+            nested = run_config.get("model")
+            if nested:
+                return nested
+
+    template_config = getattr(eval_template, "config", None) or {}
+    return template_config.get("model")
+
+
 def _get_api_key(model, organization_id, workspace_id=None):
     """
     Get API key for the model via LiteLLMModelManager.
@@ -455,8 +474,9 @@ def create_eval_instance(
 
     from agentic_eval.core_evals.fi_evals.eval_type import is_function_eval
 
-    if not (eval_template.config or {}).get("function_eval") and not is_function_eval(
-        eval_template.config.get("eval_type_id", "")
+    _template_config = eval_template.config or {}
+    if not _template_config.get("function_eval") and not is_function_eval(
+        _template_config.get("eval_type_id", "")
     ):
         config["pass_threshold"] = resolve_pass_threshold(
             eval_template, runtime_config, resolved_version

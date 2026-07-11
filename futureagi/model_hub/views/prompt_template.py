@@ -2130,12 +2130,12 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     config.eval_template.config,
                     config.config,
                 )
-                from model_hub.serializers.eval_list import RunConfigSerializer
+                from model_hub.utils.eval_list import build_run_config_view
 
-                run_config = RunConfigSerializer(
-                    instance=config.config,
-                    context={"error_localizer_enabled": config.error_localizer},
-                ).data
+                run_config = build_run_config_view(
+                    config.config,
+                    error_localizer_enabled=config.error_localizer,
+                )
                 response.append(
                     {
                         "id": str(config.id),
@@ -2669,16 +2669,12 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 else data_config.get("config", {}).copy()
             )
             config = evaluation_runner.update_config_list_values(config)
-            runtime_config = evaluation.config or {}
-            selected_model = (
-                runtime_config.get("model")
-                or (runtime_config.get("run_config") or {}).get("model")
-                or eval_template.config.get("model")
-            )
+            from evaluations.engine.instance import resolve_binding_model
+
             eval_instance = evaluation_runner._create_eval_instance(
                 config=config,
                 eval_class=eval_class,
-                model=selected_model,
+                model=resolve_binding_model(evaluation.config, eval_template),
                 kb_id=str(evaluation.kb_id) if evaluation.kb_id else None,
                 runtime_config=evaluation.config,
             )

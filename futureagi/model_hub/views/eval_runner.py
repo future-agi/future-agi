@@ -2179,8 +2179,6 @@ class EvaluationRunner:
         _mapped = merge_code_eval_kwargs(_mapped, self.eval_template, binding_config)
 
         if getattr(self.eval_template, "eval_type", "") == "code":
-
-            # Preprocess inputs for code evals that need external data (e.g. CLIP embeddings)
             from evaluations.engine.preprocessing import preprocess_inputs
 
             _mapped = preprocess_inputs(self.eval_template.name, _mapped)

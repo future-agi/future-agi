@@ -7,10 +7,42 @@ Handles: queryset building, eval type derivation, output type derivation,
 
 from collections import defaultdict
 from collections.abc import Iterable
+from copy import deepcopy
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
 from django.db.models import Count, Q, QuerySet
+
+_RUN_CONFIG_DEFAULTS: dict = {
+    "agent_mode": "agent",
+    "check_internet": False,
+    "summary": "concise",
+    "pass_threshold": 0.5,
+    "error_localizer_enabled": False,
+    "data_injection": {},
+    "knowledge_bases": [],
+    "tools": {},
+}
+_RUN_CONFIG_KEYS: tuple[str, ...] = tuple(_RUN_CONFIG_DEFAULTS)
+
+
+def build_run_config_view(
+    binding_config: dict | None,
+    *,
+    error_localizer_enabled: bool = False,
+) -> dict:
+    """Canonical run_config sub-dict returned to the FE across every eval-binding surface.
+
+    error_localizer_enabled is authoritative from the caller's column, not from
+    binding_config, since the JSON copy can drift.
+    """
+    run_config = (binding_config or {}).get("run_config") or {}
+    view = {k: run_config.get(k, deepcopy(v)) for k, v in _RUN_CONFIG_DEFAULTS.items()}
+    summary = view["summary"]
+    if isinstance(summary, dict):
+        view["summary"] = summary.get("type", _RUN_CONFIG_DEFAULTS["summary"])
+    view["error_localizer_enabled"] = bool(error_localizer_enabled)
+    return view
 
 
 def normalize_search_for_name(search: str) -> Q:
@@ -273,7 +305,6 @@ def build_user_eval_list_items(
 ) -> list[dict]:
     """Build the canonical user-eval item shape used by get_evals_list."""
     from model_hub.models.develop_dataset import Column, SourceChoices
-    from model_hub.serializers.eval_list import RunConfigSerializer
     from model_hub.utils.evals import NOT_UI_EVALS
 
     user_evals = list(user_evals)
@@ -323,10 +354,10 @@ def build_user_eval_list_items(
             "mapping": (user_eval.config or {}).get("mapping", {}),
             "params": (user_eval.config or {}).get("params", {}),
             "error_localizer": user_eval.error_localizer,
-            "run_config": RunConfigSerializer(
-                instance=user_eval.config,
-                context={"error_localizer_enabled": user_eval.error_localizer},
-            ).data,
+            "run_config": build_run_config_view(
+                user_eval.config,
+                error_localizer_enabled=user_eval.error_localizer,
+            ),
             "output_type": template.output_type_normalized or "pass_fail",
             "pinned_version_id": str(user_eval.pinned_version_id)
             if user_eval.pinned_version_id
