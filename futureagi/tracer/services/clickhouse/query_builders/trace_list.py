@@ -578,7 +578,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     def build_user_id_query(self, trace_ids: list[str]) -> tuple[str, dict[str, Any]]:
         """Fetch user_id strings from ClickHouse for a page of trace IDs.
 
-        Uses enduser_dict to resolve end_user_id UUIDs to user_id strings
+        Uses end_users_dict to resolve end_user_id UUIDs to user_id strings
         in a single query. Returns one user_id per trace (uses `any()`
         aggregation to pick the first non-null value across all spans).
         """
@@ -595,7 +595,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         FROM (
             SELECT
                 trace_id,
-                dictGetOrDefault('enduser_dict', 'user_id', any(end_user_id), '') AS user_id
+                dictGetOrDefault('end_users_dict', 'user_id', any(end_user_id), '') AS user_id
             FROM {self.TABLE}
             PREWHERE trace_id IN %(user_trace_ids)s
             WHERE {self.project_filter_sql()}
@@ -611,7 +611,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
     def resolve_user_ids(self, trace_ids: list[str], analytics) -> dict[str, str]:
         """Resolve user_id strings for a page of trace IDs.
 
-        Single-query lookup using ClickHouse enduser_dict:
+        Single-query lookup using ClickHouse end_users_dict:
         - Queries ClickHouse for user_id strings via dictionary lookup (~50-100ms)
         - No PostgreSQL round-trip needed
 
