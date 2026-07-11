@@ -510,6 +510,8 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
   // obs page's "Add to queue") instead of being converted to root spans.
   const [isVoiceTraceSelection, setIsVoiceTraceSelection] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
+  // Trace project (from TraceSelector) — passed to fetchRootSpans to prune CH.
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
   const { mutate: addItems, isPending } = useAddQueueItems();
   const queryClient = useQueryClient();
   const isDefaultQueue = !!queue?.is_default;
@@ -619,7 +621,10 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               selectAllInfo.filters,
               selectAllInfo.projectVersionId,
             );
-            const rootSpanMap = await fetchRootSpans(traceIds);
+            const rootSpanMap = await fetchRootSpans(
+              traceIds,
+              selectAllInfo.projectId ? [selectAllInfo.projectId] : [],
+            );
             const mappedIds = traceIds
               .map((traceId) => rootSpanMap[traceId])
               .filter(Boolean);
@@ -650,7 +655,10 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
         // annotator workspace's span-oriented UI (consistent with the
         // ``mappedIds`` branch above at lines 540-548).
         if (sourceType === "trace" && !isVoiceTraceSelection) {
-          const rootSpanMap = await fetchRootSpans(ids);
+          const rootSpanMap = await fetchRootSpans(
+            ids,
+            selectedProjectId ? [selectedProjectId] : [],
+          );
           const originalCount = ids.length;
           ids = ids.map((traceId) => rootSpanMap[traceId]).filter(Boolean);
           effectiveSourceType = "observation_span";
@@ -848,6 +856,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
                 onSetSelection={handleSetSelection}
                 onSelectAll={handleSelectAll}
                 onVoiceProjectChange={setIsVoiceTraceSelection}
+                onProjectChange={setSelectedProjectId}
               />
             )}
             {sourceType === "observation_span" && (
@@ -1767,7 +1776,12 @@ const traceDefaultFilterBase = {
   },
 };
 
-function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
+function TraceSelector({
+  onSetSelection,
+  onSelectAll,
+  onVoiceProjectChange,
+  onProjectChange,
+}) {
   const [projectId, setProjectId] = useState("");
   const [versionId, setVersionId] = useState("");
   const [columns, setColumns] = useState([]);
@@ -1827,6 +1841,12 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   useEffect(() => {
     onVoiceProjectChange?.(isVoiceProject);
   }, [isVoiceProject, onVoiceProjectChange]);
+
+  // Surface the selected project so handleSubmit can pass it to fetchRootSpans
+  // (prunes the CH scan).
+  useEffect(() => {
+    onProjectChange?.(projectId || null);
+  }, [projectId, onProjectChange]);
 
   // Fetch versions for prototype projects
   const {
@@ -2437,6 +2457,7 @@ TraceSelector.propTypes = {
   onSetSelection: PropTypes.func.isRequired,
   onSelectAll: PropTypes.func.isRequired,
   onVoiceProjectChange: PropTypes.func,
+  onProjectChange: PropTypes.func,
 };
 
 // ---------------------------------------------------------------------------

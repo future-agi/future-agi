@@ -70,6 +70,8 @@ from tracer.serializers.observation_span import (
     ObservationAttributeListQuerySerializer,
     ObservationAttributeListResponseSerializer,
     ObservationSpanSerializer,
+    RootSpansQuerySerializer,
+    RootSpansResponseSerializer,
     SpanExportQuerySerializer,
     SpanIndexQuerySerializer,
     SpanListQuerySerializer,
@@ -293,12 +295,17 @@ def allowed_root_spans_for_request(
     *,
     organization,
     project_scope_q,
+    project_ids: list[str] | None = None,
 ) -> dict[str, str]:
     """Resolve ``{trace_id: root_span_id}`` for *trace_ids*, returning only traces
     whose owning project is org/workspace-accessible. Collector traces have no PG
     ``Trace`` row, so the project_id is learned from CH and re-checked against the
     PG ``Project`` authority. FAIL CLOSED: an untenanted / cross-org trace is dropped
     (no key) — same response shape as before.
+
+    ``project_ids`` (optional) only prunes the CH scan; the PG re-check stays the
+    tenant boundary, so it can narrow results but never widen them. Pass a
+    superset of the traces' owning projects, else a valid root is silently dropped.
     """
     if not trace_ids:
         return {}
@@ -306,12 +313,12 @@ def allowed_root_spans_for_request(
     from tracer.services.clickhouse.v2 import get_reader
 
     with get_reader() as reader:
-        ch_spans = reader.list_by_trace_ids([str(tid) for tid in trace_ids])
+        roots = reader.root_ids_by_trace_ids(
+            [str(tid) for tid in trace_ids], project_ids=project_ids
+        )
 
-    # Root spans only (CH stores parent_span_id as a non-nullable String; root
-    # spans carry ""). Collect the candidate project_ids to verify against PG.
-    root_spans = [s for s in ch_spans if not s.parent_span_id]
-    candidate_project_ids = {str(s.project_id) for s in root_spans if s.project_id}
+    # Candidate project_ids from the lean root projection, to verify against PG.
+    candidate_project_ids = {pid for _, pid in roots.values() if pid}
     if not candidate_project_ids:
         return {}
 
@@ -326,18 +333,11 @@ def allowed_root_spans_for_request(
     if not allowed_project_ids:
         return {}
 
-    result: dict[str, str] = {}
-    for span in root_spans:
-        pid = str(span.project_id) if span.project_id else None
-        if pid is None or pid not in allowed_project_ids:
-            # FAIL CLOSED: untenanted or cross-org span — never returned.
-            continue
-        tid = str(span.trace_id)
-        # list_by_trace_ids orders by (trace_id, start_time, id) so the first
-        # parentless span per trace wins.
-        if tid not in result:
-            result[tid] = str(span.id)
-    return result
+    return {
+        tid: span_id
+        for tid, (span_id, pid) in roots.items()
+        if pid is not None and pid in allowed_project_ids
+    }
 
 
 class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
@@ -920,19 +920,23 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"Error retrieving observation span {get_error_message('FAILED_GET_OBSERVATION_SPAN')}"
             )
 
+    @validated_request(
+        query_serializer=RootSpansQuerySerializer,
+        responses={200: RootSpansResponseSerializer},
+    )
     @action(detail=False, methods=["get"], url_path="root-spans")
     def root_spans(self, request, *args, **kwargs):
         """
         Given a list of trace_ids, return the root span ID for each trace.
         Root span = the span where parent_span_id IS NULL for that trace.
 
-        Query param: trace_ids (repeated, e.g. ?trace_ids=<id>&trace_ids=<id>)
-        Response: { "result": { "<trace_id>": "<span_id>", ... } }
+        Query params (repeated): trace_ids (required,
+        ?trace_ids=<id>&trace_ids=<id>) + optional project_ids (prunes the CH
+        scan). Response: { "result": { "<trace_id>": "<span_id>", ... } }
         """
         try:
-            trace_ids = request.query_params.getlist("trace_ids")
-            if not trace_ids:
-                return self._gm.bad_request("trace_ids is required")
+            trace_ids = request.validated_query_data["trace_ids"]
+            project_ids = request.validated_query_data.get("project_ids") or None
 
             # Collector traces have no PG ``Trace`` row; the gate resolves the root
             # span + tenant from CH/PG-Project instead (fail closed). See selector.
@@ -941,11 +945,13 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 trace_ids,
                 organization=org,
                 project_scope_q=_project_workspace_scope_q(request, project_prefix=""),
+                project_ids=project_ids,
             )
             return self._gm.success_response(result)
         except Exception as e:
             # fail closed: any CH/PG error returns no data, never a partial leak
-            return self._gm.bad_request(f"Error fetching root spans: {str(e)}")
+            logger.exception("Error fetching root spans", error=str(e))
+            return self._gm.bad_request("Error fetching root spans")
 
     @action(detail=False, methods=["post"])
     def bulk_create(self, request, *args, **kwargs):

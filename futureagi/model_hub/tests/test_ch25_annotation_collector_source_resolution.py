@@ -144,15 +144,32 @@ class _ReaderCM:
             return None
         return self._span if str(span_id) == str(self._span.id) else None
 
-    def list_by_trace_ids(self, trace_ids):
-        if self._span is None:
-            return []
-        return [self._span] if str(self._span.trace_id) in set(trace_ids) else []
+    def root_ids_by_trace_ids(self, trace_ids, project_ids=None):
+        """Lean stub: ``{trace_id: (root_span_id, project_id)}``, roots only."""
+        ids = {str(t) for t in trace_ids}
+        if self._span is None or str(self._span.trace_id) not in ids:
+            return {}
+        if self._span.parent_span_id:  # roots only
+            return {}
+        pid = str(self._span.project_id) if self._span.project_id else None
+        return {str(self._span.trace_id): (str(self._span.id), pid)}
 
     def list_by_trace(self, trace_id, *, project_id=None):
         if self._span is None:
             return []
         return [self._span] if str(self._span.trace_id) == str(trace_id) else []
+
+    def roots_by_trace_ids(
+        self, trace_ids, *, include_heavy=False, project_id=None, org_id=None
+    ):
+        # Mirror the real reader: parentless spans for the given traces.
+        if self._span is None or getattr(self._span, "parent_span_id", None):
+            return []
+        return (
+            [self._span]
+            if str(self._span.trace_id) in {str(t) for t in trace_ids}
+            else []
+        )
 
 
 # ─────────────────────────── observation_span: resolve ───────────────────────
@@ -171,7 +188,6 @@ def test_collector_span_resolves_via_ch(organization, workspace):
             span.id,
             organization=organization,
             workspace=workspace,
-            allow_ch_fallback=True,
         )
     assert resolved is span
     assert resolved.id == span.id
@@ -192,7 +208,6 @@ def test_collector_span_cross_org_denied(organization, workspace, django_user_mo
             QueueItemSourceType.OBSERVATION_SPAN.value,
             span.id,
             organization=organization,  # requesting org != other_org
-            allow_ch_fallback=True,
         )
     assert resolved is None
 
@@ -238,7 +253,6 @@ def test_collector_span_org_omitted_denied():
             QueueItemSourceType.OBSERVATION_SPAN.value,
             span.id,
             # org AND workspace deliberately omitted — mirrors the serializer hole
-            allow_ch_fallback=True,
         )
     assert resolved is None
 
@@ -254,7 +268,6 @@ def test_collector_span_empty_project_id_denied(organization):
             QueueItemSourceType.OBSERVATION_SPAN.value,
             span.id,
             organization=organization,
-            allow_ch_fallback=True,
         )
     assert resolved is None
 
@@ -267,74 +280,8 @@ def test_span_absent_in_both_pg_and_ch_returns_none(organization):
             QueueItemSourceType.OBSERVATION_SPAN.value,
             f"missing-{uuid.uuid4().hex}",
             organization=organization,
-            allow_ch_fallback=True,
         )
     assert resolved is None
-
-
-@pytest.mark.django_db
-def test_pg_span_resolves_without_touching_ch(organization, workspace):
-    """Regression guard: an existing PG ObservationSpan still resolves via the PG
-    branch and the CH reader is NOT called (PG-first)."""
-    project = _make_project(organization=organization, workspace=workspace)
-    from tracer.models.trace import Trace
-
-    trace = Trace.objects.create(project=project, name="pg-trace")
-    pg_span = ObservationSpan.objects.create(
-        id=f"pg-span-{uuid.uuid4().hex[:12]}",
-        project=project,
-        trace=trace,
-        parent_span_id=None,
-        name="pg span",
-        observation_type="agent",
-        start_time=datetime.now(tz=UTC),
-        status="OK",
-    )
-
-    with mock.patch(CH_READER_PATH) as get_reader:
-        resolved = helpers.resolve_source_object(
-            QueueItemSourceType.OBSERVATION_SPAN.value,
-            pg_span.id,
-            organization=organization,
-            workspace=workspace,
-            allow_ch_fallback=True,  # even WITH fallback allowed, PG wins
-        )
-    assert resolved.id == pg_span.id
-    get_reader.assert_not_called()
-
-
-# ───────────────── opt-in CH fallback: out-of-scope callers stay PG-only ──────
-
-
-@pytest.mark.django_db
-def test_ch_fallback_is_opt_in(organization, workspace):
-    """``resolve_source_object`` must NOT return a CH object by default: callers
-    that dereference ``.pk`` / FK relations (scores, span-notes — out of scope)
-    keep the PG-only behavior, so my change can't turn their graceful not-found
-    into a crash. Only ``allow_ch_fallback=True`` reaches CH."""
-    project = _make_project(organization=organization, workspace=workspace)
-    span = _make_chspan(project_id=project.id)
-
-    with mock.patch(CH_READER_PATH, return_value=_ReaderCM(span)) as get_reader:
-        # default (out-of-scope callers): PG-only → None, CH never queried.
-        resolved_default = helpers.resolve_source_object(
-            QueueItemSourceType.OBSERVATION_SPAN.value,
-            span.id,
-            organization=organization,
-            workspace=workspace,
-        )
-        assert resolved_default is None
-        get_reader.assert_not_called()
-
-        # opt-in (in-scope add paths): CH fallback fires.
-        resolved_optin = helpers.resolve_source_object(
-            QueueItemSourceType.OBSERVATION_SPAN.value,
-            span.id,
-            organization=organization,
-            workspace=workspace,
-            allow_ch_fallback=True,
-        )
-        assert resolved_optin is span
 
 
 # ─────────────────────── observation_span: serializer store ──────────────────
@@ -569,6 +516,70 @@ def test_allowed_root_spans_empty_input(organization):
     )
 
 
+@pytest.mark.django_db
+def test_allowed_root_spans_uses_lean_projection(organization, workspace):
+    """Root-spans gate must use the lean ``root_ids_by_trace_ids`` read, never
+    the wide ``list_by_trace_ids`` (which OOMs CH, code 241, on fat voice roots)."""
+    from unittest.mock import MagicMock
+
+    from django.db.models import Q
+
+    from tracer.views.observation_span import allowed_root_spans_for_request
+
+    project = _make_project(organization=organization, workspace=workspace)
+    trace_id = str(uuid.uuid4())
+    root_span_id = f"root-{uuid.uuid4().hex[:12]}"
+
+    fake_reader = MagicMock()
+    fake_reader.__enter__.return_value = fake_reader
+    fake_reader.__exit__.return_value = False
+    fake_reader.root_ids_by_trace_ids.return_value = {
+        trace_id: (root_span_id, str(project.id))
+    }
+    # The wide read must never be called on the root-spans path.
+    fake_reader.list_by_trace_ids.side_effect = AssertionError(
+        "root-spans must not read full span rows (OOMs shared ClickHouse)"
+    )
+
+    with mock.patch(CH_READER_PATH, return_value=fake_reader):
+        result = allowed_root_spans_for_request(
+            [trace_id], organization=organization, project_scope_q=Q()
+        )
+    fake_reader.root_ids_by_trace_ids.assert_called_once()
+    assert result == {trace_id: root_span_id}
+
+
+@pytest.mark.django_db
+def test_allowed_root_spans_forwards_project_ids(organization, workspace):
+    """``project_ids`` is passed to the reader to prune the CH scan (sort-key
+    prefix) — it must not change the fail-closed tenant result."""
+    from unittest.mock import MagicMock
+
+    from django.db.models import Q
+
+    from tracer.views.observation_span import allowed_root_spans_for_request
+
+    project = _make_project(organization=organization, workspace=workspace)
+    trace_id = str(uuid.uuid4())
+
+    fake_reader = MagicMock()
+    fake_reader.__enter__.return_value = fake_reader
+    fake_reader.__exit__.return_value = False
+    fake_reader.root_ids_by_trace_ids.return_value = {
+        trace_id: (f"root-{trace_id}", str(project.id))
+    }
+
+    with mock.patch(CH_READER_PATH, return_value=fake_reader):
+        allowed_root_spans_for_request(
+            [trace_id],
+            organization=organization,
+            project_scope_q=Q(),
+            project_ids=[str(project.id)],
+        )
+    _, kwargs = fake_reader.root_ids_by_trace_ids.call_args
+    assert kwargs.get("project_ids") == [str(project.id)]
+
+
 # ──────────────────────────── trace_session (Slice 2) ────────────────────────
 
 
@@ -594,7 +605,6 @@ def test_collector_session_resolves_via_ch(organization, workspace):
             session_id,
             organization=organization,
             workspace=workspace,
-            allow_ch_fallback=True,
         )
     assert resolved is not None
     assert str(resolved.id) == session_id
@@ -625,7 +635,6 @@ def test_collector_session_cross_project_denied(organization, workspace):
             QueueItemSourceType.TRACE_SESSION.value,
             session_id,
             organization=organization,
-            allow_ch_fallback=True,
         )
     assert resolved is None
 
@@ -943,7 +952,6 @@ def test_collector_trace_resolves_via_ch(organization, workspace):
             trace_id,
             organization=organization,
             workspace=workspace,
-            allow_ch_fallback=True,
         )
     assert resolved is not None
     assert str(resolved.id) == trace_id
@@ -966,7 +974,6 @@ def test_collector_trace_cross_org_denied(organization, workspace):
             QueueItemSourceType.TRACE.value,
             trace_id,
             organization=organization,  # requesting org != other_org
-            allow_ch_fallback=True,
         )
     assert resolved is None
 
@@ -979,7 +986,6 @@ def test_collector_trace_absent_returns_none(organization):
             QueueItemSourceType.TRACE.value,
             str(uuid.uuid4()),
             organization=organization,
-            allow_ch_fallback=True,
         )
     assert resolved is None
 

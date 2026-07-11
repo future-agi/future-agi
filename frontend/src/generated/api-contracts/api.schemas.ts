@@ -19923,6 +19923,13 @@ export interface ObserveGraphDataResponseApi {
   result: ObserveGraphDataResultApi;
 }
 
+export type RootSpansResponseApiResult = {[key: string]: string};
+
+export interface RootSpansResponseApi {
+  status?: boolean;
+  result: RootSpansResponseApiResult;
+}
+
 export type ProjectVersionApiMetadata = { [key: string]: unknown };
 
 export type ProjectVersionApiError = { [key: string]: unknown };
@@ -26113,13 +26120,8 @@ page?: number;
  * Number of results to return per page.
  */
 limit?: number;
-};
-
-export type TracerObservationSpanRootSpans200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: ObservationSpanApi[];
+trace_ids: string[];
+project_ids?: string[];
 };
 
 export type TracerProjectVersionListParams = {

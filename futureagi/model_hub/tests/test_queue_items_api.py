@@ -16,7 +16,6 @@ from django.utils import timezone
 from rest_framework import status
 
 from conftest import create_categorical_label
-
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
     AnnotationQueueAnnotator,
@@ -120,6 +119,7 @@ class TestAddItems:
         from model_hub.models.ai_model import AIModel
         from tracer.models.project import Project
         from tracer.models.trace_session import TraceSession
+        from tracer.tests._ch_seed import seed_ch_trace_sessions
 
         project = Project.objects.create(
             name=f"Session Add Project {uuid.uuid4().hex[:8]}",
@@ -132,6 +132,8 @@ class TestAddItems:
             project=project,
             name="queue-session-source",
         )
+        # Tracer sources resolve CH-native — mirror the session into ClickHouse.
+        seed_ch_trace_sessions([session])
 
         resp = auth_client.post(
             add_items_url(queue),

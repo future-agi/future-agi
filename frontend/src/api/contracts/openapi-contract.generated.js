@@ -32968,8 +32968,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/observation-span/root-spans/": {
       "get": {
         "operationId": "tracer_observation-span_root_spans",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -32983,36 +32983,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "schema": {
               "type": "integer"
             }
+          },
+          "trace_ids": {
+            "required": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "project_ids": {
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
           }
         },
         "responses": {
           "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/ObservationSpan"
-                }
-              }
-            }
+            "$ref": "#/definitions/RootSpansResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -65833,6 +65828,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/ReviewLabelCommentRequest"
           },
           "default": []
+        }
+      }
+    },
+    "RootSpansResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "title": "Result",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     },
