@@ -33648,6 +33648,8 @@ export const TracerCustomEvalConfigListQueryParams = zod.object({
 
 export const tracerCustomEvalConfigListResponseResultsItemNameMax = 255;
 
+export const tracerCustomEvalConfigListResponseResultsItemModelMax = 255;
+
 
 
 export const TracerCustomEvalConfigListResponse = zod.object({
@@ -33670,13 +33672,15 @@ export const TracerCustomEvalConfigListResponse = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
+  "model": zod.string().max(tracerCustomEvalConfigListResponseResultsItemModelMax).optional(),
   "eval_group": zod.string().optional()
 }))
 })
 
 
 export const tracerCustomEvalConfigCreateBodyNameMax = 255;
+
+export const tracerCustomEvalConfigCreateBodyModelMax = 255;
 
 
 
@@ -33695,11 +33699,13 @@ export const TracerCustomEvalConfigCreateBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.string().max(tracerCustomEvalConfigCreateBodyModelMax).optional()
 })
 
 
 export const tracerCustomEvalConfigCheckExistsBodyNameMax = 255;
+
+export const tracerCustomEvalConfigCheckExistsBodyModelMax = 255;
 
 
 
@@ -33718,11 +33724,13 @@ export const TracerCustomEvalConfigCheckExistsBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.string().max(tracerCustomEvalConfigCheckExistsBodyModelMax).optional()
 })
 
 
 export const tracerCustomEvalConfigGetCustomEvalByNameBodyNameMax = 255;
+
+export const tracerCustomEvalConfigGetCustomEvalByNameBodyModelMax = 255;
 
 
 
@@ -33741,7 +33749,7 @@ export const TracerCustomEvalConfigGetCustomEvalByNameBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.string().max(tracerCustomEvalConfigGetCustomEvalByNameBodyModelMax).optional()
 })
 
 
@@ -33754,6 +33762,8 @@ export const TracerCustomEvalConfigListCustomEvalConfigsQueryParams = zod.object
 })
 
 export const tracerCustomEvalConfigListCustomEvalConfigsResponseResultsItemNameMax = 255;
+
+export const tracerCustomEvalConfigListCustomEvalConfigsResponseResultsItemModelMax = 255;
 
 
 
@@ -33777,13 +33787,15 @@ export const TracerCustomEvalConfigListCustomEvalConfigsResponse = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
+  "model": zod.string().max(tracerCustomEvalConfigListCustomEvalConfigsResponseResultsItemModelMax).optional(),
   "eval_group": zod.string().optional()
 }))
 })
 
 
 export const tracerCustomEvalConfigRunEvaluationBodyNameMax = 255;
+
+export const tracerCustomEvalConfigRunEvaluationBodyModelMax = 255;
 
 
 
@@ -33802,7 +33814,7 @@ export const TracerCustomEvalConfigRunEvaluationBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.string().max(tracerCustomEvalConfigRunEvaluationBodyModelMax).optional()
 })
 
 
@@ -33811,6 +33823,8 @@ export const TracerCustomEvalConfigReadParams = zod.object({
 })
 
 export const tracerCustomEvalConfigReadResponseNameMax = 255;
+
+export const tracerCustomEvalConfigReadResponseModelMax = 255;
 
 
 
@@ -33830,7 +33844,7 @@ export const TracerCustomEvalConfigReadResponse = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
+  "model": zod.string().max(tracerCustomEvalConfigReadResponseModelMax).optional(),
   "eval_group": zod.string().optional()
 })
 
@@ -33840,6 +33854,8 @@ export const TracerCustomEvalConfigUpdateParams = zod.object({
 })
 
 export const tracerCustomEvalConfigUpdateBodyNameMax = 255;
+
+export const tracerCustomEvalConfigUpdateBodyModelMax = 255;
 
 
 
@@ -33858,10 +33874,12 @@ export const TracerCustomEvalConfigUpdateBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.string().max(tracerCustomEvalConfigUpdateBodyModelMax).optional()
 })
 
 export const tracerCustomEvalConfigUpdateResponseNameMax = 255;
+
+export const tracerCustomEvalConfigUpdateResponseModelMax = 255;
 
 
 
@@ -33881,7 +33899,7 @@ export const TracerCustomEvalConfigUpdateResponse = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
+  "model": zod.string().max(tracerCustomEvalConfigUpdateResponseModelMax).optional(),
   "eval_group": zod.string().optional()
 })
 
@@ -33891,6 +33909,8 @@ export const TracerCustomEvalConfigPartialUpdateParams = zod.object({
 })
 
 export const tracerCustomEvalConfigPartialUpdateBodyNameMax = 255;
+
+export const tracerCustomEvalConfigPartialUpdateBodyModelMax = 255;
 
 
 
@@ -33909,10 +33929,12 @@ export const TracerCustomEvalConfigPartialUpdateBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.string().max(tracerCustomEvalConfigPartialUpdateBodyModelMax).optional()
 })
 
 export const tracerCustomEvalConfigPartialUpdateResponseNameMax = 255;
+
+export const tracerCustomEvalConfigPartialUpdateResponseModelMax = 255;
 
 
 
@@ -33932,7 +33954,7 @@ export const TracerCustomEvalConfigPartialUpdateResponse = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
+  "model": zod.string().max(tracerCustomEvalConfigPartialUpdateResponseModelMax).optional(),
   "eval_group": zod.string().optional()
 })
 
