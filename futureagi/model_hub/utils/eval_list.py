@@ -27,10 +27,7 @@ _RUN_CONFIG_KEYS: tuple[str, ...] = tuple(_RUN_CONFIG_DEFAULTS)
 
 
 def build_run_config_view(eval_config) -> dict:
-    """Canonical run_config sub-dict returned to the FE across every eval-binding surface."""
-    from model_hub.services.error_localizer_service import (
-        error_localizer_enabled as _resolve_localizer,
-    )
+    from model_hub.services.error_localizer_service import error_localizer_enabled
 
     binding_json = getattr(eval_config, "config", None) or {}
     run_config = binding_json.get("run_config") or {}
@@ -38,7 +35,7 @@ def build_run_config_view(eval_config) -> dict:
     summary = view["summary"]
     if isinstance(summary, dict):
         view["summary"] = summary.get("type", _RUN_CONFIG_DEFAULTS["summary"])
-    view["error_localizer_enabled"] = _resolve_localizer(eval_config)
+    view["error_localizer_enabled"] = error_localizer_enabled(eval_config)
     return view
 
 

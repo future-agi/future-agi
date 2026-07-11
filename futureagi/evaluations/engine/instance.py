@@ -171,12 +171,7 @@ def resolve_binding_model(
     runtime_config: dict | None,
     eval_template,
 ) -> str | None:
-    """Priority: runtime_config[run_config][model] > runtime_config[model] > eval_template.config[model].
-
-    Matches resolve_pass_threshold's nested-first order: the FE writes the user's
-    picked model into run_config[model]; runtime_config[model] at top level is
-    legacy / API-override shape.
-    """
+    """Priority: runtime_config[run_config][model] > runtime_config[model] > eval_template.config[model]."""
     if isinstance(runtime_config, dict):
         run_config = runtime_config.get("run_config") or {}
         if isinstance(run_config, dict):
