@@ -23,7 +23,14 @@ import { RESPONSE_CODES } from "./constants";
 
 // ----------------------------------------------------------------------
 //
-const axiosInstance = axios.create({ baseURL: HOST_API });
+const axiosInstance = axios.create({
+  baseURL: HOST_API,
+  // No global timeout: it would cap legitimately long-running calls (e.g. blob
+  // exports) on this shared instance. The one flow that hangs the app — the
+  // bootstrap auth check against a stalling backend — is scoped with its own
+  // per-call timeout in auth-provider (fetchAuthMeWithRetry). Individual calls
+  // that need a deadline can pass their own `timeout`.
+});
 
 const avoidRedirect = [
   "/auth/jwt/register",

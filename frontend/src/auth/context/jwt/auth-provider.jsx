@@ -68,6 +68,26 @@ const reducer = (state, action) => {
 
 const STORAGE_KEY = "accessToken";
 
+// Boot the session even when the backend intermittently stalls: retry the
+// auth check on timeout / network / 5xx (a tight per-call timeout so it cycles
+// fast), but never on a real 401/403/user_not_found — those won't change.
+const fetchAuthMeWithRetry = async (accessToken, attempts = 3) => {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await axios.get(endpoints.auth.me, {
+        timeout: 15000,
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+    } catch (error) {
+      const status = error?.response?.status ?? error?.statusCode;
+      const isAuthError =
+        error?.code === "user_not_found" ||
+        (status >= 400 && status < 500);
+      if (isAuthError || attempt === attempts - 1) throw error;
+    }
+  }
+};
+
 export function AuthProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const queryClient = useQueryClient();
@@ -77,11 +97,7 @@ export function AuthProvider({ children }) {
       const accessToken = localStorage.getItem(STORAGE_KEY);
 
       if (accessToken) {
-        const response = await axios.get(endpoints.auth.me, {
-          headers: {
-            Authorization: `Bearer ${accessToken}`,
-          },
-        });
+        const response = await fetchAuthMeWithRetry(accessToken);
 
         const user = response.data;
 
