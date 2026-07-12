@@ -1919,6 +1919,37 @@ class RunTestCallExecutionsView(APIView):
         return snapshot_as_call_exec
 
 
+# Lifecycle order of a single call's status. Lower number = earlier in the
+# workflow. Used to aggregate many call statuses into one overall status by
+# picking the least-advanced call, so an in-progress run never appears further
+# along than its slowest call. Keyed on the raw string ``.value`` because
+# ``values_list("status", flat=True)`` yields plain strings, not enum members.
+_CALL_STATUS_PRIORITY = {
+    CallExecution.CallStatus.PENDING.value: 0,  # "pending"
+    CallExecution.CallStatus.REGISTERED.value: 1,  # "queued"
+    CallExecution.CallStatus.ONGOING.value: 2,  # "ongoing"
+    CallExecution.CallStatus.ANALYZING.value: 3,  # "analyzing"
+    CallExecution.CallStatus.COMPLETED.value: 4,  # "completed"
+    CallExecution.CallStatus.FAILED.value: 5,  # "failed"
+    CallExecution.CallStatus.CANCELLED.value: 6,  # "cancelled"
+}
+
+
+def aggregate_call_status(call_statuses, fallback):
+    """Compute an overall status from individual call-execution statuses.
+
+    Returns the "earliest" status by lifecycle priority so the aggregate never
+    looks further along than its least-advanced call (e.g. mixed
+    pending/ongoing calls report "pending"). Falls back to ``fallback`` (the
+    test execution's own status) when there are no calls. Unknown status values
+    sort last so a stray value can't mask a genuinely earlier one.
+    """
+    statuses = list(call_statuses)
+    if not statuses:
+        return fallback
+    return min(statuses, key=lambda s: _CALL_STATUS_PRIORITY.get(s, 999))
+
+
 class TestExecutionDetailView(APIView):
     """
     API View to retrieve a specific test execution with all its details and paginated call executions
@@ -2484,7 +2515,13 @@ class TestExecutionDetailView(APIView):
             response_data = paginated_response.data
             response_data["column_order"] = column_order
             response_data["error_messages"] = error_messages
-            response_data["status"] = test_execution.status
+            # Report the aggregated status of all call executions rather than the
+            # test execution's own status field, which can lag behind the calls
+            # and show e.g. "pending" while calls are already running.
+            response_data["status"] = aggregate_call_status(
+                test_execution.calls.values_list("status", flat=True),
+                fallback=test_execution.status,
+            )
             response_data["provider"] = (
                 test_execution.agent_definition.provider
                 if test_execution.agent_definition
