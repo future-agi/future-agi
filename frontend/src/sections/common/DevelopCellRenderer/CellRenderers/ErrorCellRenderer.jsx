@@ -103,14 +103,8 @@ const ErrorCellRenderer = ({
             sx={{ flexShrink: 0, color: "text.primary" }}
           />
           <Typography
-            variant="body2"
-            sx={{
-              fontWeight: 600,
-              color: "text.primary",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
+           typography="s2"
+
           >
             {ctaText}
           </Typography>
@@ -122,8 +116,7 @@ const ErrorCellRenderer = ({
               textTransform: "none",
               minWidth: 0,
               padding: 0,
-              fontSize: 13,
-              fontWeight: 700,
+           
               color: "primary.main",
               textDecoration: "underline",
               whiteSpace: "nowrap",
