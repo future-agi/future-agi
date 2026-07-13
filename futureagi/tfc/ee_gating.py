@@ -142,7 +142,7 @@ def is_oss() -> bool:
 
 @functools.lru_cache(maxsize=1)
 def is_cloud() -> bool:
-    """True when the deployment is Anthropic-hosted Cloud.
+    """True when the deployment is the FutureAGI-hosted Cloud.
 
     Companion to :func:`is_oss` — call this from OSS code that needs to
     ask ``am I on cloud?`` without directly importing ``DeploymentMode``
