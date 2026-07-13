@@ -11,11 +11,7 @@ import { PARTIAL_INPUT_WARNING_TYPE } from "src/sections/common/EvalsTasks/Parti
 export const ScoreCell = ({ value }) => {
   if (value == null)
     return (
-      <Typography
-        variant="body2"
-        color="text.disabled"
-        sx={{ fontSize: "12px" }}
-      >
+      <Typography variant="s2" color="text.disabled">
         —
       </Typography>
     );
@@ -25,7 +21,11 @@ export const ScoreCell = ({ value }) => {
         label={value.toFixed(2)}
         size="small"
         color={value >= 0.7 ? "success" : value >= 0.3 ? "warning" : "error"}
-        sx={{ fontSize: "11px", height: 20, fontWeight: 600 }}
+        sx={{
+          fontSize: (t) => t.typography.s3.fontSize,
+          height: 20,
+          fontWeight: "fontWeightSemiBold",
+        }}
       />
     );
   return (
@@ -33,15 +33,15 @@ export const ScoreCell = ({ value }) => {
       label={String(value)}
       size="small"
       color="default"
-      sx={{ fontSize: "11px", height: 20 }}
+      sx={{ fontSize: (t) => t.typography.s3.fontSize, height: 20 }}
     />
   );
 };
 
 export const normalizeRow = (raw) => {
-  const out = { id: raw.row_id ?? raw.id };
+  const out = { id: raw.row_id };
   Object.entries(raw).forEach(([k, v]) => {
-    if (k === "row_id" || k === "id") return;
+    if (k === "row_id") return;
     out[k] =
       v && typeof v === "object" && !Array.isArray(v) && "cell_value" in v
         ? v.cell_value
@@ -109,19 +109,10 @@ export const decodeColumnConfig = (str, base) => {
 
 export const StatPill = ({ label, value, color }) => (
   <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-    <Typography
-      variant="caption"
-      color="text.secondary"
-      sx={{ fontSize: "11px" }}
-    >
+    <Typography variant="s3" color="text.secondary">
       {label}:
     </Typography>
-    <Typography
-      variant="caption"
-      fontWeight={700}
-      color={color}
-      sx={{ fontSize: "12px" }}
-    >
+    <Typography variant="s2" fontWeight="fontWeightBold" color={color}>
       {value}
     </Typography>
   </Box>
@@ -139,6 +130,19 @@ export const DATE_OPTION_TO_PERIOD = {
   "6M": "180d",
   "12M": "365d",
   Custom: "30d",
+};
+
+export const periodForRange = (start, end) => {
+  const hours = (new Date(end).getTime() - new Date(start).getTime()) / 3_600_000;
+  if (!(hours > 0)) return "30d";
+  if (hours <= 1) return "30m";
+  if (hours <= 6) return "6h";
+  if (hours <= 24) return "1d";
+  if (hours <= 24 * 7) return "7d";
+  if (hours <= 24 * 30) return "30d";
+  if (hours <= 24 * 90) return "90d";
+  if (hours <= 24 * 180) return "180d";
+  return "365d";
 };
 
 
@@ -224,7 +228,7 @@ const renderResult = ({ getValue, row: tableRow }) => {
             size="small"
             color="error"
             variant="outlined"
-            sx={{ fontSize: "11px", height: 20 }}
+            sx={{ fontSize: (t) => t.typography.s3.fontSize, height: 20 }}
           />
           {partialBadge}
         </Box>
@@ -241,7 +245,7 @@ const renderResult = ({ getValue, row: tableRow }) => {
         size="small"
         color={isPassed ? "success" : isFailed ? "error" : "default"}
         variant="outlined"
-        sx={{ fontSize: "11px", height: 20 }}
+        sx={{ fontSize: (t) => t.typography.s3.fontSize, height: 20 }}
       />
       {partialBadge}
     </Box>
@@ -252,10 +256,9 @@ const renderInput = ({ getValue }) => {
   const v = getValue();
   return (
     <Typography
-      variant="body2"
+      variant="s2"
       noWrap
       sx={{
-        fontSize: "12px",
         color: v ? "text.secondary" : "text.disabled",
         fontStyle: v ? "normal" : "italic",
       }}
@@ -267,9 +270,9 @@ const renderInput = ({ getValue }) => {
 
 const renderReason = ({ getValue }) => (
   <Typography
-    variant="body2"
+    variant="s2"
     noWrap
-    sx={{ fontSize: "12px", color: "text.secondary", fontStyle: "italic" }}
+    sx={{ color: "text.secondary", fontStyle: "italic" }}
   >
     {getValue() || "—"}
   </Typography>
@@ -291,7 +294,7 @@ const renderSource = ({ getValue }) => {
       label={label}
       size="small"
       variant="outlined"
-      sx={{ fontSize: "10px", height: 18 }}
+      sx={{ fontSize: (t) => t.typography.s3.fontSize, height: 18 }}
     />
   );
 };
@@ -300,7 +303,7 @@ const renderVersion = ({ getValue }) => {
   const v = getValue();
   if (v == null || v === "")
     return (
-      <Typography variant="body2" color="text.disabled" sx={{ fontSize: "12px" }}>
+      <Typography variant="s2" color="text.disabled">
         —
       </Typography>
     );
@@ -311,7 +314,7 @@ const renderVersion = ({ getValue }) => {
       label={label}
       size="small"
       variant="outlined"
-      sx={{ fontSize: "10px", height: 18 }}
+      sx={{ fontSize: (t) => t.typography.s3.fontSize, height: 18 }}
     />
   );
 };
@@ -336,7 +339,11 @@ const renderFeedback = ({ row: tableRow }) => {
             />
           }
           variant="outlined"
-          sx={{ fontSize: "10px", height: 18, fontWeight: 600 }}
+          sx={{
+            fontSize: (t) => t.typography.s3.fontSize,
+            height: 18,
+            fontWeight: "fontWeightSemiBold",
+          }}
         />
       </Tooltip>
     );
@@ -364,11 +371,7 @@ const renderCreatedAt = ({ getValue }) => {
   if (!v) return null;
   const d = new Date(v);
   return (
-    <Typography
-      variant="body2"
-      noWrap
-      sx={{ fontSize: "11px", color: "text.disabled" }}
-    >
+    <Typography variant="s3" noWrap sx={{ color: "text.disabled" }}>
       {d.toLocaleDateString(undefined, { month: "short", day: "numeric" })},{" "}
       {d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
     </Typography>
@@ -385,12 +388,9 @@ const renderGeneric = ({ getValue }) => {
         : String(v);
   return (
     <Typography
-      variant="body2"
+      variant="s2"
       noWrap
-      sx={{
-        fontSize: "12px",
-        color: v == null || v === "" ? "text.disabled" : "text.secondary",
-      }}
+      sx={{ color: v == null || v === "" ? "text.disabled" : "text.secondary" }}
     >
       {text}
     </Typography>

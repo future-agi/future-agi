@@ -41,15 +41,11 @@ import {
   decodeColumnConfig,
   encodeColumnConfig,
   normalizeRow,
+  periodForRange,
   useColumns,
 } from "../Helpers/evalUsageColumns";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
-
-// StatPill, DATE_OPTION_TO_PERIOD, ScoreCell, useColumns now live in
-// ../Helpers/evalUsageColumns (imported above). Keeping this comment so
-// future merges from dev know the local copies were removed deliberately.
-
 
 // ── Main ──
 const EvalUsageTab = ({
@@ -73,7 +69,12 @@ const EvalUsageTab = ({
 
   const [openColumnConfigure, setOpenColumnConfigure] = useState(false);
 
-  const period = DATE_OPTION_TO_PERIOD[dateOption] || "30d";
+  const period = useMemo(() => {
+    if (dateOption === "Custom" && dateFilter?.[0] && dateFilter?.[1]) {
+      return periodForRange(dateFilter[0], dateFilter[1]);
+    }
+    return DATE_OPTION_TO_PERIOD[dateOption] || "30d";
+  }, [dateOption, dateFilter]);
 
   // Split queries
   const { data: chartData, isLoading: chartLoading } = useEvalUsageChart(

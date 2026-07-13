@@ -1,7 +1,9 @@
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   startOfDay,
   endOfDay,
+  startOfMinute,
   subDays,
 } from "date-fns";
 import axios, { endpoints } from "src/utils/axios";
@@ -15,7 +17,8 @@ function getDateParams(dateOption, dateFilter) {
   if (dateOption === "Today") {
     return {
       start_date: startOfDay(new Date()).toISOString(),
-      end_date: new Date().toISOString(),
+      // Floor to the minute so the query key is stable across renders.
+      end_date: startOfMinute(new Date()).toISOString(),
     };
   }
   if (dateOption === "Yesterday") {
@@ -38,7 +41,10 @@ function getDateParams(dateOption, dateFilter) {
  * Fetch chart + stats for a period. Does NOT depend on page/pageSize.
  */
 export function useEvalUsageChart(templateId, period = "30d", dateOption, dateFilter) {
-  const dateParams = getDateParams(dateOption, dateFilter);
+  const dateParams = useMemo(
+    () => getDateParams(dateOption, dateFilter),
+    [dateOption, dateFilter],
+  );
   return useQuery({
     queryKey: ["evals", "usage-chart", templateId, period, dateParams],
     queryFn: async () => {
@@ -49,7 +55,9 @@ export function useEvalUsageChart(templateId, period = "30d", dateOption, dateFi
       const result = data?.result;
       return { stats: result?.stats, chart: result?.chart };
     },
-    enabled: !!templateId,
+    enabled:
+      !!templateId &&
+      !(dateOption === "Custom" && !(dateFilter?.[0] && dateFilter?.[1])),
     staleTime: 30_000, // cache chart for 30s
   });
 }
@@ -61,7 +69,10 @@ export function useEvalUsageLogs(
   templateId,
   { page = 0, pageSize = 25, period = "30d", dateOption, dateFilter } = {},
 ) {
-  const dateParams = getDateParams(dateOption, dateFilter);
+  const dateParams = useMemo(
+    () => getDateParams(dateOption, dateFilter),
+    [dateOption, dateFilter],
+  );
   return useQuery({
     queryKey: ["evals", "usage-logs", templateId, period, page, pageSize, dateParams],
     queryFn: async () => {
@@ -75,7 +86,9 @@ export function useEvalUsageLogs(
         pagination: result.logs || {},
       };
     },
-    enabled: !!templateId,
+    enabled:
+      !!templateId &&
+      !(dateOption === "Custom" && !(dateFilter?.[0] && dateFilter?.[1])),
     keepPreviousData: true,
   });
 }

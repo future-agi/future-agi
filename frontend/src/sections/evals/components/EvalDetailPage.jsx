@@ -272,11 +272,7 @@ const EvalDetailPage = () => {
     if (!list.length) return null;
     const byFlag = list.find((v) => v.is_default || v.isDefault);
     if (byFlag) return byFlag;
-    // Fallback matches backend `EvalTemplateVersionManager.get_default`:
-    // most-recent (highest version_number) when no version is flagged.
-    // Previously this fell back to the LOWEST number, which disagreed with
-    // the backend and caused the picker to show v1's config while the
-    // runtime resolver correctly ran the pinned (latest) version.
+    // matches backend get_default: highest version_number when none flagged
     return [...list].sort(
       (a, b) =>
         (b.version_number ?? b.versionNumber ?? Number.MIN_SAFE_INTEGER) -
