@@ -96,7 +96,9 @@ class DevelopOptimizer:
 
             input_words_string = " ".join(cell_values_strings)
             billing = get_billing()
-            opt_column_token_count = billing.count_tiktoken_tokens(input_words_string)
+            opt_column_token_count = billing.count_tiktoken_tokens(
+                input_words_string, image_urls=cell_values_image_urls
+            )
 
             # print("optimisation token_count : ", opt_column_token_count)
             reference_id = str(self.optimize_dataset.id)
@@ -155,7 +157,7 @@ class DevelopOptimizer:
                     api_call_log_row.status = APICallStatusChoices.ERROR.value
                     api_call_log_row.save()
                     refund_config = {"reference_id": str(optimizer_row.id)}
-                    get_billing().refund(api_call_log_row, config=refund_config)
+                    get_billing().refund(api_call_log_row, **refund_config)
             else:
                 if api_call_log_row:
                     api_call_log_row.status = APICallStatusChoices.SUCCESS.value

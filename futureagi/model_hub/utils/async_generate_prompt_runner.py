@@ -12,8 +12,8 @@ except ImportError:
     PromptGenerator = _ee_stub("PromptGenerator")
 
 logger = structlog.get_logger(__name__)
-from tfc.billing.boundary import get_billing, BillingEventType
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+from tfc.billing.boundary import get_billing, BillingEventType, llm_usage_properties
+from tfc.constants.api_calls import APICallTypeChoices
 
 
 async def generate_prompt_async(
@@ -59,10 +59,7 @@ async def generate_prompt_async(
             workspace=workspace,
         )
 
-        if (
-            call_log_row is not None
-            and call_log_row.status != APICallStatusChoices.PROCESSING.value
-        ):
+        if billing.deduct_denied(call_log_row):
             await ws_manager.send_generate_prompt_error_message(
                 generation_id=generation_id,
                 error="Insufficient credits",
@@ -96,6 +93,7 @@ async def generate_prompt_async(
                 source="run_prompt_gen",
                 source_id=str(generation_id),
                 raw_cost_usd=str(actual_cost),
+                **llm_usage_properties(prompt_generator),
             )
         except Exception:
             pass

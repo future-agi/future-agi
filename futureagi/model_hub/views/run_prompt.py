@@ -1342,25 +1342,23 @@ class RunPrompts:
                         error=str(api_err),
                     )
                     raise ValueError("Error in API call validation")  # noqa: B904
-                if api_call_log_row is None:
-                    logger.info(
-                        "RunPrompts_process_row_api_call_log_row_none_oss",
-                        run_prompt_id=str(self.run_prompt_id),
-                        row_id=row_id,
-                    )
-                elif api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-                    error_message = get_error_for_api_status(
-                        api_call_log_row.status
-                    )
+                if billing.deduct_denied(api_call_log_row):
+                    if api_call_log_row is None:
+                        error_message = "Error in API call validation"
+                    else:
+                        error_message = get_error_for_api_status(api_call_log_row.status)
                     logger.error(
                         "RunPrompts_process_row_api_call_status_invalid",
                         run_prompt_id=str(self.run_prompt_id),
                         row_id=row_id,
-                        status=api_call_log_row.status,
+                        status=getattr(api_call_log_row, "status", None),
                         error_message=error_message,
                     )
                     raise ValueError(error_message)
-                elif api_call_log_row.status == APICallStatusChoices.PROCESSING.value:
+                if (
+                    api_call_log_row is not None
+                    and api_call_log_row.status == APICallStatusChoices.PROCESSING.value
+                ):
                     api_call_log_row.status = APICallStatusChoices.SUCCESS.value
                     api_call_log_row.save()
                     logger.info(

@@ -16,7 +16,7 @@ from django.db import close_old_connections
 from django.db.models import F
 from django.utils import timezone
 
-from tfc.billing.boundary import get_billing, BillingEventType
+from tfc.billing.boundary import get_billing, BillingEventType, llm_usage_properties
 from tfc.temporal import temporal_activity
 from tracer.models.trace_error_analysis import TraceErrorAnalysis
 
@@ -154,6 +154,7 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
                 source_id=str(trace_id),
                 errors_found=error_count,
                 raw_cost_usd=str(actual_cost),
+                **llm_usage_properties(agent),
             )
         except Exception:
             pass
@@ -167,7 +168,7 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
         if api_call_log_row:
             logger.info(f"Refunding cost for failed trace analysis {trace_id}.")
             try:
-                get_billing().refund(api_call_log_row, config={"error": str(e)})
+                get_billing().refund(api_call_log_row, error=str(e))
             except Exception:
                 logger.exception("refund_failed")
             api_call_log_row.status = APICallStatusChoices.ERROR.value
