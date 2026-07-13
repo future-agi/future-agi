@@ -422,30 +422,11 @@ class TestProjectDeleteCascade:
         assert other_cfg.deleted is False
 
 
-BYO_MODEL_STRINGS = [
-    "gpt-4o-mini",
-    "gpt-4o",
-    "claude-3-5-sonnet-latest",
-    "turing_large",  # legacy Turing value still accepted alongside BYO
-    "",              # blank accepted; model is optional on eval configs
-]
+BYO_MODEL_STRINGS = ["gpt-4o-mini", "gpt-4o", "claude-3-5-sonnet-latest", "turing_large", ""]
 
 
 @pytest.mark.unit
 class TestEvalConfigBYOModel:
-    """CustomEvalConfig + ExternalEvalConfig accept BYO model strings.
-
-    Regression guard against re-adding ``choices=ModelChoices.choices`` on the
-    ``model`` field of either config. The two configs enforce the field on
-    different code paths so each is covered by its own path:
-      * ``CustomEvalConfig`` — the DRF ``ModelSerializer`` auto-derives a
-        ``ChoiceField`` from the model's ``choices=`` metadata; hit via
-        ``CustomEvalConfigSerializer.is_valid()``.
-      * ``ExternalEvalConfig`` — ``save()`` calls ``self.full_clean()``, and
-        ``Model.clean_fields`` is where ``choices=`` is enforced at the ORM
-        layer; hit directly on the ``model`` field via ``clean_fields``.
-    """
-
     @pytest.mark.parametrize("model_value", BYO_MODEL_STRINGS)
     def test_custom_eval_config_serializer_accepts_byo(
         self, db, project, eval_template, model_value
@@ -470,11 +451,5 @@ class TestEvalConfigBYOModel:
         from tracer.models.external_eval_config import ExternalEvalConfig
 
         config = ExternalEvalConfig(model=model_value)
-        # Validate only the ``model`` field so we do not need a full ORM graph
-        # (organization/workspace/eval_template FKs, platform credentials).
-        # ``clean_fields`` is where ``choices=`` runs; if it were still there
-        # this would raise ``ValidationError`` on BYO strings.
-        exclude = [
-            f.name for f in ExternalEvalConfig._meta.fields if f.name != "model"
-        ]
+        exclude = [f.name for f in ExternalEvalConfig._meta.fields if f.name != "model"]
         config.clean_fields(exclude=exclude)
