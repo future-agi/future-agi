@@ -116,22 +116,18 @@ const useColumns = () =>
         enableSorting: false,
         cell: ({ getValue, row }) => {
           const v = getValue();
-          const rowStatus = row.original.status;
-          const isError = rowStatus === "error";
-          const isSkipped = rowStatus === "skipped";
+          const isError = row.original.status === "error";
           const color = isError
             ? "error.main"
-            : isSkipped
-              ? "warning.main"
-              : v == null
-                ? "transparent"
-                : typeof v === "number"
-                  ? v >= 0.7
-                    ? "success.main"
-                    : v >= 0.3
-                      ? "warning.main"
-                      : "error.main"
-                  : "text.disabled";
+            : v == null
+              ? "transparent"
+              : typeof v === "number"
+                ? v >= 0.7
+                  ? "success.main"
+                  : v >= 0.3
+                    ? "warning.main"
+                    : "error.main"
+                : "text.disabled";
           return (
             <Box
               sx={{
@@ -171,13 +167,10 @@ const useColumns = () =>
         size: 100,
         cell: ({ getValue, row }) => {
           const raw = getValue();
-          const rowStatus = row.original.status;
-          const isSkipped = rowStatus === "skipped";
-          if (!raw && !isSkipped) return null;
+          if (!raw) return null;
           const parsed = parsePythonReprIfNeeded(raw);
-          const v = isSkipped
-            ? "Skipped"
-            : parsed && typeof parsed === "object" && !Array.isArray(parsed)
+          const v =
+            parsed && typeof parsed === "object" && !Array.isArray(parsed)
               ? parsed.choice ?? parsed.score ?? raw
               : parsed;
           const isPassed = v === "Passed" || v === "Pass";
@@ -187,33 +180,21 @@ const useColumns = () =>
           const partialWarning = warnings.find(
             (w) => w?.type === PARTIAL_INPUT_WARNING_TYPE,
           );
-          const chip = (
-            <Chip
-              label={v}
-              size="small"
-              color={
-                isPassed
-                  ? "success"
-                  : isFailed || isError
-                    ? "error"
-                    : isSkipped
-                      ? "warning"
-                      : "default"
-              }
-              variant="outlined"
-              sx={{ fontSize: "11px", height: 20 }}
-            />
-          );
-          const skippedReason = row.original.skipped_reason;
           return (
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-              {isSkipped && skippedReason ? (
-                <Tooltip title={skippedReason} arrow>
-                  {chip}
-                </Tooltip>
-              ) : (
-                chip
-              )}
+              <Chip
+                label={v}
+                size="small"
+                color={
+                  isPassed
+                    ? "success"
+                    : isFailed || isError
+                      ? "error"
+                      : "default"
+                }
+                variant="outlined"
+                sx={{ fontSize: "11px", height: 20 }}
+              />
               {partialWarning && (
                 <Tooltip
                   title={
@@ -1113,14 +1094,6 @@ const TaskUsageTab = ({ taskId }) => {
                 label="Errors"
                 value={stats.error_count ?? 0}
                 color="error.main"
-              />
-              <Box
-                sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
-              />
-              <StatPill
-                label="Skipped"
-                value={stats.skipped_count ?? 0}
-                color="warning.main"
               />
               <Box
                 sx={{ width: "1px", height: 14, backgroundColor: "divider" }}
