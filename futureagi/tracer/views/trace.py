@@ -63,6 +63,7 @@ from tracer.serializers.trace import (
     TraceObserveIndexQuerySerializer,
     TraceObserveListQuerySerializer,
     TraceDetailResponseSerializer,
+    TraceObserveListResponseSerializer,
     TraceSerializer,
     TraceVoiceCallListQuerySerializer,
     UserCodeExampleResponseSerializer,
@@ -2331,7 +2332,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 f"error fetching the trace id by index {str(e)}"
             )
 
-    @validated_request(query_serializer=TraceObserveListQuerySerializer)
+    @validated_request(
+        query_serializer=TraceObserveListQuerySerializer,
+        responses={200: TraceObserveListResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["get"])
     def list_traces_of_session(self, request, *args, **kwargs):
         """

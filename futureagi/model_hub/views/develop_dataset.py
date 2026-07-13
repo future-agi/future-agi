@@ -282,6 +282,7 @@ from tfc.utils.storage import (
     download_json_from_s3,
     get_compare_local_dir,
     get_compare_metadata_path,
+    is_own_storage_url,
     upload_audio_to_s3,
     upload_audio_to_s3_duration,
     upload_compare_json_to_s3,
@@ -802,6 +803,32 @@ class AddRowsFromFile(CreateAPIView):
             else:
                 max_order = -1
 
+            # Per-import validation budget. SSRF is still enforced downstream
+            # at actual GET time by _ssrf_safe_get inside upload_*_to_s3; the
+            # HEAD is only a pre-flight nicety, so we skip it after N calls or
+            # when the URL points at our own S3 (upload_*_to_s3 no-op-links).
+            _MAX_VALIDATIONS = 100
+            validations_used = [0]
+            budget_exhausted_logged = [False]
+
+            def _maybe_validate(url_value, file_type):
+                if DatatypeConverter._is_own_s3_url(url_value):
+                    return
+                if validations_used[0] >= _MAX_VALIDATIONS:
+                    if not budget_exhausted_logged[0]:
+                        logger.warning(
+                            "add_rows_validation_budget_exhausted",
+                            budget=_MAX_VALIDATIONS,
+                            dataset_id=str(dataset_id),
+                        )
+                        budget_exhausted_logged[0] = True
+                    return
+                # Count the attempt BEFORE the call so a slow external host
+                # can't blow the budget by returning errors — otherwise the
+                # counter never advances and every row pays the full timeout.
+                validations_used[0] += 1
+                validate_file_url(url_value, file_type)
+
             for index, row in data.iterrows():
                 new_row = Row.objects.create(
                     id=str(uuid.uuid4()), dataset=dataset, order=max_order + 1 + index
@@ -815,6 +842,8 @@ class AddRowsFromFile(CreateAPIView):
 
                     if column.data_type == DataTypeChoices.IMAGE.value and value:
                         try:
+                            _maybe_validate(str(value), "image")
+
                             # Generate a unique image key using dataset_id
                             image_key = f"images/{dataset_id}/{uuid.uuid4()}"
                             # Upload to S3 and get URL
@@ -828,6 +857,8 @@ class AddRowsFromFile(CreateAPIView):
 
                     elif column.data_type == DataTypeChoices.AUDIO.value and value:
                         try:
+                            _maybe_validate(str(value), "audio")
+
                             audio_key = f"audio/{dataset_id}/{uuid.uuid4()}"
                             audio_url = upload_audio_to_s3(
                                 str(value), os.getenv("S3_FOR_DATA"), audio_key
@@ -6316,6 +6347,21 @@ class DatatypeConverter:
             # Catch any other unexpected errors
             raise ValueError(f"Failed to convert to JSON: {str(e)}") from e
 
+    _OWN_S3_BUCKETS = tuple(
+        m.strip()
+        for m in os.getenv(
+            "OWN_S3_BUCKETS",
+            "fi-customer-data,fi-customer-data-dev,fi-content,fi-content-dev",
+        ).split(",")
+        if m.strip()
+    )
+
+    @classmethod
+    def _is_own_s3_url(cls, value):
+        return any(
+            is_own_storage_url(value, bucket) for bucket in cls._OWN_S3_BUCKETS
+        )
+
     def _convert_cell_to_image(self, cell):
         """Convert to image - uploads to S3"""
         if self._is_default_empty_value(cell.value, self.new_data_type):
@@ -6323,7 +6369,6 @@ class DatatypeConverter:
 
         try:
             image_value = cell.value
-            is_s3_url = False
 
             # Handle JSON array with single element (e.g., from images -> image conversion)
             if isinstance(image_value, str) and image_value.strip().startswith("["):
@@ -6331,19 +6376,16 @@ class DatatypeConverter:
                     parsed = json.loads(image_value)
                     if isinstance(parsed, list) and len(parsed) == 1:
                         image_value = parsed[0]
-                        is_s3_url = (
-                            isinstance(image_value, str)
-                            and "fi-customer-data" in image_value
-                        )
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-            # Always validate the URL, even if extracted from a JSON array
-            validate_file_url(str(image_value), "image")
-
-            # Skip re-upload only if it's already in our S3 bucket
-            if is_s3_url:
+            # Our own stored objects are linked as-is: re-validating them is
+            # redundant, and the HEAD would be SSRF-blocked outright on
+            # MinIO/private storage endpoints. External URLs are validated.
+            if self._is_own_s3_url(str(image_value)):
                 return image_value, {}
+
+            validate_file_url(str(image_value), "image")
 
             image_key = f"images/{self.dataset_id}/{uuid.uuid4()}"
             image_url = upload_image_to_s3(
@@ -6377,6 +6419,12 @@ class DatatypeConverter:
             uploaded_urls = []
             for img_value in images_list:
                 if img_value:
+                    # Same own-storage skip as the single-image path.
+                    if self._is_own_s3_url(str(img_value)):
+                        uploaded_urls.append(img_value)
+                        continue
+                    validate_file_url(str(img_value), "image")
+
                     image_key = f"images/{self.dataset_id}/{uuid.uuid4()}"
                     image_url = upload_image_to_s3(
                         str(img_value),
@@ -6842,7 +6890,8 @@ class GetEvalsListView(APIView):
         # correct behaviour at request time.
 
         if search_text:
-            eval_templates = eval_templates.filter(name__icontains=search_text)
+            from model_hub.utils.eval_list import normalize_search_for_name
+            eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
 
         if validated_data.get("eval_tags"):
             eval_templates = eval_templates.filter(
@@ -6971,7 +7020,8 @@ class GetEvalsListView(APIView):
             )
 
         if search_text:
-            user_evals = user_evals.filter(name__icontains=search_text)
+            from model_hub.utils.eval_list import normalize_search_for_name
+            user_evals = user_evals.filter(normalize_search_for_name(search_text))
 
         if validated_data.get("eval_tags"):
             user_evals = user_evals.filter(
@@ -7022,7 +7072,7 @@ class GetEvalsListView(APIView):
         )
 
         if search_text:
-            eval_templates = eval_templates.filter(Q(name__icontains=search_text))
+            eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
 
         if validated_data.get("eval_tags"):
             eval_templates = eval_templates.filter(
@@ -7081,7 +7131,8 @@ class GetEvalsListView(APIView):
             organization=organization, deleted=False, visible_ui=True
         )
         if search_text:
-            eval_templates = eval_templates.filter(Q(name__icontains=search_text))
+            from model_hub.utils.eval_list import normalize_search_for_name
+            eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
 
         if validated_data.get("eval_tags"):
             eval_templates = eval_templates.filter(
@@ -14475,7 +14526,8 @@ class GetCompareEvalsListView(APIView):
         ).select_related("template")
 
         if search_text:
-            user_evals = user_evals.filter(name__icontains=search_text)
+            from model_hub.utils.eval_list import normalize_search_for_name
+            user_evals = user_evals.filter(normalize_search_for_name(search_text))
 
         # Count occurrences of eval names across datasets
         eval_name_count = defaultdict(int)

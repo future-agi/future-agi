@@ -35,18 +35,18 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
     avoid doing work no one reads (and to sidestep the orphan-rows-on-
     re-run problem).
     """
-    from accounts.models.user import User
     try:
         from ee.agenthub.traceerroragent.traceerror import TraceErrorAnalysisAgent
     except ImportError:
         if settings.DEBUG:
             logger.warning("Could not import ee.agenthub.traceerroragent.traceerror", exc_info=True)
         return None
-    from tracer.models.observation_span import Trace
-    from tracer.models.trace import TraceErrorAnalysisStatus
+    from tracer.models.project import Project
     from tracer.models.trace_error_analysis import TraceErrorAnalysis
+    from tracer.queries import deep_analysis_state
     from tracer.queries.error_analysis import TraceErrorAnalysisDB
     from tracer.queries.helpers import get_default_workspace_for_project
+    from tracer.services.clickhouse.v2 import get_reader
     from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
     api_call_log_row = None
@@ -66,16 +66,23 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
                 "skipped": True,
             }
 
-        try:
-            trace = Trace.objects.select_related("project__organization").get(
-                id=trace_id
-            )
-            organization = trace.project.organization
-        except Trace.DoesNotExist:
+        # Trace lives only in CH post-cutover; resolve its project (org + billing)
+        # from the CH root span's project_id, then load the PG Project (kept).
+        with get_reader() as reader:
+            roots = reader.root_ids_by_trace_ids([str(trace_id)])
+        root = roots.get(str(trace_id))
+        project_id = root[1] if root else None
+        project = (
+            Project.objects.select_related("organization").filter(id=project_id).first()
+            if project_id
+            else None
+        )
+        if project is None:
             logger.warning(f"Trace {trace_id} not found, skipping analysis.")
             return {"success": False, "trace_id": trace_id, "error": "Trace not found"}
+        organization = project.organization
 
-        workspace = get_default_workspace_for_project(trace.project)
+        workspace = get_default_workspace_for_project(project)
 
         # Pre-check usage before the LLM call
         billing = get_billing()
@@ -83,13 +90,10 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
             str(organization.id), APICallTypeChoices.TRACE_ERROR_ANALYSIS.value
         )
         if not usage_check.allowed:
-            Trace.objects.filter(id=trace_id).update(
-                error_analysis_status=TraceErrorAnalysisStatus.FAILED
-            )
+            deep_analysis_state.set_failed(str(trace_id))
             raise ValueError(usage_check.reason or "Usage limit exceeded")
 
         # Log and deduct cost for the analysis upfront.
-        billing = get_billing()
         api_call_log_row = billing.log_and_deduct(
             organization=organization,
             api_call_type=APICallTypeChoices.TRACE_ERROR_ANALYSIS.value,
@@ -98,17 +102,15 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
             source_id=str(trace_id),
             config={
                 "trace_id": str(trace_id),
-                "project_id": str(trace.project.id),
-                "reference_id": str(trace.project.id),
+                "project_id": str(project.id),
+                "reference_id": str(project.id),
             },
         )
 
         if billing.deduct_denied(api_call_log_row):
             error_message = "Failed to create API call log for trace analysis."
             logger.error(error_message)
-            Trace.objects.filter(id=trace_id).update(
-                error_analysis_status=TraceErrorAnalysisStatus.FAILED
-            )
+            deep_analysis_state.set_failed(str(trace_id))
             return {"success": False, "trace_id": trace_id, "error": error_message}
 
         agent = TraceErrorAnalysisAgent(
@@ -125,9 +127,10 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
             f"Successfully analyzed trace {trace_id} - found {error_count} errors"
         )
 
-        Trace.objects.filter(id=trace_id).update(
-            error_analysis_status=TraceErrorAnalysisStatus.COMPLETED
-        )
+        # Success is recorded by the TraceErrorAnalysis row the agent wrote
+        # (save_to_db=True) — the feed derives "done" from it. Just release the
+        # transient running marker.
+        deep_analysis_state.clear(str(trace_id))
 
         if error_count > 0 and ingest_embeddings:
             error_analysis_db = TraceErrorAnalysisDB()
@@ -174,10 +177,8 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
             api_call_log_row.status = APICallStatusChoices.ERROR.value
             api_call_log_row.save(update_fields=["status"])
 
-        # Mark trace as failed
-        Trace.objects.filter(id=trace_id).update(
-            error_analysis_status=TraceErrorAnalysisStatus.FAILED
-        )
+        # Mark the run failed (transient marker; TTLs back to idle).
+        deep_analysis_state.set_failed(str(trace_id))
 
         return {"success": False, "trace_id": trace_id, "error": str(e)}
     finally:
@@ -204,10 +205,10 @@ def run_deep_analysis_on_demand(trace_id: str, force: bool = False) -> dict:
       ``TraceErrorAnalysis`` row (cascades to ``TraceErrorDetail`` via
       FK CASCADE) so the downstream agent produces fresh results.
 
-    The view sets ``Trace.error_analysis_status=PROCESSING`` synchronously
-    before dispatching so the first frontend poll sees the running state
-    without racing the Temporal worker. ``analyze_single_trace`` flips it
-    to COMPLETED/FAILED at the end.
+    The dispatcher claims a ``deep_analysis_state`` running marker before
+    dispatching so the first frontend poll sees the running state without
+    racing the Temporal worker; ``analyze_single_trace`` clears it on success
+    (done derives from the ``TraceErrorAnalysis`` row) or marks it failed.
 
     Embeddings are deliberately skipped — the Feed Revamp reads
     ``TraceErrorDetail`` rows directly and has no use for the ClickHouse
@@ -408,14 +409,22 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
 
     from ai_tools.base import ToolContext
     from tfc.middleware.workspace_context import set_workspace_context
-    from tracer.models.trace import Trace, TraceErrorAnalysisStatus
+    from tracer.models.project import Project
+    from tracer.queries import deep_analysis_state
     from tracer.queries.error_analysis import TraceErrorAnalysisDB
 
     close_old_connections()
 
     try:
-        trace = Trace.objects.select_related("project__organization").get(id=trace_id)
-        org = trace.project.organization
+        # The caller passes project_id (traces live only in CH post-cutover);
+        # load the PG Project (kept) for org / user / workspace resolution.
+        project = (
+            Project.objects.select_related("organization").filter(id=project_id).first()
+        )
+        if project is None:
+            logger.error(f"Project {project_id} not found, skipping trace {trace_id}")
+            return {"success": False, "trace_id": trace_id, "error": "Project not found"}
+        org = project.organization
 
         # Find a user in this org for the conversation
         from accounts.models.user import User
@@ -428,7 +437,7 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
         # Get workspace
         from tracer.queries.helpers import get_default_workspace_for_project
 
-        workspace = get_default_workspace_for_project(trace.project)
+        workspace = get_default_workspace_for_project(project)
 
         set_workspace_context(workspace=workspace, organization=org, user=user)
         ctx = ToolContext(user=user, organization=org, workspace=workspace)
@@ -530,8 +539,8 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
         if not analysis:
             # Falcon found no errors — create a clean analysis record
             analysis = TraceErrorAnalysis.objects.create(
-                trace=trace,
-                project=trace.project,
+                trace_id=trace_id,
+                project=project,
                 overall_score=4.0,
                 total_errors=0,
                 high_impact_errors=0,
@@ -571,9 +580,8 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
 
         error_count = analysis.total_errors or 0
 
-        # Always mark trace as completed
-        trace.error_analysis_status = TraceErrorAnalysisStatus.COMPLETED
-        trace.save(update_fields=["error_analysis_status"])
+        # Done is derived from the TraceErrorAnalysis row above; release marker.
+        deep_analysis_state.clear(str(trace_id))
 
         # Ingest embeddings for clustering if there are errors
         if error_count > 0:
@@ -625,9 +633,7 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
 
     except Exception as e:
         logger.exception(f"Falcon analysis failed for trace {trace_id}: {str(e)}")
-        Trace.objects.filter(id=trace_id).update(
-            error_analysis_status=TraceErrorAnalysisStatus.FAILED
-        )
+        deep_analysis_state.set_failed(str(trace_id))
         return {"success": False, "trace_id": trace_id, "error": str(e)}
     finally:
         close_old_connections()

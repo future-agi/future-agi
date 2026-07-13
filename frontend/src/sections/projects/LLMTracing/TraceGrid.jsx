@@ -25,6 +25,7 @@ import {
   normalizeConfigKeys,
   toBackendFilters,
 } from "./common";
+import { RENDERER_CONFIG } from "./Renderers/common";
 import { useUrlState } from "src/routes/hooks/use-url-state";
 import { userTraceRowHeightMapping } from "../UsersView/common";
 import { statusBar } from "src/components/run-insights/traces-tab/common";
@@ -478,6 +479,8 @@ const TraceGrid = React.forwardRef(
           return;
         }
         if (event?.column?.colId === "status") return;
+        if (RENDERER_CONFIG.tagColumns.includes(event?.column?.getColId()))
+          return;
         if (
           event.column.getColId() === APP_CONSTANTS.AG_GRID_SELECTION_COLUMN
         ) {

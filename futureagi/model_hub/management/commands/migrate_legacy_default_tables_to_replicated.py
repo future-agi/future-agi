@@ -2,7 +2,7 @@
 location (``cluster_centroids``, ``trace_input_embeddings``, ``error_embeddings``,
 ``llm_logs``, ``events``) into a replicated target database.
 
-Sibling of ``migrate_legacy_vectors_to_replicated``: same shape (read every
+Sibling of ``migrate_ch_vector_tables``: same shape (read every
 replica via ``clusterAllReplicas``, create the target with the replicated
 engine, poll per-replica parity), but each table here has its own schema and
 dedup key, so the copy is driven by a per-table spec instead of a fixed
@@ -40,8 +40,8 @@ from __future__ import annotations
 
 import os
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 import structlog
 from django.core.management.base import BaseCommand, CommandError
@@ -51,11 +51,14 @@ from agentic_eval.core.database.ch_vector import (
     get_clickhouse_cluster_name,
 )
 from model_hub.services.ch_migration import (
+    OneShotDecision,
     expected_replica_count,
+    one_shot_decision,
     per_replica_counts,
     poll_replica_parity,
     require_identifier,
     shared_columns,
+    simulated_post_ensure_counts,
 )
 from model_hub.services.legacy_ch_tables import (
     EVENTS_TABLE,
@@ -159,20 +162,19 @@ class Command(BaseCommand):
             )
 
         db_client = ClickHouseVectorDB()
-        if not dry_run and not db_client._is_clustered():
-            raise CommandError(
-                "CH server is not a multi-replica cluster member "
-                "(no row in `system.clusters` with `replica_num > 1`). "
-                "Run from a backend pod that connects to the production CH cluster."
+        is_clustered = db_client._is_clustered()
+        expected_replicas = expected_replica_count(db_client.client, cluster)
+
+        if dry_run:
+            self._print_dry_run_header(
+                source_db=source_db, target_db=target_db, cluster=cluster,
+                is_clustered=is_clustered, expected_replicas=expected_replicas,
+                tables=table_names,
             )
-
-        expected_replicas = (
-            0 if dry_run else expected_replica_count(db_client.client, cluster)
-        )
-
-        if not dry_run:
+        else:
+            on_cluster = f" ON CLUSTER '{cluster}'" if is_clustered else ""
             db_client.client.execute(
-                f"CREATE DATABASE IF NOT EXISTS {target_db} ON CLUSTER '{cluster}'"
+                f"CREATE DATABASE IF NOT EXISTS {target_db}{on_cluster}"
             )
 
         logger.info(
@@ -186,6 +188,7 @@ class Command(BaseCommand):
         )
 
         total_copied = 0
+        total_dry_new = 0
         failures: list[str] = []
         for name in table_names:
             copied, ok = self._migrate_one_table(
@@ -195,9 +198,13 @@ class Command(BaseCommand):
                 target_db=target_db,
                 cluster=cluster,
                 expected_replicas=expected_replicas,
+                is_clustered=is_clustered,
                 dry_run=dry_run,
             )
-            total_copied += copied
+            if dry_run:
+                total_dry_new += copied
+            else:
+                total_copied += copied
             if not ok:
                 failures.append(name)
 
@@ -208,6 +215,15 @@ class Command(BaseCommand):
             failures=failures,
             dry_run=dry_run,
         )
+
+        if dry_run:
+            self._print_dry_run_footer(
+                source_db=source_db, target_db=target_db, cluster=cluster,
+                tables=table_names, total_estimated_new=total_dry_new,
+                refused=failures,
+            )
+            return
+
         if failures:
             # Non-zero exit so an exit-code-gated cutover can't flip CH_DATABASE
             # before every replicated copy has converged.
@@ -223,6 +239,59 @@ class Command(BaseCommand):
             )
         )
 
+    _BAR = "=" * 68
+
+    def _print_dry_run_header(
+        self, *, source_db: str, target_db: str, cluster: str,
+        is_clustered: bool, expected_replicas: int, tables: list[str],
+    ) -> None:
+        mode = (
+            f"clustered  (Replicated* engines; CREATE ... ON CLUSTER '{cluster}')"
+            if is_clustered
+            else "single-node  (plain engines; no ON CLUSTER, Keeper absent)"
+        )
+        bootstrap = (
+            f"CREATE DATABASE IF NOT EXISTS {target_db} ON CLUSTER '{cluster}'"
+            if is_clustered
+            else f"CREATE DATABASE IF NOT EXISTS {target_db}"
+        )
+        self.stdout.write("")
+        self.stdout.write(self._BAR)
+        self.stdout.write("CH Migration DRY RUN  (no writes will occur)")
+        self.stdout.write(self._BAR)
+        self.stdout.write("Command:            migrate_legacy_default_tables_to_replicated")
+        self.stdout.write(f"Source database:    {source_db}")
+        self.stdout.write(f"Target database:    {target_db}")
+        self.stdout.write(f"Cluster:            {cluster}")
+        self.stdout.write(f"Mode:               {mode}")
+        self.stdout.write(f"Expected replicas:  {expected_replicas}")
+        self.stdout.write(f"Tables:             {', '.join(tables)}")
+        self.stdout.write(f"Bootstrap step:     {bootstrap}")
+        self.stdout.write(self._BAR)
+
+    def _print_dry_run_footer(
+        self, *, source_db: str, target_db: str, cluster: str,
+        tables: list[str], total_estimated_new: int, refused: list[str],
+    ) -> None:
+        refused_line = (
+            "Would refuse:       none"
+            if not refused
+            else f"Would refuse:       {', '.join(refused)}  (see per-table warnings above)"
+        )
+        self.stdout.write(self._BAR)
+        self.stdout.write("Summary")
+        self.stdout.write(f"  Tables scanned:     {len(tables)}")
+        self.stdout.write(f"  New rows to insert: {total_estimated_new}")
+        self.stdout.write(f"  {refused_line}")
+        self.stdout.write("")
+        self.stdout.write("Real run:  same command without --dry-run:")
+        self.stdout.write("  python manage.py migrate_legacy_default_tables_to_replicated \\")
+        self.stdout.write(f"    --source-database {source_db} \\")
+        self.stdout.write(f"    --target-database {target_db} \\")
+        self.stdout.write(f"    --tables {','.join(tables)} \\")
+        self.stdout.write(f"    --cluster {cluster}")
+        self.stdout.write(self._BAR)
+
     def _migrate_one_table(
         self,
         *,
@@ -232,9 +301,13 @@ class Command(BaseCommand):
         target_db: str,
         cluster: str,
         expected_replicas: int,
+        is_clustered: bool = True,
         dry_run: bool,
     ) -> tuple[int, bool]:
-        """Return ``(rows_copied, converged_ok)``."""
+        """Return ``(rows_copied_or_estimated, converged_ok)``.
+
+        In dry-run, the first element is the estimated new-row count.
+        """
         source_qualified = f"{source_db}.{spec.name}"
         target_qualified = f"{target_db}.{spec.name}"
 
@@ -247,24 +320,86 @@ class Command(BaseCommand):
         # uniqExact over the dedup key for keyed tables; row count for the
         # append-only log tables.
         count_expr = f"uniqExact({spec.dedup_columns})" if spec.is_keyed else "count()"
+        mode_label = (
+            f"keyed by ({spec.dedup_columns}), idempotent"
+            if spec.is_keyed
+            else "append-only, one-shot (target must be empty on all replicas)"
+        )
 
         if dry_run:
             if not source_exists:
                 self.stdout.write(
-                    f"  dry-run: source {source_qualified} missing; "
-                    f"would create empty target {target_qualified}"
+                    f"  {spec.name}:  source MISSING; target would be created empty  "
+                    f"[{mode_label}]"
                 )
                 return 0, True
             source_count = db_client.client.execute(
                 f"SELECT {count_expr} FROM clusterAllReplicas("
                 f"'{cluster}', {source_qualified})"
             )[0][0]
-            mode = "idempotent" if spec.is_keyed else "one-shot (target must be empty)"
-            self.stdout.write(
-                f"  dry-run: would copy {source_count} rows from "
-                f"{source_qualified} -> {target_qualified} [{mode}]"
+            # Target visibility via clusterAllReplicas; empty dict means
+            # ``ensure_target`` will create it cluster-wide on the real run.
+            before_counts = per_replica_counts(
+                db_client.client, target_db, spec.name, cluster
             )
-            return 0, True
+            if not before_counts:
+                self.stdout.write(
+                    f"  {spec.name}:  source={source_count}  target does not exist "
+                    f"(would be created)  would_insert={source_count}  [{mode_label}]"
+                )
+                return source_count, True
+            if spec.is_keyed:
+                new_rows = db_client.client.execute(
+                    f"SELECT count() FROM clusterAllReplicas("
+                    f"'{cluster}', {source_qualified}) "
+                    f"WHERE ({spec.dedup_columns}) NOT IN "
+                    f"(SELECT {spec.dedup_columns} FROM {target_qualified})"
+                )[0][0]
+                self.stdout.write(
+                    f"  {spec.name}:  source={source_count}  "
+                    f"target_now={min(before_counts.values(), default=0)}  "
+                    f"would_insert={new_rows}  [{mode_label}]"
+                )
+                return new_rows, True
+            # One-shot append-only: pad + decide against post-ensure state.
+            sim_counts = simulated_post_ensure_counts(
+                before_counts, expected_replicas
+            )
+            decision = one_shot_decision(sim_counts, expected_replicas, source_count)
+            if decision == OneShotDecision.NOOP:
+                self.stdout.write(
+                    f"  {spec.name}:  source={source_count}  target already populated "
+                    f"({before_counts})  would_insert=0 (no-op)  [{mode_label}]"
+                )
+                return 0, True
+            if decision == OneShotDecision.COPY:
+                self.stdout.write(
+                    f"  {spec.name}:  source={source_count}  target empty everywhere  "
+                    f"would_insert={source_count}  [{mode_label}]"
+                )
+                return source_count, True
+            truncate_on_cluster = (
+                f" ON CLUSTER '{cluster}'" if is_clustered else ""
+            )
+            self.stderr.write(
+                self.style.WARNING(
+                    f"  {spec.name}:  source={source_count}  target NOT empty "
+                    f"({before_counts})  would REFUSE at real run  [{mode_label}]"
+                )
+            )
+            self.stderr.write(
+                self.style.WARNING(
+                    f"    -> to migrate this table: "
+                    f"TRUNCATE TABLE {target_qualified}{truncate_on_cluster}, "
+                    f"then re-run without --dry-run."
+                )
+            )
+            self.stderr.write(
+                self.style.WARNING(
+                    "    -> to skip this table: omit it from --tables."
+                )
+            )
+            return 0, False
 
         spec.ensure_target(db_client, target_db, cluster)
 
@@ -290,31 +425,18 @@ class Command(BaseCommand):
         )
 
         if not spec.is_keyed:
-            # Append-only log with no dedup key. Three outcomes, decided by the
-            # FULL replica set (a replica missing from the result, or holding a
-            # different count, is never treated as "empty" or "done"):
-            #   - empty on every replica            -> safe to copy
-            #   - already >= source on every replica -> already migrated, no-op ok
-            #   - anything else (partial / diverged) -> refuse; re-copy would
-            #     duplicate the keyless log, so this needs a manual TRUNCATE.
-            # (min() across replicas would let one empty/lagging replica wave the
-            # copy through and duplicate the whole log.)
-            complete = len(before_counts) == expected_replicas
-            empty_everywhere = complete and all(
-                c == 0 for c in before_counts.values()
+            # Append-only log: keyless copy is not idempotent, so refuse
+            # unless the target is confirmed empty on every replica.
+            decision = one_shot_decision(
+                before_counts, expected_replicas, source_count
             )
-            already_done = (
-                complete
-                and source_count > 0
-                and all(c >= source_count for c in before_counts.values())
-            )
-            if already_done:
+            if decision == OneShotDecision.NOOP:
                 self.stdout.write(
                     f"  {spec.name}: already populated and converged on all "
                     f"{expected_replicas} replicas ({before_counts}); one-shot no-op."
                 )
                 return 0, True
-            if not empty_everywhere:
+            if decision == OneShotDecision.REFUSE:
                 self.stderr.write(
                     self.style.WARNING(
                         f"  {spec.name}: append-only table is not confirmed empty on "

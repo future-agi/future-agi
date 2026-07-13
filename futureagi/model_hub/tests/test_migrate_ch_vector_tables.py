@@ -1,4 +1,4 @@
-"""Behavioural tests for ``migrate_legacy_vectors_to_replicated``.
+"""Behavioural tests for ``migrate_ch_vector_tables``.
 
 ClickHouseVectorDB is mocked so no real CH is required. We assert on the
 SQL the command actually sends, the stdout it writes, and the conditions
@@ -13,7 +13,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.core.management import call_command
 from django.core.management.base import CommandError
-
 
 # Canonical vector-table columns for tests. The exact set only matters for
 # assertions that check the explicit column list appears in the INSERT.
@@ -73,6 +72,16 @@ def _build_mock_db_client(
             return [(1 if table_exists else 0,)]
         if "uniqexact(id)" in sql_lc and "clusterallreplicas" in sql_lc:
             return [(source_distinct,)]
+        # Dry-run anti-join preview: count() FROM clusterAllReplicas(...) WHERE id NOT IN
+        if (
+            "clusterallreplicas" in sql_lc
+            and "not in" in sql_lc
+            and "count()" in sql_lc
+        ):
+            return [(max(0, source_distinct - target_count_state["value"]),)]
+        # Dry-run target row count: plain count() FROM {target_qualified}
+        if sql_lc.lstrip().startswith("select count()") and "clusterallreplicas" not in sql_lc:
+            return [(target_count_state["value"],)]
         if sql_lc.lstrip().startswith("insert into"):
             target_count_state["value"] = max(
                 target_count_state["value"], source_distinct
@@ -96,7 +105,7 @@ def _run(
     """Invoke the command with the standard source/target and return stdout."""
     out = StringIO()
     args = [
-        "migrate_legacy_vectors_to_replicated",
+        "migrate_ch_vector_tables",
         "--source-database=default",
         "--target-database=futureagi",
         f"--tables={','.join(tables)}",
@@ -105,7 +114,7 @@ def _run(
     if dry_run:
         args.append("--dry-run")
     cm = patch(
-        "model_hub.management.commands.migrate_legacy_vectors_to_replicated.ClickHouseVectorDB",
+        "model_hub.management.commands.migrate_ch_vector_tables.ClickHouseVectorDB",
         return_value=db_client,
     ) if db_client is not None else patch("builtins.print")  # no-op patch
     with cm:
@@ -120,7 +129,7 @@ def _run(
 def test_refuses_when_source_equals_target():
     with pytest.raises(CommandError) as excinfo:
         call_command(
-            "migrate_legacy_vectors_to_replicated",
+            "migrate_ch_vector_tables",
             "--source-database=default",
             "--target-database=default",
             "--tables=feedbacks",
@@ -129,30 +138,29 @@ def test_refuses_when_source_equals_target():
     assert "must differ" in str(excinfo.value)
 
 
-def test_refuses_when_ch_is_not_clustered():
-    """Running on a single-node CH would create the target as plain
-    ReplacingMergeTree and re-introduce the non-replicated bug.
+def test_runs_on_single_node_ch():
+    """Single-node CH is a valid target: create_table's own engine probe
+    emits plain ``ReplacingMergeTree`` when there's only one replica, and
+    the CREATE DATABASE bootstrap drops ``ON CLUSTER`` (which would
+    require Keeper) on the same signal.
     """
-    db_client, _ = _build_mock_db_client(clustered=False)
-    with patch(
-        "model_hub.management.commands.migrate_legacy_vectors_to_replicated.ClickHouseVectorDB",
-        return_value=db_client,
-    ):
-        with pytest.raises(CommandError) as excinfo:
-            call_command(
-                "migrate_legacy_vectors_to_replicated",
-                "--source-database=default",
-                "--target-database=futureagi",
-                "--tables=feedbacks",
-                stdout=StringIO(),
-            )
-    assert "replica" in str(excinfo.value).lower()
+    db_client, _ = _build_mock_db_client(clustered=False, expected_replicas=1)
+    out = _run("feedbacks", db_client=db_client)
+    assert "feedbacks:" in out
+    db_client.create_table.assert_called_once()
+    create_db_sql = [
+        call.args[0]
+        for call in db_client.client.execute.call_args_list
+        if "create database" in call.args[0].lower()
+    ]
+    assert create_db_sql, "CREATE DATABASE should still run on single-node"
+    assert all("on cluster" not in s.lower() for s in create_db_sql)
 
 
 def test_refuses_unknown_table_name():
     with pytest.raises(CommandError) as excinfo:
         call_command(
-            "migrate_legacy_vectors_to_replicated",
+            "migrate_ch_vector_tables",
             "--source-database=default",
             "--target-database=futureagi",
             "--tables=feedbacks,not_a_real_table",
@@ -174,7 +182,7 @@ def test_dry_run_does_not_create_table_or_insert():
     assert not any(s.lower().lstrip().startswith("insert into") for s in executed_sqls), (
         "dry-run must not emit any INSERT statement"
     )
-    assert "would copy" in stdout.lower()
+    assert "would_insert" in stdout.lower()
 
 
 def test_creates_target_table_when_source_is_absent_so_future_writes_have_a_home():

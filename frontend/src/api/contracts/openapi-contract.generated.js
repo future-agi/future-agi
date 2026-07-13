@@ -32968,8 +32968,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/tracer/observation-span/root-spans/": {
       "get": {
         "operationId": "tracer_observation-span_root_spans",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -32983,36 +32983,31 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "schema": {
               "type": "integer"
             }
+          },
+          "trace_ids": {
+            "required": true,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "project_ids": {
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
           }
         },
         "responses": {
           "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/ObservationSpan"
-                }
-              }
-            }
+            "$ref": "#/definitions/RootSpansResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -35702,7 +35697,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
       "get": {
         "operationId": "tracer_trace_list_traces_of_session",
         "runtimeRequestValidation": true,
-        "runtimeResponseValidation": false,
+        "runtimeResponseValidation": true,
         "requestBody": null,
         "queryParameters": {
           "page": {
@@ -35772,32 +35767,13 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "responses": {
           "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/Trace"
-                }
-              }
-            }
+            "$ref": "#/definitions/TraceObserveListResponse"
+          },
+          "400": {
+            "$ref": "#/definitions/ApiErrorResponse"
+          },
+          "500": {
+            "$ref": "#/definitions/ApiErrorResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -65855,6 +65831,27 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "RootSpansResponse": {
+      "required": [
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": true
+        },
+        "result": {
+          "title": "Result",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
     "RunNewEvalsOnTestExecution": {
       "required": [
         "eval_config_ids"
@@ -70869,6 +70866,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/TraceErrorTaskUpdateResult"
+        }
+      }
+    },
+    "TraceObserveListResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/TraceObserveListResult"
         }
       }
     },
@@ -89518,6 +89531,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "TraceObserveListResult": {
+      "required": [
+        "metadata",
+        "table",
+        "config"
+      ],
+      "type": "object",
+      "properties": {
+        "metadata": {
+          "$ref": "#/definitions/TraceObserveListMetadata"
+        },
+        "table": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "x-nullable": true,
+              "x-json-value": true,
+              "description": "Any valid JSON value."
+            }
+          }
+        },
+        "config": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/TraceObserveColumnConfig"
+          }
+        }
+      }
+    },
     "TraceToGraphResult": {
       "required": [
         "graph_id",
@@ -97564,6 +97608,113 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "items": {
             "$ref": "#/definitions/TeamWorkspaceSummary"
           }
+        }
+      }
+    },
+    "TraceObserveColumnConfig": {
+      "required": [
+        "id",
+        "name",
+        "is_visible"
+      ],
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "minLength": 1
+        },
+        "is_visible": {
+          "title": "Is visible",
+          "type": "boolean"
+        },
+        "group_by": {
+          "title": "Group by",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "output_type": {
+          "title": "Output type",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "reverse_output": {
+          "title": "Reverse output",
+          "type": "boolean",
+          "x-nullable": true
+        },
+        "annotation_label_type": {
+          "title": "Annotation label type",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "x-nullable": true
+          },
+          "x-nullable": true
+        },
+        "settings": {
+          "title": "Settings",
+          "type": "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          "description": "Any valid JSON value."
+        },
+        "choices_map": {
+          "title": "Choices map",
+          "type": "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          "description": "Any valid JSON value."
+        },
+        "eval_template_id": {
+          "title": "Eval template id",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "annotators": {
+          "title": "Annotators",
+          "type": "object",
+          "x-nullable": true,
+          "x-json-value": true,
+          "description": "Any valid JSON value."
+        },
+        "source_field": {
+          "title": "Source field",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "parent_eval_id": {
+          "title": "Parent eval id",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        }
+      }
+    },
+    "TraceObserveListMetadata": {
+      "required": [
+        "total_rows"
+      ],
+      "type": "object",
+      "properties": {
+        "total_rows": {
+          "title": "Total rows",
+          "type": "integer"
         }
       }
     },

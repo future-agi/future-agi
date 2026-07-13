@@ -1,6 +1,7 @@
 import json
 import time
 import traceback
+from contextvars import ContextVar
 from dataclasses import asdict
 
 import structlog
@@ -2584,7 +2585,9 @@ def _resolve_trace_path(trace: Trace, path: str):
         if _read_source() == "clickhouse":
             spans = sorted(
                 filter_observation_spans_by_trace(
-                    str(trace.id), project_id=trace.project_id
+                    str(trace.id),
+                    project_id=trace.project_id,
+                    heavy_span_ids=_heavy_span_ids.get(),
                 ),
                 key=lambda s: (s.start_time is None, s.start_time, str(s.id)),
             )
@@ -2593,6 +2596,71 @@ def _resolve_trace_path(trace: Trace, path: str):
         return _resolve_collection_path(spans, rest, _resolve_span_path)
 
     return _MISSING
+
+
+# Per-``resolve_session_mapping_lean_first`` memo for ``_session_traces_ch``:
+# maps ``(project_id, session_id)`` → the ordered hydrated trace list so the
+# session heavy path resolves the trace list once — reused by the up-front
+# heavy-id computation and by every ``traces.*`` lookup in
+# ``_resolve_session_path`` — instead of re-running ``session_trace_ids`` +
+# ``per_trace_root_span_start_times`` + a ``get_trace`` per trace each time.
+# Default None = no active scope → always recompute (behaviour outside the
+# wrapper is unchanged).
+_session_traces_memo: ContextVar[dict | None] = ContextVar(
+    "eval_session_traces_memo", default=None
+)
+
+
+def _session_traces_ch(trace_session) -> list:
+    """Return the session's CH traces ordered by earliest root-span start_time.
+
+    Derives trace ids via ``session_trace_ids``, then loads and sorts the
+    hydrated Trace objects by ``(root_start is None, root_start, str(id))``,
+    matching the ordering ``list_traces_of_session`` and ``_resolve_session_path``
+    produce in CH mode. Factored out so ``_heavy_span_ids_for_session_mapping``
+    and ``_resolve_session_path`` share identical ordering without drift.
+
+    Only valid in CH mode — callers are responsible for the ``_read_source()``
+    guard.
+    """
+    from tracer.services.clickhouse.v2 import get_reader
+    from tracer.services.clickhouse.v2.eval_loader import get_trace
+
+    _project_id = getattr(trace_session, "project_id", None)
+    _session_id = getattr(trace_session, "id", None)
+    if _project_id is None or _session_id is None:
+        return []
+
+    memo = _session_traces_memo.get()
+    cache_key = (str(_project_id), str(_session_id))
+    if memo is not None and cache_key in memo:
+        return memo[cache_key]
+
+    with get_reader() as reader:
+        _trace_ids = reader.session_trace_ids(str(_project_id), str(_session_id))
+
+    with get_reader() as reader:
+        root_starts = reader.per_trace_root_span_start_times(
+            [str(t) for t in _trace_ids]
+        )
+        traces = []
+        for tid in _trace_ids:
+            try:
+                traces.append(
+                    get_trace(str(tid), reader=reader, project_id=_project_id)
+                )
+            except Trace.DoesNotExist:
+                continue
+
+    def _trace_order(t):
+        key = root_starts.get(str(t.id)) or t.created_at
+        return (key is None, key, str(t.id))
+
+    traces.sort(key=_trace_order)
+
+    if memo is not None:
+        memo[cache_key] = traces
+    return traces
 
 
 def _resolve_session_path(trace_session: TraceSession, path: str):
@@ -2619,59 +2687,38 @@ def _resolve_session_path(trace_session: TraceSession, path: str):
         # SDK stamps every trace in a run with the same instant) tie-break
         # by id alphabetically -- picking a "trace 0" the user never sees
         # at the top of the trace list.
-        from django.db.models import OuterRef, Subquery
-        from django.db.models.functions import Coalesce
-
-        from tracer.services.clickhouse.v2 import get_reader
-
-        # Derive the session's trace ids from CH spans, NOT the
-        # ``trace_session.traces`` reverse FK (Slice D, DESIGN §5 /
-        # PG_ORM_READ_MIGRATION): post-flip the ``Trace.session`` FK is ``None``
-        # for EVERY trace, so the reverse accessor returns EMPTY for ALL sessions
-        # (and ``trace_session`` here is the UNSAVED vehicle
-        # ``evaluate_trace_session_observe`` builds — it has no DB rows pointing at
-        # it at all). ``session_trace_ids`` is remap-aware on the input id AND each
-        # span's id, so a straddler yields its old∪new traces as one set and a
-        # net-new session yields its real set. The vehicle carries ``.id`` and
-        # ``.project_id`` (the eval config's project). Trace stays PG → ``id__in``.
-        _project_id = getattr(trace_session, "project_id", None)
-        _session_id = getattr(trace_session, "id", None)
-        if _project_id is None or _session_id is None:
-            _trace_ids: list[str] = []
-        else:
-            with get_reader() as reader:
-                _trace_ids = reader.session_trace_ids(
-                    str(_project_id), str(_session_id)
-                )
-
-        from tracer.services.clickhouse.v2.eval_loader import _read_source, get_trace
+        from tracer.services.clickhouse.v2.eval_loader import _read_source
 
         if _read_source() == "clickhouse":
-            # Order by earliest root-span start_time (parity with the PG branch
-            # and list_traces_of_session), falling back to created_at. One reader
-            # is shared across the root-start lookup and every get_trace hydration
-            # so the CH branch doesn't open (and leak) a reader per trace.
-            with get_reader() as reader:
-                root_starts = reader.per_trace_root_span_start_times(
-                    [str(t) for t in _trace_ids]
-                )
-                traces = []
-                for tid in _trace_ids:
-                    try:
-                        traces.append(
-                            get_trace(
-                                str(tid), reader=reader, project_id=_project_id
-                            )
-                        )
-                    except Trace.DoesNotExist:
-                        continue
-
-            def _trace_order(t):
-                key = root_starts.get(str(t.id)) or t.created_at
-                return (key is None, key, str(t.id))
-
-            traces.sort(key=_trace_order)
+            # Delegate to the shared CH helper so the ordering here and in
+            # ``_heavy_span_ids_for_session_mapping`` cannot drift.
+            traces = _session_traces_ch(trace_session)
         else:
+            from django.db.models import OuterRef, Subquery
+            from django.db.models.functions import Coalesce
+
+            from tracer.services.clickhouse.v2 import get_reader
+
+            # Derive the session's trace ids from CH spans, NOT the
+            # ``trace_session.traces`` reverse FK (Slice D, DESIGN §5 /
+            # PG_ORM_READ_MIGRATION): post-flip the ``Trace.session`` FK is ``None``
+            # for EVERY trace, so the reverse accessor returns EMPTY for ALL sessions
+            # (and ``trace_session`` here is the UNSAVED vehicle
+            # ``evaluate_trace_session_observe`` builds — it has no DB rows pointing at
+            # it at all). ``session_trace_ids`` is remap-aware on the input id AND each
+            # span's id, so a straddler yields its old∪new traces as one set and a
+            # net-new session yields its real set. The vehicle carries ``.id`` and
+            # ``.project_id`` (the eval config's project). Trace stays PG → ``id__in``.
+            _project_id = getattr(trace_session, "project_id", None)
+            _session_id = getattr(trace_session, "id", None)
+            if _project_id is None or _session_id is None:
+                _trace_ids: list[str] = []
+            else:
+                with get_reader() as reader:
+                    _trace_ids = reader.session_trace_ids(
+                        str(_project_id), str(_session_id)
+                    )
+
             root_start = (
                 # Earliest-root-span ordering stays a PG correlated Subquery; the
                 # trace SET is CH-derived above, the ORDERING remains PG.
@@ -2750,6 +2797,248 @@ def _process_trace_mapping(
         parsed[key] = value if isinstance(value, str) else json.dumps(value)
 
     return parsed
+
+
+# ── Lean-first trace-eval two-pass shim (A4: bound worker memory) ────────────────────────
+# Per-execution set of span ids whose heavy columns (attributes_extra /
+# span_events / resource_attrs) are needed for mapping resolution.  The
+# default (None) means "load all spans lean"; the shim sets it to the
+# minimal set on retry so only those spans pay the heavy fetch.
+_heavy_span_ids: ContextVar[frozenset[str] | None] = ContextVar(
+    "eval_trace_heavy_span_ids", default=None
+)
+
+
+def _is_heavy_span_tail(tail: str) -> bool:
+    """True iff ``tail`` is NOT a bare public field — i.e. lives in the
+    heavy JSON bag and won't be present in a lean span."""
+    return tail not in _SPAN_PUBLIC_FIELDS
+
+
+def _selector_index(sel: str, n: int) -> int | None:
+    """Resolve a collection selector token to a list index.
+
+    Returns None if the selector can't be resolved (empty list / out of
+    range / non-integer token that isn't ``first``/``last``).
+    """
+    if n == 0:
+        return None
+    if sel == "first":
+        return 0
+    if sel == "last":
+        return n - 1
+    try:
+        idx = int(sel)
+    except ValueError:
+        return None
+    if idx < 0 or idx >= n:
+        return None
+    return idx
+
+
+def _heavy_span_ids_for_trace_mapping(mapping: dict | None, trace) -> frozenset[str]:
+    """Return the span ids referenced by heavy-tail ``spans.<sel>.<tail>``
+    paths in *mapping*, resolved against *trace*'s lean spans.
+
+    Scans the mapping values for ``spans.<sel>.<tail>`` paths where
+    ``_is_heavy_span_tail(tail)`` and collects their selectors. If none
+    reference a heavy tail, returns empty *without touching CH* — a mapping that
+    only reads ``input``/``output``/scalar fields pays no span load here. When at
+    least one does, loads the trace's sorted lean spans once (same sort key as
+    ``_resolve_trace_path``) and resolves each selector to a span id.
+    """
+    if not mapping:
+        return frozenset()
+
+    selectors: list[str] = []
+    for attribute in mapping.values():
+        if not attribute or not attribute.startswith("spans."):
+            continue
+        # path: "spans.<sel>[.<tail>]"
+        remainder = attribute[len("spans.") :]
+        parts = remainder.split(".", 1)
+        sel = parts[0]
+        tail = parts[1] if len(parts) > 1 else ""
+        if not tail or not _is_heavy_span_tail(tail):
+            continue
+        selectors.append(sel)
+    if not selectors:
+        return frozenset()
+
+    from tracer.services.clickhouse.v2.eval_loader import (
+        filter_observation_spans_by_trace,
+    )
+
+    # Load the sorted lean spans once (same sort key as _resolve_trace_path).
+    spans = sorted(
+        filter_observation_spans_by_trace(str(trace.id), project_id=trace.project_id),
+        key=lambda s: (s.start_time is None, s.start_time, str(s.id)),
+    )
+    n = len(spans)
+
+    heavy_ids: set[str] = set()
+    for sel in selectors:
+        idx = _selector_index(sel, n)
+        if idx is None:
+            continue
+        heavy_ids.add(str(spans[idx].id))
+
+    return frozenset(heavy_ids)
+
+
+def resolve_trace_mapping_lean_first(mapping: dict | None, trace, template_id) -> dict:
+    """Lean-first wrapper around ``_process_trace_mapping`` for the CH eval path.
+
+    Computes the span ids whose heavy columns (attributes_extra / span_events /
+    resource_attrs) the mapping references *up front*, sets the contextvar so
+    ``_resolve_trace_path`` fetches exactly those spans with full columns (all
+    others stay lean), then resolves in a single pass. When the mapping
+    references no heavy field (the common ``input``/``output`` case)
+    ``_heavy_span_ids_for_trace_mapping`` short-circuits without a span load and
+    every span loads lean — so the memory win is preserved.
+
+    Computing the heavy set up front — rather than gating a heavy retry on a
+    ``ValueError`` from a lean first pass — is required for correctness with
+    custom evals: ``_process_trace_mapping`` resolves a missing attribute to
+    ``""`` for a ``custom_eval`` template *without raising*, so a lean-only first
+    pass would silently evaluate a heavy overflow field (e.g.
+    ``spans.first.llm.messages.transcript``) as empty and never retry. It is also
+    strictly cheaper on the heavy path (one lean + one heavy load, versus the
+    old lean + lean + heavy).
+
+    Falls through to plain ``_process_trace_mapping`` when not in CH mode
+    (PG path already has full columns).
+    """
+    from tracer.services.clickhouse.v2.eval_loader import _read_source
+
+    if _read_source() != "clickhouse":
+        return _process_trace_mapping(mapping, trace, template_id)
+
+    heavy_ids = _heavy_span_ids_for_trace_mapping(mapping, trace)
+    token = _heavy_span_ids.set(heavy_ids or None)
+    try:
+        return _process_trace_mapping(mapping, trace, template_id)
+    finally:
+        _heavy_span_ids.reset(token)
+
+
+def _heavy_span_ids_for_session_mapping(
+    mapping: dict | None, trace_session
+) -> frozenset[str]:
+    """Return span ids referenced by heavy-tail ``traces.<sel_t>.spans.<sel_s>.<tail>``
+    paths in *mapping*, resolved against *trace_session*'s ordered lean traces.
+
+    Mirrors ``_heavy_span_ids_for_trace_mapping`` but one level up: iterates
+    mapping values, parses ``traces.<sel_t>.spans.<sel_s>.<tail>`` paths where
+    ``_is_heavy_span_tail(tail)`` is true, resolves ``<sel_t>`` against the
+    session's CH-ordered trace list (via ``_session_traces_ch`` — same ordering
+    as ``_resolve_session_path``), loads each selected trace's lean spans with
+    the same sort key ``_resolve_trace_path`` uses, then resolves ``<sel_s>``
+    via ``_selector_index`` to add that span's id. Returns the flat union across
+    all paths (span ids are globally unique, so a flat set across traces is
+    correct for the ``_heavy_span_ids`` contextvar).
+
+    Loads each trace's spans lean (it never sets ``_heavy_span_ids``), and the
+    outer ``resolve_session_mapping_lean_first`` calls it before setting that
+    contextvar — so the id computation itself never triggers a heavy fetch.
+    """
+    if not mapping:
+        return frozenset()
+
+    # Parse the heavy-referencing paths first; only touch CH if at least one
+    # ``traces.<sel_t>.spans.<sel_s>.<tail>`` value names a heavy span tail.
+    pairs: list[tuple[str, str]] = []
+    for attribute in mapping.values():
+        if not attribute or not attribute.startswith("traces."):
+            continue
+        # path: "traces.<sel_t>.spans.<sel_s>.<tail>"
+        remainder = attribute[len("traces.") :]
+        parts = remainder.split(".", 1)
+        sel_t = parts[0]
+        rest_t = parts[1] if len(parts) > 1 else ""
+        if not rest_t.startswith("spans."):
+            continue
+        spans_rest = rest_t[len("spans.") :]
+        parts_s = spans_rest.split(".", 1)
+        sel_s = parts_s[0]
+        tail = parts_s[1] if len(parts_s) > 1 else ""
+        if not tail or not _is_heavy_span_tail(tail):
+            continue
+        pairs.append((sel_t, sel_s))
+    if not pairs:
+        return frozenset()
+
+    from tracer.services.clickhouse.v2.eval_loader import (
+        filter_observation_spans_by_trace,
+    )
+
+    traces = _session_traces_ch(trace_session)
+    n_traces = len(traces)
+
+    # Cache lean spans per trace index — avoid re-loading for multiple paths
+    # that reference different spans within the same trace.
+    _spans_cache: dict[int, list] = {}
+
+    heavy_ids: set[str] = set()
+    for sel_t, sel_s in pairs:
+        trace_idx = _selector_index(sel_t, n_traces)
+        if trace_idx is None:
+            continue
+        trace = traces[trace_idx]
+
+        if trace_idx not in _spans_cache:
+            _spans_cache[trace_idx] = sorted(
+                filter_observation_spans_by_trace(
+                    str(trace.id), project_id=trace.project_id
+                ),
+                key=lambda s: (s.start_time is None, s.start_time, str(s.id)),
+            )
+        spans = _spans_cache[trace_idx]
+        span_idx = _selector_index(sel_s, len(spans))
+        if span_idx is None:
+            continue
+        heavy_ids.add(str(spans[span_idx].id))
+
+    return frozenset(heavy_ids)
+
+
+def resolve_session_mapping_lean_first(
+    mapping: dict | None, trace_session, template_id
+) -> dict:
+    """Lean-first wrapper around ``_process_session_mapping`` for the CH eval path.
+
+    Session twin of ``resolve_trace_mapping_lean_first``: computes the inner-span
+    ids the mapping's ``traces.<sel_t>.spans.<sel_s>.<tail>`` paths reference *up
+    front*, sets the contextvar so ``_resolve_trace_path`` heavy-fetches exactly
+    those spans, then resolves in a single pass. Up-front (rather than a
+    ``ValueError``-gated retry) is required for the same custom-eval reason as the
+    trace path — a missing attribute resolves to ``""`` without raising, so a
+    lean-only pass would silently evaluate a heavy overflow field as empty.
+
+    Wraps the whole resolution in a ``_session_traces_memo`` scope so the
+    session's ordered trace list is hydrated once and reused by both the
+    heavy-id computation and every ``traces.*`` lookup in ``_resolve_session_path``
+    — the session heavy branch previously re-ran ``session_trace_ids`` +
+    ``per_trace_root_span_start_times`` + a ``get_trace`` per trace several times.
+
+    Falls through to plain ``_process_session_mapping`` when not in CH mode
+    (PG path already has full columns).
+    """
+    from tracer.services.clickhouse.v2.eval_loader import _read_source
+
+    if _read_source() != "clickhouse":
+        return _process_session_mapping(mapping, trace_session, template_id)
+
+    memo_token = _session_traces_memo.set({})
+    try:
+        heavy_ids = _heavy_span_ids_for_session_mapping(mapping, trace_session)
+        token = _heavy_span_ids.set(heavy_ids or None)
+        try:
+            return _process_session_mapping(mapping, trace_session, template_id)
+        finally:
+            _heavy_span_ids.reset(token)
+    finally:
+        _session_traces_memo.reset(memo_token)
 
 
 def _process_session_mapping(
@@ -3529,7 +3818,9 @@ def evaluate_trace_session_observe(
         resolve_session_fields,
     )
 
-    _fields = resolve_session_fields([session_id]).get(str(session_id))
+    _fields = resolve_session_fields(
+        [session_id], project_id=str(custom_eval_config.project_id)
+    ).get(str(session_id))
     if not _fields:
         # Parity with the old ``.get`` raising DoesNotExist: no live curated
         # session names this id (unknown / tombstoned / wrong project's id that

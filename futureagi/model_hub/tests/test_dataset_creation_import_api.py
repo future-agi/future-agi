@@ -374,6 +374,63 @@ def test_add_rows_from_file_rejects_other_workspace_before_usage_charge(
     assert Cell.no_workspace_objects.filter(dataset=dataset, deleted=False).count() == 0
 
 
+@pytest.mark.django_db
+def test_add_rows_from_file_rejects_ssrf_url_for_image_column(
+    auth_client, organization, workspace, user, monkeypatch
+):
+    """TH-5648 follow-up: adding rows to a dataset whose column is already
+    typed Image used to upload straight from the user-supplied URL with no
+    validation at all -- a wide open SSRF surface, separate from (and missed
+    by) the original "convert column type" fix. This pins that it's now
+    validated the same way.
+    """
+    dataset = Dataset.no_workspace_objects.create(
+        name="Image Row Import SSRF Dataset",
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        column_order=[],
+        column_config={},
+    )
+    Column.no_workspace_objects.create(
+        name="image_col",
+        dataset=dataset,
+        data_type=DataTypeChoices.IMAGE.value,
+        source=SourceChoices.OTHERS.value,
+    )
+    usage_calls = _patch_usage(monkeypatch, "model_hub.views.develop_dataset")
+    upload_calls = []
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.upload_image_to_s3",
+        lambda *a, **kw: upload_calls.append((a, kw))
+        or "https://s3.bucket/should-not-be-reached.png",
+    )
+
+    response = auth_client.post(
+        "/model-hub/develops/add_rows_from_file/",
+        {
+            "dataset_id": str(dataset.id),
+            "file": _csv_file(
+                name="ssrf_rows.csv",
+                content=(
+                    b"image_col,other\n"
+                    b"http://169.254.169.254/latest/meta-data/,x\n"
+                ),
+            ),
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert len(usage_calls) == 1
+    # upload_image_to_s3 must never be reached -- validate_file_url should
+    # have rejected the SSRF target before any fetch/upload was attempted.
+    assert upload_calls == []
+    column = Column.no_workspace_objects.get(dataset=dataset, name="image_col")
+    cell = Cell.no_workspace_objects.get(dataset=dataset, column=column)
+    assert not cell.value
+
+
 def _create_experiment_dataset_fixture(
     organization,
     user,

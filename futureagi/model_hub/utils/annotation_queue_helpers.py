@@ -4,7 +4,7 @@ from typing import Any, TypedDict
 import structlog
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import DatabaseError
-from django.db.models import DateTimeField, Exists, F, FloatField, OuterRef, Q
+from django.db.models import DateTimeField, F, FloatField, Q
 from django.db.models.functions import Cast
 
 from model_hub.constants import ANNOTATION_LABEL_VALUE_KEYS
@@ -40,6 +40,17 @@ SOURCE_MODEL_MAP = {
     ),
 }
 
+# Tracer-owned sources live only in ClickHouse (the tracer app is CH-native; the
+# legacy PG tables are gone). Annotation reads of these resolve/render/filter from
+# CH, never PG. The remaining source types stay PG-backed.
+_CH_NATIVE_SOURCE_TYPES = frozenset(
+    {
+        QueueItemSourceType.TRACE.value,
+        QueueItemSourceType.OBSERVATION_SPAN.value,
+        QueueItemSourceType.TRACE_SESSION.value,
+    }
+)
+
 FILTER_MODE_SOURCE_TYPES = {
     QueueItemSourceType.DATASET_ROW.value,
     QueueItemSourceType.TRACE.value,
@@ -56,6 +67,14 @@ TRACE_IN_PROGRESS_ADD_ERROR = (
     "Trace is still in progress and can't be added to an annotation queue yet."
 )
 
+# A trace's root span is terminal (the trace is complete and addable) once its
+# status reaches OK / ERROR; any other value (e.g. UNSET) means still in progress.
+_TERMINAL_SPAN_STATUSES = frozenset({"OK", "ERROR"})
+
+
+def _is_terminal_span_status(status):
+    return (status or "").upper() in _TERMINAL_SPAN_STATUSES
+
 
 def _automation_rule_filter_error_message(exc):
     """Return a short public error while full exception details stay in logs."""
@@ -63,47 +82,6 @@ def _automation_rule_filter_error_message(exc):
     if isinstance(exc, ValueError) and message and "\n" not in message:
         return message[:240]
     return AUTOMATION_RULE_FILTER_ERROR_MESSAGE
-
-
-def _trace_primary_span(trace):
-    if not trace:
-        return None
-
-    prefetched_spans = getattr(trace, "_queue_export_spans", None)
-    if prefetched_spans is not None:
-        spans = list(prefetched_spans)
-        root_spans = [
-            span for span in spans if not getattr(span, "parent_span_id", None)
-        ]
-        return (
-            next(
-                (
-                    span
-                    for span in root_spans
-                    if getattr(span, "observation_type", None) == "conversation"
-                ),
-                None,
-            )
-            or (root_spans[0] if root_spans else None)
-            or (spans[0] if spans else None)
-        )
-
-    spans = trace.observation_spans.filter(deleted=False)
-    root_spans = spans.filter(Q(parent_span_id__isnull=True) | Q(parent_span_id=""))
-    return (
-        root_spans.filter(observation_type="conversation")
-        .order_by("start_time", "created_at")
-        .first()
-        or root_spans.order_by("start_time", "created_at").first()
-        or spans.order_by("start_time", "created_at").first()
-    )
-
-
-def _metric_payload(obj, *, response_field="response_time"):
-    return {
-        "latency_ms": getattr(obj, "latency_ms", None),
-        "response_time_ms": getattr(obj, response_field, None),
-    }
 
 
 def _call_execution_metric_payload(call):
@@ -156,14 +134,6 @@ def get_fk_field_name(source_type):
     return fk_field
 
 
-def _root_span_filter():
-    return Q(parent_span_id__isnull=True) | Q(parent_span_id="")
-
-
-def _terminal_trace_span_status_filter():
-    return Q(status__iexact="OK") | Q(status__iexact="ERROR")
-
-
 def _trace_project_workspace_filter(workspace):
     if getattr(workspace, "is_default", False):
         return Q(project__workspace=workspace) | Q(project__workspace__isnull=True)
@@ -171,93 +141,91 @@ def _trace_project_workspace_filter(workspace):
 
 
 def is_source_available_for_annotation(source_type, source_obj):
-    """Return ``(is_available, reason)`` for queue add-items.
+    """Return ``(is_available, reason)`` for a single queue add-item.
 
-    A visible in-progress trace has a root span whose status is still UNSET
-    or null. Bare legacy Trace fixtures with no root span are left untouched;
-    they are not the voice-call "in progress" state surfaced in Observe.
+    CH-native: a trace is in progress while its CH root span has not reached a
+    terminal status (OK / ERROR); otherwise it's addable. ``source_obj`` is the
+    duck-typed :class:`_CHTraceSource` the resolver already built, so its
+    ``root_span`` is in hand — no extra CH read. A source with no resolvable root
+    never reaches here (the resolver returns ``None`` first); defensively, a
+    missing root reads as available. Never query PG.
     """
     if source_type != QueueItemSourceType.TRACE.value:
         return True, None
-
-    # CH-resolved collector trace (duck-typed :class:`_CHTraceSource`, no PG
-    # reverse relation): it's surfaced from CH only once complete, so it's
-    # always available. The in-progress guard below is the voice/PG lifecycle.
-    if not hasattr(source_obj, "observation_spans"):
-        return True, None
-
-    root_spans = source_obj.observation_spans.filter(_root_span_filter())
-    if not root_spans.exists():
-        return True, None
-    if root_spans.filter(_terminal_trace_span_status_filter()).exists():
+    root_span = getattr(source_obj, "root_span", None)
+    if root_span is None or _is_terminal_span_status(getattr(root_span, "status", None)):
         return True, None
     return False, TRACE_IN_PROGRESS_ADD_ERROR
 
 
 def filter_available_source_ids_for_annotation(
-    source_type, source_ids, *, organization=None, workspace=None
+    source_type, source_ids, *, organization=None, workspace=None, project_id=None
 ):
-    """Split resolved filter-mode IDs into available/unavailable IDs.
+    """Split resolved filter-mode trace IDs into available / unavailable.
 
-    Returns ``(available_ids, unavailable_count, unavailable_message)`` while
-    preserving the input ordering of available IDs.
+    CH-native mirror of :func:`is_source_available_for_annotation` for the bulk
+    filter path: a trace is in progress while its CH root span is not terminal.
+    Reads the roots LEAN in one batched call (OOM-safe) via
+    :func:`_batch_ch_trace_roots`, scoped by ``project_id`` (the filter selection is
+    per-project). A trace with no CH root reads as available (it was never resolvable
+    as in-progress). FAIL OPEN on a CH error — a transient read must not silently
+    drop every add. ``organization`` / ``workspace`` are already applied upstream by
+    ``resolve_filtered_trace_ids``. Returns ``(available_ids, unavailable_count,
+    unavailable_message)`` preserving input order. Never query PG.
     """
     ordered_ids = [str(source_id) for source_id in source_ids]
     if source_type != QueueItemSourceType.TRACE.value or not ordered_ids:
         return ordered_ids, 0, None
 
-    from tracer.models.observation_span import ObservationSpan
-    from tracer.models.trace import Trace
-
-    root_spans = ObservationSpan.objects.filter(
-        trace_id=OuterRef("id"),
-    ).filter(_root_span_filter())
-    available_qs = Trace.objects.filter(id__in=ordered_ids).annotate(
-        _has_root_span=Exists(root_spans),
-        _has_terminal_root_span=Exists(
-            root_spans.filter(_terminal_trace_span_status_filter())
-        ),
+    roots_by_trace = _batch_ch_trace_roots(
+        ordered_ids, project_id=str(project_id) if project_id else None
     )
-    if organization is not None:
-        available_qs = available_qs.filter(project__organization=organization)
-    if workspace is not None:
-        available_qs = available_qs.filter(_trace_project_workspace_filter(workspace))
 
-    available_set = {
-        str(trace_id)
-        for trace_id in available_qs.filter(
-            Q(_has_root_span=False) | Q(_has_terminal_root_span=True)
-        ).values_list("id", flat=True)
-    }
-    # Collector (CH-only) traces have no PG row — the resolver already tenant-
-    # scoped them, and they're surfaced from CH once complete, so keep them
-    # rather than silently dropping every collector trace as "in progress".
-    pg_trace_ids = {
-        str(trace_id)
-        for trace_id in Trace.objects.filter(id__in=ordered_ids).values_list(
-            "id", flat=True
-        )
-    }
-    available_ids = [
-        source_id
-        for source_id in ordered_ids
-        if source_id not in pg_trace_ids or source_id in available_set
-    ]
+    def _available(trace_id):
+        root = roots_by_trace.get(trace_id)
+        # No CH root → available (matches the single-add no-root branch); else
+        # addable only once the root span reaches a terminal status.
+        return root is None or _is_terminal_span_status(getattr(root, "status", None))
+
+    available_ids = [sid for sid in ordered_ids if _available(sid)]
     unavailable_count = len(ordered_ids) - len(available_ids)
     if unavailable_count <= 0:
         return available_ids, 0, None
 
-    noun = "trace" if unavailable_count == 1 else "traces"
-    verb = "is" if unavailable_count == 1 else "are"
-    message = (
-        f"{unavailable_count} {noun} {verb} still in progress and "
-        "were not added to the annotation queue."
-    )
     if unavailable_count == 1:
         message = (
             "1 trace is still in progress and was not added to the annotation queue."
         )
+    else:
+        message = (
+            f"{unavailable_count} traces are still in progress and "
+            "were not added to the annotation queue."
+        )
     return available_ids, unavailable_count, message
+
+
+def source_project(source_obj, organization=None):
+    """Return the PG ``Project`` for *source_obj*, or ``None``.
+
+    A tracer source resolves CH-native and duck-types (``_CHTraceSource`` /
+    :class:`CHSpan` / ``_CHTraceSessionSource``) — it carries only ``project_id``,
+    not a ``.project`` relation. Resolve the Project row directly (org-scoped when
+    given, fail-closed): the default-queue scope row lives in PG, which is not a
+    tracer table, and cross-store FK joins aren't possible. A PG-backed source
+    (dataset_row / call_execution) still exposes ``.project`` and short-circuits.
+    """
+    project = getattr(source_obj, "project", None)
+    if project is not None:
+        return project
+    project_id = getattr(source_obj, "project_id", None)
+    if not project_id:
+        return None
+    from tracer.models.project import Project
+
+    qs = Project.objects.filter(id=project_id)
+    if organization is not None:
+        qs = qs.filter(organization=organization)
+    return qs.first()
 
 
 def _resolve_default_queue_scope(source_type, source_obj, organization=None):
@@ -269,65 +237,13 @@ def _resolve_default_queue_scope(source_type, source_obj, organization=None):
     they're not per-row. This helper centralises the mapping so the scores
     endpoints and the explicit ``get-or-create-default`` endpoint agree on
     what counts as "the default queue" for a given source.
-
-    CH 25.3 duck-typing: *source_obj* may be either a Django model instance
-    (with a ``project`` FK / related-object) or a CH-loaded dataclass like
-    :class:`CHSpan` (only carries ``project_id``). For the CH path we look
-    the Project row up directly in PG since the default-queue scope row
-    lives in PG and FK joins across stores aren't possible.
     """
     if source_type in (
         QueueItemSourceType.TRACE.value,
         QueueItemSourceType.OBSERVATION_SPAN.value,
         QueueItemSourceType.TRACE_SESSION.value,
     ):
-        project = None
-        if source_type == QueueItemSourceType.TRACE.value:
-            project = getattr(source_obj, "project", None)
-            if project is None:
-                # CH trace path (_CHTraceSource): no FK, resolve the PG Project by
-                # the carried project_id, org-scoped (fail closed).
-                pid = getattr(source_obj, "project_id", None)
-                if pid:
-                    from tracer.models.project import Project
-
-                    qs = Project.objects.filter(id=pid)
-                    if organization is not None:
-                        qs = qs.filter(organization=organization)
-                    project = qs.first()
-        elif source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
-            # Django ObservationSpan: walk .project (or .trace.project).
-            project = getattr(source_obj, "project", None) or getattr(
-                getattr(source_obj, "trace", None), "project", None
-            )
-            if project is None:
-                # CHSpan path: no FK traversals available, but the row
-                # carries project_id. Resolve the PG Project explicitly.
-                # Codex wave-2 P2: scope the PG lookup by organization when
-                # one is provided. Defense-in-depth — current CHSpan callers
-                # gate on org upstream, but a future caller could forget;
-                # fail closed here.
-                pid = getattr(source_obj, "project_id", None)
-                if pid:
-                    from tracer.models.project import Project
-
-                    qs = Project.objects.filter(id=pid)
-                    if organization is not None:
-                        qs = qs.filter(organization=organization)
-                    project = qs.first()
-        else:  # trace_session
-            project = getattr(source_obj, "project", None)
-            if project is None:
-                # CH trace_session path (_CHTraceSessionSource): no FK, resolve the
-                # PG Project by the carried project_id, org-scoped (fail closed).
-                pid = getattr(source_obj, "project_id", None)
-                if pid:
-                    from tracer.models.project import Project
-
-                    qs = Project.objects.filter(id=pid)
-                    if organization is not None:
-                        qs = qs.filter(organization=organization)
-                    project = qs.first()
+        project = source_project(source_obj, organization)
         if not project:
             return None, None
         scope_name = (
@@ -526,49 +442,30 @@ def resolve_default_queue_item_for_source(source_type, source_obj, organization,
     return item
 
 
-def resolve_source_object(
-    source_type,
-    source_id,
-    organization=None,
-    workspace=None,
-    *,
-    allow_ch_fallback=False,
-):
-    """Look up a source model instance by type and ID.
+def resolve_source_object(source_type, source_id, organization=None, workspace=None):
+    """Look up a source object by type and ID.
 
-    When *organization* is provided the returned object is verified to belong
-    to that organization.  The check accounts for the fact that some source
-    models store ``organization`` directly while others reach it through a
-    related FK (e.g. ``project.organization`` or ``dataset.organization``).
-    ``None`` is returned when the object exists but does not belong to the
-    requested organization.
+    Tracer sources (trace / observation_span / trace_session) live only in
+    ClickHouse — the tracer app is CH-native — so they resolve straight from CH and
+    come back duck-typed (``.id`` / ``.project_id``); the CH resolver tenant-scopes
+    them against the PG ``Project`` (which is not a tracer table), fail-closed.
 
-    When *workspace* is provided, an additional check ensures the object
-    belongs to that workspace (via direct FK or through a related project /
-    dataset).  ``None`` is returned on mismatch.
-
-    ``allow_ch_fallback`` (opt-in): when ``True`` and no PG row exists, fall back
-    to ClickHouse for collector observation_span / trace_session sources, returning
-    a duck-typed CH object (``.id`` / ``.project_id``). Only soft-id-storing add
-    paths opt in; callers that deref ``.pk`` / FKs keep the PG-only default.
+    Non-tracer source types (dataset_row / call_execution / prototype_run) are
+    PG-backed models, verified to belong to *organization* / *workspace* (directly or
+    via a related project / dataset). ``None`` on mismatch or absence.
     """
+    if source_type in _CH_NATIVE_SOURCE_TYPES:
+        return _resolve_ch_source_object(
+            source_type, source_id, organization=organization, workspace=workspace
+        )
+
     model = get_source_model(source_type)
     if not model:
         return None
 
-    # PG-first by row existence, not by source type: a curated span/session has a
-    # PG row and must resolve there (richer object, no CH round-trip); only a
-    # collector one (no PG row) needs CH. `source_type` alone can't tell them apart
-    # — both are e.g. `observation_span` — so the missing row is the discriminator.
     obj = model.objects.filter(pk=source_id).first()
     if obj is None:
-        if not allow_ch_fallback:
-            return None
-        # No PG row: collector spans/sessions live only in CH (fail closed). A
-        # PG-native source type that's genuinely absent resolves to None there.
-        return _resolve_ch_source_object(
-            source_type, source_id, organization=organization, workspace=workspace
-        )
+        return None
 
     if organization is not None:
         obj_org = _get_source_organization(obj)
@@ -627,11 +524,11 @@ def _tenant_scoped_project(project_id, *, organization=None, workspace=None):
 class _CHTraceSource:
     """Duck-typed collector trace for annotation resolution (no PG ``Trace`` row).
 
-    Exposes the soft id the add path stores (``.id`` / ``.pk`` = trace_id) plus the
-    ``.project_id`` and resolved root :class:`CHSpan` the availability/render paths
-    read. Mirrors how a collector observation_span is duck-typed as a bare CHSpan.
-    Deliberately has no ``.observation_spans`` reverse relation — availability keys
-    off its absence to skip the PG in-progress check.
+    Exposes the soft id the add path stores (``.id`` / ``.pk`` = trace_id), the
+    ``.project_id``, and the resolved ``.root_span`` (:class:`CHSpan`). Mirrors how a
+    collector observation_span is duck-typed as a bare CHSpan. The in-progress guard
+    reads ``.root_span.status`` (terminal = addable) — the trace already resolved
+    from its CH root, so no extra read is needed.
     """
 
     def __init__(self, trace_id, root_span):
@@ -748,19 +645,6 @@ def _resolve_ch_trace_session(source_id, *, organization=None, workspace=None):
     )
 
 
-def _safe_related(item, attr):
-    """Read a ``db_constraint=False`` FK whose target row may not exist in PG
-    (collector data lives only in CH). Collapse a missing target
-    (``ObjectDoesNotExist``) to ``None`` so the caller can fall back to CH; other
-    errors propagate."""
-    from django.core.exceptions import ObjectDoesNotExist
-
-    try:
-        return getattr(item, attr)
-    except ObjectDoesNotExist:
-        return None
-
-
 def _ch_span_for_item(span_id):
     """Best-effort CH point-read for a render path (preview/content). Returns the
     :class:`CHSpan` or ``None`` (genuinely-gone span OR CH error). FAIL OPEN on the
@@ -777,30 +661,39 @@ def _ch_span_for_item(span_id):
         return None
 
 
-def _ch_root_span_for_trace(trace_id):
-    """Best-effort CH read of a collector trace's root span (resolve/render path).
+def _pick_conversation_root(root_spans):
+    """From a trace's parentless (root) spans, prefer the conversation root, else
+    the first. Shared by the per-item (:func:`_ch_root_span_for_trace`) and batched
+    (:func:`_batch_ch_trace_roots`) CH trace reads so both pick identically."""
+    if not root_spans:
+        return None
+    for span in root_spans:
+        if getattr(span, "observation_type", None) == "conversation":
+            return span
+    return root_spans[0]
 
-    Mirrors ``_get_item_spans``' trace branch: list the trace's CH spans, prefer
-    the conversation root, else the first parentless span. A non-voice trace item
-    is annotated at this root span. Returns the :class:`CHSpan` or ``None``
-    (missing / CH error). FAIL OPEN — logs, never raises into the page."""
+
+def _ch_root_span_for_trace(trace_id):
+    """Best-effort CH read of a trace's root span (resolve/render path).
+
+    Reads ONLY the parentless (root) spans, LEAN, via ``roots_by_trace_ids``: a
+    voice conversation root carries its whole raw log in the heavy columns, and a
+    full ``list_by_trace`` here is the exact TH-6442 code-241 OOM shape on the
+    shared cluster — this runs on every trace resolution. Prefers the conversation
+    root, else the first parentless span; a trace with no parentless span in CH
+    resolves to ``None`` (fail closed — never a full scan to find one root). FAIL
+    OPEN on CH error — logs, never raises into the page."""
     if not trace_id:
         return None
     from tracer.services.clickhouse.v2 import get_reader
 
     try:
         with get_reader() as reader:
-            spans = reader.list_by_trace(str(trace_id))
+            roots = reader.roots_by_trace_ids([str(trace_id)], include_heavy=False)
     except Exception as exc:
         logger.warning("ch_trace_render_error", trace_id=str(trace_id), error=str(exc))
         return None
-    root_spans = [s for s in spans if not s.parent_span_id]
-    if not root_spans:
-        return None
-    for span in root_spans:
-        if span.observation_type == "conversation":
-            return span
-    return root_spans[0]
+    return _pick_conversation_root(roots)
 
 
 def _ch_session_fields_for_item(session_id):
@@ -842,6 +735,52 @@ def _batch_ch_spans(span_ids):
     return {str(span.id): span for span in spans}
 
 
+# Chunk the trace-id IN-list so one batch can't grow unbounded; a queue's selection
+# reaches 10k items. The read itself is LEAN (see below), so peak memory is bounded
+# by row count, not by the fat voice columns.
+_CH_TRACE_ID_BATCH = 500
+
+
+def _batch_ch_trace_roots(trace_ids, *, project_id=None):
+    """Batch CH read of each trace's root span for a render/availability path:
+    ``{str(trace_id): CHSpan}`` over *trace_ids* (chunked, LEAN).
+
+    Reads the parentless (root) spans LEAN — input / output / metadata /
+    span_attributes stay real; the heavy ``resource_attributes`` and ``events`` come
+    back empty. That is a deliberate trade against ClickHouse OOM: those columns
+    carry the voice raw_log on the CONVERSATION ROOT, and a batched heavy read of
+    many roots is exactly the code-241 shape on the shared cluster. ``project_id``
+    (optional) scopes the read to one tenant on the non-null PK-prefix column — do
+    NOT scope by ``org_id`` here: a collector span row may carry a NULL ``org_id``
+    (``ObservationSpan.org_id`` is nullable and copied verbatim in the backfill), so
+    an org filter would silently drop those roots and read them as "no root". When
+    *project_id* is omitted the ``trace_ids`` are already tenant-scoped by the caller.
+    CH error → ``{}`` (FAIL OPEN — the per-item branch then does its own point-read
+    or renders the ``deleted`` sentinel). Backs :class:`CollectorSourceCache` so a
+    list page over CH traces does one read per chunk, not one per item."""
+    if not trace_ids:
+        return {}
+    from tracer.services.clickhouse.v2 import get_reader
+
+    ids = [str(t) for t in trace_ids]
+    roots_by_trace: dict[str, list] = {}
+    try:
+        with get_reader() as reader:
+            for start in range(0, len(ids), _CH_TRACE_ID_BATCH):
+                chunk = ids[start : start + _CH_TRACE_ID_BATCH]
+                for span in reader.roots_by_trace_ids(
+                    chunk, include_heavy=False, project_id=project_id
+                ):
+                    roots_by_trace.setdefault(str(span.trace_id), []).append(span)
+    except Exception as exc:
+        logger.warning("ch_trace_roots_batch_error", count=len(ids), error=str(exc))
+        return {}
+    return {
+        trace_id: _pick_conversation_root(spans)
+        for trace_id, spans in roots_by_trace.items()
+    }
+
+
 def _batch_ch_session_fields(session_ids):
     """Batch CH read of session identity fields: ``{str(id): fields}`` in one query.
     CH error → ``{}`` (FAIL OPEN). Companion to :func:`_batch_ch_spans`."""
@@ -861,30 +800,31 @@ def _batch_ch_session_fields(session_ids):
 
 
 class CollectorSourceCache:
-    """Page-scoped batch cache of CH-resolved collector sources.
+    """Page-scoped batch cache of CH-resolved sources (trace / span / session).
 
-    ``resolve_source_preview`` / ``resolve_source_content`` run once per item; for
-    collector spans/sessions (CH-only, no PG row) each call would otherwise do its
-    own CH point-read — an N+1 against ClickHouse on every list/export page (PG
-    sources are prefetchable, CH has no ORM prefetch). Build one cache per page with
+    ``resolve_source_preview`` / ``resolve_source_content`` run once per item; tracer
+    sources (trace / observation_span / trace_session) are read CH-only, so each call
+    would otherwise do its own CH point-read — an N+1 against ClickHouse on every
+    list/export page (CH has no ORM prefetch). Build one cache per page with
     :meth:`for_items` and pass it as ``ch_cache=`` so the page does a single CH read
-    per kind. Only the collector branch consults it (a PG hit never does); a cache
-    miss returns ``None`` → ``deleted`` sentinel, matching the single-read fail-open.
+    per kind. A cache miss returns ``None`` → ``deleted`` sentinel, matching the
+    single-read fail-open.
     """
 
-    __slots__ = ("_spans", "_sessions")
+    __slots__ = ("_spans", "_sessions", "_trace_roots")
 
-    def __init__(self, *, spans=None, sessions=None):
+    def __init__(self, *, spans=None, sessions=None, trace_roots=None):
         self._spans = spans or {}
         self._sessions = sessions or {}
+        self._trace_roots = trace_roots or {}
 
     @classmethod
     def for_items(cls, items):
-        """Collect the collector span/session ids across *items* and batch-resolve
-        each kind from CH in one read. ``source_type=trace`` is PG-backed this wave,
-        so only spans and sessions are cached. PG-backed ids may also be fetched (one
-        bounded query); harmless, since the cache is consulted only on a PG miss."""
-        span_ids, session_ids = set(), set()
+        """Collect the tracer source ids across *items* and batch-resolve each kind
+        from CH in one read. Traces resolve to their root span (LEAN), spans and
+        sessions by soft id. Empty id-sets short-circuit, so a page with no items of
+        a kind pays for no read of that kind."""
+        span_ids, session_ids, trace_ids = set(), set(), set()
         for item in items or []:
             source_type = getattr(item, "source_type", None)
             if (
@@ -897,13 +837,22 @@ class CollectorSourceCache:
                 and item.trace_session_id
             ):
                 session_ids.add(str(item.trace_session_id))
+            elif source_type == QueueItemSourceType.TRACE.value and item.trace_id:
+                trace_ids.add(str(item.trace_id))
+        # A page's items can span projects, so the trace-root read isn't project-
+        # scoped; the ids are the tenant's own queue items. (No org_id scoping —
+        # a collector span row may carry a NULL org_id; see _batch_ch_trace_roots.)
         return cls(
             spans=_batch_ch_spans(span_ids),
             sessions=_batch_ch_session_fields(session_ids),
+            trace_roots=_batch_ch_trace_roots(trace_ids),
         )
 
     def span(self, span_id):
         return self._spans.get(str(span_id)) if span_id else None
+
+    def trace_root(self, trace_id):
+        return self._trace_roots.get(str(trace_id)) if trace_id else None
 
     def session_fields(self, session_id):
         return self._sessions.get(str(session_id)) if session_id else None
@@ -912,70 +861,20 @@ class CollectorSourceCache:
 class _CHTraceSessionSource:
     """Duck-typed stand-in for a PG ``TraceSession`` resolved from CH. Carries only
     the attributes the annotation scope/store/render path reads off a session
-    (``id`` / ``project_id`` / ``name`` / ``first_seen``); it is NOT a Django model
-    and must never be assigned to a relation (the store path uses the soft id)."""
+    (``id`` / ``pk`` / ``project_id`` / ``name`` / ``first_seen``); it is NOT a Django
+    model and must never be assigned to a relation (the store path uses the soft id).
 
-    __slots__ = ("id", "project_id", "name", "first_seen")
+    ``pk`` mirrors ``id`` for Django-model parity — the score store reads
+    ``source_obj.pk`` (same as :class:`CHSpan` and :class:`_CHTraceSource`)."""
+
+    __slots__ = ("id", "pk", "project_id", "name", "first_seen")
 
     def __init__(self, *, id, project_id, name, first_seen):
         self.id = id
+        self.pk = str(id)
         self.project_id = project_id
         self.name = name
         self.first_seen = first_seen
-
-
-def resolve_ch_span_source(source_id, organization=None, workspace=None):
-    """CDC-off fallback for ``resolve_source_object('observation_span', …)``.
-
-    Collector-only spans live only in CH with no PG row; resolve from CH and return
-    the CHSpan (duck-types as a source object). None when absent or org/workspace mismatch.
-    """
-    try:
-        from tracer.services.clickhouse.v2 import get_reader
-
-        reader = get_reader()
-        try:
-            ch = reader.get(str(source_id))
-        finally:
-            close = getattr(reader, "close", None)
-            if callable(close):
-                close()
-    except Exception:
-        logger.exception("resolve_ch_span_source_failed", source_id=str(source_id))
-        return None
-    if ch is None:
-        return None
-
-    if organization is not None:
-        ch_org = str(getattr(ch, "org_id", "") or "")
-        # Deny by default: an empty/missing org is unattributable and must not resolve
-        # under another org's request (a `ch_org and ...` guard would fail open).
-        if ch_org != str(organization.pk):
-            logger.warning(
-                "ch_span_source_org_mismatch",
-                source_id=str(source_id),
-                expected_org=str(organization.pk),
-                actual_org=ch_org or "<empty>",
-            )
-            return None
-
-    if workspace is not None:
-        from tracer.models.project import Project
-
-        proj = Project.objects.filter(id=getattr(ch, "project_id", None)).first()
-        obj_ws = getattr(proj, "workspace", None) if proj else None
-        ws_match = obj_ws == workspace or (
-            obj_ws is None and getattr(workspace, "is_default", False)
-        )
-        if not ws_match:
-            logger.warning(
-                "ch_span_source_workspace_mismatch",
-                source_id=str(source_id),
-                expected_workspace=str(workspace.pk),
-            )
-            return None
-
-    return ch
 
 
 def _get_source_organization(obj):
@@ -1071,9 +970,10 @@ def _get_source_workspace(obj):
 def resolve_source_preview(item, *, ch_cache=None):
     """Return a standardized preview dict for a QueueItem's source.
 
-    ``ch_cache`` (opt-in :class:`CollectorSourceCache`): when supplied, collector
-    span/session sources read from the page-batched map instead of a per-item CH
-    point-read. Single-item callers pass ``None`` and keep the per-item read."""
+    Tracer sources (trace / observation_span / trace_session) are read CH-only.
+    ``ch_cache`` (opt-in :class:`CollectorSourceCache`): when supplied, they read
+    from the page-batched map instead of a per-item CH point-read. Single-item
+    callers pass ``None`` and keep the per-item read."""
     try:
         if item.source_type == QueueItemSourceType.DATASET_ROW.value:
             row = item.dataset_row
@@ -1087,65 +987,46 @@ def resolve_source_preview(item, *, ch_cache=None):
             }
 
         elif item.source_type == QueueItemSourceType.TRACE.value:
-            trace = _safe_related(item, "trace")
-            if not trace:
-                # collector trace: no PG row, preview from the CH root span.
-                root_span = _ch_root_span_for_trace(item.trace_id)
-                if root_span is None:
-                    return {"type": "trace", "deleted": True}
-                return {
-                    "type": "trace",
-                    "name": root_span.name or "",
-                    "project_id": (
-                        str(root_span.project_id) if root_span.project_id else None
-                    ),
-                    "input_preview": _truncate(str(root_span.input or ""), 200),
-                    "output_preview": _truncate(str(root_span.output or ""), 200),
-                    # CH has no response_time column; latency is the only signal.
-                    "latency_ms": root_span.latency_ms,
-                    "response_time_ms": root_span.latency_ms,
-                }
-            primary_span = _trace_primary_span(trace)
-            metrics = _metric_payload(primary_span) if primary_span else {}
+            # CH-only: a trace previews from its CH root span (conversation root
+            # preferred). The PG tracer tables are dropped — never read them.
+            root_span = (
+                ch_cache.trace_root(item.trace_id)
+                if ch_cache is not None
+                else _ch_root_span_for_trace(item.trace_id)
+            )
+            if root_span is None:
+                return {"type": "trace", "deleted": True}
             return {
                 "type": "trace",
-                "name": trace.name or "",
-                "project_id": str(trace.project_id) if trace.project_id else None,
-                "input_preview": _truncate(str(trace.input or ""), 200),
-                "output_preview": _truncate(str(trace.output or ""), 200),
-                **metrics,
+                "name": root_span.name or "",
+                "project_id": (
+                    str(root_span.project_id) if root_span.project_id else None
+                ),
+                "input_preview": _truncate(str(root_span.input or ""), 200),
+                "output_preview": _truncate(str(root_span.output or ""), 200),
+                # CH has no response_time column; latency is the only signal.
+                "latency_ms": root_span.latency_ms,
+                "response_time_ms": root_span.latency_ms,
             }
 
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
-            span = _safe_related(item, "observation_span")
-            if not span:
-                # collector span: no PG row, resolve from CH by the soft id
-                ch_span = (
-                    ch_cache.span(item.observation_span_id)
-                    if ch_cache is not None
-                    else _ch_span_for_item(item.observation_span_id)
-                )
-                if ch_span is None:
-                    return {"type": "observation_span", "deleted": True}
-                return {
-                    "type": "observation_span",
-                    "name": ch_span.name or "",
-                    "observation_type": ch_span.observation_type or "",
-                    "input_preview": _truncate(str(ch_span.input or ""), 200),
-                    "output_preview": _truncate(str(ch_span.output or ""), 200),
-                    # CH has no response_time column; latency is the only signal.
-                    "latency_ms": ch_span.latency_ms,
-                    "response_time_ms": ch_span.latency_ms,
-                }
+            # CH-only: resolve the span from CH by its soft id.
+            ch_span = (
+                ch_cache.span(item.observation_span_id)
+                if ch_cache is not None
+                else _ch_span_for_item(item.observation_span_id)
+            )
+            if ch_span is None:
+                return {"type": "observation_span", "deleted": True}
             return {
                 "type": "observation_span",
-                "name": span.name or "",
-                "observation_type": getattr(span, "observation_type", ""),
-                "input_preview": _truncate(str(getattr(span, "input", "") or ""), 200),
-                "output_preview": _truncate(
-                    str(getattr(span, "output", "") or ""), 200
-                ),
-                **_metric_payload(span),
+                "name": ch_span.name or "",
+                "observation_type": ch_span.observation_type or "",
+                "input_preview": _truncate(str(ch_span.input or ""), 200),
+                "output_preview": _truncate(str(ch_span.output or ""), 200),
+                # CH has no response_time column; latency is the only signal.
+                "latency_ms": ch_span.latency_ms,
+                "response_time_ms": ch_span.latency_ms,
             }
 
         elif item.source_type == QueueItemSourceType.PROTOTYPE_RUN.value:
@@ -1172,31 +1053,23 @@ def resolve_source_preview(item, *, ch_cache=None):
             }
 
         elif item.source_type == QueueItemSourceType.TRACE_SESSION.value:
-            session = _safe_related(item, "trace_session")
-            if not session:
-                # collector session: no PG row, resolve identity from CH
-                fields = (
-                    ch_cache.session_fields(item.trace_session_id)
-                    if ch_cache is not None
-                    else _ch_session_fields_for_item(item.trace_session_id)
-                )
-                if fields is None:
-                    return {"type": "trace_session", "deleted": True}
-                return {
-                    "type": "trace_session",
-                    "session_id": str(item.trace_session_id),
-                    "name": fields.get("display_name")
-                    or fields.get("external_session_id")
-                    or "",
-                    "project_id": (
-                        str(fields["project_id"]) if fields.get("project_id") else None
-                    ),
-                }
+            # CH-only: resolve the session identity fields from CH.
+            fields = (
+                ch_cache.session_fields(item.trace_session_id)
+                if ch_cache is not None
+                else _ch_session_fields_for_item(item.trace_session_id)
+            )
+            if fields is None:
+                return {"type": "trace_session", "deleted": True}
             return {
                 "type": "trace_session",
-                "session_id": str(session.id),
-                "name": session.name or "",
-                "project_id": str(session.project_id) if session.project_id else None,
+                "session_id": str(item.trace_session_id),
+                "name": fields.get("display_name")
+                or fields.get("external_session_id")
+                or "",
+                "project_id": (
+                    str(fields["project_id"]) if fields.get("project_id") else None
+                ),
             }
 
     except Exception as e:
@@ -1208,9 +1081,10 @@ def resolve_source_preview(item, *, ch_cache=None):
 def resolve_source_content(item, *, ch_cache=None):
     """Return full renderable content for a QueueItem's source (used in annotation view).
 
-    ``ch_cache`` (opt-in :class:`CollectorSourceCache`): when supplied, collector
-    span/session sources read from the page-batched map instead of a per-item CH
-    point-read. Single-item callers pass ``None`` and keep the per-item read."""
+    Tracer sources (trace / observation_span / trace_session) are read CH-only.
+    ``ch_cache`` (opt-in :class:`CollectorSourceCache`): when supplied, they read
+    from the page-batched map instead of a per-item CH point-read. Single-item
+    callers pass ``None`` and keep the per-item read."""
     try:
         if item.source_type == QueueItemSourceType.DATASET_ROW.value:
             row = item.dataset_row
@@ -1258,113 +1132,45 @@ def resolve_source_content(item, *, ch_cache=None):
             return data
 
         elif item.source_type == QueueItemSourceType.TRACE.value:
-            trace = _safe_related(item, "trace")
-            if not trace:
-                # collector trace: no PG row. Render from the CH root span; the
-                # non-voice UI focuses it via ``root_span_id`` (a render choice —
-                # the stored item stays a trace).
-                root_span = _ch_root_span_for_trace(item.trace_id)
-                if root_span is None:
-                    return {"type": "trace", "deleted": True}
-                from tracer.services.clickhouse.v2.span_reader import (
-                    chspan_to_annotation_source_dict,
-                )
+            # CH-only: render a trace from its CH root span (conversation root
+            # preferred). The PG tracer tables are dropped — never read them. The
+            # non-voice UI focuses the root via ``root_span_id`` (a render choice —
+            # the stored item stays a trace).
+            root_span = (
+                ch_cache.trace_root(item.trace_id)
+                if ch_cache is not None
+                else _ch_root_span_for_trace(item.trace_id)
+            )
+            if root_span is None:
+                return {"type": "trace", "deleted": True}
+            from tracer.services.clickhouse.v2.span_reader import (
+                chspan_to_annotation_source_dict,
+            )
 
-                # Headline content of the trace = its root span, reshaped to the
-                # trace dict. Drop span_id: the FE renders a trace item via
-                # InlineTraceView(trace_id) and only reads span_id for an
-                # observation_span item, so it's dead + mis-attachment-prone here.
-                data = chspan_to_annotation_source_dict(root_span)
-                data["type"] = "trace"
-                data["trace_id"] = str(item.trace_id)
-                data.pop("span_id", None)
-                return data
-            project_source = trace.project.source if trace.project_id else None
-            primary_span = _trace_primary_span(trace)
-            span_metrics = _metric_payload(primary_span) if primary_span else {}
-            trace_latency = getattr(trace, "latency", None)
-            trace_status = getattr(trace, "status", None)
-            return {
-                "type": "trace",
-                "trace_id": str(trace.id),
-                "name": trace.name or "",
-                "project_id": str(trace.project_id) if trace.project_id else None,
-                "project_source": project_source,
-                "created_at": trace.created_at,
-                "updated_at": trace.updated_at,
-                "input": trace.input,
-                "output": trace.output,
-                "metadata": trace.metadata if hasattr(trace, "metadata") else {},
-                "latency": trace_latency,
-                "latency_ms": (
-                    span_metrics.get("latency_ms")
-                    if span_metrics.get("latency_ms") is not None
-                    else trace_latency
-                ),
-                "response_time_ms": span_metrics.get("response_time_ms"),
-                "status": (
-                    trace_status
-                    if trace_status is not None
-                    else getattr(primary_span, "status", None)
-                    if primary_span
-                    else None
-                ),
-                "span_attributes": (
-                    getattr(primary_span, "span_attributes", {}) if primary_span else {}
-                ),
-                "resource_attributes": (
-                    getattr(primary_span, "resource_attributes", {})
-                    if primary_span
-                    else {}
-                ),
-            }
+            # Headline content of the trace = its root span, reshaped to the trace
+            # dict. Drop span_id: the FE renders a trace item via
+            # InlineTraceView(trace_id) and only reads span_id for an
+            # observation_span item, so it's dead + mis-attachment-prone here.
+            data = chspan_to_annotation_source_dict(root_span)
+            data["type"] = "trace"
+            data["trace_id"] = str(item.trace_id)
+            data.pop("span_id", None)
+            return data
 
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
-            span = _safe_related(item, "observation_span")
-            if not span:
-                # collector span: no PG row, rebuild content from CH via the mapper
-                ch_span = (
-                    ch_cache.span(item.observation_span_id)
-                    if ch_cache is not None
-                    else _ch_span_for_item(item.observation_span_id)
-                )
-                if ch_span is None:
-                    return {"type": "observation_span", "deleted": True}
-                from tracer.services.clickhouse.v2.span_reader import (
-                    chspan_to_annotation_source_dict,
-                )
+            # CH-only: rebuild content from CH via the canonical mapper.
+            ch_span = (
+                ch_cache.span(item.observation_span_id)
+                if ch_cache is not None
+                else _ch_span_for_item(item.observation_span_id)
+            )
+            if ch_span is None:
+                return {"type": "observation_span", "deleted": True}
+            from tracer.services.clickhouse.v2.span_reader import (
+                chspan_to_annotation_source_dict,
+            )
 
-                return chspan_to_annotation_source_dict(ch_span)
-            return {
-                "type": "observation_span",
-                "span_id": str(span.id),
-                "trace_id": str(span.trace_id) if span.trace_id else None,
-                "name": span.name or "",
-                "observation_type": getattr(span, "observation_type", ""),
-                "project_id": str(span.project_id) if span.project_id else None,
-                "created_at": span.created_at,
-                "updated_at": span.updated_at,
-                "start_time": span.start_time,
-                "end_time": span.end_time,
-                "input": getattr(span, "input", None),
-                "output": getattr(span, "output", None),
-                "metadata": getattr(span, "metadata", {}),
-                "events": getattr(span, "events", []),
-                "latency_ms": getattr(span, "latency_ms", None),
-                "response_time_ms": getattr(span, "response_time", None),
-                "model": getattr(span, "model", None),
-                "provider": getattr(span, "provider", None),
-                "cost": getattr(span, "cost", None),
-                "prompt_tokens": getattr(span, "prompt_tokens", None),
-                "completion_tokens": getattr(span, "completion_tokens", None),
-                "total_tokens": getattr(span, "total_tokens", None),
-                "status": getattr(span, "status", None),
-                "status_message": getattr(span, "status_message", None),
-                "tags": getattr(span, "tags", []),
-                "span_attributes": getattr(span, "span_attributes", {}),
-                "resource_attributes": getattr(span, "resource_attributes", {}),
-                "eval_attributes": getattr(span, "eval_attributes", {}),
-            }
+            return chspan_to_annotation_source_dict(ch_span)
 
         elif item.source_type == QueueItemSourceType.PROTOTYPE_RUN.value:
             run = item.prototype_run
@@ -1449,39 +1255,28 @@ def resolve_source_content(item, *, ch_cache=None):
             }
 
         elif item.source_type == QueueItemSourceType.TRACE_SESSION.value:
-            session = _safe_related(item, "trace_session")
-            if not session:
-                # collector session: no PG row, resolve from CH (first_seen is the
-                # created_at/updated_at proxy — CH has no audit columns)
-                fields = (
-                    ch_cache.session_fields(item.trace_session_id)
-                    if ch_cache is not None
-                    else _ch_session_fields_for_item(item.trace_session_id)
-                )
-                if fields is None:
-                    return {"type": "trace_session", "deleted": True}
-                first_seen = fields.get("first_seen")
-                return {
-                    "type": "trace_session",
-                    "session_id": str(item.trace_session_id),
-                    "source_id": str(item.trace_session_id),
-                    "name": fields.get("display_name")
-                    or fields.get("external_session_id")
-                    or "",
-                    "project_id": (
-                        str(fields["project_id"]) if fields.get("project_id") else None
-                    ),
-                    "created_at": first_seen,
-                    "updated_at": first_seen,
-                }
+            # CH-only: resolve the session from CH (first_seen is the
+            # created_at/updated_at proxy — CH has no audit columns).
+            fields = (
+                ch_cache.session_fields(item.trace_session_id)
+                if ch_cache is not None
+                else _ch_session_fields_for_item(item.trace_session_id)
+            )
+            if fields is None:
+                return {"type": "trace_session", "deleted": True}
+            first_seen = fields.get("first_seen")
             return {
                 "type": "trace_session",
-                "session_id": str(session.id),
-                "source_id": str(session.id),
-                "name": session.name or "",
-                "project_id": str(session.project_id) if session.project_id else None,
-                "created_at": session.created_at,
-                "updated_at": session.updated_at,
+                "session_id": str(item.trace_session_id),
+                "source_id": str(item.trace_session_id),
+                "name": fields.get("display_name")
+                or fields.get("external_session_id")
+                or "",
+                "project_id": (
+                    str(fields["project_id"]) if fields.get("project_id") else None
+                ),
+                "created_at": first_seen,
+                "updated_at": first_seen,
             }
 
     except Exception as e:

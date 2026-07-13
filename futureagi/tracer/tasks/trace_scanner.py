@@ -7,6 +7,7 @@ Activity 3: cluster_scan_issues_task — cluster unclustered issues + match succ
 """
 
 import time
+from contextlib import contextmanager
 from datetime import timedelta
 from typing import List
 
@@ -22,6 +23,7 @@ from tracer.queries.trace_scanner import (
     mark_traces_failed,
 )
 from tracer.services.clickhouse.v2 import get_reader
+from tracer.services.clickhouse.v2.query_settings import ch_query_settings
 from tracer.utils.trace_scanner import (
     cluster_issues,
     embed_trace_inputs,
@@ -38,6 +40,30 @@ _SWEEP_GRACE_SECONDS = 60  # let straggler child spans settle before scanning
 _SWEEP_COLD_START_SECONDS = 900  # first-sweep window when last_swept_at is NULL
 _SWEEP_BATCH_SIZE = 15  # keep each scan task under its time_limit (cf. _trigger_trace_scanner)
 _SWEEP_MAX_LAG_SECONDS = 86400  # cap how far the watermark lags behind a stuck trace (24h)
+
+# Per-query ClickHouse caps for the scanner's spans reads — same box-safe
+# starting values as the eval engine's guardrails. A heavy scan read fails at
+# the query level (a retryable code-241) instead of exhausting server memory and
+# taking the shared CH box down with it; big sorts spill to disk rather than OOM.
+# Baked into each reader's client at construction (via the ``ch_query_settings``
+# contextvar), so ``scan_ch_guardrails()`` must wrap the reader-building call.
+# Tune against dev-GCP once prod-scale headroom is known.
+SCAN_CH_GUARDRAILS: dict[str, int] = {
+    "max_memory_usage": 4 * 2**30,  # 4 GiB — hard cap per query
+    "max_execution_time": 120,  # seconds — kill a runaway query
+    "max_bytes_before_external_sort": 2 * 2**30,  # 2 GiB spill threshold
+}
+
+
+@contextmanager
+def scan_ch_guardrails():
+    """Apply per-query CH guardrails to every v2 reader built inside the block.
+
+    Inner ``ch_query_settings`` overrides win (e.g. a test tightens
+    ``max_memory_usage`` to probe the tripwire).
+    """
+    with ch_query_settings(**SCAN_CH_GUARDRAILS):
+        yield
 
 
 @temporal_activity(time_limit=600, queue="agent_compass", max_retries=1)
@@ -62,7 +88,8 @@ def scan_traces_task(trace_ids: List[str], project_id: str, from_sweep: bool = F
         project_id=project_id,
     )
 
-    results = scan_and_write(trace_ids, project_id, mark_unresolved=from_sweep)
+    with scan_ch_guardrails():
+        results = scan_and_write(trace_ids, project_id, mark_unresolved=from_sweep)
 
     issues_found = sum(len(r.issues) for r in results)
     logger.info(
@@ -96,7 +123,8 @@ def embed_trace_inputs_task(
         project_id=project_id,
     )
 
-    stored = embed_trace_inputs(trace_ids, project_id)
+    with scan_ch_guardrails():
+        stored = embed_trace_inputs(trace_ids, project_id)
 
     logger.info(
         "embed_trace_inputs_task_completed",
@@ -186,7 +214,7 @@ def sweep_scannable_traces():
 
     dispatched = 0
     abandoned = 0
-    with get_reader() as reader:
+    with scan_ch_guardrails(), get_reader() as reader:
         now_ch = reader.ch_now()
         upper = now_ch - timedelta(seconds=_SWEEP_GRACE_SECONDS)
         cold_floor = now_ch - timedelta(seconds=_SWEEP_COLD_START_SECONDS)

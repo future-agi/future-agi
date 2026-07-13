@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import re
 import time
+from enum import Enum
 
 import structlog
 from django.core.management.base import CommandError
@@ -10,6 +11,48 @@ from django.core.management.base import CommandError
 logger = structlog.get_logger(__name__)
 
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+class OneShotDecision(Enum):
+    """Outcome of the one-shot append-only guard for a single table."""
+
+    COPY = "copy"
+    NOOP = "noop"
+    REFUSE = "refuse"
+
+
+def one_shot_decision(
+    before_counts: dict[str, int],
+    expected_replicas: int,
+    source_count: int,
+) -> OneShotDecision:
+    """Decide copy/noop/refuse for an append-only one-shot table.
+
+    A missing replica counts as not-yet-converged. Dry-run callers pad
+    via ``simulated_post_ensure_counts`` first so the sim matches the
+    real run's post-``ensure_target`` view.
+    """
+    complete = len(before_counts) == expected_replicas
+    if complete and all(c == 0 for c in before_counts.values()):
+        return OneShotDecision.COPY
+    if (
+        complete
+        and source_count > 0
+        and all(c >= source_count for c in before_counts.values())
+    ):
+        return OneShotDecision.NOOP
+    return OneShotDecision.REFUSE
+
+
+def simulated_post_ensure_counts(
+    before_counts: dict[str, int],
+    expected_replicas: int,
+) -> dict[str, int]:
+    """Pad missing replicas as 0 to model post-``ensure_target ON CLUSTER`` state."""
+    padded = dict(before_counts)
+    while len(padded) < expected_replicas:
+        padded[f"__pending_{len(padded)}__"] = 0
+    return padded
 
 
 def require_identifier(value: str, flag: str) -> str:

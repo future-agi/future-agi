@@ -15,7 +15,6 @@ from django.utils import timezone
 
 from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
 from agentic_eval.core.embeddings.embedding_manager import model_manager
-from tracer.models.trace import Trace
 from tracer.models.trace_error_analysis import (
     ClusterSource,
     ErrorClusterTraces,
@@ -388,13 +387,8 @@ def get_trace_input_data(trace_ids: List[str], project_id: str) -> List[TraceInp
         if input_text:
             input_texts[trace_id_str] = str(input_text)
 
-    # Fallback: check Trace.input for any missing
-    missing = [tid for tid in scanned_trace_ids if tid not in input_texts]
-    if missing:
-        traces = Trace.objects.filter(id__in=missing).values_list("id", "input")
-        for trace_id, trace_input in traces:
-            if trace_input:
-                input_texts[str(trace_id)] = str(trace_input)
+    # The CH root span's ``input.value`` is the only source post-cutover; a trace
+    # with no root input simply contributes no text (handled below).
 
     # Build typed results — only scanned traces with known has_issues state
     result = []

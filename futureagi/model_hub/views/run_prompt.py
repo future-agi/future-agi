@@ -9,7 +9,6 @@ from typing import Any
 
 import chevron
 import litellm
-import requests
 import structlog
 import yaml
 from django.core.exceptions import ObjectDoesNotExist, ValidationError
@@ -98,6 +97,7 @@ from tfc.utils.error_codes import (
 )
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.functions import get_prompt_stats
+from tfc.utils.ssrf_guard import safe_fetch
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
 from tfc.utils.parse_errors import parse_serialized_errors
@@ -941,8 +941,9 @@ def process_media_markers(text, image_markers, model_name):
                 }
             )
             try:
-                # Download and encode audio
-                response = requests.get(info["url"], timeout=120)
+                # SSRF-guarded: user-supplied URL; safe_fetch resolves + pins
+                # IP and blocks private/link-local hosts before download.
+                response = safe_fetch(info["url"], method="GET", timeout=120)
                 response.raise_for_status()
 
                 bytes_data = response.content

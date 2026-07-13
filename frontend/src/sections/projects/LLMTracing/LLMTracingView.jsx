@@ -166,6 +166,7 @@ import {
 } from "./savedViewColumns";
 import TracingControls from "./TracingControls";
 import ObserveToolbar from "./ObserveToolbar";
+import { selectPanelGraphFilters } from "./GraphSection/graphFilterUtils";
 import { buildAddEvalsDraft } from "./buildAddEvalsDraft";
 import SelectAllBanner from "./SelectAllBanner";
 import useProjectFilterField from "../UsersView/useProjectFilterField";
@@ -547,14 +548,26 @@ const CompareGraphHeader = ({
                 }
                 sx={{
                   height: 24,
-                  bgcolor: "rgba(0,0,0,0.04)",
+                  bgcolor: "action.hover",
                   border: "1px solid",
                   borderColor: "divider",
                   borderRadius: "6px",
+                  transition: (theme) =>
+                    theme.transitions.create(
+                      ["background-color", "border-color"],
+                      {
+                        duration: theme.transitions.duration.shortest,
+                      },
+                    ),
+                  "&:hover": {
+                    bgcolor: "action.selected",
+                    borderColor: "text.disabled",
+                  },
                   "& .MuiChip-label": { px: 0.5 },
                   "& .MuiChip-deleteIcon": {
                     fontSize: 12,
                     color: "text.disabled",
+                    "&:hover": { color: "text.secondary" },
                   },
                 }}
               />
@@ -1254,29 +1267,32 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     enabled: Boolean(observeId),
   });
 
-  // Shared node click handler for agent graph/path views
   const handleAgentNodeClick = useCallback(
     (nodeData) => {
       if (!nodeData?.type) return;
       const isSame = extraFilters.some(
         (f) =>
-          f.column_id === "observation_type" &&
-          f.filter_config?.filter_value === nodeData.type,
+          f.column_id === "node_type" &&
+          (Array.isArray(f.filter_config?.filter_value)
+            ? f.filter_config.filter_value.includes(nodeData.type)
+            : f.filter_config?.filter_value === nodeData.type),
       );
-      if (isSame) {
-        setExtraFilters([]);
-      } else {
-        setExtraFilters([
-          {
-            column_id: "observation_type",
-            filter_config: {
-              filter_type: "string",
-              filter_op: "equals",
-              filter_value: nodeData.type,
-            },
-          },
-        ]);
-      }
+      const others = extraFilters.filter((f) => f.column_id !== "node_type");
+      setExtraFilters(
+        isSame
+          ? others
+          : [
+              ...others,
+              {
+                column_id: "node_type",
+                filter_config: {
+                  filter_type: "text",
+                  filter_op: "in",
+                  filter_value: [nodeData.type],
+                },
+              },
+            ],
+      );
     },
     [extraFilters, setExtraFilters],
   );
@@ -1907,6 +1923,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
       return;
     }
     wasOnSavedViewRef.current = true;
+
+    // Invalidate graph cache so switching views always triggers a fresh fetch.
+    // Without this, a cached empty/error result from a previous queryKey can
+    // persist when the view's extraFilters produce the same key as a failed request.
+    queryClient.invalidateQueries({ queryKey: ["primary-graph"] });
 
     // Apply display settings
     const display = activeViewConfig.display || {};
@@ -3320,6 +3341,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     ? primaryTraceValidatedFilters
                     : primarySpanValidatedFilters
                 }
+                extraFilters={extraFilters}
                 dateFilter={
                   selectedTab === "trace"
                     ? primaryTraceDateFilter
@@ -3354,6 +3376,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       ? compareTraceValidatedFilters
                       : compareSpansValidatedFilters
                   }
+                  extraFilters={compareExtraFilters}
                   dateFilter={
                     selectedTab === "trace"
                       ? compareTraceDateFilter
@@ -3633,12 +3656,21 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               onFilterToggle={() => {
                 // Clear any chip/+ anchor so the popover re-anchors to the
                 // toolbar Filter button (avoids opening on a stale anchor).
+                // The toolbar button always edits the PRIMARY filters, so
+                // reset the target too — otherwise a prior Compare Graph
+                // edit leaves filterTarget="compare" and applying from the
+                // toolbar would overwrite compare filters instead.
+                setFilterTarget("primary");
                 setExternalFilterAnchor(null);
                 setIsPrimaryFilterOpen(!isPrimaryFilterOpen);
               }}
               onApplyExtraFilters={setExtraFilters}
               onClearExtraFilters={clearPrimaryExtraFilters}
-              graphFilters={extraFilters}
+              graphFilters={selectPanelGraphFilters(
+                filterTarget,
+                extraFilters,
+                compareExtraFilters,
+              )}
               isFilterOpen={isPrimaryFilterOpen}
               externalFilterAnchor={externalFilterAnchor}
               filterTarget={filterTarget}
@@ -4593,10 +4625,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       setSpecificColumns("compare-trace", columns)
                     }
                     filters={compareTraceValidatedFilters}
-                    extraFilters={extraFilters}
+                    extraFilters={compareExtraFilters}
                     ref={compareTraceGridRef}
                     setFilters={setCompareTraceFilters}
-                    setExtraFilters={setExtraFilters}
+                    setExtraFilters={setCompareExtraFilters}
                     setFilterOpen={setIsPrimaryFilterOpen}
                     setLoading={setLoadingEnhanced}
                     compareType="compare"
@@ -4701,10 +4733,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     pendingCustomColumnsRef={compareSpansPendingRef}
                     canonicalOrderRef={canonicalSpanOrderRef}
                     filters={compareSpansValidatedFilters}
-                    extraFilters={extraFilters}
+                    extraFilters={compareExtraFilters}
                     ref={compareSpanGridRef}
                     setFilters={setCompareSpansFilters}
-                    setExtraFilters={setExtraFilters}
+                    setExtraFilters={setCompareExtraFilters}
                     setFilterOpen={setIsPrimaryFilterOpen}
                     setLoading={setLoadingEnhanced}
                     compareType="compare"
