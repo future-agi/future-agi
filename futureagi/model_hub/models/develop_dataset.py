@@ -245,8 +245,8 @@ class Row(BaseModel):
     dataset = models.ForeignKey(Dataset, on_delete=models.CASCADE)
     order = models.IntegerField()
     metadata = models.JSONField(default=dict, blank=True, null=True)
-    source_trace_id = models.UUIDField(null=True, blank=True)
-    source_span_id = models.CharField(max_length=255, null=True, blank=True)
+    source_trace_id = models.UUIDField(null=True, blank=True, db_index=True)
+    source_span_id = models.CharField(max_length=255, null=True, blank=True, db_index=True)
 
     class Meta(BaseModel.Meta):
         indexes = [
