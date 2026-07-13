@@ -8,7 +8,7 @@ import (
 
 // UsageEmitter is the billing emission contract the server depends on.
 type UsageEmitter interface {
-	EmitIngestion(orgID string, numTraces, numSpans int, payloadBytes int64)
+	EmitIngestion(orgID string, numTraces, numSpans int, payloadBytes int64, dedupKey string)
 }
 
 // Metering is the quota enforcement contract the server depends on.
@@ -19,7 +19,7 @@ type Metering interface {
 // NoopUsageEmitter is used when Redis is not configured — all calls are silent no-ops.
 type NoopUsageEmitter struct{}
 
-func (NoopUsageEmitter) EmitIngestion(string, int, int, int64) {}
+func (NoopUsageEmitter) EmitIngestion(string, int, int, int64, string) {}
 
 // NoopMetering allows all requests when Redis is not configured.
 type NoopMetering struct{}

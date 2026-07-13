@@ -11,6 +11,7 @@ import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 import Editor from "@monaco-editor/react";
 import ErrorLocalizeCard from "src/sections/common/ErrorLocalizeCard";
+import AudioErrorCard from "src/components/custom-audio/AudioErrorCard";
 import Iconify from "src/components/iconify";
 import { InlineAudio } from "src/components/inline-audio/inline-row-audio";
 import SkippedLocalizationBanner from "src/sections/common/SkippedLocalizationBanner";
@@ -107,6 +108,7 @@ const FormattedResult = ({ result }) => {
   const normalizedRaw = normalizeEvalCellValue(rawInput);
 
   let raw = normalizedRaw;
+  let choiceScore = null;
   if (
     normalizedRaw &&
     typeof normalizedRaw === "object" &&
@@ -115,6 +117,7 @@ const FormattedResult = ({ result }) => {
   ) {
     if (normalizedRaw.choice != null || normalizedRaw.choices != null) {
       const choiceVal = normalizedRaw.choices ?? normalizedRaw.choice;
+      if (typeof normalizedRaw.score === "number") choiceScore = normalizedRaw.score;
       raw = Array.isArray(choiceVal)
         ? choiceVal.map((c) => ({ label: c }))
         : { label: choiceVal };
@@ -173,20 +176,49 @@ const FormattedResult = ({ result }) => {
                 typeof c.label === "string"
                   ? c.label.charAt(0).toUpperCase() + c.label.slice(1)
                   : String(c.label);
+              const itemScore =
+                typeof c.score === "number"
+                  ? c.score
+                  : items.length === 1 && typeof choiceScore === "number"
+                    ? choiceScore
+                    : null;
               return (
-                <Chip
+                <Box
                   key={i}
-                  label={label}
-                  size="small"
-                  variant="outlined"
-                  sx={{
-                    borderRadius: "4px",
-                    borderColor: "purple.500",
-                    color: "purple.500",
-                    fontWeight: 400,
-                    typography: "s3",
-                  }}
-                />
+                  sx={{ display: "flex", alignItems: "center", gap: "8px" }}
+                >
+                  <Chip
+                    label={label}
+                    size="small"
+                    variant="outlined"
+                    sx={{
+                      borderRadius: "4px",
+                      borderColor: "purple.500",
+                      color: "purple.500",
+                      fontWeight: 400,
+                      typography: "s3",
+                    }}
+                  />
+                  {itemScore != null && (
+                    <Chip
+                      label={itemScore.toFixed(1)}
+                      size="small"
+                      color={
+                        itemScore >= 0.7
+                          ? "success"
+                          : itemScore >= 0.3
+                            ? "warning"
+                            : "error"
+                      }
+                      sx={{
+                        minWidth: 40,
+                        fontSize: "12px",
+                        fontWeight: 600,
+                        height: 24,
+                      }}
+                    />
+                  )}
+                </Box>
               );
             })}
           </Box>
@@ -572,6 +604,13 @@ const ErrorLocalizationSection = ({ result }) => {
     input_types: inputTypes,
   };
 
+  const allLocalizerEntries = entriesMap
+    ? Object.values(entriesMap).flat()
+    : entries || [];
+  const isAudioLocalization = allLocalizerEntries.some(
+    (entry) => entry?.orgSegment,
+  );
+
   // If no entries ended up with content, don't render anything - the eval
   // might have passed or the localizer might have found nothing to flag.
   const mapHasContent =
@@ -604,7 +643,12 @@ const ErrorLocalizationSection = ({ result }) => {
       >
         Error Localization
       </Typography>
-      {entriesMap ? (
+      {isAudioLocalization ? (
+        <AudioErrorCard
+          valueInfos={{ errorAnalysis: errorDetails }}
+          column={selectedInputKey || "input"}
+        />
+      ) : entriesMap ? (
         Object.entries(entriesMap)
           .filter(([, v]) => v && (Array.isArray(v) ? v.length > 0 : true))
           .map(([key, value]) => (

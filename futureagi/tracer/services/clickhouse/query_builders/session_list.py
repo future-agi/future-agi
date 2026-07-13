@@ -15,6 +15,10 @@ from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import NIL_UUID, BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
+from tracer.services.clickhouse.query_builders.session_filters import (
+    SESSION_ID_FILTER_COLS,
+    build_session_id_filter_clause,
+)
 from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
     resolved_id_expr,
@@ -53,6 +57,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         "total_cost": "total_cost",
         "total_tokens": "total_tokens",
         "traces_count": "traces_count",
+        "total_traces_count": "traces_count",
     }
 
     # Session-level filter columns that map to computed aggregates
@@ -61,12 +66,25 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         "total_cost": "total_cost",
         "total_tokens": "total_tokens",
         "traces_count": "traces_count",
+        "total_traces_count": "traces_count",
     }
 
-    # Columns that require a session-scoped subquery because they are
-    # set on child spans, not root spans. The main query restricts to
-    # root spans only, so filtering these directly would miss matches.
-    SUBQUERY_FILTER_COLS = {"end_user_id"}
+    MESSAGE_FILTER_MAP: dict[str, str] = {
+        "first_message": "first_message",
+        "last_message": "last_message",
+    }
+
+    # Aggregate projections shared by build() and build_id_query() so a HAVING on
+    # any of these aliases resolves in both (build_id_query returns only session_id
+    # but still applies the same HAVING).
+    _AGGREGATE_SELECT = (
+        "min(start_time) AS session_start, "
+        "max(end_time) AS session_end, "
+        "dateDiff('second', min(start_time), max(end_time)) AS duration, "
+        "sum(cost) AS total_cost, "
+        "sum(total_tokens) AS total_tokens, "
+        "uniq(trace_id) AS traces_count"
+    )
 
     def __init__(
         self,
@@ -87,8 +105,6 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         self.user_id = user_id
         self.start_date: datetime | None = None
         self.end_date: datetime | None = None
-        # Populated by _extract_end_user_ids() during build
-        self._end_user_ids: list[str] | None = None
 
     def build(self) -> tuple[str, dict[str, Any]]:
         """Build the session list query.
@@ -99,10 +115,6 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         self.start_date, self.end_date = self.parse_time_range(self.filters)
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
-
-        # Extract end_user_id filters — these need a subquery because
-        # end_user_id is set on child spans, not root spans.
-        self._end_user_ids = self._extract_end_user_ids()
 
         # Translate span-level filters (exclude session-level aggregate
         # filters AND end_user_id filters handled via subquery)
@@ -136,14 +148,10 @@ class SessionListQueryBuilder(BaseQueryBuilder):
 
         filter_fragment = f"AND {extra_where}" if extra_where else ""
         having_fragment = f"HAVING {having_clauses}" if having_clauses else ""
+        message_select = self._message_aggregate_select()
 
-        # P3b step1.5 (DESIGN §3 / id_remap_sql): `_session_from_where` ALWAYS
-        # resolves `trace_session_id` new→old (and `end_user_id` too when a user
-        # filter is present), so the `GROUP BY trace_session_id` below unifies a
-        # cross-cutover straddler's old + new session ids into ONE listed row
-        # (closes the no-filter/bookmark browse double-list). Pre-flip the remap
-        # joins are no-ops → byte-identical (result-set) to the committed bare
-        # scan (gate B).
+        # Resolve session IDs new→old before grouping so cross-cutover spans
+        # remain one session. User membership is handled separately below.
         time_where = "AND start_time >= %(start_date)s AND start_time < %(end_date)s"
         from_where = self._session_from_where(
             self.params,
@@ -151,23 +159,61 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             filter_fragment=filter_fragment,
         )
 
-        # Light aggregation — no input column (heavy). First/last messages
-        # fetched separately via build_content_query().
+        # Keep the common path light. Message aggregates are added only when
+        # first_message/last_message participate in filtering.
         query = f"""
         SELECT
             trace_session_id AS session_id,
-            min(start_time) AS session_start,
-            max(end_time) AS session_end,
-            dateDiff('second', min(start_time), max(end_time)) AS duration,
-            sum(cost) AS total_cost,
-            sum(total_tokens) AS total_tokens,
-            uniq(trace_id) AS traces_count
+            {self._AGGREGATE_SELECT}
+            {message_select}
         {from_where}
         GROUP BY trace_session_id
         {having_fragment}
         {order_clause}
         LIMIT %(limit)s
         OFFSET %(offset)s
+        """
+        return query, self.params
+
+    def build_id_query(self) -> tuple[str, dict[str, Any]]:
+        """Filtered session ids only — same grouped, remap-aware scan as build(),
+        no pagination/order. Lets the eval resolver select the same sessions this
+        list endpoint returns."""
+        self.start_date, self.end_date = self.parse_time_range(self.filters)
+        self.params["start_date"] = self.start_date
+        self.params["end_date"] = self.end_date
+
+        span_filters = self._extract_span_filters()
+        fb = ClickHouseFilterBuilder(
+            table=self.TABLE,
+            project_id=self.project_id,
+            project_ids=self.project_ids,
+        )
+        extra_where, extra_params = fb.translate(span_filters)
+        self.params.update(extra_params)
+
+        having_clauses = self._build_having_clauses()
+        if self.user_id:
+            self.params["user_id"] = self.user_id
+
+        filter_fragment = f"AND {extra_where}" if extra_where else ""
+        having_fragment = f"HAVING {having_clauses}" if having_clauses else ""
+        message_select = self._message_aggregate_select()
+        time_where = "AND start_time >= %(start_date)s AND start_time < %(end_date)s"
+        from_where = self._session_from_where(
+            self.params,
+            time_where=time_where,
+            filter_fragment=filter_fragment,
+        )
+
+        query = f"""
+        SELECT
+            trace_session_id AS session_id,
+            {self._AGGREGATE_SELECT}
+            {message_select}
+        {from_where}
+        GROUP BY trace_session_id
+        {having_fragment}
         """
         return query, self.params
 
@@ -206,6 +252,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 WHERE {self.project_filter_sql()}
                   AND is_deleted = 0
                   AND (parent_span_id IS NULL OR parent_span_id = '')
+                  AND trace_session_id IN %(content_session_ids)s
             ) AS rs
             {ts_join}
         )
@@ -218,7 +265,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         """Return True if any filters target aggregate columns (requiring HAVING)."""
         for f in self.filters:
             col_id = f.get("column_id") or f.get("columnId")
-            if col_id in self.SESSION_FILTER_MAP:
+            if col_id in self.SESSION_FILTER_MAP or col_id in self.MESSAGE_FILTER_MAP:
                 return True
         return False
 
@@ -285,6 +332,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
 
         filter_fragment = f"AND {extra_where}" if extra_where else ""
         having_fragment = f"HAVING {having_clauses}" if having_clauses else ""
+        message_select = self._message_aggregate_select()
 
         # P3b step1.5: same id-remap-resolved scan as build()/simple-count so the
         # HAVING-filtered session count unifies a straddler identically (group on
@@ -307,6 +355,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
                 sum(cost) AS total_cost,
                 sum(total_tokens) AS total_tokens,
                 uniq(trace_id) AS traces_count
+                {message_select}
             {from_where}
             GROUP BY trace_session_id
             {having_fragment}
@@ -360,6 +409,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         WHERE {self.project_filter_sql()}
           AND is_deleted = 0
           AND (parent_span_id IS NULL OR parent_span_id = '')
+          AND s.trace_session_id IN %(attr_session_ids)s
           AND (
             (span_attributes_raw != '{{}}' AND span_attributes_raw != '')
             OR length(mapKeys(span_attr_str)) > 0
@@ -446,24 +496,7 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     # `_build_resolved_user_clause` / P3b step1.5), so a cross-cutover straddler
     # unifies. `user` is the FilterBuilder alias for `end_user_id`.
     _ENDUSER_ID_FILTER_COLS = frozenset({"end_user_id", "user"})
-
-    def _extract_end_user_ids(self) -> list[str]:
-        """Return synthetic end-user UUID filters for legacy callers.
-
-        The active predicate is built by ``_build_resolved_user_clause`` so that
-        end-user IDs are resolved through the remap join. This method keeps the
-        older build/count hooks harmless after the P3b rewrite.
-        """
-        ids: list[str] = []
-        for f in self.filters:
-            col_id = f.get("column_id") or f.get("columnId")
-            if col_id not in self._ENDUSER_ID_FILTER_COLS:
-                continue
-            config = f.get("filter_config") or f.get("filterConfig") or {}
-            raw_val = config.get("filter_value", config.get("filterValue"))
-            values = raw_val if isinstance(raw_val, list) else [raw_val]
-            ids.extend(str(v) for v in values if v)
-        return ids
+    _SESSION_ID_FILTER_COLS = SESSION_ID_FILTER_COLS
 
     def _build_end_user_subquery(self) -> str:
         """Compatibility shim for pre-remap session-list code paths.
@@ -486,12 +519,25 @@ class SessionListQueryBuilder(BaseQueryBuilder):
         span_filters: list[dict] = []
         for f in self.filters:
             col_id = f.get("column_id") or f.get("columnId")
-            if col_id in self.SESSION_FILTER_MAP:
+            if col_id in self.SESSION_FILTER_MAP or col_id in self.MESSAGE_FILTER_MAP:
                 continue
-            if col_id in self._ENDUSER_ID_FILTER_COLS:
+            if (
+                col_id in self._ENDUSER_ID_FILTER_COLS
+                or col_id in self._SESSION_ID_FILTER_COLS
+            ):
                 continue
             span_filters.append(f)
         return span_filters
+
+    def _build_resolved_session_clause(self, params: dict[str, Any]) -> str:
+        # Applied in the OUTER WHERE of `_session_from_where`, where the column
+        # is already projected as the remap-resolved `trace_session_id`.
+        return build_session_id_filter_clause(
+            self.filters,
+            params,
+            session_col="trace_session_id",
+            param_prefix="sess_",
+        )
 
     def _build_resolved_user_clause(self, params: dict[str, Any]) -> str:
         """Build the id-remap-resolved end-user predicate for the session scan.
@@ -543,6 +589,99 @@ class SessionListQueryBuilder(BaseQueryBuilder):
 
         return " AND ".join(clauses)
 
+    def _user_null_filter_op(self) -> str | None:
+        """Return ``is_null``/``is_not_null`` when a user filter tests presence.
+
+        A ``user_id``/``end_user_id`` filter with a null operator carries no
+        value to resolve — it asks "does this session have a user at all" —
+        and is answered by ``_build_user_presence_clause`` instead of the
+        id-set membership in ``_build_resolved_user_clause``.
+        """
+        for f in self.filters:
+            col_id = f.get("column_id") or f.get("columnId")
+            if col_id not in self._ENDUSER_ID_FILTER_COLS:
+                continue
+            config = f.get("filter_config") or f.get("filterConfig") or {}
+            op = config.get("filter_op") or config.get("filterOp")
+            if op in ("is_null", "is_not_null"):
+                return op
+        return None
+
+    def _build_user_presence_clause(self, null_op: str) -> str:
+        """Membership over sessions that have ANY end user.
+
+        ``is_not_null`` → the session IS in that set; ``is_null`` → it is NOT.
+        The outer session query groups by remap-resolved ``trace_session_id``,
+        so the presence set must resolve session ids too. Otherwise a straddler
+        whose user appears only on its deterministic-id spans can be compared
+        against the old survivor id and misclassified as user-less.
+        """
+        ts_join = remap_left_join(
+            "us.trace_session_id", "trace_session_id_remap", "user_presence_ts_remap"
+        )
+        resolved_ts = resolved_id_expr("us.trace_session_id", "user_presence_ts_remap")
+        membership = f"""(
+            SELECT trace_session_id
+            FROM (
+                SELECT {resolved_ts} AS trace_session_id
+                FROM (
+                    SELECT trace_session_id
+                    FROM {self.TABLE}
+                    {self.project_where()}
+                      AND trace_session_id IS NOT NULL
+                      AND trace_session_id != toUUID('{NIL_UUID}')
+                      AND end_user_id IS NOT NULL
+                      AND end_user_id != toUUID('{NIL_UUID}')
+                      AND start_time >= %(start_date)s
+                      AND start_time < %(end_date)s
+                ) AS us
+                {ts_join}
+            )
+            GROUP BY trace_session_id
+        )"""
+        op = "NOT IN" if null_op == "is_null" else "IN"
+        return f"trace_session_id {op} {membership}"
+
+    def _build_session_user_membership_clause(self, params: dict[str, Any]) -> str:
+        null_op = self._user_null_filter_op()
+        if null_op:
+            return self._build_user_presence_clause(null_op)
+
+        resolved_user_clause = self._build_resolved_user_clause(params)
+        if not resolved_user_clause:
+            return ""
+
+        ts_join = remap_left_join(
+            "us.trace_session_id", "trace_session_id_remap", "user_ts_remap"
+        )
+        eu_join = remap_left_join(
+            "us.end_user_id", "end_user_id_remap", "user_eu_remap"
+        )
+        resolved_ts = resolved_id_expr("us.trace_session_id", "user_ts_remap")
+        resolved_eu = resolved_id_expr("us.end_user_id", "user_eu_remap")
+        return f"""trace_session_id IN (
+            SELECT trace_session_id
+            FROM (
+                SELECT
+                    {resolved_ts} AS trace_session_id,
+                    {resolved_eu} AS end_user_id
+                FROM (
+                    SELECT trace_session_id, end_user_id
+                    FROM {self.TABLE}
+                    {self.project_where()}
+                      AND trace_session_id IS NOT NULL
+                      AND trace_session_id != toUUID('{NIL_UUID}')
+                      AND end_user_id IS NOT NULL
+                      AND start_time >= %(start_date)s
+                      AND start_time < %(end_date)s
+                ) AS us
+                {ts_join}
+                {eu_join}
+            )
+            WHERE {resolved_user_clause}
+            GROUP BY trace_session_id
+        )"""
+
     # Span columns the session aggregates read (kept narrow so the id-remap
     # wrap projects only what the GROUP BY needs).
     _SESSION_SCAN_COLS = (
@@ -563,23 +702,16 @@ class SessionListQueryBuilder(BaseQueryBuilder):
     ) -> str:
         """Return the ``FROM … WHERE …`` clause for a session aggregation query.
 
-        P3b step1.5 (DESIGN §3 / id_remap_sql): the scan is ALWAYS wrapped in a
-        derived table that resolves ``trace_session_id`` new→old through
-        ``trace_session_id_remap`` and projects it AS ``trace_session_id``, so the
-        outer ``GROUP BY trace_session_id`` / ``count(DISTINCT trace_session_id)``
-        treat a cross-cutover straddler's OLD + NEW session ids as ONE session
-        (else the no-filter/bookmark BROWSE lists it twice at the flip). When a
-        user filter is present, ``end_user_id`` is ALSO resolved (its remap) and
-        the resolved-id predicate binds in the outer ``WHERE`` so old + new spans
-        select as ONE user. The session/root/time/project predicates +
-        ``{filter_fragment}`` stay on the inner raw scan.
+        The scan resolves ``trace_session_id`` new→old before grouping, so a
+        cross-cutover straddler remains one session. User filters use a separate
+        remap-aware membership subquery; this selects sessions without shrinking
+        their aggregate rows. Span predicates remain on the inner root-span scan.
 
         GATE B: pre-flip every span's id lives in the remap ``old_id`` column, so
         NO span matches a ``new_id`` → ``resolved_id_expr`` (zero-uuid-guarded,
         NOT a COALESCE) returns each span's own id and the LEFT JOIN(s) add
         nothing → the wrapped scan is a transparent pass-through, byte-identical
-        (result-set) to the committed bare scan. Mutates ``params`` via
-        ``_build_resolved_user_clause``.
+        (result-set) to the committed bare scan.
         """
         base_predicates = f"""{self.project_where()}
           AND trace_session_id IS NOT NULL
@@ -588,46 +720,42 @@ class SessionListQueryBuilder(BaseQueryBuilder):
           {time_where}
           {filter_fragment}"""
 
-        resolved_user_clause = self._build_resolved_user_clause(params)
+        resolved_session_clause = self._build_resolved_session_clause(params)
+        user_membership_clause = self._build_session_user_membership_clause(params)
 
         # `trace_session_id` resolution is UNCONDITIONAL (closes the browse split);
-        # `end_user_id` resolution is added only when a user filter needs it (its
-        # join is otherwise dead weight). Both remap joins hang off the SAME inner
-        # row `rs` → DISTINCT aliases (`ts_remap` / `eu_remap`).
+        # User membership is resolved in a separate session-id subquery so
+        # selecting a user does not shrink the session's displayed aggregates.
         ts_join = remap_left_join(
             "rs.trace_session_id", "trace_session_id_remap", "ts_remap"
         )
         resolved_ts = resolved_id_expr("rs.trace_session_id", "ts_remap")
 
-        # Inner scan projects the narrow aggregate cols; `end_user_id` is pulled
-        # in only when the user filter needs to resolve+bind it.
+        # Inner scan projects only columns required by session aggregation.
         scan_cols = list(self._SESSION_SCAN_COLS)
+        if self._needs_message_aggregates():
+            scan_cols.append("input")
         outer_select = [f"{resolved_ts} AS trace_session_id"] + [
             f"rs.{c} AS {c}" for c in scan_cols if c != "trace_session_id"
         ]
-        joins = [ts_join]
-        inner_extra = ""
-        where_clause = ""
-        if resolved_user_clause:
-            eu_join = remap_left_join("rs.end_user_id", "end_user_id_remap", "eu_remap")
-            resolved_eu = resolved_id_expr("rs.end_user_id", "eu_remap")
-            outer_select.append(f"{resolved_eu} AS end_user_id")
-            joins.append(eu_join)
-            inner_extra = ", end_user_id"
-            where_clause = f"\n        WHERE {resolved_user_clause}"
+        outer_clauses = [
+            c for c in (resolved_session_clause, user_membership_clause) if c
+        ]
 
         inner_cols = ", ".join(scan_cols)
         outer_select_sql = ",\n                ".join(outer_select)
-        joins_sql = "\n            ".join(joins)
+        where_clause = (
+            f"\n        WHERE {' AND '.join(outer_clauses)}" if outer_clauses else ""
+        )
         return f"""FROM (
             SELECT
                 {outer_select_sql}
             FROM (
-                SELECT {inner_cols}{inner_extra}
+                SELECT {inner_cols}
                 FROM {self.TABLE}
                 {base_predicates}
             ) AS rs
-            {joins_sql}
+            {ts_join}
         ){where_clause}"""
 
     def _build_having_clauses(self) -> str:
@@ -637,13 +765,49 @@ class SessionListQueryBuilder(BaseQueryBuilder):
 
         for f in self.filters:
             col_id = f.get("column_id") or f.get("columnId")
-            if col_id not in self.SESSION_FILTER_MAP:
+            if (
+                col_id not in self.SESSION_FILTER_MAP
+                and col_id not in self.MESSAGE_FILTER_MAP
+            ):
                 continue
 
             config = f.get("filter_config") or f.get("filterConfig") or {}
             filter_op = config.get("filter_op") or config.get("filterOp")
             filter_value = config.get("filter_value", config.get("filterValue"))
-            ch_col = self.SESSION_FILTER_MAP[col_id]
+            ch_col = (
+                self.SESSION_FILTER_MAP.get(col_id) or self.MESSAGE_FILTER_MAP[col_id]
+            )
+
+            if col_id in self.MESSAGE_FILTER_MAP:
+                if filter_op in ("is_null", "is_not_null"):
+                    conditions.append(
+                        f"({ch_col} IS NULL OR {ch_col} = '')"
+                        if filter_op == "is_null"
+                        else f"({ch_col} IS NOT NULL AND {ch_col} != '')"
+                    )
+                    continue
+                text_op = {
+                    "equals": "=",
+                    "not_equals": "!=",
+                    "contains": "ILIKE",
+                    "not_contains": "NOT ILIKE",
+                    "starts_with": "ILIKE",
+                    "ends_with": "ILIKE",
+                }.get(filter_op)
+                if text_op is None:
+                    conditions.append("0 = 1")
+                    continue
+                param_counter += 1
+                param_name = f"having_{param_counter}"
+                if filter_op in ("contains", "not_contains"):
+                    filter_value = f"%{filter_value}%"
+                elif filter_op == "starts_with":
+                    filter_value = f"{filter_value}%"
+                elif filter_op == "ends_with":
+                    filter_value = f"%{filter_value}"
+                self.params[param_name] = filter_value
+                conditions.append(f"{ch_col} {text_op} %({param_name})s")
+                continue
 
             op_map = {
                 "equals": "=",
@@ -664,3 +828,32 @@ class SessionListQueryBuilder(BaseQueryBuilder):
             conditions.append(f"{ch_col} {op} %({param_name})s")
 
         return " AND ".join(conditions)
+
+    def _has_message_filters(self) -> bool:
+        return any(
+            (f.get("column_id") or f.get("columnId")) in self.MESSAGE_FILTER_MAP
+            for f in self.filters
+        )
+
+    def _has_message_sort(self) -> bool:
+        return any(
+            (s.get("column_id") or s.get("columnId")) in self.MESSAGE_FILTER_MAP
+            for s in self.sort_params
+        )
+
+    def _needs_message_aggregates(self) -> bool:
+        """The argMin/argMax message aggregates must be projected whenever a
+        message column is filtered OR sorted on. Sorting alone (without a
+        matching filter) still emits ``ORDER BY first_message`` via
+        ``translate_sort``, so the column must be selected or CH fails with
+        "Unknown expression identifier".
+        """
+        return self._has_message_filters() or self._has_message_sort()
+
+    def _message_aggregate_select(self) -> str:
+        if not self._needs_message_aggregates():
+            return ""
+        return (
+            ",\n            argMin(input, start_time) AS first_message,"
+            "\n            argMax(input, start_time) AS last_message"
+        )

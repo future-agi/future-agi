@@ -118,6 +118,9 @@ from model_hub.utils.annotation_queue_helpers import (
     assign_items_to_all_annotators,
     auto_assign_items,
     calculate_agreement,
+    canonical_score_value,
+    eval_metrics_from_call_execution,
+    eval_output_value,
     evaluate_rule,
     filter_available_source_ids_for_annotation,
     get_fk_field_name,
@@ -126,6 +129,8 @@ from model_hub.utils.annotation_queue_helpers import (
     resolve_source_object,
 )
 from model_hub.utils.utils import send_message_to_channel
+from simulate.models.test_execution import CallTranscript
+from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.api_serializers import (
     ApiSelectionTooLargeErrorSerializer,
@@ -136,7 +141,7 @@ from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.email import email_helper
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
-from tracer.models.observation_span import EvalLogger, ObservationSpan
+from tracer.models.observation_span import EvalLogger
 from tracer.models.project import Project
 from tracer.models.span_notes import SpanNotes
 
@@ -154,6 +159,25 @@ ERROR_RESPONSES = {
 # path for selections exceeding this; until then, the endpoint errors with
 # ``selection_too_large`` so the UI can prompt the user to narrow the filter.
 MAX_SELECTION_CAP = 10_000
+
+
+def _queue_item_export_prefetches():
+    # Tracer sources (trace / observation_span) render CH-native via
+    # CollectorSourceCache, so there is no PG trace-span prefetch here — a
+    # ``trace__observation_spans`` Prefetch would query the dropped tracer tables.
+    # call_execution is a simulate model (not tracer), so its transcript prefetch
+    # stays.
+    return (
+        Prefetch(
+            "call_execution__transcripts",
+            queryset=CallTranscript.objects.filter(
+                speaker_role__in=get_displayable_transcript_roles(),
+                deleted=False,
+            ).order_by("start_time_ms"),
+            to_attr="_displayable_transcripts",
+        ),
+    )
+
 
 SOURCE_TYPE_EXPORT_LABELS = {
     QueueItemSourceType.DATASET_ROW.value: "dataset row",
@@ -288,10 +312,13 @@ def _manual_assignment_denial_reason(queue, item, user):
         return None
     if _queue_item_is_assigned_to_user(item, user):
         return None
-    if _is_queue_manager(queue, user) and not _queue_has_any_item_assignments(queue.id):
-        return None
     if _queue_item_has_assignments(item):
         return "This item is assigned to another annotator."
+    # Managers/admins may claim any unassigned item. Checked after the
+    # "assigned to another" guard so we never steal someone else's item, and no
+    # longer gated on the queue being assignment-free.
+    if _is_queue_manager(queue, user):
+        return None
     return "This item must be assigned before it can be annotated."
 
 
@@ -1240,44 +1267,27 @@ def _reopen_items_missing_required_labels(queue):
 def _span_notes_target_for_queue_item(item):
     """Return the span that stores whole-item notes for queue annotation.
 
-    Span-source items return the PG ``ObservationSpan`` (writes still live in
-    PG), falling back to the CH span for collector data with no PG row.
-    Trace-source items pick the trace's root span from
-    CH 25 — preference order is ``observation_type="conversation"`` root span
-    (voice projects) → first root span by start_time → ``None``.
+    CH-native: span-source items resolve the span from CH by its soft id;
+    trace-source items pick the trace's root span from CH (lean) — preference
+    order ``observation_type="conversation"`` root (voice) → first root span →
+    ``None``. Downstream only reads ``.id``. Never query PG (tables are dropped).
     """
-    if item.source_type == "observation_span" and item.observation_span_id:
-        try:
-            return item.observation_span
-        except ObservationSpan.DoesNotExist:
-            # Collector span: no PG row. Resolve from CH — downstream only reads
-            # `.id` (CHSpan exposes it), same as the trace-root CH spans below.
-            from tracer.services.clickhouse.v2 import get_reader
+    from tracer.services.clickhouse.v2 import get_reader
 
-            with get_reader() as reader:
-                return reader.get(str(item.observation_span_id))
+    if item.source_type == "observation_span" and item.observation_span_id:
+        with get_reader() as reader:
+            return reader.get(str(item.observation_span_id))
     if item.source_type != "trace" or not item.trace_id:
         return None
 
-    # CH read replaces the prior PG path:
-    #   root_spans = ObservationSpan.objects.filter(trace_id=item.trace_id,
-    #       deleted=False).filter(Q(parent_span_id__isnull=True) |
-    #       Q(parent_span_id=""))
-    #   conversation root → start_time root → None
-    # CHSpanReader.list_by_trace already filters is_deleted=0 and orders by
-    # (start_time, id). Root spans have empty parent_span_id (CH stores it
-    # as a non-nullable String — see schema 001), so we filter in Python.
-    from tracer.services.clickhouse.v2 import get_reader
-
     with get_reader() as reader:
-        spans = reader.list_by_trace(str(item.trace_id))
-    root_spans = [s for s in spans if not s.parent_span_id]
-    if not root_spans:
+        roots = reader.roots_by_trace_ids([str(item.trace_id)], include_heavy=False)
+    if not roots:
         return None
-    for s in root_spans:
+    for s in roots:
         if s.observation_type == "conversation":
             return s
-    return root_spans[0]
+    return roots[0]
 
 
 def _serialize_queue_item_note(note):
@@ -1316,10 +1326,10 @@ def _item_note_rows(item):
 def _span_note_rows(span):
     """Return SpanNotes for the given span.
 
-    *span* may be a Django ``ObservationSpan`` (span-source items, still PG)
-    or a ``CHSpan`` dataclass (trace-source items, loaded from CH 25 via
-    ``_span_notes_target_for_queue_item``). Both expose a string ``.id``
-    that the ``SpanNotes.span`` FK accepts as an ``span_id=`` filter value.
+    *span* is a ``CHSpan`` resolved from CH via
+    ``_span_notes_target_for_queue_item`` (or a Django ``ObservationSpan`` on the
+    legacy path); both expose a string ``.id`` that the ``SpanNotes.span`` FK
+    accepts as a ``span_id=`` filter value.
     """
     if span is None:
         return []
@@ -1424,54 +1434,6 @@ def _latest_item_note(item):
         .first()
     )
     return queue_note.notes if queue_note else ""
-
-
-def _span_note_targets_for_queue_items(items):
-    """Resolve whole-item note spans in bulk for export.
-
-    Pairs ``_span_notes_target_for_queue_item`` semantics with a bulk fetch:
-    span-source items use the FK Django ``ObservationSpan`` (still PG);
-    trace-source items pick the trace root span from CH 25 in one bulk
-    query (conversation root preferred, then first-by-(start_time, id)).
-    Currently unused — kept for the export builders that may re-adopt it.
-    """
-    targets = {}
-    trace_ids = []
-    for item in items:
-        if item.source_type == "observation_span" and item.observation_span_id:
-            targets[item.id] = item.observation_span
-        elif item.source_type == "trace" and item.trace_id:
-            trace_ids.append(str(item.trace_id))
-
-    if trace_ids:
-        # CH read replaces:
-        #   ObservationSpan.objects.filter(trace_id__in=trace_ids, deleted=False)
-        #     .filter(Q(parent_span_id__isnull=True) | Q(parent_span_id=""))
-        #     .order_by("trace_id", "start_time", "created_at")
-        # CHSpanReader.list_by_trace_ids already excludes is_deleted=1 and
-        # orders by (trace_id, start_time, id). Root-span filtering happens
-        # in Python (parent_span_id is non-nullable string in CH 25 schema).
-        from tracer.services.clickhouse.v2 import get_reader
-
-        with get_reader() as reader:
-            spans = reader.list_by_trace_ids(trace_ids)
-        first_root_by_trace = {}
-        first_conversation_by_trace = {}
-        for span in spans:
-            if span.parent_span_id:
-                continue
-            first_root_by_trace.setdefault(span.trace_id, span)
-            if span.observation_type == "conversation":
-                first_conversation_by_trace.setdefault(span.trace_id, span)
-        for item in items:
-            if item.source_type == "trace" and item.trace_id:
-                target = first_conversation_by_trace.get(
-                    str(item.trace_id)
-                ) or first_root_by_trace.get(str(item.trace_id))
-                if target is not None:
-                    targets[item.id] = target
-
-    return targets
 
 
 def _latest_item_notes_for_queue_items(items):
@@ -1644,7 +1606,7 @@ def _serialize_score_for_export(score):
     return {
         "label_id": str(score.label_id),
         "label_name": score.label.name if score.label else None,
-        "value": score.value,
+        "value": canonical_score_value(score.label, score.value),
         "notes": score.notes,
         "annotator_id": str(score.annotator_id) if score.annotator_id else None,
         "annotator_name": annotator.name if annotator else None,
@@ -1678,7 +1640,7 @@ def _label_export_value(scores, label_id, kind):
         return [_serialize_score_for_export(score) for score in label_scores]
 
     value_getters = {
-        "value": lambda score: score.value,
+        "value": lambda score: canonical_score_value(score.label, score.value),
         "notes": lambda score: score.notes,
         "annotator_id": lambda score: (
             str(score.annotator_id) if score.annotator_id else None
@@ -1721,16 +1683,6 @@ def _annotation_metrics_for_scores(scores):
     }
 
 
-def _eval_output_value(log):
-    if log.output_float is not None:
-        return log.output_float
-    if log.output_bool is not None:
-        return log.output_bool
-    if log.output_str not in (None, ""):
-        return log.output_str
-    return log.output_str_list
-
-
 def _eval_metric_key(log):
     if log.custom_eval_config_id and getattr(log.custom_eval_config, "name", None):
         return log.custom_eval_config.name
@@ -1739,7 +1691,7 @@ def _eval_metric_key(log):
 
 def _serialize_eval_log(log):
     return {
-        "score": _eval_output_value(log),
+        "score": eval_output_value(log),
         "explanation": log.results_explanation or log.eval_explanation,
         "tags": log.results_tags or log.eval_tags,
         "error": log.error,
@@ -1754,13 +1706,25 @@ def _eval_metrics_for_queue_items(items):
     if not items:
         return {}
 
+    metrics_by_item = {item.id: {} for item in items}
+
     span_item_ids = defaultdict(list)
     trace_item_ids = defaultdict(list)
     for item in items:
-        if item.source_type == "observation_span" and item.observation_span_id:
+        if (
+            item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value
+            and item.observation_span_id
+        ):
             span_item_ids[str(item.observation_span_id)].append(item.id)
-        elif item.source_type == "trace" and item.trace_id:
+        elif item.source_type == QueueItemSourceType.TRACE.value and item.trace_id:
             trace_item_ids[str(item.trace_id)].append(item.id)
+        elif (
+            item.source_type == QueueItemSourceType.CALL_EXECUTION.value
+            and item.call_execution_id
+        ):
+            metrics_by_item[item.id] = eval_metrics_from_call_execution(
+                item.call_execution
+            )
 
     eval_filter = Q()
     if span_item_ids:
@@ -1768,9 +1732,8 @@ def _eval_metrics_for_queue_items(items):
     if trace_item_ids:
         eval_filter |= Q(trace_id__in=list(trace_item_ids))
     if not eval_filter:
-        return {}
+        return metrics_by_item
 
-    metrics_by_item = {item.id: {} for item in items}
     seen_by_item = {item.id: set() for item in items}
     eval_logs = (
         EvalLogger.objects.filter(eval_filter, deleted=False)
@@ -2142,39 +2105,18 @@ def _build_annotation_queue_export_fields(queue, sample_items=None):
         fields.append(field)
 
     if sample_items is None:
-        # KEEP-PG (transitional bridge): the Prefetch hydrates
-        # `trace._queue_export_spans` which downstream callers
-        # (`_trace_primary_span`, `resolve_source_content`) read as a list of
-        # Django ObservationSpan objects with `.span_attributes` /
-        # `.resource_attributes` dict access. Migrating that chain requires
-        # either teaching `resolve_source_content` about CHSpan or attaching
-        # CHSpan objects through `Prefetch.to_attr`, which Django's prefetch
-        # machinery does not support for non-model objects. Wave-3
-        # (commit 93c5c415f) added 9 new reader methods but none hydrate
-        # CHSpan via Prefetch.to_attr (that's structurally a Django ORM
-        # concept that doesn't bridge to dataclasses). Deferred to a
-        # follow-up commit that refactors the export path to assemble its
-        # own per-trace span maps via CHSpanReader instead of leaning on
-        # Prefetch — see also DECISIONS.
+        # Tracer sources (trace / observation_span / trace_session) resolve
+        # CH-native via CollectorSourceCache below — no PG select_related on them
+        # (a join to the dropped tracer tables would 500). dataset_row /
+        # prototype_run / call_execution stay PG-backed.
         sample_items = (
             QueueItem.objects.filter(queue=queue, deleted=False)
             .select_related(
-                "trace",
-                "observation_span",
                 "dataset_row",
                 "prototype_run",
                 "call_execution",
-                "trace_session",
             )
-            .prefetch_related(
-                Prefetch(
-                    "trace__observation_spans",
-                    queryset=ObservationSpan.objects.filter(deleted=False).order_by(
-                        "start_time", "created_at"
-                    ),
-                    to_attr="_queue_export_spans",
-                )
-            )
+            .prefetch_related(*_queue_item_export_prefetches())
             .order_by("order", "created_at")[:100]
         )
     sample_items = list(sample_items)
@@ -3345,32 +3287,19 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         query_params = request.validated_query_data
 
         queue = self.get_object()
-        # KEEP-PG (transitional bridge): same Prefetch pattern as
-        # `_build_annotation_queue_export_fields` — see the comment there for
-        # the deferral rationale. The exported rows flow through
-        # `resolve_source_content`/`_trace_primary_span` which expect Django
-        # ObservationSpan objects.
+        # Tracer sources resolve CH-native via CollectorSourceCache below, so no
+        # PG select_related on trace / observation_span / trace_session (a join to
+        # the dropped tracer tables would 500).
         items_qs = (
             QueueItem.objects.filter(queue=queue, deleted=False)
             .select_related(
                 "queue",
                 "reviewed_by",
-                "trace",
-                "observation_span",
                 "dataset_row",
                 "prototype_run",
                 "call_execution",
-                "trace_session",
             )
-            .prefetch_related(
-                Prefetch(
-                    "trace__observation_spans",
-                    queryset=ObservationSpan.objects.filter(deleted=False).order_by(
-                        "start_time", "created_at"
-                    ),
-                    to_attr="_queue_export_spans",
-                )
-            )
+            .prefetch_related(*_queue_item_export_prefetches())
         )
 
         status_filter = _normalize_query_filter_value(query_params.get("status"))
@@ -3673,31 +3602,19 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 user=request.user,
             )
 
-        # KEEP-PG (transitional bridge): same Prefetch pattern as
-        # `_build_annotation_queue_export_fields` and `export_annotations` —
-        # `resolve_source_content` reads Django ObservationSpan attrs off the
-        # prefetched chain. See the comment on the first occurrence above.
+        # Tracer sources resolve CH-native via CollectorSourceCache below — no PG
+        # select_related on trace / observation_span / trace_session (a join to the
+        # dropped tracer tables would 500).
         items_qs = (
             QueueItem.objects.filter(queue=queue, deleted=False)
             .select_related(
                 "queue",
                 "reviewed_by",
-                "trace",
-                "observation_span",
                 "dataset_row",
                 "prototype_run",
                 "call_execution",
-                "trace_session",
             )
-            .prefetch_related(
-                Prefetch(
-                    "trace__observation_spans",
-                    queryset=ObservationSpan.objects.filter(deleted=False).order_by(
-                        "start_time", "created_at"
-                    ),
-                    to_attr="_queue_export_spans",
-                )
-            )
+            .prefetch_related(*_queue_item_export_prefetches())
         )
         if status_filter:
             items_qs = items_qs.filter(status=status_filter)
@@ -4071,8 +3988,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         queue = self.get_object()
         data = request.validated_data
         label_id = data.get("label_id")
-        required = _is_truthy(data.get("required", True))
+        required = _is_truthy(data.get("required", False))
 
+        # Only marking a label *required* is the gated feature; a plain add
+        # (required omitted/false) must never trip the entitlement gate.
         if required:
             from tfc.ee_gating import EEFeature, check_ee_feature
 
@@ -4174,6 +4093,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             sid = src.get("source_id")
             span_notes_source_id = src.get("span_notes_source_id")
             if span_notes_source_id:
+                # A collector root span lives only in CH (no PG row), so the PG
+                # resolve misses; fall back to the CH resolver (matches scores.py)
+                # so the trace-detail annotate panel loads instead of 404ing.
                 span_notes_source = resolve_source_object(
                     "observation_span",
                     span_notes_source_id,
@@ -4408,20 +4330,42 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             # called `get_reader().get(sid)` inside both the project- and
             # agent-definition-scope branches for every queue × source
             # combination, producing N×M CH round-trips. Precompute the
-            # span lookup once with list_by_ids; the inner branches now
-            # consult an in-memory dict.
-            _ch_span_by_id: dict[str, object] = {}
+            # span lookup once; the inner branches now consult an in-memory dict.
+            #
+            # These branches only need each span's project_id (a scope check),
+            # so read the lean ``scope_by_ids`` projection — pulling the full
+            # span row here blows the shared ClickHouse memory limit (code 241)
+            # on fat voice spans whose ``attributes_extra`` carries a whole raw
+            # log.
+            _ch_scope_by_span: dict[str, object] = {}
             _span_source_ids = [
                 str(src["source_id"])
                 for src in sources
                 if src["source_type"] == "observation_span"
             ]
-            if _span_source_ids:
+            # Same N×M / OOM rationale for traces: a trace's project is a lean CH
+            # read of its root span (``root_ids_by_trace_ids``), precomputed once so
+            # the scope branches below do an in-memory dict lookup instead of a PG
+            # ``Trace.objects`` join — the PG tracer tables are dropped.
+            _ch_project_by_trace: dict[str, str | None] = {}
+            _trace_source_ids = [
+                str(src["source_id"])
+                for src in sources
+                if src["source_type"] == "trace"
+            ]
+            if _span_source_ids or _trace_source_ids:
                 from tracer.services.clickhouse.v2 import get_reader as _gr_bulk
 
                 with _gr_bulk() as _reader_bulk:
-                    for _s in _reader_bulk.list_by_ids(_span_source_ids):
-                        _ch_span_by_id[str(_s.id)] = _s
+                    if _span_source_ids:
+                        _ch_scope_by_span = _reader_bulk.scope_by_ids(_span_source_ids)
+                    if _trace_source_ids:
+                        _ch_project_by_trace = {
+                            tid: pid
+                            for tid, (_root_id, pid) in _reader_bulk.root_ids_by_trace_ids(
+                                _trace_source_ids
+                            ).items()
+                        }
 
             for dq in missing_defaults:
                 if dq.id in seen_queues:
@@ -4439,17 +4383,18 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                         "observation_span",
                         "trace_session",
                     ):
-                        from tracer.models.trace import Trace
-
                         if st == "trace":
-                            exists = Trace.objects.filter(
-                                id=sid, project_id=dq.project_id, deleted=False
-                            ).exists()
+                            # CH-only: the trace's project (lean 2-column read,
+                            # prefetched above) must match this project-scoped
+                            # default queue. No PG ``Trace`` row exists to join.
+                            exists = _ch_project_by_trace.get(str(sid)) == str(
+                                dq.project_id
+                            )
                         elif st == "observation_span":
                             # Bulk-prefetched above; in-memory dict lookup
                             # (avoids N×M CH round-trips per codex P2).
-                            _sp = _ch_span_by_id.get(str(sid))
-                            exists = _sp is not None and _sp.project_id == str(
+                            _scope = _ch_scope_by_span.get(str(sid))
+                            exists = _scope is not None and _scope.project_id == str(
                                 dq.project_id
                             )
                         elif st == "trace_session":
@@ -4504,24 +4449,30 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                         "observation_span",
                         "trace_session",
                     ):
-                        from tracer.models.trace import Trace
-
                         if st == "trace":
-                            exists = Trace.objects.filter(
-                                id=sid,
-                                project__observability_providers__agent_definition=dq.agent_definition_id,
-                                deleted=False,
-                            ).exists()
+                            # CH-only: read the trace's project from CH (prefetched)
+                            # then verify the agent-definition linkage in PG
+                            # (Project → ObservabilityProvider → AgentDefinition),
+                            # mirroring the observation_span branch below.
+                            _pid = _ch_project_by_trace.get(str(sid))
+                            exists = (
+                                _pid is not None
+                                and Project.objects.filter(
+                                    id=_pid,
+                                    observability_providers__agent_definition=dq.agent_definition_id,
+                                ).exists()
+                            )
                         elif st == "observation_span":
                             # Bulk-prefetched above. FK traversal
                             # `project__observability_providers__agent_definition`
                             # isn't on the CH span row, so verify the project
                             # linkage via PG after the in-memory CH lookup.
-                            _sp = _ch_span_by_id.get(str(sid))
+                            _scope = _ch_scope_by_span.get(str(sid))
                             exists = (
-                                _sp is not None
+                                _scope is not None
+                                and _scope.project_id is not None
                                 and Project.objects.filter(
-                                    id=_sp.project_id,
+                                    id=_scope.project_id,
                                     observability_providers__agent_definition=dq.agent_definition_id,
                                 ).exists()
                             )
@@ -4607,12 +4558,12 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 "reviewed_by",
             )
             .prefetch_related(
+                # Tracer sources (trace / observation_span / trace_session) render
+                # CH-native via the serializer's CollectorSourceCache — no PG
+                # prefetch on them (a SELECT from the dropped tracer tables would 500).
                 "dataset_row",
-                "trace",
-                "observation_span",
                 "prototype_run",
                 "call_execution",
-                "trace_session",
                 Prefetch(
                     "assignments",
                     queryset=QueueItemAssignment.objects.filter(
@@ -4839,8 +4790,6 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 source_id,
                 organization=request.organization,
                 workspace=getattr(request, "workspace", None),
-                # stores the soft id below, so a CH-resolved collector source is fine
-                allow_ch_fallback=True,
             )
             if not source_obj:
                 errors.append(f"Not found: {source_type}={source_id}")
@@ -4969,6 +4918,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             resolved_ids,
             organization=request.organization,
             workspace=getattr(request, "workspace", None),
+            project_id=project_id,
         )
         errors = [unavailable_error] if unavailable_error else []
 
@@ -5212,7 +5162,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 "Annotations can only be submitted when the queue is active."
             )
 
-        if not _has_explicit_queue_role(
+        # _has_queue_role (not _has_explicit_queue_role): org/workspace admins
+        # are manager-equivalent, so they can annotate without an explicit role.
+        if not _has_queue_role(
             queue_id,
             request.user,
             AnnotatorRole.ANNOTATOR.value,
@@ -5382,38 +5334,16 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 ).update(deleted=True, deleted_at=now, updated_at=now)
 
         if span_notes_target is not None and item_notes is not None:
-            # `span_notes_target` is either a Django ObservationSpan (span
-            # source items) or a CHSpan dataclass (trace source items, root
-            # span loaded from CH). Both expose a string `.id` that the
-            # SpanNotes.span FK accepts as the `span_id=` argument; the FK
-            # column itself remains a PG CharField pointing at
-            # tracer_observation_span.id.
-            #
-            # Codex consolidated review P1 (2026-05-26): if the CH span has
-            # no matching PG ObservationSpan row (e.g. dual-write skew, or
-            # OTel-direct-to-CH cutover before PG dual-write removed),
-            # SpanNotes.update_or_create raises ForeignKey IntegrityError
-            # AFTER scores + queue-notes were already committed earlier in
-            # this submit handler. Catch and degrade gracefully — span notes
-            # are annotator commentary, not load-bearing; the operator gets
-            # a warning log and the user still sees their annotation land.
+            # `span_notes_target` is a Django ObservationSpan (span-source items)
+            # or a CHSpan (trace-source items, root loaded from CH); both expose a
+            # string `.id`. SpanNotes.span is a db_constraint=False soft FK, so the
+            # write must NOT gate on a PG ObservationSpan lookup — a CH-only
+            # collector span has no PG row, and the PG tracer tables are dropped.
+            # Write the soft id directly; the try/except stays defensive.
             from django.db import IntegrityError
 
-            from tracer.models.observation_span import ObservationSpan
-
             target_id = span_notes_target.id
-            pg_span_exists = ObservationSpan.no_workspace_objects.filter(
-                id=target_id
-            ).exists()
-            if not pg_span_exists:
-                logger.warning(
-                    "span_notes_skipped_no_pg_row",
-                    span_id=str(target_id),
-                    queue_item_id=str(item.id),
-                    user_id=str(request.user.id),
-                    reason="CH has the span but PG ObservationSpan FK target missing",
-                )
-            elif item_notes:
+            if item_notes:
                 try:
                     SpanNotes.objects.update_or_create(
                         span_id=target_id,
@@ -5769,11 +5699,10 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         query_params = request.validated_query_data
 
         try:
+            # Tracer sources (trace / observation_span) resolve CH-native — no PG
+            # select_related on them (a join to the dropped tracer tables would 500).
             item = QueueItem.objects.select_related(
                 "dataset_row",
-                "trace",
-                "trace__project",
-                "observation_span",
                 "prototype_run",
                 "call_execution",
                 "assigned_to",
@@ -5818,8 +5747,18 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             if assignment_denial_reason:
                 return self._gm.forbidden_response(assignment_denial_reason)
 
-        # Reservation logic: opt-in via ?reserve=true query param
+        # Reservation logic: opt-in via ?reserve=true query param.
         reserve = _is_truthy(query_params.get("reserve"))
+        # The reservation is an editing lock for the user annotating their own
+        # draft. A reviewer/manager opening the review workspace, or re-opening
+        # an item that already carries a review decision (reviewed_by set — e.g.
+        # after request-changes), is acting as a reviewer, not the editor.
+        # Granting them the lock strands the annotator who must rework the item
+        # until the reservation expires. Don't reserve in those review contexts.
+        if reserve and (
+            is_review_detail or (is_reviewer and item.reviewed_by_id is not None)
+        ):
+            reserve = False
         if reserve:
             # Atomic reservation to prevent race condition
             updated = (
@@ -5842,7 +5781,11 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 )
             )
             if not updated:
-                return self._gm.bad_request("Item is reserved by another annotator.")
+                return self._gm.custom_error_response(
+                    status.HTTP_409_CONFLICT,
+                    "Item is reserved by another annotator.",
+                    code="item_reserved",
+                )
             item.refresh_from_db()
 
         labels = (
@@ -6044,7 +5987,9 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         if getattr(queue, "is_default", False):
             _ensure_default_queue_member_can_manage(queue, request.user)
 
-        if not _has_explicit_queue_role(
+        # _has_queue_role (not _has_explicit_queue_role): org/workspace admins
+        # are manager-equivalent, so they can assign without an explicit role.
+        if not _has_queue_role(
             queue_id,
             request.user,
             AnnotatorRole.MANAGER.value,
@@ -7457,25 +7402,6 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
                 ),
             )
 
-        # Multi-click guard. If the rule fired in the last 30s, refuse with
-        # 409 so a second click while the first run is still in flight
-        # doesn't blow up to two workflows + two emails + two PG row-lock
-        # waits. The lower-level QueueItem unique constraint already prevents
-        # data corruption, but it's still wasteful work and confusing UX.
-        # 30s is small enough that legitimate re-runs aren't impacted —
-        # users can wait, and the FE keeps the Run button disabled for the
-        # same window.
-        if rule.last_triggered_at and (
-            timezone.now() - rule.last_triggered_at
-        ) < timedelta(seconds=30):
-            return self._gm.custom_error_response(
-                status_code=status.HTTP_409_CONFLICT,
-                result=(
-                    "A run is already in progress for this rule. "
-                    "Please wait a few seconds before trying again."
-                ),
-            )
-
         from model_hub.utils.annotation_queue_helpers import (
             RULE_RUN_SYNC_THRESHOLD,
         )
@@ -7505,29 +7431,21 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
             result = evaluate_rule(rule, user=request.user, cap=RULE_RUN_SYNC_THRESHOLD)
             return self._gm.success_response(result)
 
-        # Large run — hand off to Temporal. task_id is suffixed with a
-        # millisecond timestamp so two clicks of "Run" don't collide on the
-        # same workflow_id. Activity-level serialisation already handles
-        # concurrency: ``evaluate_rule`` holds a ``select_for_update`` on
-        # the rule row inside the activity, and ``QueueItem`` unique
-        # constraints make the bulk_create idempotent.
+        # Large run — hand off to Temporal. The workflow id is stable per rule,
+        # so Temporal itself rejects a second "Run" click while a run for this
+        # rule is still open (its default id-conflict behaviour raises
+        # WorkflowAlreadyStartedError), which we surface as a 409 — no duplicate
+        # workflow, no duplicate completion email. A run that has already
+        # finished (closed workflow) never blocks a fresh one, so a re-run after
+        # completion still works. Concurrency within a run is handled at the
+        # activity: ``evaluate_rule`` holds a ``select_for_update`` on the rule
+        # row and ``QueueItem`` unique constraints make the bulk_create
+        # idempotent.
+        from temporalio.exceptions import WorkflowAlreadyStartedError
+
         from tfc.temporal.drop_in.runner import start_activity_sync
 
-        # Reserve the rule *before* scheduling — the 30s multi-click guard
-        # above only catches in-flight runs once the worker has bumped
-        # ``last_triggered_at`` via ``_update_rule_stats``. For async runs
-        # that bump happens minutes later (inside the Temporal activity),
-        # leaving a window where two clicks both pass the guard and schedule
-        # duplicate workflows + duplicate completion emails. Bump now from
-        # the view so the second click sees a fresh timestamp.
-        previous_last_triggered_at = rule.last_triggered_at
-        scheduled_at = timezone.now()
-        AutomationRule.objects.filter(pk=rule.pk).update(last_triggered_at=scheduled_at)
-        rule.last_triggered_at = scheduled_at
-
-        task_id = (
-            f"automation-rule-eval-{rule.pk}-{int(scheduled_at.timestamp() * 1000)}"
-        )
+        task_id = f"automation-rule-eval-{rule.pk}"
 
         try:
             workflow_id = start_activity_sync(
@@ -7541,13 +7459,17 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
                 queue="tasks_l",
                 task_id=task_id,
             )
-        except Exception as exc:
-            # Schedule failed — release the reservation so the user can
-            # retry immediately without waiting out the 30s lockout.
-            AutomationRule.objects.filter(pk=rule.pk).update(
-                last_triggered_at=previous_last_triggered_at
+        except WorkflowAlreadyStartedError:
+            # A run for this rule is already open on Temporal — refuse the
+            # duplicate rather than spawning a second workflow + second email.
+            return self._gm.custom_error_response(
+                status_code=status.HTTP_409_CONFLICT,
+                result=(
+                    "A run is already in progress for this rule. "
+                    "Please wait for it to finish before starting another."
+                ),
             )
-            rule.last_triggered_at = previous_last_triggered_at
+        except Exception as exc:
             logger.exception(
                 "automation_rule_manual_run_schedule_failed",
                 rule_id=str(rule.pk),

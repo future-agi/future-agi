@@ -1303,6 +1303,8 @@ export const endpoints = {
       `${apiPath("/tracer/observation-span/get_trace_id_by_index_spans_as_observe/")}?project_id=${observeId}`,
     addAnnotationValuesForSpan: () =>
       apiPath("/tracer/observation-span/add_annotations/"),
+    submitObservationSpanFeedbackActionType: () =>
+      apiPath("/tracer/observation-span/submit_feedback_action_type/"),
     getObservationSpan: (id) =>
       apiPath("/tracer/observation-span/{id}/", { id }),
     getObservationSpanLoading: (id) =>

@@ -154,6 +154,7 @@ from model_hub.serializers.contracts import (
     EmbeddingsResponseSerializer,
     EvalConfigQuerySerializer,
     EvalStructureQuerySerializer,
+    FeedbackDetailsResponseSerializer,
     HuggingFaceDatasetDetailRequestSerializer,
     HuggingFaceDatasetDetailResponseSerializer,
     HuggingFaceDatasetListRequestSerializer,
@@ -280,6 +281,7 @@ from tfc.utils.storage import (
     download_json_from_s3,
     get_compare_local_dir,
     get_compare_metadata_path,
+    is_own_storage_url,
     upload_audio_to_s3,
     upload_audio_to_s3_duration,
     upload_compare_json_to_s3,
@@ -691,11 +693,10 @@ class AddRowsFromFile(CreateAPIView):
             if not dataset:
                 return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
-            # Check file size (10 MB limit, matching UI constraint)
-            from model_hub.services.dataset_validators import MAX_FILE_SIZE_BYTES
+            from model_hub.constants import MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB
 
             if file.size > MAX_FILE_SIZE_BYTES:
-                return self._gm.bad_request("File size exceeds the 10 MB limit")
+                return self._gm.bad_request(f"File size exceeds the {MAX_FILE_SIZE_MB} MB limit")
 
             # Process the file
             data, error = FileProcessor.process_file(file_obj=file)
@@ -808,6 +809,32 @@ class AddRowsFromFile(CreateAPIView):
             else:
                 max_order = -1
 
+            # Per-import validation budget. SSRF is still enforced downstream
+            # at actual GET time by _ssrf_safe_get inside upload_*_to_s3; the
+            # HEAD is only a pre-flight nicety, so we skip it after N calls or
+            # when the URL points at our own S3 (upload_*_to_s3 no-op-links).
+            _MAX_VALIDATIONS = 100
+            validations_used = [0]
+            budget_exhausted_logged = [False]
+
+            def _maybe_validate(url_value, file_type):
+                if DatatypeConverter._is_own_s3_url(url_value):
+                    return
+                if validations_used[0] >= _MAX_VALIDATIONS:
+                    if not budget_exhausted_logged[0]:
+                        logger.warning(
+                            "add_rows_validation_budget_exhausted",
+                            budget=_MAX_VALIDATIONS,
+                            dataset_id=str(dataset_id),
+                        )
+                        budget_exhausted_logged[0] = True
+                    return
+                # Count the attempt BEFORE the call so a slow external host
+                # can't blow the budget by returning errors — otherwise the
+                # counter never advances and every row pays the full timeout.
+                validations_used[0] += 1
+                validate_file_url(url_value, file_type)
+
             for index, row in data.iterrows():
                 new_row = Row.objects.create(
                     id=str(uuid.uuid4()), dataset=dataset, order=max_order + 1 + index
@@ -821,6 +848,8 @@ class AddRowsFromFile(CreateAPIView):
 
                     if column.data_type == DataTypeChoices.IMAGE.value and value:
                         try:
+                            _maybe_validate(str(value), "image")
+
                             # Generate a unique image key using dataset_id
                             image_key = f"images/{dataset_id}/{uuid.uuid4()}"
                             # Upload to S3 and get URL
@@ -834,6 +863,8 @@ class AddRowsFromFile(CreateAPIView):
 
                     elif column.data_type == DataTypeChoices.AUDIO.value and value:
                         try:
+                            _maybe_validate(str(value), "audio")
+
                             audio_key = f"audio/{dataset_id}/{uuid.uuid4()}"
                             audio_url = upload_audio_to_s3(
                                 str(value), os.getenv("S3_FOR_DATA"), audio_key
@@ -4299,49 +4330,15 @@ class DeleteColumnView(APIView):
                     annotation.save()
                     dataset.save()
 
-            # delete all cells associated with the column
-            Cell.objects.filter(column=column).update(deleted=True, deleted_at=now)
-            # Delete cells where source_id starts with column.id
-            Cell.objects.filter(column__source_id__startswith=f"{column.id}").update(
-                deleted=True, deleted_at=now
+            from model_hub.services.column_service import (
+                delete_eval_column_and_dependents,
             )
 
-            # Remove deleted columns from dataset ordering/config.
-            columns_to_delete = Column.objects.filter(
-                Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
-            ).values_list("id", flat=True)
-            col_ids_to_remove = {str(c) for c in columns_to_delete}
-            update_fields = []
-            if dataset.column_order:
-                dataset.column_order = [
-                    col_id
-                    for col_id in dataset.column_order
-                    if col_id not in col_ids_to_remove
-                ]
-                update_fields.append("column_order")
-            if dataset.column_config:
-                for col_id in col_ids_to_remove:
-                    dataset.column_config.pop(col_id, None)
-                update_fields.append("column_config")
-            if update_fields:
-                dataset.save(update_fields=update_fields)
-
-            # Update metrics BEFORE deleting columns — get_metrics_using_column
-            # scopes by dataset via the Column row, which must still be
-            # visible (deleted=False) for BaseModelManager to find it.
-            metrics = UserEvalMetric.get_metrics_using_column(
-                getattr(request, "organization", None) or request.user.organization.id,
-                column_id,
-            )
-            if metrics:
-                UserEvalMetric.objects.filter(id__in=[m.id for m in metrics]).update(
-                    column_deleted=True
-                )
-
-            # Now safe to delete columns
-            Column.objects.filter(
-                Q(id=column.id) | Q(source_id__startswith=f"{column.id}")
-            ).update(deleted=True, deleted_at=now)
+            organization_id = (
+                getattr(request, "organization", None) or request.user.organization
+            ).id
+            with transaction.atomic():
+                delete_eval_column_and_dependents(column, organization_id)
 
             return self._gm.success_response("Column deleted successfully")
 
@@ -6378,6 +6375,21 @@ class DatatypeConverter:
             # Catch any other unexpected errors
             raise ValueError(f"Failed to convert to JSON: {str(e)}") from e
 
+    _OWN_S3_BUCKETS = tuple(
+        m.strip()
+        for m in os.getenv(
+            "OWN_S3_BUCKETS",
+            "fi-customer-data,fi-customer-data-dev,fi-content,fi-content-dev",
+        ).split(",")
+        if m.strip()
+    )
+
+    @classmethod
+    def _is_own_s3_url(cls, value):
+        return any(
+            is_own_storage_url(value, bucket) for bucket in cls._OWN_S3_BUCKETS
+        )
+
     def _convert_cell_to_image(self, cell):
         """Convert to image - uploads to S3"""
         if self._is_default_empty_value(cell.value, self.new_data_type):
@@ -6385,7 +6397,6 @@ class DatatypeConverter:
 
         try:
             image_value = cell.value
-            is_s3_url = False
 
             # Handle JSON array with single element (e.g., from images -> image conversion)
             if isinstance(image_value, str) and image_value.strip().startswith("["):
@@ -6393,19 +6404,16 @@ class DatatypeConverter:
                     parsed = json.loads(image_value)
                     if isinstance(parsed, list) and len(parsed) == 1:
                         image_value = parsed[0]
-                        is_s3_url = (
-                            isinstance(image_value, str)
-                            and "fi-customer-data" in image_value
-                        )
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-            # Always validate the URL, even if extracted from a JSON array
-            validate_file_url(str(image_value), "image")
-
-            # Skip re-upload only if it's already in our S3 bucket
-            if is_s3_url:
+            # Our own stored objects are linked as-is: re-validating them is
+            # redundant, and the HEAD would be SSRF-blocked outright on
+            # MinIO/private storage endpoints. External URLs are validated.
+            if self._is_own_s3_url(str(image_value)):
                 return image_value, {}
+
+            validate_file_url(str(image_value), "image")
 
             image_key = f"images/{self.dataset_id}/{uuid.uuid4()}"
             image_url = upload_image_to_s3(
@@ -6439,6 +6447,12 @@ class DatatypeConverter:
             uploaded_urls = []
             for img_value in images_list:
                 if img_value:
+                    # Same own-storage skip as the single-image path.
+                    if self._is_own_s3_url(str(img_value)):
+                        uploaded_urls.append(img_value)
+                        continue
+                    validate_file_url(str(img_value), "image")
+
                     image_key = f"images/{self.dataset_id}/{uuid.uuid4()}"
                     image_url = upload_image_to_s3(
                         str(img_value),
@@ -6904,7 +6918,8 @@ class GetEvalsListView(APIView):
         # correct behaviour at request time.
 
         if search_text:
-            eval_templates = eval_templates.filter(name__icontains=search_text)
+            from model_hub.utils.eval_list import normalize_search_for_name
+            eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
 
         if validated_data.get("eval_tags"):
             eval_templates = eval_templates.filter(
@@ -7033,7 +7048,8 @@ class GetEvalsListView(APIView):
             )
 
         if search_text:
-            user_evals = user_evals.filter(name__icontains=search_text)
+            from model_hub.utils.eval_list import normalize_search_for_name
+            user_evals = user_evals.filter(normalize_search_for_name(search_text))
 
         if validated_data.get("eval_tags"):
             user_evals = user_evals.filter(
@@ -7084,7 +7100,8 @@ class GetEvalsListView(APIView):
         )
 
         if search_text:
-            eval_templates = eval_templates.filter(Q(name__icontains=search_text))
+            from model_hub.utils.eval_list import normalize_search_for_name
+            eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
 
         if validated_data.get("eval_tags"):
             eval_templates = eval_templates.filter(
@@ -7143,7 +7160,8 @@ class GetEvalsListView(APIView):
             organization=organization, deleted=False, visible_ui=True
         )
         if search_text:
-            eval_templates = eval_templates.filter(Q(name__icontains=search_text))
+            from model_hub.utils.eval_list import normalize_search_for_name
+            eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
 
         if validated_data.get("eval_tags"):
             eval_templates = eval_templates.filter(
@@ -7678,6 +7696,7 @@ class DeleteEvalsView(APIView):
         try:
             delete_column = request.data.get("delete_column", False)
             experiment_id = request.data.get("experiment_id")
+            organization = _request_organization(request)
             dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
             if not dataset:
                 return self._gm.not_found("Dataset not found")
@@ -7749,84 +7768,62 @@ class DeleteEvalsView(APIView):
                             deleted=False,
                         )
                     )
-                    if per_edt_cols:
-                        col_ids = [c.id for c in per_edt_cols]
-                        snapshot_dataset = per_edt_cols[0].dataset
-                        Cell.objects.filter(
-                            column_id__in=col_ids, deleted=False
-                        ).update(deleted=True, deleted_at=now)
-                        Column.objects.filter(id__in=col_ids).update(
-                            deleted=True, deleted_at=now
-                        )
-                        if snapshot_dataset.column_order:
-                            col_id_strs = {str(cid) for cid in col_ids}
-                            snapshot_dataset.column_order = [
-                                cid
-                                for cid in snapshot_dataset.column_order
-                                if cid not in col_id_strs
-                            ]
-                            snapshot_dataset.save(update_fields=["column_order"])
-                else:
-                    # Check if column exists before attempting deletion
-                    column = Column.objects.filter(
-                        source_id=eval_metric.id,
-                        dataset=dataset,
-                        deleted=False,
-                    ).first()
-                    if column:
-                        # Delete all cells associated with the column and its dependent columns
-                        Cell.objects.filter(
-                            Q(column=column)
-                            | Q(column__source_id__startswith=f"{column.id}-sourceid-"),
-                            deleted=False,
-                        ).update(deleted=True, deleted_at=now)
+                    # Soft-delete the metric alongside the per-EDT columns/cells.
+                    # Previously this branch only cleaned up columns + cells and
+                    # left eval_metric.deleted=False — the eval lived on as a
+                    # ghost record (still in the sidebar, broken on rerun).
+                    #
+                    # We can't call ``delete_eval_column_and_dependents`` here
+                    # because that service collects related columns by
+                    # ``source_id__startswith=f"{column.id}-sourceid-"`` —
+                    # experiment columns live under a different shape
+                    # (``source_id__endswith=f"-sourceid-{metric.id}"`` across
+                    # multiple sources). So we hand-roll the cell/column delete
+                    # but share ``prune_dataset_columns`` for the dataset config
+                    # update — that way ``column_order`` and ``column_config``
+                    # stay in sync on both delete paths (TH-5508 round-7 ask).
+                    from model_hub.services.column_service import (
+                        prune_dataset_columns,
+                    )
 
-                        dataset = column.dataset
-
-                        # Remove columns from column_order
-                        if dataset.column_order:
-                            # Get all columns to delete (including those with source_id starting with column.id)
-                            columns_to_delete = Column.objects.filter(
-                                Q(id=column.id)
-                                | Q(source_id__startswith=f"{column.id}-sourceid-"),
-                                deleted=False,
-                            ).values_list("id", flat=True)
-
-                            col_ids_to_remove = {str(c) for c in columns_to_delete}
-                            new_column_order = [
-                                col_id
-                                for col_id in dataset.column_order
-                                if col_id not in col_ids_to_remove
-                            ]
-                            Dataset.objects.filter(id=dataset.id).update(
-                                column_order=new_column_order
+                    with transaction.atomic():
+                        if per_edt_cols:
+                            col_ids = [c.id for c in per_edt_cols]
+                            snapshot_dataset = per_edt_cols[0].dataset
+                            Cell.objects.filter(
+                                column_id__in=col_ids, deleted=False
+                            ).update(deleted=True, deleted_at=now)
+                            Column.objects.filter(id__in=col_ids).update(
+                                deleted=True, deleted_at=now
                             )
-
-                        # Update metrics BEFORE deleting columns — the
-                        # lookup scopes by dataset via the Column row, which
-                        # must still be visible (deleted=False) for
-                        # BaseModelManager to find it.
-                        metrics = UserEvalMetric.get_metrics_using_column(
-                            getattr(request, "organization", None)
-                            or request.user.organization.id,
-                            column.id,
-                        )
-                        if metrics:
-                            UserEvalMetric.objects.filter(
-                                id__in=[m.id for m in metrics]
-                            ).update(column_deleted=True)
-
-                        # Delete all related columns
-                        Column.objects.filter(
-                            Q(id=column.id)
-                            | Q(source_id__startswith=f"{column.id}-sourceid-"),
+                            prune_dataset_columns(snapshot_dataset, col_ids)
+                        eval_metric.deleted = True
+                        eval_metric.deleted_at = now
+                        eval_metric.save(update_fields=["deleted", "deleted_at"])
+                else:
+                    # SELECT + service call + metric soft-delete all in one
+                    # atomic. If the column got deleted between the SELECT and
+                    # the service call, the service's inner queryset filters
+                    # deleted=False and no-ops — safe either way.
+                    from model_hub.services.column_service import (
+                        delete_eval_column_and_dependents,
+                    )
+                    with transaction.atomic():
+                        column = Column.objects.filter(
+                            source_id=eval_metric.id,
+                            dataset=dataset,
                             deleted=False,
-                        ).update(deleted=True, deleted_at=now)
-
-                # Delete the eval_metric itself when delete_column is True
-                eval_metric.deleted = True
-                eval_metric.deleted_at = now
-                eval_metric.save(update_fields=["deleted", "deleted_at"])
+                        ).first()
+                        if column:
+                            # delete_eval_column_and_dependents flags ALL metrics
+                            # referencing this column with column_deleted=True,
+                            # including eval_metric. That flag is immediately
+                            # superseded by deleted=True below, so it is never
+                            # visible — this is deliberate behaviour.
+                            delete_eval_column_and_dependents(column, organization.id)
+                        eval_metric.deleted = True
+                        eval_metric.deleted_at = now
+                        eval_metric.save(update_fields=["deleted", "deleted_at"])
             else:
                 # Only hide from sidebar if delete_column is False
                 eval_metric.show_in_sidebar = False
@@ -9015,11 +9012,14 @@ class ExtractJsonColumnView(APIView):
         try:
             close_old_connections()
             if cell.value:
-                # Parse the string as a Python literal
-                python_obj = ast.literal_eval(cell.value)
-                # Convert Python object to JSON
-                json_data = json.dumps(python_obj)
-                json_data = json.loads(json_data)
+                # Try standard JSON first (handles true/false/null correctly).
+                # Fall back to ast.literal_eval for Python-dict-style strings
+                # (single-quoted keys, True/False/None literals).
+                try:
+                    json_data = json.loads(cell.value)
+                except (ValueError, TypeError):
+                    python_obj = ast.literal_eval(cell.value)
+                    json_data = json.loads(json.dumps(python_obj))
 
                 # Parse back to Python object if needed
                 # print(cell.value,"cell.value*****")
@@ -11350,6 +11350,8 @@ class FeedbackViewSet(viewsets.ModelViewSet):
                 column_id = str(cell.column.id)
                 if column_id != str(eval_column.id):
                     row_dict[column_id] = cell.value
+                    if cell.column.name:
+                        row_dict[cell.column.name] = cell.value
 
             # Add feedback information
             row_dict["feedback_comment"] = feedback.explanation
@@ -11462,6 +11464,9 @@ class FeedbackViewSet(viewsets.ModelViewSet):
                 get_error_message("FAILED_TO_CREATE_FEEDBACK")
             )
 
+    @swagger_auto_schema(
+        responses={200: FeedbackDetailsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     @action(detail=False, methods=["GET"], url_path="get-feedback-details")
     def get_feedback_details(self, request):
         """
@@ -14562,7 +14567,8 @@ class GetCompareEvalsListView(APIView):
         ).select_related("template")
 
         if search_text:
-            user_evals = user_evals.filter(name__icontains=search_text)
+            from model_hub.utils.eval_list import normalize_search_for_name
+            user_evals = user_evals.filter(normalize_search_for_name(search_text))
 
         # Count occurrences of eval names across datasets
         eval_name_count = defaultdict(int)

@@ -62,13 +62,13 @@ export function isContentNotEmpty(contentArray) {
       return item.text.trim() !== "";
     }
     if (item.type === "image_url") {
-      return item.imageUrl?.url?.trim() !== "";
+      return item.image_url?.url?.trim() !== "";
     }
     if (item.type === "audio_url") {
-      return item.audioUrl?.url?.trim() !== "";
+      return item.audio_url?.url?.trim() !== "";
     }
     if (item.type === "pdf_url") {
-      return item.pdfUrl?.url?.trim() !== "";
+      return item.pdf_url?.url?.trim() !== "";
     }
     return false;
   });

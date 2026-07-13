@@ -228,7 +228,8 @@ export const useAnnotationQueuesList = (filters = {}, options = {}) => {
     queryFn: () =>
       axios.get(annotationQueueEndpoints.list, { params: filters }),
     select: (d) => d.data,
-    staleTime: 1000 * 60 * 2,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };
@@ -239,6 +240,8 @@ export const useAnnotationQueueDetail = (id, options = {}) => {
     queryFn: () => axios.get(annotationQueueEndpoints.detail(id)),
     select: (d) => extractData(d),
     enabled: !!id,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };
@@ -269,6 +272,7 @@ export const useUpdateAnnotationQueue = () => {
       enqueueSnackbar("Queue updated successfully", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
       queryClient.invalidateQueries({
+
         queryKey: annotationQueueKeys.detail(variables.id),
       });
     },
@@ -304,7 +308,6 @@ export const useArchiveAnnotationQueue = () => {
 export const useDeleteAnnotationQueue = useArchiveAnnotationQueue;
 
 export const useHardDeleteAnnotationQueue = () => {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, name }) =>
       axios.post(annotationQueueEndpoints.hardDelete(id), {
@@ -313,7 +316,6 @@ export const useHardDeleteAnnotationQueue = () => {
       }),
     onSuccess: () => {
       enqueueSnackbar("Queue permanently deleted.", { variant: "warning" });
-      queryClient.invalidateQueries({ queryKey: annotationQueueKeys.all });
     },
     onError: (error) => {
       enqueueSnackbar(extractErrorMessage(error, "Failed to delete queue"), {
@@ -420,7 +422,8 @@ export const useQueueItems = (queueId, filters = {}, options = {}) => {
       };
     },
     enabled: !!queueId,
-    staleTime: 1000 * 60 * 2,
+    staleTime: 0,
+    refetchOnMount: "always",
     ...options,
   });
 };
@@ -512,7 +515,7 @@ export const useQueueProgress = (queueId, options = {}) => {
   });
 };
 
-const getAssignmentUserId = (user) => user?.id ?? user?.user_id;
+const getAssignmentUserId = (user) => user?.user_id ?? user?.id;
 
 const normalizeAssignmentUser = (user, fallbackId) => {
   const id = String(getAssignmentUserId(user) ?? fallbackId ?? "");
@@ -635,6 +638,8 @@ const patchAssignmentCacheValue = (value, variables) => {
 export const useAssignQueueItems = () => {
   const queryClient = useQueryClient();
   return useMutation({
+    // Own the error toast here so the global handler (app.jsx) doesn't also fire one.
+    meta: { errorHandled: true },
     mutationFn: ({ queueId, itemIds, userIds, action }) => {
       const normalizedUserIds = userIds ?? [];
       return axios.post(annotationQueueEndpoints.assignItems(queueId), {
@@ -701,14 +706,16 @@ export const useAssignQueueItems = () => {
         queryKey: annotationQueueKeys.progress(variables.queueId),
       });
     },
-    onError: (_error, _variables, context) => {
+    onError: (error, _variables, context) => {
       context?.previousQueueItems?.forEach(([queryKey, data]) => {
         queryClient.setQueryData(queryKey, data);
       });
       context?.previousDetails?.forEach(([queryKey, data]) => {
         queryClient.setQueryData(queryKey, data);
       });
-      enqueueSnackbar("Failed to assign items", { variant: "error" });
+      enqueueSnackbar(extractErrorMessage(error, "Failed to assign items"), {
+        variant: "error",
+      });
     },
   });
 };
@@ -779,6 +786,7 @@ export const useAnnotateDetail = (
     viewMode,
     reviewStatus,
     excludeReviewStatus,
+    reserve,
     ...options
   } = {},
 ) => {
@@ -790,6 +798,7 @@ export const useAnnotateDetail = (
     ...(excludeReviewStatus
       ? { exclude_review_status: excludeReviewStatus }
       : {}),
+    ...(reserve ? { reserve: true } : {}),
   };
   const requestOptions = Object.keys(params).length ? { params } : undefined;
   const detailFilters = {
@@ -799,6 +808,7 @@ export const useAnnotateDetail = (
     ...(excludeReviewStatus
       ? { exclude_review_status: excludeReviewStatus }
       : {}),
+    ...(reserve ? { reserve: true } : {}),
   };
   return useQuery({
     queryKey: annotateKeys.detail(queueId, itemId, annotatorId, detailFilters),

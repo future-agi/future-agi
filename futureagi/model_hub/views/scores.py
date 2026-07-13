@@ -29,6 +29,7 @@ from model_hub.serializers.scores import (
 from model_hub.utils.annotation_queue_helpers import (
     resolve_default_queue_item_for_source,
     resolve_source_object,
+    source_project,
 )
 from tfc.constants.roles import OrganizationRoles
 from tfc.utils.api_contracts import validated_request
@@ -46,6 +47,22 @@ ERROR_RESPONSES = {
     409: ApiTextErrorResponseSerializer,
     500: ApiTextErrorResponseSerializer,
 }
+
+
+def _span_source_trace_id(source_type, source_obj):
+    """Valid-UUID trace_id of an observation_span source, else None.
+
+    Stamped as a denormalized locator on span Scores so they roll up to the trace
+    in reads (incl. CH-only spans with no PG row to join)."""
+    if source_type != "observation_span":
+        return None
+    import uuid
+
+    tid = getattr(source_obj, "trace_id", None)
+    try:
+        return str(uuid.UUID(str(tid)))
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 def _resolve_queue_item(queue_item_id, source_type, source_obj, organization, user):
@@ -122,9 +139,15 @@ def _auto_complete_queue_items(source_type, source_obj, annotator):
     if not fk_field:
         return
 
+    # Write the FK id, not the object: a CHSpan isn't an ObservationSpan instance,
+    # so passing the object raises. .pk/.id is the str id for both PG models and CHSpan.
+    source_pk = getattr(source_obj, "pk", None) or getattr(source_obj, "id", None)
+    if source_pk is None:
+        return
+
     # Find queue items pointing to this source that are not yet completed
     queue_items = QueueItem.objects.filter(
-        **{fk_field: source_obj},
+        **{f"{fk_field}_id": source_pk},
         deleted=False,
         status__in=[QueueItemStatus.PENDING.value, QueueItemStatus.IN_PROGRESS.value],
     ).select_related("queue")
@@ -137,7 +160,7 @@ def _auto_complete_queue_items(source_type, source_obj, annotator):
     queue_item_ids = [qi.id for qi in queue_items]
     scored_by_item = defaultdict(set)
     for label_id, queue_item_id in Score.objects.filter(
-        **{fk_field: source_obj},
+        **{f"{fk_field}_id": source_pk},
         annotator=annotator,
         queue_item_id__in=queue_item_ids,
         deleted=False,
@@ -169,7 +192,9 @@ def _auto_complete_queue_items(source_type, source_obj, annotator):
             )
 
 
-def _auto_create_queue_items_for_default_queues(source_type, source_obj, label_ids):
+def _auto_create_queue_items_for_default_queues(
+    source_type, source_obj, label_ids, organization=None
+):
     """
     For default queues: auto-create a QueueItem when someone annotates a source
     that belongs to the queue's scope (project, dataset, or agent_definition).
@@ -189,8 +214,10 @@ def _auto_create_queue_items_for_default_queues(source_type, source_obj, label_i
     # Build scope filters for default queues this source belongs to
     scope_q = Q()
 
-    # Project-scoped: trace, observation_span, trace_session have project FK
-    project = getattr(source_obj, "project", None)
+    # Project-scoped: trace, observation_span, trace_session. Their CH duck-typed
+    # sources carry only ``project_id`` (no ``.project`` relation), so resolve the
+    # Project row org-scoped rather than reading a relation that's always None.
+    project = source_project(source_obj, organization)
     if project:
         scope_q |= Q(project=project)
 
@@ -292,7 +319,9 @@ class ScoreViewSet(viewsets.ModelViewSet):
         if source_type and source_id:
             fk_field = SCORE_SOURCE_FK_MAP.get(source_type)
             if fk_field:
-                qs = qs.filter(**{f"{fk_field}_id": source_id})
+                # Pin source_type too: span Scores now carry a denormalized trace_id
+                # (for the trace-detail rollup), so a trace_id= filter alone would also match them.
+                qs = qs.filter(source_type=source_type, **{f"{fk_field}_id": source_id})
 
         # Filter by label
         label_id = query_params.get("label_id")
@@ -327,6 +356,8 @@ class ScoreViewSet(viewsets.ModelViewSet):
         if not fk_field:
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
+        # Tracer sources (trace / observation_span / trace_session) resolve
+        # CH-native via the single boundary — the PG tracer tables are dropped.
         source_obj = resolve_source_object(
             source_type,
             source_id,
@@ -371,6 +402,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
         # field is still populated automatically via the post-save signal
         # (set_workspace_from_organization), so workspace-scoped reads
         # continue to work correctly.
+        source_trace_id = _span_source_trace_id(source_type, source_obj)
         with transaction.atomic():
             score, created = Score.no_workspace_objects.update_or_create(
                 **{f"{fk_field}_id": source_obj.pk},
@@ -386,6 +418,9 @@ class ScoreViewSet(viewsets.ModelViewSet):
                     "organization": request.organization,
                     "workspace": getattr(request, "workspace", None)
                     or getattr(queue_item, "workspace", None),
+                    # Denormalized trace locator so a span Score (incl. CH-only spans
+                    # with no PG row to join) rolls up to its trace in the trace-detail map.
+                    **({"trace_id": source_trace_id} if source_trace_id else {}),
                 },
             )
 
@@ -400,7 +435,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
             # write that already happened.
             transaction.on_commit(
                 lambda: _safe_auto_create_queue_items_for_default_queues(
-                    source_type, source_obj, [label_id]
+                    source_type, source_obj, [label_id], request.organization
                 )
             )
             transaction.on_commit(
@@ -430,6 +465,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
         if not fk_field:
             return self._gm.bad_request(f"Invalid source_type: {source_type}")
 
+        # Tracer sources resolve CH-native via the single boundary (see create()).
         source_obj = resolve_source_object(
             source_type,
             source_id,
@@ -473,6 +509,15 @@ class ScoreViewSet(viewsets.ModelViewSet):
 
         created_scores = []
         errors = []
+        source_trace_id = _span_source_trace_id(source_type, source_obj)
+        # SpanNotes.span (db_constraint=False FK) rejects a CHSpan object on assignment;
+        # write the id form so collector-only spans work.
+        span_notes_pk = (
+            getattr(span_notes_target, "pk", None)
+            or getattr(span_notes_target, "id", None)
+            if span_notes_target is not None
+            else None
+        )
 
         with transaction.atomic():
             for score_data in data["scores"]:
@@ -507,6 +552,8 @@ class ScoreViewSet(viewsets.ModelViewSet):
                         "organization": request.organization,
                         "workspace": getattr(request, "workspace", None)
                         or getattr(queue_item, "workspace", None),
+                        # Denormalized trace locator (see create()).
+                        **({"trace_id": source_trace_id} if source_trace_id else {}),
                     },
                 )
                 created_scores.append(score)
@@ -525,7 +572,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
             if span_notes_target is not None:
                 if span_notes:
                     SpanNotes.objects.update_or_create(
-                        span=span_notes_target,
+                        span_id=span_notes_pk,
                         created_by_user=request.user,
                         defaults={
                             "notes": span_notes,
@@ -535,7 +582,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
                 else:
                     # User explicitly cleared the notes field — delete the SpanNote
                     SpanNotes.objects.filter(
-                        span=span_notes_target,
+                        span_id=span_notes_pk,
                         created_by_user=request.user,
                     ).delete()
 
@@ -567,7 +614,7 @@ class ScoreViewSet(viewsets.ModelViewSet):
             scored_label_ids = [s["label_id"] for s in data["scores"]]
             transaction.on_commit(
                 lambda: _safe_auto_create_queue_items_for_default_queues(
-                    source_type, source_obj, scored_label_ids
+                    source_type, source_obj, scored_label_ids, request.organization
                 )
             )
             transaction.on_commit(
@@ -661,6 +708,9 @@ class ScoreViewSet(viewsets.ModelViewSet):
 
         scores = (
             Score.objects.filter(
+                # Pin source_type: span Scores carry a denormalized trace_id (for the
+                # trace-detail rollup), so a trace_id= filter alone would also match them.
+                source_type=source_type,
                 **{f"{fk_field}_id": source_id},
                 organization=request.organization,
                 deleted=False,
@@ -702,19 +752,22 @@ class ScoreViewSet(viewsets.ModelViewSet):
             #     .values_list("trace_id", flat=True).first()
             # Org-tenant scope is verified by checking the span's project_id
             # against the requesting org via Project (the only side of the
-            # FK that's still in PG).
+            # FK that's still in PG). Read the lean ``scope_by_ids`` projection
+            # (project_id + trace_id only): pulling the full span row here blows
+            # the shared ClickHouse memory limit (code 241) on fat voice spans.
             with get_reader() as reader:
-                span = reader.get(str(source_id))
+                span_scope = reader.scope_by_ids([str(source_id)]).get(str(source_id))
             span_belongs_to_org = False
             trace_id = None
             if (
-                span is not None
+                span_scope is not None
+                and span_scope.project_id is not None
                 and Project.objects.filter(
-                    id=span.project_id, organization=request.organization
+                    id=span_scope.project_id, organization=request.organization
                 ).exists()
             ):
                 span_belongs_to_org = True
-                trace_id = span.trace_id or None
+                trace_id = span_scope.trace_id or None
 
             queue_note_filter = Q(queue_item__observation_span_id=source_id)
             if trace_id:

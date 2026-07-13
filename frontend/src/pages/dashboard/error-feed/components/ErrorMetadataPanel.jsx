@@ -22,16 +22,14 @@ import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { useSnackbar } from "src/components/snackbar";
 import {
-  DEEP_ANALYSIS_STATUS,
   useCreateLinearIssue,
-  useErrorFeedDeepAnalysis,
   useErrorFeedSidebar,
   useLinearTeams,
-  useRunDeepAnalysis,
   useUpdateErrorFeedIssue,
 } from "src/api/errorFeed/error-feed";
 import { useOrgMembers } from "src/api/annotation-queues/annotation-queues";
-import { useAuthContext } from "src/auth/hooks";
+import { useOrganization } from "src/contexts/OrganizationContext";
+import openExternal from "../openExternal";
 import { useErrorFeedStore } from "../store";
 import PropTypes from "prop-types";
 
@@ -815,8 +813,8 @@ function CoOccurringList({ issues }) {
               </Typography>
               <Typography fontSize="10px" color="text.secondary">
                 {issue.count?.toLocaleString()} shared
-                {issue.coOccurrence != null &&
-                  ` · ${Math.round(issue.coOccurrence * 100)}%`}
+                {issue.co_occurrence != null &&
+                  ` · ${Math.round(issue.co_occurrence * 100)}%`}
               </Typography>
             </Stack>
           </Stack>
@@ -829,16 +827,19 @@ CoOccurringList.propTypes = { issues: PropTypes.array.isRequired };
 
 // ── Integrations ──────────────────────────────────────────────────────────────
 
-function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
+export function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
   const { enqueueSnackbar } = useSnackbar();
-  const { user } = useAuthContext();
+  // Use the live active org (matches the X-Organization-Id header) instead of
+  // the cached user.organization.id, which can drift and 404 the request
+  // (TH-6156).
+  const { currentOrganizationId } = useOrganization();
   const {
     data: linearData,
     isLoading: teamsLoading,
     isError: teamsError,
-  } = useLinearTeams(user?.organization?.id, { enabled: open });
+  } = useLinearTeams(currentOrganizationId, { enabled: open });
   const createIssue = useCreateLinearIssue();
   const teams = linearData?.teams ?? [];
 
@@ -847,14 +848,21 @@ function LinearTeamPicker({ open, onClose, clusterId, traceId }) {
       { clusterId, teamId, traceId },
       {
         onSuccess: (res) => {
+          // Wire form is snake_case; tolerate the axios camelCase aliases.
           const result = res?.data?.result;
-          if (result?.alreadyLinked) {
-            window.open(result.issueUrl, "_blank");
+          const issueId = result?.issue_id ?? result?.issueId;
+          const issueUrl = result?.issue_url ?? result?.issueUrl;
+          const alreadyLinked = result?.already_linked ?? result?.alreadyLinked;
+          if (alreadyLinked) {
+            openExternal(issueUrl);
           } else {
-            enqueueSnackbar(`Created ${result?.issueId}`, {
-              variant: "success",
-            });
-            if (result?.issueUrl) window.open(result.issueUrl, "_blank");
+            enqueueSnackbar(
+              issueId ? `Created ${issueId}` : "Linear issue created",
+              {
+                variant: "success",
+              },
+            );
+            openExternal(issueUrl);
           }
           onClose();
         },
@@ -1080,12 +1088,14 @@ function Integrations({
   externalIssueId,
 }) {
   const navigate = useNavigate();
-  const { user } = useAuthContext();
+  // Live active org (matches the X-Organization-Id header) rather than the
+  // cached user.organization.id, which can drift and 404 the request (TH-6156).
+  const { currentOrganizationId } = useOrganization();
   const {
     data: linearData,
     isLoading: linearLoading,
     isError: linearError,
-  } = useLinearTeams(user?.organization?.id);
+  } = useLinearTeams(currentOrganizationId);
   const linearConnected = linearData?.connected === true;
   const [teamPickerOpen, setTeamPickerOpen] = useState(false);
 
@@ -1093,7 +1103,7 @@ function Integrations({
 
   const handleLinearAction = () => {
     if (linked) {
-      window.open(externalIssueUrl, "_blank");
+      openExternal(externalIssueUrl);
       return;
     }
     if (!linearConnected) {
@@ -1151,199 +1161,6 @@ Integrations.propTypes = {
   externalIssueId: PropTypes.string,
 };
 
-// ── Deep Analysis Button ──────────────────────────────────────────────────────
-//
-// State machine driven entirely by backend:
-//   - GET /root-cause/ returns status: idle | running | done | failed
-//   - POST /deep-analysis/ dispatches a run (or no-ops if cached and not forced)
-//   - Running state survives navigation because it's derived from
-//     Trace.error_analysis_status on the server, not client memory.
-function DeepAnalysisButton({ clusterId, traceId }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const { enqueueSnackbar } = useSnackbar();
-
-  const { data: deepAnalysis, isLoading } = useErrorFeedDeepAnalysis(
-    clusterId,
-    traceId,
-  );
-  const runMutation = useRunDeepAnalysis();
-
-  const status = deepAnalysis?.status ?? DEEP_ANALYSIS_STATUS.IDLE;
-  const isDispatching = runMutation.isPending;
-  const isRunning = status === DEEP_ANALYSIS_STATUS.RUNNING || isDispatching;
-
-  const dispatch = (force) => {
-    if (!traceId) return;
-    runMutation.mutate(
-      { clusterId, traceId, force },
-      {
-        onSuccess: (res) => {
-          const newStatus = res?.data?.result?.status;
-          if (newStatus === DEEP_ANALYSIS_STATUS.RUNNING) {
-            enqueueSnackbar(
-              "Deep analysis started — takes about a minute. You can keep browsing; it'll show up here when ready.",
-              { variant: "info", autoHideDuration: 6000 },
-            );
-          } else if (newStatus === DEEP_ANALYSIS_STATUS.DONE) {
-            // Cached result; frontend will scroll on its own via the
-            // effect in OverviewTab that watches the done state.
-            enqueueSnackbar("Showing existing analysis results.", {
-              variant: "success",
-              autoHideDuration: 3000,
-            });
-          }
-        },
-        onError: () => {
-          enqueueSnackbar("Failed to start deep analysis. Please try again.", {
-            variant: "error",
-          });
-        },
-      },
-    );
-  };
-
-  // No trace selected yet (e.g. cluster has zero traces) — show disabled button
-  if (!traceId) {
-    return (
-      <Button
-        variant="contained"
-        fullWidth
-        disabled
-        startIcon={<Iconify icon="mdi:magnify-expand" width={14} />}
-        sx={{
-          height: 34,
-          fontSize: "12px",
-          fontWeight: 600,
-          borderRadius: "7px",
-          textTransform: "none",
-        }}
-      >
-        Run Deep Analysis
-      </Button>
-    );
-  }
-
-  // Initial query still loading — neutral placeholder
-  if (isLoading && !deepAnalysis) {
-    return (
-      <Box
-        sx={{
-          height: 34,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          border: "1px solid",
-          borderColor: "divider",
-          borderRadius: "7px",
-        }}
-      >
-        <CircularProgress size={12} thickness={5} />
-      </Box>
-    );
-  }
-
-  if (isRunning) {
-    return (
-      <Box
-        sx={{
-          height: 34,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          gap: 1,
-          border: "1px solid",
-          borderColor: "primary.main",
-          borderRadius: "7px",
-          bgcolor: (t) => alpha(t.palette.primary.main, 0.06),
-        }}
-      >
-        <CircularProgress size={12} thickness={5} />
-        <Typography fontSize="12px" fontWeight={600} color="primary.main">
-          Running analysis…
-        </Typography>
-      </Box>
-    );
-  }
-
-  if (status === DEEP_ANALYSIS_STATUS.DONE) {
-    return (
-      <Stack direction="row" alignItems="center" justifyContent="space-between">
-        <Stack direction="row" alignItems="center" gap={0.5}>
-          <Iconify
-            icon="mdi:check-circle"
-            width={13}
-            sx={{ color: "#5ACE6D" }}
-          />
-          <Typography fontSize="11px" fontWeight={600} color="text.secondary">
-            Analysis complete
-          </Typography>
-        </Stack>
-        <Button
-          size="small"
-          variant="contained"
-          startIcon={<Iconify icon="mdi:refresh" width={10} />}
-          onClick={() => dispatch(true)}
-          disabled={isDispatching}
-          sx={{
-            height: 22,
-            fontSize: "10px",
-            fontWeight: 600,
-            px: 1,
-            borderRadius: "6px",
-            textTransform: "none",
-            bgcolor: isDark ? "#fff" : "#111",
-            color: isDark ? "#111" : "#fff",
-            boxShadow: "none",
-            "&:hover": {
-              bgcolor: isDark ? "#e8e8e8" : "#333",
-              boxShadow: "none",
-            },
-          }}
-        >
-          Re-run
-        </Button>
-      </Stack>
-    );
-  }
-
-  // idle or failed
-  const label =
-    status === DEEP_ANALYSIS_STATUS.FAILED
-      ? "Retry Deep Analysis"
-      : "Run Deep Analysis";
-  return (
-    <Button
-      variant="contained"
-      fullWidth
-      startIcon={<Iconify icon="mdi:magnify-expand" width={14} />}
-      onClick={() => dispatch(false)}
-      disabled={isDispatching}
-      sx={{
-        height: 34,
-        fontSize: "12px",
-        fontWeight: 600,
-        borderRadius: "7px",
-        textTransform: "none",
-        bgcolor: isDark ? "#fff" : "#111",
-        color: isDark ? "#111" : "#fff",
-        boxShadow: "none",
-        "&:hover": {
-          bgcolor: isDark ? "#e8e8e8" : "#333",
-          boxShadow: "none",
-        },
-      }}
-    >
-      {label}
-    </Button>
-  );
-}
-
-DeepAnalysisButton.propTypes = {
-  clusterId: PropTypes.string,
-  traceId: PropTypes.string,
-};
-
 // Backend returns `"llm_judge" | "deterministic"` — EvalRow expects
 // `"llm" | "pass" | "deterministic"`. Translate on the way in.
 const EVAL_TYPE_MAP = {
@@ -1356,48 +1173,43 @@ export default function ErrorMetadataPanel({ error }) {
   const isDark = theme.palette.mode === "dark";
   const [severity, setSeverityLocal] = useState(error?.severity ?? "high");
   const [assignee, setAssigneeLocal] = useState(error?.assignees?.[0] ?? null);
-  const { user } = useAuthContext();
-  const { data: orgMembers = [] } = useOrgMembers(user?.organization?.id);
+  // Use the live active org (matches the X-Organization-Id header) instead of
+  // the cached user.organization.id, which can drift and 404 the members
+  // request (TH-6156).
+  const { currentOrganizationId } = useOrganization();
+  const { data: orgMembers = [] } = useOrgMembers(currentOrganizationId);
   const updateIssue = useUpdateErrorFeedIssue();
 
   const setSeverity = (val) => {
     setSeverityLocal(val);
-    updateIssue.mutate({ clusterId: error?.clusterId, severity: val });
+    updateIssue.mutate({ clusterId: error?.cluster_id, severity: val });
   };
   const setAssignee = (val) => {
     setAssigneeLocal(val);
-    updateIssue.mutate({ clusterId: error?.clusterId, assignee: val });
+    updateIssue.mutate({ clusterId: error?.cluster_id, assignee: val });
   };
 
-  // Selected trace drives the sidebar's trace-level sections (AI Metadata,
-  // Evaluations, Deep Analysis). When nothing's selected, backend falls
-  // back to the cluster's latest trace.
   const selectedTraceId = useErrorFeedStore(
-    (s) => s.selectedTraceIdByCluster[error?.clusterId] ?? null,
+    (s) => s.selectedTraceIdByCluster[error?.cluster_id] ?? null,
   );
   const { data: sidebar, isLoading: isSidebarLoading } = useErrorFeedSidebar(
-    error?.clusterId,
+    error?.cluster_id,
     selectedTraceId,
   );
   const sidebarPending = isSidebarLoading && !sidebar;
-  // OverviewTab keys its deep-analysis query off `selectedTraceId` (with a
-  // `representativeTraces[0]` fallback inside the tab). The button has to
-  // use the same source or the two end up reading different cache entries:
-  // OverviewTab shows the done content, button keeps polling a different
-  // trace and stays stuck on loading. Prefer the store; fall back to the
-  // sidebar's resolved trace only while the store hasn't been backfilled.
+  // Must match OverviewTab's trace source or the two read different cache entries.
   const effectiveTraceId =
-    selectedTraceId ?? sidebar?.aiMetadata?.traceId ?? null;
+    selectedTraceId ?? sidebar?.ai_metadata?.trace_id ?? null;
 
   if (!error) return null;
 
-  // Prefer backend-computed ageDays; fall back to client calc if sidebar
+  // Prefer backend-computed age_days; fall back to client calc if sidebar
   // hasn't loaded yet so the UI still renders something.
-  const fallbackAgeMs = error.firstSeen
-    ? Date.now() - new Date(error.firstSeen).getTime()
+  const fallbackAgeMs = error.first_seen
+    ? Date.now() - new Date(error.first_seen).getTime()
     : null;
   const ageDays =
-    sidebar?.timeline?.ageDays ??
+    sidebar?.timeline?.age_days ??
     (fallbackAgeMs ? Math.floor(fallbackAgeMs / (1000 * 60 * 60 * 24)) : null);
 
   const qualityScores = (sidebar?.evaluations ?? []).map((ev) => ({
@@ -1407,17 +1219,14 @@ export default function ErrorMetadataPanel({ error }) {
     score: ev.score ?? undefined,
     value: ev.value ?? undefined,
   }));
-  const coOccurringIssues = sidebar?.coOccurringIssues ?? [];
+  const coOccurringIssues = sidebar?.co_occurring_issues ?? [];
 
-  // Minimal activity trail built from what we actually know: first detection.
-  // Full audit log (status changes, assignment history) is out of scope —
-  // see feed-api-plan.md.
-  const activityLog = error.firstSeen
+  const activityLog = error.first_seen
     ? [
         {
           color: "#F5A623",
           text: "First detected",
-          meta: `System · ${error.firstSeenHuman ?? humanizeTime(error.firstSeen)}${
+          meta: `System · ${error.firstSeenHuman ?? humanizeTime(error.first_seen)}${
             ageDays != null ? ` — ${ageDays} days open` : ""
           }`,
         },
@@ -1443,7 +1252,7 @@ export default function ErrorMetadataPanel({ error }) {
           <Stack gap={0.9}>
             <FieldRow label="Status">
               <StatusDropdown
-                clusterId={error.clusterId}
+                clusterId={error.cluster_id}
                 current={error.status}
               />
             </FieldRow>
@@ -1468,12 +1277,12 @@ export default function ErrorMetadataPanel({ error }) {
             {[
               {
                 label: "Traces",
-                value: error.traceCount?.toLocaleString(),
+                value: error.trace_count?.toLocaleString(),
                 icon: "mdi:counter",
               },
               {
                 label: "Users affected",
-                value: error.usersAffected?.toLocaleString(),
+                value: error.users_affected?.toLocaleString(),
                 icon: "mdi:account-group-outline",
               },
               {
@@ -1483,7 +1292,7 @@ export default function ErrorMetadataPanel({ error }) {
               },
               {
                 label: "Cluster ID",
-                value: error.clusterId,
+                value: error.cluster_id,
                 icon: "mdi:identifier",
               },
             ].map((item) => (
@@ -1520,25 +1329,17 @@ export default function ErrorMetadataPanel({ error }) {
           </Box>
         </Section>
 
-        {/* ── Deep Analysis ── */}
-        <Section title="Deep Analysis">
-          <DeepAnalysisButton
-            clusterId={error.clusterId}
-            traceId={effectiveTraceId}
-          />
-        </Section>
-
         {/* ── Timeline ── */}
         <Section title="Timeline">
           <Stack gap={0.5}>
             <MetaRow
               label="First seen"
-              value={error.firstSeenHuman ?? humanizeTime(error.firstSeen)}
+              value={error.firstSeenHuman ?? humanizeTime(error.first_seen)}
               icon="mdi:clock-start"
             />
             <MetaRow
               label="Last seen"
-              value={error.lastSeenHuman ?? humanizeTime(error.lastSeen)}
+              value={error.lastSeenHuman ?? humanizeTime(error.last_seen)}
               icon="mdi:clock-outline"
             />
             {ageDays != null && (
@@ -1556,13 +1357,13 @@ export default function ErrorMetadataPanel({ error }) {
           <Stack gap={0.5}>
             <MetaRow
               label="Model"
-              value={sidebar?.aiMetadata?.model ?? error.model}
+              value={sidebar?.ai_metadata?.model ?? error.model}
               icon="mdi:brain"
               monospace
             />
             <MetaRow
               label="Version"
-              value={sidebar?.aiMetadata?.modelVersion ?? error.modelVersion}
+              value={sidebar?.ai_metadata?.model_version ?? error.model_version}
               icon="mdi:tag-outline"
               monospace
             />
@@ -1582,21 +1383,21 @@ export default function ErrorMetadataPanel({ error }) {
             )}
             <MetaRow
               label="Project"
-              value={sidebar?.aiMetadata?.project ?? error.project}
+              value={sidebar?.ai_metadata?.project ?? error.project}
               icon="mdi:folder-outline"
             />
-            {(sidebar?.aiMetadata?.evalScore ?? error.evalScore) != null && (
+            {(sidebar?.ai_metadata?.eval_score ?? error.eval_score) != null && (
               <MetaRow
                 label="Eval score"
                 value={`${(
-                  sidebar?.aiMetadata?.evalScore ?? error.evalScore
+                  sidebar?.ai_metadata?.eval_score ?? error.eval_score
                 ).toFixed(2)} / 1.00`}
                 icon="mdi:chart-line"
               />
             )}
             <MetaRow
               label="Trace ID"
-              value={sidebar?.aiMetadata?.traceId ?? error.traceId}
+              value={sidebar?.ai_metadata?.trace_id ?? error.trace_id}
               icon="mdi:sitemap-outline"
               monospace
             />
@@ -1702,10 +1503,10 @@ export default function ErrorMetadataPanel({ error }) {
             Integrations
           </Typography>
           <Integrations
-            clusterId={error?.clusterId}
+            clusterId={error?.cluster_id}
             traceId={effectiveTraceId}
-            externalIssueUrl={error?.externalIssueUrl}
-            externalIssueId={error?.externalIssueId}
+            externalIssueUrl={error?.external_issue_url}
+            externalIssueId={error?.external_issue_id}
           />
         </Stack>
       </Stack>

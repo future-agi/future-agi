@@ -1,6 +1,7 @@
 from django.db.models import Q
 from rest_framework import serializers
 
+from tfc.utils.serializer_fields import JsonValueField
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
@@ -64,7 +65,9 @@ class TraceSerializer(serializers.ModelSerializer):
             if getattr(workspace, "is_default", False):
                 project_scope &= (
                     Q(workspace=workspace)
-                    | Q(workspace__is_default=True, workspace__organization=organization)
+                    | Q(
+                        workspace__is_default=True, workspace__organization=organization
+                    )
                     | Q(workspace__isnull=True)
                 )
                 related_project_scope &= (
@@ -115,7 +118,9 @@ class TraceSerializer(serializers.ModelSerializer):
 
         if project_version and project and project_version.project_id != project.id:
             raise serializers.ValidationError(
-                {"project_version": "Project version must belong to the selected project."}
+                {
+                    "project_version": "Project version must belong to the selected project."
+                }
             )
 
         if session and project and session.project_id != project.id:
@@ -163,6 +168,47 @@ class TraceObserveListQuerySerializer(StrictInputSerializer):
     interval = serializers.CharField(required=False, allow_blank=True)
 
 
+class TraceObserveListMetadataSerializer(serializers.Serializer):
+    total_rows = serializers.IntegerField()
+
+
+class TraceObserveColumnConfigSerializer(serializers.Serializer):
+    """One column-config row — the asdict() shape of tracer.utils.helper.FieldConfig."""
+
+    id = serializers.CharField()
+    name = serializers.CharField()
+    is_visible = serializers.BooleanField()
+    group_by = serializers.CharField(required=False, allow_null=True)
+    output_type = serializers.CharField(required=False, allow_null=True)
+    reverse_output = serializers.BooleanField(required=False, allow_null=True)
+    annotation_label_type = serializers.CharField(required=False, allow_null=True)
+    # FieldConfig defaults `choices` to (None,), so serialized rows can carry
+    # [None] — the child must allow null.
+    choices = serializers.ListField(
+        child=serializers.CharField(allow_null=True), required=False, allow_null=True
+    )
+    settings = JsonValueField(required=False, allow_null=True)
+    choices_map = JsonValueField(required=False, allow_null=True)
+    eval_template_id = serializers.CharField(required=False, allow_null=True)
+    annotators = JsonValueField(required=False, allow_null=True)
+    source_field = serializers.CharField(required=False, allow_null=True)
+    parent_eval_id = serializers.CharField(required=False, allow_null=True)
+
+
+class TraceObserveListResultSerializer(serializers.Serializer):
+    metadata = TraceObserveListMetadataSerializer()
+    # allow_null: real rows carry null cells (cost, latency on error traces).
+    table = serializers.ListField(
+        child=serializers.DictField(child=JsonValueField(allow_null=True))
+    )
+    config = TraceObserveColumnConfigSerializer(many=True)
+
+
+class TraceObserveListResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    result = TraceObserveListResultSerializer()
+
+
 class TraceExportQuerySerializer(StrictInputSerializer):
     project_id = serializers.UUIDField()
     filters = filter_list_query_param_field(required=False, default=list)
@@ -200,6 +246,7 @@ class UsersQuerySerializer(StrictInputSerializer):
     current_page_index = serializers.IntegerField(required=False, min_value=0)
     sort_params = SortParamListQueryParamField(required=False, default=list)
     filters = filter_list_query_param_field(required=False, default=list)
+    export = serializers.BooleanField(required=False, default=False)
 
 
 class UsersTableRowSerializer(serializers.Serializer):
@@ -240,3 +287,17 @@ class UsersResponseSerializer(serializers.Serializer):
 class UserCodeExampleResponseSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=True)
     result = serializers.CharField()
+
+
+class TraceDetailResultSerializer(serializers.Serializer):
+    """Envelope payload for the trace-detail endpoint (CH-assembled)."""
+
+    trace = serializers.JSONField()
+    observation_spans = serializers.ListField(child=serializers.JSONField())
+    summary = serializers.JSONField()
+    graph = serializers.JSONField()
+
+
+class TraceDetailResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = TraceDetailResultSerializer()

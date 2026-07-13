@@ -5,6 +5,8 @@ Comprehensive tests for workspace management and membership endpoints.
 Tests cover WorkspaceManagementView and WorkspaceMembershipView from workspace.py.
 """
 
+from unittest.mock import patch
+
 import pytest
 from rest_framework import status
 
@@ -316,6 +318,43 @@ class TestWorkspaceCreateAPI:
         result = response.json()["result"]
         # camelCase: addedUsers
         assert member_user.email in result["added_users"]
+
+    @patch(
+        "accounts.views.workspace.email_helper",
+        side_effect=RuntimeError("email delivery failed"),
+    )
+    def test_create_workspace_persists_when_invite_email_fails(
+        self,
+        mock_email_helper,
+        auth_client,
+        organization,
+        django_capture_on_commit_callbacks,
+    ):
+        """Invite email failure should not undo workspace creation or membership."""
+        email = "workspace-email-fail@futureagi.com"
+
+        with django_capture_on_commit_callbacks(execute=True):
+            response = auth_client.post(
+                "/accounts/workspaces/",
+                {
+                    "name": "Workspace Email Failure",
+                    "emails": [email],
+                    "role": OrganizationRoles.WORKSPACE_MEMBER,
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        workspace = Workspace.objects.get(
+            name="Workspace Email Failure", organization=organization
+        )
+        new_member = User.objects.get(email=email, organization=organization)
+        assert WorkspaceMembership.no_workspace_objects.filter(
+            workspace=workspace,
+            user=new_member,
+            is_active=True,
+        ).exists()
+        mock_email_helper.assert_called_once()
 
     def test_create_workspace_invalid_emails_format(self, auth_client):
         """Emails must be a list."""
@@ -781,6 +820,45 @@ class TestWorkspaceMembersAddAPI:
         # camelCase: addedUsers
         added = response.json()["result"]["added_users"]
         assert any(u["email"] == member_user.email for u in added)
+
+    @patch(
+        "accounts.views.workspace.email_helper",
+        side_effect=RuntimeError("email delivery failed"),
+    )
+    def test_add_new_member_persists_when_invite_email_fails(
+        self,
+        mock_email_helper,
+        auth_client,
+        second_workspace,
+        django_capture_on_commit_callbacks,
+    ):
+        """Invite email failure should not undo new workspace membership."""
+        email = "workspace-member-email-fail@futureagi.com"
+
+        with django_capture_on_commit_callbacks(execute=True):
+            response = auth_client.post(
+                f"/accounts/workspaces/{second_workspace.id}/members/",
+                {
+                    "users": [
+                        {
+                            "email": email,
+                            "role": OrganizationRoles.WORKSPACE_MEMBER,
+                        }
+                    ]
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_201_CREATED
+        new_member = User.objects.get(
+            email=email, organization=second_workspace.organization
+        )
+        assert WorkspaceMembership.no_workspace_objects.filter(
+            workspace=second_workspace,
+            user=new_member,
+            is_active=True,
+        ).exists()
+        mock_email_helper.assert_called_once()
 
 
 # =============================================================================

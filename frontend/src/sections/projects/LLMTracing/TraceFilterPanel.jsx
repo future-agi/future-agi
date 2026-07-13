@@ -26,13 +26,20 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import axios, { endpoints } from "src/utils/axios";
 import { useDashboardFilterValues } from "src/hooks/useDashboards";
+import { useDebounce } from "src/hooks/use-debounce";
 import { useAIFilter } from "src/hooks/use-ai-filter";
 import { QueryInput } from "src/components/filter-panel";
 import {
@@ -100,6 +107,33 @@ export const getTraceFilterFields = (tab) => {
   if (tab === "spans")
     return [TRACE_ID_FIELD, SPAN_ID_FIELD, ...BASE_TRACE_FILTER_FIELDS];
   return BASE_TRACE_FILTER_FIELDS;
+};
+
+// Map a static trace field to a picker property. In spans view the root
+// "Trace Name" field is reused as "Span Name" — remap its id so the picker
+// fires a distinct span_name request instead of duplicating the name request.
+export const toStaticFilterProperty = (field, isSpansView = false) => {
+  if (isSpansView && field.value === "name") {
+    return {
+      id: "span_name",
+      name: "Span Name",
+      category: "system",
+      type: "string",
+      apiColType: "SYSTEM_METRIC",
+    };
+  }
+  return {
+    id: field.value,
+    name: field.label,
+    category: "system",
+    // Pinned so the eval-task wire encoding doesn't have to guess
+    // from `category` alone — without this every static field would
+    // round-trip through the chain with apiColType=undefined and
+    // get coerced to SPAN_ATTRIBUTE downstream.
+    apiColType: "SYSTEM_METRIC",
+    type: field.type === "enum" ? "string" : field.type,
+    ...(field.choices ? { choices: field.choices } : {}),
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -256,6 +290,40 @@ const normalizeFieldType = (rawType) => {
   return "string";
 };
 
+export const isValidNumericInput = (v) => {
+  if (v === "" || v === undefined || v === null) return true;
+  return /^-?\d*\.?\d*$/.test(String(v).trim());
+};
+
+// Empty values pass — computeValidFilters already drops empty rows before apply,
+// so this only guards against partial inputs like "-" or "1.5.6" leaking through.
+export const isCompleteNumericValue = (v) => {
+  if (v === undefined || v === null) return true;
+  const str = String(v).trim();
+  if (str === "") return true;
+  if (!/^-?(\d+\.?\d*|\.\d+)$/.test(str)) return false;
+  return Number.isFinite(parseFloat(str));
+};
+
+const NUMERIC_HELPER_TEXT_PROPS = {
+  sx: {
+    fontSize: 10,
+    mx: 0.5,
+    mt: 0,
+    position: "absolute",
+    top: "100%",
+    left: 0,
+    lineHeight: 1.2,
+    whiteSpace: "nowrap",
+  },
+};
+
+const NUMERIC_TEXTFIELD_SX = {
+  flex: "1 1 80px",
+  minWidth: 0,
+  position: "relative",
+};
+
 const getOperators = (fieldType) => {
   if (fieldType === "categorical") return CATEGORICAL_OPS;
   if (fieldType === "thumbs") return THUMBS_OPS;
@@ -324,6 +392,59 @@ const HYDRATE_STRING_OP = { equals: "in", not_equals: "not_in" };
 const HYDRATE_CATEGORICAL_OP = { equals: "is", not_equals: "is_not" };
 
 const NO_VALUE_OPS = new Set(["is_null", "is_not_null"]);
+
+// Build the list of *valid, applyable* filter rows: a row needs a field and,
+// unless its operator takes no value, a non-empty value. Returns null when
+// nothing is applyable. Shared by the debounced auto-apply and the
+// flush-on-close path so both compute the filter set identically.
+const computeValidFilters = (rows) => {
+  const valid = rows.map(normalizeFilterRowOperator).filter((r) => {
+    if (!r.field) return false;
+    if (NO_VALUE_OPS.has(r.operator)) return true;
+    const ops = getOperatorsForFilter(r);
+    const opDef = ops.find((o) => o.value === r.operator);
+    if (opDef?.range)
+      return Array.isArray(r.value) && r.value[0] !== "" && r.value[1] !== "";
+    if (Array.isArray(r.value)) return r.value.length > 0;
+    return r.value !== "" && r.value !== undefined && r.value !== null;
+  });
+  return valid.length ? valid : null;
+};
+
+// Canonical projection for dedup: two filter sets that produce the same API
+// query serialize identically regardless of row key order or display-only
+// fields (fieldName/fieldCategory can differ between the open/AI/apply init
+// paths), so an identical set never fires a redundant request.
+export const serializeFilterSet = (filters) =>
+  JSON.stringify(
+    (filters || []).map((f) => ({
+      field: f.field,
+      operator: normalizeFilterRowOperator(f).operator,
+      value: f.value,
+    })),
+  );
+
+// Hold auto-apply while a numeric row is mid-edit: a partial/invalid value
+// ("-", "1.5.6"), or a range with only one bound filled. Mirrors the old
+// disabled-Apply gate (TH-5195) so invalid numbers never reach the API and a
+// half-filled range doesn't drop the already-applied filter and refire.
+export const hasIncompleteNumericRow = (rows) =>
+  rows.some((r) => {
+    if (normalizeFieldType(r.fieldType) !== "number") return false;
+    if (Array.isArray(r.value)) {
+      const filled = r.value.filter(
+        (v) => v !== "" && v !== undefined && v !== null,
+      );
+      if (r.value.length >= 2 && filled.length === 1) return true;
+      return filled.some((v) => !isCompleteNumericValue(v));
+    }
+    return (
+      r.value !== "" &&
+      r.value !== undefined &&
+      r.value !== null &&
+      !isCompleteNumericValue(r.value)
+    );
+  });
 
 // Scalar ops — value picker forces single-select. Multi-value goes via in/not_in.
 const SINGLE_VALUE_OPS = new Set([
@@ -836,7 +957,7 @@ function ValuePicker({
 }) {
   const [anchorEl, setAnchorEl] = useState(null);
   const [search, setSearch] = useState("");
-  const debouncedSearch = search; // could add debounce for large datasets
+  const debouncedSearch = useDebounce(search, 500);
 
   // If the property declares its own static choices (e.g. the Project filter
   // on the cross-project user-detail page), use them directly. Skips both
@@ -859,6 +980,8 @@ function ValuePicker({
   const isSessionField =
     !hasStaticChoices && SESSION_VALUE_FIELDS.has(propertyId);
 
+  const isIdOnlyField = !hasStaticChoices && ID_ONLY_FIELDS.has(propertyId);
+
   // Primary: dashboard API values
   const {
     data: dashboardOptions = [],
@@ -869,7 +992,11 @@ function ValuePicker({
     metricType,
     projectIds: projectId ? [projectId] : [],
     source,
-    enabled: !hasStaticChoices && Boolean(anchorEl),
+    search: isIdOnlyField ? debouncedSearch : "",
+    enabled:
+      !hasStaticChoices &&
+      Boolean(anchorEl) &&
+      (!isIdOnlyField || Boolean(debouncedSearch)),
   });
 
   // Fallback: session filter values endpoint (for session-specific fields)
@@ -905,12 +1032,12 @@ function ValuePicker({
   const isError = !hasStaticChoices && !isSessionField && dashError;
 
   const filtered = useMemo(() => {
-    if (!search || isSessionField) return options; // session endpoint already filters server-side
+    if (!search || isSessionField || isIdOnlyField) return options;
     const q = search.toLowerCase();
     return options.filter((o) =>
       getPickerOptionSearchText(o).toLowerCase().includes(q),
     );
-  }, [options, search, isSessionField]);
+  }, [options, search, isSessionField, isIdOnlyField]);
 
   const selectedValues = useMemo(() => normalizePickerValues(value), [value]);
 
@@ -1275,6 +1402,8 @@ function FilterRow({
   ValuePickerOverride,
   categories,
   freeSoloValues = false,
+  operatorFilter,
+  defaultOperatorForType,
 }) {
   const [pickerAnchor, setPickerAnchor] = useState(null);
   const selectedProp = properties.find((p) => p.id === filter.field);
@@ -1282,9 +1411,11 @@ function FilterRow({
   const isNumber = normalizedType === "number";
   const isDate = normalizedType === "date";
   const isBoolean = normalizedType === "boolean";
-  const ops = getOperatorsForFilter(filter);
+  const allOps = getOperatorsForFilter(filter);
+  // Optional per-flow allowlist; currentOpDef resolves against the full set.
+  const ops = operatorFilter ? allOps.filter(operatorFilter) : allOps;
   const safeOperator = normalizeFilterRowOperator(filter).operator;
-  const currentOpDef = ops.find((o) => o.value === safeOperator);
+  const currentOpDef = allOps.find((o) => o.value === safeOperator);
   const updateRow = useCallback(
     (changes) =>
       onChange(index, {
@@ -1299,6 +1430,12 @@ function FilterRow({
       ? freeSoloValues(filter)
       : freeSoloValues;
 
+  const rowHasInvalidNumeric =
+    isNumber &&
+    (Array.isArray(filter.value)
+      ? filter.value.some((v) => !isValidNumericInput(v))
+      : !isValidNumericInput(filter.value));
+
   const handlePropertySelect = useCallback(
     (prop) => {
       // Preserve custom annotation types (categorical, thumbs, text) —
@@ -1312,9 +1449,10 @@ function FilterRow({
           ? prop.type
           : normalizeFieldType(prop.type);
       // ID-only fields only support "is"; fallback would render blank.
+      // defaultOperatorForType: optional per-flow { type: op } override.
       const defaultOp = ID_ONLY_FIELDS.has(prop.id)
         ? "is"
-        : DEFAULT_OP_FOR_TYPE[nt] || "equals";
+        : defaultOperatorForType?.[nt] || DEFAULT_OP_FOR_TYPE[nt] || "equals";
       let defaultValue;
       if (nt === "number" || nt === "date") defaultValue = "";
       else if (nt === "boolean") defaultValue = "true";
@@ -1330,7 +1468,7 @@ function FilterRow({
         value: defaultValue,
       });
     },
-    [index, onChange],
+    [index, onChange, defaultOperatorForType],
   );
 
   const handleOperatorChange = useCallback(
@@ -1481,6 +1619,10 @@ function FilterRow({
 
     if (isNumber) {
       if (currentOpDef?.range) {
+        const minVal = Array.isArray(filter.value) ? filter.value[0] ?? "" : "";
+        const maxVal = Array.isArray(filter.value) ? filter.value[1] ?? "" : "";
+        const minInvalid = !isValidNumericInput(minVal);
+        const maxInvalid = !isValidNumericInput(maxVal);
         return (
           <Stack
             direction="row"
@@ -1495,55 +1637,73 @@ function FilterRow({
           >
             <TextField
               size="small"
-              type="number"
+              type="text"
+              inputMode="decimal"
               placeholder="Min"
-              value={Array.isArray(filter.value) ? filter.value[0] ?? "" : ""}
+              value={minVal}
+              error={minInvalid}
+              helperText={minInvalid ? "Numbers only" : undefined}
               onChange={(e) => {
                 const cur = Array.isArray(filter.value)
                   ? [...filter.value]
                   : ["", ""];
-                cur[0] = e.target.value;
+                cur[0] = e.target.value.trim();
                 updateRow({ value: cur });
               }}
-              sx={{ flex: "1 1 80px", minWidth: 0 }}
+              sx={NUMERIC_TEXTFIELD_SX}
               inputProps={{
                 style: { fontSize: 12, height: 12, padding: "6px 8px" },
               }}
+              FormHelperTextProps={NUMERIC_HELPER_TEXT_PROPS}
             />
             <Typography sx={{ fontSize: 11, color: "text.secondary" }}>
               and
             </Typography>
             <TextField
               size="small"
-              type="number"
+              type="text"
+              inputMode="decimal"
               placeholder="Max"
-              value={Array.isArray(filter.value) ? filter.value[1] ?? "" : ""}
+              value={maxVal}
+              error={maxInvalid}
+              helperText={maxInvalid ? "Numbers only" : undefined}
               onChange={(e) => {
                 const cur = Array.isArray(filter.value)
                   ? [...filter.value]
                   : ["", ""];
-                cur[1] = e.target.value;
+                cur[1] = e.target.value.trim();
                 updateRow({ value: cur });
               }}
-              sx={{ flex: "1 1 80px", minWidth: 0 }}
+              sx={NUMERIC_TEXTFIELD_SX}
               inputProps={{
                 style: { fontSize: 12, height: 12, padding: "6px 8px" },
               }}
+              FormHelperTextProps={NUMERIC_HELPER_TEXT_PROPS}
             />
           </Stack>
         );
       }
+      const invalid = !isValidNumericInput(filter.value);
       return (
         <TextField
           size="small"
-          type="number"
+          type="text"
+          inputMode="decimal"
           placeholder="Value"
           value={filter.value ?? ""}
-          onChange={(e) => updateRow({ value: e.target.value })}
-          sx={{ flex: "1 1 120px", minWidth: 0, maxWidth: "100%" }}
+          error={invalid}
+          helperText={invalid ? "Numbers only" : undefined}
+          onChange={(e) => updateRow({ value: e.target.value.trim() })}
+          sx={{
+            flex: "1 1 120px",
+            minWidth: 0,
+            maxWidth: "100%",
+            position: "relative",
+          }}
           inputProps={{
             style: { fontSize: 12, height: 12, padding: "6px 8px" },
           }}
+          FormHelperTextProps={NUMERIC_HELPER_TEXT_PROPS}
         />
       );
     }
@@ -1585,7 +1745,12 @@ function FilterRow({
       direction="row"
       alignItems="center"
       gap={0.5}
-      sx={{ width: "100%", minWidth: 0, flexWrap: "wrap" }}
+      sx={{
+        width: "100%",
+        minWidth: 0,
+        flexWrap: "wrap",
+        mb: rowHasInvalidNumeric ? 1.5 : 0,
+      }}
     >
       <CustomTooltip
         show={!!selectedProp?.name}
@@ -1692,6 +1857,8 @@ const TraceFilterPanel = ({
   showQueryTab = true,
   categories: categoriesOverride,
   propertyFilter,
+  operatorFilter,
+  defaultOperatorForType,
   panelWidth,
   defaultRow: defaultRowOverride,
   isSimulator = false,
@@ -1718,29 +1885,9 @@ const TraceFilterPanel = ({
     // Start with static trace fields (trace_name, status, model, etc.) —
     // prepend trace_id / span_id when rendered inside the LLM Tracing
     // trace or span tab. In spans view, relabel "Trace Name" to "Span Name".
-    const staticProps = getTraceFilterFields(tab).map((f) => {
-      if (isSpansView && f.value === "name") {
-        return {
-          id: "name",
-          name: "Span Name",
-          category: "system",
-          type: "string",
-          apiColType: "SYSTEM_METRIC",
-        };
-      }
-      return {
-        id: f.value,
-        name: f.label,
-        category: "system",
-        // Pinned so the eval-task wire encoding doesn't have to guess
-        // from `category` alone — without this every static field would
-        // round-trip through the chain with apiColType=undefined and
-        // get coerced to SPAN_ATTRIBUTE downstream.
-        apiColType: "SYSTEM_METRIC",
-        type: f.type === "enum" ? "string" : f.type,
-        ...(f.choices ? { choices: f.choices } : {}),
-      };
-    });
+    const staticProps = getTraceFilterFields(tab).map((f) =>
+      toStaticFilterProperty(f, isSpansView),
+    );
     const knownIds = new Set(staticProps.map((p) => p.id));
     // Add dynamic properties not already covered by static fields
     const dynamicExtras = dynamicProperties.filter((p) => !knownIds.has(p.id));
@@ -1773,6 +1920,8 @@ const TraceFilterPanel = ({
   const effectiveDefaultRow = defaultRowOverride || DEFAULT_ROW;
   const [activeTab, setActiveTab] = useState("basic");
   const [aiQuery, setAiQuery] = useState("");
+  // True when the last AI query returned zero filters (shows inline hint).
+  const [aiEmpty, setAiEmpty] = useState(false);
   // AI filter schema: exclude `attribute` category — those are typically
   // 100s–1000s of free-form keys that aren't referenced by name in natural
   // language and only slow step-1 field selection down without helping.
@@ -1795,21 +1944,24 @@ const TraceFilterPanel = ({
     error: aiError,
   } = useAIFilter(aiFilterSchema);
   const [rows, setRows] = useState([{ ...DEFAULT_ROW }]);
+  // Serialized snapshot of the filter set last sent to onApply. Auto-apply
+  // compares against this so we only hit the API when the applyable filter set
+  // actually changes — picking a field/operator with no value, or re-opening
+  // the popover, yields the same set and is skipped.
+  const lastAppliedRef = useRef(undefined);
 
   // Convert dashboard properties to QueryInput format (same IDs as dashboard API)
-  const queryFilterFields = useMemo(
-    () =>
-      properties.map((p) => ({
-        value: p.id,
-        label: p.name,
-        type: p.choices?.length ? "enum" : "string",
-        choices: p.choices,
-        panelType: p.type || "string",
-        category: p.category, // system, eval, annotation, attribute
-        apiColType: p.apiColType,
-      })),
-    [properties],
-  );
+  const queryFilterFields = useMemo(() => {
+    return properties.map((p) => ({
+      value: p.id,
+      label: p.name,
+      type: p.type || "string",
+      choices: p.choices,
+      panelType: p.type || "string",
+      category: p.category, // system, eval, annotation, attribute
+      apiColType: p.apiColType,
+    }));
+  }, [properties]);
   const queryFieldMap = useMemo(
     () => Object.fromEntries(queryFilterFields.map((f) => [f.value, f])),
     [queryFilterFields],
@@ -1873,15 +2025,33 @@ const TraceFilterPanel = ({
           });
         });
         setRows(enriched);
+        // Seed last-applied with the already-applied set so the first
+        // auto-apply pass after opening doesn't refire the same filters.
+        lastAppliedRef.current = serializeFilterSet(
+          computeValidFilters(enriched),
+        );
       } else {
-        setRows([{ ...effectiveDefaultRow }]);
+        const initialRows = [{ ...effectiveDefaultRow }];
+        setRows(initialRows);
+        lastAppliedRef.current = serializeFilterSet(
+          computeValidFilters(initialRows),
+        );
       }
     }
-  }, [open, currentFilters]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Initialize rows only when the popover OPENS. With auto-apply, picking a
+    // value pushes to currentFilters; if this effect also re-ran on
+    // currentFilters it would reset rows and "unchoose" the value (feedback
+    // loop). While open, local rows are the source of truth.
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleQueryTokensChange = useCallback(
-    (tokens) => {
-      const converted = tokens.map((t) => {
+  const queryInputRef = useRef(null);
+
+  // Pure converter: query-input tokens → FilterRow shape. Extracted so the
+  // query-apply path can run it directly against tokens that were just
+  // flushed from QueryInput, without waiting for the setRows state cycle.
+  const queryTokensToRows = useCallback(
+    (tokens) =>
+      tokens.map((t) => {
         const queryFieldDef = queryFieldMap[t.field];
         const prop = propertyById[t.field];
         return {
@@ -1894,12 +2064,33 @@ const TraceFilterPanel = ({
             (queryFieldDef?.type === "enum" ? "categorical" : "string"),
           apiColType: prop?.apiColType || queryFieldDef?.apiColType,
           operator: QUERY_TO_BASIC_OP[t.operator] || t.operator,
-          value: Array.isArray(t.value) ? t.value : [t.value],
+          value: NO_VALUE_OPS.has(t.operator)
+            ? ""
+            : Array.isArray(t.value)
+              ? t.value
+              : [t.value],
         };
-      });
+      }),
+    [propertyById, queryFieldMap],
+  );
+
+  const handleQueryTokensChange = useCallback(
+    (tokens) => {
+      const converted = queryTokensToRows(tokens);
       setRows(converted.length ? converted : [{ ...effectiveDefaultRow }]);
     },
-    [effectiveDefaultRow, propertyById, queryFieldMap],
+    [effectiveDefaultRow, queryTokensToRows],
+  );
+
+  const queryGetOperators = useCallback(
+    (type, field) => {
+      const ops = getOperatorsForFilter({ field, fieldType: type });
+      const allowed = operatorFilter ? ops.filter(operatorFilter) : ops;
+      return allowed.map((op) =>
+        NO_VALUE_OPS.has(op.value) ? { ...op, noValue: true } : op,
+      );
+    },
+    [operatorFilter],
   );
 
   const handleChange = useCallback((idx, updated) => {
@@ -1916,36 +2107,77 @@ const TraceFilterPanel = ({
     [effectiveDefaultRow],
   );
 
-  const handleApply = useCallback(() => {
-    const valid = rows.map(normalizeFilterRowOperator).filter((r) => {
-      if (!r.field) return false;
-      if (NO_VALUE_OPS.has(r.operator)) return true;
-      const ops = getOperatorsForFilter(r);
-      const opDef = ops.find((o) => o.value === r.operator);
-      if (opDef?.range)
-        return Array.isArray(r.value) && r.value[0] !== "" && r.value[1] !== "";
-      if (Array.isArray(r.value)) return r.value.length > 0;
-      return r.value !== "" && r.value !== undefined && r.value !== null;
-    });
-    onApply(valid.length ? valid : null);
-    onClose();
-  }, [rows, onApply, onClose]);
+  // Auto-apply: filters take effect as soon as a value is chosen (debounced),
+  // so there's no Apply button — only Clear all. We apply WITHOUT closing the
+  // popover so the user can keep adjusting filters and see them apply live.
+  const autoApplyTimerRef = useRef(null);
+  // Apply only when the resulting filter set differs from the last one sent.
+  const applyIfChanged = useCallback(
+    (sourceRows) => {
+      // Hold while a numeric row is mid-edit so partial/invalid values don't
+      // auto-fire and a half-filled range doesn't drop the applied filter.
+      if (hasIncompleteNumericRow(sourceRows)) return;
+      const next = computeValidFilters(sourceRows);
+      const serialized = serializeFilterSet(next);
+      if (serialized === lastAppliedRef.current) return;
+      lastAppliedRef.current = serialized;
+      onApply(next);
+    },
+    [onApply],
+  );
+
+  useEffect(() => {
+    if (!open) return undefined;
+    if (autoApplyTimerRef.current) clearTimeout(autoApplyTimerRef.current);
+    autoApplyTimerRef.current = setTimeout(() => applyIfChanged(rows), 350);
+    return () => {
+      if (autoApplyTimerRef.current) clearTimeout(autoApplyTimerRef.current);
+    };
+  }, [rows, open, applyIfChanged]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Flush pending apply on close; bypass ref lets programmatic applies skip it.
+  const wasOpenRef = useRef(open);
+  const bypassNextCloseFlushRef = useRef(false);
+  useEffect(() => {
+    if (wasOpenRef.current && !open) {
+      if (bypassNextCloseFlushRef.current) {
+        bypassNextCloseFlushRef.current = false;
+        wasOpenRef.current = open;
+        return;
+      }
+      if (autoApplyTimerRef.current) {
+        clearTimeout(autoApplyTimerRef.current);
+        autoApplyTimerRef.current = null;
+      }
+      const flushed = queryInputRef.current?.flushPartial?.();
+      if (flushed && flushed.length) {
+        const flushedRows = queryTokensToRows(flushed);
+        setRows(flushedRows);
+        applyIfChanged(flushedRows);
+      } else {
+        applyIfChanged(rows);
+      }
+    }
+    wasOpenRef.current = open;
+  }, [open, rows, applyIfChanged, queryTokensToRows]);
 
   const handleClear = useCallback(() => {
     setRows([{ ...effectiveDefaultRow }]);
+    lastAppliedRef.current = serializeFilterSet(null);
     onApply(null);
     onClose();
   }, [onApply, onClose, effectiveDefaultRow]);
 
   const handleAiFilter = useCallback(async () => {
     if (!aiQuery.trim()) return;
+    setAiEmpty(false);
     const aiFilters = await aiParseQuery(aiQuery, {
       smart: true,
       projectId: observeId,
       source,
     });
     if (aiFilters.length > 0) {
-      const converted = aiFilters.map((f) => {
+      const aiRows = aiFilters.map((f) => {
         const prop = properties.find((p) => p.id === f.field);
         const fieldType = prop?.type || "string";
         return {
@@ -1957,20 +2189,28 @@ const TraceFilterPanel = ({
           value: Array.isArray(f.value) ? f.value : [f.value],
         };
       });
-      setRows(converted);
-      onApply(converted);
+      // Additive: append AI rows to existing valid filters, no dedup.
+      const merged = [...(computeValidFilters(rows) || []), ...aiRows];
+      const validFilters = computeValidFilters(merged);
+      setRows(merged);
+      lastAppliedRef.current = serializeFilterSet(validFilters);
+      onApply(validFilters);
       setAiQuery("");
+      bypassNextCloseFlushRef.current = true;
       onClose();
+    } else {
+      setAiEmpty(true);
     }
-  }, [aiQuery, aiParseQuery, observeId, source, properties, onApply, onClose]);
-
-  const handlePrimaryApply = useCallback(() => {
-    if (showAi && aiQuery.trim()) {
-      handleAiFilter();
-      return;
-    }
-    handleApply();
-  }, [showAi, aiQuery, handleAiFilter, handleApply]);
+  }, [
+    aiQuery,
+    aiParseQuery,
+    observeId,
+    source,
+    properties,
+    rows,
+    onApply,
+    onClose,
+  ]);
 
   return (
     <Popover
@@ -2005,7 +2245,10 @@ const TraceFilterPanel = ({
                   : "Ask AI — e.g. 'show traces with errors on gpt-4'"
               }
               value={aiQuery}
-              onChange={(e) => setAiQuery(e.target.value)}
+              onChange={(e) => {
+                setAiQuery(e.target.value);
+                setAiEmpty(false);
+              }}
               disabled={aiLoading}
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleAiFilter();
@@ -2052,6 +2295,15 @@ const TraceFilterPanel = ({
                 sx={{ fontSize: 11, color: "text.secondary", px: 0.5 }}
               >
                 AI unavailable, use filters below
+              </Typography>
+            )}
+            {aiEmpty && !aiError && !aiLoading && (
+              <Typography
+                variant="caption"
+                sx={{ fontSize: 11, color: "text.secondary", px: 0.5 }}
+              >
+                Could not derive filters from that query. Try rephrasing or add
+                a filter manually below.
               </Typography>
             )}
           </>
@@ -2104,6 +2356,8 @@ const TraceFilterPanel = ({
                     ValuePickerOverride={ValuePickerOverride}
                     categories={effectiveCategories}
                     freeSoloValues={freeSoloValues}
+                    operatorFilter={operatorFilter}
+                    defaultOperatorForType={defaultOperatorForType}
                   />
                 ))}
               </Stack>
@@ -2137,20 +2391,6 @@ const TraceFilterPanel = ({
                 >
                   Clear all
                 </Button>
-                <Button
-                  size="small"
-                  variant="contained"
-                  data-filter-panel-action="apply"
-                  onClick={handlePrimaryApply}
-                  disabled={aiLoading}
-                  sx={{
-                    textTransform: "none",
-                    fontSize: 12,
-                    px: 2,
-                  }}
-                >
-                  Apply
-                </Button>
               </Stack>
             </Stack>
           </Box>
@@ -2160,27 +2400,28 @@ const TraceFilterPanel = ({
         {showQueryTab && activeTab === "query" && (
           <Box sx={{ px: 0.5, pt: 0.25 }}>
             <QueryInput
+              ref={queryInputRef}
               filterFields={queryFilterFields}
               fieldMap={queryFieldMap}
+              getOperators={queryGetOperators}
               onApply={handleQueryTokensChange}
               initialTokens={rows
-                .filter(
-                  (r) =>
-                    r.field &&
-                    (Array.isArray(r.value)
-                      ? r.value.length > 0
-                      : r.value !== "" &&
+                .filter((r) => {
+                  if (!r.field) return false;
+                  if (NO_VALUE_OPS.has(normalizeFilterRowOperator(r).operator))
+                    return true;
+                  return Array.isArray(r.value)
+                    ? r.value.length > 0
+                    : r.value !== "" &&
                         r.value !== undefined &&
-                        r.value !== null),
-                )
+                        r.value !== null;
+                })
                 .map((r) => ({
                   field: r.field,
                   operator:
                     BASIC_TO_QUERY_OP[normalizeFilterRowOperator(r).operator] ||
                     normalizeFilterRowOperator(r).operator,
-                  value: Array.isArray(r.value)
-                    ? r.value.join(", ")
-                    : r.value || "",
+                  value: Array.isArray(r.value) ? r.value : r.value || "",
                 }))}
               valueOptions={queryValueOptions}
               valueLoading={queryValuesLoading}
@@ -2199,15 +2440,6 @@ const TraceFilterPanel = ({
                 sx={{ textTransform: "none", fontSize: 12 }}
               >
                 Clear all
-              </Button>
-              <Button
-                size="small"
-                variant="contained"
-                data-filter-panel-action="apply"
-                onClick={handleApply}
-                sx={{ textTransform: "none", fontSize: 12, px: 2 }}
-              >
-                Apply
               </Button>
             </Stack>
             <Typography
@@ -2239,6 +2471,8 @@ TraceFilterPanel.propTypes = {
   showQueryTab: PropTypes.bool,
   categories: PropTypes.array,
   propertyFilter: PropTypes.func,
+  operatorFilter: PropTypes.func,
+  defaultOperatorForType: PropTypes.object,
   panelWidth: PropTypes.number,
   defaultRow: PropTypes.object,
   isSimulator: PropTypes.bool,

@@ -23,7 +23,8 @@ from model_hub.utils.composite_aggregation import (
     aggregate_scores,
     aggregate_summaries,
 )
-from model_hub.utils.scoring import determine_pass_fail, normalize_score
+from evaluations.engine.instance import resolve_pass_threshold
+from model_hub.utils.scoring import determine_pass_fail, score_eval_output
 
 logger = logging.getLogger(__name__)
 
@@ -131,37 +132,10 @@ def _execute_child(
             call_context=call_context,
         )
 
-        score: float | None = None
-        _output_type = child_template.output_type_normalized
-        if not _output_type:
-            # Older / code-created templates may not have output_type_normalized
-            # set. Derive it from config["output"] before falling back to a
-            # dumb numeric cast so "Passed"/"Failed" strings score correctly.
-            _config_output = (getattr(child_template, "config", None) or {}).get("output", "")
-            _output_type = {
-                "Pass/Fail": "pass_fail",
-                "score": "percentage",
-                "choices": "choices",
-            }.get(_config_output)
-
-        if _output_type:
-            score = normalize_score(
-                result.get("output"),
-                _output_type,
-                child_template.choice_scores,
-            )
-        else:
-            # Last resort — best-effort numeric fallback.
-            try:
-                raw = result.get("output")
-                if raw is not None:
-                    score = max(0.0, min(1.0, float(raw)))
-            except (ValueError, TypeError):
-                logger.warning(
-                    "Child %s has no output_type_normalized and a non-numeric "
-                    "output — skipping in aggregation",
-                    child_template.name,
-                )
+        # None: unscoreable children fall through to the exclusion branch below.
+        score: float | None = score_eval_output(
+            result.get("output"), child_template, default_score=None
+        )
 
         return CompositeChildResult(
             child_id=str(child_template.id),
@@ -357,10 +331,10 @@ def execute_composite_children_sync(
 
     if parent.aggregation_enabled:
         threshold_map = {
-            str(link.child_id): (
-                link.child.pass_threshold
-                if link.child.pass_threshold is not None
-                else 0.5
+            str(link.child_id): resolve_pass_threshold(
+                eval_template=link.child,
+                runtime_config=link.config or {},
+                resolved_version=link.pinned_version,
             )
             for link in child_links
         }

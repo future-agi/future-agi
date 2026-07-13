@@ -90,6 +90,7 @@ import {
 } from "./add-items-session-utils";
 import "src/styles/clean-data-table.css";
 import { fetchRootSpans } from "src/api/project/llm-tracing";
+import { summarizeAddResults, addResultToast } from "./add-items-results";
 
 const panelFilterToApi = (panel) =>
   panelFilterToApiBase(panel, { includeMeta: true });
@@ -509,6 +510,8 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
   // obs page's "Add to queue") instead of being converted to root spans.
   const [isVoiceTraceSelection, setIsVoiceTraceSelection] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
+  // Trace project (from TraceSelector) — passed to fetchRootSpans to prune CH.
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
   const { mutate: addItems, isPending } = useAddQueueItems();
   const queryClient = useQueryClient();
   const isDefaultQueue = !!queue?.is_default;
@@ -551,8 +554,6 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
           sourceType === "call_execution");
 
       if (isBackendFilterMode) {
-        const totalCount =
-          selectAllInfo.totalCount - selectAllInfo.excludedIds.size;
         addItems(
           {
             queueId,
@@ -568,11 +569,11 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
             },
           },
           {
-            onSuccess: () => {
-              enqueueSnackbar(
-                `${totalCount} item${totalCount !== 1 ? "s" : ""} added to queue`,
-                { variant: "success" },
+            onSuccess: (resp) => {
+              const { message, variant } = addResultToast(
+                summarizeAddResults([resp]),
               );
+              enqueueSnackbar(message, { variant });
               resetSelection();
               setSourceType(null);
               onClose();
@@ -620,7 +621,10 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               selectAllInfo.filters,
               selectAllInfo.projectVersionId,
             );
-            const rootSpanMap = await fetchRootSpans(traceIds);
+            const rootSpanMap = await fetchRootSpans(
+              traceIds,
+              selectAllInfo.projectId ? [selectAllInfo.projectId] : [],
+            );
             const mappedIds = traceIds
               .map((traceId) => rootSpanMap[traceId])
               .filter(Boolean);
@@ -651,7 +655,10 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
         // annotator workspace's span-oriented UI (consistent with the
         // ``mappedIds`` branch above at lines 540-548).
         if (sourceType === "trace" && !isVoiceTraceSelection) {
-          const rootSpanMap = await fetchRootSpans(ids);
+          const rootSpanMap = await fetchRootSpans(
+            ids,
+            selectedProjectId ? [selectedProjectId] : [],
+          );
           const originalCount = ids.length;
           ids = ids.map((traceId) => rootSpanMap[traceId]).filter(Boolean);
           effectiveSourceType = "observation_span";
@@ -674,18 +681,21 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
       const BATCH_SIZE = 500;
       const totalCount = itemsToAdd.length;
       if (totalCount > BATCH_SIZE) {
+        const responses = [];
         for (let i = 0; i < totalCount; i += BATCH_SIZE) {
           const batch = itemsToAdd.slice(i, i + BATCH_SIZE);
-          await new Promise((resolve, reject) => {
+          const resp = await new Promise((resolve, reject) => {
             addItems(
               { queueId, items: batch },
               { onSuccess: resolve, onError: reject },
             );
           });
+          responses.push(resp);
         }
-        enqueueSnackbar(`${totalCount} items added to queue`, {
-          variant: "success",
-        });
+        const { message, variant } = addResultToast(
+          summarizeAddResults(responses),
+        );
+        enqueueSnackbar(message, { variant });
         resetSelection();
         setSourceType(null);
         onClose();
@@ -693,11 +703,11 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
         addItems(
           { queueId, items: itemsToAdd },
           {
-            onSuccess: () => {
-              enqueueSnackbar(
-                `${totalCount} item${totalCount !== 1 ? "s" : ""} added to queue`,
-                { variant: "success" },
+            onSuccess: (resp) => {
+              const { message, variant } = addResultToast(
+                summarizeAddResults([resp]),
               );
+              enqueueSnackbar(message, { variant });
               resetSelection();
               setSourceType(null);
               onClose();
@@ -846,6 +856,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
                 onSetSelection={handleSetSelection}
                 onSelectAll={handleSelectAll}
                 onVoiceProjectChange={setIsVoiceTraceSelection}
+                onProjectChange={setSelectedProjectId}
               />
             )}
             {sourceType === "observation_span" && (
@@ -1138,13 +1149,7 @@ export function buildReadOnlyColumnDefs(columnConfig) {
 // ---------------------------------------------------------------------------
 // Server-side datasource for dataset grid (read-only, with filters)
 // ---------------------------------------------------------------------------
-function createDataSource(
-  queryClient,
-  datasetId,
-  filtersRef,
-  searchRef,
-  setGridLoading,
-) {
+function createDataSource(queryClient, datasetId, filtersRef, searchRef) {
   return {
     getRows: async (params) => {
       const { request } = params;
@@ -1160,7 +1165,6 @@ function createDataSource(
       const search = searchRef.current || "";
 
       try {
-        setGridLoading?.(true);
         const queryOptions = getDatasetQueryOptions(
           datasetId,
           pageNumber,
@@ -1183,8 +1187,6 @@ function createDataSource(
         });
       } catch {
         params.fail();
-      } finally {
-        setGridLoading?.(false);
       }
     },
   };
@@ -1308,36 +1310,6 @@ SelectorEmptyState.propTypes = {
   loadingLabel: PropTypes.string,
 };
 
-function GridLoadingOverlay({ open, label = "Loading rows..." }) {
-  if (!open) return null;
-  return (
-    <Box
-      sx={{
-        position: "absolute",
-        inset: 0,
-        zIndex: 2,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        bgcolor: (theme) => alpha(theme.palette.background.paper, 0.72),
-        backdropFilter: "blur(1px)",
-      }}
-    >
-      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-        <CircularProgress size={18} />
-        <Typography variant="body2" color="text.secondary">
-          {label}
-        </Typography>
-      </Box>
-    </Box>
-  );
-}
-
-GridLoadingOverlay.propTypes = {
-  open: PropTypes.bool,
-  label: PropTypes.string,
-};
-
 // ---------------------------------------------------------------------------
 // Dataset Row Selector – Same AG Grid as dataset view
 // ---------------------------------------------------------------------------
@@ -1350,7 +1322,6 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
   const [filters, setFiltersState] = useState([
     { ...DefaultFilter, id: getRandomId() },
   ]);
-  const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
   const agTheme = useAgThemeWith(DATASET_GRID_THEME_PARAMS);
   const queryClient = useQueryClient();
@@ -1421,7 +1392,6 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
           datasetId,
           filtersRef,
           searchRef,
-          setIsGridLoading,
         );
         params.api.setGridOption("serverSideDatasource", ds);
       }
@@ -1437,7 +1407,6 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         datasetId,
         filtersRef,
         searchRef,
-        setIsGridLoading,
       );
       gridApi.setGridOption("serverSideDatasource", ds);
     }
@@ -1452,7 +1421,6 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         datasetId,
         filtersRef,
         searchRef,
-        setIsGridLoading,
       );
       gridApi.setGridOption("serverSideDatasource", ds);
     },
@@ -1512,7 +1480,6 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
         datasetId,
         filtersRef,
         searchRef,
-        setIsGridLoading,
       );
       gridApi.setGridOption("serverSideDatasource", ds);
     }
@@ -1759,7 +1726,6 @@ export function DatasetRowSelector({ onSetSelection, onSelectAll }) {
             }}
           >
             <Box sx={{ flex: 1, position: "relative" }}>
-              <GridLoadingOverlay open={isGridLoading} />
               <AgGridReact
                 ref={gridRef}
                 rowHeight={100}
@@ -1810,7 +1776,12 @@ const traceDefaultFilterBase = {
   },
 };
 
-function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
+function TraceSelector({
+  onSetSelection,
+  onSelectAll,
+  onVoiceProjectChange,
+  onProjectChange,
+}) {
   const [projectId, setProjectId] = useState("");
   const [versionId, setVersionId] = useState("");
   const [columns, setColumns] = useState([]);
@@ -1825,7 +1796,6 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [gridApi, setGridApi] = useState(null);
-  const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
   const filterButtonRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
@@ -1871,6 +1841,12 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   useEffect(() => {
     onVoiceProjectChange?.(isVoiceProject);
   }, [isVoiceProject, onVoiceProjectChange]);
+
+  // Surface the selected project so handleSubmit can pass it to fetchRootSpans
+  // (prunes the CH scan).
+  useEffect(() => {
+    onProjectChange?.(projectId || null);
+  }, [projectId, onProjectChange]);
 
   // Fetch versions for prototype projects
   const {
@@ -1954,12 +1930,11 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: TRACE_ROWS_LIMIT,
-            filters: JSON.stringify(filtersRef.current || []),
+            filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
           }
-          setIsGridLoading(true);
           const results = await axios.get(
             endpoints.project.getTracesForObserveProject(),
             { params: apiParams },
@@ -1984,8 +1959,6 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           });
         } catch {
           params.fail();
-        } finally {
-          setIsGridLoading(false);
         }
       },
     }),
@@ -2000,7 +1973,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
     }
     return columns
       .filter((col) => !col.groupBy || col.groupBy === "")
-      .map((col) => getTraceListColumnDefs(col));
+      .map((col) => ({ ...getTraceListColumnDefs(col), hide: false }));
   }, [columns]);
 
   const defaultColDef = useMemo(
@@ -2451,7 +2424,6 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             onSelectAll={commitFilterModeSelectAll}
           />
           <Box sx={{ flex: 1, position: "relative" }}>
-            <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
               ref={gridRef}
               className="clean-data-table"
@@ -2485,6 +2457,7 @@ TraceSelector.propTypes = {
   onSetSelection: PropTypes.func.isRequired,
   onSelectAll: PropTypes.func.isRequired,
   onVoiceProjectChange: PropTypes.func,
+  onProjectChange: PropTypes.func,
 };
 
 // ---------------------------------------------------------------------------
@@ -2505,7 +2478,6 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [gridApi, setGridApi] = useState(null);
-  const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
   const filterButtonRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
@@ -2606,13 +2578,12 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: SPAN_ROWS_LIMIT,
-            filters: JSON.stringify(filtersRef.current || []),
+            filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
           }
 
-          setIsGridLoading(true);
           const results = await axios.get(
             endpoints.project.getSpansForObserveProject(),
             { params: apiParams },
@@ -2637,8 +2608,6 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           });
         } catch {
           params.fail();
-        } finally {
-          setIsGridLoading(false);
         }
       },
     }),
@@ -2653,7 +2622,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
     }
     return columns
       .filter((col) => !col.groupBy || col.groupBy === "")
-      .map((col) => getTraceListColumnDefs(col));
+      .map((col) => ({ ...getTraceListColumnDefs(col), hide: false }));
   }, [columns]);
 
   const defaultColDef = useMemo(
@@ -3024,7 +2993,6 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             onSelectAll={commitFilterModeSelectAll}
           />
           <Box sx={{ flex: 1, position: "relative" }}>
-            <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
               ref={gridRef}
               className="clean-data-table"
@@ -3078,7 +3046,6 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
   const [gridApi, setGridApi] = useState(null);
-  const [isGridLoading, setIsGridLoading] = useState(false);
   const gridRef = useRef(null);
   const filterButtonRef = useRef(null);
   const agTheme = useAgThemeWith(SELECTOR_GRID_THEME_PARAMS);
@@ -3161,7 +3128,6 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
           const pageSize = request.endRow - request.startRow;
           const pageNumber = Math.floor(request.startRow / pageSize);
 
-          setIsGridLoading(true);
           const results = await axios.get(
             endpoints.project.projectSessionList(),
             {
@@ -3176,7 +3142,7 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
                     direction: sort,
                   })),
                 ),
-                filters: JSON.stringify(filtersRef.current || []),
+                filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
               },
             },
           );
@@ -3200,8 +3166,6 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
           });
         } catch {
           params.fail();
-        } finally {
-          setIsGridLoading(false);
         }
       },
     }),
@@ -3240,7 +3204,10 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
         },
       ];
     }
-    return columns.map((col) => getSessionListColumnDef(col));
+    return columns.map((col) => ({
+      ...getSessionListColumnDef(col),
+      hide: false,
+    }));
   }, [columns]);
 
   const defaultColDef = useMemo(
@@ -3601,7 +3568,6 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
             onSelectAll={commitFilterModeSelectAll}
           />
           <Box sx={{ flex: 1, position: "relative" }}>
-            <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
               ref={gridRef}
               className="clean-data-table"
@@ -4200,7 +4166,6 @@ function SimulationSelector({ onSetSelection }) {
   const [testId, setTestId] = useState("");
   const [executionRunId, setExecutionRunId] = useState("");
   const [gridApi, setGridApi] = useState(null);
-  const [isGridLoading, setIsGridLoading] = useState(false);
   const [simulationColumnOrder, setSimulationColumnOrder] = useState([]);
   const [filters, setFilters] = useState([
     { ...simulationDefaultFilterBase, id: getRandomId() },
@@ -4269,7 +4234,6 @@ function SimulationSelector({ onSetSelection }) {
           const pageSize = request.endRow - request.startRow;
           const pageNumber = Math.floor(request.startRow / pageSize);
 
-          setIsGridLoading(true);
           const { data } = await queryClient.fetchQuery({
             queryKey: [
               "sim-call-executions",
@@ -4315,8 +4279,6 @@ function SimulationSelector({ onSetSelection }) {
           });
         } catch {
           params.fail();
-        } finally {
-          setIsGridLoading(false);
         }
       },
     }),
@@ -4704,7 +4666,6 @@ function SimulationSelector({ onSetSelection }) {
           }}
         >
           <Box sx={{ flex: 1, position: "relative" }}>
-            <GridLoadingOverlay open={isGridLoading} />
             <AgGridReact
               ref={gridRef}
               className="clean-data-table"

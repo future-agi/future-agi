@@ -10,7 +10,8 @@ vi.mock("src/utils/axios", () => ({
   endpoints: {
     develop: {
       runPrompt: {
-        assignMultipleLabels: "/model-hub/prompt-labels/assign-multiple-labels/",
+        assignMultipleLabels:
+          "/model-hub/prompt-labels/assign-multiple-labels/",
         createPromptLabel: "/model-hub/prompt-labels/",
       },
     },
@@ -73,27 +74,19 @@ describe("LabelSelectContent — Save button (TH-5894)", () => {
     expect(saveButton()).toBeDisabled();
   });
 
-  it("disables Save when the selection matches the original (no change)", () => {
+  it("enables Save whenever the selection is non-empty", () => {
     renderContent({ selectedLabels: [ALPHA] });
-    expect(saveButton()).toBeDisabled();
+    expect(saveButton()).toBeEnabled();
   });
 
-  it("enables Save and submits an empty list when the only tag is removed", async () => {
+  it("disables Save when the only tag is removed — empty selection cannot be submitted", () => {
     const { container } = renderContent({ selectedLabels: [ALPHA] });
-    expect(saveButton()).toBeDisabled();
+    expect(saveButton()).toBeEnabled();
 
     fireEvent.click(deleteIcons(container)[0]);
 
-    expect(saveButton()).toBeEnabled();
-
-    fireEvent.click(saveButton());
-
-    await waitFor(() => {
-      expect(mocks.post).toHaveBeenCalledWith(
-        "/model-hub/prompt-labels/assign-multiple-labels/",
-        { template_version_id: "version-1", label_ids: [] },
-      );
-    });
+    expect(saveButton()).toBeDisabled();
+    expect(mocks.post).not.toHaveBeenCalled();
   });
 
   it("submits the remaining ids when one of several tags is removed", async () => {

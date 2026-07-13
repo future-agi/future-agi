@@ -31,6 +31,7 @@ export const StereoMultiTrackPlayer = ({
   id,
   height = 70,
   onInstance,
+  isInbound = false,
 }) => {
   const theme = useTheme();
   // Speaker palette — matches the TranscriptView timeline strip / talk
@@ -47,7 +48,7 @@ export const StereoMultiTrackPlayer = ({
     customerUrl: stereoCustomer,
     loading: stereoLoading,
     error: stereoError,
-  } = useStereoChannels(recordings?.stereo || "");
+  } = useStereoChannels(recordings?.stereo || "", isInbound);
 
   // Use stereo-split channels when available, fall back to separate mono files
   const useStereo =
@@ -106,6 +107,7 @@ StereoMultiTrackPlayer.propTypes = {
   id: PropTypes.string,
   height: PropTypes.number,
   onInstance: PropTypes.func,
+  isInbound: PropTypes.bool,
 };
 
 const AudioPlayerCustom = ({ data, onInstance }) => {
@@ -116,6 +118,12 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
     );
 
   const isProjectModule = data?.module === "project";
+  const isInbound =
+    (
+      data?.call_metadata?.call_direction ||
+      data?.call_type ||
+      ""
+    ).toLowerCase() === "inbound";
   if (isCallInProgress) {
     return (
       <Box sx={{ height: 200 }}>
@@ -124,7 +132,7 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
     );
   }
   if (isProjectModule) {
-    if (!data?.recordingAvailable) {
+    if (!data?.recording_available) {
       return (
         <Stack
           justifyContent="center"
@@ -139,7 +147,7 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
       );
     }
 
-    if (data?.callMetadata?.provider === "retell") {
+    if (data?.call_metadata?.provider === "retell") {
       return (
         <Stack
           height={50}
@@ -202,6 +210,7 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
         recordings={normalizedRecordings}
         id={data?.id}
         onInstance={onInstance}
+        isInbound={isInbound}
       />
     );
   }
@@ -237,6 +246,7 @@ const AudioPlayerCustom = ({ data, onInstance }) => {
         recordings={recordings}
         id={data?.id}
         onInstance={onInstance}
+        isInbound={isInbound}
       />
     );
   }
@@ -271,9 +281,9 @@ const areRecordingPropsEqual = (prev, next) => {
     p?.status === n?.status &&
     p?.simulation_call_type === n?.simulation_call_type &&
     p?.module === n?.module &&
-    p?.recordingAvailable === n?.recordingAvailable &&
+    p?.recording_available === n?.recording_available &&
     p?.ended_reason === n?.ended_reason &&
-    p?.callMetadata?.provider === n?.callMetadata?.provider &&
+    p?.call_metadata?.provider === n?.call_metadata?.provider &&
     p?.recording_url === n?.recording_url &&
     p?.recording === n?.recording &&
     p?.recordings === n?.recordings &&

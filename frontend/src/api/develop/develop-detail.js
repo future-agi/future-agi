@@ -3,6 +3,7 @@ import { useMemo } from "react";
 import { getColumnConfig } from "src/sections/develop-detail/DataTab/common";
 import axios, { endpoints } from "src/utils/axios";
 import logger from "src/utils/logger";
+import { modelHubDevelopsGetDatasetTableList } from "src/generated/api-contracts/api";
 
 export const normalizeDatasetListItem = (dataset) => ({
   ...dataset,
@@ -144,13 +145,8 @@ export const useGetJsonColumnSchema = (datasetId, options = {}) => {
 export const useGetDatasetDetail = (datasetId, options = {}, params = {}) => {
   return useQuery({
     queryKey: ["get-dataset-detail", datasetId, params],
-    queryFn: async () => {
-      const res = await axios.get(
-        endpoints.develop.getDatasetDetail(datasetId),
-        { params },
-      );
-      return res.data?.result;
-    },
+    queryFn: () => modelHubDevelopsGetDatasetTableList(datasetId, params),
+    select: (d) => d?.data?.result || d?.result || d,
     enabled: Boolean(datasetId),
     staleTime: 60 * 1000,
     ...options,

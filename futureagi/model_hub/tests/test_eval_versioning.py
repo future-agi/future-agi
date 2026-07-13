@@ -143,8 +143,10 @@ class TestVersionCreateAPI:
         assert r2.status_code == 200
         assert r1.data["result"]["version_number"] == 1
         assert r2.data["result"]["version_number"] == 2
+        # Default rotates to the newly-created version — v1 was default at
+        # create-time but got demoted by v2's create_version transaction.
         assert r1.data["result"]["is_default"] is True
-        assert r2.data["result"]["is_default"] is False
+        assert r2.data["result"]["is_default"] is True
 
     def test_create_version_with_overrides(self, auth_client, user_template):
         response = auth_client.post(
@@ -157,7 +159,10 @@ class TestVersionCreateAPI:
         assert v.criteria == "New instructions {{var}}"
         assert v.model == "turing_flash"
 
-    def test_create_version_keeps_existing_default(self, auth_client, user_template):
+    def test_create_version_rotates_default(self, auth_client, user_template):
+        """Creating a new version demotes the previous default and flags the
+        new version as default in the same transaction.
+        """
         r1 = auth_client.post(self._url(user_template.id), {}, format="json")
         r2 = auth_client.post(self._url(user_template.id), {}, format="json")
 
@@ -166,8 +171,23 @@ class TestVersionCreateAPI:
 
         v1.refresh_from_db()
         v2.refresh_from_db()
-        assert v1.is_default is True
-        assert v2.is_default is False
+        assert v1.is_default is False
+        assert v2.is_default is True
+
+    def test_only_one_default_after_multiple_creates(self, auth_client, user_template):
+        """Invariant: after any number of create_version calls, exactly one
+        version per template carries is_default=True. Enforced at the DB
+        level by the `unique_default_version_per_template` partial unique
+        constraint (migration 0114).
+        """
+        for _ in range(5):
+            auth_client.post(self._url(user_template.id), {}, format="json")
+
+        defaults = EvalTemplateVersion.objects.filter(
+            eval_template=user_template, is_default=True, deleted=False
+        )
+        assert defaults.count() == 1
+        assert defaults.first().version_number == 5
 
     def test_create_version_nonexistent_template(self, auth_client):
         response = auth_client.post(

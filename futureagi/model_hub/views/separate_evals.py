@@ -1,3 +1,4 @@
+import copy
 import json
 import math
 import traceback
@@ -19,6 +20,7 @@ from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from accounts.authentication import workspace_read_only
 from agentic_eval.core.embeddings.embedding_manager import EmbeddingManager
 from model_hub.constants import (
     EVAL_PLAYGROUND_CURL_CODE,
@@ -39,6 +41,7 @@ from model_hub.models.evals_metric import (
 )
 
 from model_hub.models.run_prompt import PromptEvalConfig
+from model_hub.selectors.feedback import resolve_feedback_edit_contexts
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     CellErrorLocalizerResponseSerializer,
@@ -1121,6 +1124,7 @@ class EvalMetricView(APIView):
             return self._gm.bad_request(str(e))
 
 
+@workspace_read_only
 class GetEvalTemplateNameView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -1167,7 +1171,8 @@ class GetEvalTemplateNameView(APIView):
                 .order_by("name")
             )
             if search_text:
-                eval_templates = eval_templates.filter(name__icontains=search_text)
+                from model_hub.utils.eval_list import normalize_search_for_name
+                eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
             eval_template_names = [
                 {
                     "id": str(eval_template.id),
@@ -1182,6 +1187,7 @@ class GetEvalTemplateNameView(APIView):
             return self._gm.bad_request(str(e))
 
 
+@workspace_read_only
 class GetEvalTemplates(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
@@ -1463,6 +1469,7 @@ class GetEvalTemplates(APIView):
             return self._gm.bad_request(str(e))
 
 
+@workspace_read_only
 class EvalTemplateListView(APIView):
     """
     POST /model-hub/eval-templates/list/
@@ -1639,6 +1646,7 @@ class EvalTemplateListView(APIView):
             return self._gm.bad_request(str(e))
 
 
+@workspace_read_only
 class EvalTemplateListChartsView(APIView):
     """
     POST /model-hub/eval-templates/list-charts/
@@ -2017,9 +2025,18 @@ class EvalTemplateCreateV2View(APIView):
                         if hasattr(req, "data_injection") and req.data_injection
                         else False
                     )
+                    # LLM evals can put the variable in any turn (System /
+                    # User / Assistant), so scan every message body, not
+                    # just req.instructions (which mirrors the System turn).
+                    _prompt_texts = [req.instructions or ""]
+                    if req.messages:
+                        for _m in req.messages:
+                            if isinstance(_m, dict):
+                                _prompt_texts.append(_m.get("content", "") or "")
+                    _combined_prompt = "\n".join(t for t in _prompt_texts if t)
                     if (
-                        req.instructions
-                        and not re.search(variable_pattern, req.instructions)
+                        _combined_prompt.strip()
+                        and not re.search(variable_pattern, _combined_prompt)
                         and not has_data_injection
                     ):
                         return self._gm.bad_request(
@@ -2455,7 +2472,11 @@ class EvalTemplateUpdateView(APIView):
             )
 
             try:
-                template = EvalTemplate.objects.get(
+                # select_related caches the org + workspace FKs so downstream
+                # accesses stay in Python instead of firing fresh SELECTs.
+                template = EvalTemplate.objects.select_related(
+                    "organization", "workspace"
+                ).get(
                     id=template_id,
                     organization=organization,
                     owner=OwnerChoices.USER.value,
@@ -2466,14 +2487,23 @@ class EvalTemplateUpdateView(APIView):
                     "Eval template not found or cannot be edited (system templates are read-only)."
                 )
 
+            # Snapshot for update_fields diffing at save() below.
+            # deepcopy so in-place JSONField mutations (template.config[...] = ...)
+            # register as changes; a shallow reference would alias the same dict.
+            _original_field_values = {
+                f.attname: copy.deepcopy(getattr(template, f.attname))
+                for f in template._meta.concrete_fields
+            }
+
             # Update fields if provided
-            if req.name is not None:
+            # Skip the validation + uniqueness scan when the name is unchanged;
+            # autosave otherwise fires the collision query on every keystroke.
+            if req.name is not None and req.name.strip() != template.name:
                 cleaned = req.name.strip()
                 if not re.match(r"^[a-z0-9_-]+$", cleaned):
                     return self._gm.bad_request(
                         "Name can only contain lowercase letters, numbers, hyphens, or underscores."
                     )
-                # Check uniqueness
                 if (
                     EvalTemplate.objects.filter(
                         name=cleaned, organization=organization, deleted=False
@@ -2712,7 +2742,17 @@ class EvalTemplateUpdateView(APIView):
             if req.publish:
                 template.visible_ui = True
 
-            template.save()
+            # Write only dirty columns; default save() rewrites the whole row.
+            _dirty_fields = [
+                name
+                for name, orig in _original_field_values.items()
+                if getattr(template, name) != orig
+            ]
+            if _dirty_fields:
+                # auto_now=True on updated_at only fires if it's in update_fields.
+                if "updated_at" not in _dirty_fields:
+                    _dirty_fields.append("updated_at")
+                template.save(update_fields=_dirty_fields)
 
             # Lazy V1 on first publish (idempotent).
             if req.publish:
@@ -5264,7 +5304,8 @@ class EvalFeedbackListView(APIView):
             )
 
             total = base_qs.count()
-            feedbacks = base_qs[page * page_size : (page + 1) * page_size]
+            feedbacks = list(base_qs[page * page_size : (page + 1) * page_size])
+            edit_contexts = resolve_feedback_edit_contexts(feedbacks)
 
             items = []
             for fb in feedbacks:
@@ -5272,6 +5313,11 @@ class EvalFeedbackListView(APIView):
                 if fb.user:
                     user_name = getattr(fb.user, "name", "") or fb.user.email
 
+                ctx = edit_contexts.get(fb.id) or {
+                    "user_eval_metric_id": "",
+                    "custom_eval_config_id": "",
+                    "experiment_id": "",
+                }
                 items.append(
                     {
                         "id": str(fb.id),
@@ -5284,6 +5330,9 @@ class EvalFeedbackListView(APIView):
                         "created_at": (
                             fb.created_at.isoformat() if fb.created_at else ""
                         ),
+                        "user_eval_metric_id": ctx["user_eval_metric_id"],
+                        "custom_eval_config_id": ctx["custom_eval_config_id"],
+                        "experiment_id": ctx["experiment_id"],
                     }
                 )
 
@@ -6114,9 +6163,26 @@ class EvalPlayGroundAPIView(APIView):
                         CallExecution,
                         CallTranscript,
                     )
+                    from simulate.utils.speaker_roles import SpeakerRoleResolver
 
                     _ce = CallExecution.objects.filter(id=_call_id).first()
                     if _ce:
+                        # Filter out system prompt and normalise speaker labels via
+                        # the resolver so the simulator persona never reaches the eval.
+                        _ce_provider = SpeakerRoleResolver.detect_provider(
+                            _ce.provider_call_data
+                        )
+                        _ce_is_outbound = SpeakerRoleResolver.detect_is_outbound(_ce)
+                        _conversational_roles = (
+                            SpeakerRoleResolver.get_conversational_roles()
+                        )
+                        _transcript_rows = (
+                            CallTranscript.objects.filter(
+                                call_execution_id=_ce.id,
+                                speaker_role__in=_conversational_roles,
+                            )
+                            .order_by("start_time_ms")[:200]
+                        )
                         call_context = {
                             "id": str(_ce.id),
                             "status": _ce.status,
@@ -6147,13 +6213,15 @@ class EvalPlayGroundAPIView(APIView):
                             "scenario": build_eval_playground_scenario_context(_ce),
                             "transcript": [
                                 {
-                                    "speaker": t.speaker_role,
+                                    "speaker": SpeakerRoleResolver.get_eval_role_label(
+                                        t.speaker_role,
+                                        provider=_ce_provider,
+                                        is_outbound=_ce_is_outbound,
+                                    ),
                                     "content": t.content,
                                     "start_ms": t.start_time_ms,
                                 }
-                                for t in CallTranscript.objects.filter(
-                                    call_execution_id=_ce.id
-                                ).order_by("start_time_ms")[:200]
+                                for t in _transcript_rows
                             ],
                         }
                 except Exception as _e:

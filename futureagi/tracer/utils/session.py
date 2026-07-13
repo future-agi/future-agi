@@ -44,14 +44,21 @@ def _try_session_navigation_ch(
 
         user_id = query_data.get("user_id")
         if user_id:
-            # Add user filter to the navigation query. Anchor must match the
-            # exact line emitted by ``build_session_navigation_query``; keep
-            # in sync if that builder is changed.
-            nav_params["user_id"] = user_id
-            nav_query = nav_query.replace(
-                "AND trace_session_id IS NOT NULL",
-                "AND trace_session_id IS NOT NULL AND end_user_id = %(user_id)s",
+            from tracer.services.clickhouse.v2.end_user_dict_reader import (
+                resolve_end_user_ids_by_user_id,
             )
+
+            end_user_ids = resolve_end_user_ids_by_user_id(
+                user_id, project_id=project_id
+            )
+            if end_user_ids:
+                nav_params["end_user_ids"] = end_user_ids
+                nav_query = nav_query.replace(
+                    "AND trace_session_id IS NOT NULL",
+                    "AND trace_session_id IS NOT NULL AND end_user_id IN %(end_user_ids)s",
+                )
+            else:
+                return None
 
         nav_result = service.execute_ch_query(nav_query, nav_params)
 
@@ -64,9 +71,6 @@ def _try_session_navigation_ch(
         first_q, last_q, msg_params = builder.build_first_last_message_query(
             session_ids
         )
-        if user_id:
-            msg_params["user_id"] = user_id
-
         first_result = service.execute_ch_query(first_q, msg_params)
         last_result = service.execute_ch_query(last_q, msg_params)
 

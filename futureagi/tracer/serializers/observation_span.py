@@ -57,6 +57,20 @@ class ObservationAttributeListResponseSerializer(serializers.Serializer):
     result = serializers.ListField(child=serializers.CharField())
 
 
+class RootSpansQuerySerializer(serializers.Serializer):
+    # Repeated query params: ?trace_ids=<id>&trace_ids=<id> (DRF ListField reads
+    # QueryDict.getlist). CharField (not UUID): collector ids are hash strings.
+    trace_ids = serializers.ListField(child=serializers.CharField(), allow_empty=False)
+    project_ids = serializers.ListField(
+        child=serializers.CharField(), required=False, allow_empty=True
+    )
+
+
+class RootSpansResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.DictField(child=serializers.CharField())
+
+
 class ObservationSpanSerializer(serializers.ModelSerializer):
     project = serializers.PrimaryKeyRelatedField(
         queryset=Project.objects.all(), many=False
@@ -217,7 +231,7 @@ class SpanListQuerySerializer(StrictInputSerializer):
 
 
 class SpanObserveListQuerySerializer(StrictInputSerializer):
-    project_id = serializers.UUIDField()
+    project_id = serializers.UUIDField(required=False, allow_null=True)
     user_id = serializers.CharField(required=False, allow_blank=True)
     filters = filter_list_query_param_field(required=False, default=list)
     page_number = serializers.IntegerField(required=False, default=0, min_value=0)

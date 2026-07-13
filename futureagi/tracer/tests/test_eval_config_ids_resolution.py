@@ -182,7 +182,6 @@ class TestEvalReadFailurePropagates:
                 view._retrieve_clickhouse(
                     request=mock.Mock(),
                     trace_session_id="s1",
-                    trace_session_obj=None,
                     project_id="p1",
                     analytics=_FakeAnalytics(),
                     query_data={"page_number": 0, "page_size": 30},
@@ -241,6 +240,17 @@ class TestEvalReadSelectors:
         assert "trace_id IN %(trace_ids)s" in query
         assert "custom_eval_config_id IN %(config_ids)s" in query
         assert captured["params"] == {"trace_ids": ["t1"], "config_ids": ["c1"]}
+
+    @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
+    def test_trace_eval_scores_null_safe_output_str(self):
+        """A NULL output_str (successful bool/float eval) must not be filtered out."""
+        svc, captured = _capturing_service([{"trace_id": "t", "config_id": "c"}])
+        svc.get_trace_eval_scores_ch(["t1"], ["c1"])
+        query = captured["query"]
+        assert "ifNull(output_str, '') != 'ERROR'" in query
+        assert "output_str != 'ERROR'" not in query.replace(
+            "ifNull(output_str, '') != 'ERROR'", ""
+        )
 
     def test_trace_eval_scores_empty_short_circuits(self):
         svc, captured = _capturing_service([{"trace_id": "t"}])

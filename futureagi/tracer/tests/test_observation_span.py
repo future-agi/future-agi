@@ -176,6 +176,8 @@ class TestObservationSpanWorkspaceScopeAPI:
     def test_root_spans_omits_same_org_other_workspace_trace(
         self, auth_client, organization, user
     ):
+        """GET root-spans is fail-closed: a same-org other-workspace trace is
+        omitted from the {trace_id: root_span_id} map."""
         _, _, _, other_trace, other_span = make_same_org_other_workspace_span(
             organization, user, trace_type="observe"
         )
@@ -579,6 +581,9 @@ class TestObservationSpanListSpansAPI:
     def test_list_spans_falls_back_to_postgres_when_clickhouse_fails(
         self, auth_client, project_version, observation_span, monkeypatch
     ):
+        """Unlike the fail-closed observe sibling, the experiment/prototype
+        `list_spans` path keeps the PG fallback: a CH error returns PG rows
+        rather than 400ing the prototype span list."""
         from tracer.services.clickhouse.query_service import QueryType
         from tracer.views.observation_span import ObservationSpanView
 
@@ -650,13 +655,15 @@ class TestObservationSpanListSpansObserveAPI:
         )
         assert response.status_code == status.HTTP_200_OK
 
-    def test_list_spans_observe_falls_back_to_postgres_when_clickhouse_fails(
+    def test_list_spans_observe_fails_closed_when_clickhouse_fails(
         self, auth_client, observe_project, session_trace, monkeypatch
     ):
+        """CH is authoritative post-migration: a CH error surfaces as 400
+        rather than falling back to the dropped-table PG path."""
         from tracer.services.clickhouse.query_service import QueryType
         from tracer.views.observation_span import ObservationSpanView
 
-        span = ObservationSpan.objects.create(
+        ObservationSpan.objects.create(
             id=f"observe_span_{uuid.uuid4().hex[:8]}",
             project=observe_project,
             trace=session_trace,
@@ -671,7 +678,9 @@ class TestObservationSpanListSpansObserveAPI:
             lambda self, query_type: query_type == QueryType.SPAN_LIST,
         )
 
-        def fail_clickhouse(self, request, project_id, validated_data, analytics):
+        def fail_clickhouse(
+            self, request, project_id, validated_data, analytics, **kwargs
+        ):
             raise RuntimeError("clickhouse unavailable")
 
         monkeypatch.setattr(
@@ -685,9 +694,7 @@ class TestObservationSpanListSpansObserveAPI:
             {"project_id": str(observe_project.id), "filters": "[]"},
         )
 
-        assert response.status_code == status.HTTP_200_OK
-        rows = get_result(response).get("table", [])
-        assert any(row["span_id"] == span.id for row in rows)
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
 
 @pytest.mark.integration

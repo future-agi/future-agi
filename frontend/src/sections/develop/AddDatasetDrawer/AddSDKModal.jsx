@@ -109,7 +109,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
       onCloseClick();
       //@ts-ignore
       addRowSDK({
-        dataset_name: data?.data?.result?.datasetName,
+        dataset_name: data?.data?.result?.dataset_name,
       });
       setIsNext(true);
     },
@@ -375,13 +375,13 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     p="5px 12px"
                     color="black"
                   >
-                    {data?.data?.result?.apiKeys?.apiKey}
+                    {data?.data?.result?.api_keys?.api_key}
                   </Typography>
                   <IconButton
                     size="small"
                     onClick={() =>
                       copyToClipboard(
-                        data?.data?.result?.apiKeys?.apiKey,
+                        data?.data?.result?.api_keys?.api_key,
                         "API Key",
                       )
                     }
@@ -410,13 +410,13 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     p="5px 12px"
                     color="black"
                   >
-                    {data?.data?.result?.apiKeys?.secretKey}
+                    {data?.data?.result?.api_keys?.secret_key}
                   </Typography>
                   <IconButton
                     size="small"
                     onClick={() =>
                       copyToClipboard(
-                        data?.data?.result?.apiKeys?.secretKey,
+                        data?.data?.result?.api_keys?.secret_key,
                         "Secret Key",
                       )
                     }

@@ -68,8 +68,12 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
     label_ids = serializers.ListField(
         child=serializers.UUIDField(),
         write_only=True,
-        required=False,
-        default=list,
+        required=True,
+        min_length=1,
+        error_messages={
+            "required": "At least one label is required.",
+            "min_length": "At least one label is required.",
+        },
     )
     annotator_ids = serializers.ListField(
         child=serializers.UUIDField(),
@@ -578,7 +582,6 @@ class QueueItemSerializer(serializers.ModelSerializer):
                     source_id,
                     organization=organization,
                     workspace=workspace,
-                    allow_ch_fallback=True,
                 )
                 if source_obj:
                     # Store the soft id, not the FK object: a CH-resolved source
@@ -748,7 +751,9 @@ class QueueDefaultRequestSerializer(StrictInputSerializer):
 
 class QueueLabelRequestSerializer(StrictInputSerializer):
     label_id = serializers.UUIDField()
-    required = serializers.BooleanField(required=False, default=True)
+    # Default off: adding a label makes it available to annotate with, not
+    # required. Required labels are a gated feature the caller opts into.
+    required = serializers.BooleanField(required=False, default=False)
 
 
 class QueueExportColumnMappingSerializer(StrictInputSerializer):

@@ -1,3 +1,4 @@
+import uuid
 from datetime import timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -8,7 +9,6 @@ from rest_framework import status
 
 # These tests verify that queue annotation submission correctly creates Score
 # records, adds queue annotators, manages reservations, and validates permissions.
-
 from accounts.models import User
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
@@ -76,12 +76,28 @@ def _create_trace_project(organization, workspace, name="Annotation E2E Project"
 
 
 def _create_trace(project, name="Annotation E2E Trace"):
-    return Trace.objects.create(
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.tests._ch_seed import seed_ch_span
+
+    trace = Trace.objects.create(
         project=project,
         name=name,
         input={"prompt": "hello"},
         output={"response": "world"},
     )
+    # Tracer sources resolve CH-native — seed a CH-only root span (never PG).
+    root = ObservationSpan(
+        id=f"chroot_{uuid.uuid4().hex[:16]}",
+        project=project,
+        trace=trace,
+        name="trace root",
+        observation_type="agent",
+        start_time=timezone.now() - timedelta(seconds=1),
+        end_time=timezone.now(),
+        status="OK",
+    )
+    seed_ch_span(root)  # CH only — NOT ObservationSpan.objects.create
+    return trace
 
 
 def _create_trace_queue(
@@ -278,7 +294,7 @@ def test_reservation_blocks_other_user_until_timeout(
     blocked_resp = api_client.get(
         _annotate_detail_url(queue.id, item.id), {"reserve": "true"}
     )
-    assert blocked_resp.status_code == status.HTTP_400_BAD_REQUEST
+    assert blocked_resp.status_code == status.HTTP_409_CONFLICT
     assert "reserved" in str(blocked_resp.data).lower()
 
     item.reservation_expires_at = timezone.now() - timedelta(minutes=1)

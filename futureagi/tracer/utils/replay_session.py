@@ -100,11 +100,14 @@ def get_system_prompt(
     return prompt
 
 
-def _get_agent_definition_from_replay_sessions(
+def _resolve_agent_definition_for_project(
     project: Project,
 ) -> Optional[AgentDefinition]:
     """
-    Get agent definition from existing replay sessions for this project.
+    Get agent definition from existing replay sessions or observability provider for this project.
+
+    First checks if an agent definition was linked by a prior replay session.
+    Falls back to the agent definition linked via the project's observability provider.
 
     Args:
         project: The Project instance
@@ -125,7 +128,20 @@ def _get_agent_definition_from_replay_sessions(
 
     if replay_session:
         return replay_session.agent_definition
-    return None
+
+    # Fallback: check if an agent definition exists via the project's observability provider
+    agent_def_from_provider = (
+        AgentDefinition.objects.filter(
+            observability_provider__project=project,
+            observability_provider__deleted=False,
+            observability_provider__project__deleted=False,
+            deleted=False,
+        )
+        .order_by("-created_at")
+        .first()
+    )
+
+    return agent_def_from_provider
 
 
 def _get_next_replay_scenario_version(
@@ -175,7 +191,7 @@ def get_agent_suggestions(
     date_suffix = now.strftime("%d_%m_%y")
     agent_name = f"{project.name}_replay_agent_{date_suffix}"
 
-    agent_def = _get_agent_definition_from_replay_sessions(project)
+    agent_def = _resolve_agent_definition_for_project(project)
     version_num = _get_next_replay_scenario_version(project, agent_def)
     scenario_name = f"{project.name}_replay_{date_suffix}_v{version_num}"
 
@@ -298,7 +314,7 @@ def get_or_create_agent_definition(
     """
     is_voice = original_voice_config and agent_type == AgentTypeChoices.VOICE
 
-    existing = _get_agent_definition_from_replay_sessions(project)
+    existing = _resolve_agent_definition_for_project(project)
     if existing:
         _update_agent_definition(
             agent_def=existing,

@@ -27,6 +27,7 @@ from accounts.serializers.contracts import (
     WorkspaceUpdateRequestSerializer,
     WorkspaceUpdateResponseSerializer,
 )
+from accounts.services.workspace_membership import create_workspace_membership
 from accounts.utils import generate_password, resolve_org, resolve_org_role
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
@@ -37,6 +38,19 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
+
+
+def _send_workspace_invite_after_commit(subject, template, context, recipients):
+    def send_invite():
+        try:
+            email_helper(subject, template, context, recipients)
+        except Exception:
+            logger.exception(
+                "Failed to send workspace invite email",
+                recipients=recipients,
+            )
+
+    transaction.on_commit(send_invite)
 
 
 class WorkspaceManagementView(APIView):
@@ -214,7 +228,7 @@ class WorkspaceManagementView(APIView):
             org_membership = OrganizationMembership.no_workspace_objects.filter(
                 user=user, organization=organization, is_active=True
             ).first()
-            WorkspaceMembership.no_workspace_objects.create(
+            create_workspace_membership(
                 workspace=workspace,
                 user=user,
                 role=OrganizationRoles.WORKSPACE_ADMIN,
@@ -245,7 +259,7 @@ class WorkspaceManagementView(APIView):
                             ).first()
                         )
                         ws_level = Level.STRING_TO_LEVEL.get(str(role))
-                        WorkspaceMembership.no_workspace_objects.create(
+                        create_workspace_membership(
                             workspace=workspace,
                             user=member,
                             role=role,
@@ -383,7 +397,7 @@ class WorkspaceManagementView(APIView):
                             new_member.save()
 
                             # Add user to workspace
-                            WorkspaceMembership.no_workspace_objects.create(
+                            create_workspace_membership(
                                 workspace=workspace,
                                 user=new_member,
                                 role=role,
@@ -393,9 +407,9 @@ class WorkspaceManagementView(APIView):
                             uidb64 = urlsafe_base64_encode(force_bytes(new_member.pk))
                             token = default_token_generator.make_token(new_member)
 
-                            # Send invitation email with credentials
+                            # Send invitation email with credentials after commit.
                             ssl_context = ssl.create_default_context()
-                            email_helper(
+                            _send_workspace_invite_after_commit(
                                 f"You are invited to join {organization.display_name if organization.display_name else organization.name} - Future AGI",
                                 "member_invite.html",
                                 {
@@ -841,9 +855,9 @@ class WorkspaceMembershipView(APIView):
                                 )
                                 token = default_token_generator.make_token(target_user)
 
-                                # Send invitation email with credentials
+                                # Send invitation email with credentials after commit.
                                 ssl_context = ssl.create_default_context()
-                                email_helper(
+                                _send_workspace_invite_after_commit(
                                     f"You are invited to join {organization.display_name if organization.display_name else organization.name} - Future AGI",
                                     "member_invite.html",
                                     {
@@ -899,7 +913,7 @@ class WorkspaceMembershipView(APIView):
                         )
                 else:
                     # Add user to workspace
-                    WorkspaceMembership.no_workspace_objects.create(
+                    create_workspace_membership(
                         workspace=workspace,
                         user=target_user,
                         role=user_role,

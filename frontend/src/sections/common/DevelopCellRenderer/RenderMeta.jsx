@@ -12,7 +12,7 @@ const RenderMeta = ({ meta, originType, showToken = true, valuesInfo }) => {
   if (!["run_prompt", "optimisation", "text"].includes(originType)) {
     return <></>;
   }
-  if (!Object.values(meta).find((value) => value)) {
+  if (!meta || !Object.values(meta).find((value) => value)) {
     return <></>;
   }
 

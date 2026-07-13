@@ -36,6 +36,13 @@ from simulate.serializers.response.agent_definition import (
 from simulate.serializers.response.agent_version import (
     AgentVersionListResponseSerializer,
 )
+from simulate.services.agent_definition import (
+    is_masked,
+    resolve_api_key_for_version,
+    resolve_stored_api_key,
+    sync_provider_credentials,
+)
+from simulate.services.types.agent_definition import ProviderCredentialsInput
 from tfc.ee_stub import _ee_stub
 
 try:
@@ -302,12 +309,15 @@ class CreateAgentDefinitionView(APIView):
                 observability_provider=observability_provider,
             )
 
-            # Route livekit/provider credentials to ProviderCredentials table.
-            from simulate.serializers.agent_definition import (
-                AgentDefinitionSerializer,
-                ProviderCredentialsInput,
+            # Create the first version first so ProviderCredentials can link to it.
+            version = agent.create_version(
+                description=description,
+                commit_message=commit_message,
+                status=AgentVersion.StatusChoices.ACTIVE,
             )
 
+            # Route livekit/provider credentials to ProviderCredentials table,
+            # now linked to the version instead of the agent definition.
             creds_input = ProviderCredentialsInput(
                 provider=provider or "",
                 api_key=api_key,
@@ -320,14 +330,13 @@ class CreateAgentDefinitionView(APIView):
                 livekit_max_concurrency=validated.get("livekit_max_concurrency"),
                 provider_was_provided="provider" in request.data,
             )
-            AgentDefinitionSerializer._sync_provider_credentials(agent, creds_input)
+            sync_provider_credentials(version, creds_input)
 
-            # Create the first version
-            agent.create_version(
-                description=description,
-                commit_message=commit_message,
-                status=AgentVersion.StatusChoices.ACTIVE,
+            # Re-snapshot now that ProviderCredentials exist (LiveKit fields)
+            version.configuration_snapshot = version.create_snapshot(
+                commit_message=version.commit_message or ""
             )
+            version.save(update_fields=["configuration_snapshot"])
 
             if replay_session_id:
                 link_agent_to_replay_session(
@@ -372,7 +381,7 @@ class AgentDefinitionDetailView(APIView):
         Get details of a specific agent definition with version information.
         """
         try:
-            agent = AgentDefinition.objects.select_related("credentials").get(
+            agent = AgentDefinition.objects.get(
                 id=agent_id,
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
@@ -422,10 +431,7 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
         return AgentDefinitionResponseSerializer
 
     def get_queryset(self):
-        # select_related("credentials") avoids N+1 when
-        # AgentDefinitionSerializer.to_representation reads
-        # instance.credentials (OneToOne reverse accessor).
-        return super().get_queryset().select_related("credentials")
+        return super().get_queryset()
 
     @swagger_auto_schema(
         responses={
@@ -520,6 +526,19 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
             prompt = ""
             name = ""
 
+            if is_masked(api_key):
+                api_key = resolve_stored_api_key(
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                    workspace=getattr(request, "workspace", None),
+                    agent_id=validated.get("agent_id"),
+                    assistant_id=assistant_id,
+                    masked_value=api_key,
+                )
+                if not api_key:
+                    msg = "Cannot sync with a masked API key. Please paste the actual key."
+                    return self._gm.bad_request(msg)
+
             if provider == ProviderChoices.VAPI:
                 from tfc.ee_gating import EEFeature, check_ee_feature
 
@@ -561,7 +580,6 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
 
             response_data = {
                 "assistant_id": assistant_id,
-                "api_key": api_key,
                 "name": name,
                 "prompt": prompt,
                 "provider": provider,
@@ -602,7 +620,7 @@ class EditAgentDefinitionView(APIView):
         Update an existing agent definition.
         """
         try:
-            agent = AgentDefinition.objects.select_related("credentials").get(
+            agent = AgentDefinition.objects.get(
                 id=agent_id,
                 organization=getattr(request, "organization", None)
                 or request.user.organization,
@@ -614,10 +632,8 @@ class EditAgentDefinitionView(APIView):
             # they live on the related ProviderCredentials row and are
             # routed below via ``_sync_provider_credentials``.
             validated = request.validated_data
-            from simulate.serializers.agent_definition import _is_masked
-
             incoming_api_key = validated.get("api_key")
-            preserve_existing_api_key = incoming_api_key is not None and _is_masked(
+            preserve_existing_api_key = incoming_api_key is not None and is_masked(
                 incoming_api_key
             )
             update_fields = [
@@ -649,14 +665,20 @@ class EditAgentDefinitionView(APIView):
             # Route livekit_* fields to ProviderCredentials so they
             # actually persist (setattr on the model is a no-op for these
             # since they aren't real columns).
-            from simulate.serializers.agent_definition import (
-                AgentDefinitionSerializer,
-                ProviderCredentialsInput,
-            )
+            if preserve_existing_api_key:
+                version = agent.active_version or agent.latest_version
+                existing_api_key = (
+                    resolve_api_key_for_version(version) if version else None
+                )
+            else:
+                existing_api_key = None
+            version = agent.active_version or agent.latest_version
 
             creds_input = ProviderCredentialsInput(
                 provider=validated.get("provider") or agent.provider or "",
-                api_key=None if preserve_existing_api_key else validated.get("api_key"),
+                api_key=existing_api_key
+                if preserve_existing_api_key
+                else validated.get("api_key"),
                 assistant_id=validated.get("assistant_id"),
                 livekit_url=validated.get("livekit_url"),
                 livekit_api_key=validated.get("livekit_api_key"),
@@ -666,11 +688,8 @@ class EditAgentDefinitionView(APIView):
                 livekit_max_concurrency=validated.get("livekit_max_concurrency"),
                 provider_was_provided="provider" in request.data,
             )
-            AgentDefinitionSerializer._sync_provider_credentials(agent, creds_input)
-            try:
-                del agent.credentials
-            except AttributeError:
-                pass
+            if version:
+                sync_provider_credentials(version, creds_input)
             updated_agent = agent
 
             response_data = {

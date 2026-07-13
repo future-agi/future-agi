@@ -47,6 +47,7 @@ from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.span_notes import SpanNotes
 from tracer.models.trace import Trace
+from tracer.tests._ch_seed import seed_ch_span
 
 
 @pytest.fixture
@@ -72,7 +73,7 @@ def observe_trace(db, observe_project):
 
 @pytest.fixture
 def root_conversation_span(db, observe_project, observe_trace):
-    return ObservationSpan.objects.create(
+    span = ObservationSpan.objects.create(
         id=f"voice_root_{uuid.uuid4().hex[:16]}",
         project=observe_project,
         trace=observe_trace,
@@ -85,6 +86,10 @@ def root_conversation_span(db, observe_project, observe_trace):
         latency_ms=1000,
         status="OK",
     )
+    # Tracer sources resolve CH-native; mirror this root span into ClickHouse so
+    # the trace/span resolves (the PG row alone is no longer read).
+    seed_ch_span(span)
+    return span
 
 
 @pytest.fixture
@@ -285,7 +290,7 @@ class TestVoiceAnnotationRegressionE2E:
             project=observe_project,
             name="In-progress voice call trace",
         )
-        ObservationSpan.objects.create(
+        in_progress_span = ObservationSpan.objects.create(
             id=f"voice_in_progress_{uuid.uuid4().hex[:16]}",
             project=observe_project,
             trace=in_progress_trace,
@@ -295,6 +300,7 @@ class TestVoiceAnnotationRegressionE2E:
             parent_span_id=None,
             status="UNSET",
         )
+        seed_ch_span(in_progress_span)
 
         resp = auth_client.post(
             _add_items_url(queue),
@@ -341,7 +347,7 @@ class TestVoiceAnnotationRegressionE2E:
             project=observe_project,
             name="In-progress voice call trace",
         )
-        ObservationSpan.objects.create(
+        in_progress_span = ObservationSpan.objects.create(
             id=f"voice_filter_in_progress_{uuid.uuid4().hex[:16]}",
             project=observe_project,
             trace=in_progress_trace,
@@ -351,6 +357,7 @@ class TestVoiceAnnotationRegressionE2E:
             parent_span_id=None,
             status="UNSET",
         )
+        seed_ch_span(in_progress_span)
 
         resp = auth_client.post(
             _add_items_url(queue),
@@ -1101,8 +1108,9 @@ class TestVoiceAnnotationRegressionE2E:
         simulation_agent_definition,
         simulation_call_execution,
     ):
-        root_conversation_span.response_time = 123.5
-        root_conversation_span.save(update_fields=["response_time"])
+        # CH has no separate response_time column — a span's response_time_ms
+        # collapses to latency_ms (the only CH timing signal). The call_execution
+        # branch is PG-backed and keeps its distinct response_time_ms.
         simulation_call_execution.response_time_ms = 456
         simulation_call_execution.avg_agent_latency_ms = 789
         simulation_call_execution.save(
@@ -1141,7 +1149,7 @@ class TestVoiceAnnotationRegressionE2E:
         span_preview = next(p for p in previews if p["type"] == "observation_span")
         call_preview = next(p for p in previews if p["type"] == "call_execution")
         assert span_preview["latency_ms"] == 1000
-        assert span_preview["response_time_ms"] == 123.5
+        assert span_preview["response_time_ms"] == 1000  # == latency_ms (CH-native)
         assert call_preview["latency_ms"] == 789
         assert call_preview["response_time_ms"] == 456
         assert call_preview["duration_seconds"] == 42
@@ -1162,6 +1170,9 @@ class TestVoiceAnnotationRegressionE2E:
         }
         root_conversation_span.response_time = 321.0
         root_conversation_span.save(update_fields=["span_attributes", "response_time"])
+        # Re-seed CH after mutating the span: export fields read span_attributes
+        # CH-native, so the PG-only write above must be mirrored.
+        seed_ch_span(root_conversation_span)
         queue = _queue(
             "TH-4735 export queue",
             organization,
@@ -1386,7 +1397,8 @@ class TestVoiceAnnotationRegressionE2E:
         }
         assert cells["source_identifier"] == root_conversation_span.id
         assert cells["latency_ms"] == "1000"
-        assert cells["response_time_ms"] == "321.0"
+        # CH has no response_time column — response_time_ms collapses to latency_ms.
+        assert cells["response_time_ms"] == "1000"
         # Per-queue scoping: SpanNote ("whole item export note") was never
         # written through this queue's annotation flow, so item_notes is
         # empty for this queue's export. Pre-revamp the span-level note
@@ -1398,13 +1410,13 @@ class TestVoiceAnnotationRegressionE2E:
         assert cells["review_status"] == "approved"
         assert cells["reviewer_email"] == reviewer.email
         assert cells["review_notes"] == "review export note"
-        assert cells["thumbs_annotation_1_score"] == json.dumps({"value": "up"})
+        assert cells["thumbs_annotation_1_score"] == "up"
         assert cells["thumbs_annotation_1_notes"] == "label export note"
         assert cells["thumbs_annotation_1_annotator_email"] == user.email
         assert json.loads(cells["thumbs_annotation_1_record"])["notes"] == (
             "label export note"
         )
-        assert cells["thumbs_annotation_2_score"] == json.dumps({"value": "down"})
+        assert cells["thumbs_annotation_2_score"] == "down"
         assert cells["thumbs_annotation_2_notes"] == "second annotator note"
         assert (
             json.loads(cells["annotation_metrics"])[thumbs_label.name][0]["notes"]
@@ -1418,12 +1430,12 @@ class TestVoiceAnnotationRegressionE2E:
         )
         assert (
             Column.objects.get(dataset=dataset, name="customer_score").data_type
-            == DataTypeChoices.INTEGER.value
+            == DataTypeChoices.FLOAT.value
         )
         assert json.loads(cells["eval_metrics"])["Export Quality"]["score"] == 0.82
         assert cells["export_quality_score"] == "0.82"
         assert cells["customer_tier"] == "gold"
-        assert cells["customer_score"] == "7"
+        assert cells["customer_score"] == "7.0"  # CH attrs_number is Float64
         assert row.metadata["annotations"][str(thumbs_label.id)][0]["notes"] == (
             "label export note"
         )
@@ -1436,7 +1448,7 @@ class TestVoiceAnnotationRegressionE2E:
         assert download_resp.status_code == status.HTTP_200_OK, download_resp.data
         exported_item = download_resp.data["result"][0]
         assert exported_item["source"]["span_attributes"]["customer"]["tier"] == "gold"
-        assert exported_item["source"]["span_attributes"]["score"] == 7
+        assert exported_item["source"]["span_attributes"]["score"] == 7.0
         assert exported_item["annotations"][1]["annotator_email"] == (
             second_annotator.email
         )
@@ -1459,9 +1471,9 @@ class TestVoiceAnnotationRegressionE2E:
         assert csv_rows[0]["reviewer_id"] == str(reviewer.id)
         assert csv_rows[0]["reviewed_at"]
         assert csv_rows[0]["review_notes"] == "review export note"
-        assert json.loads(csv_rows[0]["value"]) == {"value": "up"}
+        assert csv_rows[0]["value"] == "up"
         assert csv_rows[1]["review_status"] == "approved"
-        assert json.loads(csv_rows[1]["value"]) == {"value": "down"}
+        assert csv_rows[1]["value"] == "down"
 
         duplicate_resp = auth_client.post(
             f"/model-hub/annotation-queues/{queue.id}/export-to-dataset/",
@@ -1502,6 +1514,8 @@ class TestVoiceAnnotationRegressionE2E:
     ):
         root_conversation_span.span_attributes = {"score": 7}
         root_conversation_span.save(update_fields=["span_attributes"])
+        # Re-seed CH after mutating span_attributes: export reads them CH-native.
+        seed_ch_span(root_conversation_span)
         queue = _queue(
             "Existing dataset export queue",
             organization,
@@ -1609,7 +1623,7 @@ class TestVoiceAnnotationRegressionE2E:
         )
         assert (
             Column.objects.get(dataset=dataset, name="customer_score").data_type
-            == DataTypeChoices.INTEGER.value
+            == DataTypeChoices.FLOAT.value
         )
         dataset.refresh_from_db()
         assert (
@@ -1629,10 +1643,8 @@ class TestVoiceAnnotationRegressionE2E:
             for cell in Cell.objects.filter(row=exported_row).select_related("column")
         }
         assert exported_cells["source_identifier"] == root_conversation_span.id
-        assert exported_cells["thumbs_annotation_1_score"] == json.dumps(
-            {"value": "up"}
-        )
-        assert exported_cells["customer_score"] == "7"
+        assert exported_cells["thumbs_annotation_1_score"] == "up"
+        assert exported_cells["customer_score"] == "7.0"  # CH attrs_number is Float64
         assert exported_cells["existing_only"] == ""
         assert exported_row.metadata["queue_item_id"] == str(item.id)
 
@@ -1989,7 +2001,7 @@ class TestVoiceAnnotationRegressionE2E:
         # in the export. The older inline (orphan) score belongs to no
         # queue and is excluded — pre-revamp it would have filled slot 2,
         # which is what this regression test originally guarded against.
-        assert cells["slot_1_value"] == json.dumps({"value": "up"})
+        assert cells["slot_1_value"] == "up"
         assert cells["slot_1_notes"] == "queue label note"
         assert cells["slot_1_annotator"] == user.email
         # Slot 2 is empty because nothing else was scored *in this queue*.
@@ -2007,4 +2019,313 @@ class TestVoiceAnnotationRegressionE2E:
         assert "older inline source note" not in notes
         assert row.metadata["annotations"][str(thumbs_label.id)][0]["notes"] == (
             "queue label note"
+        )
+
+
+# Unit tests for call_execution-side annotation queue export helpers
+
+from types import SimpleNamespace
+
+from model_hub.utils.annotation_queue_helpers import (
+    canonical_score_value,
+    eval_metrics_from_call_execution,
+    eval_output_value,
+)
+
+
+def _label(type_value):
+    return SimpleNamespace(type=type_value, id="lbl-1")
+
+
+class TestCanonicalScoreValue:
+    def test_text_label_extracts_text_key(self):
+        assert canonical_score_value(
+            _label(AnnotationTypeChoices.TEXT.value), {"text": "hello"}
+        ) == "hello"
+
+    def test_numeric_label_extracts_value_key(self):
+        assert canonical_score_value(
+            _label(AnnotationTypeChoices.NUMERIC.value), {"value": 7}
+        ) == 7
+
+    def test_star_label_extracts_rating_key(self):
+        assert canonical_score_value(
+            _label(AnnotationTypeChoices.STAR.value), {"rating": 4}
+        ) == 4
+
+    def test_thumbs_label_extracts_value_key(self):
+        assert canonical_score_value(
+            _label(AnnotationTypeChoices.THUMBS_UP_DOWN.value), {"value": "up"}
+        ) == "up"
+
+    def test_categorical_label_extracts_selected_key(self):
+        assert canonical_score_value(
+            _label(AnnotationTypeChoices.CATEGORICAL.value), {"selected": ["a", "b"]}
+        ) == ["a", "b"]
+
+    def test_none_raw_returns_none(self):
+        assert canonical_score_value(_label(AnnotationTypeChoices.STAR.value), None) is None
+
+    def test_scalar_raw_passes_through(self):
+        assert canonical_score_value(_label(AnnotationTypeChoices.NUMERIC.value), 5) == 5
+
+    def test_missing_label_returns_raw_dict(self):
+        assert canonical_score_value(None, {"value": 1}) == {"value": 1}
+
+    def test_unknown_label_type_falls_back_to_raw(self):
+        unknown = SimpleNamespace(type="future_type", id="lbl-fut")
+        assert canonical_score_value(unknown, {"value": 1}) == {"value": 1}
+
+    def test_dict_missing_expected_key_returns_raw(self):
+        assert canonical_score_value(
+            _label(AnnotationTypeChoices.STAR.value), {"value": 1}
+        ) == {"value": 1}
+
+
+class TestEvalOutputValue:
+    def test_typed_dict_output_float(self):
+        assert eval_output_value({"output_float": 0.75}) == 0.75
+
+    def test_typed_dict_output_bool(self):
+        assert eval_output_value({"output_bool": True}) is True
+
+    def test_typed_dict_output_str(self):
+        assert eval_output_value({"output_str": "good"}) == "good"
+
+    def test_typed_dict_output_str_list(self):
+        assert eval_output_value({"output_str_list": ["a", "b"]}) == ["a", "b"]
+
+    def test_legacy_output_score_dict(self):
+        assert eval_output_value({"output": {"score": 0.5}}) == 0.5
+
+    def test_legacy_output_choice_dict(self):
+        assert eval_output_value({"output": {"choice": "pass"}}) == "pass"
+
+    def test_legacy_scalar_output(self):
+        assert eval_output_value({"output": 1.0}) == 1.0
+
+    def test_none_source(self):
+        assert eval_output_value(None) is None
+
+    def test_eval_logger_row_prefers_typed_columns(self):
+        row = SimpleNamespace(
+            output_float=0.9,
+            output_bool=None,
+            output_str=None,
+            output_str_list=[],
+        )
+        assert eval_output_value(row) == 0.9
+
+
+class TestEvalMetricsFromCallExecution:
+    def test_returns_empty_when_call_missing(self):
+        assert eval_metrics_from_call_execution(None) == {}
+
+    def test_returns_empty_when_eval_outputs_empty(self):
+        call = SimpleNamespace(eval_outputs={})
+        assert eval_metrics_from_call_execution(call) == {}
+
+    def test_legacy_output_dict_with_score(self):
+        call = SimpleNamespace(
+            eval_outputs={
+                "evt-1": {
+                    "name": "Helpfulness",
+                    "output": {"score": 0.8},
+                    "reason": "looked helpful",
+                }
+            }
+        )
+        result = eval_metrics_from_call_execution(call)
+        assert result == {
+            "Helpfulness": [
+                {
+                    "score": 0.8,
+                    "explanation": "looked helpful",
+                    "tags": None,
+                    "error": None,
+                    "error_message": None,
+                    "created_at": None,
+                }
+            ]
+        }
+
+    def test_typed_axis_sibling_keys_preferred_over_legacy_output(self):
+        call = SimpleNamespace(
+            eval_outputs={
+                "evt-1": {
+                    "name": "Score",
+                    "output_float": 0.42,
+                    "output": {"score": 0.99},
+                }
+            }
+        )
+        assert eval_metrics_from_call_execution(call)["Score"][0]["score"] == 0.42
+
+    def test_error_field_preserved_raw_not_coerced(self):
+        call = SimpleNamespace(
+            eval_outputs={
+                "evt-1": {
+                    "name": "Failing",
+                    "output": None,
+                    "error": "error",
+                    "error_message": "boom",
+                }
+            }
+        )
+        entry = eval_metrics_from_call_execution(call)["Failing"][0]
+        assert entry["error"] == "error"
+        assert entry["error_message"] == "boom"
+
+    def test_error_message_none_when_no_error(self):
+        call = SimpleNamespace(
+            eval_outputs={
+                "evt-1": {
+                    "name": "OK",
+                    "output": {"score": 1.0},
+                    "error_message": "stale",
+                }
+            }
+        )
+        entry = eval_metrics_from_call_execution(call)["OK"][0]
+        assert entry["error"] is None
+        assert entry["error_message"] is None
+
+    def test_non_dict_entry_skipped(self):
+        call = SimpleNamespace(
+            eval_outputs={"evt-1": "not-a-dict", "evt-2": {"name": "Real", "output": 1}}
+        )
+        result = eval_metrics_from_call_execution(call)
+        assert "Real" in result and len(result) == 1
+
+    def test_falls_back_to_eval_id_when_name_missing(self):
+        call = SimpleNamespace(eval_outputs={"evt-id": {"output": {"score": 0.1}}})
+        assert "evt-id" in eval_metrics_from_call_execution(call)
+
+    def test_shape_pin_matches_typed_dict(self):
+        from model_hub.utils.annotation_queue_helpers import EvalMetricEntry
+
+        call = SimpleNamespace(
+            eval_outputs={
+                "evt-1": {
+                    "name": "Pinned",
+                    "output": {"score": 0.5},
+                    "reason": "explain",
+                    "tags": ["x"],
+                    "created_at": "2026-01-01T00:00:00Z",
+                }
+            }
+        )
+        entries = eval_metrics_from_call_execution(call)["Pinned"]
+        assert len(entries) == 1
+        assert set(entries[0].keys()) == set(EvalMetricEntry.__annotations__.keys())
+
+
+@pytest.mark.django_db
+class TestQueueExportQueryCount:
+    def _seed_call(self, organization, workspace, base_call, turns=2):
+        from simulate.models.test_execution import CallExecution, CallTranscript
+
+        call = CallExecution.objects.create(
+            test_execution=base_call.test_execution,
+            scenario=base_call.scenario,
+            status=CallExecution.CallStatus.COMPLETED,
+            duration_seconds=10,
+        )
+        for i in range(turns):
+            role = (
+                CallTranscript.SpeakerRole.USER
+                if i % 2 == 0
+                else CallTranscript.SpeakerRole.ASSISTANT
+            )
+            CallTranscript.objects.create(
+                call_execution=call,
+                speaker_role=role,
+                content=f"turn {i}",
+                start_time_ms=i * 500,
+            )
+        return call
+
+    def _seed_queue_with_calls(
+        self, organization, workspace, user, calls, queue_name="prefetch guard"
+    ):
+        queue = _queue(queue_name, organization, workspace, user)
+        for call in calls:
+            QueueItem.objects.create(
+                queue=queue,
+                source_type=QueueItemSourceType.CALL_EXECUTION.value,
+                call_execution=call,
+                organization=organization,
+                workspace=workspace,
+                status=QueueItemStatus.COMPLETED.value,
+            )
+        return queue
+
+    def _run_export(self, queue):
+        from model_hub.utils.annotation_queue_helpers import _call_transcript_turns
+        from model_hub.views.annotation_queues import _queue_item_export_prefetches
+
+        items_qs = (
+            QueueItem.objects.filter(queue=queue, deleted=False)
+            .select_related("call_execution")
+            .prefetch_related(*_queue_item_export_prefetches())
+        )
+        items = list(items_qs)
+        for item in items:
+            _ = _call_transcript_turns(item.call_execution)
+        return items
+
+    def test_export_queryset_does_not_scale_with_call_items(
+        self,
+        organization,
+        workspace,
+        user,
+        simulation_call_execution,
+    ):
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        from simulate.models.test_execution import CallTranscript
+
+        for i in range(2):
+            CallTranscript.objects.create(
+                call_execution=simulation_call_execution,
+                speaker_role=(
+                    CallTranscript.SpeakerRole.USER
+                    if i % 2 == 0
+                    else CallTranscript.SpeakerRole.ASSISTANT
+                ),
+                content=f"fixture turn {i}",
+                start_time_ms=i * 500,
+            )
+
+        call_b = self._seed_call(organization, workspace, simulation_call_execution)
+        queue_2 = self._seed_queue_with_calls(
+            organization,
+            workspace,
+            user,
+            [simulation_call_execution, call_b],
+            queue_name="prefetch guard 2-item",
+        )
+        with CaptureQueriesContext(connection) as ctx_2:
+            self._run_export(queue_2)
+        baseline = len(ctx_2.captured_queries)
+
+        call_c = self._seed_call(organization, workspace, simulation_call_execution)
+        call_d = self._seed_call(organization, workspace, simulation_call_execution)
+        queue_3 = self._seed_queue_with_calls(
+            organization,
+            workspace,
+            user,
+            [simulation_call_execution, call_c, call_d],
+            queue_name="prefetch guard 3-item",
+        )
+        with CaptureQueriesContext(connection) as ctx_3:
+            self._run_export(queue_3)
+
+        assert len(ctx_3.captured_queries) == baseline, (
+            f"Query count grew with item count: {baseline} -> "
+            f"{len(ctx_3.captured_queries)}. The transcripts fetch is "
+            f"running per-item; the Prefetch is missing or _call_transcript_turns "
+            f"is bypassing the prefetched attribute.\n"
+            + "\n".join(q["sql"][:200] for q in ctx_3.captured_queries)
         )

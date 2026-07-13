@@ -567,7 +567,8 @@ const RunExperiment = ({
     !!selectedExperiment,
   );
   const allColumns = useMemo(() => {
-    const cols = experimentColumns ?? datasetColumns;
+
+    const cols = experimentColumns?.length ? experimentColumns : datasetColumns;
     if (!cols) return cols;
     return cols.map((col) => ({
       ...col,
@@ -576,7 +577,6 @@ const RunExperiment = ({
       value: col?.name,
     }));
   }, [experimentColumns, datasetColumns]);
-
   const { data: experimentJsonSchemas = {} } = useGetExperimentJSONSchema(
     !!selectedExperiment,
     selectedExperiment,
@@ -746,7 +746,7 @@ const RunExperiment = ({
           ) : (
             <RunExperimentForm
               allColumns={allColumns?.filter((col) =>
-                ["run_prompt", "others"].includes(
+                ["run_prompt", "others",].includes(
                   col?.originType?.toLowerCase(),
                 ),
               )}

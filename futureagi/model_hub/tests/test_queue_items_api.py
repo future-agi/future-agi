@@ -15,6 +15,7 @@ import pytest
 from django.utils import timezone
 from rest_framework import status
 
+from conftest import create_categorical_label
 from model_hub.models.annotation_queues import (
     AnnotationQueue,
     AnnotationQueueAnnotator,
@@ -62,10 +63,18 @@ def demote_queue_creator_to_annotator(queue_id, user):
 # ---------------------------------------------------------------------------
 
 
+
+
 @pytest.fixture
 def queue(auth_client):
     """Create a queue and return its ID."""
-    resp = auth_client.post(QUEUE_URL, {"name": "Item Test Queue"}, format="json")
+    # A queue must have at least one label (serializer-enforced).
+    label_id = create_categorical_label(auth_client, name="Item Test Label")
+    resp = auth_client.post(
+        QUEUE_URL,
+        {"name": "Item Test Queue", "label_ids": [str(label_id)]},
+        format="json",
+    )
     return resp.data["id"]
 
 
@@ -110,6 +119,7 @@ class TestAddItems:
         from model_hub.models.ai_model import AIModel
         from tracer.models.project import Project
         from tracer.models.trace_session import TraceSession
+        from tracer.tests._ch_seed import seed_ch_trace_sessions
 
         project = Project.objects.create(
             name=f"Session Add Project {uuid.uuid4().hex[:8]}",
@@ -122,6 +132,8 @@ class TestAddItems:
             project=project,
             name="queue-session-source",
         )
+        # Tracer sources resolve CH-native — mirror the session into ClickHouse.
+        seed_ch_trace_sessions([session])
 
         resp = auth_client.post(
             add_items_url(queue),

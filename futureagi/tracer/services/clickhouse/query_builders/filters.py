@@ -671,6 +671,7 @@ class ClickHouseFilterBuilder:
         filter_value: Any,
     ) -> str | None:
         """Dispatch to the appropriate condition builder based on column type."""
+        col_type = self._normalize_col_type_for_dispatch(col_id, col_type)
 
         # TODO: run migrations to normalize filter_op to canonical form , then remove this handling .
         if col_type != self.SPAN_ATTRIBUTE:
@@ -690,8 +691,36 @@ class ClickHouseFilterBuilder:
             return self._build_annotation_condition(
                 col_id, filter_type, filter_op, filter_value
             )
+        elif col_type == self.NORMAL:
+            # Sanitize col_id: only path interpolating a raw identifier into SQL (injection guard).
+            return self._build_column_condition(
+                _sanitize_key(col_id), filter_type, filter_op, filter_value
+            )
         else:
             raise ValueError(f"Unsupported col_type: {col_type!r}")
+
+    def _normalize_col_type_for_dispatch(self, col_id: str, col_type: str) -> str:
+        """Promote a default ``NORMAL`` col_id to its real handler so it doesn't fall through or raise."""
+        # TRACE_END_USER resolves via the SYSTEM_METRIC end-user path.
+        if col_type == self.TRACE_END_USER:
+            return self.SYSTEM_METRIC
+
+        if col_id in self._ENDUSER_STRING_COLUMNS:
+            return self.SYSTEM_METRIC
+
+        # Denormalised columns may arrive as SPAN_ATTRIBUTE; route via SYSTEM_METRIC to match root metrics.
+        if col_id in self.SYSTEM_METRIC_MAP and col_type != self.SYSTEM_METRIC:
+            return self.SYSTEM_METRIC
+
+        # Voice list metrics derive from span attrs/exprs; treat as system metrics even when col_type is omitted.
+        if (
+            col_id in self.VOICE_SYSTEM_METRIC_EXPRS
+            or col_id in self.VOICE_SYSTEM_METRIC_STR_MAP
+            or col_id in self.VOICE_SYSTEM_METRIC_STR_EXPRS
+        ) and col_type != self.SYSTEM_METRIC:
+            return self.SYSTEM_METRIC
+
+        return col_type
 
     _ENDUSER_STRING_COLUMNS = {
         "user_id": "user_id",
@@ -712,8 +741,8 @@ class ClickHouseFilterBuilder:
         filter_op: str | None,
         filter_value: Any,
     ) -> str | None:
-        """Resolve an end-user string field (user_id / user_id_type) on
-        tracer_enduser, then map to end_user_id on spans."""
+        """Resolve an end-user string field (user_id / user_id_type) on the
+        curated ``end_users`` RMT, then map to end_user_id on spans."""
 
         if filter_op in NO_VALUE_OPS:
             comparison_op = "=" if filter_op == "is_null" else "!="
@@ -748,6 +777,7 @@ class ClickHouseFilterBuilder:
         if not inner:
             return None
 
+        # Curated EndUser dimension is the ``end_users`` RMT.
         return (
             f"trace_id {outer_op} ("
             f"SELECT trace_id FROM {self.table} "
@@ -822,10 +852,18 @@ class ClickHouseFilterBuilder:
             if is_root_only
             else ""
         )
+        # Mirror the org-scoped vs single-project param binding used
+        # elsewhere (see `_scoped_spans_subquery`): the outer query exposes
+        # either `%(project_id)s` or `%(project_ids)s`, never both.
+        project_pred = (
+            "project_id IN %(project_ids)s"
+            if self._org_scoped
+            else "project_id = %(project_id)s"
+        )
         return (
             f"trace_id IN ("
             f"SELECT trace_id FROM {self.table} "
-            f"WHERE project_id = %(project_id)s AND _peerdb_is_deleted = 0 "
+            f"WHERE {project_pred} AND _peerdb_is_deleted = 0 "
             f"{root_clause}"
             f"AND {inner})"
         )
@@ -1045,6 +1083,37 @@ class ClickHouseFilterBuilder:
             "trace_session_id",
         }
     )
+    # Ops comparing a nullable-UUID column as text (wrapped in toString so string ops work).
+    _UUID_TEXT_FILTER_OPS = frozenset(
+        {
+            "equals",
+            "not_equals",
+            "in",
+            "not_in",
+            "contains",
+            "not_contains",
+            "starts_with",
+            "ends_with",
+        }
+    )
+
+    # Ops that compare a nullable UUID column against a STRING value. For
+    # these the column is wrapped in toString(...) so substring (LIKE),
+    # equality, and IN work — ClickHouse rejects direct UUID-vs-String
+    # comparisons. Ops absent here (is_null/is_not_null, ranges) operate on
+    # the bare column.
+    _UUID_TEXT_FILTER_OPS = frozenset(
+        {
+            "equals",
+            "not_equals",
+            "contains",
+            "not_contains",
+            "starts_with",
+            "ends_with",
+            "in",
+            "not_in",
+        }
+    )
 
     def _build_column_condition(
         self,
@@ -1066,15 +1135,17 @@ class ClickHouseFilterBuilder:
         if filter_op == "is_null":
             if column in self._NULLABLE_UUID_COLUMNS:
                 return f"{column} IS NULL"
-            if column in self._NULLABLE_UUID_COLUMNS:
-                return f"{column} IS NULL"
-            return f"({column} IS NULL OR {column} = '')"
+            # Empty-string fallback is text-only; comparing a numeric/datetime
+            # column to '' raises a ClickHouse cast error.
+            if filter_type == FilterType.TEXT.value:
+                return f"({column} IS NULL OR {column} = '')"
+            return f"{column} IS NULL"
         elif filter_op == "is_not_null":
             if column in self._NULLABLE_UUID_COLUMNS:
                 return f"{column} IS NOT NULL"
-            if column in self._NULLABLE_UUID_COLUMNS:
-                return f"{column} IS NOT NULL"
-            return f"({column} IS NOT NULL AND {column} != '')"
+            if filter_type == FilterType.TEXT.value:
+                return f"({column} IS NOT NULL AND {column} != '')"
+            return f"{column} IS NOT NULL"
         elif filter_op == "contains":
             self._params[param] = f"%{filter_value}%"
             like_op = "ILIKE" if case_insensitive else "LIKE"

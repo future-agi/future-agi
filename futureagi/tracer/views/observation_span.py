@@ -70,6 +70,8 @@ from tracer.serializers.observation_span import (
     ObservationAttributeListQuerySerializer,
     ObservationAttributeListResponseSerializer,
     ObservationSpanSerializer,
+    RootSpansQuerySerializer,
+    RootSpansResponseSerializer,
     SpanExportQuerySerializer,
     SpanIndexQuerySerializer,
     SpanListQuerySerializer,
@@ -85,6 +87,10 @@ from tracer.services.clickhouse.graph_dispatch import (
     fetch_system_metric_graph_ch,
 )
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
+from tracer.services.clickhouse.v2.span_selectors import (
+    flatten_span_attributes_into_entry,
+    merge_content_rows,
+)
 from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.create_otel_span import create_single_otel_span
 from tracer.utils.eval import (
@@ -289,12 +295,17 @@ def allowed_root_spans_for_request(
     *,
     organization,
     project_scope_q,
+    project_ids: list[str] | None = None,
 ) -> dict[str, str]:
     """Resolve ``{trace_id: root_span_id}`` for *trace_ids*, returning only traces
     whose owning project is org/workspace-accessible. Collector traces have no PG
     ``Trace`` row, so the project_id is learned from CH and re-checked against the
     PG ``Project`` authority. FAIL CLOSED: an untenanted / cross-org trace is dropped
     (no key) — same response shape as before.
+
+    ``project_ids`` (optional) only prunes the CH scan; the PG re-check stays the
+    tenant boundary, so it can narrow results but never widen them. Pass a
+    superset of the traces' owning projects, else a valid root is silently dropped.
     """
     if not trace_ids:
         return {}
@@ -302,14 +313,12 @@ def allowed_root_spans_for_request(
     from tracer.services.clickhouse.v2 import get_reader
 
     with get_reader() as reader:
-        ch_spans = reader.list_by_trace_ids([str(tid) for tid in trace_ids])
+        roots = reader.root_ids_by_trace_ids(
+            [str(tid) for tid in trace_ids], project_ids=project_ids
+        )
 
-    # Root spans only (CH stores parent_span_id as a non-nullable String; root
-    # spans carry ""). Collect the candidate project_ids to verify against PG.
-    root_spans = [s for s in ch_spans if not s.parent_span_id]
-    candidate_project_ids = {
-        str(s.project_id) for s in root_spans if s.project_id
-    }
+    # Candidate project_ids from the lean root projection, to verify against PG.
+    candidate_project_ids = {pid for _, pid in roots.values() if pid}
     if not candidate_project_ids:
         return {}
 
@@ -324,18 +333,11 @@ def allowed_root_spans_for_request(
     if not allowed_project_ids:
         return {}
 
-    result: dict[str, str] = {}
-    for span in root_spans:
-        pid = str(span.project_id) if span.project_id else None
-        if pid is None or pid not in allowed_project_ids:
-            # FAIL CLOSED: untenanted or cross-org span — never returned.
-            continue
-        tid = str(span.trace_id)
-        # list_by_trace_ids orders by (trace_id, start_time, id) so the first
-        # parentless span per trace wins.
-        if tid not in result:
-            result[tid] = str(span.id)
-    return result
+    return {
+        tid: span_id
+        for tid, (span_id, pid) in roots.items()
+        if pid is not None and pid in allowed_project_ids
+    }
 
 
 class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
@@ -694,6 +696,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     config_name_map[str(c.id)] = c.name
                     config_output_type_map[str(c.id)] = _get_configured_output_type(c)
 
+            # Keys with a completed score or an error — a terminal result always
+            # wins over a non-terminal/skipped marker regardless of CH row order.
+            terminal_keys: set[str] = set()
+            # Precedence among non-terminal/skipped rows for the same key.
+            _status_rank = {"pending": 1, "running": 2, "skipped": 3}
+
             for eval_row in eval_rows:
                 config_id = eval_row.get("config_id")
                 span_id = eval_row.get("span_id")
@@ -711,28 +719,65 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
 
                 key = f"{config_id}**{span_id}"
 
-                if eval_row.get("error") or eval_row.get("output_str") == "ERROR":
+                _row_status = (eval_row.get("status") or "").lower()
+                if (
+                    eval_row.get("error")
+                    or eval_row.get("output_str") == "ERROR"
+                    or _row_status == "errored"
+                ):
                     evals_metrics[key] = {
                         "score": None,
                         "name": f"{config_name}{name_suffix}",
                         "explanation": eval_row.get("error_message"),
                         "error": True,
                     }
-                else:
-                    configured_output_type = config_output_type_map.get(config_id)
-                    score, output_type = _build_eval_metric_entry(
-                        eval_row.get("output_float"),
-                        eval_row.get("output_bool"),
-                        eval_row.get("output_str_list"),
-                        configured_output_type,
-                    )
-                    if score is not None or output_type is not None:
-                        evals_metrics[key] = {
-                            "score": score,
-                            "name": f"{config_name}{name_suffix}",
-                            "explanation": eval_row.get("eval_explanation"),
-                            "output_type": output_type,
-                        }
+                    terminal_keys.add(key)
+                    continue
+
+                # A non-terminal lifecycle status wins over the output columns:
+                # the CH mirror stores 0 for a NULL bool, so a queued/running/
+                # skipped row can carry stale output that would otherwise be
+                # rendered as a real score. Surface the status marker instead
+                # (a completed row for the same key still overrides it below).
+                status = (eval_row.get("status") or "").lower()
+                if status in _status_rank:
+                    if key not in terminal_keys:
+                        existing = evals_metrics.get(key)
+                        if not (
+                            existing
+                            and _status_rank.get(existing.get("status"), 0)
+                            >= _status_rank[status]
+                        ):
+                            entry = {
+                                "score": None,
+                                "name": f"{config_name}{name_suffix}",
+                                "explanation": eval_row.get("eval_explanation"),
+                                "status": status,
+                            }
+                            if status == "skipped" and eval_row.get("skipped_reason"):
+                                entry["skipped_reason"] = eval_row.get("skipped_reason")
+                                if not entry["explanation"]:
+                                    entry["explanation"] = eval_row.get(
+                                        "skipped_reason"
+                                    )
+                            evals_metrics[key] = entry
+                    continue
+
+                configured_output_type = config_output_type_map.get(config_id)
+                score, output_type = _build_eval_metric_entry(
+                    eval_row.get("output_float"),
+                    eval_row.get("output_bool"),
+                    eval_row.get("output_str_list"),
+                    configured_output_type,
+                )
+                if score is not None or output_type is not None:
+                    evals_metrics[key] = {
+                        "score": score,
+                        "name": f"{config_name}{name_suffix}",
+                        "explanation": eval_row.get("eval_explanation"),
+                        "output_type": output_type,
+                    }
+                    terminal_keys.add(key)
 
         return self._gm.success_response(
             {"observation_span": observation_span, "evals_metrics": evals_metrics}
@@ -875,19 +920,23 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"Error retrieving observation span {get_error_message('FAILED_GET_OBSERVATION_SPAN')}"
             )
 
+    @validated_request(
+        query_serializer=RootSpansQuerySerializer,
+        responses={200: RootSpansResponseSerializer},
+    )
     @action(detail=False, methods=["get"], url_path="root-spans")
     def root_spans(self, request, *args, **kwargs):
         """
         Given a list of trace_ids, return the root span ID for each trace.
         Root span = the span where parent_span_id IS NULL for that trace.
 
-        Query param: trace_ids (repeated, e.g. ?trace_ids=<id>&trace_ids=<id>)
-        Response: { "result": { "<trace_id>": "<span_id>", ... } }
+        Query params (repeated): trace_ids (required,
+        ?trace_ids=<id>&trace_ids=<id>) + optional project_ids (prunes the CH
+        scan). Response: { "result": { "<trace_id>": "<span_id>", ... } }
         """
         try:
-            trace_ids = request.query_params.getlist("trace_ids")
-            if not trace_ids:
-                return self._gm.bad_request("trace_ids is required")
+            trace_ids = request.validated_query_data["trace_ids"]
+            project_ids = request.validated_query_data.get("project_ids") or None
 
             # Collector traces have no PG ``Trace`` row; the gate resolves the root
             # span + tenant from CH/PG-Project instead (fail closed). See selector.
@@ -896,11 +945,13 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 trace_ids,
                 organization=org,
                 project_scope_q=_project_workspace_scope_q(request, project_prefix=""),
+                project_ids=project_ids,
             )
             return self._gm.success_response(result)
         except Exception as e:
             # fail closed: any CH/PG error returns no data, never a partial leak
-            return self._gm.bad_request(f"Error fetching root spans: {str(e)}")
+            logger.exception("Error fetching root spans", error=str(e))
+            return self._gm.bad_request("Error fetching root spans")
 
     @action(detail=False, methods=["post"])
     def bulk_create(self, request, *args, **kwargs):
@@ -1316,14 +1367,31 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         try:
             validated_data = request.validated_query_data
 
-            project_id = str(validated_data["project_id"])
-
-            # Tenant gate via PG (Project + organization filter).
-            Project.objects.get(
-                _project_workspace_scope_q(self.request, project_prefix=""),
-                id=project_id,
-                organization=_get_request_organization(request),
+            project_id = (
+                str(validated_data["project_id"])
+                if validated_data.get("project_id")
+                else None
             )
+            org = _get_request_organization(request)
+
+            org_project_ids = None
+            if project_id:
+                try:
+                    Project.objects.get(
+                        _project_workspace_scope_q(self.request, project_prefix=""),
+                        id=project_id,
+                        organization=org,
+                    )
+                except Project.DoesNotExist:
+                    return self._gm.bad_request("Project not found or access denied")
+            else:
+                org_project_ids = list(
+                    Project.objects.filter(
+                        _project_workspace_scope_q(self.request, project_prefix=""),
+                        organization=org,
+                        deleted=False,
+                    ).values_list("id", flat=True)
+                )
 
             # ClickHouse dispatch
             from tracer.services.clickhouse.query_service import (
@@ -1340,7 +1408,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             # Postgres path, which masked CH failures as "0 rows".
             analytics = AnalyticsQueryService()
             return self._list_spans_clickhouse(
-                request, project_id, validated_data, analytics
+                request,
+                project_id,
+                validated_data,
+                analytics,
+                org_project_ids=org_project_ids,
+                org=org,
             )
 
         except Exception as e:
@@ -1349,7 +1422,15 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 f"error fetching the spans list of observe {str(e)}"
             )
 
-    def _list_spans_clickhouse(self, request, project_id, validated_data, analytics):
+    def _list_spans_clickhouse(
+        self,
+        request,
+        project_id,
+        validated_data,
+        analytics,
+        org_project_ids=None,
+        org=None,
+    ):
         """List spans using ClickHouse backend.
 
         Builder class is resolved via the v1↔v2 dispatch — set
@@ -1361,6 +1442,10 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         from tracer.services.clickhouse.v2.dispatch import get_query_builder_class
 
         BuilderCls = get_query_builder_class("SPAN_LIST")  # noqa: N806
+
+        org_scope = bool(org_project_ids)
+        if org is None:
+            org = _get_request_organization(request)
         # The v2 builder is a subclass of the v1 builder, so the pivot
         # helpers below (called as classmethods on the v1 name) work for
         # both — keep the v1 import for those static calls.
@@ -1399,24 +1484,39 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
-        # Get eval config IDs from CH (fast) instead of PG EvalLogger scan,
-        # via the shared service selector (same lookup trace.py uses).
+        # Get eval config IDs. Single-project uses the fast CH dict-lookup;
+        # org-scoped falls back to a PG EvalLogger scan.
         eval_config_ids = []
-        ch_ids = analytics.get_eval_config_ids_with_data_ch(
-            str(project_id), timeout_ms=30000
-        )
-        if ch_ids:
+        if org_scope:
+            _eval_ids = (
+                EvalLogger.objects.filter(
+                    observation_span__project_id__in=org_project_ids
+                )
+                .values("custom_eval_config_id")
+                .distinct()
+            )
             eval_configs = CustomEvalConfig.objects.filter(
-                id__in=ch_ids, deleted=False
+                id__in=_eval_ids, deleted=False
             ).select_related("eval_template")
             eval_config_ids = [str(c.id) for c in eval_configs]
         else:
-            eval_configs = []
+            ch_ids = analytics.get_eval_config_ids_with_data_ch(
+                str(project_id), timeout_ms=30000
+            )
+            if ch_ids:
+                eval_configs = CustomEvalConfig.objects.filter(
+                    id__in=ch_ids, deleted=False
+                ).select_related("eval_template")
+                eval_config_ids = [str(c.id) for c in eval_configs]
+            else:
+                eval_configs = []
 
         # Labels can be project-local or org/shared labels that are referenced
         # by span scores. Use the score-backed helper so span columns and
         # annotation filters match the actual data returned from ClickHouse.
-        annotation_labels = get_annotation_labels_for_project(project_id)
+        annotation_labels = get_annotation_labels_for_project(
+            project_id, project_ids=org_project_ids if org_scope else None
+        )
         annotation_label_ids = [str(lbl.id) for lbl in annotation_labels]
         label_types = {str(lbl.id): lbl.type for lbl in annotation_labels}
 
@@ -1424,7 +1524,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
         # filter in `filters` (resolved via the remap-aware `end_users` path
         # above), so the builder's bespoke single-id end_user path is unused here.
         builder = BuilderCls(
-            project_id=str(project_id),
+            project_id=None if org_scope else str(project_id),
+            project_ids=[str(p) for p in org_project_ids] if org_scope else None,
             filters=filters,
             page_number=page_number,
             page_size=page_size,
@@ -1449,12 +1550,19 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 content_result = analytics.execute_ch_query(
                     content_query, content_params, timeout_ms=10000
                 )
-                content_map = {str(r.get("id", "")): r for r in content_result.data}
-                for row in result.data:
-                    c = content_map.get(str(row.get("id", "")), {})
-                    row["input"] = c.get("input", "")
-                    row["output"] = c.get("output", "")
-                    row["attributes_extra"] = c.get("attributes_extra", "{}")
+                merge_content_rows(
+                    result.data,
+                    content_result.data,
+                    id_key="id",
+                    keys=(
+                        "input",
+                        "output",
+                        "attributes_extra",
+                        "attrs_string",
+                        "attrs_number",
+                        "attrs_bool",
+                    ),
+                )
 
         # Count
         count_query, count_params = builder.build_count_query()
@@ -1607,11 +1715,19 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 if config_id not in span_evals:
                     continue
                 val = span_evals[config_id]
+                # Lifecycle marker — ``{"status": ...}`` (pending/running/skipped)
+                # or ``{"error": True}`` (errored): pass the whole marker through
+                # on the ``config_id`` column so the cell renders the
+                # loading / pending / skipped / error state instead of a blank.
+                if isinstance(val, dict) and (
+                    isinstance(val.get("status"), str) or val.get("error")
+                ):
+                    entry[config_id] = val
                 # CHOICES eval: spread per-choice percentages into separate
                 # columns keyed ``{config_id}**{choice}`` to match the
                 # column config produced by
                 # ``update_column_config_based_on_eval_config``.
-                if isinstance(val, dict) and not val.get("error") and val:
+                elif isinstance(val, dict) and not val.get("error") and val:
                     for choice, pct in val.items():
                         entry[f"{config_id}**{choice}"] = pct
                 else:
@@ -1628,29 +1744,8 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 if label_id in span_annotations:
                     entry[label_id] = span_annotations[label_id]
 
-            # Include span attributes for custom columns
-            raw_attrs = row.get("attributes_extra", "{}")
-            try:
-                attrs = (
-                    json.loads(raw_attrs)
-                    if isinstance(raw_attrs, str)
-                    else (raw_attrs or {})
-                )
-            except (json.JSONDecodeError, TypeError):
-                attrs = {}
-            _SKIP_ATTR_PREFIXES = (
-                "raw.",
-                "llm.input_messages",
-                "llm.output_messages",
-                "input.value",
-                "output.value",
-            )
-            for key, value in attrs.items():
-                if key not in entry and not key.startswith(_SKIP_ATTR_PREFIXES):
-                    if isinstance(value, str) and len(value) > 500:
-                        entry[key] = value[:500] + "..."
-                    else:
-                        entry[key] = value
+            # Include span attributes (typed maps + attributes_extra) for custom columns
+            flatten_span_attributes_into_entry(entry, row)
 
             table_data.append(entry)
 
@@ -1792,7 +1887,12 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 if config_id not in span_evals:
                     continue
                 val = span_evals[config_id]
-                if (
+                if isinstance(val, dict) and (
+                    isinstance(val.get("status"), str) or val.get("error")
+                ):
+                    # Lifecycle marker — loading/pending/skipped or errored.
+                    entry[config_id] = val
+                elif (
                     isinstance(val, dict)
                     and not val.get("error")
                     and not val.get("score")

@@ -38,7 +38,7 @@ const AddNewVersionDrawer = ({ open, onClose, latestVersion }) => {
     setValue,
     getValues,
     trigger,
-  } = useAgentConfigForm(createAgentDefinitionSchema(), agentDetails);
+  } = useAgentConfigForm(createAgentDefinitionSchema({ agentDefinitionId }), agentDetails);
 
   useEffect(() => {
     return () => resetAgentDetails();

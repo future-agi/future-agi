@@ -34,7 +34,7 @@ const CallLogsCard = ({ log }) => {
   const filteredTranscript = useMemo(() => {
     const originalTranscript = log?.transcript;
     return originalTranscript?.filter(
-      (item) => (item.speaker_role ?? item.speakerRole) !== "system",
+      (item) => item.speaker_role !== "system",
     );
   }, [log]);
 

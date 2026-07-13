@@ -43,6 +43,8 @@ import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
 import EvalResultDisplay from "./EvalResultDisplay";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
 import VersionBadge from "./VersionBadge";
+import { useAuthContext } from "src/auth/hooks";
+import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import {
   useExecuteCompositeEval,
   useExecuteCompositeEvalAdhoc,
@@ -678,6 +680,11 @@ const TestPlayground = React.forwardRef(
     const { state: errorLocalizerState, start: startErrorLocalizerPoll } =
       useErrorLocalizerPoll();
 
+    const { role } = useAuthContext();
+    const canEditEvals = Boolean(
+      RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role]
+    );
+
     // Version hover menu state
     const [versionMenuAnchor, setVersionMenuAnchor] = useState(null);
     const [hoveredVersionId, setHoveredVersionId] = useState(null);
@@ -1097,7 +1104,7 @@ const TestPlayground = React.forwardRef(
             }}
           >
             <Iconify
-              icon="solar:play-bold"
+              icon="lucide:play"
               width={14}
               sx={{
                 color:
@@ -1803,6 +1810,7 @@ const TestPlayground = React.forwardRef(
                         <Tooltip title="Actions" arrow placement="left">
                           <IconButton
                             size="small"
+                            disabled={!canEditEvals}
                             onClick={(e) => {
                               e.stopPropagation();
                               handleVersionMenuOpen(e, v);

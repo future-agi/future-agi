@@ -329,7 +329,7 @@ import type {
   DatasetNamesResponseApi,
   DatasetOptimizationApi,
   DatasetOptimizationCreateApi,
-  DatasetOptimizationDetailApi,
+  DatasetOptimizationDetailApiResponseApi,
   DatasetRowDataRequestApi,
   DatasetRowDataResponseApi,
   DatasetRowDiffRequestApi,
@@ -482,6 +482,7 @@ import type {
   FeedStatsApiResponseApi,
   FeedUpdateBodyApi,
   FeedbackApi,
+  FeedbackDetailsResponseApi,
   FetchAssistantRequestApi,
   FetchAssistantResponseApi,
   FileUploadResponseApi,
@@ -668,7 +669,6 @@ import type {
   ModelHubExperimentsDataListParams,
   ModelHubExperimentsV2ListList200,
   ModelHubExperimentsV2ListListParams,
-  ModelHubFeedbackGetFeedbackDetails200,
   ModelHubFeedbackGetFeedbackDetailsParams,
   ModelHubFeedbackGetFeedbackSummary200,
   ModelHubFeedbackGetFeedbackSummaryParams,
@@ -896,6 +896,7 @@ import type {
   ResourceLimitMutationResponseApi,
   ResourceTypeListResponseApi,
   ReviewItemRequestApi,
+  RootSpansResponseApi,
   RunNewEvalsOnTestExecutionApi,
   RunNewEvalsResponseApi,
   RunPromptColumnConfigResponseApi,
@@ -1079,10 +1080,12 @@ import type {
   ToolsApi,
   TopicCategoriesResponseApi,
   TraceApi,
+  TraceDetailResponseApi,
   TraceErrorAnalysisResponseApi,
   TraceErrorTaskResponseApi,
   TraceErrorTaskUpdateRequestApi,
   TraceErrorTaskUpdateResponseApi,
+  TraceObserveListResponseApi,
   TraceSessionApi,
   TraceSessionGraphDataRequestApi,
   TraceTagsUpdateApi,
@@ -1118,6 +1121,7 @@ import type {
   TracerEvalTaskPauseEvalTaskParams,
   TracerEvalTaskUnpauseEvalTaskParams,
   TracerFeedIssuesListParams,
+  TracerFeedIssuesOverviewListParams,
   TracerFeedIssuesReadParams,
   TracerFeedIssuesRootCauseListParams,
   TracerFeedIssuesSidebarListParams,
@@ -1148,7 +1152,6 @@ import type {
   TracerObservationSpanListSpansParams,
   TracerObservationSpanRetrieveLoading200,
   TracerObservationSpanRetrieveLoadingParams,
-  TracerObservationSpanRootSpans200,
   TracerObservationSpanRootSpansParams,
   TracerProjectFetchSystemMetrics200,
   TracerProjectFetchSystemMetricsParams,
@@ -1189,7 +1192,6 @@ import type {
   TracerTraceList200,
   TracerTraceListParams,
   TracerTraceListTraces200,
-  TracerTraceListTracesOfSession200,
   TracerTraceListTracesOfSessionParams,
   TracerTraceListTracesParams,
   TracerTraceListVoiceCalls200,
@@ -1304,6 +1306,9 @@ import type {
   ValidateLiveKitCredentialsRequestApi,
   ValidateLiveKitCredentialsResponseApi,
   VectorDBColumnRequestApi,
+  VerifyApiKeyRequestApi,
+  VerifyAssistantIdRequestApi,
+  VerifyResponseApi,
   WalletBalanceResponseApi,
   WebAuthnCredentialApi,
   WebhookIngestResponseApi,
@@ -1317,6 +1322,7 @@ import type {
   WorkspaceInviteResponseApi,
   WorkspaceListPaginatedResponseApi,
   WorkspaceManagementListResponseApi,
+  WorkspaceMemberListResponseApi,
   WorkspaceMemberRemoveApi,
   WorkspaceMemberRemoveResponseApi,
   WorkspaceMemberRoleUpdateApi,
@@ -7029,7 +7035,7 @@ export const accountsWorkspaceSwitchCreate = async (switchWorkspaceApi: SwitchWo
 
 
 export type accountsWorkspaceMembersListResponse200 = {
-  data: MemberListResponseApi
+  data: WorkspaceMemberListResponseApi
   status: 200
 }
 
@@ -27359,7 +27365,7 @@ export const modelHubDatasetOptimizationCreate = async (datasetOptimizationCreat
 
 
 export type modelHubDatasetOptimizationReadResponse200 = {
-  data: DatasetOptimizationDetailApi
+  data: DatasetOptimizationDetailApiResponseApi
   status: 200
 }
 
@@ -27386,9 +27392,7 @@ export const getModelHubDatasetOptimizationReadUrl = (id: string,) => {
 }
 
 /**
- * Returns data in the same format as AgentPromptOptimiserRunViewSet.retrieve()
-to allow reuse of frontend simulation components.
- * @summary Get run details with trial comparison table.
+ * Get run details; payload matches AgentPromptOptimiserRunViewSet.retrieve().
  */
 export const modelHubDatasetOptimizationRead = async (id: string, options?: RequestInit): Promise<modelHubDatasetOptimizationReadResponse> => {
 
@@ -38847,19 +38851,44 @@ export const modelHubFeedbackCreate = async (feedbackApi: NonReadonly<FeedbackAp
 
 
 export type modelHubFeedbackGetFeedbackDetailsResponse200 = {
-  data: ModelHubFeedbackGetFeedbackDetails200
+  data: FeedbackDetailsResponseApi
   status: 200
+}
+
+export type modelHubFeedbackGetFeedbackDetailsResponse400 = {
+  data: ModelHubErrorResponseApi
+  status: 400
+}
+
+export type modelHubFeedbackGetFeedbackDetailsResponse403 = {
+  data: ModelHubErrorResponseApi
+  status: 403
+}
+
+export type modelHubFeedbackGetFeedbackDetailsResponse404 = {
+  data: ModelHubErrorResponseApi
+  status: 404
+}
+
+export type modelHubFeedbackGetFeedbackDetailsResponse409 = {
+  data: ModelHubErrorResponseApi
+  status: 409
+}
+
+export type modelHubFeedbackGetFeedbackDetailsResponse500 = {
+  data: ModelHubErrorResponseApi
+  status: 500
 }
 
 export type modelHubFeedbackGetFeedbackDetailsResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
 }
 
 export type modelHubFeedbackGetFeedbackDetailsResponseSuccess = (modelHubFeedbackGetFeedbackDetailsResponse200) & {
   headers: Headers;
 };
-export type modelHubFeedbackGetFeedbackDetailsResponseError = (modelHubFeedbackGetFeedbackDetailsResponseDefault) & {
+export type modelHubFeedbackGetFeedbackDetailsResponseError = (modelHubFeedbackGetFeedbackDetailsResponse400 | modelHubFeedbackGetFeedbackDetailsResponse403 | modelHubFeedbackGetFeedbackDetailsResponse404 | modelHubFeedbackGetFeedbackDetailsResponse409 | modelHubFeedbackGetFeedbackDetailsResponse500 | modelHubFeedbackGetFeedbackDetailsResponseDefault) & {
   headers: Headers;
 };
 
@@ -60659,20 +60688,33 @@ export type tracerFeedIssuesOverviewListResponseError = (tracerFeedIssuesOvervie
 
 export type tracerFeedIssuesOverviewListResponse = (tracerFeedIssuesOverviewListResponseSuccess | tracerFeedIssuesOverviewListResponseError)
 
-export const getTracerFeedIssuesOverviewListUrl = (clusterId: string,) => {
+export const getTracerFeedIssuesOverviewListUrl = (clusterId: string,
+    params?: TracerFeedIssuesOverviewListParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/tracer/feed/issues/${clusterId}/overview/`
+  return stringifiedParams.length > 0 ? `/tracer/feed/issues/${clusterId}/overview/?${stringifiedParams}` : `/tracer/feed/issues/${clusterId}/overview/`
 }
 
 /**
  * GET /tracer/feed/issues/{cluster_id}/overview/
  */
-export const tracerFeedIssuesOverviewList = async (clusterId: string, options?: RequestInit): Promise<tracerFeedIssuesOverviewListResponse> => {
+export const tracerFeedIssuesOverviewList = async (clusterId: string,
+    params?: TracerFeedIssuesOverviewListParams, options?: RequestInit): Promise<tracerFeedIssuesOverviewListResponse> => {
 
-  return apiMutator<tracerFeedIssuesOverviewListResponse>(getTracerFeedIssuesOverviewListUrl(clusterId),
+  return apiMutator<tracerFeedIssuesOverviewListResponse>(getTracerFeedIssuesOverviewListUrl(clusterId,params),
   {
     ...options,
     method: 'GET'
@@ -61297,20 +61339,25 @@ export const tracerObservabilityProviderCreate = async (observabilityProviderApi
 
 
 
-export type tracerObservabilityProviderVerifyApiKeyResponse201 = {
-  data: ObservabilityProviderApi
-  status: 201
+export type tracerObservabilityProviderVerifyApiKeyResponse200 = {
+  data: VerifyResponseApi
+  status: 200
+}
+
+export type tracerObservabilityProviderVerifyApiKeyResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
 }
 
 export type tracerObservabilityProviderVerifyApiKeyResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 200 | 400>
 }
 
-export type tracerObservabilityProviderVerifyApiKeyResponseSuccess = (tracerObservabilityProviderVerifyApiKeyResponse201) & {
+export type tracerObservabilityProviderVerifyApiKeyResponseSuccess = (tracerObservabilityProviderVerifyApiKeyResponse200) & {
   headers: Headers;
 };
-export type tracerObservabilityProviderVerifyApiKeyResponseError = (tracerObservabilityProviderVerifyApiKeyResponseDefault) & {
+export type tracerObservabilityProviderVerifyApiKeyResponseError = (tracerObservabilityProviderVerifyApiKeyResponse400 | tracerObservabilityProviderVerifyApiKeyResponseDefault) & {
   headers: Headers;
 };
 
@@ -61327,7 +61374,7 @@ export const getTracerObservabilityProviderVerifyApiKeyUrl = () => {
 /**
  * API endpoints for managing Observability Providers.
  */
-export const tracerObservabilityProviderVerifyApiKey = async (observabilityProviderApi: NonReadonly<ObservabilityProviderApi>, options?: RequestInit): Promise<tracerObservabilityProviderVerifyApiKeyResponse> => {
+export const tracerObservabilityProviderVerifyApiKey = async (verifyApiKeyRequestApi: VerifyApiKeyRequestApi, options?: RequestInit): Promise<tracerObservabilityProviderVerifyApiKeyResponse> => {
 
   return apiMutator<tracerObservabilityProviderVerifyApiKeyResponse>(getTracerObservabilityProviderVerifyApiKeyUrl(),
   {
@@ -61335,26 +61382,31 @@ export const tracerObservabilityProviderVerifyApiKey = async (observabilityProvi
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      observabilityProviderApi,)
+      verifyApiKeyRequestApi,)
   }
 );}
 
 
 
-export type tracerObservabilityProviderVerifyAssistantIdResponse201 = {
-  data: ObservabilityProviderApi
-  status: 201
+export type tracerObservabilityProviderVerifyAssistantIdResponse200 = {
+  data: VerifyResponseApi
+  status: 200
+}
+
+export type tracerObservabilityProviderVerifyAssistantIdResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
 }
 
 export type tracerObservabilityProviderVerifyAssistantIdResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 201>
+  status: Exclude<HTTPStatusCodes, 200 | 400>
 }
 
-export type tracerObservabilityProviderVerifyAssistantIdResponseSuccess = (tracerObservabilityProviderVerifyAssistantIdResponse201) & {
+export type tracerObservabilityProviderVerifyAssistantIdResponseSuccess = (tracerObservabilityProviderVerifyAssistantIdResponse200) & {
   headers: Headers;
 };
-export type tracerObservabilityProviderVerifyAssistantIdResponseError = (tracerObservabilityProviderVerifyAssistantIdResponseDefault) & {
+export type tracerObservabilityProviderVerifyAssistantIdResponseError = (tracerObservabilityProviderVerifyAssistantIdResponse400 | tracerObservabilityProviderVerifyAssistantIdResponseDefault) & {
   headers: Headers;
 };
 
@@ -61371,7 +61423,7 @@ export const getTracerObservabilityProviderVerifyAssistantIdUrl = () => {
 /**
  * API endpoints for managing Observability Providers.
  */
-export const tracerObservabilityProviderVerifyAssistantId = async (observabilityProviderApi: NonReadonly<ObservabilityProviderApi>, options?: RequestInit): Promise<tracerObservabilityProviderVerifyAssistantIdResponse> => {
+export const tracerObservabilityProviderVerifyAssistantId = async (verifyAssistantIdRequestApi: VerifyAssistantIdRequestApi, options?: RequestInit): Promise<tracerObservabilityProviderVerifyAssistantIdResponse> => {
 
   return apiMutator<tracerObservabilityProviderVerifyAssistantIdResponse>(getTracerObservabilityProviderVerifyAssistantIdUrl(),
   {
@@ -61379,7 +61431,7 @@ export const tracerObservabilityProviderVerifyAssistantId = async (observability
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...options?.headers },
     body: JSON.stringify(
-      observabilityProviderApi,)
+      verifyAssistantIdRequestApi,)
   }
 );}
 
@@ -62310,7 +62362,7 @@ export type tracerObservationSpanListSpansObserveResponseError = (tracerObservat
 
 export type tracerObservationSpanListSpansObserveResponse = (tracerObservationSpanListSpansObserveResponseSuccess | tracerObservationSpanListSpansObserveResponseError)
 
-export const getTracerObservationSpanListSpansObserveUrl = (params: TracerObservationSpanListSpansObserveParams,) => {
+export const getTracerObservationSpanListSpansObserveUrl = (params?: TracerObservationSpanListSpansObserveParams,) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
@@ -62329,7 +62381,7 @@ export const getTracerObservationSpanListSpansObserveUrl = (params: TracerObserv
   return stringifiedParams.length > 0 ? `/tracer/observation-span/list_spans_observe/?${stringifiedParams}` : `/tracer/observation-span/list_spans_observe/`
 }
 
-export const tracerObservationSpanListSpansObserve = async (params: TracerObservationSpanListSpansObserveParams, options?: RequestInit): Promise<tracerObservationSpanListSpansObserveResponse> => {
+export const tracerObservationSpanListSpansObserve = async (params?: TracerObservationSpanListSpansObserveParams, options?: RequestInit): Promise<tracerObservationSpanListSpansObserveResponse> => {
 
   return apiMutator<tracerObservationSpanListSpansObserveResponse>(getTracerObservationSpanListSpansObserveUrl(params),
   {
@@ -62394,7 +62446,7 @@ export const tracerObservationSpanRetrieveLoading = async (params?: TracerObserv
 
 
 export type tracerObservationSpanRootSpansResponse200 = {
-  data: TracerObservationSpanRootSpans200
+  data: RootSpansResponseApi
   status: 200
 }
 
@@ -62412,7 +62464,7 @@ export type tracerObservationSpanRootSpansResponseError = (tracerObservationSpan
 
 export type tracerObservationSpanRootSpansResponse = (tracerObservationSpanRootSpansResponseSuccess | tracerObservationSpanRootSpansResponseError)
 
-export const getTracerObservationSpanRootSpansUrl = (params?: TracerObservationSpanRootSpansParams,) => {
+export const getTracerObservationSpanRootSpansUrl = (params: TracerObservationSpanRootSpansParams,) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
@@ -62435,9 +62487,11 @@ export const getTracerObservationSpanRootSpansUrl = (params?: TracerObservationS
  * Given a list of trace_ids, return the root span ID for each trace.
 Root span = the span where parent_span_id IS NULL for that trace.
 
-Query param: trace_ids (repeated, e.g. ?trace_ids=<id>&trace_ids=<id>)
+Query params (repeated): trace_ids (required,
+?trace_ids=<id>&trace_ids=<id>) + optional project_ids (prunes the CH
+scan). Response: { "result": { "<trace_id>": "<span_id>", ... } }
  */
-export const tracerObservationSpanRootSpans = async (params?: TracerObservationSpanRootSpansParams, options?: RequestInit): Promise<tracerObservationSpanRootSpansResponse> => {
+export const tracerObservationSpanRootSpans = async (params: TracerObservationSpanRootSpansParams, options?: RequestInit): Promise<tracerObservationSpanRootSpansResponse> => {
 
   return apiMutator<tracerObservationSpanRootSpansResponse>(getTracerObservationSpanRootSpansUrl(params),
   {
@@ -66600,19 +66654,29 @@ export const tracerTraceListTraces = async (params: TracerTraceListTracesParams,
 
 
 export type tracerTraceListTracesOfSessionResponse200 = {
-  data: TracerTraceListTracesOfSession200
+  data: TraceObserveListResponseApi
   status: 200
+}
+
+export type tracerTraceListTracesOfSessionResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type tracerTraceListTracesOfSessionResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
 }
 
 export type tracerTraceListTracesOfSessionResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>
 }
 
 export type tracerTraceListTracesOfSessionResponseSuccess = (tracerTraceListTracesOfSessionResponse200) & {
   headers: Headers;
 };
-export type tracerTraceListTracesOfSessionResponseError = (tracerTraceListTracesOfSessionResponseDefault) & {
+export type tracerTraceListTracesOfSessionResponseError = (tracerTraceListTracesOfSessionResponse400 | tracerTraceListTracesOfSessionResponse500 | tracerTraceListTracesOfSessionResponseDefault) & {
   headers: Headers;
 };
 
@@ -66770,19 +66834,29 @@ export const tracerTraceVoiceCallDetail = async (params?: TracerTraceVoiceCallDe
 
 
 export type tracerTraceReadResponse200 = {
-  data: TraceApi
+  data: TraceDetailResponseApi
   status: 200
+}
+
+export type tracerTraceReadResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type tracerTraceReadResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
 }
 
 export type tracerTraceReadResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>
 }
 
 export type tracerTraceReadResponseSuccess = (tracerTraceReadResponse200) & {
   headers: Headers;
 };
-export type tracerTraceReadResponseError = (tracerTraceReadResponseDefault) & {
+export type tracerTraceReadResponseError = (tracerTraceReadResponse400 | tracerTraceReadResponse500 | tracerTraceReadResponseDefault) & {
   headers: Headers;
 };
 

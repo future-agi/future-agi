@@ -400,6 +400,15 @@ export const getTestRunDetailGridColumnDefs = (columnOrder) => {
   return config;
 };
 
+export const getColumnDefsSignature = (colDefs = []) =>
+  colDefs
+    .map((colDef) =>
+      colDef?.children
+        ? `${colDef.id}:[${getColumnDefsSignature(colDef.children)}]`
+        : String(colDef?.id ?? colDef?.field ?? ""),
+    )
+    .join(",");
+
 export const getTestRunDetailColumnQuery = (
   executionId,
   pageNumber,
@@ -570,7 +579,7 @@ export const getTestRunDetailFilterDefinition = (columns) => {
       };
     }
     scenarioFilters.push({
-      propertyId: `scenario_${col.scenario_id}_dataset_${col.id}`,
+      propertyId: col.id,
       propertyName: col.column_name,
       filterType: filterType,
       ...extra,
