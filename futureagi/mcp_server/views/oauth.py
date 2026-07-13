@@ -320,9 +320,28 @@ class MCPOAuthTokenView(APIView):
                 status=400,
             )
 
-        # Mark code as used
-        auth_code.used = True
-        auth_code.save(update_fields=["used"])
+        # Atomically claim the code before minting tokens. Django compiles this to a
+        # single `UPDATE ... SET used=true WHERE pk=? AND used=false`, so exactly one
+        # of two concurrent exchanges can flip the flag; `.update()` returns the number
+        # of rows it changed. Without this compare-and-swap, two requests could both
+        # pass the `used=False` read above and each mint a valid token (code replay).
+        claimed = MCPOAuthCode.objects.filter(pk=auth_code.pk, used=False).update(
+            used=True
+        )
+        if not claimed:
+            # Lost the race — another exchange consumed this code first.
+            logger.warning(
+                "oauth_code_replay_rejected",
+                client_id=client_id,
+                user_id=str(auth_code.user.id),
+            )
+            return Response(
+                {
+                    "error": "invalid_grant",
+                    "error_description": "Code already used",
+                },
+                status=400,
+            )
 
         # Generate tokens
         access_token, expires_at = generate_oauth_token(

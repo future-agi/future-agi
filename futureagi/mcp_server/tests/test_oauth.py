@@ -201,3 +201,90 @@ class TestMCPOAuthCodeModel:
         )
         code.refresh_from_db()
         assert code.is_expired
+
+
+@pytest.mark.django_db
+class TestAuthorizationCodeConsumption:
+    """Authorization codes are single-use bearer grants (see issue #1134)."""
+
+    def _setup_code(self, user, workspace, *, client_id, code_value):
+        from mcp_server.models.oauth_client import MCPOAuthClient
+        from mcp_server.models.oauth_code import MCPOAuthCode
+        from mcp_server.oauth_utils import hash_client_secret
+        from tfc.middleware.workspace_context import set_workspace_context
+
+        set_workspace_context(
+            workspace=workspace, organization=user.organization, user=user
+        )
+        client = MCPOAuthClient.objects.create(
+            client_id=client_id,
+            client_secret_hash=hash_client_secret("test-secret"),
+            name="Test Client",
+            redirect_uris=["https://example.com/callback"],
+        )
+        MCPOAuthCode.objects.create(
+            code=code_value,
+            client=client,
+            user=user,
+            organization=user.organization,
+            workspace=workspace,
+            redirect_uri="https://example.com/callback",
+            scope=["evaluations"],
+        )
+        return client
+
+    def _exchange(self, code_value, client_id):
+        from rest_framework.test import APIClient
+
+        return APIClient().post(
+            "/mcp/oauth/token/",
+            {
+                "grant_type": "authorization_code",
+                "code": code_value,
+                "client_id": client_id,
+                "client_secret": "test-secret",
+                "redirect_uri": "https://example.com/callback",
+            },
+            format="json",
+        )
+
+    def test_valid_code_exchange_succeeds(self, user, workspace):
+        """Regression guard: the happy path still mints tokens."""
+        self._setup_code(user, workspace, client_id="cc-1", code_value="code-ok")
+
+        response = self._exchange("code-ok", "cc-1")
+
+        assert response.status_code == 200
+        assert response.data["access_token"]
+        assert response.data["refresh_token"]
+        assert response.data["token_type"] == "Bearer"
+
+    def test_reused_code_is_rejected(self, user, workspace):
+        """Replaying a consumed code must fail with invalid_grant."""
+        self._setup_code(user, workspace, client_id="cc-2", code_value="code-replay")
+
+        first = self._exchange("code-replay", "cc-2")
+        assert first.status_code == 200
+
+        second = self._exchange("code-replay", "cc-2")
+        assert second.status_code == 400
+        assert second.data["error"] == "invalid_grant"
+
+    def test_concurrent_claim_yields_single_winner(self, user, workspace):
+        """Simulate two simultaneous exchanges: the atomic compare-and-swap
+        lets exactly one flip used False->True. The second claim affects 0 rows,
+        which is what drives the invalid_grant response in the view."""
+        from mcp_server.models.oauth_code import MCPOAuthCode
+
+        self._setup_code(user, workspace, client_id="cc-3", code_value="code-race")
+        code = MCPOAuthCode.objects.get(code="code-race")
+
+        first_claim = MCPOAuthCode.objects.filter(pk=code.pk, used=False).update(
+            used=True
+        )
+        second_claim = MCPOAuthCode.objects.filter(pk=code.pk, used=False).update(
+            used=True
+        )
+
+        assert first_claim == 1
+        assert second_claim == 0
