@@ -159,36 +159,16 @@ class LiteLLMModelManager:
         if not provider:
             provider = self.get_provider(self.model_name)
 
-        # Build query with optional workspace filtering
-        query = {"organization_id": organization_id, "provider": provider}
-        if workspace_id:
-            query["workspace_id"] = workspace_id
-        else:
-            try:
-                org = Organization.objects.get(id=organization_id)
-                if org.ws_enabled:
-                    default_workspace = Workspace.objects.get(
-                        organization=org, is_default=True
-                    )
-                    query["workspace_id"] = default_workspace.id
-            except Organization.DoesNotExist:
-                pass
-            except Workspace.DoesNotExist:
-                pass
+        if not workspace_id:
+            workspace_id = self._resolve_default_workspace_id(organization_id)
 
-        try:
-            api_key_entry = ApiKey.objects.get(**query)
-        except ApiKey.DoesNotExist:
+        api_key_entry = self._find_api_key_entry(
+            organization_id, workspace_id, provider
+        )
+        if api_key_entry is None:
             raise ValueError(
                 f"API key not configured for {provider}. Please add your API key in settings."
-            ) from None
-        except ApiKey.MultipleObjectsReturned:
-            # Fallback to first match if multiple keys exist (e.g., workspace not specified)
-            api_key_entry = ApiKey.objects.filter(**query).first()
-            if not api_key_entry:
-                raise ValueError(
-                    f"API key not configured for {provider}. Please add your API key in settings."
-                ) from None
+            )
 
         if api_key_entry.key:
             return api_key_entry.actual_key
@@ -199,6 +179,39 @@ class LiteLLMModelManager:
         raise ValueError(
             f"API key not configured for {provider}. Please add your API key in settings."
         )
+
+    def _resolve_default_workspace_id(self, organization_id):
+        try:
+            org = Organization.objects.get(id=organization_id)
+        except Organization.DoesNotExist:
+            return None
+        if not org.ws_enabled:
+            return None
+        try:
+            return Workspace.objects.get(organization=org, is_default=True).id
+        except Workspace.DoesNotExist:
+            return None
+
+    def _find_api_key_entry(self, organization_id, workspace_id, provider):
+        """Workspace-scoped key wins if present; falls back to the
+        org-level key (workspace unset). Keys can be saved without a
+        workspace (e.g. added before a workspace was selected), so a
+        strict workspace-only match would miss a key that's clearly
+        configured for the org."""
+        if workspace_id:
+            entry = ApiKey.objects.filter(
+                organization_id=organization_id,
+                workspace_id=workspace_id,
+                provider=provider,
+            ).first()
+            if entry is not None:
+                return entry
+
+        return ApiKey.objects.filter(
+            organization_id=organization_id,
+            workspace_id__isnull=True,
+            provider=provider,
+        ).first()
 
     def get_provider(self, model_name, organization_id=None, workspace_id=None):
         provider = None
