@@ -72,6 +72,11 @@ export const CommunicationStyleOptions = [
   { value: "Collaborative", label: "Collaborative" },
 ];
 
+export const BEHAVIOURAL_SETTINGS_ERROR =
+  "Select at least one behavioural setting.";
+
+const hasSelection = (value) => Array.isArray(value) && value.length > 0;
+
 const accentList = [
   { value: "american", label: "American" },
   { value: "arabic", label: "Arabic" },
@@ -435,6 +440,31 @@ export const PersonCreateValidationSchema = z
       ...PersonCreateBaseValidationSchema.shape,
     }),
   ])
+  .superRefine((data, ctx) => {
+    if (!hasSelection(data.personality)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "At least one personality trait is required",
+        path: ["personality"],
+      });
+    }
+
+    if (!hasSelection(data.communicationStyle)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Communication style is required",
+        path: ["communicationStyle"],
+      });
+    }
+
+    if (data.simulationType === "voice" && !hasSelection(data.accent)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Accent is required",
+        path: ["accent"],
+      });
+    }
+  })
   .transform((data) => {
     return {
       ...data,

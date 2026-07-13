@@ -7,6 +7,51 @@ from tfc.middleware.workspace_context import (
 )
 
 
+def _resolve_value(attrs, field_name, instance=None):
+    """Return the effective value of a field, considering partial updates."""
+    if field_name in attrs:
+        return attrs.get(field_name)
+    if instance is not None:
+        return getattr(instance, field_name, None)
+    return None
+
+
+def _resolve_simulation_type(attrs, instance=None):
+    """Return the effective simulation_type, defaulting to 'voice'."""
+    sim_type = _resolve_value(attrs, "simulation_type", instance)
+    return sim_type if sim_type else "voice"
+
+
+def _has_selection(value):
+    """Return True if the value is a non-empty list."""
+    return bool(value) if isinstance(value, list) else bool(value)
+
+
+def _validate_behavioral_settings(attrs, instance=None):
+    """Validate that all required behavioural settings are present.
+
+    Returns a dict of field-level error messages. An empty dict means
+    validation passed.
+    """
+    errors = {}
+    simulation_type = _resolve_simulation_type(attrs, instance)
+
+    if not _has_selection(_resolve_value(attrs, "personality", instance)):
+        errors["personality"] = "At least one personality trait is required."
+
+    if not _has_selection(
+        _resolve_value(attrs, "communication_style", instance)
+    ):
+        errors["communication_style"] = "Communication style is required."
+
+    if simulation_type == "voice" and not _has_selection(
+        _resolve_value(attrs, "accent", instance)
+    ):
+        errors["accent"] = "Accent is required."
+
+    return errors
+
+
 class PersonaSerializer(serializers.ModelSerializer):
     """
     Serializer for Persona model - returns business fields only.
@@ -93,10 +138,11 @@ class PersonaSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
-        """Custom validation"""
-        # Note: organization and workspace are not in the serializer fields
-        # They are handled automatically in the view layer from user context
-        # No validation needed here since they're set internally
+        """Custom validation for updates — enforces behavioural settings
+        across the final state after applying the partial update."""
+        errors = _validate_behavioral_settings(attrs, instance=self.instance)
+        if errors:
+            raise serializers.ValidationError(errors)
         return attrs
 
     def get_simulation_type(self, obj):
@@ -328,6 +374,38 @@ class PersonaCreateSerializer(serializers.Serializer):
         required=False, allow_blank=True, allow_null=True, default="balanced"
     )
 
+    def validate(self, attrs):
+        """Cross-field validation including behavioural settings."""
+        errors = _validate_behavioral_settings(attrs)
+
+        # If multilingual is True, languages must be non-empty
+        multilingual = attrs.get("multilingual", False)
+        languages = attrs.get("languages", [])
+        if multilingual and not languages:
+            errors["language"] = (
+                "At least one language is required when multilingual is enabled."
+            )
+
+        # Validate custom_properties keys and values are non-empty strings
+        metadata = attrs.get("metadata")
+        if metadata and isinstance(metadata, dict):
+            for key, value in metadata.items():
+                if not key or not str(key).strip():
+                    errors["custom_properties"] = (
+                        "Property keys must be non-empty strings."
+                    )
+                    break
+                if not value or not str(value).strip():
+                    errors["custom_properties"] = (
+                        f"Value for property '{key}' must be a non-empty string."
+                    )
+                    break
+
+        if errors:
+            raise serializers.ValidationError(errors)
+
+        return attrs
+
     def validate_simulation_type(self, value):
         """Validate simulation type choices"""
         if value is not None and value not in [
@@ -548,37 +626,6 @@ class PersonaCreateSerializer(serializers.Serializer):
                     f"Invalid regional_mix value: {value}. Valid choices: {valid_choices}"
                 )
         return value
-
-    def validate(self, attrs):
-        """Cross-field validation"""
-        # If multilingual is True, languages must be non-empty
-        multilingual = attrs.get("multilingual", False)
-        languages = attrs.get("languages", [])
-        if multilingual and not languages:
-            raise serializers.ValidationError(
-                {
-                    "language": "At least one language is required when multilingual is enabled."
-                }
-            )
-
-        # Validate custom_properties keys and values are non-empty strings
-        metadata = attrs.get("metadata")
-        if metadata and isinstance(metadata, dict):
-            for key, value in metadata.items():
-                if not key or not str(key).strip():
-                    raise serializers.ValidationError(
-                        {
-                            "custom_properties": "Property keys must be non-empty strings."
-                        }
-                    )
-                if not value or not str(value).strip():
-                    raise serializers.ValidationError(
-                        {
-                            "custom_properties": f"Value for property '{key}' must be a non-empty string."
-                        }
-                    )
-
-        return attrs
 
     def validate_background_sound(self, value):
         """Convert string boolean to actual boolean, preserve None"""
