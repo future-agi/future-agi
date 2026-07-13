@@ -249,6 +249,70 @@ def test_legacy_feedback_generated_routes_round_trip(auth_client, user, workspac
 
 
 @pytest.mark.django_db
+def test_get_template_returns_choice_scores_when_defined(
+    auth_client, user, workspace
+):
+    """Feedback template must surface choice_scores so the FE can render a
+    choice picker with derived scores instead of a raw numeric input."""
+    organization = user.organization
+    dataset = Dataset.objects.create(
+        name="Choice scores template dataset",
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        source=DatasetSourceChoices.BUILD.value,
+    )
+    eval_template = EvalTemplate.objects.create(
+        name=f"choice-scores-template-{uuid.uuid4().hex[:8]}",
+        description="Template mapping choices to derived scores",
+        organization=organization,
+        workspace=workspace,
+        owner=OwnerChoices.USER.value,
+        config={"output": "score", "eval_type_id": "test_eval_type"},
+        choice_scores={"Yes": 1.0, "Maybe": 0.5, "No": 0.0},
+    )
+    metric = UserEvalMetric.objects.create(
+        name="Choice Scores Metric",
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        template=eval_template,
+        dataset=dataset,
+        config={"mapping": {}},
+        status=StatusType.COMPLETED.value,
+    )
+
+    response = auth_client.get(
+        f"{FEEDBACK_URL}get_template/",
+        {"user_eval_metric_id": str(metric.id)},
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.json()
+    payload = _result(response)
+    assert payload["choice_scores"] == {"Yes": 1.0, "Maybe": 0.5, "No": 0.0}
+    assert payload["eval_name"] == eval_template.name
+    assert payload["user_eval_name"] == metric.name
+
+
+@pytest.mark.django_db
+def test_get_template_returns_null_choice_scores_when_absent(
+    auth_client, user, workspace
+):
+    """Templates without choice_scores must still round-trip cleanly; the FE
+    treats null as "no picker, use the numeric input"."""
+    graph = _create_feedback_graph(user, workspace)
+
+    response = auth_client.get(
+        f"{FEEDBACK_URL}get_template/",
+        {"user_eval_metric_id": str(graph["metric"].id)},
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.json()
+    payload = _result(response)
+    assert payload["choice_scores"] is None
+
+
+@pytest.mark.django_db
 def test_legacy_feedback_rejects_same_org_other_workspace_source_column(
     auth_client, user, workspace
 ):

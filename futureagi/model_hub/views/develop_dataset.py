@@ -185,6 +185,7 @@ from model_hub.serializers.develop_dataset import (
     CompareDatasetSerializer,
     DatasetSerializer,
     FeedbackSerializer,
+    FeedbackTemplateResponseSerializer,
     FileSerializer,
     KnowledgeBaseFileSerializer,
 )
@@ -11157,6 +11158,10 @@ class FeedbackViewSet(viewsets.ModelViewSet):
         kwargs["partial"] = True
         return self.update(request, *args, **kwargs)
 
+    @swagger_auto_schema(
+        method="get",
+        responses={200: FeedbackTemplateResponseSerializer},
+    )
     @action(detail=False, methods=["GET"])
     def get_template(self, request):
         """

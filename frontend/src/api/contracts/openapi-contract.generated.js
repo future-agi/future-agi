@@ -19684,32 +19684,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "responses": {
           "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/Feedback"
-                }
-              }
-            }
+            "$ref": "#/definitions/FeedbackTemplateResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -55790,6 +55765,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "FeedbackTemplateResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/FeedbackTemplateResult"
+        }
+      }
+    },
     "FetchAssistantRequest": {
       "required": [
         "assistant_id",
@@ -80929,6 +80920,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "multi_choice": {
           "title": "Multi choice",
           "type": "boolean"
+        },
+        "choice_scores": {
+          "title": "Choice scores",
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "x-nullable": true
         }
       }
     },
@@ -81400,6 +81399,54 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "total_count": {
           "title": "Total count",
           "type": "integer"
+        }
+      }
+    },
+    "FeedbackTemplateResult": {
+      "required": [
+        "eval_name",
+        "user_eval_name"
+      ],
+      "type": "object",
+      "properties": {
+        "output_type": {
+          "title": "Output type",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "eval_description": {
+          "title": "Eval description",
+          "type": "string",
+          "x-nullable": true
+        },
+        "eval_name": {
+          "title": "Eval name",
+          "type": "string",
+          "minLength": 1
+        },
+        "user_eval_name": {
+          "title": "User eval name",
+          "type": "string",
+          "minLength": 1
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "multi_choice": {
+          "title": "Multi choice",
+          "type": "boolean"
+        },
+        "choice_scores": {
+          "title": "Choice scores",
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "x-nullable": true
         }
       }
     },
