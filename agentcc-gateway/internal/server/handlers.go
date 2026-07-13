@@ -108,13 +108,21 @@ func orgModelMatches(registeredModel, requestedModel, providerID string) bool {
 	return false
 }
 
-func setAuthMetadataFromRequest(rc *models.RequestContext, r *http.Request) {
+// authHeaderFromRequest returns the caller's credential in the form the auth
+// plugin expects, accepting either header spelling.
+func authHeaderFromRequest(r *http.Request) string {
 	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
-		rc.Metadata["authorization"] = authHeader
-		return
+		return authHeader
 	}
 	if apiKey := r.Header.Get("x-api-key"); apiKey != "" {
-		rc.Metadata["authorization"] = "Bearer " + apiKey
+		return "Bearer " + apiKey
+	}
+	return ""
+}
+
+func setAuthMetadataFromRequest(rc *models.RequestContext, r *http.Request) {
+	if authHeader := authHeaderFromRequest(r); authHeader != "" {
+		rc.Metadata["authorization"] = authHeader
 	}
 }
 

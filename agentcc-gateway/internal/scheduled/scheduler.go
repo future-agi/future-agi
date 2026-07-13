@@ -10,8 +10,9 @@ import (
 )
 
 // ExecuteFunc is called by the scheduler to execute a scheduled job.
-// It receives the raw request JSON and returns the raw response JSON.
-type ExecuteFunc func(requestJSON json.RawMessage) (json.RawMessage, error)
+// It receives the job — not just its request — because running it requires the
+// submitter's identity, and returns the raw response JSON.
+type ExecuteFunc func(job *ScheduledJob) (json.RawMessage, error)
 
 // Scheduler picks up due jobs and executes them.
 type Scheduler struct {
@@ -119,7 +120,7 @@ func (s *Scheduler) worker() {
 func (s *Scheduler) executeJob(job *ScheduledJob) {
 	slog.Info("scheduler: executing job", "job_id", job.ID, "model", job.Model, "attempt", job.Attempts+1)
 
-	responseJSON, err := s.executeFunc(job.Request)
+	responseJSON, err := s.executeFunc(job)
 	job.Attempts++
 	job.UpdatedAt = time.Now()
 

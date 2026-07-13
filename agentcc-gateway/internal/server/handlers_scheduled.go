@@ -91,20 +91,20 @@ func (h *Handlers) SubmitScheduled(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(req.Request, &partial)
 
 	requestID := models.GetRequestID(r.Context())
-	orgID := "" // extracted from auth middleware if available
 
 	job := &scheduled.ScheduledJob{
-		ID:          "sched-" + requestID,
-		OrgID:       orgID,
-		Status:      scheduled.StatusPending,
-		ScheduledAt: scheduledAt,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-		Request:     req.Request,
-		Model:       partial.Model,
-		MaxAttempts: h.scheduledRetryAttempts,
-		WebhookURL:  req.WebhookURL,
-		Metadata:    req.Metadata,
+		ID:            "sched-" + requestID,
+		OrgID:         extractOrgID(r, h),
+		Authorization: authHeaderFromRequest(r),
+		Status:        scheduled.StatusPending,
+		ScheduledAt:   scheduledAt,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+		Request:       req.Request,
+		Model:         partial.Model,
+		MaxAttempts:   h.scheduledRetryAttempts,
+		WebhookURL:    req.WebhookURL,
+		Metadata:      req.Metadata,
 	}
 
 	if err := h.scheduledStore.Create(job); err != nil {
@@ -126,6 +126,17 @@ func (h *Handlers) SubmitScheduled(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(job)
 }
 
+// jobForCaller looks up a job and returns it only if the caller's org owns it.
+// Another org's job is reported as not-found rather than forbidden, so job ids
+// cannot be probed for existence.
+func (h *Handlers) jobForCaller(r *http.Request, jobID string) (*scheduled.ScheduledJob, bool) {
+	job, err := h.scheduledStore.Get(jobID)
+	if err != nil || job.OrgID != extractOrgID(r, h) {
+		return nil, false
+	}
+	return job, true
+}
+
 // GetScheduledJob handles GET /v1/scheduled/{job_id}.
 func (h *Handlers) GetScheduledJob(w http.ResponseWriter, r *http.Request) {
 	if h.scheduledStore == nil {
@@ -139,8 +150,8 @@ func (h *Handlers) GetScheduledJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.scheduledStore.Get(jobID)
-	if err != nil {
+	job, ok := h.jobForCaller(r, jobID)
+	if !ok {
 		models.WriteError(w, models.ErrNotFound("job_not_found", "Scheduled job not found"))
 		return
 	}
@@ -167,8 +178,7 @@ func (h *Handlers) ListScheduledJobs(w http.ResponseWriter, r *http.Request) {
 		limit = 100
 	}
 
-	orgID := "" // from auth
-	jobs, err := h.scheduledStore.ListByOrg(orgID, status, limit)
+	jobs, err := h.scheduledStore.ListByOrg(extractOrgID(r, h), status, limit)
 	if err != nil {
 		models.WriteError(w, models.ErrInternal("Failed to list jobs: "+err.Error()))
 		return
@@ -194,8 +204,8 @@ func (h *Handlers) CancelScheduledJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.scheduledStore.Get(jobID)
-	if err != nil {
+	job, ok := h.jobForCaller(r, jobID)
+	if !ok {
 		models.WriteError(w, models.ErrNotFound("job_not_found", "Scheduled job not found"))
 		return
 	}

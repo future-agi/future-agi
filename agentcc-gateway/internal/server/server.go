@@ -301,9 +301,9 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		handlers.scheduledRetryAttempts = retryAttempts
 
 		// The execute function calls back into the gateway pipeline.
-		schedExecuteFn := func(requestJSON json.RawMessage) (json.RawMessage, error) {
+		schedExecuteFn := func(job *scheduled.ScheduledJob) (json.RawMessage, error) {
 			var req models.ChatCompletionRequest
-			if err := json.Unmarshal(requestJSON, &req); err != nil {
+			if err := json.Unmarshal(job.Request, &req); err != nil {
 				return nil, fmt.Errorf("invalid scheduled request: %w", err)
 			}
 
@@ -311,6 +311,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			rc.Model = req.Model
 			rc.Request = &req
 			rc.IsStream = false
+			// Replay the submitter's credential: the pipeline authenticates and
+			// attributes spend per request, so without it the job is rejected by
+			// the auth plugin and its cost belongs to no org.
+			rc.Metadata["authorization"] = job.Authorization
 
 			provider, err := registry.Resolve(req.Model)
 			if err != nil {
