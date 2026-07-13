@@ -63,9 +63,23 @@ except ImportError:
         the SAME lowercase string so an OSS boundary call that happens to
         pass ``event_type`` downstream (e.g. to a log line, a metric, an
         integration webhook) sees the same key as the EE build.
+
+        The returned value is a ``str`` subclass exposing ``.value`` (and
+        ``.name``) so call sites written against the EE enum — e.g.
+        ``BillingEventType.CODE_EVALUATOR.value`` — work identically in OSS
+        instead of raising ``AttributeError`` on a plain str.
         """
-        def __getattr__(self, name: str) -> str:
-            return name.lower()
+        class _StubMember(str):
+            @property
+            def value(self) -> str:
+                return str(self)
+
+            @property
+            def name(self) -> str:
+                return str(self).upper()
+
+        def __getattr__(self, name: str) -> "_BillingEventTypeStub._StubMember":
+            return self._StubMember(name.lower())
 
     BillingEventType = _BillingEventTypeStub()
 
