@@ -102,6 +102,13 @@ x-backend-env: &backend-env
   CH_PASSWORD: ""
   CH_DATABASE: default
   CH_USE_REPLICATED_ENGINES: ${CH_USE_REPLICATED_ENGINES:-false}
+  # Light mode has no PeerDB CDC mirror writing `spans`/friends (those views
+  # are documented as empty until `full` mode is on), so default to dropping
+  # the legacy pre-CH25 tables/columns on boot rather than leaving the v1
+  # shape in place — the ch25 migration can't ALTER v1 into the v2 shape.
+  # If you run `full` mode and rely on the legacy CDC chain, set this to
+  # `false` in .env.
+  CH25_DROP_LEGACY_CDC_CHAIN: ${CH25_DROP_LEGACY_CDC_CHAIN:-true}
 
   # Redis
   REDIS_HOST: redis
@@ -291,12 +298,17 @@ services:
     restart: unless-stopped
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.10.2.80
+    image: clickhouse/clickhouse-server:25.3
+    environment:
+      # App connects as the `default` user with an empty password (CH_USER/CH_PASSWORD
+      # above) — skip the image's default-user lockdown so that account keeps network access.
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
     ports:
       - "127.0.0.1:${CH_HTTP_PORT:-8123}:8123"
       - "127.0.0.1:${CH_PORT:-9000}:9000"
     volumes:
       - clickhouse-data:/var/lib/clickhouse
+      - ./config/clickhouse/config.xml:/etc/clickhouse-server/config.d/custom.xml:ro
     ulimits:
       nofile:
         soft: 262144

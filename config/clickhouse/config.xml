@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<!--
+  Tiered storage policy for the spans table, matching the backend image's
+  own `.ci/clickhouse-storage-policy.xml` reference config (self-host has
+  no S3, so `cold` is a second local path rather than an S3 disk).
+-->
+<clickhouse>
+    <storage_configuration>
+        <disks>
+            <!-- 'default' is already provided by CH at the server's <path>; do not redeclare. -->
+            <cold_local>
+                <path>/var/lib/clickhouse/cold/</path>
+                <keep_free_space_bytes>536870912</keep_free_space_bytes>
+            </cold_local>
+        </disks>
+        <policies>
+            <tiered>
+                <volumes>
+                    <hot>
+                        <disk>default</disk>
+                        <max_data_part_size_bytes>10737418240</max_data_part_size_bytes>
+                    </hot>
+                    <cold>
+                        <disk>cold_local</disk>
+                    </cold>
+                </volumes>
+                <move_factor>0.05</move_factor>
+            </tiered>
+        </policies>
+    </storage_configuration>
+</clickhouse>
