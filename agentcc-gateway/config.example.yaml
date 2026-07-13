@@ -189,6 +189,20 @@ providers:
   #     - mistral-large-latest
   #     - mistral-small-latest
 
+  # MiniMax global OpenAI-compatible endpoint (preset default):
+  # minimax:
+  #   api_key: "${MINIMAX_API_KEY}"
+  #   type: "MiniMax"
+  #   models:
+  #     - MiniMax-M3
+  #     - MiniMax-M2.7
+  #
+  # Alternative MiniMax endpoints use the same model list. The gateway appends
+  # each protocol's request path to these API roots:
+  #   China OpenAI:     base_url: "https://api.minimaxi.com", api_format: "openai"
+  #   Global Anthropic: base_url: "https://api.minimax.io/anthropic", api_format: "anthropic"
+  #   China Anthropic:  base_url: "https://api.minimaxi.com/anthropic", api_format: "anthropic"
+
   # together:
   #   api_key: "${TOGETHER_API_KEY}"
   #   type: "together"

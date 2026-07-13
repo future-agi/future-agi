@@ -68,23 +68,64 @@ func TestPreset_Groq(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 3b. applyProviderPreset — known type "MiniMax" fills BaseURL and APIFormat
+// 3b. applyProviderPreset — MiniMax supports each documented endpoint
 // ---------------------------------------------------------------------------
 
 func TestPreset_MiniMax(t *testing.T) {
-	cfg := &config.ProviderConfig{
-		Type: "MiniMax",
+	tests := []struct {
+		name    string
+		cfg     config.ProviderConfig
+		wantURL string
+		wantFmt string
+	}{
+		{
+			name:    "global OpenAI default",
+			cfg:     config.ProviderConfig{Type: "MiniMax"},
+			wantURL: "https://api.minimax.io",
+			wantFmt: "openai",
+		},
+		{
+			name: "China OpenAI override",
+			cfg: config.ProviderConfig{
+				Type:      "MiniMax",
+				BaseURL:   "https://api.minimaxi.com",
+				APIFormat: "openai",
+			},
+			wantURL: "https://api.minimaxi.com",
+			wantFmt: "openai",
+		},
+		{
+			name: "global Anthropic override",
+			cfg: config.ProviderConfig{
+				Type:      "MiniMax",
+				BaseURL:   "https://api.minimax.io/anthropic",
+				APIFormat: "anthropic",
+			},
+			wantURL: "https://api.minimax.io/anthropic",
+			wantFmt: "anthropic",
+		},
+		{
+			name: "China Anthropic override",
+			cfg: config.ProviderConfig{
+				Type:      "MiniMax",
+				BaseURL:   "https://api.minimaxi.com/anthropic",
+				APIFormat: "anthropic",
+			},
+			wantURL: "https://api.minimaxi.com/anthropic",
+			wantFmt: "anthropic",
+		},
 	}
-	applyProviderPreset(cfg)
 
-	wantURL := "https://api.minimax.io"
-	wantFmt := "openai"
-
-	if cfg.BaseURL != wantURL {
-		t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, wantURL)
-	}
-	if cfg.APIFormat != wantFmt {
-		t.Errorf("APIFormat = %q, want %q", cfg.APIFormat, wantFmt)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			applyProviderPreset(&tt.cfg)
+			if tt.cfg.BaseURL != tt.wantURL {
+				t.Errorf("BaseURL = %q, want %q", tt.cfg.BaseURL, tt.wantURL)
+			}
+			if tt.cfg.APIFormat != tt.wantFmt {
+				t.Errorf("APIFormat = %q, want %q", tt.cfg.APIFormat, tt.wantFmt)
+			}
+		})
 	}
 }
 
