@@ -846,6 +846,30 @@ class TestSimulateEvalConfigModel:
 
         assert run_test.simulate_eval_configs.count() == 2
 
+    @pytest.mark.parametrize(
+        "model_value",
+        [
+            "gpt-4o-mini",
+            "gpt-4o",
+            "claude-3-5-sonnet-latest",
+            "turing_large",  # legacy Turing value still accepted alongside BYO
+            "",              # blank accepted; model is optional
+        ],
+    )
+    def test_eval_config_accepts_byo_model(self, db, model_value):
+        """SimulateEvalConfig.model accepts arbitrary strings, not just ModelChoices.
+
+        Regression guard against re-adding ``choices=ModelChoices.choices`` on
+        the field. Enforcement happens in ``Model.clean_fields`` where the
+        ``choices=`` validator lives; validating only the ``model`` field lets
+        the test skip the run_test / eval_template FK graph.
+        """
+        config = SimulateEvalConfig(model=model_value)
+        exclude = [
+            f.name for f in SimulateEvalConfig._meta.fields if f.name != "model"
+        ]
+        config.clean_fields(exclude=exclude)
+
 
 # ============================================================================
 # Bug Discovery Tests
