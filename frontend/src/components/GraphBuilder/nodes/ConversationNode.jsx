@@ -80,7 +80,7 @@ const ConversationNode = ({ data, isConnectable, id }) => {
             borderColor: theme.palette.primary.main,
           }}
         />
-        <NodeHeader type="conversation" title={data?.name} />
+        <NodeHeader type="conversation" title={data?.name} nodeId={id} />
         <ShowComponent condition={data?.isGlobal}>
           <Chip
             icon={<Iconify icon="mdi:earth" width={14} />}

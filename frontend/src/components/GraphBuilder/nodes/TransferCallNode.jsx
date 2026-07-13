@@ -73,7 +73,7 @@ const TransferCallNode = ({ id, data, isConnectable }) => {
             : theme.palette.orange[600],
         }}
       />
-      <NodeHeader type="transfer" title={data?.name} />
+      <NodeHeader type="transfer" title={data?.name} nodeId={id} />
       <Box>
         <Typography typography="s1" fontWeight="fontWeightMedium">
           Message
