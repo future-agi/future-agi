@@ -71,7 +71,7 @@ class TestRehostExternalRecordings:
             observe_project, provider="vapi", span_attributes=dict(original)
         )
 
-        async def _fake_convert(call_id, url, url_type):
+        async def _fake_convert(call_id, url, url_type, **kwargs):
             return f"https://fagi.s3.amazonaws.com/{call_id}/{url_type}.mp3", 1024
 
         with patch(
@@ -103,7 +103,7 @@ class TestRehostExternalRecordings:
             observe_project, provider="retell", span_attributes=dict(original)
         )
 
-        async def _fake_convert(call_id, url, url_type):
+        async def _fake_convert(call_id, url, url_type, **kwargs):
             return f"https://fagi.s3.amazonaws.com/{call_id}/{url_type}.mp3", 1024
 
         with patch(
@@ -159,7 +159,7 @@ class TestRehostExternalRecordings:
             observe_project, provider="vapi", span_attributes=dict(original)
         )
 
-        async def _flaky_convert(call_id, url, url_type):
+        async def _flaky_convert(call_id, url, url_type, **kwargs):
             # Combined succeeds, stereo fails (helper returns input on failure).
             if url_type == "stereo":
                 return url, 0

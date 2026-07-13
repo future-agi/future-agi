@@ -1,23 +1,9 @@
-"""VapiRecordingService — single service for every Vapi recording and
-call-log operation.
+"""Single service for Vapi recording + call-log operations.
 
-Callers do exactly three things:
-
-    1. import VapiRecordingService
-    2. call a classmethod
-    3. use the return value
-
-All business logic lives here — endpoint URLs, Bearer auth, redirect
-handling, API-key resolution, S3 rehost, DB mirroring, dead-URL
-guards, call-log parsing. Callers never touch requests, httpx, or the
-Vapi API surface directly.
-
-Vapi enforces Bearer-authenticated downloads for call artifacts from
-2026-07-15. The provider hosts ``storage.vapi.ai`` and
-``calllogs.vapi.ai`` return 401 without auth after that date and stop
-working entirely on 2026-07-25. Every read path that surfaces a
-recording URL must go through ``is_dead_provider_url`` first; every
-download path must go through this service.
+Handles endpoint URLs, Bearer auth (mandatory from 2026-07-15), API-key
+resolution, S3 rehost, DB mirroring, dead-URL guards, and call-log
+parsing so callers can just import, call a classmethod, and use the
+result.
 """
 
 from __future__ import annotations
@@ -268,7 +254,7 @@ class VapiRecordingService:
 
         agent_def = (
             AgentDefinition.objects.filter(
-                project_id=project_id,
+                observability_provider__project_id=project_id,
                 provider="vapi",
             )
             .exclude(api_key__isnull=True)

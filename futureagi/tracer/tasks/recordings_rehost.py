@@ -1,18 +1,10 @@
-"""Recording rehost tasks.
+"""Per-call rehost of provider recordings onto FA S3.
 
-Per-call activity that downloads provider recording URLs and re-hosts
-them on FA S3, overwriting the same ``conversation.recording.*``
-span-attribute keys in place. Vapi downloads route through
-:class:`VapiRecordingService` (authenticated ``api.vapi.ai/call/{id}/{artifact_type}``
-+ Bearer + 302); Retell continues to use unauthenticated fetches.
-
-After a successful rehost the S3 URL is mirrored onto every consumer-
-facing storage location (flat ``span_attributes`` aliases, the linked
-``CallExecution`` row and every ``CallExecutionSnapshot`` for the same
-call) so no downstream reader ever sees a raw provider URL from the DB.
-
-``span_attributes["raw_log"]`` is left untouched — it is an immutable
-historical record.
+Vapi downloads route through :class:`VapiRecordingService` (Bearer +
+authenticated endpoint + 302). Retell uses the unauthenticated fetch.
+On success the S3 URL is mirrored onto every consumer-facing storage
+location so no downstream reader sees a raw provider URL. ``raw_log``
+is left untouched.
 """
 
 from __future__ import annotations
