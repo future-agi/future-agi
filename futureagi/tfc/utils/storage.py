@@ -1301,19 +1301,50 @@ def download_audio_from_url(
     timeout=200,
     min_duration_seconds: float | None = 1.0,
     pad_silence: bool = True,
+    *,
+    provider: str | None = None,
+    api_key: str | None = None,
+    call_id: str | None = None,
+    artifact_type: str | None = None,
 ):
-    # PYTHONWARNINGS="error::AssertionError"
     """
     Downloads an audio file from the provided URL with retries and error handling.
     Processes audio data in memory and converts to MP3 format if needed.
+
+    When ``provider == "vapi"`` and ``api_key`` + ``call_id`` +
+    ``artifact_type`` are all supplied, the download is routed through
+    :meth:`VapiRecordingService.download_artifact_sync` (authenticated
+    ``api.vapi.ai`` endpoint + Bearer + 302 follow). Otherwise the
+    historical unauthenticated retry loop is used.
     """
-    # headers = {
-    #     "User-Agent": (
-    #         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    #         "AppleWebKit/537.36 (KHTML, like Gecko) "
-    #         "Chrome/91.0.4472.124 Safari/537.36"
-    #     )
-    # }
+    # Route Vapi fetches through the authenticated endpoint. Signed URLs
+    # are single-use / short-lived; the service re-issues per call, so
+    # we do not cache the redirect target.
+    if provider == "vapi" and api_key and call_id and artifact_type:
+        from tracer.utils.vapi_recording import (
+            VapiArtifactNotReadyError,
+            VapiAuthError,
+            VapiRateLimitError,
+            VapiRecordingService,
+        )
+
+        try:
+            return VapiRecordingService.download_artifact_sync(
+                call_id=call_id,
+                artifact_type=artifact_type,
+                api_key=api_key,
+                timeout_seconds=timeout,
+            )
+        except (VapiAuthError, VapiArtifactNotReadyError, VapiRateLimitError):
+            raise
+        except Exception as exc:
+            logger.warning(
+                "vapi_authenticated_download_failed_falling_back",
+                audio_url=audio_url,
+                call_id=call_id,
+                artifact_type=artifact_type,
+                error=str(exc),
+            )
 
     for attempt in range(max_retries):
         audio_data = b""  # Reset audio_data for each attempt

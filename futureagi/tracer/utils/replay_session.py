@@ -683,7 +683,12 @@ def _extract_recording_urls_from_spans(spans: list[dict]) -> dict[str, str]:
     """
     Extract the best recording URL for each voice trace from pre-loaded spans.
     Prefers mono_combined (single-channel mixed audio), falls back to stereo.
+
+    Provider URLs whose rehost has not yet landed are dropped so replay
+    setup does not surface a URL that requires customer credentials to
+    fetch.
     """
+    from tracer.utils.vapi_recording import VapiRecordingService
 
     recording_key_stereo = f"{ConversationAttributes.CONVERSATION_RECORDING}.{ConversationAttributes.STEREO}"
     recording_key_mono = f"{ConversationAttributes.CONVERSATION_RECORDING}.{ConversationAttributes.MONO_COMBINED}"
@@ -692,7 +697,7 @@ def _extract_recording_urls_from_spans(spans: list[dict]) -> dict[str, str]:
     for span in spans:
         attrs = merge_span_attrs(span)
         url = attrs.get(recording_key_mono) or attrs.get(recording_key_stereo)
-        if url:
+        if url and not VapiRecordingService.is_dead_provider_url(url):
             recordings_map[str(span["trace_id"])] = url
 
     return recordings_map

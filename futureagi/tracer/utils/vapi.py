@@ -28,13 +28,18 @@ from tracer.utils.otel import (
 metrics_calculator = ConversationMetricsCalculator() if ConversationMetricsCalculator else None
 
 
-def normalize_vapi_data(log: dict) -> dict:
+def normalize_vapi_data(log: dict, *, api_key: str | None = None) -> dict:
     """
     Normalizes a single log entry from Vapi into a structured format.
+
+    ``api_key`` is threaded through to :func:`_extract_call_logs` so the
+    call-log download can hit the authenticated
+    ``api.vapi.ai/call/{id}/call-logs`` endpoint. When absent the call-log
+    fetch falls back to the legacy unauthenticated ``artifact.logUrl``.
     """
     status = _map_status(log.get("status", ""))
     start_time, end_time = _extract_timestamps(log)
-    eval_attributes = _extract_eval_attributes(log)
+    eval_attributes = _extract_eval_attributes(log, api_key=api_key)
 
     prompt_tokens = eval_attributes.get(SpanAttributes.USAGE_INPUT_TOKENS)
     completion_tokens = eval_attributes.get(SpanAttributes.USAGE_OUTPUT_TOKENS)
@@ -76,13 +81,20 @@ def _extract_timestamps(log: dict) -> tuple:
     return start_time, end_time
 
 
-def _extract_eval_attributes(log: dict, *, include_call_logs: bool = True) -> dict:
+def _extract_eval_attributes(
+    log: dict,
+    *,
+    include_call_logs: bool = True,
+    api_key: str | None = None,
+) -> dict:
     """Extracts and flattens evaluation attributes from a Vapi log.
 
-    When `include_call_logs` is False the blocking GET against
-    `artifact.logUrl` is skipped — useful in request-path callers that
+    When ``include_call_logs`` is False the blocking GET against the
+    call-log endpoint is skipped — useful in request-path callers that
     surface these attributes synchronously (e.g. simulate drawer detail
     view) and rely on a separate background task to persist logs.
+
+    ``api_key`` enables the authenticated call-log download path.
     """
     eval_attributes = {
         SpanAttributes.SPAN_KIND: "conversation",
@@ -96,7 +108,7 @@ def _extract_eval_attributes(log: dict, *, include_call_logs: bool = True) -> di
     _extract_metadata(log, eval_attributes)
     _extract_common_call_fields(log, eval_attributes)
     if include_call_logs:
-        _extract_call_logs(log, eval_attributes)
+        _extract_call_logs(log, eval_attributes, api_key=api_key)
 
     return eval_attributes
 
@@ -354,66 +366,33 @@ def _coerce_log_datetime(payload: dict) -> str | None:
     return None
 
 
-def _extract_call_logs(log: dict, eval_attributes: dict):
-    """Download call logs from artifact.logUrl and store as call_logs in span_attributes."""
-    log_url = log.get("artifact", {}).get("logUrl")
-    if not log_url:
+def _extract_call_logs(log: dict, eval_attributes: dict, *, api_key: str | None = None):
+    """Download call logs and store them under ``call_logs`` in span_attributes.
+
+    Delegates the fetch to
+    :meth:`VapiRecordingService.fetch_and_parse_call_logs`, which tries
+    the authenticated ``api.vapi.ai/call/{id}/call-logs`` endpoint first
+    when ``api_key`` is available and falls back to the legacy
+    unauthenticated ``artifact.logUrl`` in the grace window.
+    """
+    from tracer.utils.vapi_recording import VapiRecordingService
+
+    call_id = log.get("id")
+    legacy_url = log.get("artifact", {}).get("logUrl")
+    if not (call_id or legacy_url):
         return
 
-    try:
-        response = requests.get(log_url, timeout=60, stream=True)
-        response.raise_for_status()
+    entries = VapiRecordingService.fetch_and_parse_call_logs(
+        call_id=call_id,
+        api_key=api_key,
+        legacy_url=legacy_url,
+    )
+    if entries is None:
+        return
 
-        entries = []
-        buffer = io.BytesIO(response.content)
-        with gzip.GzipFile(fileobj=buffer) as gzip_file:
-            for raw_line in gzip_file:
-                line = raw_line.decode("utf-8").strip()
-                if not line:
-                    continue
-                try:
-                    payload = json.loads(line)
-                except json.JSONDecodeError:
-                    payload = {"raw_line": line}
-
-                logged_at = _coerce_log_datetime(payload)
-
-                level_value = payload.get("level")
-                try:
-                    level = int(level_value) if level_value is not None else 0
-                except (TypeError, ValueError):
-                    level = 0
-
-                severity_text = payload.get("severityText") or ""
-                body = payload.get("body") or ""
-                attributes = payload.get("attributes") or {}
-                if not isinstance(attributes, dict):
-                    attributes = {}
-                category = attributes.get("category") or ""
-
-                entries.append(
-                    {
-                        "id": str(uuid.uuid4()),
-                        "logged_at": logged_at,
-                        "level": level,
-                        "severity_text": str(severity_text)[:32],
-                        "category": str(category)[:128],
-                        "body": str(body)[:1024],
-                        "attributes": attributes,
-                        "payload": payload,
-                    }
-                )
-
-        eval_attributes["call_logs"] = entries
-        logger.info(
-            "Extracted call logs from VAPI",
-            log_count=len(entries),
-            call_id=log.get("id"),
-        )
-    except Exception:
-        logger.warning(
-            "Failed to download call logs from VAPI",
-            call_id=log.get("id"),
-            log_url=log_url,
-            exc_info=True,
-        )
+    eval_attributes["call_logs"] = entries
+    logger.info(
+        "Extracted call logs from VAPI",
+        log_count=len(entries),
+        call_id=call_id,
+    )

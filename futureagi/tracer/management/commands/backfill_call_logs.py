@@ -12,6 +12,7 @@ Usage:
 from django.core.management.base import BaseCommand
 
 from tracer.models.observation_span import ObservationSpan
+from tracer.selectors import get_agent_api_key
 from tracer.utils.vapi import _extract_call_logs
 
 
@@ -41,6 +42,19 @@ class Command(BaseCommand):
         dry_run = options["dry_run"]
         limit = options["limit"]
         project_id = options.get("project_id")
+
+        # Resolve the Vapi api_key up front when --project-id is supplied so
+        # every span in this batch can use the authenticated call-log
+        # endpoint. Without --project-id, the api_key stays None and the
+        # download falls back to the legacy unauthenticated URL.
+        api_key = get_agent_api_key(project_id, "vapi") if project_id else None
+        if project_id and not api_key:
+            self.stdout.write(
+                self.style.WARNING(
+                    "No Vapi api_key found for --project-id; falling back to "
+                    "the legacy call-log URL."
+                )
+            )
 
         qs = ObservationSpan.objects.filter(observation_type="conversation")
 
@@ -88,7 +102,7 @@ class Command(BaseCommand):
             )
 
             attrs = dict(span.span_attributes)
-            _extract_call_logs(raw_log, attrs)
+            _extract_call_logs(raw_log, attrs, api_key=api_key)
 
             if "call_logs" in attrs:
                 span.span_attributes = attrs

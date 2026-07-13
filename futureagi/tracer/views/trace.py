@@ -1053,10 +1053,20 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
     @staticmethod
     def _build_recording_dict(attrs):
-        """Build a recording dict from span attributes. Shared by list & detail."""
+        """Build a recording dict from span attributes. Shared by list &
+        detail.
+
+        Any URL that still points at a provider host (rehost has not
+        completed for this span yet) is replaced with ``None`` so the FE
+        renders a "processing" state instead of a broken audio element.
+        """
+        from tracer.utils.vapi_recording import VapiRecordingService
 
         def _get(key):
-            return attrs.get(key)
+            value = attrs.get(key)
+            if VapiRecordingService.is_dead_provider_url(value):
+                return None
+            return value
 
         return {
             "mono": {
@@ -4822,13 +4832,22 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     lines.append(f"{role}: {content}")
                 transcript_text = "\n".join(lines)
 
-            # Build recording URL from nested recording dict
+            # Build recording URL from nested recording dict. Provider
+            # URLs whose rehost has not landed yet are dropped from the
+            # export so downstream pipelines never carry a URL that
+            # requires customer credentials to fetch.
+            from tracer.utils.vapi_recording import VapiRecordingService
+
             recording = result.get("recording", {}) or {}
             mono = recording.get("mono", {}) or {}
             recording_url = result.get("recording_url") or mono.get("combinedUrl") or ""
             stereo_url = (
                 result.get("stereo_recording_url") or recording.get("stereoUrl") or ""
             )
+            if VapiRecordingService.is_dead_provider_url(recording_url):
+                recording_url = ""
+            if VapiRecordingService.is_dead_provider_url(stereo_url):
+                stereo_url = ""
 
             row_data = {
                 "ID": result.get("id", ""),

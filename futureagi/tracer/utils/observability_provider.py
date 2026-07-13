@@ -280,14 +280,35 @@ def _update_observation_span(existing_span, normalized_data):
     return existing_span
 
 
-def process_and_store_logs(logs: list, provider: ObservabilityProvider):
-    """
-    Processes raw log data and stores it as ObservationSpan objects.
+def process_and_store_logs(
+    logs: list,
+    provider: ObservabilityProvider,
+    *,
+    api_key: str | None = None,
+):
+    """Process raw log data and store it as ObservationSpan objects.
+
+    For Vapi providers, ``api_key`` is threaded through to
+    :func:`normalize_vapi_data` so the call-log download can use the
+    authenticated endpoint. When ``api_key`` is None it is resolved
+    via the Selector; when no key is available the pipeline falls back
+    to the legacy unauthenticated fetch.
     """
     project = provider.project
 
+    if provider.provider == "vapi" and api_key is None:
+        try:
+            from tracer.selectors import get_agent_api_key
+
+            api_key = get_agent_api_key(project.id, provider.provider)
+        except Exception:
+            logger.exception(
+                "process_and_store_logs: vapi api_key resolution failed",
+                provider_id=str(provider.id),
+            )
+
     normalization_functions = {
-        "vapi": normalize_vapi_data,
+        "vapi": lambda log: normalize_vapi_data(log, api_key=api_key),
         "retell": normalize_retell_data,
         "eleven_labs": normalize_eleven_labs_data,
     }
@@ -490,7 +511,11 @@ def normalize_and_store_logs(body, agent_definition_id) -> None:
             return
 
         call_log = body.get("call")
-        process_and_store_logs([call_log], provider)
+        # Webhook path already has the AgentDefinition in scope, so pass
+        # the api_key directly. process_and_store_logs falls back to the
+        # Selector otherwise.
+        api_key = getattr(agent_definition, "api_key", None) or None
+        process_and_store_logs([call_log], provider, api_key=api_key)
 
         logger.info("normalize_and_store_logs completed")
 

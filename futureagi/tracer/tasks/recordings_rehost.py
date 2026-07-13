@@ -1,14 +1,21 @@
-"""
-Recording rehost tasks.
+"""Recording rehost tasks.
 
-Per-call activity that downloads external Vapi/Retell recording URLs and
-re-hosts them on FAGI S3, overwriting the same `conversation.recording.*`
-span_attribute keys in place. The provider's original URL is preserved
-verbatim under `span_attributes["raw_log"]`.
+Per-call activity that downloads provider recording URLs and re-hosts
+them on FA S3, overwriting the same ``conversation.recording.*``
+span-attribute keys in place. Vapi downloads route through
+:class:`VapiRecordingService` (authenticated ``api.vapi.ai/call/{id}/{artifact_type}``
++ Bearer + 302); Retell continues to use unauthenticated fetches.
 
-Dispatched from `tracer.utils.observability_provider.process_and_store_logs`
-via `transaction.on_commit` after each upsert.
+After a successful rehost the S3 URL is mirrored onto every consumer-
+facing storage location (flat ``span_attributes`` aliases, the linked
+``CallExecution`` row and every ``CallExecutionSnapshot`` for the same
+call) so no downstream reader ever sees a raw provider URL from the DB.
+
+``span_attributes["raw_log"]`` is left untouched — it is an immutable
+historical record.
 """
+
+from __future__ import annotations
 
 import asyncio
 
@@ -20,16 +27,17 @@ from simulate.temporal.utils.async_storage import (
 )
 from tfc.temporal import temporal_activity
 from tracer.models.observability_provider import ProviderChoices
-from tracer.selectors import get_agent_api_key
 from tracer.models.observation_span import ObservationSpan
+from tracer.selectors import get_agent_api_key
 from tracer.utils.otel import ConversationAttributes
 from tracer.utils.usage_emit import emit_span_ingestion_usage
+from tracer.utils.vapi_recording import VapiRecordingService
 
 logger = structlog.get_logger(__name__)
 
 
-# Recording attribute keys per provider — overwritten in place with S3 URLs
-# after rehost. Raw provider URLs remain in span_attributes["raw_log"].
+# Recording attribute keys per provider — overwritten in place with S3
+# URLs after rehost. Raw provider URLs remain in ``span_attributes["raw_log"]``.
 RECORDING_KEYS_BY_PROVIDER: dict[str, list[tuple[str, str]]] = {
     ProviderChoices.VAPI: [
         (
@@ -63,7 +71,7 @@ RECORDING_KEYS_BY_PROVIDER: dict[str, list[tuple[str, str]]] = {
 
 
 def is_already_s3_url(url: str) -> bool:
-    return "amazonaws.com" in str(url) or "minio" in str(url)
+    return VapiRecordingService.is_s3_url(url)
 
 
 def _resolve_call_id(span: ObservationSpan) -> str:
@@ -85,16 +93,16 @@ def _resolve_call_id(span: ObservationSpan) -> str:
     queue="tasks_s",
 )
 def rehost_external_recordings(span_id: str) -> None:
-    """Re-host external provider recording URLs (Vapi/Retell) on FAGI S3.
+    """Re-host external provider recording URLs on FA S3.
 
-    Hands each non-S3 `conversation.recording.*` URL to
-    `convert_audio_url_to_s3_async_with_size` (downloads run concurrently) and
-    overwrites the key with the durable S3 URL. The helper returns the
-    input URL unchanged on download failure, so the key falls back to the
-    provider URL and a future tick can pick it up.
+    Each non-S3 ``conversation.recording.*`` URL is downloaded and
+    re-uploaded through :func:`convert_audio_url_to_s3_async_with_size`.
+    For Vapi spans, an ``api_key`` and ``artifact_type`` are threaded
+    through so the download hits the authenticated ``api.vapi.ai``
+    endpoint. On success, S3 URLs are written to the span attributes and
+    mirrored onto every consumer-facing storage location.
 
-    `span_attributes["raw_log"]` is left untouched. Idempotent: URLs
-    already on S3 are skipped before dispatch.
+    Idempotent: URLs already on S3 are skipped before dispatch.
     """
     try:
         span = ObservationSpan.objects.get(id=span_id)
@@ -102,24 +110,20 @@ def rehost_external_recordings(span_id: str) -> None:
         logger.warning("rehost_external_recordings: span not found", span_id=span_id)
         return
 
-    # Resolve Vapi API key for bearer-authenticated recording download.
-    # If None, download falls back to unauthenticated artifact URL (legacy path).
-    api_key = get_agent_api_key(span.project_id, "vapi") if span.provider == ProviderChoices.VAPI else None
-    if not api_key and span.provider == ProviderChoices.VAPI:
-        logger.warning(
-            "rehost_external_recordings: no Vapi API key for project_id=%s — "
-            "recording download will use unauthenticated artifact URL (may 401/403)",
-            span.project_id,
-        )
+    api_key = None
+    if span.provider == ProviderChoices.VAPI:
+        api_key = get_agent_api_key(span.project_id, ProviderChoices.VAPI)
+        if not api_key:
+            logger.warning(
+                "rehost_external_recordings: vapi_api_key_missing",
+                span_id=span_id,
+                project_id=str(span.project_id),
+            )
 
     keys = RECORDING_KEYS_BY_PROVIDER.get(span.provider) or []
     if not keys:
         return
 
-    # Billing marker — url_types we've already emitted OBSERVE_ADD for on
-    # this span. Survives `_update_observation_span` overwriting
-    # span_attributes back to provider URLs, so subsequent polls of the
-    # same call don't re-bill the same audio.
     already_billed = set((span.metadata or {}).get("rehost_billed_url_types", []))
 
     attrs = dict(span.span_attributes or {})
@@ -134,11 +138,23 @@ def rehost_external_recordings(span_id: str) -> None:
         return
 
     call_id = _resolve_call_id(span)
+    is_vapi = span.provider == ProviderChoices.VAPI
 
     async def _rehost_all() -> list[tuple[str, int]]:
         return await asyncio.gather(
             *(
-                convert_audio_url_to_s3_async_with_size(call_id, url, url_type, api_key=api_key)
+                convert_audio_url_to_s3_async_with_size(
+                    call_id,
+                    url,
+                    url_type,
+                    provider=(ProviderChoices.VAPI if is_vapi else None),
+                    api_key=(api_key if is_vapi else None),
+                    artifact_type=(
+                        VapiRecordingService.artifact_for_url_type(url_type)
+                        if is_vapi
+                        else None
+                    ),
+                )
                 for _, url, url_type in jobs
             )
         )
@@ -160,10 +176,8 @@ def rehost_external_recordings(span_id: str) -> None:
     if not successful:
         return
 
-    # Re-check the marker under a row lock so concurrent activities for
-    # the same span (e.g., overlapping poll + webhook) can't both bill
-    # the same url_types. S3 uploads above are idempotent thanks to
-    # deterministic object keys, so they are safe to do without a lock.
+    s3_url_by_url_type = {url_type: s3_url for (_, url_type, s3_url, _) in successful}
+
     with transaction.atomic():
         locked = (
             ObservationSpan.objects.select_for_update().filter(id=span_id).first()
@@ -182,6 +196,19 @@ def rehost_external_recordings(span_id: str) -> None:
         new_attrs = dict(locked.span_attributes or {})
         for (key, _, s3_url, _) in successful:
             new_attrs[key] = s3_url
+
+        # Mirror the S3 URL onto every consumer-facing storage location
+        # (flat span-attribute aliases, CallExecution + Snapshot columns)
+        # so downstream readers never see a raw provider URL.
+        new_attrs = VapiRecordingService.mirror_s3_url_to_consumer_fields(
+            span=type(
+                "SpanFacade",
+                (),
+                {"span_attributes": new_attrs},
+            )(),
+            call_id=call_id,
+            s3_url_by_url_type=s3_url_by_url_type,
+        )
 
         md = dict(locked.metadata or {})
         md["rehost_billed_url_types"] = sorted(current_billed | to_bill_types)
