@@ -7101,6 +7101,7 @@ class GetEvalsListView(APIView):
         )
 
         if search_text:
+            from model_hub.utils.eval_list import normalize_search_for_name
             eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
 
         if validated_data.get("eval_tags"):
