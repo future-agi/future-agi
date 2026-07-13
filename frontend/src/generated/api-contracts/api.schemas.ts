@@ -11334,6 +11334,7 @@ export interface EvalConfigApi {
   config_params_option?: EvalConfigApiConfigParamsOption;
   param_modalities?: EvalConfigApiParamModalities;
   choices?: EvalConfigApiChoices;
+  multi_choice?: boolean;
   check_internet?: boolean;
   kb_id?: EvalConfigApiKbId;
   error_localizer?: boolean;

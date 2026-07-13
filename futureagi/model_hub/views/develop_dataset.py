@@ -251,7 +251,7 @@ from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from model_hub.utils.utils import contains_sql, get_diff
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.run_prompt import PROVIDERS_WITH_JSON
-from model_hub.views.utils.constants import EVAL_OUTPUT_TYPES
+from model_hub.selectors.feedback import resolve_feedback_template_data
 from model_hub.views.utils.evals import process_eval_for_single_row
 from model_hub.views.utils.utils import (
     get_recommendations,
@@ -7282,6 +7282,7 @@ class GetEvalConfigView(APIView):
                     template.config.get("config_params_option", {})
                 ),
                 "param_modalities": template.config.get("param_modalities", {}),
+                "multi_choice": bool(template.config.get("multi_choice", False)),
                 "kb_id": None,
                 "error_localizer": template.error_localizer_enabled,
                 "api_key_available": (
@@ -7352,6 +7353,7 @@ class GetEvalConfigView(APIView):
                 ),
                 "param_modalities": template.config.get("param_modalities", {}),
                 "choices": choices,
+                "multi_choice": bool(template.config.get("multi_choice", False)),
                 "check_internet": template.config.get("check_internet", False),
             }
 
@@ -11196,42 +11198,9 @@ class FeedbackViewSet(viewsets.ModelViewSet):
             return self._gm.not_found(get_error_message("EVAL_TEMP_NOT_FOUND"))
 
         try:
-            template_data = {
-                "output_type": eval_template.config.get("output"),
-                "eval_description": eval_template.description,
-                "eval_name": eval_template.name,
-                "user_eval_name": user_eval_metric.name,
-                "choice_scores": eval_template.choice_scores or None,
-            }
-
-            if template_data["output_type"] == EVAL_OUTPUT_TYPES["PASS_FAIL"]:
-                template_data["choices"] = ["Passed", "Failed"]
-
-            elif template_data["output_type"] == EVAL_OUTPUT_TYPES["CHOICES"]:
-                if (
-                    user_eval_metric.config
-                    and isinstance(user_eval_metric.config, dict)
-                    and "config" in user_eval_metric.config
-                    and "choices" in user_eval_metric.config["config"]
-                    and user_eval_metric.config["config"]["choices"]
-                ):
-                    template_data["choices"] = user_eval_metric.config["config"][
-                        "choices"
-                    ]
-                    template_data["multi_choice"] = user_eval_metric.config[
-                        "config"
-                    ].get("multi_choice", False)
-
-                elif hasattr(eval_template, "choices") and eval_template.choices:
-                    template_data["choices"] = eval_template.choices
-                    template_data["multi_choice"] = eval_template.config.get(
-                        "multi_choice", False
-                    )
-
-                else:
-                    template_data["choices"] = []
-                    template_data["multi_choice"] = False
-
+            template_data = resolve_feedback_template_data(
+                user_eval_metric, eval_template
+            )
             return self._gm.success_response(template_data)
 
         except UserEvalMetric.DoesNotExist:

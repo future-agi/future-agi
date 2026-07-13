@@ -363,6 +363,37 @@ class TestExperimentFeedbackGetTemplateV2:
         assert data["choices"] == ["A", "B", "C"]
         assert data["multi_choice"] is True
 
+    def test_get_template_metric_multi_choice_override_wins_over_template(
+        self,
+        auth_client,
+        experiment,
+        eval_template_choices,
+        dataset,
+        organization,
+        workspace,
+    ):
+        # Metric overrides multi_choice but does not override choices; the
+        # returned multi_choice must reflect the metric, not the template.
+        metric = UserEvalMetric.objects.create(
+            name="Tone-like Metric",
+            organization=organization,
+            workspace=workspace,
+            template=eval_template_choices,
+            dataset=dataset,
+            config={"config": {"multi_choice": True}},
+            status=StatusType.COMPLETED.value,
+        )
+        experiment.user_eval_template_ids.add(metric)
+
+        response = auth_client.get(
+            url(experiment.id, "get-template/"),
+            {"user_eval_metric_id": str(metric.id)},
+        )
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        data = response.json()["result"]
+        assert data["multi_choice"] is True
+        assert data["choices"] == eval_template_choices.choices
+
     def test_get_template_returns_choice_scores_when_defined(
         self, auth_client, experiment, user_eval_metric_choice_scores
     ):

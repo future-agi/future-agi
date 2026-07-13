@@ -295,6 +295,53 @@ def test_get_template_returns_choice_scores_when_defined(
 
 
 @pytest.mark.django_db
+def test_get_template_metric_multi_choice_override_wins_over_template(
+    auth_client, user, workspace
+):
+    """A metric that overrides `multi_choice` while reusing the template's
+    choices (e.g. `tone`) must surface the metric's flag — the elif branch
+    used to read multi_choice from the template config and drop the override,
+    forcing the FE to render radios instead of checkboxes."""
+    organization = user.organization
+    dataset = Dataset.objects.create(
+        name="Multi-choice override dataset",
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        source=DatasetSourceChoices.BUILD.value,
+    )
+    eval_template = EvalTemplate.objects.create(
+        name=f"tone-like-{uuid.uuid4().hex[:8]}",
+        description="Template with choices but no multi_choice set",
+        organization=organization,
+        workspace=workspace,
+        owner=OwnerChoices.USER.value,
+        config={"output": "choices", "eval_type_id": "test_eval_type"},
+        choices=["joy", "anger", "sadness"],
+    )
+    metric = UserEvalMetric.objects.create(
+        name="Tone-like Metric",
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        template=eval_template,
+        dataset=dataset,
+        config={"config": {"multi_choice": True}},
+        status=StatusType.COMPLETED.value,
+    )
+
+    response = auth_client.get(
+        f"{FEEDBACK_URL}get_template/",
+        {"user_eval_metric_id": str(metric.id)},
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.json()
+    payload = _result(response)
+    assert payload["multi_choice"] is True
+    assert payload["choices"] == ["joy", "anger", "sadness"]
+
+
+@pytest.mark.django_db
 def test_get_template_returns_null_choice_scores_when_absent(
     auth_client, user, workspace
 ):

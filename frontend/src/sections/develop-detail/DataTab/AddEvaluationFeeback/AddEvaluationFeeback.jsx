@@ -375,14 +375,26 @@ export const FeedBackForm = ({
 
     // When choice_scores is defined the LLM always emits a choice label (the
     // score is derived from the map), so the feedback widget must be a picker
-    // regardless of the eval's raw output_type.
+    // regardless of the eval's raw output_type. Multi-choice evals still get
+    // checkboxes; single-choice ones get radios.
     if (choiceScores && Object.keys(choiceScores).length > 0) {
+      const labels = Object.keys(choiceScores);
+      if (isMulti) {
+        return (
+          <ChoiceCheckboxGroup
+            control={control}
+            label="Select the right value(s)"
+            choices={labels}
+            renderLabel={(label) => `${label} (score ${choiceScores[label]})`}
+          />
+        );
+      }
       return (
         <RadioField
           label="Select a right value"
           control={control}
           fieldName="value"
-          options={Object.keys(choiceScores).map((label) => ({
+          options={labels.map((label) => ({
             label: `${label} (score ${choiceScores[label]})`,
             value: label,
           }))}
@@ -557,8 +569,10 @@ export const FeedBackForm = ({
   );
 };
 
-// Multi-choice value input — checkboxes.
-const ChoiceCheckboxGroup = ({ control, label, choices }) => {
+// Multi-choice value input — checkboxes. `renderLabel` optionally decorates
+// the visible label (e.g. "Polite (score 1)") while the stored value stays
+// the raw choice key.
+const ChoiceCheckboxGroup = ({ control, label, choices, renderLabel }) => {
   return (
     <Controller
       name="value"
@@ -608,7 +622,7 @@ const ChoiceCheckboxGroup = ({ control, label, choices }) => {
                       }}
                     />
                   }
-                  label={choice}
+                  label={renderLabel ? renderLabel(choice) : choice}
                 />
               ))}
             </Box>
@@ -776,6 +790,7 @@ ChoiceCheckboxGroup.propTypes = {
   control: PropTypes.any,
   label: PropTypes.string,
   choices: PropTypes.array,
+  renderLabel: PropTypes.func,
 };
 
 AllInputField.propTypes = {

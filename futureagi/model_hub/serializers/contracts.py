@@ -1933,6 +1933,7 @@ class EvalConfigSerializer(serializers.Serializer):
     config_params_option = serializers.JSONField(required=False)
     param_modalities = serializers.JSONField(required=False)
     choices = serializers.JSONField(required=False)
+    multi_choice = serializers.BooleanField(required=False)
     check_internet = serializers.BooleanField(required=False)
     kb_id = serializers.JSONField(required=False, allow_null=True)
     error_localizer = serializers.BooleanField(required=False)

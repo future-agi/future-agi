@@ -29,6 +29,7 @@ const AddEvalsFeedbackForm = ({
   outputType,
   feedbackError,
   choices,
+  multiChoice = false,
   retuneOptions,
   handleSubmitForm,
   handleSubmit,
@@ -149,32 +150,52 @@ const AddEvalsFeedbackForm = ({
                     p: 2,
                   }}
                 >
-                  {choices?.map((choice, index) => (
-                    <div key={`${choice}-${index}`}>
-                      <FormControlLabel
-                        control={
-                          <Checkbox
-                            checked={field.value?.includes(choice) || false}
-                            onChange={(e) => {
-                              const currentValues = field.value || [];
-                              if (e.target.checked) {
-                                // Add choice to array
-                                field.onChange([...currentValues, choice]);
-                              } else {
-                                // Remove choice from array
-                                field.onChange(
-                                  currentValues.filter(
-                                    (item) => item !== choice,
-                                  ),
-                                );
-                              }
-                            }}
+                  {multiChoice
+                    ? choices?.map((choice, index) => (
+                        <div key={`${choice}-${index}`}>
+                          <FormControlLabel
+                            control={
+                              <Checkbox
+                                checked={
+                                  field.value?.includes(choice) || false
+                                }
+                                onChange={(e) => {
+                                  const currentValues = field.value || [];
+                                  if (e.target.checked) {
+                                    field.onChange([...currentValues, choice]);
+                                  } else {
+                                    field.onChange(
+                                      currentValues.filter(
+                                        (item) => item !== choice,
+                                      ),
+                                    );
+                                  }
+                                }}
+                              />
+                            }
+                            label={choice}
                           />
-                        }
-                        label={choice}
-                      />
-                    </div>
-                  ))}
+                        </div>
+                      ))
+                    : (
+                        <RadioGroup
+                          value={
+                            Array.isArray(field.value)
+                              ? field.value[0] || ""
+                              : field.value || ""
+                          }
+                          onChange={(e) => field.onChange(e.target.value)}
+                        >
+                          {choices?.map((choice, index) => (
+                            <FormControlLabel
+                              key={`${choice}-${index}`}
+                              value={choice}
+                              control={<Radio />}
+                              label={choice}
+                            />
+                          ))}
+                        </RadioGroup>
+                      )}
                 </Box>
               </FormControl>
             )}
@@ -381,6 +402,7 @@ AddEvalsFeedbackForm.propTypes = {
   explanation: PropTypes.any,
   outputType: PropTypes.string,
   choices: PropTypes.array,
+  multiChoice: PropTypes.bool,
   feedbackError: PropTypes.bool,
   handleSubmitForm: PropTypes.func,
   handleSubmit: PropTypes.func,

@@ -2,6 +2,8 @@
 // they can be unit-tested directly and reused by both the dataset feedback
 // drawer and the evals → usage feedback drawer.
 
+import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
+
 export const FEEDBACK_OUTPUT_TYPES = {
   REASON: "reason",
   SCORE: "score",
@@ -32,18 +34,27 @@ export const toArray = (value) => {
 export const serializeFeedbackValue = (value) =>
   Array.isArray(value) ? JSON.stringify(value) : value;
 
-// The eval's current output for this cell, formatted for display in the
-// feedback panel. When choice_scores is defined the LLM emits a choice label
-// and the score is derived from the map — show both so the user can see the
-// value they're correcting. Falls back to the raw cell value otherwise.
+// The eval's current output for this cell, displayed above "Write a right
+// value" so the user can see what they're correcting. Delegates to the
+// shared eval-cell normalizer used by other surfaces (compare drawer,
+// experiment cells, EvalResultDisplay). When choice_scores is defined the
+// LLM emits a choice label and the score is derived from the map — surface
+// both so the user knows which score the choice maps to.
 export const getCurrentValue = (data, choiceScores) => {
   const raw = data?.value;
   if (raw === null || raw === undefined || raw === "") return "";
-  const asString = String(raw);
-  if (choiceScores && typeof choiceScores === "object" && asString in choiceScores) {
-    return `${asString} (score ${choiceScores[asString]})`;
+  const normalized = normalizeEvalCellValue(raw);
+  const display = Array.isArray(normalized)
+    ? normalized.map((v) => String(v)).join(", ")
+    : String(normalized ?? "");
+  if (
+    choiceScores &&
+    typeof choiceScores === "object" &&
+    display in choiceScores
+  ) {
+    return `${display} (score ${choiceScores[display]})`;
   }
-  return asString;
+  return display;
 };
 
 // The eval's explanation for this cell. Cells store value-infos under either

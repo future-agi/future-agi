@@ -95851,6 +95851,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Choices",
           "type": "object"
         },
+        "multi_choice": {
+          "title": "Multi choice",
+          "type": "boolean"
+        },
         "check_internet": {
           "title": "Check internet",
           "type": "boolean"

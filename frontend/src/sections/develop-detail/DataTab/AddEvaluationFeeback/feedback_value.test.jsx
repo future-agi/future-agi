@@ -95,6 +95,34 @@ describe("feedback_value helpers", () => {
         getCurrentValue({ value: "Unmapped" }, { Yes: 1.0, No: 0.0 }),
       ).toBe("Unmapped");
     });
+
+    it("extracts choices out of {score, choices: [...]} object values", () => {
+      // normalizeEvalCellValue lifts the choices array out — this is the same
+      // shape shown as chips elsewhere in the platform.
+      expect(
+        getCurrentValue(
+          { value: { score: 0.3, choices: ["Toxic", "Abrupt"] } },
+          null,
+        ),
+      ).toBe("Toxic, Abrupt");
+    });
+
+    it("parses Python-repr with choices via the shared normalizer", () => {
+      expect(
+        getCurrentValue(
+          { value: "{'score': 0.3, 'choices': ['Toxic', 'Abrupt']}" },
+          null,
+        ),
+      ).toBe("Toxic, Abrupt");
+    });
+
+    it("parses JSON-encoded arrays into a comma-separated list", () => {
+      expect(getCurrentValue({ value: '["A","B","C"]' }, null)).toBe("A, B, C");
+    });
+
+    it("returns a bare array as a comma-separated list", () => {
+      expect(getCurrentValue({ value: ["A", "B"] }, null)).toBe("A, B");
+    });
   });
 
   it("exposes the expected output types", () => {

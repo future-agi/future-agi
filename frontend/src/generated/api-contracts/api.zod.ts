@@ -21898,6 +21898,7 @@ export const ModelHubGetEvalConfigListResponse = zod.object({
   "choices": zod.object({
 
 }).passthrough().optional(),
+  "multi_choice": zod.boolean().optional(),
   "check_internet": zod.boolean().optional(),
   "kb_id": zod.object({
 

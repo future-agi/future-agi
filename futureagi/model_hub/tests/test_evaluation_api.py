@@ -27,6 +27,7 @@ from model_hub.models.choices import (
     CellStatus,
     DatasetSourceChoices,
     DataTypeChoices,
+    OwnerChoices,
     SourceChoices,
     StatusType,
 )
@@ -598,6 +599,51 @@ class TestEvalConfigContracts:
         response = auth_client.get(f"/model-hub/get-eval-config?evalId={uuid.uuid4()}")
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_get_eval_config_returns_multi_choice_true(self, auth_client, user):
+        """A choices template with multi_choice=True must surface the flag —
+        the eval-tab edit-feedback drawer reads it to render checkboxes vs
+        radios."""
+        template = EvalTemplate.objects.create(
+            name=f"multi-choice-{uuid.uuid4().hex[:8]}",
+            description="Multi-choice template",
+            organization=user.organization,
+            owner=OwnerChoices.USER.value,
+            config={
+                "output": "choices",
+                "eval_type_id": "test_eval_type",
+                "multi_choice": True,
+            },
+            choices=["A", "B", "C"],
+        )
+
+        response = auth_client.get(
+            f"/model-hub/get-eval-config?eval_id={template.id}"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        payload = response.json()["result"]["eval"]
+        assert payload["multi_choice"] is True
+
+    def test_get_eval_config_returns_multi_choice_false_when_absent(
+        self, auth_client, user
+    ):
+        template = EvalTemplate.objects.create(
+            name=f"single-choice-{uuid.uuid4().hex[:8]}",
+            description="Single-choice template",
+            organization=user.organization,
+            owner=OwnerChoices.USER.value,
+            config={"output": "choices", "eval_type_id": "test_eval_type"},
+            choices=["A", "B"],
+        )
+
+        response = auth_client.get(
+            f"/model-hub/get-eval-config?eval_id={template.id}"
+        )
+
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        payload = response.json()["result"]["eval"]
+        assert payload["multi_choice"] is False
 
     def test_get_eval_structure_rejects_legacy_eval_type_alias(
         self, auth_client, dataset
