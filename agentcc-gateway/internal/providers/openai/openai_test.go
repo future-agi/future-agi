@@ -1240,3 +1240,147 @@ func TestNewProvider_TrailingSlashStripped(t *testing.T) {
 		t.Errorf("baseURL = %q, want no trailing slash", p.baseURL)
 	}
 }
+
+// ─────────────────────────────────────────────────────────────
+// max_tokens → max_completion_tokens normalization
+// ─────────────────────────────────────────────────────────────
+
+func TestIsOfficialAPI(t *testing.T) {
+	tests := []struct {
+		baseURL string
+		want    bool
+	}{
+		{"https://api.openai.com", true},
+		{"https://api.openai.com/v1", true},
+		{"http://localhost:8000/v1", false},
+		{"https://my-vllm.internal/v1", false},
+		{"https://example.azure.com/openai", false},
+		{"https://api.openai.com.evil.test/v1", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := isOfficialAPI(tt.baseURL); got != tt.want {
+			t.Errorf("isOfficialAPI(%q) = %v, want %v", tt.baseURL, got, tt.want)
+		}
+	}
+}
+
+func intPtr(i int) *int { return &i }
+
+// captureBody starts a server that records the raw JSON body it receives.
+func captureBody(t *testing.T, got *map[string]any, sse bool) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(got); err != nil {
+			t.Errorf("decoding request body: %v", err)
+		}
+		if sse {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("data: [DONE]\n\n"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(models.ChatCompletionResponse{ID: "chatcmpl-1", Model: "m"})
+	}))
+}
+
+func TestNormalizeMaxTokens(t *testing.T) {
+	tests := []struct {
+		name        string
+		officialAPI bool
+		req         models.ChatCompletionRequest
+		wantMCT     any  // expected max_completion_tokens (nil = key absent)
+		wantMax     any  // expected max_tokens (nil = key absent)
+	}{
+		{
+			name:        "official API rewrites max_tokens",
+			officialAPI: true,
+			req:         models.ChatCompletionRequest{Model: "gpt-5.4", MaxTokens: intPtr(64)},
+			wantMCT:     float64(64),
+			wantMax:     nil,
+		},
+		{
+			// Model-agnostic by design: every official-API model accepts
+			// max_completion_tokens, so non-reasoning models are rewritten too.
+			name:        "official API rewrites for non-reasoning models too",
+			officialAPI: true,
+			req:         models.ChatCompletionRequest{Model: "gpt-4o", MaxTokens: intPtr(64)},
+			wantMCT:     float64(64),
+			wantMax:     nil,
+		},
+		{
+			// Both set is a 400 upstream; the client's explicit value wins.
+			name:        "both set keeps max_completion_tokens and drops max_tokens",
+			officialAPI: true,
+			req:         models.ChatCompletionRequest{Model: "gpt-5.4", MaxTokens: intPtr(64), MaxCompletionTokens: intPtr(128)},
+			wantMCT:     float64(128),
+			wantMax:     nil,
+		},
+		{
+			name:        "official API with neither set adds neither",
+			officialAPI: true,
+			req:         models.ChatCompletionRequest{Model: "gpt-5.4"},
+			wantMCT:     nil,
+			wantMax:     nil,
+		},
+		{
+			// vLLM/Ollama and friends only understand max_tokens.
+			name:        "non-official upstream passes max_tokens through untouched",
+			officialAPI: false,
+			req:         models.ChatCompletionRequest{Model: "gpt-5.4", MaxTokens: intPtr(64)},
+			wantMCT:     nil,
+			wantMax:     float64(64),
+		},
+	}
+
+	for _, tt := range tests {
+		for _, streaming := range []bool{false, true} {
+			name := tt.name
+			if streaming {
+				name += " (streaming)"
+			}
+			t.Run(name, func(t *testing.T) {
+				var got map[string]any
+				ts := captureBody(t, &got, streaming)
+				defer ts.Close()
+
+				p := newTestProvider(t, ts.URL)
+				p.openAIAPI = tt.officialAPI
+
+				req := tt.req
+				req.Messages = []models.Message{{Role: "user", Content: json.RawMessage(`"hi"`)}}
+
+				if streaming {
+					chunks, errs := p.StreamChatCompletion(context.Background(), &req)
+					for chunks != nil || errs != nil {
+						select {
+						case _, ok := <-chunks:
+							if !ok {
+								chunks = nil
+							}
+						case _, ok := <-errs:
+							if !ok {
+								errs = nil
+							}
+						}
+					}
+				} else if _, err := p.ChatCompletion(context.Background(), &req); err != nil {
+					t.Fatalf("ChatCompletion() error: %v", err)
+				}
+
+				if got["max_completion_tokens"] != tt.wantMCT {
+					t.Errorf("max_completion_tokens = %v, want %v", got["max_completion_tokens"], tt.wantMCT)
+				}
+				if got["max_tokens"] != tt.wantMax {
+					t.Errorf("max_tokens = %v, want %v", got["max_tokens"], tt.wantMax)
+				}
+
+				// The caller's request must survive untouched — the cache plugin
+				// hashes it, so mutating it would poison cache keys.
+				if tt.req.MaxTokens != nil && req.MaxTokens == nil {
+					t.Error("caller's request was mutated: MaxTokens cleared")
+				}
+			})
+		}
+	}
+}

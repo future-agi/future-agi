@@ -26,6 +26,23 @@ type Provider struct {
 	apiKey     string
 	httpClient *http.Client
 	semaphore  chan struct{}
+	// openAIAPI reports whether baseURL points at the official OpenAI API, whose
+	// max_tokens/max_completion_tokens handling differs from other OpenAI-format
+	// upstreams. See normalizeMaxTokens.
+	openAIAPI bool
+}
+
+// officialAPIHost is the host of the official OpenAI API. Other upstreams speak
+// the same wire format but not the same parameter contract.
+const officialAPIHost = "api.openai.com"
+
+// isOfficialAPI reports whether baseURL points at the official OpenAI API.
+func isOfficialAPI(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	return u.Hostname() == officialAPIHost
 }
 
 // New creates a new OpenAI-compatible provider.
@@ -65,7 +82,30 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 			Timeout:   timeout,
 		},
 		semaphore: make(chan struct{}, maxConcurrent),
+		openAIAPI: isOfficialAPI(cfg.BaseURL),
 	}, nil
+}
+
+// normalizeMaxTokens rewrites max_tokens to max_completion_tokens for the official
+// OpenAI API, which rejects max_tokens on reasoning models but accepts
+// max_completion_tokens on every chat model. Setting both is also rejected, so
+// max_tokens is always cleared.
+//
+// Deliberately keyed on the upstream, not the model name: the set of models that
+// reject max_tokens keeps growing, while "the official API accepts
+// max_completion_tokens" has held for every model. Other OpenAI-format upstreams
+// (vLLM, Ollama, and other self-hosted servers) are left untouched — several only
+// understand max_tokens.
+//
+// Operates on the caller's copy; the original request is never modified.
+func (p *Provider) normalizeMaxTokens(req *models.ChatCompletionRequest) {
+	if !p.openAIAPI || req.MaxTokens == nil {
+		return
+	}
+	if req.MaxCompletionTokens == nil {
+		req.MaxCompletionTokens = req.MaxTokens
+	}
+	req.MaxTokens = nil
 }
 
 // endpoint builds a full upstream URL for a versioned path like "/v1/ocr".
@@ -209,6 +249,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	reqCopy := *req
 	reqCopy.Model = actualModel
 	reqCopy.Stream = false
+	p.normalizeMaxTokens(&reqCopy)
 
 	body, err := json.Marshal(&reqCopy)
 	if err != nil {
@@ -270,6 +311,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		reqCopy := *req
 		reqCopy.Model = actualModel
 		reqCopy.Stream = true
+		p.normalizeMaxTokens(&reqCopy)
 
 		body, err := json.Marshal(&reqCopy)
 		if err != nil {
