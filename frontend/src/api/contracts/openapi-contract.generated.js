@@ -74933,13 +74933,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "model": {
           "title": "Model",
           "type": "string",
-          "enum": [
-            "turing_large",
-            "turing_small",
-            "protect",
-            "protect_flash",
-            "turing_flash"
-          ],
+          "maxLength": 255,
           "x-nullable": true
         },
         "status": {
