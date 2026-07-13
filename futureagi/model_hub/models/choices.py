@@ -689,11 +689,16 @@ def is_image_url(url):
         if mime_type and mime_type.lower() in _get_image_mime_types():
             return True
 
-        # Check for common image URL patterns
+        # Check for common image URL patterns. Includes extensionless shapes
+        # used by image CDNs (e.g. Unsplash "/photo-<id>") so signed/query-keyed
+        # image URLs without a file extension are still detected.
         image_patterns = [
             "/image/",
+            "/images/",
             "/img/",
             "/photo/",
+            "/photos/",
+            "/photo-",
             "/picture/",
             "/media/",
             "image=",
@@ -702,6 +707,16 @@ def is_image_url(url):
             "picture=",
         ]
         if any(pattern in url_lower for pattern in image_patterns):
+            return True
+
+        # Well-known image-CDN hosts that serve extensionless image URLs.
+        image_hosts = [
+            "images.unsplash.com",
+            "res.cloudinary.com",
+            "i.imgur.com",
+            "pbs.twimg.com",
+        ]
+        if any(host in url_lower for host in image_hosts):
             return True
 
         return False

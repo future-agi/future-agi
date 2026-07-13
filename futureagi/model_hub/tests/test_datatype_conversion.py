@@ -438,28 +438,27 @@ class TestDatatypeConverter(APITestCase):
     # ============= IMAGE/AUDIO/DOCUMENT CONVERSION TESTS =============
 
     @patch("model_hub.views.develop_dataset.upload_image_to_s3")
-    @patch("model_hub.views.develop_dataset.validate_file_url")
-    def test_convert_to_image_success(self, mock_validate, mock_upload):
-        """Test image conversion uploads to S3"""
-        mock_validate.return_value = None  # Validation passes
+    def test_convert_to_image_success(self, mock_upload):
+        """Test image conversion uploads to S3 (no URL pre-validation)"""
         mock_upload.return_value = "https://s3.bucket/image.jpg"
         converter = DatatypeConverter(
             DataTypeChoices.IMAGE.value, dataset_id=str(self.dataset.id)
         )
-        cell = self._create_cell("https://example.com/image.jpg")
+        # Extensionless CDN URL: previously rejected by validate_file_url,
+        # now accepted since upload_image_to_s3 validates the content.
+        cell = self._create_cell(
+            "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=800"
+        )
 
         result = converter._convert_single_cell(cell)
 
         assert result.success is True
         assert result.new_value == "https://s3.bucket/image.jpg"
-        mock_validate.assert_called_once()
         mock_upload.assert_called_once()
 
     @patch("model_hub.views.develop_dataset.upload_image_to_s3")
-    @patch("model_hub.views.develop_dataset.validate_file_url")
-    def test_convert_to_image_upload_fails(self, mock_validate, mock_upload):
+    def test_convert_to_image_upload_fails(self, mock_upload):
         """Test image conversion handles upload failure"""
-        mock_validate.return_value = None  # Validation passes
         mock_upload.side_effect = Exception("Upload failed")
         converter = DatatypeConverter(
             DataTypeChoices.IMAGE.value, dataset_id=str(self.dataset.id)
@@ -517,9 +516,7 @@ class TestDatatypeConverter(APITestCase):
         converter = DatatypeConverter(
             DataTypeChoices.IMAGE.value, dataset_id=str(self.dataset.id)
         )
-        own_url = (
-            "https://fi-content-dev.s3.ap-south-1.amazonaws.com/images/uuid/uuid"
-        )
+        own_url = "https://fi-content-dev.s3.ap-south-1.amazonaws.com/images/uuid/uuid"
         cell = self._create_cell(json.dumps([own_url]))
 
         result = converter._convert_single_cell(cell)
@@ -869,7 +866,9 @@ class TestDatatypeConverter(APITestCase):
 
     @patch("model_hub.views.develop_dataset.upload_image_to_s3")
     @patch("model_hub.views.develop_dataset.validate_file_url")
-    def test_convert_to_images_single_url_becomes_array(self, mock_validate, mock_upload):
+    def test_convert_to_images_single_url_becomes_array(
+        self, mock_validate, mock_upload
+    ):
         """Test IMAGES conversion converts single URL to array"""
         mock_validate.return_value = None
         mock_upload.return_value = "https://s3.bucket/image1.jpg"

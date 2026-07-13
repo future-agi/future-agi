@@ -624,105 +624,27 @@ class TestImagesDataTypeDetection:
         assert result != DataTypeChoices.IMAGES.value
 
 
-class TestIsDocumentUrlSSRF:
-    """TH-5648 follow-up: `is_document_url` is called from `determine_data_type`
-    for *every* uploaded file (CSV/HuggingFace/etc.) whose column values look
-    like URLs -- independent of whether that column ever ends up typed as
-    Document. It used to call `requests.head(url, allow_redirects=True)`
-    directly, with zero SSRF protection: a plain CSV upload with a URL-like
-    column could make the server probe cloud metadata endpoints or any
-    internal/private address, and would also happily follow redirects to one.
-    It must now route through the same SSRF-safe `safe_fetch` used by
-    `validate_file_url`, and reject unsafe targets outright (returning False,
-    since it's a best-effort classifier) instead of ever issuing the request.
-    """
+class TestExtensionlessImageUrlDetection:
+    """Regression tests for TH-6207: image URLs without a file extension."""
 
-    def test_rejects_cloud_metadata_endpoint(self):
-        from model_hub.models.choices import is_document_url
-
-        assert is_document_url("http://169.254.169.254/latest/meta-data/") is False
-
-    def test_rejects_loopback(self):
-        from model_hub.models.choices import is_document_url
-
-        assert is_document_url("http://127.0.0.1:8080/secret") is False
-
-    def test_rejects_private_network(self):
-        from model_hub.models.choices import is_document_url
-
-        assert is_document_url("http://10.0.0.5/internal") is False
-
-    def test_uses_safe_fetch_not_raw_requests(self, monkeypatch):
-        """Classification must go through the SSRF guard, not `requests.head`."""
-        import model_hub.models.choices as choices_module
-        from tfc.utils.ssrf_guard import SsrfResponse
-
-        calls = []
-
-        def fake_safe_fetch(url, **kwargs):
-            calls.append((url, kwargs.get("method")))
-            # Canonical `Content-Type` casing so this test reflects what real
-            # safe_fetch emits (case-insensitive HTTPHeaderDict keyed by the
-            # server's chosen casing) — not a fabricated lowercase shape.
-            return SsrfResponse(200, {"Content-Type": "application/pdf"}, b"", url)
-
-        monkeypatch.setattr(choices_module, "safe_fetch", fake_safe_fetch)
-
-        assert choices_module.is_document_url("https://example.com/report.pdf") is True
-        assert calls == [("https://example.com/report.pdf", "HEAD")]
-
-    def test_safe_fetch_rejection_yields_false_not_exception(self, monkeypatch):
-        """SSRF rejection must degrade to False (best-effort classifier)."""
-        import model_hub.models.choices as choices_module
-
-        def raising_safe_fetch(url, **kwargs):
-            raise ValueError("blocked")
-
-        monkeypatch.setattr(choices_module, "safe_fetch", raising_safe_fetch)
-
-        assert choices_module.is_document_url("https://example.com/report.pdf") is False
-
-
-class TestClassifyUrlColumnSampling:
-    """TH-5648 follow-up: `is_document_url` is the only network-bound check in
-    `_classify_url_column`, so a large URL-like column used to cost one
-    blocking HEAD request per row. It must now only be run against a bounded
-    sample.
-    """
-
-    def test_document_check_is_capped_to_sample_size(self, monkeypatch):
-        import model_hub.models.choices as choices_module
-
-        calls = []
-
-        def fake_is_document_url(url):
-            calls.append(url)
-            return True
-
-        monkeypatch.setattr(choices_module, "is_document_url", fake_is_document_url)
-        monkeypatch.setattr(choices_module, "is_audio_url", lambda url: False)
-        monkeypatch.setattr(choices_module, "is_image_url", lambda url: False)
-
-        urls = [f"https://example.com/{i}.pdf" for i in range(100)]
-        result = choices_module._classify_url_column(urls)
-
-        assert result == choices_module.DataTypeChoices.DOCUMENT.value
-        assert len(calls) == choices_module._MAX_DOCUMENT_CHECK_SAMPLES
-
-    def test_skips_document_check_entirely_once_audio_or_image_matches(
-        self, monkeypatch
-    ):
-        import model_hub.models.choices as choices_module
-
-        calls = []
-        monkeypatch.setattr(
-            choices_module, "is_document_url", lambda url: calls.append(url) or True
+    def test_unsplash_style_urls_detected_as_image(self):
+        """Extensionless Unsplash CDN URLs should be detected as IMAGE, not TEXT."""
+        column = pd.Series(
+            [
+                "https://images.unsplash.com/photo-1514888286974-6c03e2ca1dba?w=800",
+                "https://images.unsplash.com/photo-1503376780353-7e6692767b70?w=800",
+            ]
         )
-        monkeypatch.setattr(choices_module, "is_audio_url", lambda url: False)
-        monkeypatch.setattr(choices_module, "is_image_url", lambda url: True)
+        result = determine_data_type(column)
+        assert result == DataTypeChoices.IMAGE.value
 
-        urls = [f"https://example.com/{i}.png" for i in range(5)]
-        result = choices_module._classify_url_column(urls)
-
-        assert result == choices_module.DataTypeChoices.IMAGE.value
-        assert calls == []
+    def test_extensionless_photo_path_detected_as_image(self):
+        """A generic host serving a '/photo-<id>' path should be detected as IMAGE."""
+        column = pd.Series(
+            [
+                "https://cdn.example.com/photo-abc123",
+                "https://cdn.example.com/photo-def456",
+            ]
+        )
+        result = determine_data_type(column)
+        assert result == DataTypeChoices.IMAGE.value

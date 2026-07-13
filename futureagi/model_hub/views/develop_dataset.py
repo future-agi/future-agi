@@ -696,7 +696,9 @@ class AddRowsFromFile(CreateAPIView):
             from model_hub.constants import MAX_FILE_SIZE_BYTES, MAX_FILE_SIZE_MB
 
             if file.size > MAX_FILE_SIZE_BYTES:
-                return self._gm.bad_request(f"File size exceeds the {MAX_FILE_SIZE_MB} MB limit")
+                return self._gm.bad_request(
+                    f"File size exceeds the {MAX_FILE_SIZE_MB} MB limit"
+                )
 
             # Process the file
             data, error = FileProcessor.process_file(file_obj=file)
@@ -6386,9 +6388,7 @@ class DatatypeConverter:
 
     @classmethod
     def _is_own_s3_url(cls, value):
-        return any(
-            is_own_storage_url(value, bucket) for bucket in cls._OWN_S3_BUCKETS
-        )
+        return any(is_own_storage_url(value, bucket) for bucket in cls._OWN_S3_BUCKETS)
 
     def _convert_cell_to_image(self, cell):
         """Convert to image - uploads to S3"""
@@ -6412,8 +6412,6 @@ class DatatypeConverter:
             # MinIO/private storage endpoints. External URLs are validated.
             if self._is_own_s3_url(str(image_value)):
                 return image_value, {}
-
-            validate_file_url(str(image_value), "image")
 
             image_key = f"images/{self.dataset_id}/{uuid.uuid4()}"
             image_url = upload_image_to_s3(
@@ -6919,7 +6917,10 @@ class GetEvalsListView(APIView):
 
         if search_text:
             from model_hub.utils.eval_list import normalize_search_for_name
-            eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
+
+            eval_templates = eval_templates.filter(
+                normalize_search_for_name(search_text)
+            )
 
         if validated_data.get("eval_tags"):
             eval_templates = eval_templates.filter(
@@ -7049,6 +7050,7 @@ class GetEvalsListView(APIView):
 
         if search_text:
             from model_hub.utils.eval_list import normalize_search_for_name
+
             user_evals = user_evals.filter(normalize_search_for_name(search_text))
 
         if validated_data.get("eval_tags"):
@@ -7095,12 +7097,13 @@ class GetEvalsListView(APIView):
                     ).order_by("version_number"),
                     to_attr="_prefetched_versions",
                 ),
-            )
-            .select_related("organization")
+            ).select_related("organization")
         )
 
         if search_text:
-            eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
+            eval_templates = eval_templates.filter(
+                normalize_search_for_name(search_text)
+            )
 
         if validated_data.get("eval_tags"):
             eval_templates = eval_templates.filter(
@@ -7160,7 +7163,10 @@ class GetEvalsListView(APIView):
         )
         if search_text:
             from model_hub.utils.eval_list import normalize_search_for_name
-            eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
+
+            eval_templates = eval_templates.filter(
+                normalize_search_for_name(search_text)
+            )
 
         if validated_data.get("eval_tags"):
             eval_templates = eval_templates.filter(
@@ -7526,7 +7532,9 @@ class GetEvalStructureView(APIView):
                 template.config.get("config_params_option", {})
             ),
             "run_config": eval.config.get("run_config", {}),
-            "pinned_version_id": str(eval.pinned_version_id) if eval.pinned_version_id else None,
+            "pinned_version_id": (
+                str(eval.pinned_version_id) if eval.pinned_version_id else None
+            ),
         }
 
         return self._gm.success_response({"eval": eval_data})
@@ -7807,6 +7815,7 @@ class DeleteEvalsView(APIView):
                     from model_hub.services.column_service import (
                         delete_eval_column_and_dependents,
                     )
+
                     with transaction.atomic():
                         column = Column.objects.filter(
                             source_id=eval_metric.id,
@@ -7905,7 +7914,9 @@ class EditAndRunUserEvalView(APIView):
                 run = request_data.get("run", False)
                 save_as_template = request_data.get("save_as_template", False)
                 experiment_id = request_data.get("experiment_id")
-                dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+                dataset = (
+                    _request_dataset_queryset(request).filter(id=dataset_id).first()
+                )
                 if not dataset:
                     return self._gm.not_found("Dataset not found")
 
@@ -7951,7 +7962,9 @@ class EditAndRunUserEvalView(APIView):
                             deleted=False,
                         ).exists()
                     ):
-                        return self._gm.bad_request(get_error_message("EVAL_NAME_EXISTS"))
+                        return self._gm.bad_request(
+                            get_error_message("EVAL_NAME_EXISTS")
+                        )
 
                     new_template = EvalTemplate(
                         name=template_name,
@@ -7979,7 +7992,9 @@ class EditAndRunUserEvalView(APIView):
                     if has_function_params_schema(new_config):
                         for key, value in input_params.items():
                             if key in new_config.get("function_params_schema", {}):
-                                new_config["function_params_schema"][key]["default"] = value
+                                new_config["function_params_schema"][key][
+                                    "default"
+                                ] = value
                     new_template.config = new_config
                     new_template.save()
                     # Assign the full object (not just _id) so the FK cache
@@ -7998,6 +8013,7 @@ class EditAndRunUserEvalView(APIView):
                         get_required_mapping_keys_for_template,
                         validate_required_key_mapping,
                     )
+
                     missing_keys = validate_required_key_mapping(
                         new_config.get("mapping", {}),
                         get_required_mapping_keys_for_template(eval_metric.template),
@@ -8017,12 +8033,12 @@ class EditAndRunUserEvalView(APIView):
                 # Both paths keep eval_metric.config and pinned_version.config_snapshot
                 # in lockstep (the invariant).
                 explicit_version_id = request_data.get("pinned_version_id")
-                version_switched = (
+                version_switched = explicit_version_id and str(
                     explicit_version_id
-                    and str(explicit_version_id) != str(eval_metric.pinned_version_id or "")
-                )
+                ) != str(eval_metric.pinned_version_id or "")
                 if version_switched:
                     from model_hub.models.evals_metric import EvalTemplateVersion as ETV
+
                     selected_ver = ETV.objects.filter(
                         id=explicit_version_id,
                         eval_template=eval_metric.template,
@@ -8037,13 +8053,16 @@ class EditAndRunUserEvalView(APIView):
                 # matches the baseline snapshot, dedup skips creation; if it
                 # differs (including after a version switch with edits), a new
                 # version is created and pinned.
-                from model_hub.services.eval_version_pinning import maybe_pin_new_version
+                from model_hub.services.eval_version_pinning import (
+                    maybe_pin_new_version,
+                )
 
                 maybe_pin_new_version(
                     eval_metric,
                     request_data,
                     user=request.user,
-                    organization=getattr(request, "organization", None) or request.user.organization,
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
                     workspace=getattr(request, "workspace", None),
                 )
 
@@ -8315,9 +8334,9 @@ class AddUserEvalView(CreateAPIView):
                     if has_function_params_schema(new_config):
                         for key, value in input_params.items():
                             if key in new_config.get("function_params_schema", {}):
-                                new_config["function_params_schema"][key]["default"] = (
-                                    value
-                                )
+                                new_config["function_params_schema"][key][
+                                    "default"
+                                ] = value
                     new_template.config = new_config
                     new_template.save()
                     template_id = new_template.id
@@ -11569,9 +11588,8 @@ class FeedbackViewSet(viewsets.ModelViewSet):
             )[:5]
             for feedback in recent_feedback:
                 feedback_user = feedback.user
-                user_name = (
-                    getattr(feedback_user, "name", "")
-                    or getattr(feedback_user, "email", "")
+                user_name = getattr(feedback_user, "name", "") or getattr(
+                    feedback_user, "email", ""
                 )
                 summary["recent_feedback"].append(
                     {
@@ -14567,6 +14585,7 @@ class GetCompareEvalsListView(APIView):
 
         if search_text:
             from model_hub.utils.eval_list import normalize_search_for_name
+
             user_evals = user_evals.filter(normalize_search_for_name(search_text))
 
         # Count occurrences of eval names across datasets
