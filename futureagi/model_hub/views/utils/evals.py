@@ -33,6 +33,28 @@ except ImportError:
     log_and_deduct_cost_for_api_request = None
 
 
+def _canonical_playground_output(value, response, template, api_call_log_row):
+    from model_hub.types import PlaygroundEvalResponse
+
+    payload = PlaygroundEvalResponse(
+        output=value,
+        reason=response.get("reason"),
+        model=response.get("model"),
+        metadata=response.get("metadata"),
+        output_type=template.config.get("output"),
+        log_id=(
+            str(api_call_log_row.log_id) if api_call_log_row is not None else None
+        ),
+        ground_truth_examples=response.get("ground_truth_examples"),
+        warnings=response.get("warnings") or None,
+    ).model_dump()
+    if payload.get("warnings") is None:
+        payload.pop("warnings", None)
+    if payload.get("ground_truth_examples") is None:
+        payload.pop("ground_truth_examples", None)
+    return payload
+
+
 def run_eval_func(
     config,
     mappings,
@@ -356,7 +378,7 @@ def run_eval_func(
                 metadata = {}
 
         if api_call_log_row is None:
-            return response
+            return _canonical_playground_output(value, response, template, None)
         config_dict = json.loads(api_call_log_row.config)
         output_payload = {"output": value, "reason": response["reason"]}
         # Mirror the dataset path: propagate partial-input warnings into
@@ -485,18 +507,9 @@ def run_eval_func(
         except Exception:
             pass  # Metering failure must not break the action
 
-        output = {}
-        output["output"] = value
-        output["reason"] = response.get("reason")
-        output["model"] = response.get("model")
-        output["metadata"] = response.get("metadata")
-        output["output_type"] = template.config.get("output")
-        output["log_id"] = str(api_call_log_row.log_id)
-        output["ground_truth_examples"] = response.get("ground_truth_examples")
-        # Pass partial-input warning through to the playground UI so the
-        # yellow ⚠ badge can render alongside the result.
-        if response.get("warnings"):
-            output["warnings"] = response["warnings"]
+        output = _canonical_playground_output(
+            value, response, template, api_call_log_row
+        )
 
         if error_localizer:
             from model_hub.tasks.user_evaluation import (
@@ -516,6 +529,7 @@ def run_eval_func(
                 value=value,
                 mapping=mappings,
                 eval_explanation=response.get("reason"),
+                eval_config=config,
             )
 
         return output

@@ -1,3 +1,4 @@
+import copy
 import json
 import math
 import traceback
@@ -1170,7 +1171,8 @@ class GetEvalTemplateNameView(APIView):
                 .order_by("name")
             )
             if search_text:
-                eval_templates = eval_templates.filter(name__icontains=search_text)
+                from model_hub.utils.eval_list import normalize_search_for_name
+                eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
             eval_template_names = [
                 {
                     "id": str(eval_template.id),
@@ -2023,9 +2025,18 @@ class EvalTemplateCreateV2View(APIView):
                         if hasattr(req, "data_injection") and req.data_injection
                         else False
                     )
+                    # LLM evals can put the variable in any turn (System /
+                    # User / Assistant), so scan every message body, not
+                    # just req.instructions (which mirrors the System turn).
+                    _prompt_texts = [req.instructions or ""]
+                    if req.messages:
+                        for _m in req.messages:
+                            if isinstance(_m, dict):
+                                _prompt_texts.append(_m.get("content", "") or "")
+                    _combined_prompt = "\n".join(t for t in _prompt_texts if t)
                     if (
-                        req.instructions
-                        and not re.search(variable_pattern, req.instructions)
+                        _combined_prompt.strip()
+                        and not re.search(variable_pattern, _combined_prompt)
                         and not has_data_injection
                     ):
                         return self._gm.bad_request(
@@ -2461,7 +2472,11 @@ class EvalTemplateUpdateView(APIView):
             )
 
             try:
-                template = EvalTemplate.objects.get(
+                # select_related caches the org + workspace FKs so downstream
+                # accesses stay in Python instead of firing fresh SELECTs.
+                template = EvalTemplate.objects.select_related(
+                    "organization", "workspace"
+                ).get(
                     id=template_id,
                     organization=organization,
                     owner=OwnerChoices.USER.value,
@@ -2472,14 +2487,23 @@ class EvalTemplateUpdateView(APIView):
                     "Eval template not found or cannot be edited (system templates are read-only)."
                 )
 
+            # Snapshot for update_fields diffing at save() below.
+            # deepcopy so in-place JSONField mutations (template.config[...] = ...)
+            # register as changes; a shallow reference would alias the same dict.
+            _original_field_values = {
+                f.attname: copy.deepcopy(getattr(template, f.attname))
+                for f in template._meta.concrete_fields
+            }
+
             # Update fields if provided
-            if req.name is not None:
+            # Skip the validation + uniqueness scan when the name is unchanged;
+            # autosave otherwise fires the collision query on every keystroke.
+            if req.name is not None and req.name.strip() != template.name:
                 cleaned = req.name.strip()
                 if not re.match(r"^[a-z0-9_-]+$", cleaned):
                     return self._gm.bad_request(
                         "Name can only contain lowercase letters, numbers, hyphens, or underscores."
                     )
-                # Check uniqueness
                 if (
                     EvalTemplate.objects.filter(
                         name=cleaned, organization=organization, deleted=False
@@ -2718,7 +2742,17 @@ class EvalTemplateUpdateView(APIView):
             if req.publish:
                 template.visible_ui = True
 
-            template.save()
+            # Write only dirty columns; default save() rewrites the whole row.
+            _dirty_fields = [
+                name
+                for name, orig in _original_field_values.items()
+                if getattr(template, name) != orig
+            ]
+            if _dirty_fields:
+                # auto_now=True on updated_at only fires if it's in update_fields.
+                if "updated_at" not in _dirty_fields:
+                    _dirty_fields.append("updated_at")
+                template.save(update_fields=_dirty_fields)
 
             # Lazy V1 on first publish (idempotent).
             if req.publish:

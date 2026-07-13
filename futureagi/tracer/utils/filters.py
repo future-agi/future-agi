@@ -141,6 +141,8 @@ class FilterEngine:
         "span_name": "span_name",
         "trace_name": "trace_name",
         "session_id": "session_id",
+        "input": "input",
+        "output": "output",
         "prompt_template_version": "prompt_template_version",
         "labels": "labels",
         "unique_traces": "unique_traces",

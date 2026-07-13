@@ -63,6 +63,7 @@ from tracer.serializers.trace import (
     TraceObserveIndexQuerySerializer,
     TraceObserveListQuerySerializer,
     TraceDetailResponseSerializer,
+    TraceObserveListResponseSerializer,
     TraceSerializer,
     TraceVoiceCallListQuerySerializer,
     UserCodeExampleResponseSerializer,
@@ -82,6 +83,10 @@ from tracer.services.clickhouse.query_builders.base import NIL_UUID
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
 from tracer.services.clickhouse.v2.query_builders.user_list import (
     UserListQueryBuilderV2,
+)
+from tracer.services.clickhouse.v2.span_selectors import (
+    flatten_span_attributes_into_entry,
+    merge_content_rows,
 )
 from tracer.services.observability_providers import ObservabilityService
 from tracer.services.users_list_manager import UsersListManager
@@ -2327,7 +2332,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 f"error fetching the trace id by index {str(e)}"
             )
 
-    @validated_request(query_serializer=TraceObserveListQuerySerializer)
+    @validated_request(
+        query_serializer=TraceObserveListQuerySerializer,
+        responses={200: TraceObserveListResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["get"])
     def list_traces_of_session(self, request, *args, **kwargs):
         """
@@ -3473,24 +3481,32 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Phase 1b: Fetch heavy columns (input/output/attrs) for the page
         trace_ids = [str(row.get("trace_id", "")) for row in result.data]
-        content_map = {}
+        content_rows = []
         if trace_ids:
             content_query, content_params = builder.build_content_query(trace_ids)
             if content_query:
                 content_result = analytics.execute_ch_query(
                     content_query, content_params, timeout_ms=10000
                 )
-                for crow in content_result.data:
-                    content_map[str(crow.get("trace_id", ""))] = crow
+                content_rows = content_result.data
+        content_map = merge_content_rows(
+            result.data,
+            content_rows,
+            id_key="trace_id",
+            keys=(
+                "input",
+                "output",
+                "attrs_string",
+                "attrs_number",
+                "attrs_bool",
+                "attributes_extra",
+                "trace_tags",
+            ),
+        )
 
-        # Merge content into Phase 1 results
+        # metadata needs JSON-parsing from the raw CH column
         for row in result.data:
-            tid = str(row.get("trace_id", ""))
-            content = content_map.get(tid, {})
-            row["input"] = content.get("input", "")
-            row["output"] = content.get("output", "")
-            row["attrs_string"] = content.get("attrs_string", {})
-            row["attrs_number"] = content.get("attrs_number", {})
+            content = content_map.get(str(row.get("trace_id", "")), {})
             raw_meta = content.get("metadata", "{}")
             if isinstance(raw_meta, str):
                 try:
@@ -3499,7 +3515,6 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     row["metadata"] = {}
             else:
                 row["metadata"] = raw_meta or {}
-            row["trace_tags"] = content.get("trace_tags", [])
 
         user_id_map = builder.resolve_user_ids(trace_ids, analytics)
 
@@ -3659,6 +3674,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 label_id = str(label.id)
                 if label_id in trace_annotations:
                     entry[label_id] = trace_annotations[label_id]
+
+            # Root-span attributes for custom columns (typed maps + attributes_extra)
+            flatten_span_attributes_into_entry(entry, row)
 
             # Include metadata for custom columns
             metadata = row.get("metadata") or {}
@@ -4111,6 +4129,30 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         result = analytics.execute_ch_query(query, params, timeout_ms=10000)
         result.data = result.data[:page_size]
 
+        # Phase 1b: heavy columns (input/output + root-span attrs) for the page.
+        # Root-span attrs feed custom columns; without this merge they render "-".
+        page_trace_ids = [str(row.get("trace_id", "")) for row in result.data]
+        if page_trace_ids:
+            content_query, content_params = builder.build_content_query(page_trace_ids)
+            if content_query:
+                content_result = analytics.execute_ch_query(
+                    content_query, content_params, timeout_ms=10000
+                )
+                merge_content_rows(
+                    result.data,
+                    content_result.data,
+                    id_key="trace_id",
+                    keys=(
+                        "input",
+                        "output",
+                        "trace_tags",
+                        "attrs_string",
+                        "attrs_number",
+                        "attrs_bool",
+                        "attributes_extra",
+                    ),
+                )
+
         # Get count
         count_query, count_params = builder.build_count_query()
         count_result = analytics.execute_ch_query(
@@ -4195,6 +4237,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 label_id = str(label.id)
                 if label_id in trace_annotations:
                     entry[label_id] = trace_annotations[label_id]
+
+            # Root-span attributes for custom columns (typed maps + attributes_extra)
+            flatten_span_attributes_into_entry(entry, row)
 
             table_data.append(entry)
 

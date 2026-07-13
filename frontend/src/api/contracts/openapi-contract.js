@@ -167,6 +167,21 @@ function enumSchema(values) {
   return z.union(literals);
 }
 
+// Real recursive JSON value — scalars, arrays, and objects of JSON values.
+// Used for x-json-value so those fields validate as "any valid JSON" rather
+// than z.any(): a malformed cell (undefined, function, class instance leaking
+// into the payload) fails instead of silently passing.
+const JSON_VALUE_SCHEMA = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(JSON_VALUE_SCHEMA),
+    z.record(JSON_VALUE_SCHEMA),
+  ]),
+);
+
 function schemaToZod(schema, options = {}) {
   if (!schema || typeof schema !== "object") return z.any();
 
@@ -186,7 +201,7 @@ function schemaToZod(schema, options = {}) {
   }
 
   if (schema["x-json-value"]) {
-    return nullableIfNeeded(z.any(), schema);
+    return nullableIfNeeded(JSON_VALUE_SCHEMA, schema);
   }
 
   if (schema.$ref) {

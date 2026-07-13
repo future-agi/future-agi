@@ -240,7 +240,10 @@ class AnnotationQueueLabel(BaseModel):
         on_delete=models.CASCADE,
         related_name="queue_memberships",
     )
-    required = models.BooleanField(default=True)
+    # Labels are optional to fill unless a queue owner explicitly marks them
+    # required. Marking a label required is a gated feature, so the default
+    # must stay off — otherwise every plainly-added label trips the gate.
+    required = models.BooleanField(default=False)
     order = models.IntegerField(default=0)
 
     class Meta:

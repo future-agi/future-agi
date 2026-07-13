@@ -578,16 +578,29 @@ class EvalTemplateVersionManager(models.Manager):
             eval_tags = list(eval_template.eval_tags or [])
 
         with transaction.atomic():
-            # Lock the template row to prevent concurrent version creation
+            # Lock the parent template row to serialize concurrent create_version
+            # calls. select_for_update on the versions queryset alone locks the
+            # existing rows, but locks NOTHING when the template has zero
+            # versions yet — two racing first-creates would both proceed and
+            # both flag v1 as default. Locking the template row closes that.
+            # Use no_workspace_objects to avoid the LEFT JOIN that
+            # BaseModelManager adds (Postgres rejects SELECT FOR UPDATE on the
+            # nullable side of an outer join).
+            EvalTemplate.no_workspace_objects.select_for_update().filter(
+                pk=eval_template.pk
+            ).first()
+
             last_version = (
                 self.filter(eval_template=eval_template)
-                .select_for_update()
                 .order_by("-version_number")
                 .values_list("version_number", flat=True)
                 .first()
             )
             next_version = (last_version or 0) + 1
-            is_first = next_version == 1
+
+            self.filter(
+                eval_template=eval_template, is_default=True
+            ).update(is_default=False)
 
             version = self.create(
                 eval_template=eval_template,
@@ -596,7 +609,7 @@ class EvalTemplateVersionManager(models.Manager):
                 config_snapshot=config_snapshot or {},
                 criteria=criteria or "",
                 model=model or "",
-                is_default=is_first,
+                is_default=True,
                 created_by=user,
                 organization=organization,
                 workspace=workspace,
@@ -737,6 +750,11 @@ class EvalTemplateVersion(ModelBaseModel):
                 fields=["eval_template", "version_number"],
                 condition=Q(deleted=False),
                 name="unique_version_per_template",
+            ),
+            models.UniqueConstraint(
+                fields=["eval_template"],
+                condition=Q(is_default=True, deleted=False),
+                name="unique_default_version_per_template",
             ),
         ]
         indexes = [

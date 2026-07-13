@@ -36,7 +36,7 @@ import { useCompositeChildrenUnionKeys } from "../hooks/useCompositeChildrenKeys
 import CodeEvalEditor, { PYTHON_CODE_TEMPLATE } from "./CodeEvalEditor";
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
-import { extractVariables } from "src/utils/utils";
+import { extractVariables, extractVariablesFromMessages } from "src/utils/utils";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
@@ -619,10 +619,18 @@ const EvalCreatePage = () => {
   }, []);
   // Mirrors the Test button's content rules: prompt-based single evals must
   // have a template that actually references inputs, otherwise the saved
-  // eval can't be run against real data.
+  // eval can't be run against real data. For LLM evals the variable can
+  // live in any turn (System / User / Assistant), so scan the whole
+  // messages array in addition to instructions.
   const singleHasInstructionVariables =
-    !!instructions.trim() &&
-    extractVariables(instructions, templateFormat).length > 0;
+    evalType === "llm"
+      ? extractVariablesFromMessages(
+          instructions,
+          messages,
+          templateFormat,
+        ).length > 0
+      : !!instructions.trim() &&
+        extractVariables(instructions, templateFormat).length > 0;
   const canSaveSingle =
     !!name.trim() &&
     (evalType === "code" ? !!code.trim() : singleHasInstructionVariables);
@@ -1319,10 +1327,26 @@ const EvalCreatePage = () => {
                 {(() => {
                   const hasCompositeChildren = selectedChildren.length > 0;
                   const hasCode = !!code.trim();
-                  const hasInstructions = !!instructions.trim();
-                  const instructionVariables = hasInstructions
-                    ? extractVariables(instructions, templateFormat)
-                    : [];
+                  // For LLM evals, prompt content and its variables can live
+                  // in any turn (System / User / Assistant), not just the
+                  // instructions field (which mirrors the System turn).
+                  const hasAnyPromptContent =
+                    evalType === "llm"
+                      ? !!instructions.trim() ||
+                        (Array.isArray(messages) &&
+                          messages.some((m) => (m?.content || "").trim()))
+                      : !!instructions.trim();
+                  const hasInstructions = hasAnyPromptContent;
+                  const instructionVariables =
+                    evalType === "llm"
+                      ? extractVariablesFromMessages(
+                          instructions,
+                          messages,
+                          templateFormat,
+                        )
+                      : hasInstructions
+                        ? extractVariables(instructions, templateFormat)
+                        : [];
                   const hasInstructionVariables =
                     instructionVariables.length > 0;
                   const instructionsReady =
@@ -1422,7 +1446,15 @@ const EvalCreatePage = () => {
                       "Give this evaluation a name before saving.";
                   } else if (evalType === "code" && !code.trim()) {
                     saveDisabledReason = "Write some code before saving.";
-                  } else if (evalType !== "code" && !instructions.trim()) {
+                  } else if (
+                    evalType !== "code" &&
+                    !instructions.trim() &&
+                    !(
+                      evalType === "llm" &&
+                      Array.isArray(messages) &&
+                      messages.some((m) => (m?.content || "").trim())
+                    )
+                  ) {
                     saveDisabledReason = "Add instructions before saving.";
                   } else if (
                     evalType !== "code" &&

@@ -298,6 +298,89 @@ class TestExecuteCompositeChildrenSync:
         assert outcome.summary is None
         assert len(outcome.child_results) == 2
 
+    def test_choices_children_score_via_shared_helper(
+        self, db, organization, workspace
+    ):
+        """Deterministic-typed children route the picked label to its choice_scores value."""
+        child_a = EvalTemplate.no_workspace_objects.create(
+            name="choices-child-a",
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            config={"output": "choices", "eval_type_id": "CustomPromptEvaluator"},
+            output_type_normalized="deterministic",
+            choices=["Sad", "Happy", "Neutral"],
+            choice_scores={"Sad": 1.0, "Happy": 0.5, "Neutral": 0.0},
+            pass_threshold=0.5,
+            multi_choice=True,
+        )
+        child_b = EvalTemplate.no_workspace_objects.create(
+            name="choices-child-b",
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            config={"output": "choices", "eval_type_id": "AgentEvaluator"},
+            output_type_normalized="deterministic",
+            choices=["Happy", "Sad", "Neutral"],
+            choice_scores={"Sad": 0.5, "Happy": 0.5, "Neutral": 0.5},
+            pass_threshold=0.5,
+        )
+        parent = EvalTemplate.no_workspace_objects.create(
+            name="choices-composite",
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            template_type="composite",
+            aggregation_enabled=True,
+            aggregation_function="avg",
+            pass_threshold=0.5,
+            config={},
+        )
+        CompositeEvalChild.objects.create(parent=parent, child=child_a, order=0, weight=1.0)
+        CompositeEvalChild.objects.create(parent=parent, child=child_b, order=1, weight=1.0)
+
+        links = list(
+            CompositeEvalChild.objects.filter(parent=parent)
+            .select_related("child")
+            .order_by("order")
+        )
+
+        def _choices_fake_run_eval_func(_cfg, _mapping, template, *_a, **_k):
+            # `run_eval_func` returns `output` as the formatted verdict dict from
+            # `format_eval_value`: `{"score": float, "choice": str}` for choices.
+            canned = {
+                "choices-child-a": {"score": 1.0, "choice": "Sad"},
+                "choices-child-b": {"score": 0.5, "choice": "Sad"},
+            }
+            payload = canned.get(template.name)
+            return {
+                "output": payload,
+                "reason": f"{template.name} labelled Sad",
+                "output_type": "choices",
+                "model": "turing_large",
+                "metadata": {},
+                "log_id": None,
+            }
+
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_choices_fake_run_eval_func,
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "I am very sad today."},
+                config={},
+                org=organization,
+            )
+
+        by_name = {cr.child_name: cr for cr in outcome.child_results}
+        assert by_name["choices-child-a"].score == pytest.approx(1.0)
+        assert by_name["choices-child-b"].score == pytest.approx(0.5)
+        # Simple average, both weights 1.0 → (1.0 + 0.5) / 2 = 0.75
+        assert outcome.aggregate_score == pytest.approx(0.75)
+        assert outcome.aggregate_pass is True
+
     def test_failing_child_is_captured_not_raised(self, composite_parent, organization):
         links = list(
             CompositeEvalChild.objects.filter(parent=composite_parent)
@@ -418,6 +501,593 @@ class TestExecuteCompositeChildrenSync:
         assert event.amount == pytest.approx(
             BillingConfig.get().calculate_ai_credits(0.012001)
         )
+
+
+def _make_percentage_child(
+    organization, workspace, name, pass_threshold=0.5
+):
+    return EvalTemplate.no_workspace_objects.create(
+        name=name,
+        organization=organization,
+        workspace=workspace,
+        owner=OwnerChoices.USER.value,
+        config={"output": "score", "eval_type_id": "CustomPromptEvaluator"},
+        output_type_normalized="percentage",
+        pass_threshold=pass_threshold,
+    )
+
+
+def _make_composite(
+    organization,
+    workspace,
+    name,
+    aggregation_function,
+    pass_threshold=0.5,
+    aggregation_enabled=True,
+):
+    return EvalTemplate.no_workspace_objects.create(
+        name=name,
+        organization=organization,
+        workspace=workspace,
+        owner=OwnerChoices.USER.value,
+        template_type="composite",
+        aggregation_enabled=aggregation_enabled,
+        aggregation_function=aggregation_function,
+        pass_threshold=pass_threshold,
+        config={},
+    )
+
+
+def _fake_response(output, output_type="score"):
+    """Build a run_eval_func-shaped response dict for the given output value."""
+    return {
+        "output": output,
+        "reason": "canned",
+        "output_type": output_type,
+        "model": "turing_large",
+        "metadata": {},
+        "log_id": None,
+    }
+
+
+def _canned_by_name(name_to_output, output_type="score"):
+    """Return a side_effect that maps template.name to a canned response dict."""
+    def _inner(_cfg, _mapping, template, *_a, **_k):
+        return _fake_response(name_to_output.get(template.name, 0.0), output_type)
+    return _inner
+
+
+@pytest.mark.django_db
+class TestCompositeAggregationFunctions:
+    """One test per aggregation function against a real 3-child composite."""
+
+    def _build(self, organization, workspace, function, weights):
+        children = [
+            _make_percentage_child(organization, workspace, f"child-{k}")
+            for k in ("a", "b", "c")
+        ]
+        parent = _make_composite(organization, workspace, f"comp-{function}", function)
+        for i, (child, w) in enumerate(zip(children, weights)):
+            CompositeEvalChild.objects.create(
+                parent=parent, child=child, order=i, weight=w
+            )
+        links = list(
+            CompositeEvalChild.objects.filter(parent=parent)
+            .select_related("child")
+            .order_by("order")
+        )
+        return parent, links, children
+
+    def test_weighted_avg_honours_link_weights(self, db, organization, workspace):
+        parent, links, _ = self._build(
+            organization, workspace, "weighted_avg", weights=[1.0, 2.0, 3.0]
+        )
+        canned = {"child-a": 0.1, "child-b": 0.5, "child-c": 0.9}
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_canned_by_name(canned),
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+            )
+        # (0.1*1 + 0.5*2 + 0.9*3) / (1+2+3) = 3.8 / 6 = 0.6333...
+        assert outcome.aggregate_score == pytest.approx(0.6333, abs=1e-3)
+        assert outcome.aggregate_pass is True
+
+    def test_avg_ignores_weights(self, db, organization, workspace):
+        parent, links, _ = self._build(
+            organization, workspace, "avg", weights=[1.0, 2.0, 3.0]
+        )
+        canned = {"child-a": 0.1, "child-b": 0.5, "child-c": 0.9}
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_canned_by_name(canned),
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+            )
+        # Simple mean = (0.1 + 0.5 + 0.9) / 3 = 0.5, weights ignored.
+        assert outcome.aggregate_score == pytest.approx(0.5)
+
+    def test_min_returns_worst_child_score(self, db, organization, workspace):
+        parent, links, _ = self._build(
+            organization, workspace, "min", weights=[1.0, 1.0, 1.0]
+        )
+        canned = {"child-a": 0.9, "child-b": 0.2, "child-c": 0.7}
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_canned_by_name(canned),
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+            )
+        assert outcome.aggregate_score == pytest.approx(0.2)
+        # Below default parent threshold of 0.5 → fail.
+        assert outcome.aggregate_pass is False
+
+    def test_max_returns_best_child_score(self, db, organization, workspace):
+        parent, links, _ = self._build(
+            organization, workspace, "max", weights=[1.0, 1.0, 1.0]
+        )
+        canned = {"child-a": 0.2, "child-b": 0.9, "child-c": 0.5}
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_canned_by_name(canned),
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+            )
+        assert outcome.aggregate_score == pytest.approx(0.9)
+        assert outcome.aggregate_pass is True
+
+    def test_pass_rate_uses_per_child_thresholds(self, db, organization, workspace):
+        """pass_rate gates each child on its own threshold, returns pass fraction."""
+        child_a = _make_percentage_child(
+            organization, workspace, "pr-child-a", pass_threshold=0.5
+        )
+        child_b = _make_percentage_child(
+            organization, workspace, "pr-child-b", pass_threshold=0.5
+        )
+        child_c = _make_percentage_child(
+            organization, workspace, "pr-child-c", pass_threshold=0.9
+        )
+        parent = _make_composite(organization, workspace, "pr-comp", "pass_rate")
+        for i, child in enumerate([child_a, child_b, child_c]):
+            CompositeEvalChild.objects.create(
+                parent=parent, child=child, order=i, weight=1.0
+            )
+        links = list(
+            CompositeEvalChild.objects.filter(parent=parent)
+            .select_related("child")
+            .order_by("order")
+        )
+        # child_a passes (0.6 >= 0.5), child_b fails (0.4 < 0.5),
+        # child_c fails (0.85 < 0.9).
+        canned = {"pr-child-a": 0.6, "pr-child-b": 0.4, "pr-child-c": 0.85}
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_canned_by_name(canned),
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+            )
+        # 1 out of 3 passed against their own threshold.
+        assert outcome.aggregate_score == pytest.approx(1.0 / 3.0, abs=1e-6)
+        assert outcome.aggregate_pass is False  # 0.333 < parent threshold 0.5
+
+
+@pytest.mark.django_db
+class TestCompositeChildThresholdPrecedence:
+    """One test per source in link.config -> pinned_version -> live -> 0.5."""
+
+    def _setup_pass_rate_composite(
+        self,
+        organization,
+        workspace,
+        child_pass_threshold=0.5,
+        link_config=None,
+        pinned_version_threshold=None,
+    ):
+        child = _make_percentage_child(
+            organization,
+            workspace,
+            "prec-child",
+            pass_threshold=child_pass_threshold,
+        )
+        parent = _make_composite(
+            organization, workspace, "prec-comp", "pass_rate"
+        )
+        pinned_version = None
+        if pinned_version_threshold is not None:
+            from model_hub.models.evals_metric import EvalTemplateVersion
+
+            pinned_version = EvalTemplateVersion.all_objects.create(
+                eval_template=child,
+                version_number=1,
+                config_snapshot=child.config,
+                model=child.model or "",
+                pass_threshold=pinned_version_threshold,
+                output_type_normalized="percentage",
+                is_default=False,
+            )
+        CompositeEvalChild.objects.create(
+            parent=parent,
+            child=child,
+            order=0,
+            weight=1.0,
+            config=link_config,
+            pinned_version=pinned_version,
+        )
+        links = list(
+            CompositeEvalChild.objects.filter(parent=parent)
+            .select_related("child")
+            .order_by("order")
+        )
+        return parent, links
+
+    def test_link_config_pass_threshold_wins_over_all_others(
+        self, db, organization, workspace
+    ):
+        # link.config=0.9 should win; pinned_version=0.6 and child=0.3 ignored.
+        parent, links = self._setup_pass_rate_composite(
+            organization,
+            workspace,
+            child_pass_threshold=0.3,
+            link_config={"pass_threshold": 0.9},
+            pinned_version_threshold=0.6,
+        )
+        # Child scores 0.8: fails 0.9 gate (link.config), passes 0.6 & 0.3.
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_canned_by_name({"prec-child": 0.8}),
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+            )
+        # 0 of 1 passed → pass_rate = 0.0
+        assert outcome.aggregate_score == pytest.approx(0.0)
+
+    def test_pinned_version_threshold_used_when_link_config_absent(
+        self, db, organization, workspace
+    ):
+        # pinned_version=0.7 wins over child=0.3.
+        parent, links = self._setup_pass_rate_composite(
+            organization,
+            workspace,
+            child_pass_threshold=0.3,
+            link_config=None,
+            pinned_version_threshold=0.7,
+        )
+        # Child scores 0.6: fails 0.7 gate (pinned), passes 0.3.
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_canned_by_name({"prec-child": 0.6}),
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+            )
+        assert outcome.aggregate_score == pytest.approx(0.0)
+
+    def test_live_template_threshold_used_when_link_and_version_absent(
+        self, db, organization, workspace
+    ):
+        parent, links = self._setup_pass_rate_composite(
+            organization,
+            workspace,
+            child_pass_threshold=0.4,
+            link_config=None,
+            pinned_version_threshold=None,
+        )
+        # Child scores 0.45: passes 0.4 gate.
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_canned_by_name({"prec-child": 0.45}),
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+            )
+        assert outcome.aggregate_score == pytest.approx(1.0)
+
+    def test_default_0_5_when_all_sources_are_missing(
+        self, db, organization, workspace
+    ):
+        # child.pass_threshold=None (missing on model). Should default to 0.5.
+        child = _make_percentage_child(organization, workspace, "def-child")
+        child.pass_threshold = None
+        child.save(update_fields=["pass_threshold"])
+        parent = _make_composite(organization, workspace, "def-comp", "pass_rate")
+        CompositeEvalChild.objects.create(
+            parent=parent, child=child, order=0, weight=1.0
+        )
+        links = list(
+            CompositeEvalChild.objects.filter(parent=parent)
+            .select_related("child")
+            .order_by("order")
+        )
+        # Score 0.6 passes 0.5 default.
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_canned_by_name({"def-child": 0.6}),
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+            )
+        assert outcome.aggregate_score == pytest.approx(1.0)
+
+
+@pytest.mark.django_db
+class TestCompositeOutputTypesEndToEnd:
+    """Score routing across the four child output-type axes."""
+
+    def test_pass_fail_children_score_correctly(
+        self, db, organization, workspace
+    ):
+        child_a = EvalTemplate.no_workspace_objects.create(
+            name="pf-a",
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            config={"output": "Pass/Fail", "eval_type_id": "CustomPromptEvaluator"},
+            output_type_normalized="pass_fail",
+            pass_threshold=0.5,
+        )
+        child_b = EvalTemplate.no_workspace_objects.create(
+            name="pf-b",
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            config={"output": "Pass/Fail", "eval_type_id": "CustomPromptEvaluator"},
+            output_type_normalized="pass_fail",
+            pass_threshold=0.5,
+        )
+        parent = _make_composite(organization, workspace, "pf-comp", "avg")
+        CompositeEvalChild.objects.create(parent=parent, child=child_a, order=0, weight=1.0)
+        CompositeEvalChild.objects.create(parent=parent, child=child_b, order=1, weight=1.0)
+        links = list(
+            CompositeEvalChild.objects.filter(parent=parent)
+            .select_related("child")
+            .order_by("order")
+        )
+
+        def _fake(_cfg, _map, template, *_a, **_k):
+            return _fake_response(
+                "Passed" if template.name == "pf-a" else "Failed",
+                output_type="Pass/Fail",
+            )
+
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_fake,
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+            )
+        by_name = {cr.child_name: cr for cr in outcome.child_results}
+        assert by_name["pf-a"].score == pytest.approx(1.0)
+        assert by_name["pf-b"].score == pytest.approx(0.0)
+        assert outcome.aggregate_score == pytest.approx(0.5)
+
+    def test_percentage_children_score_correctly(
+        self, db, organization, workspace
+    ):
+        parent, links, _ = TestCompositeAggregationFunctions()._build(
+            organization, workspace, "avg", weights=[1.0, 1.0, 1.0]
+        )
+        canned = {"child-a": 0.2, "child-b": 0.6, "child-c": 1.0}
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_canned_by_name(canned),
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+            )
+        by_name = {cr.child_name: cr for cr in outcome.child_results}
+        assert by_name["child-a"].score == pytest.approx(0.2)
+        assert by_name["child-b"].score == pytest.approx(0.6)
+        assert by_name["child-c"].score == pytest.approx(1.0)
+        assert outcome.aggregate_score == pytest.approx(0.6)
+
+    def test_code_children_score_correctly(
+        self, db, organization, workspace
+    ):
+        # Code eval with output_type_normalized="percentage": the runtime
+        # emits a numeric score directly via the CustomCodeEval evaluator.
+        child = EvalTemplate.no_workspace_objects.create(
+            name="code-child",
+            organization=organization,
+            workspace=workspace,
+            owner=OwnerChoices.USER.value,
+            eval_type="code",
+            config={
+                "output": "score",
+                "eval_type_id": "CustomCodeEval",
+                "code": "def evaluate(**kwargs): return 0.7",
+                "language": "python",
+            },
+            output_type_normalized="percentage",
+            pass_threshold=0.5,
+        )
+        parent = _make_composite(organization, workspace, "code-comp", "avg")
+        CompositeEvalChild.objects.create(
+            parent=parent, child=child, order=0, weight=1.0
+        )
+        links = list(
+            CompositeEvalChild.objects.filter(parent=parent)
+            .select_related("child")
+            .order_by("order")
+        )
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_canned_by_name({"code-child": 0.7}),
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+            )
+        assert outcome.child_results[0].score == pytest.approx(0.7)
+        assert outcome.aggregate_score == pytest.approx(0.7)
+        assert outcome.aggregate_pass is True
+
+
+@pytest.mark.django_db
+class TestCompositeAggregationEdgeCases:
+    def test_all_children_fail_aggregate_is_none(
+        self, db, organization, workspace
+    ):
+        parent, links, _ = TestCompositeAggregationFunctions()._build(
+            organization, workspace, "avg", weights=[1.0, 1.0, 1.0]
+        )
+
+        def _all_raise(*_a, **_k):
+            raise RuntimeError("boom")
+
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_all_raise,
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+            )
+        assert outcome.aggregate_score is None
+        assert outcome.aggregate_pass is None
+        assert all(cr.status == "failed" for cr in outcome.child_results)
+
+    def test_pass_rate_denominator_excludes_failed_children(
+        self, db, organization, workspace
+    ):
+        """Documented behaviour: pass_rate denominator = number of scored children,
+        not total children. If children fail, pass_rate can inflate."""
+        parent, links, children = TestCompositeAggregationFunctions()._build(
+            organization, workspace, "pass_rate", weights=[1.0, 1.0, 1.0]
+        )
+
+        def _mixed(_cfg, _map, template, *_a, **_k):
+            if template.name == "child-a":
+                raise RuntimeError("simulated failure")
+            return _fake_response(0.8)  # both remaining pass 0.5 gate
+
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_mixed,
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+            )
+        # 2 completed children, both pass → 2/2 = 1.0. Failed child excluded.
+        assert outcome.aggregate_score == pytest.approx(1.0)
+
+    def test_aggregate_pass_true_when_score_meets_threshold(
+        self, db, organization, workspace
+    ):
+        parent = _make_composite(
+            organization, workspace, "at-comp", "avg", pass_threshold=0.7
+        )
+        child = _make_percentage_child(organization, workspace, "at-child")
+        CompositeEvalChild.objects.create(
+            parent=parent, child=child, order=0, weight=1.0
+        )
+        links = list(
+            CompositeEvalChild.objects.filter(parent=parent)
+            .select_related("child")
+            .order_by("order")
+        )
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_canned_by_name({"at-child": 0.75}),
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+            )
+        assert outcome.aggregate_score == pytest.approx(0.75)
+        assert outcome.aggregate_pass is True
+
+    def test_aggregate_pass_false_when_score_below_threshold(
+        self, db, organization, workspace
+    ):
+        parent = _make_composite(
+            organization, workspace, "bt-comp", "avg", pass_threshold=0.7
+        )
+        child = _make_percentage_child(organization, workspace, "bt-child")
+        CompositeEvalChild.objects.create(
+            parent=parent, child=child, order=0, weight=1.0
+        )
+        links = list(
+            CompositeEvalChild.objects.filter(parent=parent)
+            .select_related("child")
+            .order_by("order")
+        )
+        with patch(
+            "model_hub.views.utils.evals.run_eval_func",
+            side_effect=_canned_by_name({"bt-child": 0.65}),
+        ):
+            outcome = execute_composite_children_sync(
+                parent=parent,
+                child_links=links,
+                mapping={"input": "x"},
+                config={},
+                org=organization,
+            )
+        assert outcome.aggregate_score == pytest.approx(0.65)
+        assert outcome.aggregate_pass is False
 
 
 # ---------------------------------------------------------------------------

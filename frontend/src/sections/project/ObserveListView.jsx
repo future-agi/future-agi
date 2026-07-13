@@ -12,11 +12,11 @@ import { useNavigate } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
-import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
 import PropTypes from "prop-types";
 import { DataTable, DataTablePagination } from "src/components/data-table";
 import VolumeBarChart from "./VolumeBarChart";
 import TagEditor from "./TagEditor";
+import { buildProjectListApiFilters } from "./common";
 
 // ── Helpers ──
 
@@ -74,23 +74,10 @@ const ObserveListView = forwardRef(
       : "updated_at";
     const sortOrder = sorting[0]?.desc ? "desc" : "asc";
 
-    // Build the operator-based filters payload via the canonical contract
-    // builder (same one every other list uses), so the project list speaks the
-    // full { column_id, filter_config: { filter_type, filter_op, filter_value } }
-    // shape and gets the builder's operator validation.
-    const apiFilters = useMemo(() => {
-      if (!filters?.length) return null;
-      const out = filters
-        .filter((f) => f.value != null && f.value !== "")
-        .map((f) =>
-          buildApiFilterFromPanelRow({
-            field: f.field, // "name" | "tags"
-            operator: f.operator || "contains", // "contains" | "equals"
-            value: f.value,
-          }),
-        );
-      return out.length ? JSON.stringify(out) : null;
-    }, [filters]);
+    const apiFilters = useMemo(
+      () => buildProjectListApiFilters(filters),
+      [filters],
+    );
 
     const { data: apiData, isLoading } = useQuery({
       queryKey: [

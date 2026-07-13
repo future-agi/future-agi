@@ -10,7 +10,6 @@ from enum import Enum
 from urllib.parse import urlparse
 
 import pandas as pd
-import requests
 import structlog
 from PIL import Image
 
@@ -23,6 +22,7 @@ from agentic_eval.core_evals.fi_evals.eval_type import (
     GroundedEvalTypeId,
     LlmEvalTypeId,
 )
+from tfc.utils.ssrf_guard import safe_fetch
 
 
 class ModalityType(str, Enum):
@@ -569,18 +569,14 @@ def is_document_url(url):
             if not parsed_url.netloc:  # No domain/host
                 return False
 
-            # Make a HEAD request to check if the URL is accessible
-            headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-            }
-            response = requests.head(
-                url, headers=headers, timeout=10, allow_redirects=True
-            )
+            try:
+                response = safe_fetch(url, method="HEAD")
+            except ValueError:
+                return False
 
             if response.status_code != 200:
                 return False
 
-            # Check if the response indicates it's a downloadable document
             content_type = response.headers.get("content-type", "").lower()
             content_length = response.headers.get("content-length")
 
@@ -1164,22 +1160,24 @@ def _check_media_strings(str_values, media_type):
     return True
 
 
+# is_document_url is the only network-bound check below; cap how many values it ever runs against so a big column can't cost hundreds of blocking HEAD requests (TH-5648 follow-up).
+_MAX_DOCUMENT_CHECK_SAMPLES = 20
+
+
 def _classify_url_column(str_values):
     """
     Classify a column of URLs by checking if all are of the same media type.
     """
-    all_audio_urls = all(is_audio_url(url) for url in str_values)
-    all_image_urls = all(is_image_url(url) for url in str_values)
-    all_document_urls = all(is_document_url(url) for url in str_values)
-
-    if all_audio_urls:
+    if all(is_audio_url(url) for url in str_values):
         return DataTypeChoices.AUDIO.value
-    elif all_image_urls:
+    if all(is_image_url(url) for url in str_values):
         return DataTypeChoices.IMAGE.value
-    elif all_document_urls:
+
+    sample = str_values[:_MAX_DOCUMENT_CHECK_SAMPLES]
+    if sample and all(is_document_url(url) for url in sample):
         return DataTypeChoices.DOCUMENT.value
-    else:
-        return DataTypeChoices.TEXT.value
+
+    return DataTypeChoices.TEXT.value
 
 
 def determine_data_type(column_values):

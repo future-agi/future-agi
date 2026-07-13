@@ -21,6 +21,27 @@ export const WIDTH_OPTIONS = [
 export const MIN_WIDGET_HEIGHT = 120;
 export const DEFAULT_WIDGET_HEIGHT = 320;
 
+export const AGGREGATION_OPTIONS = [
+  { label: "Sum", value: "sum" },
+  { label: "Average", value: "avg" },
+  { label: "Median", value: "median" },
+  { label: "Distinct Count", value: "count_distinct" },
+  { label: "Count", value: "count" },
+  { label: "Minimum", value: "min" },
+  { label: "Maximum", value: "max" },
+];
+
+export const PERCENTILE_OPTIONS = [
+  { label: "25th Percentile", value: "p25" },
+  { label: "50th Percentile", value: "p50" },
+  { label: "75th Percentile", value: "p75" },
+  { label: "90th Percentile", value: "p90" },
+  { label: "95th Percentile", value: "p95" },
+  { label: "99th Percentile", value: "p99" },
+];
+
+export const ALL_AGGREGATIONS = [...AGGREGATION_OPTIONS, ...PERCENTILE_OPTIONS];
+
 // Shared style for the date-filter chips (font from theme, not hardcoded).
 export const DATE_CHIP_SX = {
   typography: "caption",

@@ -1402,6 +1402,8 @@ function FilterRow({
   ValuePickerOverride,
   categories,
   freeSoloValues = false,
+  operatorFilter,
+  defaultOperatorForType,
 }) {
   const [pickerAnchor, setPickerAnchor] = useState(null);
   const selectedProp = properties.find((p) => p.id === filter.field);
@@ -1409,9 +1411,11 @@ function FilterRow({
   const isNumber = normalizedType === "number";
   const isDate = normalizedType === "date";
   const isBoolean = normalizedType === "boolean";
-  const ops = getOperatorsForFilter(filter);
+  const allOps = getOperatorsForFilter(filter);
+  // Optional per-flow allowlist; currentOpDef resolves against the full set.
+  const ops = operatorFilter ? allOps.filter(operatorFilter) : allOps;
   const safeOperator = normalizeFilterRowOperator(filter).operator;
-  const currentOpDef = ops.find((o) => o.value === safeOperator);
+  const currentOpDef = allOps.find((o) => o.value === safeOperator);
   const updateRow = useCallback(
     (changes) =>
       onChange(index, {
@@ -1445,9 +1449,10 @@ function FilterRow({
           ? prop.type
           : normalizeFieldType(prop.type);
       // ID-only fields only support "is"; fallback would render blank.
+      // defaultOperatorForType: optional per-flow { type: op } override.
       const defaultOp = ID_ONLY_FIELDS.has(prop.id)
         ? "is"
-        : DEFAULT_OP_FOR_TYPE[nt] || "equals";
+        : defaultOperatorForType?.[nt] || DEFAULT_OP_FOR_TYPE[nt] || "equals";
       let defaultValue;
       if (nt === "number" || nt === "date") defaultValue = "";
       else if (nt === "boolean") defaultValue = "true";
@@ -1463,7 +1468,7 @@ function FilterRow({
         value: defaultValue,
       });
     },
-    [index, onChange],
+    [index, onChange, defaultOperatorForType],
   );
 
   const handleOperatorChange = useCallback(
@@ -1852,6 +1857,8 @@ const TraceFilterPanel = ({
   showQueryTab = true,
   categories: categoriesOverride,
   propertyFilter,
+  operatorFilter,
+  defaultOperatorForType,
   panelWidth,
   defaultRow: defaultRowOverride,
   isSimulator = false,
@@ -1913,6 +1920,8 @@ const TraceFilterPanel = ({
   const effectiveDefaultRow = defaultRowOverride || DEFAULT_ROW;
   const [activeTab, setActiveTab] = useState("basic");
   const [aiQuery, setAiQuery] = useState("");
+  // True when the last AI query returned zero filters (shows inline hint).
+  const [aiEmpty, setAiEmpty] = useState(false);
   // AI filter schema: exclude `attribute` category — those are typically
   // 100s–1000s of free-form keys that aren't referenced by name in natural
   // language and only slow step-1 field selection down without helping.
@@ -2074,11 +2083,14 @@ const TraceFilterPanel = ({
   );
 
   const queryGetOperators = useCallback(
-    (type, field) =>
-      getOperatorsForFilter({ field, fieldType: type }).map((op) =>
+    (type, field) => {
+      const ops = getOperatorsForFilter({ field, fieldType: type });
+      const allowed = operatorFilter ? ops.filter(operatorFilter) : ops;
+      return allowed.map((op) =>
         NO_VALUE_OPS.has(op.value) ? { ...op, noValue: true } : op,
-      ),
-    [],
+      );
+    },
+    [operatorFilter],
   );
 
   const handleChange = useCallback((idx, updated) => {
@@ -2123,15 +2135,16 @@ const TraceFilterPanel = ({
     };
   }, [rows, open, applyIfChanged]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Flush on close: if a value was entered then the popover closed before the
-  // 350ms debounce fired, run the pending apply immediately so the filter
-  // isn't dropped. On the Query tab a value can be typed but not committed
-  // (no Enter) — it lives only in QueryInput's internal state, so flush that
-  // partial token to rows first. applyIfChanged dedups, so an unchanged set
-  // is a no-op.
+  // Flush pending apply on close; bypass ref lets programmatic applies skip it.
   const wasOpenRef = useRef(open);
+  const bypassNextCloseFlushRef = useRef(false);
   useEffect(() => {
     if (wasOpenRef.current && !open) {
+      if (bypassNextCloseFlushRef.current) {
+        bypassNextCloseFlushRef.current = false;
+        wasOpenRef.current = open;
+        return;
+      }
       if (autoApplyTimerRef.current) {
         clearTimeout(autoApplyTimerRef.current);
         autoApplyTimerRef.current = null;
@@ -2157,13 +2170,14 @@ const TraceFilterPanel = ({
 
   const handleAiFilter = useCallback(async () => {
     if (!aiQuery.trim()) return;
+    setAiEmpty(false);
     const aiFilters = await aiParseQuery(aiQuery, {
       smart: true,
       projectId: observeId,
       source,
     });
     if (aiFilters.length > 0) {
-      const converted = aiFilters.map((f) => {
+      const aiRows = aiFilters.map((f) => {
         const prop = properties.find((p) => p.id === f.field);
         const fieldType = prop?.type || "string";
         return {
@@ -2175,16 +2189,28 @@ const TraceFilterPanel = ({
           value: Array.isArray(f.value) ? f.value : [f.value],
         };
       });
-      // Apply the same normalized/valid-filtered shape every other path sends,
-      // and seed lastAppliedRef with it so dedup matches what we actually sent.
-      const validFilters = computeValidFilters(converted);
-      setRows(converted);
+      // Additive: append AI rows to existing valid filters, no dedup.
+      const merged = [...(computeValidFilters(rows) || []), ...aiRows];
+      const validFilters = computeValidFilters(merged);
+      setRows(merged);
       lastAppliedRef.current = serializeFilterSet(validFilters);
       onApply(validFilters);
       setAiQuery("");
+      bypassNextCloseFlushRef.current = true;
       onClose();
+    } else {
+      setAiEmpty(true);
     }
-  }, [aiQuery, aiParseQuery, observeId, source, properties, onApply, onClose]);
+  }, [
+    aiQuery,
+    aiParseQuery,
+    observeId,
+    source,
+    properties,
+    rows,
+    onApply,
+    onClose,
+  ]);
 
   return (
     <Popover
@@ -2219,7 +2245,10 @@ const TraceFilterPanel = ({
                   : "Ask AI — e.g. 'show traces with errors on gpt-4'"
               }
               value={aiQuery}
-              onChange={(e) => setAiQuery(e.target.value)}
+              onChange={(e) => {
+                setAiQuery(e.target.value);
+                setAiEmpty(false);
+              }}
               disabled={aiLoading}
               onKeyDown={(e) => {
                 if (e.key === "Enter") handleAiFilter();
@@ -2266,6 +2295,15 @@ const TraceFilterPanel = ({
                 sx={{ fontSize: 11, color: "text.secondary", px: 0.5 }}
               >
                 AI unavailable, use filters below
+              </Typography>
+            )}
+            {aiEmpty && !aiError && !aiLoading && (
+              <Typography
+                variant="caption"
+                sx={{ fontSize: 11, color: "text.secondary", px: 0.5 }}
+              >
+                Could not derive filters from that query. Try rephrasing or add
+                a filter manually below.
               </Typography>
             )}
           </>
@@ -2318,6 +2356,8 @@ const TraceFilterPanel = ({
                     ValuePickerOverride={ValuePickerOverride}
                     categories={effectiveCategories}
                     freeSoloValues={freeSoloValues}
+                    operatorFilter={operatorFilter}
+                    defaultOperatorForType={defaultOperatorForType}
                   />
                 ))}
               </Stack>
@@ -2431,6 +2471,8 @@ TraceFilterPanel.propTypes = {
   showQueryTab: PropTypes.bool,
   categories: PropTypes.array,
   propertyFilter: PropTypes.func,
+  operatorFilter: PropTypes.func,
+  defaultOperatorForType: PropTypes.object,
   panelWidth: PropTypes.number,
   defaultRow: PropTypes.object,
   isSimulator: PropTypes.bool,

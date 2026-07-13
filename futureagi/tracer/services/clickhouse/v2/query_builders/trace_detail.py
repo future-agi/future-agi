@@ -25,6 +25,7 @@ from tracer.services.clickhouse.query_builders.trace_detail import (
     compute_trace_summary_and_graph,
 )
 from tracer.services.clickhouse.v2.query_builders._rewrite import V2RewriteMixin
+from tracer.services.clickhouse.v2.span_reader import merge_span_attributes
 
 if TYPE_CHECKING:
     from rest_framework.request import Request
@@ -158,24 +159,12 @@ def retrieve_trace_detail_ch(
 
         provider = row.get("provider")
 
-        # Build span_attributes from raw JSON or decomposed maps
-        span_attrs_raw = row.get("span_attributes") or "{}"
-        try:
-            span_attrs = (
-                _json.loads(span_attrs_raw)
-                if isinstance(span_attrs_raw, str)
-                else span_attrs_raw
-            )
-        except (ValueError, TypeError):
-            span_attrs = {}
-        if not span_attrs:
-            span_attrs = {}
-            for k, v in (row.get("attrs_string") or {}).items():
-                span_attrs[k] = v
-            for k, v in (row.get("attrs_number") or {}).items():
-                span_attrs[k] = v
-            for k, v in (row.get("attrs_bool") or {}).items():
-                span_attrs[k] = bool(v)
+        span_attrs = merge_span_attributes(
+            row.get("attrs_string"),
+            row.get("attrs_number"),
+            row.get("attrs_bool"),
+            row.get("span_attributes"),
+        )
         # Fallback: if CH has no span_attributes, try PG (skipped on a CH-only
         # deployment where `tracer_observation_span` is dropped — the query
         # raises and we fall through to the empty attrs).
