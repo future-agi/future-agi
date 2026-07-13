@@ -19,6 +19,7 @@ Every method on ``Billing`` has:
   - a stub test on ``BillingEventType``                            → OSS attribute → lowercase value
 """
 
+import importlib.util
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -265,6 +266,10 @@ class TestNoopBillingGatewayClientsRaise:
 # ── _EeBilling delegation ────────────────────────────────────────────────────
 
 
+@pytest.mark.skipif(
+    importlib.util.find_spec("ee") is None,
+    reason="delegation tests patch ee.usage import paths; requires the ee package",
+)
 class TestEeBillingDelegation:
     """``_EeBilling`` methods delegate to ``ee.usage`` via lazy imports.
 
