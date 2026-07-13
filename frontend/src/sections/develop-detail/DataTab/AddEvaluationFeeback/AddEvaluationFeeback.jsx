@@ -32,6 +32,7 @@ import { useAddEvaluationFeebackStore } from "../../states";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 import {
   FEEDBACK_OUTPUT_TYPES as OUTPUT,
+  getCurrentValue,
   getReason,
   serializeFeedbackValue,
   toArray,
@@ -365,10 +366,29 @@ export const FeedBackForm = ({
   isMulti,
 }) => {
   const choices = feedbackData?.choices || [];
+  const choiceScores = feedbackData?.choice_scores;
   const reasonText = getReason(data);
+  const currentValue = getCurrentValue(data, choiceScores);
 
   const renderValueInput = () => {
     if (!feedbackData) return null;
+
+    // When choice_scores is defined the LLM always emits a choice label (the
+    // score is derived from the map), so the feedback widget must be a picker
+    // regardless of the eval's raw output_type.
+    if (choiceScores && Object.keys(choiceScores).length > 0) {
+      return (
+        <RadioField
+          label="Select a right value"
+          control={control}
+          fieldName="value"
+          options={Object.keys(choiceScores).map((label) => ({
+            label: `${label} (score ${choiceScores[label]})`,
+            value: label,
+          }))}
+        />
+      );
+    }
 
     if (outputType === OUTPUT.REASON) {
       return (
@@ -395,8 +415,8 @@ export const FeedBackForm = ({
           fieldName="value"
           variant="filled"
           type="number"
-          inputProps={{ min: 0, max: 100 }}
-          helperText="Enter a number between 0 and 100"
+          inputProps={{ min: 0, max: 1, step: "any" }}
+          helperText="Enter a number between 0 and 1"
         />
       );
     }
@@ -473,12 +493,30 @@ export const FeedBackForm = ({
         borderRadius={1}
         padding={1.5}
       >
+        {currentValue && (
+          <Box mb={reasonText ? 1.25 : 0}>
+            <Typography
+              fontSize={12}
+              fontWeight={700}
+              letterSpacing="0.02em"
+              color="text.secondary"
+              textTransform="uppercase"
+            >
+              Current output
+            </Typography>
+            <Typography fontSize={14} color="text.primary">
+              {currentValue}
+            </Typography>
+          </Box>
+        )}
         {reasonText ? (
           <CellMarkdown spacing={0} text={reasonText} />
         ) : (
-          <Typography color="text.disabled" fontSize={14}>
-            Unable to fetch Explanation
-          </Typography>
+          !currentValue && (
+            <Typography color="text.disabled" fontSize={14}>
+              Unable to fetch Explanation
+            </Typography>
+          )
         )}
       </Box>
 

@@ -11195,6 +11195,7 @@ class FeedbackViewSet(viewsets.ModelViewSet):
                 "eval_description": eval_template.description,
                 "eval_name": eval_template.name,
                 "user_eval_name": user_eval_metric.name,
+                "choice_scores": eval_template.choice_scores or None,
             }
 
             if template_data["output_type"] == EVAL_OUTPUT_TYPES["PASS_FAIL"]:

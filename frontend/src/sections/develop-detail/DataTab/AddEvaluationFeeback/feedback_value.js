@@ -32,6 +32,20 @@ export const toArray = (value) => {
 export const serializeFeedbackValue = (value) =>
   Array.isArray(value) ? JSON.stringify(value) : value;
 
+// The eval's current output for this cell, formatted for display in the
+// feedback panel. When choice_scores is defined the LLM emits a choice label
+// and the score is derived from the map — show both so the user can see the
+// value they're correcting. Falls back to the raw cell value otherwise.
+export const getCurrentValue = (data, choiceScores) => {
+  const raw = data?.value;
+  if (raw === null || raw === undefined || raw === "") return "";
+  const asString = String(raw);
+  if (choiceScores && typeof choiceScores === "object" && asString in choiceScores) {
+    return `${asString} (score ${choiceScores[asString]})`;
+  }
+  return asString;
+};
+
 // The eval's explanation for this cell. Cells store value-infos under either
 // `value_infos` or `valueInfos`, and the explanation under `reason` or
 // `summary` — mirror the eval panel's own fallback chain. The experiment shape
