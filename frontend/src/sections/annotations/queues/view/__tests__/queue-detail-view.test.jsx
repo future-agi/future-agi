@@ -45,6 +45,66 @@ vi.mock("src/components/snackbar", () => ({
   enqueueSnackbar: vi.fn(),
 }));
 
+// Module-level constants so mock hooks return stable references across renders.
+// Returning new object literals on every call would trigger infinite re-render
+// loops with any useEffect that depends on these values (e.g. the bulk-assign
+// annotator sync effect).
+const MOCK_QUEUE_DETAIL = {
+  data: {
+    id: "queue-1",
+    name: "Bulk Queue",
+    status: "active",
+    viewer_role: "manager",
+    viewer_roles: ["manager"],
+    annotators: [
+      {
+        user_id: "manager-1",
+        role: "manager",
+        roles: ["manager"],
+        name: "Manager",
+        email: "manager@example.com",
+      },
+      {
+        user_id: "annotator-1",
+        role: "annotator",
+        roles: ["annotator"],
+        name: "Alice",
+        email: "alice@example.com",
+      },
+      {
+        user_id: "annotator-2",
+        role: "annotator",
+        roles: ["annotator"],
+        name: "Bob",
+        email: "bob@example.com",
+      },
+    ],
+  },
+};
+
+const MOCK_QUEUE_ITEMS = {
+  data: {
+    results: [
+      {
+        id: "item-1",
+        status: "pending",
+        review_status: "pending_review",
+        source_type: "trace",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    ],
+    count: 1,
+  },
+  isLoading: false,
+  fetchNextPage: vi.fn(),
+  hasNextPage: false,
+  isFetchingNextPage: false,
+};
+
+const MOCK_QUEUE_PROGRESS = {
+  data: { total: 1, skipped: 0 },
+};
+
 vi.mock("src/api/annotation-queues/annotation-queues", () => ({
   annotateKeys: {
     nextItem: (...args) => ["next-item", ...args],
@@ -57,59 +117,9 @@ vi.mock("src/api/annotation-queues/annotation-queues", () => ({
   queueItemKeys: {
     all: (...args) => ["queue-items", ...args],
   },
-  useAnnotationQueueDetail: () => ({
-    data: {
-      id: "queue-1",
-      name: "Bulk Queue",
-      status: "active",
-      viewer_role: "manager",
-      viewer_roles: ["manager"],
-      annotators: [
-        {
-          user_id: "manager-1",
-          role: "manager",
-          roles: ["manager"],
-          name: "Manager",
-          email: "manager@example.com",
-        },
-        {
-          user_id: "annotator-1",
-          role: "annotator",
-          roles: ["annotator"],
-          name: "Alice",
-          email: "alice@example.com",
-        },
-        {
-          user_id: "annotator-2",
-          role: "annotator",
-          roles: ["annotator"],
-          name: "Bob",
-          email: "bob@example.com",
-        },
-      ],
-    },
-  }),
-  useQueueItems: () => ({
-    data: {
-      results: [
-        {
-          id: "item-1",
-          status: "pending",
-          review_status: "pending_review",
-          source_type: "trace",
-          created_at: "2026-01-01T00:00:00Z",
-        },
-      ],
-      count: 1,
-    },
-    isLoading: false,
-    fetchNextPage: vi.fn(),
-    hasNextPage: false,
-    isFetchingNextPage: false,
-  }),
-  useQueueProgress: () => ({
-    data: { total: 1, skipped: 0 },
-  }),
+  useAnnotationQueueDetail: () => MOCK_QUEUE_DETAIL,
+  useQueueItems: () => MOCK_QUEUE_ITEMS,
+  useQueueProgress: () => MOCK_QUEUE_PROGRESS,
   useRemoveQueueItem: () => ({ mutate: vi.fn() }),
   useBulkRemoveQueueItems: () => ({ mutate: vi.fn(), isPending: false }),
   useBulkReviewItems: () => ({ mutate: vi.fn(), isPending: false }),

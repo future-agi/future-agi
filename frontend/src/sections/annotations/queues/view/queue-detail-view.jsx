@@ -1,4 +1,10 @@
-import React, { useState, useCallback, useMemo, useRef } from "react";
+import React, {
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+  useEffect,
+} from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthContext } from "src/auth/hooks";
@@ -284,6 +290,19 @@ export default function QueueDetailView() {
     setBulkAssignUserIds(new Set());
     setBulkAssignOpen(true);
   }, []);
+
+  // Keep bulkAssignUserIds in sync if queueAnnotators change while dialog is open.
+  // - Remove any selected ids that are no longer present in queueAnnotators
+  // - Preserve other selections when annotators list shrinks/changes
+  useEffect(() => {
+    if (!bulkAssignOpen) return;
+    const annotatorIds = new Set(queueAnnotators.map((a) => String(a.user_id)));
+    setBulkAssignUserIds((prev) => {
+      const next = new Set();
+      for (const id of prev) if (annotatorIds.has(id)) next.add(id);
+      return next;
+    });
+  }, [bulkAssignOpen, queueAnnotators]);
 
   const handleAddedSortChange = useCallback((direction) => {
     setItemOrdering(direction === "asc" ? "created_at" : "-created_at");
@@ -823,6 +842,34 @@ export default function QueueDetailView() {
       >
         <DialogTitle>Assign Selected Items</DialogTitle>
         <DialogContent>
+          {queueAnnotators.length > 1 && (
+            <Stack direction="row" spacing={1} sx={{ mb: 1 }}>
+              <Button
+                size="small"
+                onClick={() => {
+                  const allUserIds = new Set(
+                    queueAnnotators.map((a) => String(a.user_id)),
+                  );
+                  const allSelected =
+                    bulkAssignUserIds.size === queueAnnotators.length;
+                  setBulkAssignUserIds(allSelected ? new Set() : allUserIds);
+                }}
+                disabled={isAssigningItems}
+              >
+                {bulkAssignUserIds.size === queueAnnotators.length
+                  ? "Deselect All"
+                  : "Select All"}
+              </Button>
+              <Button
+                size="small"
+                onClick={() => setBulkAssignUserIds(new Set())}
+                disabled={isAssigningItems}
+              >
+                Select None
+              </Button>
+            </Stack>
+          )}
+
           <Stack spacing={0.5} sx={{ mt: 1 }}>
             {queueAnnotators.map((annotator) => {
               const uid = String(annotator.user_id);
