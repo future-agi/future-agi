@@ -10,6 +10,8 @@ import { enqueueSnackbar } from "src/components/snackbar";
 import axios, { endpoints } from "src/utils/axios";
 import { ReactFlowProvider } from "@xyflow/react";
 import { ValidateAndTransformGraphSchema } from "src/components/GraphBuilder/validation";
+import { validateGraphConnectivity } from "src/components/GraphBuilder/connectivity";
+import DisconnectedNodesToast from "src/components/GraphBuilder/DisconnectedNodesToast";
 import { useGraphStore } from "src/components/GraphBuilder/store/graphStore";
 import { hasGraphChanged } from "./common";
 import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
@@ -79,9 +81,12 @@ const GraphPreview = ({ scenario, agentType, viewOnly = false }) => {
   };
 
   const handleSaveChanges = () => {
+    const currentNodes = useGraphStore.getState().nodes;
+    const currentEdges = useGraphStore.getState().edges;
+
     const validatedGraph = ValidateAndTransformGraphSchema().safeParse({
-      nodes: useGraphStore.getState().nodes,
-      edges: useGraphStore.getState().edges,
+      nodes: currentNodes,
+      edges: currentEdges,
     });
 
     if (!validatedGraph.success) {
@@ -89,6 +94,26 @@ const GraphPreview = ({ scenario, agentType, viewOnly = false }) => {
         ?.map((error) => error.message)
         .join(", ");
       enqueueSnackbar(messageString, { variant: "error" });
+      setOpenConfirmClose(false);
+      return;
+    }
+
+    const { orphanNames, orphanIds, noStartNode } = validateGraphConnectivity(
+      currentNodes,
+      currentEdges,
+    );
+    useGraphStore.getState().setOrphanHighlights(orphanIds);
+    if (noStartNode) {
+      enqueueSnackbar("Graph has no start node. Add one before saving.", {
+        variant: "error",
+      });
+      setOpenConfirmClose(false);
+      return;
+    }
+    if (orphanIds.length > 0) {
+      enqueueSnackbar(<DisconnectedNodesToast names={orphanNames} />, {
+        variant: "error",
+      });
       setOpenConfirmClose(false);
       return;
     }

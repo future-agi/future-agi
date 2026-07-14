@@ -17854,10 +17854,60 @@ export const OPENAPI_CONTRACT = Object.freeze({
     "/model-hub/eval-templates/{template_id}/usage/": {
       "get": {
         "operationId": "model-hub_eval-templates_usage_list",
-        "runtimeRequestValidation": false,
-        "runtimeResponseValidation": false,
+        "runtimeRequestValidation": true,
+        "runtimeResponseValidation": true,
         "requestBody": null,
-        "queryParameters": {},
+        "queryParameters": {
+          "page": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000,
+              "default": 0
+            }
+          },
+          "page_size": {
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            }
+          },
+          "period": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "30m",
+                "6h",
+                "1d",
+                "7d",
+                "30d",
+                "90d",
+                "180d",
+                "365d"
+              ],
+              "default": "30d"
+            }
+          },
+          "start_date": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "end_date": {
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        },
         "responses": {
           "200": {
             "$ref": "#/definitions/EvalUsageStatsResponse"
@@ -50187,13 +50237,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "model": {
           "title": "Model",
           "type": "string",
-          "enum": [
-            "turing_large",
-            "turing_small",
-            "protect",
-            "protect_flash",
-            "turing_flash"
-          ],
+          "maxLength": 255,
           "x-nullable": true
         },
         "eval_group": {
@@ -58333,8 +58377,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "response_format": {
           "title": "Response format",
-          "description": "JSON schema for response format if required. Defaults to None.",
-          "type": "object"
+          "description": "String or JSON object.",
+          "type": "object",
+          "x-string-or-object": true
         },
         "tool_choice": {
           "title": "Tool choice",
@@ -67661,6 +67706,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Dataset rows",
           "type": "integer",
           "readOnly": true
+        },
+        "dataset_column_config": {
+          "title": "Dataset column config",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/definitions/DatasetColumnConfigEntry"
+          },
+          "readOnly": true,
+          "x-nullable": true
         }
       }
     },
@@ -74939,13 +74993,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "model": {
           "title": "Model",
           "type": "string",
-          "enum": [
-            "turing_large",
-            "turing_small",
-            "protect",
-            "protect_flash",
-            "turing_flash"
-          ],
+          "maxLength": 255,
           "x-nullable": true
         },
         "status": {
@@ -75187,10 +75235,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "response_format": {
           "title": "Response format",
-          "description": "Any valid JSON value.",
+          "description": "String or JSON object.",
           "type": "object",
           "x-nullable": true,
-          "x-json-value": true
+          "x-string-or-object": true
         },
         "tool_choice": {
           "title": "Tool choice",
@@ -77217,7 +77265,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "response_format": {
           "title": "Response format",
-          "type": "object"
+          "type": "object",
+          "x-string-or-object": true,
+          "description": "String or JSON object."
         },
         "tool_choice": {
           "title": "Tool choice",
@@ -77822,9 +77872,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "response_format": {
           "title": "Response format",
-          "description": "LLM output format: 'text' (plain text), 'json' (free-form JSON), 'json_schema' (structured with schema), UUID string (saved schema reference), or object with 'id' field (prompt playground format). See class docstring for details.",
+          "description": "String or JSON object.",
           "type": "object",
-          "default": "text"
+          "default": "text",
+          "x-string-or-object": true
         },
         "response_schema": {
           "title": "Response schema",
@@ -80478,6 +80529,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "is_composite",
         "stats",
         "chart",
+        "table",
         "logs"
       ],
       "type": "object",
@@ -80500,8 +80552,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/EvalUsageChartPoint"
           }
         },
+        "table": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/EvalUsageTableRow"
+          }
+        },
         "logs": {
-          "$ref": "#/definitions/EvalUsageLogs"
+          "$ref": "#/definitions/EvalUsagePagination"
         }
       }
     },
@@ -88090,6 +88148,23 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "DatasetColumnConfigEntry": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        }
+      }
+    },
     "ScenarioPromptItem": {
       "type": "object",
       "properties": {
@@ -93488,21 +93563,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "EvalUsageLogs": {
+    "EvalUsagePagination": {
       "required": [
-        "items",
         "total",
         "page",
         "page_size"
       ],
       "type": "object",
       "properties": {
-        "items": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/EvalUsageLogItem"
-          }
-        },
         "total": {
           "title": "Total",
           "type": "integer"
@@ -93548,6 +93616,62 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "type": "number"
         }
       }
+    },
+    "EvalUsageTableRow": {
+      "required": [
+        "row_id"
+      ],
+      "type": "object",
+      "properties": {
+        "row_id": {
+          "title": "Row id",
+          "type": "string",
+          "minLength": 1
+        },
+        "score": {
+          "$ref": "#/definitions/EvalUsageNumberCell"
+        },
+        "result": {
+          "$ref": "#/definitions/EvalUsageStringCell"
+        },
+        "input": {
+          "$ref": "#/definitions/EvalUsageStringCell"
+        },
+        "reason": {
+          "$ref": "#/definitions/EvalUsageStringCell"
+        },
+        "source": {
+          "$ref": "#/definitions/EvalUsageStringCell"
+        },
+        "version": {
+          "$ref": "#/definitions/EvalUsageStringCell"
+        },
+        "feedback": {
+          "$ref": "#/definitions/EvalUsageFeedbackCell"
+        },
+        "created_at": {
+          "$ref": "#/definitions/EvalUsageStringCell"
+        },
+        "status": {
+          "$ref": "#/definitions/EvalUsageStringCell"
+        },
+        "warnings": {
+          "$ref": "#/definitions/EvalUsageWarningsCell"
+        },
+        "detail": {
+          "$ref": "#/definitions/EvalUsageLogItemDetail"
+        },
+        "composite": {
+          "title": "Composite",
+          "type": "boolean"
+        },
+        "aggregate_pass": {
+          "title": "Aggregate pass",
+          "type": "boolean",
+          "x-nullable": true
+        }
+      },
+      "additionalProperties": true
     },
     "ExperimentComparisonDetail": {
       "required": [
@@ -98941,66 +99065,124 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
-    "EvalUsageLogItem": {
-      "required": [
-        "id",
-        "input",
-        "status",
-        "created_at",
-        "detail"
-      ],
+    "EvalUsageFeedbackCell": {
       "type": "object",
       "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "format": "uuid"
-        },
-        "input": {
-          "title": "Input",
-          "type": "string"
-        },
-        "result": {
-          "title": "Result",
-          "type": "string"
-        },
-        "score": {
-          "title": "Score",
-          "type": "number",
+        "cell_value": {
+          "$ref": "#/definitions/EvalUsageFeedback"
+        }
+      }
+    },
+    "EvalUsageLogItemDetail": {
+      "type": "object",
+      "properties": {
+        "input_variables": {
+          "title": "Input variables",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
           "x-nullable": true
         },
-        "reason": {
-          "title": "Reason",
-          "type": "string"
+        "output": {
+          "title": "Output",
+          "type": "object",
+          "x-nullable": true
         },
-        "status": {
-          "title": "Status",
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "x-nullable": true
+          },
+          "default": []
+        },
+        "mappings": {
+          "title": "Mappings",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {},
+          "x-nullable": true
+        },
+        "model": {
+          "title": "Model",
+          "type": "object",
+          "x-nullable": true,
+          "x-string-or-object": true,
+          "description": "String or JSON object."
+        },
+        "version_id": {
+          "title": "Version id",
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "x-nullable": true
         },
-        "source": {
-          "title": "Source",
-          "type": "string"
+        "version_number": {
+          "title": "Version number",
+          "type": "integer",
+          "x-nullable": true
         },
-        "created_at": {
-          "title": "Created at",
+        "children": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "x-nullable": true
+          },
+          "default": []
+        },
+        "aggregation_function": {
+          "title": "Aggregation function",
           "type": "string",
-          "minLength": 1
+          "x-nullable": true
         },
-        "detail": {
-          "title": "Detail",
-          "type": "object"
+        "total_children": {
+          "title": "Total children",
+          "type": "integer",
+          "x-nullable": true
         },
-        "feedback": {
-          "$ref": "#/definitions/EvalUsageFeedback"
+        "completed_children": {
+          "title": "Completed children",
+          "type": "integer",
+          "x-nullable": true
         },
-        "composite": {
-          "title": "Composite",
-          "type": "boolean"
-        },
-        "aggregate_pass": {
-          "title": "Aggregate pass",
-          "type": "boolean",
+        "failed_children": {
+          "title": "Failed children",
+          "type": "integer",
+          "x-nullable": true
+        }
+      }
+    },
+    "EvalUsageNumberCell": {
+      "type": "object",
+      "properties": {
+        "cell_value": {
+          "title": "Cell value",
+          "type": "number",
+          "x-nullable": true
+        }
+      }
+    },
+    "EvalUsageStringCell": {
+      "type": "object",
+      "properties": {
+        "cell_value": {
+          "title": "Cell value",
+          "type": "string",
+          "x-nullable": true
+        }
+      }
+    },
+    "EvalUsageWarningsCell": {
+      "type": "object",
+      "properties": {
+        "cell_value": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          },
           "x-nullable": true
         }
       }
@@ -99712,7 +99894,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "value": {
           "title": "Value",
-          "type": "object",
+          "type": "string",
           "x-nullable": true
         },
         "explanation": {

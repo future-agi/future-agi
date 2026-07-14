@@ -47,6 +47,29 @@ custom_prompt_eval_types = ["CustomPrompt"]
 EXPERIMENT = "experiment"
 OBSERVE = "observe"
 
+
+def _stamp_eval_version(source_config, eval_template):
+    """Record which template version produced this usage log.
+
+    Tracer executions always run the template's default (active) version —
+    per-metric pinning doesn't apply here — so the default is what gets
+    stamped. Best-effort: a stamping failure must never block the eval run.
+    """
+    try:
+        from model_hub.models.evals_metric import EvalTemplateVersion
+
+        version = EvalTemplateVersion.objects.get_default(eval_template)
+        if version:
+            source_config["version_id"] = str(version.id)
+            source_config["version_number"] = version.version_number
+    except Exception:
+        logger.warning(
+            "version_tracking_failed",
+            path="tracer_eval",
+            template_id=str(getattr(eval_template, "id", None)),
+            exc_info=True,
+        )
+
 # Re-export for backward compat
 from tracer.utils.eval_helpers import resolve_eval_config_id  # noqa: F401, E402
 
@@ -849,6 +872,7 @@ def _run_evaluation(
         )
         if feedback_id:
             source_config.update({"feedback_id": str(feedback_id)})
+        _stamp_eval_version(source_config, eval_model)
 
         api_call_type = _get_api_call_type(custom_eval_config.model)
 
@@ -1483,6 +1507,7 @@ def _execute_evaluation(
     }
     if feedback_id:
         source_config["feedback_id"] = str(feedback_id)
+    _stamp_eval_version(source_config, eval_model)
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
     workspace = observation_span.project.workspace
@@ -3165,6 +3190,7 @@ def _execute_evaluation_for_trace(
     }
     if feedback_id:
         source_config["feedback_id"] = str(feedback_id)
+    _stamp_eval_version(source_config, eval_template)
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
     billing = get_billing()
@@ -3398,6 +3424,7 @@ def _execute_evaluation_for_session(
     }
     if feedback_id:
         source_config["feedback_id"] = str(feedback_id)
+    _stamp_eval_version(source_config, eval_template)
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
     billing = get_billing()

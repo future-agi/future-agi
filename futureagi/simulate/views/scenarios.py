@@ -580,6 +580,42 @@ class CreateScenarioView(APIView):
             raise Exception(f"Failed to create simulator agent: {str(e)}")  # noqa: B904
 
 
+
+import logging
+
+logger = logging.getLogger(__name__)
+
+def get_dataset_column_config(dataset) -> dict[str, dict[str, str]] | None:
+    if dataset is None:
+        return None
+    column_order = dataset.column_order or []
+    columns_by_id = {
+        col.id: col
+        for col in Column.objects.filter(
+            deleted=False,
+            id__in=column_order,
+            dataset=dataset,
+        )
+    }
+    
+    config = {}
+    for cid in column_order:
+        if cid not in columns_by_id:
+            logger.warning(
+                "scenario_column_order_references_missing_column",
+                extra={
+                    "dataset_id": str(dataset.id),
+                    "column_id": str(cid),
+                }
+            )
+            continue
+            
+        config[str(cid)] = {
+            "name": columns_by_id[cid].name,
+            "type": columns_by_id[cid].data_type,
+        }
+    return config
+
 class ScenarioDetailView(APIView):
     """
     API View to get details of a specific scenario
@@ -659,6 +695,9 @@ class ScenarioDetailView(APIView):
                 response_data["dataset_rows"] = dataset_rows
             else:
                 response_data["dataset_rows"] = 0
+
+            # Add dataset column config so frontend can show actual column names in eval mapping
+            response_data["dataset_column_config"] = get_dataset_column_config(scenario.dataset)
 
             # Return the response — pass through serializer to whitelist permitted fields
             return Response(

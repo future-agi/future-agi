@@ -116,7 +116,12 @@ from model_hub.models.develop_dataset import (
 from model_hub.models.develop_optimisation import (
     OptimizationDataset,
 )
-from model_hub.models.evals_metric import EvalTemplate, Feedback, UserEvalMetric
+from model_hub.models.evals_metric import (
+    EvalTemplate,
+    EvalTemplateVersion,
+    Feedback,
+    UserEvalMetric,
+)
 from model_hub.models.experiments import ExperimentDatasetTable, ExperimentsTable
 from model_hub.models.optimize_dataset import OptimizeDataset
 from model_hub.models.run_prompt import PromptVersion, RunPrompter
@@ -7072,6 +7077,7 @@ class GetEvalsListView(APIView):
         )
 
         if search_text:
+            from model_hub.utils.eval_list import normalize_search_for_name
             eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
 
         if validated_data.get("eval_tags"):
@@ -11686,8 +11692,11 @@ def run_evaluation_task(evaluation_data):
         metric_ids = evaluation_data["metric_ids"]
         row_ids = evaluation_data["row_ids"]
 
-        # Update status for all metrics
-        metrics = UserEvalMetric.objects.filter(id__in=metric_ids)
+        # Update status for all metrics. select_related avoids an N+1 when
+        # version stamping resolves each metric's pinned/default version.
+        metrics = UserEvalMetric.objects.filter(id__in=metric_ids).select_related(
+            "template", "pinned_version"
+        )
         metric_map = {str(metric.id): metric for metric in list(metrics)}
         metrics.update(status=StatusType.RUNNING.value)
 
@@ -11784,6 +11793,26 @@ def run_evaluation_task(evaluation_data):
                             "dataset_id", str(metric.dataset_id)
                         )
                     runner_source_configs.setdefault("source", "dataset")
+                    # Stamp which eval version will run — pinned wins, else
+                    # the template default (resolve_for_metric).
+                    try:
+                        version = EvalTemplateVersion.objects.resolve_for_metric(
+                            metric
+                        )
+                        if version:
+                            runner_source_configs.setdefault(
+                                "version_id", str(version.id)
+                            )
+                            runner_source_configs.setdefault(
+                                "version_number", version.version_number
+                            )
+                    except Exception:
+                        logger.warning(
+                            "version_tracking_failed",
+                            path="dataset_batch_eval",
+                            metric_id=str(metric_id),
+                            exc_info=True,
+                        )
                     runner_args["source_configs"] = runner_source_configs
 
                     evaluation_runner = EvaluationRunner(

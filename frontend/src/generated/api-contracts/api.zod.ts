@@ -3192,9 +3192,7 @@ export const AgentPlaygroundGraphsVersionsNodesCreateBody = zod.object({
   "pdf_url": zod.string().url().min(1).optional().describe('PDF URL (required when type=pdf_url)')
 }).describe('Array of content items')).describe('Array of content items')
 }).describe('Array of message objects with id, role, and content array')).describe('Array of message objects with id, role, and content array'),
-  "response_format": zod.object({
-
-}).passthrough().default(agentPlaygroundGraphsVersionsNodesCreateBodyPromptTemplateResponseFormatDefault).describe('LLM output format: \'text\' (plain text), \'json\' (free-form JSON), \'json_schema\' (structured with schema), UUID string (saved schema reference), or object with \'id\' field (prompt playground format). See class docstring for details.'),
+  "response_format": zod.union([zod.string(), zod.object({}).passthrough()]).default(agentPlaygroundGraphsVersionsNodesCreateBodyPromptTemplateResponseFormatDefault).describe('String or JSON object.'),
   "response_schema": zod.object({
 
 }).passthrough().optional().describe('JSON Schema (Draft 7) for structured outputs. Required when response_format=\'json_schema\'. Example: {\'type\': \'object\', \'properties\': {...}, \'required\': [...]}'),
@@ -3329,9 +3327,7 @@ export const AgentPlaygroundGraphsVersionsNodesPartialUpdateBody = zod.object({
   "pdf_url": zod.string().url().min(1).optional().describe('PDF URL (required when type=pdf_url)')
 }).describe('Array of content items')).describe('Array of content items')
 }).describe('Array of message objects with id, role, and content array')).describe('Array of message objects with id, role, and content array'),
-  "response_format": zod.object({
-
-}).passthrough().default(agentPlaygroundGraphsVersionsNodesPartialUpdateBodyPromptTemplateResponseFormatDefault).describe('LLM output format: \'text\' (plain text), \'json\' (free-form JSON), \'json_schema\' (structured with schema), UUID string (saved schema reference), or object with \'id\' field (prompt playground format). See class docstring for details.'),
+  "response_format": zod.union([zod.string(), zod.object({}).passthrough()]).default(agentPlaygroundGraphsVersionsNodesPartialUpdateBodyPromptTemplateResponseFormatDefault).describe('String or JSON object.'),
   "response_schema": zod.object({
 
 }).passthrough().optional().describe('JSON Schema (Draft 7) for structured outputs. Required when response_format=\'json_schema\'. Example: {\'type\': \'object\', \'properties\': {...}, \'required\': [...]}'),
@@ -3405,9 +3401,7 @@ export const AgentPlaygroundGraphsVersionsNodesPartialUpdateResponse = zod.objec
   "pdf_url": zod.string().url().min(1).optional().describe('PDF URL (required when type=pdf_url)')
 }).describe('Array of content items')).describe('Array of content items')
 }).describe('Array of message objects with id, role, and content array')).describe('Array of message objects with id, role, and content array'),
-  "response_format": zod.object({
-
-}).passthrough().default(agentPlaygroundGraphsVersionsNodesPartialUpdateResponsePromptTemplateResponseFormatDefault).describe('LLM output format: \'text\' (plain text), \'json\' (free-form JSON), \'json_schema\' (structured with schema), UUID string (saved schema reference), or object with \'id\' field (prompt playground format). See class docstring for details.'),
+  "response_format": zod.union([zod.string(), zod.object({}).passthrough()]).default(agentPlaygroundGraphsVersionsNodesPartialUpdateResponsePromptTemplateResponseFormatDefault).describe('String or JSON object.'),
   "response_schema": zod.object({
 
 }).passthrough().optional().describe('JSON Schema (Draft 7) for structured outputs. Required when response_format=\'json_schema\'. Example: {\'type\': \'object\', \'properties\': {...}, \'required\': [...]}'),
@@ -15199,9 +15193,7 @@ export const ModelHubColumnConfigReadResponse = zod.object({
   "presence_penalty": zod.number().optional(),
   "max_tokens": zod.number().optional(),
   "top_p": zod.number().optional(),
-  "response_format": zod.object({
-
-}).passthrough().optional(),
+  "response_format": zod.union([zod.string(), zod.object({}).passthrough()]).optional().describe('String or JSON object.'),
   "tool_choice": zod.string().optional(),
   "tools": zod.array(zod.string().min(1)).optional(),
   "optimize_type": zod.string().optional(),
@@ -17044,9 +17036,7 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
   "presence_penalty": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
   "max_tokens": zod.number().min(1).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigMaxTokensMax).optional().describe('Maximum number of tokens to generate. Null = use provider default.'),
   "top_p": zod.number().min(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTopPMin).max(modelHubDevelopsAddRunPromptColumnCreateBodyConfigTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
-  "response_format": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "response_format": zod.union([zod.string(), zod.object({}).passthrough()]).optional().describe('String or JSON object.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
   "tools": zod.array(zod.record(zod.string(), zod.object({
 
@@ -17316,9 +17306,7 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
   "presence_penalty": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
   "max_tokens": zod.number().min(1).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigMaxTokensMax).optional().describe('Maximum number of tokens to generate. Null = use provider default.'),
   "top_p": zod.number().min(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTopPMin).max(modelHubDevelopsEditRunPromptColumnCreateBodyConfigTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
-  "response_format": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "response_format": zod.union([zod.string(), zod.object({}).passthrough()]).optional().describe('String or JSON object.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
   "tools": zod.array(zod.record(zod.string(), zod.object({
 
@@ -17563,9 +17551,7 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
   "presence_penalty": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigPresencePenaltyMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
   "max_tokens": zod.number().min(1).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigMaxTokensMax).optional().describe('Maximum number of tokens to generate. Null = use provider default.'),
   "top_p": zod.number().min(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTopPMin).max(modelHubDevelopsPreviewRunPromptColumnCreateBodyConfigTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
-  "response_format": zod.object({
-
-}).passthrough().optional().describe('Any valid JSON value.'),
+  "response_format": zod.union([zod.string(), zod.object({}).passthrough()]).optional().describe('String or JSON object.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
   "tools": zod.array(zod.record(zod.string(), zod.object({
 
@@ -19981,18 +19967,43 @@ export const ModelHubEvalTemplatesUpdateUpdateResponse = zod.object({
 
 
 /**
- * Returns usage stats, chart data, and paginated eval logs.
-Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d|180d|365d)
+ * Returns usage stats, chart data, and the paginated usage table.
+Query params: page (0-based), page_size, period
+(30m|6h|1d|7d|30d|90d|180d|365d), optional start_date/end_date pair
+(overrides period — sent by the FE for Today / Yesterday / Custom).
+
+The response is rendered through
+``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the
+boundary so shape drift surfaces here instead of shipping silently.
  * @summary GET /model-hub/eval-templates/<id>/usage/
  */
 export const ModelHubEvalTemplatesUsageListParams = zod.object({
   "template_id": zod.string()
 })
 
+export const modelHubEvalTemplatesUsageListQueryPageDefault = 0;
+export const modelHubEvalTemplatesUsageListQueryPageMin = 0;
+export const modelHubEvalTemplatesUsageListQueryPageMax = 10000;
+
+export const modelHubEvalTemplatesUsageListQueryPageSizeDefault = 25;
+export const modelHubEvalTemplatesUsageListQueryPageSizeMax = 100;
+
+export const modelHubEvalTemplatesUsageListQueryPeriodDefault = `30d`;
+
+export const ModelHubEvalTemplatesUsageListQueryParams = zod.object({
+  "page": zod.number().min(modelHubEvalTemplatesUsageListQueryPageMin).max(modelHubEvalTemplatesUsageListQueryPageMax).default(modelHubEvalTemplatesUsageListQueryPageDefault),
+  "page_size": zod.number().min(1).max(modelHubEvalTemplatesUsageListQueryPageSizeMax).default(modelHubEvalTemplatesUsageListQueryPageSizeDefault),
+  "period": zod.enum(['30m', '6h', '1d', '7d', '30d', '90d', '180d', '365d']).default(modelHubEvalTemplatesUsageListQueryPeriodDefault),
+  "start_date": zod.string().datetime({"offset":true}).optional(),
+  "end_date": zod.string().datetime({"offset":true}).optional()
+})
 
 
 
-
+export const modelHubEvalTemplatesUsageListResponseResultTableItemDetailInputVariablesDefault = {  };
+export const modelHubEvalTemplatesUsageListResponseResultTableItemDetailWarningsDefault = [];
+export const modelHubEvalTemplatesUsageListResponseResultTableItemDetailMappingsDefault = {  };
+export const modelHubEvalTemplatesUsageListResponseResultTableItemDetailChildrenDefault = [];
 
 export const ModelHubEvalTemplatesUsageListResponse = zod.object({
   "status": zod.boolean(),
@@ -20014,32 +20025,67 @@ export const ModelHubEvalTemplatesUsageListResponse = zod.object({
   "pass_count": zod.number().optional(),
   "fail_count": zod.number().optional()
 })),
-  "logs": zod.object({
-  "items": zod.array(zod.object({
-  "id": zod.string().uuid(),
-  "input": zod.string(),
-  "result": zod.string().optional(),
-  "score": zod.number().optional(),
-  "reason": zod.string().optional(),
-  "status": zod.string().min(1),
-  "source": zod.string().optional(),
-  "created_at": zod.string().min(1),
-  "detail": zod.object({
-
-}).passthrough(),
+  "table": zod.array(zod.object({
+  "row_id": zod.string().min(1),
+  "score": zod.object({
+  "cell_value": zod.number().optional()
+}).optional(),
+  "result": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "input": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "reason": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "source": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "version": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
   "feedback": zod.object({
+  "cell_value": zod.object({
   "id": zod.string().uuid(),
-  "value": zod.object({
-
-}).passthrough().optional(),
+  "value": zod.string().optional(),
   "explanation": zod.string().optional(),
   "action_type": zod.string().optional(),
   "created_at": zod.string().optional(),
   "user": zod.string().optional()
+}).optional()
+}).optional(),
+  "created_at": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "status": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "warnings": zod.object({
+  "cell_value": zod.array(zod.object({
+
+}).passthrough()).optional()
+}).optional(),
+  "detail": zod.object({
+  "input_variables": zod.record(zod.string(), zod.string()).default(modelHubEvalTemplatesUsageListResponseResultTableItemDetailInputVariablesDefault),
+  "output": zod.object({
+
+}).passthrough().optional(),
+  "warnings": zod.array(zod.string()).default(modelHubEvalTemplatesUsageListResponseResultTableItemDetailWarningsDefault),
+  "mappings": zod.record(zod.string(), zod.string()).default(modelHubEvalTemplatesUsageListResponseResultTableItemDetailMappingsDefault),
+  "model": zod.union([zod.string(), zod.object({}).passthrough()]).optional().describe('String or JSON object.'),
+  "version_id": zod.string().min(1).optional(),
+  "version_number": zod.number().optional(),
+  "children": zod.array(zod.string()).default(modelHubEvalTemplatesUsageListResponseResultTableItemDetailChildrenDefault),
+  "aggregation_function": zod.string().optional(),
+  "total_children": zod.number().optional(),
+  "completed_children": zod.number().optional(),
+  "failed_children": zod.number().optional()
 }).optional(),
   "composite": zod.boolean().optional(),
   "aggregate_pass": zod.boolean().optional()
 })),
+  "logs": zod.object({
   "total": zod.number(),
   "page": zod.number(),
   "page_size": zod.number()
@@ -25706,9 +25752,7 @@ export const ModelHubRunPromptCreateBody = zod.object({
   "presence_penalty": zod.number().min(modelHubRunPromptCreateBodyPresencePenaltyMin).max(modelHubRunPromptCreateBodyPresencePenaltyMax).optional().describe('Penalty for new word usage. Value between -2 and 2.'),
   "max_tokens": zod.number().min(1).max(modelHubRunPromptCreateBodyMaxTokensMax).optional().describe('Maximum number of tokens to generate. Null = use provider default.'),
   "top_p": zod.number().min(modelHubRunPromptCreateBodyTopPMin).max(modelHubRunPromptCreateBodyTopPMax).optional().describe('Controls diversity via nucleus sampling. Value between 0 and 1.'),
-  "response_format": zod.object({
-
-}).passthrough().optional().describe('JSON schema for response format if required. Defaults to None.'),
+  "response_format": zod.union([zod.string(), zod.object({}).passthrough()]).optional().describe('String or JSON object.'),
   "tool_choice": zod.union([zod.literal('auto'),zod.literal('required'),zod.literal(null)]).optional().describe('Tool selection mode: \'auto\' or \'required\'.'),
   "tools": zod.array(zod.record(zod.string(), zod.string())).optional().describe('List of tools with tool properties if available.')
 })
@@ -32676,6 +32720,8 @@ export const SimulateScenariosReadParams = zod.object({
 
 
 
+
+
 export const SimulateScenariosReadResponse = zod.object({
   "id": zod.string().uuid().optional(),
   "name": zod.string().min(1).optional(),
@@ -32696,7 +32742,11 @@ export const SimulateScenariosReadResponse = zod.object({
   "role": zod.enum(['system', 'user', 'assistant']).optional(),
   "content": zod.string().min(1).optional()
 })).optional(),
-  "dataset_rows": zod.number().optional()
+  "dataset_rows": zod.number().optional(),
+  "dataset_column_config": zod.record(zod.string(), zod.object({
+  "name": zod.string().min(1).optional(),
+  "type": zod.string().min(1).optional()
+})).optional()
 })
 
 
@@ -33648,6 +33698,8 @@ export const TracerCustomEvalConfigListQueryParams = zod.object({
 
 export const tracerCustomEvalConfigListResponseResultsItemNameMax = 255;
 
+export const tracerCustomEvalConfigListResponseResultsItemModelMax = 255;
+
 
 
 export const TracerCustomEvalConfigListResponse = zod.object({
@@ -33670,13 +33722,15 @@ export const TracerCustomEvalConfigListResponse = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
+  "model": zod.string().max(tracerCustomEvalConfigListResponseResultsItemModelMax).optional(),
   "eval_group": zod.string().optional()
 }))
 })
 
 
 export const tracerCustomEvalConfigCreateBodyNameMax = 255;
+
+export const tracerCustomEvalConfigCreateBodyModelMax = 255;
 
 
 
@@ -33695,11 +33749,13 @@ export const TracerCustomEvalConfigCreateBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.string().max(tracerCustomEvalConfigCreateBodyModelMax).optional()
 })
 
 
 export const tracerCustomEvalConfigCheckExistsBodyNameMax = 255;
+
+export const tracerCustomEvalConfigCheckExistsBodyModelMax = 255;
 
 
 
@@ -33718,11 +33774,13 @@ export const TracerCustomEvalConfigCheckExistsBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.string().max(tracerCustomEvalConfigCheckExistsBodyModelMax).optional()
 })
 
 
 export const tracerCustomEvalConfigGetCustomEvalByNameBodyNameMax = 255;
+
+export const tracerCustomEvalConfigGetCustomEvalByNameBodyModelMax = 255;
 
 
 
@@ -33741,7 +33799,7 @@ export const TracerCustomEvalConfigGetCustomEvalByNameBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.string().max(tracerCustomEvalConfigGetCustomEvalByNameBodyModelMax).optional()
 })
 
 
@@ -33754,6 +33812,8 @@ export const TracerCustomEvalConfigListCustomEvalConfigsQueryParams = zod.object
 })
 
 export const tracerCustomEvalConfigListCustomEvalConfigsResponseResultsItemNameMax = 255;
+
+export const tracerCustomEvalConfigListCustomEvalConfigsResponseResultsItemModelMax = 255;
 
 
 
@@ -33777,13 +33837,15 @@ export const TracerCustomEvalConfigListCustomEvalConfigsResponse = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
+  "model": zod.string().max(tracerCustomEvalConfigListCustomEvalConfigsResponseResultsItemModelMax).optional(),
   "eval_group": zod.string().optional()
 }))
 })
 
 
 export const tracerCustomEvalConfigRunEvaluationBodyNameMax = 255;
+
+export const tracerCustomEvalConfigRunEvaluationBodyModelMax = 255;
 
 
 
@@ -33802,7 +33864,7 @@ export const TracerCustomEvalConfigRunEvaluationBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.string().max(tracerCustomEvalConfigRunEvaluationBodyModelMax).optional()
 })
 
 
@@ -33811,6 +33873,8 @@ export const TracerCustomEvalConfigReadParams = zod.object({
 })
 
 export const tracerCustomEvalConfigReadResponseNameMax = 255;
+
+export const tracerCustomEvalConfigReadResponseModelMax = 255;
 
 
 
@@ -33830,7 +33894,7 @@ export const TracerCustomEvalConfigReadResponse = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
+  "model": zod.string().max(tracerCustomEvalConfigReadResponseModelMax).optional(),
   "eval_group": zod.string().optional()
 })
 
@@ -33840,6 +33904,8 @@ export const TracerCustomEvalConfigUpdateParams = zod.object({
 })
 
 export const tracerCustomEvalConfigUpdateBodyNameMax = 255;
+
+export const tracerCustomEvalConfigUpdateBodyModelMax = 255;
 
 
 
@@ -33858,10 +33924,12 @@ export const TracerCustomEvalConfigUpdateBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.string().max(tracerCustomEvalConfigUpdateBodyModelMax).optional()
 })
 
 export const tracerCustomEvalConfigUpdateResponseNameMax = 255;
+
+export const tracerCustomEvalConfigUpdateResponseModelMax = 255;
 
 
 
@@ -33881,7 +33949,7 @@ export const TracerCustomEvalConfigUpdateResponse = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
+  "model": zod.string().max(tracerCustomEvalConfigUpdateResponseModelMax).optional(),
   "eval_group": zod.string().optional()
 })
 
@@ -33891,6 +33959,8 @@ export const TracerCustomEvalConfigPartialUpdateParams = zod.object({
 })
 
 export const tracerCustomEvalConfigPartialUpdateBodyNameMax = 255;
+
+export const tracerCustomEvalConfigPartialUpdateBodyModelMax = 255;
 
 
 
@@ -33909,10 +33979,12 @@ export const TracerCustomEvalConfigPartialUpdateBody = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional()
+  "model": zod.string().max(tracerCustomEvalConfigPartialUpdateBodyModelMax).optional()
 })
 
 export const tracerCustomEvalConfigPartialUpdateResponseNameMax = 255;
+
+export const tracerCustomEvalConfigPartialUpdateResponseModelMax = 255;
 
 
 
@@ -33932,7 +34004,7 @@ export const TracerCustomEvalConfigPartialUpdateResponse = zod.object({
 }).passthrough().optional(),
   "error_localizer": zod.boolean().optional(),
   "kb_id": zod.string().uuid().optional(),
-  "model": zod.enum(['turing_large', 'turing_small', 'protect', 'protect_flash', 'turing_flash']).optional(),
+  "model": zod.string().max(tracerCustomEvalConfigPartialUpdateResponseModelMax).optional(),
   "eval_group": zod.string().optional()
 })
 

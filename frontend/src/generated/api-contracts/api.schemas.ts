@@ -1970,9 +1970,9 @@ export interface MessageApi {
 }
 
 /**
- * LLM output format: 'text' (plain text), 'json' (free-form JSON), 'json_schema' (structured with schema), UUID string (saved schema reference), or object with 'id' field (prompt playground format). See class docstring for details.
+ * String or JSON object.
  */
-export type PromptTemplateDataApiResponseFormat = { [key: string]: unknown };
+export type PromptTemplateDataApiResponseFormat = string | { [key: string]: unknown };
 
 /**
  * JSON Schema (Draft 7) for structured outputs. Required when response_format='json_schema'. Example: {'type': 'object', 'properties': {...}, 'required': [...]}
@@ -1994,7 +1994,7 @@ export interface PromptTemplateDataApi {
   prompt_version_id?: string;
   /** Array of message objects with id, role, and content array */
   messages: MessageApi[];
-  /** LLM output format: 'text' (plain text), 'json' (free-form JSON), 'json_schema' (structured with schema), UUID string (saved schema reference), or object with 'id' field (prompt playground format). See class docstring for details. */
+  /** String or JSON object. */
   response_format?: PromptTemplateDataApiResponseFormat;
   /** JSON Schema (Draft 7) for structured outputs. Required when response_format='json_schema'. Example: {'type': 'object', 'properties': {...}, 'required': [...]} */
   response_schema?: PromptTemplateDataApiResponseSchema;
@@ -6938,7 +6938,10 @@ export type ColumnConfigResultApiPromptConfig = { [key: string]: unknown };
 
 export type ColumnConfigResultApiMessages = { [key: string]: unknown };
 
-export type ColumnConfigResultApiResponseFormat = { [key: string]: unknown };
+/**
+ * String or JSON object.
+ */
+export type ColumnConfigResultApiResponseFormat = string | { [key: string]: unknown };
 
 export type ColumnConfigResultApiOptimizedKPrompts = { [key: string]: unknown };
 
@@ -6967,6 +6970,7 @@ export interface ColumnConfigResultApi {
   presence_penalty?: number;
   max_tokens?: number;
   top_p?: number;
+  /** String or JSON object. */
   response_format?: ColumnConfigResultApiResponseFormat;
   tool_choice?: string;
   tools?: string[];
@@ -8159,9 +8163,9 @@ export type PromptConfigApiRunPromptConfig = {[key: string]: { [key: string]: un
 export type PromptConfigApiMessagesItem = {[key: string]: { [key: string]: unknown }};
 
 /**
- * Any valid JSON value.
+ * String or JSON object.
  */
-export type PromptConfigApiResponseFormat = { [key: string]: unknown };
+export type PromptConfigApiResponseFormat = string | { [key: string]: unknown };
 
 export type PromptConfigApiToolsItem = {[key: string]: { [key: string]: unknown }};
 
@@ -8201,7 +8205,7 @@ export interface PromptConfigApi {
      * @maximum 1
      */
   top_p?: number;
-  /** Any valid JSON value. */
+  /** String or JSON object. */
   response_format?: PromptConfigApiResponseFormat;
   /** Tool selection mode: 'auto' or 'required'. */
   tool_choice?: PromptConfigApiToolChoice;
@@ -10278,38 +10282,81 @@ export interface EvalUsageChartPointApi {
   fail_count?: number;
 }
 
-export type EvalUsageFeedbackApiValue = { [key: string]: unknown };
+export interface EvalUsageNumberCellApi {
+  cell_value?: number;
+}
+
+export interface EvalUsageStringCellApi {
+  cell_value?: string;
+}
 
 export interface EvalUsageFeedbackApi {
   id: string;
-  value?: EvalUsageFeedbackApiValue;
+  value?: string;
   explanation?: string;
   action_type?: string;
   created_at?: string;
   user?: string;
 }
 
-export type EvalUsageLogItemApiDetail = { [key: string]: unknown };
-
-export interface EvalUsageLogItemApi {
-  id: string;
-  input: string;
-  result?: string;
-  score?: number;
-  reason?: string;
-  /** @minLength 1 */
-  status: string;
-  source?: string;
-  /** @minLength 1 */
-  created_at: string;
-  detail: EvalUsageLogItemApiDetail;
-  feedback?: EvalUsageFeedbackApi;
-  composite?: boolean;
-  aggregate_pass?: boolean;
+export interface EvalUsageFeedbackCellApi {
+  cell_value?: EvalUsageFeedbackApi;
 }
 
-export interface EvalUsageLogsApi {
-  items: EvalUsageLogItemApi[];
+export type EvalUsageWarningsCellApiCellValueItem = { [key: string]: unknown };
+
+export interface EvalUsageWarningsCellApi {
+  cell_value?: EvalUsageWarningsCellApiCellValueItem[];
+}
+
+export type EvalUsageLogItemDetailApiInputVariables = {[key: string]: string};
+
+export type EvalUsageLogItemDetailApiOutput = { [key: string]: unknown };
+
+export type EvalUsageLogItemDetailApiMappings = {[key: string]: string};
+
+/**
+ * String or JSON object.
+ */
+export type EvalUsageLogItemDetailApiModel = string | { [key: string]: unknown };
+
+export interface EvalUsageLogItemDetailApi {
+  input_variables?: EvalUsageLogItemDetailApiInputVariables;
+  output?: EvalUsageLogItemDetailApiOutput;
+  warnings?: string[];
+  mappings?: EvalUsageLogItemDetailApiMappings;
+  /** String or JSON object. */
+  model?: EvalUsageLogItemDetailApiModel;
+  /** @minLength 1 */
+  version_id?: string;
+  version_number?: number;
+  children?: string[];
+  aggregation_function?: string;
+  total_children?: number;
+  completed_children?: number;
+  failed_children?: number;
+}
+
+export interface EvalUsageTableRowApi {
+  /** @minLength 1 */
+  row_id: string;
+  score?: EvalUsageNumberCellApi;
+  result?: EvalUsageStringCellApi;
+  input?: EvalUsageStringCellApi;
+  reason?: EvalUsageStringCellApi;
+  source?: EvalUsageStringCellApi;
+  version?: EvalUsageStringCellApi;
+  feedback?: EvalUsageFeedbackCellApi;
+  created_at?: EvalUsageStringCellApi;
+  status?: EvalUsageStringCellApi;
+  warnings?: EvalUsageWarningsCellApi;
+  detail?: EvalUsageLogItemDetailApi;
+  composite?: boolean;
+  aggregate_pass?: boolean;
+  [key: string]: unknown;
+ }
+
+export interface EvalUsagePaginationApi {
   total: number;
   page: number;
   page_size: number;
@@ -10320,7 +10367,8 @@ export interface EvalUsageStatsResponseResultApi {
   is_composite: boolean;
   stats: EvalUsageStatsApi;
   chart: EvalUsageChartPointApi[];
-  logs: EvalUsageLogsApi;
+  table: EvalUsageTableRowApi[];
+  logs: EvalUsagePaginationApi;
 }
 
 export interface EvalUsageStatsResponseApi {
@@ -12822,9 +12870,9 @@ export const LitellmApiOutputFormat = {
 } as const;
 
 /**
- * JSON schema for response format if required. Defaults to None.
+ * String or JSON object.
  */
-export type LitellmApiResponseFormat = { [key: string]: unknown };
+export type LitellmApiResponseFormat = string | { [key: string]: unknown };
 
 /**
  * Tool selection mode: 'auto' or 'required'.
@@ -12890,7 +12938,7 @@ export interface LitellmApi {
      * @maximum 1
      */
   top_p?: number;
-  /** JSON schema for response format if required. Defaults to None. */
+  /** String or JSON object. */
   response_format?: LitellmApiResponseFormat;
   /** Tool selection mode: 'auto' or 'required'. */
   tool_choice?: LitellmApiToolChoice;
@@ -17010,17 +17058,6 @@ export interface AddEvalConfigsRequestApi {
   evaluations_config: EvalConfigDefinitionApi[];
 }
 
-export type EvalConfigResponseApiModel = typeof EvalConfigResponseApiModel[keyof typeof EvalConfigResponseApiModel];
-
-
-export const EvalConfigResponseApiModel = {
-  turing_large: 'turing_large',
-  turing_small: 'turing_small',
-  protect: 'protect',
-  protect_flash: 'protect_flash',
-  turing_flash: 'turing_flash',
-} as const;
-
 export type EvalConfigResponseApiStatus = typeof EvalConfigResponseApiStatus[keyof typeof EvalConfigResponseApiStatus];
 
 
@@ -17058,7 +17095,8 @@ export interface EvalConfigResponseApi {
   mapping?: EvalConfigResponseApiMapping;
   filters?: EvalConfigResponseApiFilters;
   error_localizer?: boolean;
-  model?: EvalConfigResponseApiModel;
+  /** @maxLength 255 */
+  model?: string;
   status?: EvalConfigResponseApiStatus;
   readonly eval_group?: string;
   readonly template_id?: string;
@@ -17668,6 +17706,15 @@ export const ScenarioDetailResponseApiStatus = {
 
 export type ScenarioDetailResponseApiGraph = {[key: string]: string};
 
+export interface DatasetColumnConfigEntryApi {
+  /** @minLength 1 */
+  readonly name?: string;
+  /** @minLength 1 */
+  readonly type?: string;
+}
+
+export type ScenarioDetailResponseApiDatasetColumnConfig = {[key: string]: DatasetColumnConfigEntryApi};
+
 export type ScenarioPromptItemApiRole = typeof ScenarioPromptItemApiRole[keyof typeof ScenarioPromptItemApiRole];
 
 
@@ -17705,6 +17752,7 @@ export interface ScenarioDetailResponseApi {
   readonly graph?: ScenarioDetailResponseApiGraph;
   readonly prompts?: readonly ScenarioPromptItemApi[];
   readonly dataset_rows?: number;
+  readonly dataset_column_config?: ScenarioDetailResponseApiDatasetColumnConfig;
 }
 
 export interface ScenarioAddColumnsRequestApi {
@@ -18248,17 +18296,6 @@ export type CustomEvalConfigApiMapping = { [key: string]: unknown };
 
 export type CustomEvalConfigApiFilters = { [key: string]: unknown };
 
-export type CustomEvalConfigApiModel = typeof CustomEvalConfigApiModel[keyof typeof CustomEvalConfigApiModel];
-
-
-export const CustomEvalConfigApiModel = {
-  turing_large: 'turing_large',
-  turing_small: 'turing_small',
-  protect: 'protect',
-  protect_flash: 'protect_flash',
-  turing_flash: 'turing_flash',
-} as const;
-
 export interface CustomEvalConfigApi {
   readonly id?: string;
   eval_template: string;
@@ -18270,7 +18307,8 @@ export interface CustomEvalConfigApi {
   filters?: CustomEvalConfigApiFilters;
   error_localizer?: boolean;
   kb_id?: string;
-  model?: CustomEvalConfigApiModel;
+  /** @maxLength 255 */
+  model?: string;
   readonly eval_group?: string;
 }
 
@@ -24162,6 +24200,36 @@ export type ModelHubEvalGroupsList200 = {
   previous?: string;
   results: EvalGroupApi[];
 };
+
+export type ModelHubEvalTemplatesUsageListParams = {
+/**
+ * @minimum 0
+ * @maximum 10000
+ */
+page?: number;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+page_size?: number;
+period?: ModelHubEvalTemplatesUsageListPeriod;
+start_date?: string;
+end_date?: string;
+};
+
+export type ModelHubEvalTemplatesUsageListPeriod = typeof ModelHubEvalTemplatesUsageListPeriod[keyof typeof ModelHubEvalTemplatesUsageListPeriod];
+
+
+export const ModelHubEvalTemplatesUsageListPeriod = {
+  '30m': '30m',
+  '6h': '6h',
+  '1d': '1d',
+  '7d': '7d',
+  '30d': '30d',
+  '90d': '90d',
+  '180d': '180d',
+  '365d': '365d',
+} as const;
 
 export type ModelHubExperimentDetailListParams = {
 /**
