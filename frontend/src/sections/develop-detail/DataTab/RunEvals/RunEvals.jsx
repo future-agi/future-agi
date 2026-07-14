@@ -49,8 +49,10 @@ const RunEvals = ({ gridRef, setIsData }) => {
     onSuccess: (data) => {
       const columnConfig =
         data?.result?.columnConfig ?? data?.result?.column_config ?? [];
-      const runPromptData = columnConfig.filter((item) => isRunnableColumn(item));
-      setMainData(runPromptData);
+      const runnableColumnData = columnConfig.filter((item) =>
+        isRunnableColumn(item),
+      );
+      setMainData(runnableColumnData);
     },
   });
 

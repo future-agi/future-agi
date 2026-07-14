@@ -177,10 +177,10 @@ const DevelopDataSelectionActive = () => {
       const selectedIds = toggledNodes;
 
       const evalIds = selectedEvalIds
-        .filter((item) => getOriginType(item) == "eval")
+        .filter((item) => getOriginType(item) === "eval")
         .map((row) => row.field);
       const runPromptIds = selectedEvalIds
-        .filter((item) => getOriginType(item) == "run_prompt")
+        .filter((item) => getOriginType(item) === "run_prompt")
         .map((row) => row.field);
       const dynamicColumns = selectedEvalIds.filter((item) => {
         const originType = getOriginType(item);
