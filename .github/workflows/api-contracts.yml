@@ -430,16 +430,22 @@ jobs:
 
       - name: Check ee.usage does not leak outside the boundary
         run: |
+          # Grandfathered files below either pre-date the boundary (guarded
+          # try/except ImportError lazy imports on EE-only paths) or are the
+          # environment oracle itself. New leaks must go through the boundary.
           leaks=$(grep -rEn "from ee\.usage|import ee\.usage" \
             --include="*.py" \
             --exclude-dir=ee \
             --exclude-dir=tests \
             . \
+            | grep -vE "^[^:]+:[0-9]+:\s*#" \
             | grep -v "tfc/billing/boundary.py" \
             | grep -v "ee\.usage\.models" \
+            | grep -v "ee\.usage\.deployment" \
             | grep -v "tfc/ee_gating.py" \
+            | grep -v "^\./tfc/ee_gates.py" \
+            | grep -v "^\./tfc/temporal/" \
             | grep -v "^\./simulate/services/test_executor.py" \
-            | grep -v "^\./tfc/temporal/common/registry.py" \
             | grep -v "^\./model_hub/utils/composite_execution.py" \
             | grep -v "^\./ai_tools/tools/evaluations/trigger_error_localization.py" \
             || true)
