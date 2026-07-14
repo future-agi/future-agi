@@ -14,10 +14,13 @@ import {
   getSeriesAverage,
   getSuggestedUnitConfig,
   getYAxisRangeWarning,
+  seriesHasDataPoints,
 } from "./widgetUtils";
 import { toTimeRangePayload } from "./dashboardDateRange";
 
 const CHART_HEIGHT_FALLBACK = 280;
+const NO_DATA_FOR_RANGE_MESSAGE =
+  "No data available for this time period. Try a broader range.";
 const COLORS = [
   "#7B56DB", // purple (primary)
   "#1ABCFE", // cyan
@@ -160,11 +163,13 @@ export default function WidgetChart({ widget, globalDateRange }) {
     [chartSeries, axisConfig],
   );
 
+  const hasNoDataForRange = useMemo(
+    () => !seriesHasDataPoints(chartSeries),
+    [chartSeries],
+  );
+
   const pieValues = useMemo(
-    () =>
-      isPie
-        ? chartSeries.map((s) => getSeriesAverage(s.data) ?? 0)
-        : [],
+    () => (isPie ? chartSeries.map((s) => getSeriesAverage(s.data) ?? 0) : []),
     [isPie, chartSeries],
   );
 
@@ -822,6 +827,27 @@ export default function WidgetChart({ widget, globalDateRange }) {
             );
           })}
         </Box>
+      </Box>
+    );
+  }
+
+  if (hasNoDataForRange) {
+    return (
+      <Box
+        ref={containerRef}
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          width: "100%",
+          height: "100%",
+          minHeight: 0,
+          px: 2,
+        }}
+      >
+        <Typography variant="body2" color="text.disabled">
+          {NO_DATA_FOR_RANGE_MESSAGE}
+        </Typography>
       </Box>
     );
   }

@@ -99,6 +99,12 @@ export const getAggColumnLabel = (metrics, allAggregations) => {
   return "Agg.";
 };
 
+// A metric's series entry can come back structurally present (name/shape
+// set) but with an empty `data` array when the query range holds zero rows
+// — distinct from no series existing at all, which callers handle upstream.
+export const seriesHasDataPoints = (series = []) =>
+  series.some((s) => (s.data || []).length > 0);
+
 // ApexCharts silently clips any series point outside yaxis min/max — if
 // every point in every series falls outside the configured bounds, the
 // chart renders fully blank with no indication why. Surface that as a
