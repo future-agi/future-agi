@@ -119,10 +119,23 @@ const EvalPickerConfig = ({ evalData, onBack, onSave, isSaving }) => {
     [evalData],
   );
 
-  // Extract required variables from eval template
+  // Extract required variables from eval template.
+  // Prefer live extraction from the instructions text (so newly added /
+  // removed `{{variable}}` placeholders show up immediately), falling
+  // back to the template's stored requiredKeys when there's no
+  // instructions text to parse. Mirrors the mustache-extraction branch
+  // in EvalPickerConfigFull.jsx.
   const variables = useMemo(() => {
-    const keys = normalizedEvalData?.requiredKeys || [];
-    return [...new Set(keys)];
+    const requiredKeys = normalizedEvalData?.requiredKeys || [];
+    const instructions = normalizedEvalData?.instructions || "";
+
+    const matches = instructions.match(/\{\{\s*([^{}]+?)\s*\}\}/g) || [];
+    const templateVars = matches.map((m) =>
+      m.replace(/\{\{|\}\}/g, "").trim(),
+    );
+    if (templateVars.length > 0) return [...new Set(templateVars)];
+
+    return [...new Set(requiredKeys)];
   }, [normalizedEvalData]);
 
   // Column options for mapping dropdowns
