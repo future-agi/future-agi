@@ -18286,6 +18286,8 @@ export interface CustomEvalConfigApi {
   kb_id?: string;
   model?: CustomEvalConfigApiModel;
   readonly eval_group?: string;
+  /** Pin to a specific template version for runtime. */
+  pinned_version?: string;
 }
 
 export interface DashboardApi {

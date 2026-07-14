@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from model_hub.models.develop_dataset import KnowledgeBaseFile
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 from model_hub.utils.function_eval_params import normalize_eval_runtime_config
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.project import Project
@@ -23,6 +23,16 @@ class CustomEvalConfigSerializer(serializers.ModelSerializer):
     )
 
     eval_group = serializers.SerializerMethodField()
+    # Use all_objects so soft-deleted versions are fetchable here; the
+    # validate() method then explicitly rejects them with a clear error.
+    # Without this, the default manager excludes deleted rows and the
+    # "Cannot pin a deleted version" branch never fires.
+    pinned_version = serializers.PrimaryKeyRelatedField(
+        queryset=EvalTemplateVersion.all_objects.all(),
+        required=False,
+        allow_null=True,
+        help_text="Pin to a specific template version for runtime.",
+    )
 
     class Meta:
         model = CustomEvalConfig
@@ -38,6 +48,7 @@ class CustomEvalConfigSerializer(serializers.ModelSerializer):
             "kb_id",
             "model",
             "eval_group",
+            "pinned_version",
         ]
 
     def get_eval_group(self, obj):
@@ -58,6 +69,19 @@ class CustomEvalConfigSerializer(serializers.ModelSerializer):
                     else getattr(self.instance, "config", {})
                 ),
             )
+
+        # Validate pinned_version belongs to this config's eval_template
+        pinned = attrs.get("pinned_version")
+        if pinned is not None and eval_template is not None:
+            if pinned.eval_template_id != eval_template.id:
+                raise serializers.ValidationError(
+                    {"pinned_version": "Version does not belong to this eval template."}
+                )
+            if pinned.deleted:
+                raise serializers.ValidationError(
+                    {"pinned_version": "Cannot pin a deleted version."}
+                )
+
         return attrs
 
 

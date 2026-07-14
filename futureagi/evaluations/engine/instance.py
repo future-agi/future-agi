@@ -423,6 +423,7 @@ def create_eval_instance(
     organization_id=None,
     workspace_id=None,
     version_number=None,
+    pinned_version=None,
     is_futureagi=False,
 ):
     """
@@ -456,7 +457,9 @@ def create_eval_instance(
     elif eval_template.organization:
         org = eval_template.organization
 
-    resolved_version = resolve_version(eval_template, version_number, org)
+    # Use the pre-loaded typed object when available — avoids a redundant
+    # re-query by (eval_template, version_number).
+    resolved_version = pinned_version if pinned_version is not None else resolve_version(eval_template, version_number, org)
 
     # Prepare config based on eval type
     config, criteria = prepare_eval_config(
