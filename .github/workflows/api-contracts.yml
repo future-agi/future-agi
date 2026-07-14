@@ -27,6 +27,7 @@ on:
       - "futureagi/model_hub/views/annotation_queues.py"
       - "futureagi/model_hub/views/ai_filter.py"
       - "futureagi/model_hub/views/scores.py"
+      - "futureagi/tfc/billing/**"
       - "futureagi/tfc/utils/api_contracts.py"
       - "futureagi/tfc/utils/general_methods.py"
       - "futureagi/model_hub/utils/annotation_queue_helpers.py"
@@ -317,3 +318,142 @@ jobs:
           simulate/tests/test_simulator_agent_api_contract.py
           simulate/tests/test_test_execution_api_contract.py
           tracer/tests/test_tracer_feed_api_contract.py
+
+  # OSS (ee-absent) leg: runs the billing-boundary and entitlement-gate tests
+  # WITHOUT the private ee checkout. This is the only job that mechanically
+  # catches "works on EE, broken/free on OSS" regressions — e.g. gates that
+  # skip on OSS, _NoopBilling call-shape drift, or imports of ee.usage leaking
+  # outside tfc/billing/boundary.py.
+  oss-boundary-tests:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: futureagi
+    env:
+      PG_HOST: localhost
+      PG_PORT: 5432
+      PG_DB: postgres
+      PG_TEST_DB: test_tfc_test
+      PG_USER: postgres
+      PG_PASSWORD: postgres
+      CH_HOST: localhost
+      CH_PORT: 19000
+      CH_DATABASE: test_tfc
+      CH25_HOST: localhost
+      CH25_HTTP_PORT: 18123
+      CH25_TCP_PORT: 19000
+      CH25_DATABASE: test_tfc
+      CH_USE_REPLICATED_ENGINES: "false"
+      CH25_DROP_LEGACY_CDC_CHAIN: "true"
+      REDIS_URL: redis://localhost:6379/0
+      REDIS_LOCK_URL: redis://localhost:6379/2
+      TESTING: "false"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Assert the private ee package is absent
+        run: |
+          if [ -d ee ]; then
+            echo "::error::futureagi/ee exists in an OSS-leg checkout; this job must run without the private ee package."
+            exit 1
+          fi
+
+      - name: Start ClickHouse test service
+        run: |
+          docker run -d \
+            --name futureagi-oss-boundary-clickhouse \
+            --ulimit nofile=262144:262144 \
+            -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+            -e CLICKHOUSE_SKIP_USER_SETUP=1 \
+            -e CLICKHOUSE_DB=test_tfc \
+            -p 18123:8123 \
+            -p 19000:9000 \
+            -v "$PWD/.ci/clickhouse-test-config.xml:/etc/clickhouse-server/config.d/test-overrides.xml:ro" \
+            -v "$PWD/.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/001_storage_policy.xml:ro" \
+            clickhouse/clickhouse-server:25.3-alpine
+
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:18123/ping >/dev/null; then
+              echo "ClickHouse is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+
+          docker logs futureagi-oss-boundary-clickhouse
+          echo "::error::ClickHouse did not become ready on localhost:18123"
+          exit 1
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install backend dependencies
+        run: uv sync --frozen
+
+      - name: Apply ClickHouse test schema
+        run: >
+          uv run python -m tracer.services.clickhouse.v2.apply_schema
+          --schema-dir tracer/services/clickhouse/v2/schema
+          --ch-host localhost
+          --ch-http-port 18123
+          --ch-user default
+          --ch-database test_tfc
+
+      - name: Check ee.usage does not leak outside the boundary
+        run: |
+          leaks=$(grep -rEn "from ee\.usage|import ee\.usage" \
+            --include="*.py" \
+            --exclude-dir=ee \
+            --exclude-dir=tests \
+            . \
+            | grep -v "tfc/billing/boundary.py" \
+            | grep -v "ee\.usage\.models" \
+            | grep -v "tfc/ee_gating.py" \
+            | grep -v "^\./simulate/services/test_executor.py" \
+            | grep -v "^\./tfc/temporal/common/registry.py" \
+            | grep -v "^\./model_hub/utils/composite_execution.py" \
+            | grep -v "^\./ai_tools/tools/evaluations/trigger_error_localization.py" \
+            || true)
+          if [ -n "$leaks" ]; then
+            echo "::error::ee.usage imported outside tfc/billing/boundary.py (grandfathered files are pinned in this step):"
+            echo "$leaks"
+            exit 1
+          fi
+
+      - name: Run OSS billing-boundary and entitlement-gate tests
+        env:
+          TESTING: "true"
+        run: >
+          uv run pytest -q --tb=line
+          tfc/billing/tests/
+          model_hub/tests/test_annotation_workflow_api.py
+          model_hub/tests/test_annotation_advanced_api.py

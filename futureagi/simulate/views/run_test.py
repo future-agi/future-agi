@@ -214,7 +214,7 @@ def _voice_sim_gate_response(user_organization, gm):
 
     from tfc.billing.boundary import get_billing
     billing = get_billing()
-    if not billing.is_enabled:
+    if not billing.has_ee_billing:
         # OSS handled by voice_sim_oss_gate_response above; nothing more to do.
         return None
     gate = billing.check_feature_gate(str(user_organization.id), "has_voice_sim")

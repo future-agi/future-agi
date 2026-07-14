@@ -69,6 +69,28 @@ def allow_advanced_api_entitlements():
                     return_value=SimpleNamespace(allowed=True, reason=None),
                 )
             )
+        else:
+            # OSS checkout: the _NoopBilling singleton denies EE features by
+            # design, so bypass the gate on the singleton instance only. The
+            # explicit OSS-denial tests build their own _NoopBilling() (via a
+            # view-level get_billing patch), which stays unpatched and denies.
+            from tfc.billing.boundary import UsageDecision, get_billing
+
+            billing_singleton = get_billing()
+            stack.enter_context(
+                patch.object(
+                    billing_singleton,
+                    "check_feature_gate",
+                    return_value=UsageDecision(allowed=True),
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    billing_singleton,
+                    "can_create",
+                    return_value=UsageDecision(allowed=True),
+                )
+            )
         yield
 
 QUEUE_URL = "/model-hub/annotation-queues/"

@@ -297,6 +297,20 @@ def allow_queue_creation_entitlement():
                     return_value=SimpleNamespace(allowed=True, reason=None),
                 )
             )
+        else:
+            # OSS checkout: the _NoopBilling singleton denies EE features by
+            # design, so bypass the gate on the singleton instance only. The
+            # explicit OSS-denial tests build their own _NoopBilling() (via a
+            # view-level get_billing patch), which stays unpatched and denies.
+            from tfc.billing.boundary import UsageDecision, get_billing
+
+            stack.enter_context(
+                patch.object(
+                    get_billing(),
+                    "check_feature_gate",
+                    return_value=UsageDecision(allowed=True),
+                )
+            )
         yield check_can_create
 
 
@@ -2204,7 +2218,10 @@ class TestReviewItem:
         second_user,
         organization,
     ):
-        if importlib.util.find_spec("ee.usage.services.entitlements") is None:
+        try:
+            if importlib.util.find_spec("ee.usage.services.entitlements") is None:
+                pytest.skip("Enterprise entitlement module is not available.")
+        except ModuleNotFoundError:
             pytest.skip("Enterprise entitlement module is not available.")
 
         queue_id, item_ids, label = queue_with_items

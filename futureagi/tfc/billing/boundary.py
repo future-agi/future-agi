@@ -94,7 +94,7 @@ class Billing:
     Never instantiate directly — use get_billing().
     """
 
-    is_enabled: bool = True
+    has_ee_billing: bool = True
 
     def record_usage(
         self,
@@ -245,7 +245,7 @@ class Billing:
         row denies unless its status is PROCESSING.
         """
         if call_log_row is None:
-            return self.is_enabled
+            return self.has_ee_billing
         from tfc.constants.api_calls import APICallStatusChoices
 
         return call_log_row.status != APICallStatusChoices.PROCESSING.value
@@ -257,7 +257,7 @@ class Billing:
         A non-None row denies only on RESOURCE_LIMIT (mirrors dev's checks).
         """
         if call_log_row is None:
-            return self.is_enabled
+            return self.has_ee_billing
         from tfc.constants.api_calls import APICallStatusChoices
 
         return call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
@@ -270,7 +270,7 @@ class Billing:
 class _NoopBilling(Billing):
     """OSS default: metering is silent, entitlements fail-CLOSED."""
 
-    is_enabled = False
+    has_ee_billing = False
 
     def record_usage(self, org_id, event_type, *, amount=1.0, **properties):
         pass
@@ -452,6 +452,17 @@ class _EeBilling(Billing):
         return count_tiktoken_tokens(str(text), image_urls)
 
     def get_tracing_billing_mode(self, org_id):
+        # Delegation-first: the caching policy + subscription query belong in
+        # ee.usage.services, not in this seam. The inline fallback below only
+        # exists for ee checkouts that predate the tracing_mode service and
+        # should be deleted once the ee-side change is everywhere.
+        try:
+            from ee.usage.services.tracing_mode import get_tracing_billing_mode
+
+            return get_tracing_billing_mode(str(org_id))
+        except ImportError:
+            pass
+
         from ee.usage.services.emitter import get_redis
         from ee.usage.models.usage import OrganizationSubscription
 
