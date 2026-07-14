@@ -89,13 +89,15 @@ class CreateSyntheticDataset(APIView):
             org = (
                 getattr(request, "organization", None) or request.user.organization
             )
+            # No ``is_enabled`` wrapper: synthetic_data is an EE feature, so
+            # OSS gets a clean plan-gate denial here instead of the messy
+            # SyntheticDataAgent ImportError path below.
             billing = get_billing()
-            if billing.is_enabled:
-                gate = billing.check_feature_gate(str(org.id), "has_synthetic_data")
-                if not gate.allowed:
-                    return self._gm.forbidden_response(
-                        gate.reason or "Synthetic data feature is not available on your plan."
-                    )
+            gate = billing.check_feature_gate(str(org.id), "has_synthetic_data")
+            if not gate.allowed:
+                return self._gm.forbidden_response(
+                    gate.reason or "Synthetic data feature is not available on your plan."
+                )
 
             validated_data = request.validated_data
             dataset_name = validated_data["dataset"]["name"]

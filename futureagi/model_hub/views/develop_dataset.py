@@ -15100,29 +15100,14 @@ class CreateKnowledgeBaseView(APIView):
             if not ent_check.allowed:
                 return self._gm.forbidden_response(ent_check.reason)
 
-            if billing.is_enabled:
-                feat_check = billing.check_feature_gate(
-                    str(org.id), "has_knowledge_base"
-                )
-                if not feat_check.allowed:
-                    return self._gm.forbidden_response(feat_check.reason)
-
-            # Legacy resource-limit deduct only applies when entitlements did
-            # not gate the request above (mirrors the pre-boundary behavior
-            # where EE skipped this block once Entitlements ran).
-            if not billing.is_enabled:
-                call_log_row = billing.log_and_deduct_resource(
-                    organization=org,
-                    api_call_type=APICallTypeChoices.KNOWLEDGE_BASE.value,
-                    workspace=request.workspace,
-                )
-                if billing.resource_denied(call_log_row):
-                    return self._gm.too_many_requests(
-                        get_error_message("KB_CREATION_LIMIT_REACHED")
-                    )
-                if call_log_row is not None:
-                    call_log_row.status = APICallStatusChoices.SUCCESS.value
-                    call_log_row.save()
+            # knowledge_base is an EE feature: the gate runs (and denies) on
+            # OSS as well, which also makes the old OSS-only resource-limit
+            # deduct unreachable — removed rather than kept as dead code.
+            feat_check = billing.check_feature_gate(
+                str(org.id), "has_knowledge_base"
+            )
+            if not feat_check.allowed:
+                return self._gm.forbidden_response(feat_check.reason)
 
             # Validate ALL files FIRST (before creating KB)
             # Uses is_file_readable for full validation (password check, content parsing)
@@ -15231,13 +15216,11 @@ class CreateKnowledgeBaseView(APIView):
                     get_error_message("KNOWLEDGE_BASE_NOT_FOUND")
                 )
 
+            # knowledge_base is an EE feature: gate runs (and denies) on OSS.
             billing = get_billing()
-            if billing.is_enabled:
-                feat_check = billing.check_feature_gate(
-                    str(org.id), "has_knowledge_base"
-                )
-                if not feat_check.allowed:
-                    return self._gm.forbidden_response(feat_check.reason)
+            feat_check = billing.check_feature_gate(str(org.id), "has_knowledge_base")
+            if not feat_check.allowed:
+                return self._gm.forbidden_response(feat_check.reason)
 
             file_names = {file.name for file in files}
             if len(file_names) != len(files):

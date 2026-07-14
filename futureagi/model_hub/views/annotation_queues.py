@@ -2831,10 +2831,10 @@ def _check_annotation_queue_create_limit(org, workspace=None):
 
 
 def _review_workflow_entitlement_denial(request):
+    # review_workflow is an EE feature: the gate must also run (and deny)
+    # on OSS, matching the check_ee_feature guards on the settings endpoints.
     org = getattr(request, "organization", None) or request.user.organization
     billing = get_billing()
-    if not billing.is_enabled:
-        return None
     result = billing.check_feature_gate(str(org.id), "has_review_workflow")
     if not result.allowed:
         return result.reason or "Review workflow is not available on your plan."
@@ -3810,15 +3810,12 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         """Calculate inter-annotator agreement metrics."""
         org = getattr(request, "organization", None) or request.user.organization
         billing = get_billing()
-        if billing.is_enabled:
-            feat_check = billing.check_feature_gate(
-                str(org.id), "has_agreement_metrics"
+        feat_check = billing.check_feature_gate(str(org.id), "has_agreement_metrics")
+        if not feat_check.allowed:
+            return self._gm.forbidden_response(
+                feat_check.reason
+                or "Agreement metrics are not available on your plan."
             )
-            if not feat_check.allowed:
-                return self._gm.forbidden_response(
-                    feat_check.reason
-                    or "Agreement metrics are not available on your plan."
-                )
 
         queue = self.get_object()
         result = calculate_agreement(queue)

@@ -688,6 +688,19 @@ class TestAgreement:
         assert "labels" in result
         assert "annotator_pairs" in result
 
+    def test_agreement_denied_on_oss(self, auth_client, organization, workspace):
+        """agreement_metrics is an EE feature: OSS (_NoopBilling) must deny
+        the agreement endpoint instead of computing metrics for free."""
+        from tfc.billing.boundary import _NoopBilling
+
+        queue_id = _create_queue(auth_client, name="Agree OSS Q")
+        with patch(
+            "model_hub.views.annotation_queues.get_billing",
+            return_value=_NoopBilling(),
+        ):
+            resp = auth_client.get(f"{QUEUE_URL}{queue_id}/agreement/")
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
+
     def test_full_agreement(self, auth_client, organization, workspace, user):
         queue_id = _create_queue(auth_client, name="Agree Q2", annotations_required=2)
         label = _create_label(organization, workspace, name="L-Agr2")

@@ -17,7 +17,7 @@ the stub works in OSS without any ee install.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -94,8 +94,6 @@ class Billing:
     Never instantiate directly — use get_billing().
     """
 
-    # True on EE, False on OSS. Callers that need to fail-open a fail-CLOSED
-    # entitlement check (see review_workflow, agreement, KB) branch on this.
     is_enabled: bool = True
 
     def record_usage(
@@ -118,8 +116,21 @@ class Billing:
         """Pre-check before a billable action.  Returns ALLOW in OSS."""
         raise NotImplementedError
 
-    def log_and_deduct(self, **kw: Any) -> Any:
-        """Create an APICallLog row and gate on credits.  No-ops in OSS."""
+    def log_and_deduct(
+        self,
+        organization: Any,
+        api_call_type: str,
+        config: Optional[dict] = None,
+        source: Optional[str] = None,
+        source_id: Any = None,
+        workspace: Any = None,
+    ) -> Any:
+        """Create an APICallLog row and gate on credits.  No-ops in OSS.
+
+        Explicit signature (mirrors ee's ``log_and_deduct_cost_for_api_request``)
+        so a typo'd kwarg raises ``TypeError`` on OSS test runs instead of only
+        blowing up on EE/Cloud.
+        """
         raise NotImplementedError
 
     def log_and_deduct_resource(
@@ -139,8 +150,8 @@ class Billing:
         """
         raise NotImplementedError
 
-    def ai_credits(self, cost_usd: float) -> int:
-        """Convert a raw LLM cost (USD) to AI credits.  Returns 0 in OSS."""
+    def ai_credits(self, cost_usd: float) -> float:
+        """Convert a raw LLM cost (USD) to AI credits (fractional).  Returns 0 in OSS."""
         raise NotImplementedError
 
     def has_feature(self, org_id: str, feature: str) -> bool:
@@ -201,8 +212,15 @@ class Billing:
         """Refund credits for a failed API call.  No-op in OSS."""
         raise NotImplementedError
 
-    def check_rate_limit(self, org_id: str, event_type: str) -> UsageDecision:
-        """Rate-limit check for ingestion.  Returns ALLOW in OSS."""
+    def check_rate_limit(
+        self, org_id: str, limit_type: Literal["api", "ingestion"]
+    ) -> UsageDecision:
+        """Rate-limit check.  Returns ALLOW in OSS.
+
+        ``limit_type`` is a *limit type* (``"api"`` or ``"ingestion"``), NOT a
+        BillingEventType — EE's RateLimiter silently allows unknown values, so
+        passing anything else would disable rate limiting.
+        """
         raise NotImplementedError
 
     def setup_org_subscription(self, organization: Any) -> None:
@@ -260,14 +278,22 @@ class _NoopBilling(Billing):
     def check_usage(self, org_id, event_type, amount=0):
         return _ALLOW
 
-    def log_and_deduct(self, **kw):
+    def log_and_deduct(
+        self,
+        organization,
+        api_call_type,
+        config=None,
+        source=None,
+        source_id=None,
+        workspace=None,
+    ):
         return None
 
     def log_and_deduct_resource(self, organization, api_call_type, config=None, workspace=None, **extra):
         return None
 
     def ai_credits(self, cost_usd):
-        return 0
+        return 0.0
 
     def has_feature(self, org_id, feature):
         return False  # entitlement: fail-CLOSED — avoids the develop_annotations leak
@@ -296,7 +322,7 @@ class _NoopBilling(Billing):
     def refund(self, api_call_log_row, **config):
         pass  # no credits to refund in OSS
 
-    def check_rate_limit(self, org_id, event_type):
+    def check_rate_limit(self, org_id, limit_type):
         return _ALLOW  # no rate limiting in OSS
 
     def setup_org_subscription(self, organization):
@@ -338,10 +364,25 @@ class _EeBilling(Billing):
             upgrade_cta=_cta_dict(getattr(result, "upgrade_cta", None)),
         )
 
-    def log_and_deduct(self, **kw):
+    def log_and_deduct(
+        self,
+        organization,
+        api_call_type,
+        config=None,
+        source=None,
+        source_id=None,
+        workspace=None,
+    ):
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 
-        return log_and_deduct_cost_for_api_request(**kw)
+        return log_and_deduct_cost_for_api_request(
+            organization,
+            api_call_type,
+            config=config,
+            source=source,
+            source_id=source_id,
+            workspace=workspace,
+        )
 
     def log_and_deduct_resource(self, organization, api_call_type, config=None, workspace=None, **extra):
         from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
@@ -453,10 +494,10 @@ class _EeBilling(Billing):
 
         refund_cost_for_api_call(api_call_log_row, config=config or None)
 
-    def check_rate_limit(self, org_id, event_type):
+    def check_rate_limit(self, org_id, limit_type):
         from ee.usage.services.rate_limiter import RateLimiter
 
-        result = RateLimiter.check(org_id, event_type)
+        result = RateLimiter.check(org_id, limit_type)
         return UsageDecision(
             allowed=getattr(result, "allowed", True),
             reason=getattr(result, "reason", ""),
@@ -487,8 +528,13 @@ class _EeBilling(Billing):
 def _log_entitlements_import_failure() -> None:
     import logging
 
-    logging.getLogger(__name__).warning(
-        "ee.usage.services.entitlements import failed; allowing by default"
+    # ERROR, not warning: entitlements failing open on a broken EE install
+    # means every paid feature is granted to every org — a revenue leak that
+    # must be loud enough to trip log-based alerting.
+    logging.getLogger(__name__).error(
+        "ee.usage.services.entitlements import failed; entitlements are "
+        "FAILING OPEN — every feature gate is allowing by default. "
+        "Fix the ee install immediately."
     )
 
 

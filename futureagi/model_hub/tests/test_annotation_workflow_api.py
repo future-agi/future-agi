@@ -2242,6 +2242,23 @@ class TestReviewItem:
             action=QueueItemReviewComment.ACTION_APPROVE,
         ).exists()
 
+    def test_bulk_review_denied_on_oss(self, auth_client, queue_with_items):
+        """review_workflow is an EE feature: OSS (_NoopBilling) must deny
+        review actions, not just the queue-settings endpoints."""
+        from tfc.billing.boundary import _NoopBilling
+
+        queue_id, item_ids, _label = queue_with_items
+        with patch(
+            "model_hub.views.annotation_queues.get_billing",
+            return_value=_NoopBilling(),
+        ):
+            resp = auth_client.post(
+                bulk_review_url(queue_id),
+                {"item_ids": [str(item_ids[0])], "action": "approve"},
+                format="json",
+            )
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
+
     def test_bulk_review_reports_own_annotations_without_approving_them(
         self,
         auth_client,
