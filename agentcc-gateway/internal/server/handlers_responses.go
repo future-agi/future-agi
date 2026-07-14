@@ -404,7 +404,6 @@ func (h *Handlers) DeleteResponse(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// extractOrgID extracts the org ID from auth metadata.
 // extractOrgID returns the organization that owns the caller's API key. That
 // org is the ownership boundary for every org-scoped resource — files,
 // responses, scheduled jobs — so this must return the key's real org.
