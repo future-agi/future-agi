@@ -311,10 +311,13 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 			rc.Model = req.Model
 			rc.Request = &req
 			rc.IsStream = false
-			// Replay the submitter's credential: the pipeline authenticates and
-			// attributes spend per request, so without it the job is rejected by
-			// the auth plugin and its cost belongs to no org.
+			// Replay the submitter's identity: the pipeline authenticates,
+			// attributes spend, and evaluates IP ACLs per request, so without
+			// these the job is rejected by the auth plugin and its cost belongs
+			// to no org. The IP is the submitter's, captured at submit time —
+			// the authenticated principal, not the background worker.
 			rc.Metadata["authorization"] = job.Authorization
+			rc.Metadata["client_ip"] = job.ClientIP
 
 			provider, err := registry.Resolve(req.Model)
 			if err != nil {

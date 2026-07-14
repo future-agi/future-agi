@@ -96,6 +96,7 @@ func (h *Handlers) SubmitScheduled(w http.ResponseWriter, r *http.Request) {
 		ID:            "sched-" + requestID,
 		OrgID:         extractOrgID(r, h),
 		Authorization: authHeaderFromRequest(r),
+		ClientIP:      extractClientIP(r),
 		Status:        scheduled.StatusPending,
 		ScheduledAt:   scheduledAt,
 		CreatedAt:     time.Now(),

@@ -45,6 +45,29 @@ func TestSubmitScheduledCapturesSubmitterCredential(t *testing.T) {
 	}
 }
 
+// The job must record the submitter's IP so that, when it runs in the
+// background, IP ACLs are evaluated against the submitter and not the worker's
+// blank address — otherwise an IP-restricted key's jobs always fail to execute.
+func TestSubmitScheduledCapturesClientIP(t *testing.T) {
+	h, store := newScheduledHandlers(t)
+
+	body := `{"delay":"1h","request":{"model":"gpt-4o"}}`
+	r := httptest.NewRequest("POST", "/v1/scheduled", strings.NewReader(body))
+	r.Header.Set("Authorization", "Bearer sk-agentcc-caller")
+	r.Header.Set("X-Forwarded-For", "203.0.113.7, 10.0.0.1")
+	w := httptest.NewRecorder()
+
+	h.SubmitScheduled(w, r)
+
+	jobs, _ := store.ListByOrg("", "", 10)
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 stored job, got %d", len(jobs))
+	}
+	if jobs[0].ClientIP != "203.0.113.7" {
+		t.Errorf("ClientIP = %q, want the submitter's forwarded address", jobs[0].ClientIP)
+	}
+}
+
 // x-api-key is the other accepted spelling; it must be normalized the same way
 // the synchronous path normalizes it.
 func TestSubmitScheduledAcceptsXAPIKey(t *testing.T) {
