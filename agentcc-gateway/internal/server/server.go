@@ -300,58 +300,10 @@ func New(cfg *config.Config, configPath string, registry *providers.Registry, en
 		}
 		handlers.scheduledRetryAttempts = retryAttempts
 
-		// The execute function calls back into the gateway pipeline.
-		schedExecuteFn := func(job *scheduled.ScheduledJob) (json.RawMessage, error) {
-			var req models.ChatCompletionRequest
-			if err := json.Unmarshal(job.Request, &req); err != nil {
-				return nil, fmt.Errorf("invalid scheduled request: %w", err)
-			}
-
-			rc := models.AcquireRequestContext()
-			rc.Model = req.Model
-			rc.Request = &req
-			rc.IsStream = false
-			// Replay the submitter's identity: the pipeline authenticates,
-			// attributes spend, and evaluates IP ACLs per request, so without
-			// these the job is rejected by the auth plugin and its cost belongs
-			// to no org. The IP is the submitter's, captured at submit time —
-			// the authenticated principal, not the background worker.
-			rc.Metadata["authorization"] = job.Authorization
-			rc.Metadata["client_ip"] = job.ClientIP
-
-			provider, err := registry.Resolve(req.Model)
-			if err != nil {
-				rc.Release()
-				return nil, fmt.Errorf("no provider for model %q: %w", req.Model, err)
-			}
-			rc.Provider = provider.ID()
-
-			providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
-				resp, err := provider.ChatCompletion(callCtx, callRC.Request)
-				if err != nil {
-					return err
-				}
-				callRC.Response = resp
-				callRC.ResolvedModel = resp.Model
-				return nil
-			}
-
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-			defer cancel()
-			if err := engine.Process(ctx, rc, providerCall); err != nil {
-				rc.Release()
-				return nil, err
-			}
-			resp := rc.Response
-			rc.Release()
-			if resp == nil {
-				return nil, fmt.Errorf("no response from provider")
-			}
-			return json.Marshal(resp)
-		}
-
+		// The scheduler runs each due job back through the request pipeline as
+		// its original submitter — see Handlers.executeScheduledJob.
 		scheduler := scheduled.NewScheduler(
-			scheduledStore, schedExecuteFn,
+			scheduledStore, handlers.executeScheduledJob,
 			cfg.Routing.Scheduled.ResultTTL,
 			cfg.Routing.Scheduled.RetryBackoff,
 			cfg.Routing.Scheduled.WorkerCount,

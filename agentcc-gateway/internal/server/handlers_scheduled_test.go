@@ -8,8 +8,66 @@ import (
 	"testing"
 	"time"
 
+	authpkg "github.com/futureagi/agentcc-gateway/internal/auth"
+	"github.com/futureagi/agentcc-gateway/internal/config"
+	"github.com/futureagi/agentcc-gateway/internal/providers"
 	"github.com/futureagi/agentcc-gateway/internal/scheduled"
 )
+
+const userKeyProviderRejection = "is not available for this API key"
+
+// A scheduled job must resolve its provider the way a live request from the same
+// key would. A non-internal key cannot reach a global, gateway-credentialed
+// provider synchronously; it must not be able to via the scheduler either,
+// spending gateway-owned credentials on the async path.
+func TestExecuteScheduledJobRejectsUserKeyOnGlobalProvider(t *testing.T) {
+	ks := authpkg.NewKeyStore(config.AuthConfig{
+		Enabled: true,
+		Keys: []config.AuthKeyConfig{
+			{Name: "user", Key: "sk-user", KeyType: "byok", Metadata: map[string]string{"org_id": "org-a"}},
+		},
+	})
+	h := &Handlers{keyStore: ks} // guard rejects before any provider/engine is touched
+
+	job := &scheduled.ScheduledJob{
+		Authorization: "Bearer sk-user",
+		Request:       json.RawMessage(`{"model":"gpt-4o"}`),
+	}
+
+	if _, err := h.executeScheduledJob(job); err == nil {
+		t.Fatal("a user key scheduled a global-provider model and was allowed; want rejection")
+	} else if !strings.Contains(err.Error(), userKeyProviderRejection) {
+		t.Errorf("err = %v, want the global-provider rejection", err)
+	}
+}
+
+// The guard that blocks user keys must NOT block internal service keys — they
+// are the primary scheduler caller. An internal key gets past the key-type
+// guard; here it then fails only because the model resolves to no provider,
+// which is a different error.
+func TestExecuteScheduledJobAllowsInternalKeysPastTheGuard(t *testing.T) {
+	ks := authpkg.NewKeyStore(config.AuthConfig{
+		Enabled: true,
+		Keys: []config.AuthKeyConfig{
+			{Name: "svc", Key: "sk-internal", KeyType: "internal"},
+		},
+	})
+	registry, err := providers.NewRegistry(config.DefaultConfig())
+	if err != nil {
+		t.Fatalf("creating registry: %v", err)
+	}
+	h := &Handlers{keyStore: ks, registry: registry}
+
+	job := &scheduled.ScheduledJob{
+		Authorization: "Bearer sk-internal",
+		Request:       json.RawMessage(`{"model":"sched-no-such-model"}`),
+	}
+
+	_, err = h.executeScheduledJob(job)
+	if err != nil && strings.Contains(err.Error(), userKeyProviderRejection) {
+		t.Errorf("internal key was rejected by the user-key provider guard: %v", err)
+	}
+}
 
 func newScheduledHandlers(t *testing.T) (*Handlers, scheduled.Store) {
 	t.Helper()
