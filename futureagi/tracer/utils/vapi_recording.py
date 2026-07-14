@@ -61,7 +61,7 @@ class VapiRecordingService:
     """Single entry point for Vapi recording and call-log operations."""
 
     @classmethod
-    def build_artifact_url(cls, call_id: str, artifact_type: str) -> str:
+    def build_artifact_url(cls, call_id: str, artifact_type: VapiArtifactType) -> str:
         """Build the authenticated endpoint URL for a call artifact."""
         return f"{VAPI_API_BASE_URL}/call/{call_id}/{artifact_type}"
 
@@ -107,13 +107,15 @@ class VapiRecordingService:
             )
             return None
 
+        org_id = provider.organization_id if provider is not None else None
+
         if provider is not None:
             key = cls._api_key_from_provider_row(provider)
             if key:
                 return key
 
         try:
-            return cls._api_key_from_any_agent_on_project(project_id)
+            return cls._api_key_from_any_agent_on_project(project_id, org_id)
         except Exception:
             logger.exception(
                 "vapi_recording_service.get_api_key_agent_lookup_failed",
@@ -178,7 +180,7 @@ class VapiRecordingService:
 
     @classmethod
     def _api_key_from_any_agent_on_project(
-        cls, project_id: Any
+        cls, project_id: Any, org_id: Optional[Any] = None
     ) -> Optional[str]:
         try:
             from simulate.models.agent_definition import AgentDefinition
@@ -190,6 +192,7 @@ class VapiRecordingService:
             AgentDefinition.objects.filter(
                 observability_provider__project_id=project_id,
                 provider=ProviderChoices.VAPI,
+                organization_id=org_id,
             )
             .exclude(api_key__isnull=True)
             .exclude(api_key="")
