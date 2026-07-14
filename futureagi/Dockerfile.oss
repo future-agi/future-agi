@@ -1,53 +1,82 @@
 # ============================================================================
-# Future AGI — OSS backend image
-# Builds from a public Python base. No private registry required.
-# Build context: ./futureagi (see docker-compose.yml).
+# Future AGI — OSS backend image (multi-stage, slim)
+#
+# Layout:
+#   builder  → compiles native wheels (build-essential, dev headers)
+#   runtime  → minimal Debian slim + site-packages from builder, no toolchain
+#
+# OSS image installs only `requirements.txt` (no GPU, no spaCy, no audio).
+# Heavy/EE deps live in `[project.optional-dependencies]` extras; EE's
+# overlay image (ee/Dockerfile.ee) installs `ee/requirements.txt` on top via
+# `uv pip install --system`, which targets the same site-packages dir this
+# image's runtime stage exposes.
 # ============================================================================
 
-FROM python:3.11-slim-bookworm
+# ────────────────────── builder ───────────────────────
+FROM python:3.11-slim-bookworm AS builder
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_DEFAULT_TIMEOUT=300 \
-    UV_TIMEOUT=900 \
+    UV_TIMEOUT=900
+
+# Native-build deps: build-essential for C/C++ wheels, xmlsec dev headers
+# for the `xmlsec` Python bindings (SAML SSO), libkrb5-dev for kerberos
+# bindings, pkg-config for header discovery.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        pkg-config \
+        libxml2-dev \
+        libxslt1-dev \
+        libxmlsec1-dev \
+        libxmlsec1-openssl \
+        libkrb5-dev \
+        zlib1g-dev \
+        xmlsec1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN pip install uv
+
+COPY requirements.txt /tmp/requirements.txt
+# `lxml` ships its own libxml2 statically; `xmlsec` wheels dynamic-link the
+# system one. Always mismatched at runtime → SAML breaks. Build both from
+# source against the builder's libxml2-dev so they share one ABI.
+RUN uv pip install --system -r /tmp/requirements.txt --compile-bytecode --no-cache \
+    --no-binary lxml --no-binary xmlsec
+
+# ────────────────────── runtime ───────────────────────
+FROM python:3.11-slim-bookworm AS runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
     PROJECT_ROOT=/app/backend
+
+# Runtime-only shared libs:
+#   libxmlsec1-openssl + xmlsec1  → SAML signing/verification
+#   libkrb5-3 + libgssapi-krb5-2 + libcom-err2 → Kerberos GSSAPI
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libxmlsec1-openssl \
+        xmlsec1 \
+        libkrb5-3 \
+        libgssapi-krb5-2 \
+        libcom-err2 \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Pull installed Python packages + console scripts from the builder.
+# Keeping the system-Python layout means `uv pip install --system` in the
+# EE overlay (ee/Dockerfile.ee) targets the same site-packages dir.
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/
+COPY --from=builder /usr/local/bin/celery /usr/local/bin/granian /usr/local/bin/
 
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        supervisor \
-        nginx \
-        git \
-        curl \
-        nodejs \
-        build-essential \
-        libxml2-dev \
-        libxmlsec1-dev \
-        libxmlsec1-openssl \
-        pkg-config \
-        xmlsec1 \
-        ffmpeg \
-        libavformat-dev \
-        libavcodec-dev \
-        libavdevice-dev \
-        libavutil-dev \
-        libavfilter-dev \
-        libswscale-dev \
-        libswresample-dev \
-        libcom-err2 \
-        libkrb5-3 \
-        libgssapi-krb5-2 \
-    && rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
-
 WORKDIR $PROJECT_ROOT
-RUN pip install uv && mkdir -p media logs static && chown -R appuser:appuser /app
-
-COPY requirements.txt ./
-RUN uv pip install --system -r requirements.txt --compile-bytecode --no-cache --only-binary av
+RUN mkdir -p media logs static && chown -R appuser:appuser /app
 
 COPY . .
 RUN chmod +x entrypoint.sh

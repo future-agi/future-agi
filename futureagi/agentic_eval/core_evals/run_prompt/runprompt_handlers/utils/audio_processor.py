@@ -15,8 +15,11 @@ import time
 import wave
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-import av
 import structlog
+
+# `av` (PyAV) lives in the `audio` extra (OSS-light skips it). Reuse the
+# proxy from tfc.utils.storage so any call site raises a clear ImportError.
+from tfc.utils.storage import av  # noqa: F401
 
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
 from tfc.utils.storage import (
