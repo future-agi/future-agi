@@ -335,7 +335,10 @@ class TestProcessEvaluationSingleTask:
         from model_hub.tasks.user_evaluation import process_evaluation_single_task
 
         mock_eval = MagicMock()
-        mock_user_eval.objects.get.return_value = mock_eval
+        # The task fetches with select_related for version stamping.
+        mock_user_eval.objects.select_related.return_value.get.return_value = (
+            mock_eval
+        )
 
         process_evaluation_single_task({"type": "single", "eval_id": "eval-123"})
 
@@ -351,7 +354,9 @@ class TestProcessEvaluationSingleTask:
         from model_hub.tasks.user_evaluation import process_evaluation_single_task
 
         mock_eval = MagicMock()
-        mock_user_eval.objects.get.return_value = mock_eval
+        mock_user_eval.objects.select_related.return_value.get.return_value = (
+            mock_eval
+        )
 
         process_evaluation_single_task({"type": "experiment", "eval_id": "eval-123"})
 
@@ -368,7 +373,9 @@ class TestProcessEvaluationSingleTask:
 
         mock_eval = MagicMock()
         mock_eval.source_id = "optim-123"
-        mock_user_eval.objects.get.return_value = mock_eval
+        mock_user_eval.objects.select_related.return_value.get.return_value = (
+            mock_eval
+        )
 
         mock_optimizer = MagicMock()
         mock_optimizer_class.return_value = mock_optimizer

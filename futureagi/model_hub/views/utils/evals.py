@@ -14,7 +14,7 @@ from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
 from model_hub.models.develop_dataset import Column
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 from model_hub.services.ground_truth_service import GroundTruthService
 from model_hub.views.eval_runner import (
     EvaluationRunner,
@@ -238,6 +238,23 @@ def run_eval_func(
             source_config.update(config)
         if input_data_types:
             source_config.update({"input_data_types": input_data_types})
+
+        # Stamp which eval version produced this result so the Usage tab can
+        # show it per row. Callers that already resolved a version (e.g. a
+        # pinned composite child) pass it in; otherwise the template default.
+        tracked_version = kwargs.get("resolved_version")
+        if not tracked_version:
+            try:
+                tracked_version = EvalTemplateVersion.objects.get_default(template)
+            except Exception:
+                logger.warning(
+                    "version_tracking_failed",
+                    template_id=str(template.id),
+                    exc_info=True,
+                )
+        if tracked_version:
+            source_config["version_id"] = str(tracked_version.id)
+            source_config["version_number"] = tracked_version.version_number
 
         try:
             from ee.usage.schemas.event_types import BillingEventType

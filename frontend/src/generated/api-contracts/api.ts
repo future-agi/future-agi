@@ -663,6 +663,7 @@ import type {
   ModelHubEvalConfigResponseApi,
   ModelHubEvalGroupsList200,
   ModelHubEvalGroupsListParams,
+  ModelHubEvalTemplatesUsageListParams,
   ModelHubExperimentDetailList200,
   ModelHubExperimentDetailListParams,
   ModelHubExperimentsDataList200,
@@ -35765,22 +35766,41 @@ export type modelHubEvalTemplatesUsageListResponseError = (modelHubEvalTemplates
 
 export type modelHubEvalTemplatesUsageListResponse = (modelHubEvalTemplatesUsageListResponseSuccess | modelHubEvalTemplatesUsageListResponseError)
 
-export const getModelHubEvalTemplatesUsageListUrl = (templateId: string,) => {
+export const getModelHubEvalTemplatesUsageListUrl = (templateId: string,
+    params?: ModelHubEvalTemplatesUsageListParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/model-hub/eval-templates/${templateId}/usage/`
+  return stringifiedParams.length > 0 ? `/model-hub/eval-templates/${templateId}/usage/?${stringifiedParams}` : `/model-hub/eval-templates/${templateId}/usage/`
 }
 
 /**
- * Returns usage stats, chart data, and paginated eval logs.
-Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d|180d|365d)
+ * Returns usage stats, chart data, and the paginated usage table.
+Query params: page (0-based), page_size, period
+(30m|6h|1d|7d|30d|90d|180d|365d), optional start_date/end_date pair
+(overrides period — sent by the FE for Today / Yesterday / Custom).
+
+The response is rendered through
+``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the
+boundary so shape drift surfaces here instead of shipping silently.
  * @summary GET /model-hub/eval-templates/<id>/usage/
  */
-export const modelHubEvalTemplatesUsageList = async (templateId: string, options?: RequestInit): Promise<modelHubEvalTemplatesUsageListResponse> => {
+export const modelHubEvalTemplatesUsageList = async (templateId: string,
+    params?: ModelHubEvalTemplatesUsageListParams, options?: RequestInit): Promise<modelHubEvalTemplatesUsageListResponse> => {
 
-  return apiMutator<modelHubEvalTemplatesUsageListResponse>(getModelHubEvalTemplatesUsageListUrl(templateId),
+  return apiMutator<modelHubEvalTemplatesUsageListResponse>(getModelHubEvalTemplatesUsageListUrl(templateId,params),
   {
     ...options,
     method: 'GET'

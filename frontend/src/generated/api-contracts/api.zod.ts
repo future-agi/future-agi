@@ -19967,18 +19967,43 @@ export const ModelHubEvalTemplatesUpdateUpdateResponse = zod.object({
 
 
 /**
- * Returns usage stats, chart data, and paginated eval logs.
-Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d|180d|365d)
+ * Returns usage stats, chart data, and the paginated usage table.
+Query params: page (0-based), page_size, period
+(30m|6h|1d|7d|30d|90d|180d|365d), optional start_date/end_date pair
+(overrides period — sent by the FE for Today / Yesterday / Custom).
+
+The response is rendered through
+``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the
+boundary so shape drift surfaces here instead of shipping silently.
  * @summary GET /model-hub/eval-templates/<id>/usage/
  */
 export const ModelHubEvalTemplatesUsageListParams = zod.object({
   "template_id": zod.string()
 })
 
+export const modelHubEvalTemplatesUsageListQueryPageDefault = 0;
+export const modelHubEvalTemplatesUsageListQueryPageMin = 0;
+export const modelHubEvalTemplatesUsageListQueryPageMax = 10000;
+
+export const modelHubEvalTemplatesUsageListQueryPageSizeDefault = 25;
+export const modelHubEvalTemplatesUsageListQueryPageSizeMax = 100;
+
+export const modelHubEvalTemplatesUsageListQueryPeriodDefault = `30d`;
+
+export const ModelHubEvalTemplatesUsageListQueryParams = zod.object({
+  "page": zod.number().min(modelHubEvalTemplatesUsageListQueryPageMin).max(modelHubEvalTemplatesUsageListQueryPageMax).default(modelHubEvalTemplatesUsageListQueryPageDefault),
+  "page_size": zod.number().min(1).max(modelHubEvalTemplatesUsageListQueryPageSizeMax).default(modelHubEvalTemplatesUsageListQueryPageSizeDefault),
+  "period": zod.enum(['30m', '6h', '1d', '7d', '30d', '90d', '180d', '365d']).default(modelHubEvalTemplatesUsageListQueryPeriodDefault),
+  "start_date": zod.string().datetime({"offset":true}).optional(),
+  "end_date": zod.string().datetime({"offset":true}).optional()
+})
 
 
 
-
+export const modelHubEvalTemplatesUsageListResponseResultTableItemDetailInputVariablesDefault = {  };
+export const modelHubEvalTemplatesUsageListResponseResultTableItemDetailWarningsDefault = [];
+export const modelHubEvalTemplatesUsageListResponseResultTableItemDetailMappingsDefault = {  };
+export const modelHubEvalTemplatesUsageListResponseResultTableItemDetailChildrenDefault = [];
 
 export const ModelHubEvalTemplatesUsageListResponse = zod.object({
   "status": zod.boolean(),
@@ -20000,32 +20025,67 @@ export const ModelHubEvalTemplatesUsageListResponse = zod.object({
   "pass_count": zod.number().optional(),
   "fail_count": zod.number().optional()
 })),
-  "logs": zod.object({
-  "items": zod.array(zod.object({
-  "id": zod.string().uuid(),
-  "input": zod.string(),
-  "result": zod.string().optional(),
-  "score": zod.number().optional(),
-  "reason": zod.string().optional(),
-  "status": zod.string().min(1),
-  "source": zod.string().optional(),
-  "created_at": zod.string().min(1),
-  "detail": zod.object({
-
-}).passthrough(),
+  "table": zod.array(zod.object({
+  "row_id": zod.string().min(1),
+  "score": zod.object({
+  "cell_value": zod.number().optional()
+}).optional(),
+  "result": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "input": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "reason": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "source": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "version": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
   "feedback": zod.object({
+  "cell_value": zod.object({
   "id": zod.string().uuid(),
-  "value": zod.object({
-
-}).passthrough().optional(),
+  "value": zod.string().optional(),
   "explanation": zod.string().optional(),
   "action_type": zod.string().optional(),
   "created_at": zod.string().optional(),
   "user": zod.string().optional()
+}).optional()
+}).optional(),
+  "created_at": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "status": zod.object({
+  "cell_value": zod.string().optional()
+}).optional(),
+  "warnings": zod.object({
+  "cell_value": zod.array(zod.object({
+
+}).passthrough()).optional()
+}).optional(),
+  "detail": zod.object({
+  "input_variables": zod.record(zod.string(), zod.string()).default(modelHubEvalTemplatesUsageListResponseResultTableItemDetailInputVariablesDefault),
+  "output": zod.object({
+
+}).passthrough().optional(),
+  "warnings": zod.array(zod.string()).default(modelHubEvalTemplatesUsageListResponseResultTableItemDetailWarningsDefault),
+  "mappings": zod.record(zod.string(), zod.string()).default(modelHubEvalTemplatesUsageListResponseResultTableItemDetailMappingsDefault),
+  "model": zod.union([zod.string(), zod.object({}).passthrough()]).optional().describe('String or JSON object.'),
+  "version_id": zod.string().min(1).optional(),
+  "version_number": zod.number().optional(),
+  "children": zod.array(zod.string()).default(modelHubEvalTemplatesUsageListResponseResultTableItemDetailChildrenDefault),
+  "aggregation_function": zod.string().optional(),
+  "total_children": zod.number().optional(),
+  "completed_children": zod.number().optional(),
+  "failed_children": zod.number().optional()
 }).optional(),
   "composite": zod.boolean().optional(),
   "aggregate_pass": zod.boolean().optional()
 })),
+  "logs": zod.object({
   "total": zod.number(),
   "page": zod.number(),
   "page_size": zod.number()

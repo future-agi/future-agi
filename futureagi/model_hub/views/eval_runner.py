@@ -923,8 +923,22 @@ class EvaluationRunner:
                 self.dataset.workspace.id if self.dataset.workspace else None
             )
 
-        if self.version_number is None and self.user_eval_metric.pinned_version_id:
-            self.version_number = self.user_eval_metric.pinned_version.version_number
+        if self.version_number is None:
+            # Resolve the version that will actually run (pinned wins, else
+            # template default) so run records and usage logs agree.
+            try:
+                self._resolved_version = EvalTemplateVersion.objects.resolve_for_metric(
+                    self.user_eval_metric
+                )
+            except Exception:
+                logger.warning(
+                    "version_tracking_failed",
+                    path="eval_runner",
+                    user_eval_metric_id=str(self.user_eval_metric_id),
+                    exc_info=True,
+                )
+            if self._resolved_version:
+                self.version_number = self._resolved_version.version_number
 
         self.user_eval_metric.status = StatusType.RUNNING.value
         self.user_eval_metric.save(update_fields=["status"])
@@ -1388,6 +1402,12 @@ class EvaluationRunner:
         }
         if self.source_configs:
             api_call_config.update(self.source_configs)
+        # Version stamp for the Usage tab. source_configs from the dataset
+        # paths already carry it (setdefault-safe); this covers callers that
+        # constructed the runner without one.
+        if "version_id" not in api_call_config and self._resolved_version:
+            api_call_config["version_id"] = str(self._resolved_version.id)
+            api_call_config["version_number"] = self._resolved_version.version_number
         # else:
         api_call_config.update(config)
         if preview:
