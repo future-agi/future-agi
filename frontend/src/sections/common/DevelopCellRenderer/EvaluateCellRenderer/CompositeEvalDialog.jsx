@@ -4,7 +4,7 @@ import {
   DialogTitle,
   IconButton,
 } from "@mui/material";
-import React, { useEffect, useState } from "react";
+import React, { useRef } from "react";
 import Iconify from "src/components/iconify";
 import CompositeResultView from "src/sections/evals/components/CompositeResultView";
 import { useCompositeEvalStore } from "src/sections/develop-detail/states";
@@ -14,26 +14,21 @@ const CompositeEvalDialog = () => {
   const setCompositeEval = useCompositeEvalStore((s) => s.setCompositeEval);
   const open = Boolean(compositeEval);
 
-  // Retain the last composite so the content stays mounted through the
-  // Dialog's close transition; clearing it immediately would collapse the
-  // modal height to just the title before the fade-out finishes.
-  const [rendered, setRendered] = useState(compositeEval);
-  useEffect(() => {
-    if (compositeEval) setRendered(compositeEval);
-  }, [compositeEval]);
+  // Keep the last composite available during the Dialog's close transition so
+  // the modal body doesn't collapse to just the title while it fades out. The
+  // ref is written during render (before it's read), so content is present on
+  // the very first paint on open; MUI unmounts the subtree itself once the exit
+  // transition finishes.
+  const lastEvalRef = useRef(null);
+  if (compositeEval) lastEvalRef.current = compositeEval;
+  const rendered = compositeEval ?? lastEvalRef.current;
 
   const close = () => setCompositeEval(null);
 
   const children = rendered?.children || [];
 
   return (
-    <Dialog
-      open={open}
-      onClose={close}
-      maxWidth="md"
-      fullWidth
-      TransitionProps={{ onExited: () => setRendered(null) }}
-    >
+    <Dialog open={open} onClose={close} maxWidth="md" fullWidth>
       <DialogTitle
         sx={{
           display: "flex",
