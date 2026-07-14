@@ -384,33 +384,6 @@ class VapiRecordingService:
         return response.content
 
     @classmethod
-    async def rehost_recording_bytes(
-        cls,
-        call_id: str,
-        artifact_type: str,
-        url_type: str,
-        api_key: str,
-    ) -> tuple[str, int]:
-        """Download an artifact via Bearer and upload to FA S3; returns (s3_url, bytes)."""
-        audio_bytes = await cls.download_artifact_async(
-            call_id, artifact_type, api_key
-        )
-        import asyncio
-
-        from tfc.utils.storage import upload_audio_to_s3
-
-        loop = asyncio.get_running_loop()
-
-        def _do_upload() -> str:
-            object_key = f"call-recordings/{call_id}/{url_type}.mp3"
-            return upload_audio_to_s3(
-                {"bytes": audio_bytes}, object_key=object_key
-            )
-
-        s3_url = await loop.run_in_executor(None, _do_upload)
-        return s3_url, len(audio_bytes)
-
-    @classmethod
     def mirror_s3_url_to_consumer_fields(
         cls,
         *,
