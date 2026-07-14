@@ -42,6 +42,7 @@ import FormSearchField from "src/components/FormSearchField/FormSearchField";
 
 import { enqueueSnackbar } from "notistack";
 import SingleImageViewerProvider from "src/sections/develop-detail/Common/SingleImageViewer/SingleImageViewerProvider";
+import CompositeEvalDialog from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/CompositeEvalDialog";
 import RenderCellRunningOptions from "./RenderCellRunningOptions";
 import { useRerunColumnInExperimentStoreShallow } from "./states";
 import { useGetExperimentDetails } from "src/hooks/useGetExperimentDetails";
@@ -965,6 +966,7 @@ function ExperimentDataView() {
         }}
       >
         <SingleImageViewerProvider>
+          <CompositeEvalDialog />
           <AgGridReact
             rowHeight={defaultRowHeightMapping["Short"]?.height}
             getRowHeight={getRowHeight}
