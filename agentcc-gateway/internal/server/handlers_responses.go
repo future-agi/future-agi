@@ -405,18 +405,21 @@ func (h *Handlers) DeleteResponse(w http.ResponseWriter, r *http.Request) {
 }
 
 // extractOrgID extracts the org ID from auth metadata.
+// extractOrgID returns the organization that owns the caller's API key. That
+// org is the ownership boundary for every org-scoped resource — files,
+// responses, scheduled jobs — so this must return the key's real org.
+//
+// peekKeyOrgID reads the org straight off the key's metadata (into
+// "key_org_id") without running the full auth pipeline. Ownership is NOT made
+// contingent on the key having a server-side tenant config: a key with no such
+// config still belongs to its org. A key with no org metadata — or a
+// deployment with no key store — resolves to "", which is correct for a
+// single-tenant gateway where every caller shares the one implicit org.
 func extractOrgID(r *http.Request, h *Handlers) string {
 	rc := models.AcquireRequestContext()
 	defer rc.Release()
 
 	setAuthMetadataFromRequest(rc, r)
-
 	h.peekKeyOrgID(rc)
-	_, orgCfg := h.resolveOrgConfig(rc)
-	if orgCfg != nil {
-		if v, ok := rc.Metadata["org_id"]; ok {
-			return v
-		}
-	}
-	return ""
+	return rc.Metadata["key_org_id"]
 }
