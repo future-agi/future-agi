@@ -7,6 +7,16 @@ import { AgGridReact } from "ag-grid-react";
 import PropTypes from "prop-types";
 import { useAgThemeWithoutGridWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
+import { DynamicColumnOriginTypes } from "../common";
+
+const getOriginType = (item) => item?.originType ?? item?.origin_type;
+
+const isRunnableColumn = (item) => {
+  const originType = getOriginType(item);
+  return (
+    originType === "run_prompt" || DynamicColumnOriginTypes.includes(originType)
+  );
+};
 
 const RunEvals = ({ gridRef, setIsData }) => {
   const [mainData, setMainData] = useState(null);
@@ -37,9 +47,9 @@ const RunEvals = ({ gridRef, setIsData }) => {
       return response.data;
     },
     onSuccess: (data) => {
-      const runPromptData = data?.result?.columnConfig?.filter(
-        (item) => item?.originType === "run_prompt",
-      );
+      const columnConfig =
+        data?.result?.columnConfig ?? data?.result?.column_config ?? [];
+      const runPromptData = columnConfig.filter((item) => isRunnableColumn(item));
       setMainData(runPromptData);
     },
   });
@@ -66,9 +76,11 @@ const RunEvals = ({ gridRef, setIsData }) => {
 
       return mergedData.map((item) => ({
         content: item?.name || item?.evalTemplateName,
-        field: item?.originType === "run_prompt" ? item.sourceId : item.id,
-        originType:
-          item?.originType === "run_prompt" ? item.originType : "eval",
+        field:
+          getOriginType(item) === "run_prompt"
+            ? item?.sourceId ?? item?.source_id
+            : item?.id,
+        originType: isRunnableColumn(item) ? getOriginType(item) : "eval",
       }));
     }
     return [];
