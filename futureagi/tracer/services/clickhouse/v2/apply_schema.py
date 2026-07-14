@@ -32,6 +32,7 @@ Exit codes:
     2   drift detected without --force
     3   CH error during apply
 """
+
 from __future__ import annotations
 
 import argparse
@@ -39,13 +40,12 @@ import hashlib
 import os
 import sys
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
-import clickhouse_connect          # HTTP — easier to debug than native here
+import clickhouse_connect  # HTTP — easier to debug than native here
 import structlog
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Logging — structured, machine-parseable, never print()
@@ -64,9 +64,12 @@ log = structlog.get_logger("apply_schema")
 # CLI
 # ──────────────────────────────────────────────────────────────────────────────
 def build_argparser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     p.add_argument(
-        "--schema-dir", type=Path,
+        "--schema-dir",
+        type=Path,
         # Default is THIS module's schema dir (v2). Earlier the default pointed
         # to ../schema which resolved to the legacy CH 24.10 schema directory
         # — codex review P1 finding. Tests sweep the v2 dir explicitly so they
@@ -81,27 +84,48 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--ch-password", default=os.environ.get("CH_PASSWORD", ""))
     p.add_argument("--ch-database", default="default")
     p.add_argument("--status", action="store_true", help="Show applied versions, exit")
-    p.add_argument("--force", action="store_true",
-                   help="Apply even if hash drift detected (requires DECISIONS.md justification)")
-    p.add_argument("--files", nargs="+", default=None,
-                   help="Apply only these files (relative to --schema-dir). Default: all *.sql in order.")
-    p.add_argument("--replicated", action="store_true",
-                   help=("Rewrite engine declarations to their Replicated* variants and append "
-                         "ON CLUSTER to CREATE TABLE / CREATE MATERIALIZED VIEW. Use in production "
-                         "where tables are coordinated via ZooKeeper / ClickHouse Keeper. The local "
-                         "test rig (single-node, no Keeper) does NOT use this flag."))
-    p.add_argument("--cluster", default="default",
-                   help="Cluster name for --replicated (default 'default'). Must match the cluster "
-                        "name in remote_servers config on the prod CH cluster.")
-    p.add_argument("--zk-table-path-prefix", default="/clickhouse/tables/ch25",
-                   help=("ZooKeeper/Keeper path prefix for Replicated tables (default "
-                         "'/clickhouse/tables/ch25'). Each table gets "
-                         "<prefix>/{shard}/<table>. {shard} and {replica} are resolved by "
-                         "CH macros server-side. The '/ch25' segment namespaces v2 tables "
-                         "away from the legacy '/clickhouse/tables/{shard}/<table>' paths "
-                         "used by the existing CH 24.10 tables (per schema.py:760). Sharing "
-                         "the path would cause replica-metadata collisions on the same "
-                         "Keeper instance — codex review P0 finding."))
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Apply even if hash drift detected (requires DECISIONS.md justification)",
+    )
+    p.add_argument(
+        "--files",
+        nargs="+",
+        default=None,
+        help="Apply only these files (relative to --schema-dir). Default: all *.sql in order.",
+    )
+    p.add_argument(
+        "--replicated",
+        action="store_true",
+        help=(
+            "Rewrite engine declarations to their Replicated* variants and append "
+            "ON CLUSTER to CREATE TABLE / CREATE MATERIALIZED VIEW / CREATE DICTIONARY. "
+            "Use in production "
+            "where tables are coordinated via ZooKeeper / ClickHouse Keeper. The local "
+            "test rig (single-node, no Keeper) does NOT use this flag."
+        ),
+    )
+    p.add_argument(
+        "--cluster",
+        default="default",
+        help="Cluster name for --replicated (default 'default'). Must match the cluster "
+        "name in remote_servers config on the prod CH cluster.",
+    )
+    p.add_argument(
+        "--zk-table-path-prefix",
+        default="/clickhouse/tables/ch25",
+        help=(
+            "ZooKeeper/Keeper path prefix for Replicated tables (default "
+            "'/clickhouse/tables/ch25'). Each table gets "
+            "<prefix>/{shard}/<table>. {shard} and {replica} are resolved by "
+            "CH macros server-side. The '/ch25' segment namespaces v2 tables "
+            "away from the legacy '/clickhouse/tables/{shard}/<table>' paths "
+            "used by the existing CH 24.10 tables (per schema.py:760). Sharing "
+            "the path would cause replica-metadata collisions on the same "
+            "Keeper instance — codex review P0 finding."
+        ),
+    )
     return p
 
 
@@ -114,7 +138,7 @@ class SchemaFile:
     sha256: str
 
     @classmethod
-    def from_path(cls, p: Path) -> "SchemaFile":
+    def from_path(cls, p: Path) -> SchemaFile:
         return cls(path=p, sha256=hashlib.sha256(p.read_bytes()).hexdigest())
 
 
@@ -122,14 +146,20 @@ class SchemaFile:
 # can import them without pulling in clickhouse_connect.
 from tracer.services.clickhouse.v2.apply_schema_rewriter import (  # noqa: E402
     extract_table_name as _extract_table_name,
+)
+from tracer.services.clickhouse.v2.apply_schema_rewriter import (  # noqa: E402
     rewrite_for_replicated,
     split_statements,
 )
 
 
-def ensure_versions_table(client, *, replicated: bool = False,
-                          cluster: str = "default",
-                          zk_prefix: str = "/clickhouse/tables") -> None:
+def ensure_versions_table(
+    client,
+    *,
+    replicated: bool = False,
+    cluster: str = "default",
+    zk_prefix: str = "/clickhouse/tables",
+) -> None:
     """Create schema_versions if it doesn't exist. Bootstrap; not tracked itself.
 
     Uses unqualified table name so it lands in the connection's current database
@@ -142,8 +172,10 @@ def ensure_versions_table(client, *, replicated: bool = False,
     """
     on_cluster = f" ON CLUSTER '{cluster}'" if replicated else ""
     if replicated:
-        engine = (f"ReplicatedMergeTree('{zk_prefix}/{{shard}}/schema_versions', "
-                  f"'{{replica}}')")
+        engine = (
+            f"ReplicatedMergeTree('{zk_prefix}/{{shard}}/schema_versions', "
+            f"'{{replica}}')"
+        )
     else:
         engine = "MergeTree"
     client.command(f"""
@@ -185,13 +217,21 @@ def discover_files(schema_dir: Path, only: Iterable[str] | None) -> list[SchemaF
             log.error("missing_files", missing=[str(m) for m in missing])
             sys.exit(1)
     else:
-        files = sorted(p for p in schema_dir.glob("*.sql") if not p.name.startswith("_"))
+        files = sorted(
+            p for p in schema_dir.glob("*.sql") if not p.name.startswith("_")
+        )
     return [SchemaFile.from_path(p) for p in files]
 
 
-def apply_file(client, sf: SchemaFile, applied_by: str, *,
-               replicated: bool = False, cluster: str = "default",
-               zk_prefix: str = "/clickhouse/tables") -> int:
+def apply_file(
+    client,
+    sf: SchemaFile,
+    applied_by: str,
+    *,
+    replicated: bool = False,
+    cluster: str = "default",
+    zk_prefix: str = "/clickhouse/tables",
+) -> int:
     """Apply one file. Returns the number of statements executed.
 
     When `replicated=True`, each statement is passed through
@@ -203,25 +243,41 @@ def apply_file(client, sf: SchemaFile, applied_by: str, *,
     """
     sql = sf.path.read_text()
     statements = split_statements(sql)
-    log.info("apply_file_begin", file=sf.path.name, sha256=sf.sha256[:12],
-             statements=len(statements), replicated=replicated)
+    log.info(
+        "apply_file_begin",
+        file=sf.path.name,
+        sha256=sf.sha256[:12],
+        statements=len(statements),
+        replicated=replicated,
+    )
     for i, stmt in enumerate(statements, 1):
         if replicated:
             table_name = _extract_table_name(stmt)
             if table_name:
                 stmt = rewrite_for_replicated(
-                    stmt, table_name=table_name,
-                    cluster=cluster, zk_prefix=zk_prefix,
+                    stmt,
+                    table_name=table_name,
+                    cluster=cluster,
+                    zk_prefix=zk_prefix,
                 )
         first_line = stmt.splitlines()[0][:80]
-        log.info("apply_statement", file=sf.path.name, n=i, of=len(statements), preview=first_line)
+        log.info(
+            "apply_statement",
+            file=sf.path.name,
+            n=i,
+            of=len(statements),
+            preview=first_line,
+        )
         try:
             client.command(stmt)
         except Exception as e:
-            log.error("statement_failed",
-                      file=sf.path.name, n=i,
-                      statement_preview=stmt[:500],
-                      err=str(e))
+            log.error(
+                "statement_failed",
+                file=sf.path.name,
+                n=i,
+                statement_preview=stmt[:500],
+                err=str(e),
+            )
             raise
     # Record successful apply
     client.insert(
@@ -239,7 +295,9 @@ def apply_file(client, sf: SchemaFile, applied_by: str, *,
 def main(argv: list[str] | None = None) -> int:
     args = build_argparser().parse_args(argv)
 
-    log.info("connect", host=args.ch_host, port=args.ch_http_port, database=args.ch_database)
+    log.info(
+        "connect", host=args.ch_host, port=args.ch_http_port, database=args.ch_database
+    )
     client = clickhouse_connect.get_client(
         host=args.ch_host,
         port=args.ch_http_port,
@@ -295,11 +353,13 @@ def main(argv: list[str] | None = None) -> int:
 
     if drift and not args.force:
         for sf, prior in drift:
-            log.error("drift_detected",
-                      file=sf.path.name,
-                      prior_sha=prior[:12],
-                      current_sha=sf.sha256[:12],
-                      hint="rerun with --force after writing a DECISIONS.md entry justifying the schema edit")
+            log.error(
+                "drift_detected",
+                file=sf.path.name,
+                prior_sha=prior[:12],
+                current_sha=sf.sha256[:12],
+                hint="rerun with --force after writing a DECISIONS.md entry justifying the schema edit",
+            )
         return 2
 
     if not to_apply:
@@ -307,16 +367,21 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.replicated:
-        log.info("replicated_mode",
-                 cluster=args.cluster, zk_prefix=args.zk_table_path_prefix,
-                 note="engines will be rewritten to Replicated* and ON CLUSTER appended")
+        log.info(
+            "replicated_mode",
+            cluster=args.cluster,
+            zk_prefix=args.zk_table_path_prefix,
+            note="engines will be rewritten to Replicated* and ON CLUSTER appended",
+        )
 
     total_stmts = 0
     t0 = time.time()
     for sf in to_apply:
         try:
             total_stmts += apply_file(
-                client, sf, user,
+                client,
+                sf,
+                user,
                 replicated=args.replicated,
                 cluster=args.cluster,
                 zk_prefix=args.zk_table_path_prefix,
@@ -324,10 +389,12 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:
             log.error("apply_aborted", file=sf.path.name, err=str(e))
             return 3
-    log.info("apply_complete",
-             files=len(to_apply),
-             statements=total_stmts,
-             elapsed_sec=round(time.time() - t0, 2))
+    log.info(
+        "apply_complete",
+        files=len(to_apply),
+        statements=total_stmts,
+        elapsed_sec=round(time.time() - t0, 2),
+    )
     return 0
 
 

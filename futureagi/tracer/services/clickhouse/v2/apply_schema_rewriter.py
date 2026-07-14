@@ -8,9 +8,11 @@ regression would create non-replicated tables in prod, causing silent
 split-brain across replicas. Sibling test file:
 `tracer/tests/test_ch25_apply_schema_replicated.py`.
 """
+
 from __future__ import annotations
 
 import re
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Statement splitter — extracted so the rewriter is self-contained.
@@ -27,7 +29,8 @@ def split_statements(sql: str) -> list[str]:
     out = []
     for part in parts:
         stripped = "\n".join(
-            line for line in part.splitlines()
+            line
+            for line in part.splitlines()
             if line.strip() and not line.strip().startswith("--")
         ).strip()
         if stripped:
@@ -54,6 +57,9 @@ def split_statements(sql: str) -> list[str]:
 # We also append ` ON CLUSTER '<cluster>' ` to:
 #   CREATE TABLE IF NOT EXISTS <name>
 #   CREATE MATERIALIZED VIEW IF NOT EXISTS <name> TO <target>
+#   CREATE DICTIONARY IF NOT EXISTS <name>      (dictionaries are node-local —
+#                                                without ON CLUSTER the DDL lands
+#                                                only on the connected replica)
 #   ALTER TABLE <name>                          (for projection adds in 007)
 
 # Object-name pattern: each segment can be bare, backtick-quoted, or
@@ -62,11 +68,18 @@ def split_statements(sql: str) -> list[str]:
 _SEGMENT = r"(?:`[^`]+`|\"[^\"]+\"|[A-Za-z_][A-Za-z0-9_]*)"
 _OBJECT_NAME = rf"(?P<obj>{_SEGMENT}(?:\.{_SEGMENT})?)"
 _CREATE_TABLE_RE = re.compile(
-    r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?" + _OBJECT_NAME,
+    r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    + _OBJECT_NAME,
     re.IGNORECASE,
 )
 _CREATE_MV_RE = re.compile(
-    r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?MATERIALIZED\s+VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?" + _OBJECT_NAME,
+    r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?MATERIALIZED\s+VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    + _OBJECT_NAME,
+    re.IGNORECASE,
+)
+_CREATE_DICTIONARY_RE = re.compile(
+    r"^\s*CREATE\s+(?:OR\s+REPLACE\s+)?DICTIONARY\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    + _OBJECT_NAME,
     re.IGNORECASE,
 )
 _ALTER_TABLE_RE = re.compile(
@@ -87,6 +100,8 @@ def _object_name_from_match(m: re.Match) -> str:
     if len(raw) >= 2 and raw[0] in ("`", '"') and raw[-1] == raw[0]:
         raw = raw[1:-1]
     return raw
+
+
 # Match the ENGINE = clause. We support both multi-line and single-line
 # SQL — the leading group accepts a newline, a space, or the start of the
 # string so the rewriter doesn't miss inline statements.
@@ -102,11 +117,11 @@ _ENGINE_RE = re.compile(
 
 
 def extract_table_name(stmt: str) -> str | None:
-    """Return the table or MV name for an apply-time rewrite. Returns None
+    """Return the table, MV, or dictionary name for an apply-time rewrite. Returns None
     for statements that aren't subject to engine rewriting (INSERTs, DROPs, etc.).
     Handles bare identifiers, backtick/double-quoted, and <db>.<table> shapes.
     """
-    for rx in (_CREATE_TABLE_RE, _CREATE_MV_RE, _ALTER_TABLE_RE):
+    for rx in (_CREATE_TABLE_RE, _CREATE_MV_RE, _CREATE_DICTIONARY_RE, _ALTER_TABLE_RE):
         m = rx.match(stmt)
         if m:
             return _object_name_from_match(m)
@@ -128,8 +143,9 @@ class ReplicatedRewriteError(Exception):
 _KIND_REQUIRES_ENGINE = ("CREATE TABLE",)
 
 
-def rewrite_for_replicated(stmt: str, *, table_name: str, cluster: str,
-                           zk_prefix: str) -> str:
+def rewrite_for_replicated(
+    stmt: str, *, table_name: str, cluster: str, zk_prefix: str
+) -> str:
     """Apply the prod-mode rewrites to a single statement. Pure function;
     given the same inputs, always produces the same output (so schema
     hashing in the versions table stays deterministic per-mode).
@@ -145,13 +161,20 @@ def rewrite_for_replicated(stmt: str, *, table_name: str, cluster: str,
     if "ON CLUSTER" not in stmt.upper():
         # CREATE TABLE [IF NOT EXISTS] <name>
         stmt = _CREATE_TABLE_RE.sub(
-            lambda m: f"{m.group(0)} ON CLUSTER '{cluster}'", stmt, count=1)
+            lambda m: f"{m.group(0)} ON CLUSTER '{cluster}'", stmt, count=1
+        )
         # CREATE MATERIALIZED VIEW [IF NOT EXISTS] <name>
         stmt = _CREATE_MV_RE.sub(
-            lambda m: f"{m.group(0)} ON CLUSTER '{cluster}'", stmt, count=1)
+            lambda m: f"{m.group(0)} ON CLUSTER '{cluster}'", stmt, count=1
+        )
+        # CREATE DICTIONARY [IF NOT EXISTS] <name>
+        stmt = _CREATE_DICTIONARY_RE.sub(
+            lambda m: f"{m.group(0)} ON CLUSTER '{cluster}'", stmt, count=1
+        )
         # ALTER TABLE <name>
         stmt = _ALTER_TABLE_RE.sub(
-            lambda m: f"{m.group(0)} ON CLUSTER '{cluster}'", stmt, count=1)
+            lambda m: f"{m.group(0)} ON CLUSTER '{cluster}'", stmt, count=1
+        )
 
     # 2. Rewrite engine. Only one ENGINE = per statement in our schema files.
     def _swap(m: re.Match) -> str:
