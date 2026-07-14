@@ -80,14 +80,14 @@ func TestPreset_MiniMax(t *testing.T) {
 	}{
 		{
 			name:    "global OpenAI default",
-			cfg:     config.ProviderConfig{Type: "MiniMax"},
+			cfg:     config.ProviderConfig{Type: "minimax"},
 			wantURL: "https://api.minimax.io",
 			wantFmt: "openai",
 		},
 		{
 			name: "China OpenAI override",
 			cfg: config.ProviderConfig{
-				Type:      "MiniMax",
+				Type:      "minimax",
 				BaseURL:   "https://api.minimaxi.com",
 				APIFormat: "openai",
 			},
@@ -97,7 +97,7 @@ func TestPreset_MiniMax(t *testing.T) {
 		{
 			name: "global Anthropic override",
 			cfg: config.ProviderConfig{
-				Type:      "MiniMax",
+				Type:      "minimax",
 				BaseURL:   "https://api.minimax.io/anthropic",
 				APIFormat: "anthropic",
 			},
@@ -107,7 +107,7 @@ func TestPreset_MiniMax(t *testing.T) {
 		{
 			name: "China Anthropic override",
 			cfg: config.ProviderConfig{
-				Type:      "MiniMax",
+				Type:      "minimax",
 				BaseURL:   "https://api.minimaxi.com/anthropic",
 				APIFormat: "anthropic",
 			},
@@ -208,7 +208,7 @@ func TestPreset_KnownProvidersComplete(t *testing.T) {
 		"anyscale":    {BaseURL: "https://api.endpoints.anyscale.com", APIFormat: "openai"},
 		"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai"},
 		"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai"},
-		"MiniMax":     {BaseURL: "https://api.minimax.io", APIFormat: "openai"},
+		"minimax":     {BaseURL: "https://api.minimax.io", APIFormat: "openai"},
 		"azure":       {BaseURL: "", APIFormat: "azure"},
 	}
 

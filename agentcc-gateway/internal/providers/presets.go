@@ -22,7 +22,7 @@ var KnownProviders = map[string]ProviderPreset{
 	"anyscale":    {BaseURL: "https://api.endpoints.anyscale.com", APIFormat: "openai"},
 	"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai"},
 	"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai"},
-	"MiniMax":     {BaseURL: "https://api.minimax.io", APIFormat: "openai"},
+	"minimax":     {BaseURL: "https://api.minimax.io", APIFormat: "openai"},
 	"azure":       {APIFormat: "azure"},
 }
 

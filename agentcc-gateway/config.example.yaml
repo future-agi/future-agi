@@ -192,7 +192,7 @@ providers:
   # MiniMax global OpenAI-compatible endpoint (preset default):
   # minimax:
   #   api_key: "${MINIMAX_API_KEY}"
-  #   type: "MiniMax"
+  #   type: "minimax"
   #   models:
   #     - MiniMax-M3
   #     - MiniMax-M2.7
