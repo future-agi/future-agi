@@ -11,9 +11,7 @@ import Iconify from "src/components/iconify";
 import { paths } from "src/routes/paths";
 import { useNavigate } from "react-router-dom";
 
-// Error codes emitted by backend's usage pre-check (see CheckResult.error_code
-
-
+// Error codes emitted by backend's usage pre-check (see CheckResult.error_code).
 const USAGE_LIMIT_CTA = {
   FREE_TIER_LIMIT: "Upgrade for more usage",
   RATE_LIMITED: "Upgrade to raise rate limit",
@@ -102,12 +100,7 @@ const ErrorCellRenderer = ({
             width={16}
             sx={{ flexShrink: 0, color: "text.primary" }}
           />
-          <Typography
-           typography="s2"
-
-          >
-            {ctaText}
-          </Typography>
+          <Typography typography="s2">{ctaText}</Typography>
           <Button
             size="small"
             variant="text"
@@ -116,7 +109,6 @@ const ErrorCellRenderer = ({
               textTransform: "none",
               minWidth: 0,
               padding: 0,
-           
               color: "primary.main",
               textDecoration: "underline",
               whiteSpace: "nowrap",
