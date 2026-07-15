@@ -354,7 +354,7 @@ const VoiceDetailDrawerV2 = ({
                 }
           }
           onDownload={handleDownload}
-          onShare={() => setShareDialogOpen(true)}
+          onShare={data?.trace_id ? () => setShareDialogOpen(true) : undefined}
         />
       )}
 
