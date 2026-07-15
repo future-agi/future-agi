@@ -1,10 +1,11 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 import PropTypes from "prop-types";
-import { Box, Popover, Stack, Typography } from "@mui/material";
+import { Popover, Stack, Typography } from "@mui/material";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import axios from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
-import { normalizeTags } from "./tagUtils";
+import { useDashboardFilterValues } from "src/hooks/useDashboards";
+import { hashColor, normalizeTags } from "./tagUtils";
 import TagChip from "./TagChip";
 import TagInput from "./TagInput";
 
@@ -14,6 +15,7 @@ const AddTagsPopover = ({
   onClose,
   traceId,
   spanId,
+  projectId,
   bulkItems,
   currentTags = [],
   onSuccess,
@@ -25,6 +27,38 @@ const AddTagsPopover = ({
     isBulk ? [] : normalizeTags(currentTags),
   );
   const queryClient = useQueryClient();
+
+  const { data: projectTagValues = [] } = useDashboardFilterValues({
+    metricName: "tag",
+    metricType: "system_metric",
+    projectIds: projectId ? [projectId] : [],
+    source: "traces",
+    enabled: Boolean(open && projectId),
+  });
+
+  const projectTags = useMemo(() => {
+    const seen = new Set();
+
+    return projectTagValues.reduce((result, option) => {
+      const rawName =
+        typeof option === "string"
+          ? option
+          : option?.name || option?.value || option?.label;
+      const name = String(rawName || "").trim();
+      const key = name.toLowerCase();
+      if (!name || seen.has(key)) return result;
+
+      seen.add(key);
+      result.push({
+        name,
+        color:
+          typeof option === "object" && option?.color
+            ? option.color
+            : hashColor(name),
+      });
+      return result;
+    }, []);
+  }, [projectTagValues]);
 
   React.useEffect(() => {
     if (open) setTags(isBulk ? [] : normalizeTags(currentTags));
@@ -143,6 +177,7 @@ const AddTagsPopover = ({
       <TagInput
         onAdd={handleAdd}
         existingNames={tags.map((t) => t.name)}
+        suggestions={projectTags}
         disabled={isPending}
       />
 
@@ -161,6 +196,7 @@ AddTagsPopover.propTypes = {
   onClose: PropTypes.func.isRequired,
   traceId: PropTypes.string,
   spanId: PropTypes.string,
+  projectId: PropTypes.string,
   bulkItems: PropTypes.arrayOf(
     PropTypes.shape({
       id: PropTypes.string.isRequired,
