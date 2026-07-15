@@ -31,10 +31,15 @@ from model_hub.models.error_localizer_model import (
     ErrorLocalizerStatus,
     ErrorLocalizerTask,
 )
-from model_hub.models.evals_metric import EvalTemplate, UserEvalMetric
+from model_hub.models.evals_metric import (
+    EvalTemplate,
+    EvalTemplateVersion,
+    UserEvalMetric,
+)
 from model_hub.models.evaluation import Evaluation
 from model_hub.models.run_prompt import RunPrompter
 from model_hub.services.error_localizer_service import should_run_error_localizer
+from model_hub.utils.api_log_config import parse_api_log_config
 from model_hub.views.develop_optimiser import DevelopOptimizer
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.experiment_runner import ExperimentRunner
@@ -226,15 +231,31 @@ def process_single_evaluation(user_eval_metric):
             _mark_cells_usage_limit_error(user_eval_metric, usage_check)
             raise ValueError(usage_check.reason or "Usage limit exceeded")
 
+    # Stamp which eval version will run — pinned version wins, else the
+    # template default (EvalTemplateVersion.objects.resolve_for_metric).
+    source_configs = {
+        "dataset_id": str(user_eval_metric.dataset.id),
+        "source": "dataset",
+    }
+    try:
+        version = EvalTemplateVersion.objects.resolve_for_metric(user_eval_metric)
+        if version:
+            source_configs["version_id"] = str(version.id)
+            source_configs["version_number"] = version.version_number
+    except Exception:
+        logger.warning(
+            "version_tracking_failed",
+            path="dataset_eval",
+            eval_id=str(eval_id),
+            exc_info=True,
+        )
+
     runner = EvaluationRunner(
         user_eval_metric_id=user_eval_metric.id,
         is_only_eval=True,
         source="dataset_evaluation",
         source_id=user_eval_metric.template.id,
-        source_configs={
-            "dataset_id": str(user_eval_metric.dataset.id),
-            "source": "dataset",
-        },
+        source_configs=source_configs,
     )
     cols_used = runner._get_all_column_ids_being_used()
 
@@ -477,7 +498,11 @@ def execute_evaluation():
 def process_evaluation_single_task(evaluation):
     close_old_connections()
 
-    eval_obj = UserEvalMetric.objects.get(id=evaluation["eval_id"])
+    # select_related avoids an N+1 when resolve_for_metric touches
+    # pinned_version/template during version stamping.
+    eval_obj = UserEvalMetric.objects.select_related(
+        "dataset", "template", "pinned_version"
+    ).get(id=evaluation["eval_id"])
     logger.info(f"Processing evaluation {eval_obj.id}")
 
     if evaluation["type"] == "single":
@@ -1319,18 +1344,22 @@ def process_single_error_localization(task_id):
                 cell.save(update_fields=["value_infos"])
 
                 metadata = task.metadata
-                if metadata.get("log_id", None):
+                if metadata.get("log_id", None) and APICallLog is not None:
                     try:
-                        if APICallLog is not None:
-                            log = APICallLog.objects.get(log_id=metadata.get("log_id"))
-                        config = json.loads(log.config)
+                        log = APICallLog.objects.get(log_id=metadata.get("log_id"))
+                        # Historical rows can be double-encoded JSON strings
+                        # or plain dicts (see parse_api_log_config). Write
+                        # the dict back — config is a JSONField; json.dumps
+                        # here would re-create the double encoding the 0115
+                        # migration unwraps.
+                        config = parse_api_log_config(log.config)
                         config["error_localizer"] = {
                             "error_analysis": error_analysis,
                             "selected_input_key": selected_input_key,
                             "input_types": task.input_types,
                             "input_data": task.input_data,
                         }
-                        log.config = json.dumps(config)
+                        log.config = config
                         log.save(update_fields=["config"])
                     except APICallLog.DoesNotExist:
                         logger.info("Log doesn't exist.")
@@ -1357,18 +1386,17 @@ def process_single_error_localization(task_id):
                 eval_logger.save(update_fields=["output_metadata"])
 
                 metadata = task.metadata
-                if metadata.get("log_id", None):
+                if metadata.get("log_id", None) and APICallLog is not None:
                     try:
-                        if APICallLog is not None:
-                            log = APICallLog.objects.get(log_id=metadata.get("log_id"))
-                        config = json.loads(log.config)
+                        log = APICallLog.objects.get(log_id=metadata.get("log_id"))
+                        config = parse_api_log_config(log.config)
                         config["error_localizer"] = {
                             "error_analysis": error_analysis,
                             "selected_input_key": selected_input_key,
                             "input_types": task.input_types,
                             "input_data": task.input_data,
                         }
-                        log.config = json.dumps(config)
+                        log.config = config
                         log.save(update_fields=["config"])
                     except APICallLog.DoesNotExist:
                         logger.info("Log doesn't exist.")
@@ -1381,16 +1409,17 @@ def process_single_error_localization(task_id):
 
         elif task.source == ErrorLocalizerSource.PLAYGROUND:
             try:
-                if APICallLog is not None:
-                    eval_logger = APICallLog.objects.get(log_id=task.source_id)
-                config = json.loads(eval_logger.config) or {}
+                if APICallLog is None:
+                    return  # OSS build — no APICallLog model to update
+                eval_logger = APICallLog.objects.get(log_id=task.source_id)
+                config = parse_api_log_config(eval_logger.config)
                 config["error_localizer"] = {
                     "error_analysis": error_analysis,
                     "selected_input_key": selected_input_key,
                     "input_types": task.input_types,
                     "input_data": task.input_data,
                 }
-                eval_logger.config = json.dumps(config)
+                eval_logger.config = config
                 eval_logger.save(update_fields=["config"])
             except Exception as e:
                 logger.exception(f"Error in updating log config: {str(e)}")

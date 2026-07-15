@@ -71,6 +71,7 @@ import { useDevelopDatasetList } from "src/api/develop/develop-detail";
 import { useEvalsList } from "src/sections/common/EvaluationDrawer/getEvalsList";
 import { AudioPlaybackProvider } from "src/components/custom-audio/context-provider/AudioPlaybackContext";
 import SingleImageViewerProvider from "../Common/SingleImageViewer/SingleImageViewerProvider";
+import CompositeEvalDialog from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/CompositeEvalDialog";
 import { MultiImageViewerProvider } from "../Common/MultiImageViewer";
 import DevelopFilterBox from "./DevelopFilters/DevelopFilterBox";
 import TopBanner from "./TopBanner";
@@ -1241,6 +1242,7 @@ const DevelopDataV2 = ({ datasetId, viewOptions }) => {
         <DevelopFilterBox />
         <MultiImageViewerProvider>
           <SingleImageViewerProvider>
+            <CompositeEvalDialog />
             {isData === true ? (
               <>
                 <TopBanner />

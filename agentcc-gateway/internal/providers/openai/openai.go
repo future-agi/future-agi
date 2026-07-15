@@ -26,6 +26,23 @@ type Provider struct {
 	apiKey     string
 	httpClient *http.Client
 	semaphore  chan struct{}
+	// openAIAPI reports whether baseURL points at the official OpenAI API, whose
+	// max_tokens/max_completion_tokens handling differs from other OpenAI-format
+	// upstreams. See normalizeMaxTokens.
+	openAIAPI bool
+}
+
+// officialAPIHost is the host of the official OpenAI API. Other upstreams speak
+// the same wire format but not the same parameter contract.
+const officialAPIHost = "api.openai.com"
+
+// isOfficialAPI reports whether baseURL points at the official OpenAI API.
+func isOfficialAPI(baseURL string) bool {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Hostname(), officialAPIHost)
 }
 
 // New creates a new OpenAI-compatible provider.
@@ -65,7 +82,30 @@ func New(id string, cfg config.ProviderConfig) (*Provider, error) {
 			Timeout:   timeout,
 		},
 		semaphore: make(chan struct{}, maxConcurrent),
+		openAIAPI: isOfficialAPI(cfg.BaseURL),
 	}, nil
+}
+
+// normalizeMaxTokens rewrites max_tokens to max_completion_tokens for the official
+// OpenAI API, which rejects max_tokens on reasoning models but accepts
+// max_completion_tokens on every chat model. Setting both is also rejected, so
+// max_tokens is always cleared.
+//
+// Deliberately keyed on the upstream, not the model name: the set of models that
+// reject max_tokens keeps growing, while "the official API accepts
+// max_completion_tokens" has held for every model. Other OpenAI-format upstreams
+// (vLLM, Ollama, and other self-hosted servers) are left untouched — several only
+// understand max_tokens.
+//
+// Operates on the caller's copy; the original request is never modified.
+func (p *Provider) normalizeMaxTokens(req *models.ChatCompletionRequest) {
+	if !p.openAIAPI || req.MaxTokens == nil {
+		return
+	}
+	if req.MaxCompletionTokens == nil {
+		req.MaxCompletionTokens = req.MaxTokens
+	}
+	req.MaxTokens = nil
 }
 
 // endpoint builds a full upstream URL for a versioned path like "/v1/ocr".
@@ -209,6 +249,7 @@ func (p *Provider) ChatCompletion(ctx context.Context, req *models.ChatCompletio
 	reqCopy := *req
 	reqCopy.Model = actualModel
 	reqCopy.Stream = false
+	p.normalizeMaxTokens(&reqCopy)
 
 	body, err := json.Marshal(&reqCopy)
 	if err != nil {
@@ -270,6 +311,7 @@ func (p *Provider) StreamChatCompletion(ctx context.Context, req *models.ChatCom
 		reqCopy := *req
 		reqCopy.Model = actualModel
 		reqCopy.Stream = true
+		p.normalizeMaxTokens(&reqCopy)
 
 		body, err := json.Marshal(&reqCopy)
 		if err != nil {
@@ -791,231 +833,6 @@ func (p *Provider) CreateEmbedding(ctx context.Context, req *models.EmbeddingReq
 	}
 
 	return &result, nil
-}
-
-// SubmitBatch submits a batch of requests to OpenAI's Batch API.
-func (p *Provider) SubmitBatch(ctx context.Context, requests []models.BatchRequest) (string, error) {
-	if err := p.acquireSemaphore(ctx); err != nil {
-		return "", models.ErrGatewayTimeout("provider concurrency limit reached")
-	}
-	defer p.releaseSemaphore()
-
-	// Build JSONL content.
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	for i := range requests {
-		requests[i].Body.Model = resolveModelName(requests[i].Body.Model)
-		line := struct {
-			CustomID string                       `json:"custom_id"`
-			Method   string                       `json:"method"`
-			URL      string                       `json:"url"`
-			Body     models.ChatCompletionRequest `json:"body"`
-		}{
-			CustomID: requests[i].CustomID,
-			Method:   "POST",
-			URL:      "/v1/chat/completions",
-			Body:     requests[i].Body,
-		}
-		if err := enc.Encode(line); err != nil {
-			return "", models.ErrInternal(fmt.Sprintf("encoding batch request %d: %v", i, err))
-		}
-	}
-
-	// Upload JSONL file.
-	var formBuf bytes.Buffer
-	writer := multipart.NewWriter(&formBuf)
-	writer.WriteField("purpose", "batch")
-	filePart, err := writer.CreateFormFile("file", "batch_input.jsonl")
-	if err != nil {
-		return "", models.ErrInternal(fmt.Sprintf("creating batch file part: %v", err))
-	}
-	filePart.Write(buf.Bytes())
-	writer.Close()
-
-	uploadReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/files", &formBuf)
-	if err != nil {
-		return "", models.ErrInternal(fmt.Sprintf("creating file upload request: %v", err))
-	}
-	uploadReq.Header.Set("Content-Type", writer.FormDataContentType())
-	if p.apiKey != "" {
-		uploadReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-	}
-
-	uploadResp, err := p.httpClient.Do(uploadReq)
-	if err != nil {
-		if ctx.Err() != nil {
-			return "", models.ErrGatewayTimeout("batch file upload timed out")
-		}
-		return "", models.ErrUpstreamProvider(0, fmt.Sprintf("batch file upload failed: %v", err))
-	}
-	defer uploadResp.Body.Close()
-
-	uploadBody, err := io.ReadAll(io.LimitReader(uploadResp.Body, 10*1024*1024))
-	if err != nil {
-		return "", models.ErrUpstreamProvider(uploadResp.StatusCode, fmt.Sprintf("reading file upload response: %v", err))
-	}
-	if uploadResp.StatusCode != http.StatusOK {
-		return "", parseProviderError(uploadResp.StatusCode, uploadBody)
-	}
-
-	var fileResp struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(uploadBody, &fileResp); err != nil {
-		return "", models.ErrUpstreamProvider(uploadResp.StatusCode, fmt.Sprintf("parsing file upload response: %v", err))
-	}
-
-	// Create batch.
-	batchReq := struct {
-		InputFileID      string `json:"input_file_id"`
-		Endpoint         string `json:"endpoint"`
-		CompletionWindow string `json:"completion_window"`
-	}{
-		InputFileID:      fileResp.ID,
-		Endpoint:         "/v1/chat/completions",
-		CompletionWindow: "24h",
-	}
-
-	batchBody, err := json.Marshal(batchReq)
-	if err != nil {
-		return "", models.ErrInternal(fmt.Sprintf("marshaling batch request: %v", err))
-	}
-
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/batches", bytes.NewReader(batchBody))
-	if err != nil {
-		return "", models.ErrInternal(fmt.Sprintf("creating batch request: %v", err))
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-	}
-
-	resp, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		if ctx.Err() != nil {
-			return "", models.ErrGatewayTimeout("batch creation timed out")
-		}
-		return "", models.ErrUpstreamProvider(0, fmt.Sprintf("batch creation failed: %v", err))
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
-	if err != nil {
-		return "", models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("reading batch response: %v", err))
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", parseProviderError(resp.StatusCode, respBody)
-	}
-
-	var batchResp struct {
-		ID string `json:"id"`
-	}
-	if err := json.Unmarshal(respBody, &batchResp); err != nil {
-		return "", models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("parsing batch response: %v", err))
-	}
-
-	return batchResp.ID, nil
-}
-
-// GetBatch retrieves the status of an OpenAI batch.
-func (p *Provider) GetBatch(ctx context.Context, batchID string) (*models.ProviderBatchStatus, error) {
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", p.baseURL+"/v1/batches/"+batchID, nil)
-	if err != nil {
-		return nil, models.ErrInternal(fmt.Sprintf("creating get batch request: %v", err))
-	}
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-	}
-
-	resp, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil, models.ErrGatewayTimeout("get batch timed out")
-		}
-		return nil, models.ErrUpstreamProvider(0, fmt.Sprintf("get batch failed: %v", err))
-	}
-	defer resp.Body.Close()
-
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10*1024*1024))
-	if err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("reading batch status: %v", err))
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, parseProviderError(resp.StatusCode, respBody)
-	}
-
-	var oaiBatch struct {
-		ID              string `json:"id"`
-		Status          string `json:"status"`
-		OutputFileID    string `json:"output_file_id"`
-		ErrorFileID     string `json:"error_file_id"`
-		CreatedAt       int64  `json:"created_at"`
-		CompletedAt     *int64 `json:"completed_at"`
-		RequestCounts   struct {
-			Total     int `json:"total"`
-			Completed int `json:"completed"`
-			Failed    int `json:"failed"`
-		} `json:"request_counts"`
-	}
-	if err := json.Unmarshal(respBody, &oaiBatch); err != nil {
-		return nil, models.ErrUpstreamProvider(resp.StatusCode, fmt.Sprintf("parsing batch status: %v", err))
-	}
-
-	return &models.ProviderBatchStatus{
-		ID:           oaiBatch.ID,
-		Status:       mapOpenAIBatchStatus(oaiBatch.Status),
-		Total:        oaiBatch.RequestCounts.Total,
-		Completed:    oaiBatch.RequestCounts.Completed,
-		Failed:       oaiBatch.RequestCounts.Failed,
-		OutputFileID: oaiBatch.OutputFileID,
-		ErrorFileID:  oaiBatch.ErrorFileID,
-		CreatedAt:    oaiBatch.CreatedAt,
-		CompletedAt:  oaiBatch.CompletedAt,
-	}, nil
-}
-
-// CancelBatch cancels an OpenAI batch.
-func (p *Provider) CancelBatch(ctx context.Context, batchID string) error {
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+"/v1/batches/"+batchID+"/cancel", nil)
-	if err != nil {
-		return models.ErrInternal(fmt.Sprintf("creating cancel batch request: %v", err))
-	}
-	if p.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
-	}
-
-	resp, err := p.httpClient.Do(httpReq)
-	if err != nil {
-		if ctx.Err() != nil {
-			return models.ErrGatewayTimeout("cancel batch timed out")
-		}
-		return models.ErrUpstreamProvider(0, fmt.Sprintf("cancel batch failed: %v", err))
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024*1024))
-		return parseProviderError(resp.StatusCode, respBody)
-	}
-
-	return nil
-}
-
-func mapOpenAIBatchStatus(status string) string {
-	switch status {
-	case "validating", "in_progress":
-		return models.BatchStatusProcessing
-	case "completed":
-		return models.BatchStatusCompleted
-	case "failed":
-		return models.BatchStatusFailed
-	case "cancelled", "cancelling":
-		return models.BatchStatusCancelled
-	case "expired":
-		return models.BatchStatusExpired
-	default:
-		return models.BatchStatusQueued
-	}
 }
 
 // ProxyAssistantsRequest forwards a non-streaming Assistants API request to OpenAI.

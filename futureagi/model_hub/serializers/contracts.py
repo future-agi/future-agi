@@ -4,6 +4,7 @@ from rest_framework import serializers
 
 from model_hub.constants import MAX_EMPTY_DATASET_ROWS
 from model_hub.models.choices import ModelTypes
+from model_hub.serializers.experiments import _ExtraFieldsMixin
 from model_hub.serializers.optimize_dataset import (
     OptimizeDatasetKbSerializer,
     OptimizeDatasetSerializer,
@@ -11,6 +12,7 @@ from model_hub.serializers.optimize_dataset import (
 from model_hub.serializers.performance_report import PerformanceReportSerializer
 from model_hub.services.ai_eval_writer_service import OUTPUT_FORMAT_PROMPTS
 from tfc.utils.api_errors import API_ERROR_TYPE_CHOICES
+from tfc.utils.serializer_fields import StringOrObjectField
 from tracer.serializers.filters import (
     SortParamField,
     StrictInputSerializer,
@@ -1265,7 +1267,7 @@ class ColumnConfigResultSerializer(serializers.Serializer):
     presence_penalty = serializers.FloatField(required=False, allow_null=True)
     max_tokens = serializers.IntegerField(required=False, allow_null=True)
     top_p = serializers.FloatField(required=False, allow_null=True)
-    response_format = serializers.JSONField(required=False)
+    response_format = StringOrObjectField(required=False)
     tool_choice = serializers.CharField(
         required=False, allow_blank=True, allow_null=True
     )
@@ -1704,6 +1706,40 @@ class EvalUsageChartPointSerializer(serializers.Serializer):
     fail_count = serializers.IntegerField(required=False)
 
 
+class EvalUsageQuerySerializer(serializers.Serializer):
+    page = serializers.IntegerField(
+        required=False, default=0, min_value=0, max_value=10000
+    )
+    page_size = serializers.IntegerField(
+        required=False, default=25, min_value=1, max_value=100
+    )
+    period = serializers.ChoiceField(
+        choices=["30m", "6h", "1d", "7d", "30d", "90d", "180d", "365d"],
+        required=False,
+        default="30d",
+    )
+    # Optional explicit date range — when provided, overrides the period
+    # string. Sent by the frontend for Today, Yesterday, and Custom date
+    # picker selections.
+    start_date = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    end_date = serializers.DateTimeField(required=False, allow_null=True, default=None)
+
+    def validate(self, attrs):
+        # Both or neither. Half a range silently falling back to `period`
+        # is the difference between "user picked Yesterday" and "user got
+        # 30 days of data".
+        start, end = attrs.get("start_date"), attrs.get("end_date")
+        if (start is None) != (end is None):
+            raise serializers.ValidationError(
+                "start_date and end_date must be provided together."
+            )
+        if start and end and start > end:
+            raise serializers.ValidationError(
+                "start_date must be on or before end_date."
+            )
+        return attrs
+
+
 class EvalUsageStatsSerializer(serializers.Serializer):
     total_runs = serializers.IntegerField()
     runs_period = serializers.IntegerField()
@@ -1714,33 +1750,127 @@ class EvalUsageStatsSerializer(serializers.Serializer):
 
 class EvalUsageFeedbackSerializer(serializers.Serializer):
     id = serializers.UUIDField()
-    value = serializers.JSONField(required=False, allow_null=True)
+    # Feedback.value is a TextField — always a string (thumbs value or custom)
+    value = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     explanation = serializers.CharField(required=False, allow_blank=True)
     action_type = serializers.CharField(required=False, allow_blank=True)
     created_at = serializers.CharField(required=False, allow_blank=True)
     user = serializers.CharField(required=False, allow_blank=True)
 
 
-class EvalUsageLogItemSerializer(serializers.Serializer):
-    id = serializers.UUIDField()
-    input = serializers.CharField(allow_blank=True)
-    result = serializers.CharField(required=False, allow_blank=True)
-    score = serializers.FloatField(required=False, allow_null=True)
-    reason = serializers.CharField(required=False, allow_blank=True)
-    status = serializers.CharField()
-    source = serializers.CharField(required=False, allow_blank=True)
-    created_at = serializers.CharField()
-    detail = serializers.JSONField()
-    feedback = EvalUsageFeedbackSerializer(required=False, allow_null=True)
-    composite = serializers.BooleanField(required=False)
-    aggregate_pass = serializers.BooleanField(required=False, allow_null=True)
+class EvalUsageLogItemDetailSerializer(_ExtraFieldsMixin, serializers.Serializer):
+    """Detail blob on each usage-table row (the expand drawer payload).
+
+    - ``input_variables``: variable name → rendered string value.
+    - ``mappings``: the eval's required_keys → bound column id / literal.
+    - ``model``: legitimate ``string | object`` union (bare model name or
+      full ModelSpec dict).
+    - ``output``: stays ``JSONField`` — its runtime shape is per-eval-type
+      (bool for pass_fail, float for regression, ``{label, score}`` for
+      choices). A discriminated union needs OpenAPI 3 ``oneOf`` (TH-6029).
+    - Composite rows add children/aggregation fields (declared below).
+    """
+
+    input_variables = serializers.DictField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        allow_null=True,
+        default=dict,
+    )
+    output = serializers.JSONField(required=False, allow_null=True)
+    warnings = serializers.ListField(required=False, default=list)
+    mappings = serializers.DictField(
+        child=serializers.CharField(allow_blank=True),
+        required=False,
+        allow_null=True,
+        default=dict,
+    )
+    model = StringOrObjectField(required=False, allow_null=True)
+    version_id = serializers.CharField(required=False, allow_null=True)
+    version_number = serializers.IntegerField(required=False, allow_null=True)
+    # composite-only fields
+    children = serializers.ListField(required=False, default=list)
+    aggregation_function = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+    total_children = serializers.IntegerField(required=False, allow_null=True)
+    completed_children = serializers.IntegerField(required=False, allow_null=True)
+    failed_children = serializers.IntegerField(required=False, allow_null=True)
 
 
-class EvalUsageLogsSerializer(serializers.Serializer):
-    items = EvalUsageLogItemSerializer(many=True)
+class EvalUsagePaginationSerializer(serializers.Serializer):
     total = serializers.IntegerField()
     page = serializers.IntegerField()
     page_size = serializers.IntegerField()
+
+
+class EvalUsageNumberCellSerializer(serializers.Serializer):
+    """``{cell_value: number|null}`` — numeric cells (score)."""
+
+    cell_value = serializers.FloatField(required=False, allow_null=True)
+
+
+class EvalUsageStringCellSerializer(serializers.Serializer):
+    """``{cell_value: string|null}`` — plain text cells.
+
+    Also used for the version column: the view stamps ``str(version_number)``
+    (or ``""`` for system templates, ``null`` for pre-tracking rows), so the
+    wire type is honestly a nullable string — not a string/number union.
+    """
+
+    cell_value = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True
+    )
+
+
+class EvalUsageWarningsCellSerializer(serializers.Serializer):
+    """``{cell_value: array}`` — list of warning objects."""
+
+    cell_value = serializers.ListField(
+        child=serializers.JSONField(), required=False, allow_null=True
+    )
+
+
+class EvalUsageFeedbackCellSerializer(serializers.Serializer):
+    """``{cell_value: feedback|null}`` — latest feedback record for the row."""
+
+    cell_value = EvalUsageFeedbackSerializer(required=False, allow_null=True)
+
+
+class EvalUsageTableRowSerializer(_ExtraFieldsMixin, serializers.Serializer):
+    """One row in the eval-usage table.
+
+    Known columns are typed explicitly as ``{cell_value: <type>}`` wrappers so
+    the contract describes what the FE actually receives. The per-eval
+    ``input_var_<name>`` columns are user-controlled dynamic keys — their
+    exact set depends on the tenant's dataset + eval mapping — so they pass
+    through via ``additionalProperties: True``. ``_ExtraFieldsMixin`` is what
+    actually preserves those dynamic cell keys through ``.data``; without it
+    DRF strips undeclared fields at serialize time and the grid renders empty
+    rows even though the swagger says extras are allowed.
+    """
+
+    row_id = serializers.CharField()
+    score = EvalUsageNumberCellSerializer(required=False)
+    result = EvalUsageStringCellSerializer(required=False)
+    input = EvalUsageStringCellSerializer(required=False)
+    reason = EvalUsageStringCellSerializer(required=False)
+    source = EvalUsageStringCellSerializer(required=False)
+    version = EvalUsageStringCellSerializer(required=False)
+    feedback = EvalUsageFeedbackCellSerializer(required=False)
+    created_at = EvalUsageStringCellSerializer(required=False)
+    status = EvalUsageStringCellSerializer(required=False)
+    warnings = EvalUsageWarningsCellSerializer(required=False)
+    detail = EvalUsageLogItemDetailSerializer(required=False)
+    # composite-only row flags
+    composite = serializers.BooleanField(required=False)
+    aggregate_pass = serializers.BooleanField(required=False, allow_null=True)
+
+    class Meta:
+        # Dynamic `input_var_<name>` keys — user-controlled, can't be typed
+        # ahead of time. The FE derives their columns from row keys at
+        # runtime (see evalUsageColumns.jsx).
+        swagger_schema_fields = {"additionalProperties": True}
 
 
 class EvalUsageStatsResponseResultSerializer(serializers.Serializer):
@@ -1748,7 +1878,8 @@ class EvalUsageStatsResponseResultSerializer(serializers.Serializer):
     is_composite = serializers.BooleanField()
     stats = EvalUsageStatsSerializer()
     chart = EvalUsageChartPointSerializer(many=True)
-    logs = EvalUsageLogsSerializer()
+    table = serializers.ListField(child=EvalUsageTableRowSerializer())
+    logs = EvalUsagePaginationSerializer()
 
 
 class EvalUsageStatsResponseSerializer(serializers.Serializer):

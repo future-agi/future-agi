@@ -272,6 +272,7 @@ const EvalDetailPage = () => {
     if (!list.length) return null;
     const byFlag = list.find((v) => v.is_default || v.isDefault);
     if (byFlag) return byFlag;
+    // matches backend get_default: highest version_number when none flagged
     return [...list].sort(
       (a, b) =>
         (b.version_number ?? b.versionNumber ?? Number.MIN_SAFE_INTEGER) -

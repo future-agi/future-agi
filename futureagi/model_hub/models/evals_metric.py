@@ -623,8 +623,39 @@ class EvalTemplateVersionManager(models.Manager):
             return version
 
     def get_default(self, eval_template):
-        """Get the default (active) version for a template."""
-        return self.filter(eval_template=eval_template, is_default=True).first()
+        """Get the default (active) version for a template.
+
+        Falls back to the highest version_number when no version is flagged
+        default (or the flagged one is deleted). version_number
+        auto-increments on save, so the highest number is always the
+        most-recently created version; ordering by it hits the existing
+        (eval_template, version_number) integer index.
+        """
+        version = self.filter(
+            eval_template=eval_template, is_default=True, deleted=False
+        ).first()
+        if version is None:
+            version = (
+                self.filter(eval_template=eval_template, deleted=False)
+                .order_by("-version_number")
+                .first()
+            )
+        return version
+
+    def resolve_for_metric(self, user_eval_metric):
+        """Version that will actually run for a UserEvalMetric.
+
+        Single authoritative home for the pin rule used by every stamping
+        site (playground, dataset single/batch, EvaluationRunner): a live
+        pinned version wins; a soft-deleted pin falls back to the template
+        default; no pin means the template default. Returns None only when
+        the template has no versions at all.
+        """
+        if getattr(user_eval_metric, "pinned_version_id", None):
+            pinned = user_eval_metric.pinned_version
+            if pinned and not getattr(pinned, "deleted", False):
+                return pinned
+        return self.get_default(user_eval_metric.template)
 
 
 class EvalTemplateVersion(ModelBaseModel):
