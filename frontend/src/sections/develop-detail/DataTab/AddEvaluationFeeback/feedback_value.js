@@ -2,7 +2,10 @@
 // they can be unit-tested directly and reused by both the dataset feedback
 // drawer and the evals → usage feedback drawer.
 
-import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/common";
+import {
+  extractChoiceLabel,
+  normalizeEvalCellValue,
+} from "src/sections/develop-detail/DataTab/common";
 
 export const FEEDBACK_OUTPUT_TYPES = {
   REASON: "reason",
@@ -44,9 +47,17 @@ export const getCurrentValue = (data, choiceScores) => {
   const raw = data?.value;
   if (raw === null || raw === undefined || raw === "") return "";
   const normalized = normalizeEvalCellValue(raw);
-  const display = Array.isArray(normalized)
-    ? normalized.map((v) => String(v)).join(", ")
-    : String(normalized ?? "");
+  let display;
+  if (Array.isArray(normalized)) {
+    display = normalized.map((v) => String(v)).join(", ");
+  } else if (normalized && typeof normalized === "object") {
+    // Score-with-choices evals emit {score, choice}; pull the label so
+    // the drawer shows "Bad" instead of "[object Object]".
+    const label = extractChoiceLabel(normalized);
+    display = label ?? String(normalized ?? "");
+  } else {
+    display = String(normalized ?? "");
+  }
   if (
     choiceScores &&
     typeof choiceScores === "object" &&

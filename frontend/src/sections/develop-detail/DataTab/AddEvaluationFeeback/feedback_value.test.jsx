@@ -123,6 +123,28 @@ describe("feedback_value helpers", () => {
     it("returns a bare array as a comma-separated list", () => {
       expect(getCurrentValue({ value: ["A", "B"] }, null)).toBe("A, B");
     });
+
+    it("unwraps single-choice {score, choice: 'Bad'} objects instead of stringifying to [object Object]", () => {
+      // score-with-choices evals emit a single label + derived score; the
+      // stored value round-trips through Python-repr so both raw dict and
+      // repr string are exercised.
+      expect(
+        getCurrentValue({ value: { score: 0.0, choice: "Bad" } }, null),
+      ).toBe("Bad");
+      expect(
+        getCurrentValue({ value: "{'score': 0.0, 'choice': 'Bad'}" }, null),
+      ).toBe("Bad");
+    });
+
+    it("annotates unwrapped single-choice objects with choice_scores when mapped", () => {
+      const map = { Bad: 0, Good: 1, Normal: 0.3, Average: 0.7 };
+      expect(
+        getCurrentValue({ value: { score: 0.0, choice: "Bad" } }, map),
+      ).toBe("Bad (score 0)");
+      expect(
+        getCurrentValue({ value: "{'score': 0.7, 'choice': 'Average'}" }, map),
+      ).toBe("Average (score 0.7)");
+    });
   });
 
   it("exposes the expected output types", () => {
