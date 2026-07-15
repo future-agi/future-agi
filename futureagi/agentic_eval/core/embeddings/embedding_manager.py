@@ -15,6 +15,7 @@ from django.db import close_old_connections
 from PIL import Image
 from tfc.telemetry import wrap_for_thread
 
+from agentic_eval.core.database import get_vector_db
 from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
 from agentic_eval.core.embeddings.serving_client import get_serving_client
 from agentic_eval.core.utils.functions import detect_input_type
@@ -226,7 +227,7 @@ model_manager = ModelManager()
 
 class EmbeddingManager:
     def __init__(self):
-        self.db_client = ClickHouseVectorDB()
+        self.db_client = get_vector_db()
         self.input_types = None
 
     def close(self):
@@ -244,6 +245,11 @@ class EmbeddingManager:
     def get_feedback_count(self, eval_id: str, organization_id: str = None, workspace_id: str = None) -> int:
         """Return the number of non-deleted feedback rows for a given eval_id."""
         try:
+            if hasattr(self.db_client, "get_feedback_count"):
+                return self.db_client.get_feedback_count(
+                    FEEDBACK_TABLE_NAME, eval_id, organization_id, workspace_id
+                )
+
             where = ["eval_id = %(eval_id)s", "deleted = 0"]
             params = {"eval_id": eval_id}
             if organization_id:
@@ -611,7 +617,7 @@ class EmbeddingManager:
         workspace_id=None,
     ):
         if table_name == FEEDBACK_TABLE_NAME:
-            db_client = ClickHouseVectorDB()
+            db_client = get_vector_db()
             db_client.create_table(table_name)
             vectors, metadata_list = self.data_formatter(
                 row_dict=metadatas,
@@ -626,7 +632,7 @@ class EmbeddingManager:
             def process_batch(batch):
                 vectors_batch = []
                 metadata_batch = []
-                db_client = ClickHouseVectorDB()
+                db_client = get_vector_db()
 
                 try:
                     db_client.create_table(table_name)
@@ -693,7 +699,7 @@ class EmbeddingManager:
         """
         try:
             # Create a new connection for this operation
-            db_client = ClickHouseVectorDB()
+            db_client = get_vector_db()
             try:
                 db_client.create_table(table_name)
                 new_ids = db_client.bulk_upsert_vectors(
@@ -1258,7 +1264,14 @@ class EmbeddingManager:
             organization_id (str): The organization ID to associate with the chunks
         """
         try:
-            # Check if table exists
+            if hasattr(self.db_client, "delete_chunks_by_file"):
+                self.db_client.delete_chunks_by_file(table_name, kb_id, file_id, organization_id)
+                logger.info(
+                    f"Successfully deleted chunks with eval_id {kb_id} and file_id {file_id} from table {table_name}"
+                )
+                return
+
+            # ClickHouse path
             check_query = f"EXISTS TABLE {table_name}"
             table_exists = self.db_client.client.execute(check_query)[0][0]
 
@@ -1268,7 +1281,6 @@ class EmbeddingManager:
                 )
                 return
 
-            # Construct and execute delete query using metadata.key and metadata.value
             delete_query = f"""
             ALTER TABLE {table_name}
             DELETE WHERE eval_id = '{kb_id}'

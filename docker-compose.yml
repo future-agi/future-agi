@@ -322,6 +322,22 @@ services:
       retries: 5
     restart: unless-stopped
 
+  valkey:
+    image: valkey/valkey:8.1-alpine
+    command: valkey-server --appendonly yes --loadmodule /opt/valkey/lib/valkey-search.so
+    ports:
+      - "127.0.0.1:${VALKEY_PORT:-6389}:6379"
+    volumes:
+      - valkey-data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    profiles:
+      - valkey
+
   rabbitmq:
     image: rabbitmq:3-management
     environment:
@@ -570,6 +586,7 @@ volumes:
   postgres-data:
   clickhouse-data:
   redis-data:
+  valkey-data:
   rabbitmq-data:
   minio-data:
   peerdb-catalog-data:
