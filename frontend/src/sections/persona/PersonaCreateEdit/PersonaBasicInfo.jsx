@@ -97,6 +97,7 @@ const PersonaBasicInfo = ({ viewOptions, multiple = true }) => {
                 multiple={multiple}
                 checkbox={multiple}
                 selectAll
+                required
               />
               <FormSearchSelectFieldControl
                 control={control}
