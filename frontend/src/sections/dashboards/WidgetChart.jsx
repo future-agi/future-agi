@@ -311,6 +311,27 @@ export default function WidgetChart({ widget, globalDateRange }) {
     );
   }
 
+  if (hasNoDataForRange) {
+    return (
+      <Box
+        ref={containerRef}
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          width: "100%",
+          height: "100%",
+          minHeight: 0,
+          px: 2,
+        }}
+      >
+        <Typography variant="body2" color="text.disabled">
+          {NO_DATA_FOR_RANGE_MESSAGE}
+        </Typography>
+      </Box>
+    );
+  }
+
   // Metric card
   if (isMetricCard) {
     return (
@@ -827,27 +848,6 @@ export default function WidgetChart({ widget, globalDateRange }) {
             );
           })}
         </Box>
-      </Box>
-    );
-  }
-
-  if (hasNoDataForRange) {
-    return (
-      <Box
-        ref={containerRef}
-        sx={{
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-          width: "100%",
-          height: "100%",
-          minHeight: 0,
-          px: 2,
-        }}
-      >
-        <Typography variant="body2" color="text.disabled">
-          {NO_DATA_FOR_RANGE_MESSAGE}
-        </Typography>
       </Box>
     );
   }

@@ -65,4 +65,16 @@ describe("WidgetChart — empty time-range state", () => {
     expect(screen.getByTestId("apex-line")).toBeInTheDocument();
     expect(screen.queryByText(NO_DATA_MESSAGE)).not.toBeInTheDocument();
   });
+
+  // Regression guard: hasNoDataForRange must stay ABOVE the metric-card/table/pie/
+  // horizontal early returns so those widget types show this message too, instead of
+  // falling into their own type-specific render with an empty series.
+  it("shows the empty-range message for a pie widget with zero data points, not the pie render", () => {
+    h.query.data = queryResult([]);
+    const pieWidget = { ...baseWidget, chart_config: { chart_type: "pie" } };
+    render(<WidgetChart widget={pieWidget} globalDateRange={null} />);
+
+    expect(screen.getByText(NO_DATA_MESSAGE)).toBeInTheDocument();
+    expect(screen.queryByTestId("apex-pie")).not.toBeInTheDocument();
+  });
 });
