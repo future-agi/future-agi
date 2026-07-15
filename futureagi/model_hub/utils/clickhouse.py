@@ -135,9 +135,9 @@ def update_eval_record(
         """
         client.execute(delete_query, {"primary_key_value": primary_key_value})
     else:
-        # TODO throw exception
-        # print(f'Error in update_eval_record for primary key value {primary_key_value}')
-        pass
+        raise ValueError(
+            f"{table_name} has no record with {primary_key_field}={primary_key_value}"
+        )
 
     merged_values["UUID"] = str(uuid.uuid4())
 
