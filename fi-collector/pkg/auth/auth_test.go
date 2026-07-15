@@ -933,20 +933,17 @@ func TestUsageEmitterEmitIngestionNil(t *testing.T) {
 }
 
 func TestBillingEventIDDeterministic(t *testing.T) {
-	a := billingEventID("trace-abc", "tracing_event")
-	if a != billingEventID("trace-abc", "tracing_event") {
-		t.Error("same dedupKey+eventType must yield the same event_id (re-poll must dedup)")
+	a := billingEventID("trace-abc")
+	if a != billingEventID("trace-abc") {
+		t.Error("same dedupKey must yield the same event_id (re-poll must dedup, even across a mode flip)")
 	}
-	if billingEventID("trace-abc", "observe_add") == a {
-		t.Error("different eventType must yield distinct ids (else the two events collide on unique event_id)")
-	}
-	if billingEventID("trace-xyz", "tracing_event") == a {
+	if billingEventID("trace-xyz") == a {
 		t.Error("different dedupKey must yield distinct ids")
 	}
 }
 
 func TestBillingEventIDEmptyKeyIsRandom(t *testing.T) {
-	if billingEventID("", "tracing_event") == billingEventID("", "tracing_event") {
+	if billingEventID("") == billingEventID("") {
 		t.Error("empty dedupKey must fall back to a random event_id (SDK batches)")
 	}
 }
@@ -1075,8 +1072,7 @@ func TestEmitIngestionDefaultsToStorageWhenModeUnknown(t *testing.T) {
 	}
 }
 
-// Issue B: events-mode tracing amount is traces+spans, and payloadBytes is
-// ignored (span storage isn't billed in events mode).
+// events-mode tracing amount is traces+spans, and payloadBytes is ignored.
 func TestEmitIngestionEventsModeAmountIncludesSpans(t *testing.T) {
 	mr := miniredis.RunT(t)
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -1091,6 +1087,25 @@ func TestEmitIngestionEventsModeAmountIncludesSpans(t *testing.T) {
 	}
 	if evs[0]["event_type"] != "tracing_event" || evs[0]["amount"] != "7" {
 		t.Errorf("want tracing_event amount=7 (2 traces + 5 spans), got type=%v amount=%v",
+			evs[0]["event_type"], evs[0]["amount"])
+	}
+}
+
+// events mode with spans=0 pins the other boundary of the traces+spans sum.
+func TestEmitIngestionEventsModeTracesOnly(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	u := NewUsageEmitter(rdb, nil, slog.Default())
+	setTracingMode(t, rdb, "org-t", "events")
+
+	u.EmitIngestion("org-t", 2, 0, 999, "trace-1")
+
+	evs := usageStreamEvents(t, rdb)
+	if len(evs) != 1 {
+		t.Fatalf("events mode must emit exactly one event, got %d: %v", len(evs), evs)
+	}
+	if evs[0]["event_type"] != "tracing_event" || evs[0]["amount"] != "2" {
+		t.Errorf("want tracing_event amount=2 (2 traces + 0 spans), got type=%v amount=%v",
 			evs[0]["event_type"], evs[0]["amount"])
 	}
 }
