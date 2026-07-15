@@ -214,13 +214,15 @@ const EvaluationFeeback = ({
   }, [feedbackData, existingFeedback, isMulti]);
 
   // Submit the chosen re-tune action (and the value/explanation) against the
-  // created/existing feedback record.
+  // created/existing feedback record. Both submit endpoints (dataset and
+  // experiment) read row_id off the feedback record itself; sending it in
+  // the payload is redundant and the experiment endpoint's strict
+  // serializer rejects it.
   const submitAction = (feedbackId) => {
     submitFeedbackField({
       action_type: pendingRef.current.actionType,
       user_eval_metric_id: metricId,
       feedback_id: feedbackId,
-      row_id: rowId,
       value: pendingRef.current.value,
       explanation: pendingRef.current.explanation,
     });

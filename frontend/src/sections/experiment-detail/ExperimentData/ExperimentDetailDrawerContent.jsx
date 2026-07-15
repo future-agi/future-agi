@@ -1132,7 +1132,12 @@ export default function ExperimentDetailDrawerContent({
               ...evalData,
               userEvalMetricId: evalData?.group?.id,
               sourceId: evalData?.id,
-              value: evalData?.value ?? evalData?.output,
+              // Experiments carry the cell's output under `cell_value`;
+              // dataset/other surfaces use `value`/`output`. Fall back
+              // through all three so the drawer's Current output line
+              // populates on every entry point.
+              value:
+                evalData?.value ?? evalData?.output ?? evalData?.cell_value,
               rowData: { row_id: row?.row_id },
             });
             setOpenDetailRow(null);
