@@ -11366,7 +11366,7 @@ class FeedbackViewSet(viewsets.ModelViewSet):
                 metadatas=row_dict,
                 inputs_formater=required_field,
                 organization_id=dataset.organization.id,
-                workspace_id=dataset.workspace.id if dataset.workspace else None,
+                workspace_id=None,
             )
             embedding_manager.close()
             # Handle different action types

@@ -1212,11 +1212,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 row_dict=trace_data,
                 inputs_formater=[observation_span.id],
                 organization_id=observation_span.project.organization.id,
-                workspace_id=(
-                    observation_span.project.workspace.id
-                    if observation_span.project.workspace
-                    else None
-                ),
+                workspace_id=None,
             )
             embedding_manager.close()
 

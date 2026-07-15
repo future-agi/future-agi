@@ -255,17 +255,23 @@ class TestResolveFeedbackTemplateData:
 
         data = resolve_feedback_template_data(metric, tpl)
 
+        # Metric choices override still wins; multi_choice is now
+        # sourced from the template only (unset here → False).
         assert data["choices"] == ["X", "Y", "Z"]
-        assert data["multi_choice"] is True
+        assert data["multi_choice"] is False
 
-    def test_metric_multi_choice_override_alone_wins(self, user, workspace):
-        """The `tone`-like case: metric enables multi_choice without
-        re-specifying choices. Old resolution dropped the override."""
+    def test_multi_choice_sourced_from_template_when_metric_asserts_true(
+        self, user, workspace
+    ):
+        """Metric-side ``multi_choice`` override is ignored; the
+        template's canonical multi_choice field is the single source of
+        truth."""
         tpl = _template(
             user,
             workspace,
             config={"output": "choices"},
             choices=["neutral", "joy", "sadness"],
+            multi_choice=False,
         )
         metric = _metric_for(
             user, workspace, tpl, config={"config": {"multi_choice": True}}
@@ -273,17 +279,19 @@ class TestResolveFeedbackTemplateData:
 
         data = resolve_feedback_template_data(metric, tpl)
 
-        assert data["multi_choice"] is True
+        assert data["multi_choice"] is False
         assert data["choices"] == ["neutral", "joy", "sadness"]
 
-    def test_metric_explicit_false_multi_choice_beats_template_true(
+    def test_multi_choice_from_template_ignores_metric_false(
         self, user, workspace
     ):
+        """Template says multi_choice=True; metric override is ignored."""
         tpl = _template(
             user,
             workspace,
-            config={"output": "choices", "multi_choice": True},
+            config={"output": "choices"},
             choices=["A", "B"],
+            multi_choice=True,
         )
         metric = _metric_for(
             user, workspace, tpl, config={"config": {"multi_choice": False}}
@@ -291,7 +299,7 @@ class TestResolveFeedbackTemplateData:
 
         data = resolve_feedback_template_data(metric, tpl)
 
-        assert data["multi_choice"] is False
+        assert data["multi_choice"] is True
 
     def test_choices_type_with_no_choices_anywhere_returns_empty(
         self, user, workspace

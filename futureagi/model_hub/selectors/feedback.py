@@ -95,12 +95,9 @@ def resolve_feedback_template_data(
       * ``choice_scores`` — a choice→score map; when present, the LLM emits
         choice labels and the FE must render a picker (radio or checkbox)
         regardless of ``output_type``
-      * ``multi_choice`` — checkbox vs radio for the CHOICES branch
-
-    ``choices`` and ``multi_choice`` are resolved independently: a metric may
-    override just one of them (``tone`` overrides ``multi_choice`` but reuses
-    the template's choice list). Whichever field the metric explicitly sets
-    wins; the template config is the fallback.
+      * ``multi_choice`` (checkbox vs radio for the CHOICES branch) is
+        sourced from the template's canonical ``multi_choice`` field;
+        metrics do not override this.
     """
 
     template_config = eval_template.config or {}
@@ -126,9 +123,9 @@ def resolve_feedback_template_data(
         else:
             data["choices"] = []
 
-        if "multi_choice" in overrides:
-            data["multi_choice"] = bool(overrides["multi_choice"])
-        else:
-            data["multi_choice"] = bool(template_config.get("multi_choice", False))
+        # `multi_choice` is a canonical template field on EvalTemplate,
+        # not a nested config key. The nested key is often unset even
+        # when the direct field is True (e.g. the `tone` system template).
+        data["multi_choice"] = bool(getattr(eval_template, "multi_choice", False))
 
     return data
