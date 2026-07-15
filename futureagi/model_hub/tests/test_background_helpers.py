@@ -424,7 +424,7 @@ class TestCreateKnowledgeBaseEntitlements:
     @patch("model_hub.views.develop_dataset.KnowledgeBaseFile.objects.filter")
     @patch("ee.usage.services.entitlements.Entitlements.check_feature")
     @patch("ee.usage.services.entitlements.Entitlements.can_create")
-    @patch("model_hub.views.develop_dataset.log_and_deduct_cost_for_resource_request")
+    @patch("tfc.billing.boundary._EeBilling.log_and_deduct_resource")
     def test_post_uses_entitlements_instead_of_legacy_resource_limit(
         self,
         mock_legacy_limit,

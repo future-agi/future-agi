@@ -144,6 +144,7 @@ from tfc.utils.pagination import ExtendedPageNumberPagination
 from tracer.models.observation_span import EvalLogger
 from tracer.models.project import Project
 from tracer.models.span_notes import SpanNotes
+from tfc.billing.boundary import get_billing
 
 logger = structlog.get_logger(__name__)
 
@@ -2830,18 +2831,13 @@ def _check_annotation_queue_create_limit(org, workspace=None):
 
 
 def _review_workflow_entitlement_denial(request):
-    try:
-        from ee.usage.services.entitlements import Entitlements
-    except ImportError:
-        return None
-
+    # review_workflow is an EE feature: the gate must also run (and deny)
+    # on OSS, matching the check_ee_feature guards on the settings endpoints.
     org = getattr(request, "organization", None) or request.user.organization
-    feat_check = Entitlements.check_feature(
-        str(org.id),
-        "has_review_workflow",
-    )
-    if not feat_check.allowed:
-        return feat_check.reason
+    billing = get_billing()
+    result = billing.check_feature_gate(str(org.id), "has_review_workflow")
+    if not result.allowed:
+        return result.reason or "Review workflow is not available on your plan."
     return None
 
 
@@ -3812,21 +3808,14 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
     @action(detail=True, methods=["get"], url_path="agreement")
     def agreement(self, request, pk=None):
         """Calculate inter-annotator agreement metrics."""
-        try:
-            try:
-                from ee.usage.services.entitlements import Entitlements
-            except ImportError:
-                Entitlements = None
-
-            org = getattr(request, "organization", None) or request.user.organization
-            if Entitlements is not None:
-                feat_check = Entitlements.check_feature(
-                    str(org.id), "has_agreement_metrics"
-                )
-                if not feat_check.allowed:
-                    return self._gm.forbidden_response(feat_check.reason)
-        except ImportError:
-            pass
+        org = getattr(request, "organization", None) or request.user.organization
+        billing = get_billing()
+        feat_check = billing.check_feature_gate(str(org.id), "has_agreement_metrics")
+        if not feat_check.allowed:
+            return self._gm.forbidden_response(
+                feat_check.reason
+                or "Agreement metrics are not available on your plan."
+            )
 
         queue = self.get_object()
         result = calculate_agreement(queue)
@@ -7294,24 +7283,14 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
             return manager_error
 
         # Entitlement check: can this org create more automation rules?
-        try:
-            try:
-                from ee.usage.services.entitlements import Entitlements
-            except ImportError:
-                Entitlements = None
-
-            org = getattr(request, "organization", None) or request.user.organization
-            current_count = AutomationRule.objects.filter(
-                organization=org, deleted=False
-            ).count()
-            if Entitlements is not None:
-                check = Entitlements.can_create(
-                    str(org.id), "automation_rules", current_count
-                )
-                if not check.allowed:
-                    return self._gm.forbidden_response(check.reason)
-        except ImportError:
-            pass
+        org = getattr(request, "organization", None) or request.user.organization
+        current_count = AutomationRule.objects.filter(
+            organization=org, deleted=False
+        ).count()
+        billing = get_billing()
+        check = billing.can_create(str(org.id), "automation_rules", current_count)
+        if not check.allowed:
+            return self._gm.forbidden_response(check.reason)
 
         return super().create(request, *args, **kwargs)
 

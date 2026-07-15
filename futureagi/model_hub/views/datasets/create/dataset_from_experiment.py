@@ -32,11 +32,7 @@ from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
-
-try:
-    from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
-except ImportError:
-    log_and_deduct_cost_for_resource_request = None
+from tfc.billing.boundary import get_billing
 
 
 def _request_organization(request):
@@ -149,20 +145,17 @@ class CreateDatasetFromExpView(APIView):
             if not dataset_serializer.is_valid():
                 return self._gm.bad_request(parse_serialized_errors(dataset_serializer))
 
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row_entry = log_and_deduct_cost_for_resource_request(
-                    organization=_org,
-                    api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                    workspace=getattr(request, "workspace", None),
+            billing = get_billing()
+            call_log_row_entry = billing.log_and_deduct_resource(
+                organization=_org,
+                api_call_type=APICallTypeChoices.DATASET_ADD.value,
+                workspace=getattr(request, "workspace", None),
+            )
+            if billing.resource_denied(call_log_row_entry):
+                return self._gm.too_many_requests(
+                    get_error_message("DATASET_CREATE_LIMIT_REACHED")
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+            if call_log_row_entry is not None:
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 

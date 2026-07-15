@@ -120,6 +120,7 @@ from model_hub.utils.function_eval_params import (
 )
 from model_hub.utils.SQL_queries import SQLQueryHandler
 from model_hub.views.utils.evals import run_eval_func, run_eval_func_task
+from tfc.billing.boundary import UsageLimitExceeded
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_workspace
 from tfc.settings.settings import BASE_URL
@@ -134,10 +135,6 @@ from tracer.models.observation_span import EvalLogger
 from tracer.utils.filters import apply_created_at_filters
 from tracer.utils.graphs import GraphEngine
 
-try:
-    from ee.usage.exceptions import UsageLimitExceeded
-except ImportError:
-    UsageLimitExceeded = None
 
 logger = structlog.get_logger(__name__)
 
@@ -6391,7 +6388,7 @@ class EvalPlayGroundAPIView(APIView):
                     response if response else "Evaluation has been updated."
                 )
             except Exception as e:
-                if UsageLimitExceeded is not None and isinstance(e, UsageLimitExceeded):
+                if isinstance(e, UsageLimitExceeded):
                     logger.warning(f"Eval playground usage limit: {str(e)}")
                     return self._gm.usage_limit_response(e.check_result)
                 logger.error(f"Error in run_eval_func: {str(e)}")

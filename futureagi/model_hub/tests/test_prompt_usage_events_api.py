@@ -20,7 +20,7 @@ def test_generate_prompt_api_emits_token_usage_properties(auth_client):
 
     with (
         patch(
-            "model_hub.views.prompt_template.log_and_deduct_cost_for_api_request",
+            "tfc.billing.boundary._EeBilling.log_and_deduct",
             return_value=call_log,
         ) as mock_log_cost,
         patch("model_hub.views.prompt_template.submit_with_retry") as mock_submit,
@@ -58,7 +58,7 @@ def test_improve_prompt_api_emits_token_usage_properties(auth_client):
     with (
         patch("tfc.ee_gating.check_ee_feature"),
         patch(
-            "model_hub.views.prompt_template.log_and_deduct_cost_for_api_request",
+            "tfc.billing.boundary._EeBilling.log_and_deduct",
             return_value=call_log,
         ) as mock_log_cost,
         patch("model_hub.views.prompt_template.submit_with_retry") as mock_submit,

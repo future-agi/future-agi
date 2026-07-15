@@ -9,12 +9,9 @@ from model_hub.models.evals_metric import EvalTemplate
 from model_hub.models.evaluation import Evaluation, StatusChoices
 from model_hub.tasks.user_evaluation import trigger_error_localization_for_standalone
 from sdk.utils.helpers import _get_api_call_type
-from tracer.utils.inline_evals import trigger_inline_eval
+from tfc.billing.boundary import get_billing, token_usage_properties
 from tfc.constants.api_calls import APICallStatusChoices
-try:
-    from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
-except ImportError:
-    log_and_deduct_cost_for_api_request = None
+from tracer.utils.inline_evals import trigger_inline_eval
 
 
 class StandaloneEvaluationError(Exception):
@@ -43,37 +40,29 @@ def _log_and_deduct_cost_for_standalone_eval(
 
     api_call_type = _get_api_call_type(model)
 
-    try:
-        from ee.usage.services.metering import check_usage
-    except ImportError:
-        check_usage = None
-
-    if check_usage is not None:
-        usage_check = check_usage(str(user.organization.id), api_call_type)
-        if not usage_check.allowed:
-            raise ValueError(usage_check.reason or "Usage limit exceeded")
+    billing = get_billing()
+    usage_check = billing.check_usage(str(user.organization.id), api_call_type)
+    if not usage_check.allowed:
+        raise ValueError(usage_check.reason or "Usage limit exceeded")
 
     if model:
         log_config.update({"model": str(model)})
     if kb_id:
         log_config.update({"kb_id": str(kb_id)})
 
-    api_call_log_row = None
-    if log_and_deduct_cost_for_api_request is not None:
-        api_call_log_row = log_and_deduct_cost_for_api_request(
-            organization=user.organization,
-            api_call_type=api_call_type,
-            source="standalone_v2",
-            source_id=eval_template.id,
-            config=log_config,
-            workspace=workspace,
-        )
+    api_call_log_row = billing.log_and_deduct(
+        organization=user.organization,
+        api_call_type=api_call_type,
+        source="standalone_v2",
+        source_id=eval_template.id,
+        config=log_config,
+        workspace=workspace,
+    )
 
-        if not api_call_log_row:
-            raise ValueError("API call not allowed : Error validating the api call.")
-
-        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-            raise ValueError(f"API call not allowed: {api_call_log_row.status}")
+    if billing.deduct_denied(api_call_log_row):
+        if api_call_log_row is None:
+            raise ValueError("API call not allowed")
+        raise ValueError(f"API call not allowed: {api_call_log_row.status}")
 
     # NOTE: No pre-eval UsageEvent emission. The cost isn't known until the
     # eval finishes, and UsageEvent.amount defaults to 1 — emitting here
@@ -261,50 +250,31 @@ def _run_eval(eval_template, inputs, model, user, workspace, eval_config=None):
     # amount (cost is unknown until the eval runs), so without this post-eval
     # emit SDK/API-key evals never produce a billable UsageEvent. (TH-3402)
     try:
-        try:
-            from ee.usage.schemas.events import UsageEvent
-        except ImportError:
-            UsageEvent = None
-        try:
-            from ee.usage.services.config import BillingConfig
-        except ImportError:
-            BillingConfig = None
-        try:
-            from ee.usage.services.emitter import emit
-        except ImportError:
-            emit = None
-        try:
-            from ee.usage.utils.event_properties import token_usage_properties
-        except ImportError:
-            token_usage_properties = lambda token_usage: {}
+        billing = get_billing()
+        eval_cost = result.cost or {}
+        token_usage = result.token_usage or {}
+        llm_cost = eval_cost.get("total_cost", 0)
 
-        billing_config = None
-        if BillingConfig is not None:
-            billing_config = BillingConfig.get()
-        if billing_config is not None:
-            eval_cost = result.cost or {}
-            token_usage = result.token_usage or {}
-            llm_cost = eval_cost.get("total_cost", 0)
-            per_run_fee = billing_config.get_eval_per_run_fee()
-            actual_cost = llm_cost + per_run_fee
-            credits = billing_config.calculate_ai_credits(actual_cost)
+        per_run_fee = 0
+        try:
+            per_run_fee = billing.eval_per_run_fee()
+        except Exception:
+            pass
+        actual_cost = llm_cost + per_run_fee
+        credits = billing.ai_credits(actual_cost)
 
-            api_call_type = _get_api_call_type(model)
-            if emit is not None and UsageEvent is not None:
-                emit(
-                    UsageEvent(
-                        org_id=str(user.organization.id),
-                        event_type=api_call_type,
-                        amount=credits,
-                        properties={
-                            "source": "standalone_v2",
-                            "source_id": str(eval_template.id),
-                            "raw_cost_usd": str(actual_cost),
-                            "log_id": str(api_call_log_row.log_id) if api_call_log_row else None,
-                            **token_usage_properties(token_usage),
-                        },
-                    )
-                )
+        api_call_type = _get_api_call_type(model)
+
+        billing.record_usage(
+            str(user.organization.id),
+            api_call_type,
+            amount=credits,
+            source="standalone_v2",
+            source_id=str(eval_template.id),
+            raw_cost_usd=str(actual_cost),
+            log_id=str(api_call_log_row.log_id) if api_call_log_row else None,
+            **token_usage_properties(token_usage),
+        )
 
     except Exception:
         pass  # Metering failure must not break the action
@@ -523,67 +493,47 @@ def _run_protect(
 
         # Emit usage event with actual cost after eval completion
         try:
-            try:
-                from ee.usage.schemas.events import UsageEvent
-            except ImportError:
-                UsageEvent = None
-            try:
-                from ee.usage.services.config import BillingConfig
-            except ImportError:
-                BillingConfig = None
-            try:
-                from ee.usage.services.emitter import emit
-            except ImportError:
-                emit = None
-            try:
-                from ee.usage.utils.event_properties import token_usage_properties
-            except ImportError:
-                token_usage_properties = lambda token_usage: {}
+            token_usage = (result.metadata or {}).get("token_usage", {})
+            from agentic_eval.core_evals.fi_utils.token_count_helper import (
+                calculate_total_cost,
+            )
 
-            billing_config = None
-            if BillingConfig is not None:
-                billing_config = BillingConfig.get()
+            # Resolve model alias for pricing lookup
+            if protect_flash:
+                protect_model = "protect_flash"
+            else:
+                try:
+                    from ee.protect.helper import ProtectHelper
 
-            if billing_config is not None:
-                token_usage = (result.metadata or {}).get("token_usage", {})
-                from agentic_eval.core_evals.fi_utils.token_count_helper import (
-                    calculate_total_cost,
-                )
-
-                # Resolve model alias for pricing lookup
-                if protect_flash:
-                    protect_model = "protect_flash"
-                else:
-                    try:
-                        from ee.protect.helper import ProtectHelper
-
-                        protect_model = ProtectHelper.resolve_alias(
-                            eval_template.name, is_flash=False
-                        )
-                    except ImportError:
-                        protect_model = f"protect_{eval_template.name}"
-                cost_info = calculate_total_cost(protect_model, token_usage)
-                llm_cost = cost_info.get("total_cost", 0)
-                per_run_fee = billing_config.get_eval_per_run_fee()
-                actual_cost = llm_cost + per_run_fee
-                credits = billing_config.calculate_ai_credits(actual_cost)
-
-                if emit is not None and UsageEvent is not None:
-                    emit(
-                        UsageEvent(
-                            org_id=str(user.organization.id),
-                            event_type=_get_api_call_type(
-                                "protect_flash" if protect_flash else "protect"
-                            ),
-                            amount=credits,
-                            properties={
-                                "source": "standalone_v2",
-                                "source_id": str(eval_template.id),
-                                "raw_cost_usd": str(actual_cost),
-                                **token_usage_properties(token_usage),
-                            },
-                        )
+                    protect_model = ProtectHelper.resolve_alias(
+                        eval_template.name, is_flash=False
                     )
+                except ImportError:
+                    protect_model = f"protect_{eval_template.name}"
+            cost_info = calculate_total_cost(protect_model, token_usage)
+            llm_cost = cost_info.get("total_cost", 0)
+
+            per_run_fee = 0
+            try:
+                per_run_fee = get_billing().eval_per_run_fee()
+            except Exception:
+                pass
+            actual_cost = llm_cost + per_run_fee
+
+            billing_protect = get_billing()
+            credits = billing_protect.ai_credits(actual_cost)
+
+            billing_protect.record_usage(
+                str(user.organization.id),
+                _get_api_call_type(
+                    "protect_flash" if protect_flash else "protect"
+                ),
+                amount=credits,
+                source="standalone_v2",
+                source_id=str(eval_template.id),
+                raw_cost_usd=str(actual_cost),
+                **token_usage_properties(token_usage),
+            )
 
         except Exception:
             pass

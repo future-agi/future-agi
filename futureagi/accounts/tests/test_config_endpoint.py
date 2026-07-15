@@ -3,19 +3,31 @@ from unittest.mock import patch
 from django.test import TestCase, override_settings
 from rest_framework.test import APIClient
 
+from tfc import ee_gating
+
 try:
     from ee.usage.deployment import _detect_mode
 except ImportError:
     _detect_mode = None
 
 
+def _clear_mode_caches():
+    if _detect_mode is not None:
+        _detect_mode.cache_clear()
+    # The config endpoint reads the lru_cached tfc.ee_gating oracles; clear
+    # them so override_settings takes effect per test.
+    ee_gating.is_cloud.cache_clear()
+    ee_gating.is_oss.cache_clear()
+    ee_gating.is_ee.cache_clear()
+
+
 class PublicConfigEndpointTest(TestCase):
     def setUp(self):
         self.client = APIClient()
-        _detect_mode.cache_clear()
+        _clear_mode_caches()
 
     def tearDown(self):
-        _detect_mode.cache_clear()
+        _clear_mode_caches()
 
     def test_default_self_hosted(self):
         """Without CLOUD_DEPLOYMENT, returns cloud=false."""

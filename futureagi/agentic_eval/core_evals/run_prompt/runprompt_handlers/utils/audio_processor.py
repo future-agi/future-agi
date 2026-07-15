@@ -19,6 +19,7 @@ import av
 import structlog
 
 from agentic_eval.core_evals.fi_utils.token_count_helper import calculate_total_cost
+from tfc.billing.boundary import get_billing
 from tfc.utils.storage import (
     audio_bytes_from_url_or_base64,
     convert_to_mp3,
@@ -26,10 +27,6 @@ from tfc.utils.storage import (
     get_audio_duration,
     upload_audio_to_s3,
 )
-try:
-    from ee.usage.utils.usage_entries import count_tiktoken_tokens
-except ImportError:
-    count_tiktoken_tokens = None
 
 logger = structlog.get_logger(__name__)
 
@@ -207,7 +204,8 @@ class AudioProcessor:
 
         # Calculate token usage
         try:
-            prompt_tokens = count_tiktoken_tokens(input_text)
+            billing = get_billing()
+            prompt_tokens = billing.count_tiktoken_tokens(input_text)
         except Exception:
             prompt_tokens = None
 

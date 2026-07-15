@@ -31,12 +31,8 @@ from model_hub.models.develop_annotations import Annotations, AnnotationsLabels
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_error_message
+from tfc.billing.boundary import get_billing, BillingEventType, llm_usage_properties
 from tfc.constants.api_calls import APICallTypeChoices
-try:
-    from ee.usage.utils.usage_entries import count_tiktoken_tokens, log_and_deduct_cost_for_api_request
-except ImportError:
-    count_tiktoken_tokens = None
-    log_and_deduct_cost_for_api_request = None
 
 # from ee.agenthub.feedback_agent_updated.utils import delete_table
 
@@ -176,19 +172,10 @@ class AutoAnnotation:
             ).update(status=StatusType.RUNNING.value)
 
             # Pre-check usage before starting the annotation loop
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.services.metering import check_usage
-            except ImportError:
-                check_usage = None
-
-            if check_usage is not None and BillingEventType is not None:
-                usage_check = check_usage(str(org.id), BillingEventType.AUTO_ANNOTATION)
-                if not usage_check.allowed:
-                    raise ValueError(usage_check.reason or "Usage limit exceeded")
+            billing = get_billing()
+            usage_check = billing.check_usage(str(org.id), BillingEventType.AUTO_ANNOTATION)
+            if not usage_check.allowed:
+                raise ValueError(usage_check.reason or "Usage limit exceeded")
 
             for _index, row in enumerate(rows):
                 if (
@@ -221,17 +208,16 @@ class AutoAnnotation:
                         inputs, input_type, strict=False
                     ):
                         if input_type_item == "image":
-                            tokens = (count_tiktoken_tokens("", input_item) if count_tiktoken_tokens else 0)
+                            tokens = billing.count_tiktoken_tokens("", input_item)
                         else:
-                            tokens = (count_tiktoken_tokens(input_item) if count_tiktoken_tokens else 0)
+                            tokens = billing.count_tiktoken_tokens(input_item)
                         api_call_type = APICallTypeChoices.AUTO_ANNOTATION.value
                         config = {}
                         config["input_tokens"] = tokens
-                        if log_and_deduct_cost_for_api_request is not None:
-                            log_and_deduct_cost_for_api_request(
-                            org,
-                            api_call_type,
-                            config,
+                        billing.log_and_deduct(
+                            organization=org,
+                            api_call_type=api_call_type,
+                            config=config,
                             source="auto_annotate",
                             workspace=dataset.workspace,
                         )
@@ -283,54 +269,21 @@ class AutoAnnotation:
 
                     # Emit cost-based usage event after agent completes
                     try:
-                        try:
-                            from ee.usage.schemas.event_types import BillingEventType
-                        except ImportError:
-                            BillingEventType = None
-                        try:
-                            from ee.usage.schemas.events import UsageEvent
-                        except ImportError:
-                            UsageEvent = None
-                        try:
-                            from ee.usage.services.config import BillingConfig
-                        except ImportError:
-                            BillingConfig = None
-                        try:
-                            from ee.usage.services.emitter import emit
-                        except ImportError:
-                            emit = None
-                        try:
-                            from ee.usage.utils.event_properties import (
-                                llm_usage_properties,
-                            )
-                        except ImportError:
-                            llm_usage_properties = lambda obj: {}
-
                         actual_cost = 0
                         if hasattr(agent, "llm") and agent.llm:
                             actual_cost = getattr(agent.llm, "cost", {}).get(
                                 "total_cost", 0
                             )
-                        if BillingConfig is not None:
-
-                            credits = BillingConfig.get().calculate_ai_credits(actual_cost)
-
-                        if emit is not None and UsageEvent is not None and BillingEventType is not None:
-
-
-                            emit(
-                            UsageEvent(
-                                org_id=str(org.id),
-                                event_type=BillingEventType.AUTO_ANNOTATION,
-                                amount=credits,
-                                properties={
-                                    "source": "auto_annotate",
-                                    "annotation_id": str(self.annotation.id),
-                                    "row_id": str(row.id),
-                                    "raw_cost_usd": str(actual_cost),
-                                    **llm_usage_properties(agent),
-                                },
-                            )
+                        credits = billing.ai_credits(actual_cost)
+                        billing.record_usage(
+                            str(org.id),
+                            BillingEventType.AUTO_ANNOTATION,
+                            amount=credits,
+                            source="auto_annotate",
+                            annotation_id=str(self.annotation.id),
+                            row_id=str(row.id),
+                            raw_cost_usd=str(actual_cost),
+                            **llm_usage_properties(agent),
                         )
                     except Exception:
                         pass

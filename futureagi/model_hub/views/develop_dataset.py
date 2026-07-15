@@ -263,6 +263,7 @@ from model_hub.views.utils.utils import (
     validate_file_url,
 )
 from sdk.utils.helpers import _get_api_call_type
+from tfc.billing.boundary import get_billing
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 
 # Define a Temporal activity for running the evaluation
@@ -295,14 +296,9 @@ from tfc.utils.storage import (
     upload_image_to_s3,
 )
 
-try:
-    from ee.usage.utils.usage_entries import (
-        ROW_LIMIT_REACHED_MESSAGE,
-        log_and_deduct_cost_for_resource_request,
-    )
-except ImportError:
-    ROW_LIMIT_REACHED_MESSAGE = None
-    log_and_deduct_cost_for_resource_request = None
+ROW_LIMIT_REACHED_MESSAGE = (
+    "Row limit reached. Please upgrade to a higher tier to avail more rows."
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -719,18 +715,16 @@ class AddRowsFromFile(CreateAPIView):
             ).count()
             # total_rows_allowed = get_number_of_rows_allowed(organization)
 
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row = log_and_deduct_cost_for_resource_request(
-                    organization,
-                    api_call_type=APICallTypeChoices.ROW_ADD.value,
-                    config={"total_rows": existing_rows_count + new_rows_count},
-                    workspace=request.workspace,
-                )
-                if (
-                    call_log_row is None
-                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            billing = get_billing()
+            call_log_row = billing.log_and_deduct_resource(
+                organization,
+                api_call_type=APICallTypeChoices.ROW_ADD.value,
+                config={"total_rows": existing_rows_count + new_rows_count},
+                workspace=request.workspace,
+            )
+            if billing.resource_denied(call_log_row):
+                return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
                 call_log_row.save()
             # --- Row Limit Check End ---
@@ -928,21 +922,18 @@ class CloneDatasetView(APIView):
             )
             if not source_dataset:
                 return self._gm.not_found("Dataset not found")
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row_entry = log_and_deduct_cost_for_resource_request(
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                    workspace=request.workspace,
+            billing = get_billing()
+            call_log_row_entry = billing.log_and_deduct_resource(
+                organization=getattr(request, "organization", None)
+                or request.user.organization,
+                api_call_type=APICallTypeChoices.DATASET_ADD.value,
+                workspace=request.workspace,
+            )
+            if billing.resource_denied(call_log_row_entry):
+                return self._gm.too_many_requests(
+                    get_error_message("DATASET_CREATE_LIMIT_REACHED")
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+            if call_log_row_entry is not None:
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
             new_dataset_name = request.data.get(
@@ -965,18 +956,16 @@ class CloneDatasetView(APIView):
             row_count = Row.objects.filter(
                 dataset=source_dataset, deleted=False
             ).count()
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row = log_and_deduct_cost_for_resource_request(
-                    getattr(request, "organization", None) or request.user.organization,
-                    api_call_type=APICallTypeChoices.ROW_ADD.value,
-                    config={"total_rows": row_count},
-                    workspace=request.workspace,
-                )
-                if (
-                    call_log_row is None
-                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            billing = get_billing()
+            call_log_row = billing.log_and_deduct_resource(
+                getattr(request, "organization", None) or request.user.organization,
+                api_call_type=APICallTypeChoices.ROW_ADD.value,
+                config={"total_rows": row_count},
+                workspace=request.workspace,
+            )
+            if billing.resource_denied(call_log_row):
+                return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
                 call_log_row.save()
 
@@ -1165,20 +1154,17 @@ class AddAsNewDataset(APIView):
                     str(column.id): column for column in source_columns
                 }
 
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row_entry = log_and_deduct_cost_for_resource_request(
-                    organization=_org,
-                    api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                    workspace=request.workspace,
+            billing = get_billing()
+            call_log_row_entry = billing.log_and_deduct_resource(
+                organization=_org,
+                api_call_type=APICallTypeChoices.DATASET_ADD.value,
+                workspace=request.workspace,
+            )
+            if billing.resource_denied(call_log_row_entry):
+                return self._gm.too_many_requests(
+                    get_error_message("DATASET_CREATE_LIMIT_REACHED")
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+            if call_log_row_entry is not None:
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 
@@ -1188,20 +1174,17 @@ class AddAsNewDataset(APIView):
                 row_count = Row.objects.filter(
                     dataset=source_dataset, deleted=False
                 ).count()
-                if log_and_deduct_cost_for_resource_request is not None:
-                    call_log_row = log_and_deduct_cost_for_resource_request(
-                        getattr(request, "organization", None)
-                        or request.user.organization,
-                        api_call_type=APICallTypeChoices.ROW_ADD.value,
-                        config={"total_rows": row_count},
-                        workspace=request.workspace,
-                    )
-                    if (
-                        call_log_row is None
-                        or call_log_row.status
-                        == APICallStatusChoices.RESOURCE_LIMIT.value
-                    ):
-                        return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+                billing = get_billing()
+                call_log_row = billing.log_and_deduct_resource(
+                    getattr(request, "organization", None)
+                    or request.user.organization,
+                    api_call_type=APICallTypeChoices.ROW_ADD.value,
+                    config={"total_rows": row_count},
+                    workspace=request.workspace,
+                )
+                if billing.resource_denied(call_log_row):
+                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+                if call_log_row is not None:
                     call_log_row.status = APICallStatusChoices.SUCCESS.value
                     call_log_row.save()
             # ---------------------------------------------------------
@@ -4453,18 +4436,16 @@ class AddEmptyRowsView(APIView):
                 dataset=dataset, deleted=False
             ).count()
             prospective_total = existing_rows_count + num_rows
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row = log_and_deduct_cost_for_resource_request(
-                    organization,
-                    api_call_type=APICallTypeChoices.ROW_ADD.value,
-                    config={"total_rows": prospective_total},
-                    workspace=request.workspace,
-                )
-                if (
-                    call_log_row is None
-                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            billing = get_billing()
+            call_log_row = billing.log_and_deduct_resource(
+                organization,
+                api_call_type=APICallTypeChoices.ROW_ADD.value,
+                config={"total_rows": prospective_total},
+                workspace=request.workspace,
+            )
+            if billing.resource_denied(call_log_row):
+                return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
                 call_log_row.save()
 
@@ -4551,18 +4532,16 @@ class AddSDKRowsView(APIView):
             existing_rows_count = Row.objects.filter(
                 dataset=dataset, deleted=False
             ).count()
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row = log_and_deduct_cost_for_resource_request(
-                    getattr(request, "organization", None) or request.user.organization,
-                    api_call_type=APICallTypeChoices.ROW_ADD.value,
-                    config={"total_rows": existing_rows_count},
-                    workspace=request.workspace,
-                )
-                if (
-                    call_log_row is None
-                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            billing = get_billing()
+            call_log_row = billing.log_and_deduct_resource(
+                getattr(request, "organization", None) or request.user.organization,
+                api_call_type=APICallTypeChoices.ROW_ADD.value,
+                config={"total_rows": existing_rows_count},
+                workspace=request.workspace,
+            )
+            if billing.resource_denied(call_log_row):
+                return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
                 call_log_row.save()
             # --- Row Limit Check End ---
@@ -4663,36 +4642,31 @@ class ManuallyCreateDatasetView(APIView):
             except Exception as validation_err:
                 return self._gm.bad_request(str(validation_err.detail[0]))
 
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row_entry = log_and_deduct_cost_for_resource_request(
-                    organization,
-                    api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                    workspace=request.workspace,
+            billing = get_billing()
+            call_log_row_entry = billing.log_and_deduct_resource(
+                organization,
+                api_call_type=APICallTypeChoices.DATASET_ADD.value,
+                workspace=request.workspace,
+            )
+            if billing.resource_denied(call_log_row_entry):
+                return self._gm.too_many_requests(
+                    get_error_message("DATASET_CREATE_LIMIT_REACHED")
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+            if call_log_row_entry is not None:
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 
             # Check row limit
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row = log_and_deduct_cost_for_resource_request(
-                    organization,
-                    api_call_type=APICallTypeChoices.ROW_ADD.value,
-                    config={"total_rows": number_of_rows},
-                    workspace=request.workspace,
-                )
-                if (
-                    call_log_row is None
-                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            billing = get_billing()
+            call_log_row = billing.log_and_deduct_resource(
+                organization,
+                api_call_type=APICallTypeChoices.ROW_ADD.value,
+                config={"total_rows": number_of_rows},
+                workspace=request.workspace,
+            )
+            if billing.resource_denied(call_log_row):
+                return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
                 call_log_row.save()
 
@@ -4806,18 +4780,16 @@ class AddDataRowsView(APIView):
             new_rows_count = len(rows)
             prospective_total = existing_rows_count + new_rows_count
 
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row = log_and_deduct_cost_for_resource_request(
-                    organization,
-                    api_call_type=APICallTypeChoices.ROW_ADD.value,
-                    config={"total_rows": prospective_total},
-                    workspace=request.workspace,
-                )
-                if (
-                    call_log_row is None
-                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            billing = get_billing()
+            call_log_row = billing.log_and_deduct_resource(
+                organization,
+                api_call_type=APICallTypeChoices.ROW_ADD.value,
+                config={"total_rows": prospective_total},
+                workspace=request.workspace,
+            )
+            if billing.resource_denied(call_log_row):
+                return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
                 call_log_row.save()
 
@@ -11769,34 +11741,29 @@ def run_evaluation_task(evaluation_data):
             for metric_id in metric_ids:
                 metric = metric_map.get(metric_id)
                 if metric:
-                    try:
-                        from ee.usage.services.metering import check_usage
-                    except ImportError:
-                        check_usage = None
-
-                    if check_usage is not None:
-                        api_call_type = _get_api_call_type(
-                            metric.model or ModelChoices.TURING_LARGE.value
+                    billing = get_billing()
+                    api_call_type = _get_api_call_type(
+                        metric.model or ModelChoices.TURING_LARGE.value
+                    )
+                    usage_check = billing.check_usage(
+                        str(metric.organization.id), api_call_type
+                    )
+                    if not usage_check.allowed:
+                        from model_hub.tasks.user_evaluation import (
+                            _mark_cells_usage_limit_error,
                         )
-                        usage_check = check_usage(
-                            str(metric.organization.id), api_call_type
-                        )
-                        if not usage_check.allowed:
-                            from model_hub.tasks.user_evaluation import (
-                                _mark_cells_usage_limit_error,
-                            )
 
-                            UserEvalMetric.objects.filter(id=metric_id).update(
-                                status=StatusType.FAILED.value
-                            )
-                            blocked_metric_ids.add(str(metric_id))
-                            _mark_cells_usage_limit_error(metric, usage_check)
-                            logger.warning(
-                                "dataset_eval_rerun_usage_limit_exceeded",
-                                eval_id=str(metric_id),
-                                reason=usage_check.reason,
-                            )
-                            continue
+                        UserEvalMetric.objects.filter(id=metric_id).update(
+                            status=StatusType.FAILED.value
+                        )
+                        blocked_metric_ids.add(str(metric_id))
+                        _mark_cells_usage_limit_error(metric, usage_check)
+                        logger.warning(
+                            "dataset_eval_rerun_usage_limit_exceeded",
+                            eval_id=str(metric_id),
+                            reason=usage_check.reason,
+                        )
+                        continue
 
                     properties = get_mixpanel_properties(
                         org=metric.organization,
@@ -11972,19 +11939,17 @@ class DuplicateRowsView(APIView):
                 if source_rows.count() != len(row_ids):
                     return self._gm.bad_request(get_error_message("ROW_NOT_FOUND"))
 
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row = log_and_deduct_cost_for_resource_request(
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    api_call_type=APICallTypeChoices.ROW_ADD.value,
-                    config={"total_rows": source_rows.count() * num_copies},
-                    workspace=request.workspace,
-                )
-                if (
-                    call_log_row is None
-                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            billing = get_billing()
+            call_log_row = billing.log_and_deduct_resource(
+                organization=getattr(request, "organization", None)
+                or request.user.organization,
+                api_call_type=APICallTypeChoices.ROW_ADD.value,
+                config={"total_rows": source_rows.count() * num_copies},
+                workspace=request.workspace,
+            )
+            if billing.resource_denied(call_log_row):
+                return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
                 call_log_row.save()
             source_cells = Cell.objects.filter(
@@ -12093,21 +12058,18 @@ class DuplicateDatasetView(APIView):
                     return self._gm.bad_request(get_error_message("ROW_NOT_FOUND"))
             source_row_count = source_rows.count()
 
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row_entry = log_and_deduct_cost_for_resource_request(
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                    workspace=request.workspace,
+            billing = get_billing()
+            call_log_row_entry = billing.log_and_deduct_resource(
+                organization=getattr(request, "organization", None)
+                or request.user.organization,
+                api_call_type=APICallTypeChoices.DATASET_ADD.value,
+                workspace=request.workspace,
+            )
+            if billing.resource_denied(call_log_row_entry):
+                return self._gm.too_many_requests(
+                    get_error_message("DATASET_CREATE_LIMIT_REACHED")
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+            if call_log_row_entry is not None:
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 
@@ -12180,19 +12142,17 @@ class DuplicateDatasetView(APIView):
             new_rows = []
             new_cells = []
 
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row = log_and_deduct_cost_for_resource_request(
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    api_call_type=APICallTypeChoices.ROW_ADD.value,
-                    config={"total_rows": source_row_count},
-                    workspace=request.workspace,
-                )
-                if (
-                    call_log_row is None
-                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            billing = get_billing()
+            call_log_row = billing.log_and_deduct_resource(
+                organization=getattr(request, "organization", None)
+                or request.user.organization,
+                api_call_type=APICallTypeChoices.ROW_ADD.value,
+                config={"total_rows": source_row_count},
+                workspace=request.workspace,
+            )
+            if billing.resource_denied(call_log_row):
+                return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
                 call_log_row.save()
             # Process in batches of 1000 rows
@@ -15161,47 +15121,22 @@ class CreateKnowledgeBaseView(APIView):
             if updated_size > MAX_KB_SIZE:
                 return self._gm.bad_request(get_error_message("MAX_KB_SIZE_EXCEEDED"))
 
-            entitlements_checked = False
-            try:
-                from ee.usage.services.entitlements import Entitlements
+            billing = get_billing()
+            kb_count = KnowledgeBaseFile.objects.filter(
+                organization=org, deleted=False
+            ).count()
+            ent_check = billing.can_create(str(org.id), "knowledge_bases", kb_count)
+            if not ent_check.allowed:
+                return self._gm.forbidden_response(ent_check.reason)
 
-                kb_count = KnowledgeBaseFile.objects.filter(
-                    organization=org, deleted=False
-                ).count()
-                if Entitlements is not None:
-                    ent_check = Entitlements.can_create(
-                        str(org.id), "knowledge_bases", kb_count
-                    )
-                if not ent_check.allowed:
-                    return self._gm.forbidden_response(ent_check.reason)
-
-                if Entitlements is not None:
-                    feat_check = Entitlements.check_feature(
-                        str(org.id), "has_knowledge_base"
-                    )
-                    if not feat_check.allowed:
-                        return self._gm.forbidden_response(feat_check.reason)
-                entitlements_checked = True
-            except ImportError:
-                pass
-
-            if not entitlements_checked:
-                if log_and_deduct_cost_for_resource_request is not None:
-                    call_log_row = log_and_deduct_cost_for_resource_request(
-                        organization=org,
-                        api_call_type=APICallTypeChoices.KNOWLEDGE_BASE.value,
-                        workspace=request.workspace,
-                    )
-                    if (
-                        call_log_row is None
-                        or call_log_row.status
-                        == APICallStatusChoices.RESOURCE_LIMIT.value
-                    ):
-                        return self._gm.too_many_requests(
-                            get_error_message("KB_CREATION_LIMIT_REACHED")
-                        )
-                    call_log_row.status = APICallStatusChoices.SUCCESS.value
-                    call_log_row.save()
+            # knowledge_base is an EE feature: the gate runs (and denies) on
+            # OSS as well, which also makes the old OSS-only resource-limit
+            # deduct unreachable — removed rather than kept as dead code.
+            feat_check = billing.check_feature_gate(
+                str(org.id), "has_knowledge_base"
+            )
+            if not feat_check.allowed:
+                return self._gm.forbidden_response(feat_check.reason)
 
             # Validate ALL files FIRST (before creating KB)
             # Uses is_file_readable for full validation (password check, content parsing)
@@ -15310,20 +15245,11 @@ class CreateKnowledgeBaseView(APIView):
                     get_error_message("KNOWLEDGE_BASE_NOT_FOUND")
                 )
 
-            try:
-                try:
-                    from ee.usage.services.entitlements import Entitlements
-                except ImportError:
-                    Entitlements = None
-
-                if Entitlements is not None:
-                    feat_check = Entitlements.check_feature(
-                        str(org.id), "has_knowledge_base"
-                    )
-                    if not feat_check.allowed:
-                        return self._gm.forbidden_response(feat_check.reason)
-            except ImportError:
-                pass
+            # knowledge_base is an EE feature: gate runs (and denies) on OSS.
+            billing = get_billing()
+            feat_check = billing.check_feature_gate(str(org.id), "has_knowledge_base")
+            if not feat_check.allowed:
+                return self._gm.forbidden_response(feat_check.reason)
 
             file_names = {file.name for file in files}
             if len(file_names) != len(files):

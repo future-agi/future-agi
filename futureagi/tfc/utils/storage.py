@@ -23,6 +23,7 @@ from PIL import Image
 from requests.exceptions import ChunkedEncodingError, ConnectionError, RequestException
 
 logger = structlog.get_logger(__name__)
+from tfc.billing.boundary import get_billing, BillingEventType
 from tfc.settings.settings import MINIO_URL, UPLOAD_BUCKET_NAME
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.ssrf_guard import SsrfBlocked, safe_fetch
@@ -527,29 +528,14 @@ def upload_document_to_s3(
 
         if org_id:
             try:
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
-                    emit(
-                    UsageEvent(
-                        org_id=str(org_id),
-                        event_type=BillingEventType.OBSERVE_ADD,
-                        amount=len(doc_bytes),
-                        properties={"source": "dataset_document"},
-                    )
+                billing = get_billing()
+                billing.record_usage(
+                    str(org_id),
+                    BillingEventType.OBSERVE_ADD,
+                    amount=len(doc_bytes),
+                    source="dataset_document",
                 )
-            except ImportError:
+            except Exception:
                 pass
 
         return url
@@ -655,27 +641,15 @@ def upload_image_to_s3(
 
         if org_id:
             try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.schemas.events import UsageEvent
-            except ImportError:
-                UsageEvent = None
-            try:
-                from ee.usage.services.emitter import emit
-            except ImportError:
-                emit = None
-
-            if emit is not None and UsageEvent is not None and BillingEventType is not None:
-                emit(
-                UsageEvent(
-                    org_id=str(org_id),
-                    event_type=BillingEventType.OBSERVE_ADD,
+                billing = get_billing()
+                billing.record_usage(
+                    str(org_id),
+                    BillingEventType.OBSERVE_ADD,
                     amount=len(img_bytes),
-                    properties={"source": "trace_image"},
+                    source="trace_image",
                 )
-            )
+            except Exception:
+                pass
 
         # Generate and return the public URL of the uploaded image
         url = get_object_url(bucket_name, object_key)
@@ -888,29 +862,14 @@ def upload_audio_to_s3_duration(
 
         if org_id:
             try:
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
-                    emit(
-                    UsageEvent(
-                        org_id=str(org_id),
-                        event_type=BillingEventType.OBSERVE_ADD,
-                        amount=len(audio_bytes),
-                        properties={"source": "dataset_audio"},
-                    )
+                billing = get_billing()
+                billing.record_usage(
+                    str(org_id),
+                    BillingEventType.OBSERVE_ADD,
+                    amount=len(audio_bytes),
+                    source="dataset_audio",
                 )
-            except ImportError:
+            except Exception:
                 pass
 
         return url, duration_seconds
@@ -1266,30 +1225,16 @@ def upload_file_to_s3(
 
         if org_id:
             try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.schemas.events import UsageEvent
-            except ImportError:
-                UsageEvent = None
-            try:
-                from ee.usage.services.emitter import emit
-            except ImportError:
-                emit = None
-
-            if emit is not None and UsageEvent is not None and BillingEventType is not None:
-                emit(
-                UsageEvent(
-                    org_id=str(org_id),
-                    event_type=BillingEventType.KB_STORAGE,
+                billing = get_billing()
+                billing.record_usage(
+                    str(org_id),
+                    BillingEventType.KB_STORAGE,
                     amount=len(file_bytes),
-                    properties={
-                        "source": "kb_upload",
-                        "kb_id": str(kb_id) if kb_id else None,
-                    },
+                    source="kb_upload",
+                    kb_id=str(kb_id) if kb_id else None,
                 )
-            )
+            except Exception:
+                pass
 
         # Generate and return the public URL of the uploaded file
         url = get_object_url(bucket_name, object_key)
@@ -1821,27 +1766,15 @@ def upload_audio_to_s3(
 
         if org_id:
             try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.schemas.events import UsageEvent
-            except ImportError:
-                UsageEvent = None
-            try:
-                from ee.usage.services.emitter import emit
-            except ImportError:
-                emit = None
-
-            if emit is not None and UsageEvent is not None and BillingEventType is not None:
-                emit(
-                UsageEvent(
-                    org_id=str(org_id),
-                    event_type=BillingEventType.OBSERVE_ADD,
+                billing = get_billing()
+                billing.record_usage(
+                    str(org_id),
+                    BillingEventType.OBSERVE_ADD,
                     amount=len(audio_bytes),
-                    properties={"source": "trace_audio"},
+                    source="trace_audio",
                 )
-            )
+            except Exception:
+                pass
 
         # Generate and return the public URL of the uploaded audio
         url = get_object_url(bucket_name, object_key)
@@ -2015,27 +1948,15 @@ def upload_video_to_s3(
 
                 if org_id:
                     try:
-                        from ee.usage.schemas.event_types import BillingEventType
-                    except ImportError:
-                        BillingEventType = None
-                    try:
-                        from ee.usage.schemas.events import UsageEvent
-                    except ImportError:
-                        UsageEvent = None
-                    try:
-                        from ee.usage.services.emitter import emit
-                    except ImportError:
-                        emit = None
-
-                    if emit is not None and UsageEvent is not None and BillingEventType is not None:
-                        emit(
-                        UsageEvent(
-                            org_id=str(org_id),
-                            event_type=BillingEventType.OBSERVE_ADD,
+                        billing = get_billing()
+                        billing.record_usage(
+                            str(org_id),
+                            BillingEventType.OBSERVE_ADD,
                             amount=len(video_bytes) + len(thumbnail_bytes),
-                            properties={"source": "trace_video"},
+                            source="trace_video",
                         )
-                    )
+                    except Exception:
+                        pass
 
                 thumbnail_url = get_object_url(bucket_name, thumbnail_object_key)
                 return url, thumbnail_url
@@ -2043,52 +1964,28 @@ def upload_video_to_s3(
                 logger.warning(f"Failed to extract thumbnail: {str(e)}")
                 if org_id:
                     try:
-                        from ee.usage.schemas.event_types import BillingEventType
-                    except ImportError:
-                        BillingEventType = None
-                    try:
-                        from ee.usage.schemas.events import UsageEvent
-                    except ImportError:
-                        UsageEvent = None
-                    try:
-                        from ee.usage.services.emitter import emit
-                    except ImportError:
-                        emit = None
-
-                    if emit is not None and UsageEvent is not None and BillingEventType is not None:
-                        emit(
-                        UsageEvent(
-                            org_id=str(org_id),
-                            event_type=BillingEventType.OBSERVE_ADD,
+                        billing = get_billing()
+                        billing.record_usage(
+                            str(org_id),
+                            BillingEventType.OBSERVE_ADD,
                             amount=len(video_bytes),
-                            properties={"source": "trace_video"},
+                            source="trace_video",
                         )
-                    )
+                    except Exception:
+                        pass
                 return url, None
         else:
             if org_id:
                 try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
-                    emit(
-                    UsageEvent(
-                        org_id=str(org_id),
-                        event_type=BillingEventType.OBSERVE_ADD,
+                    billing = get_billing()
+                    billing.record_usage(
+                        str(org_id),
+                        BillingEventType.OBSERVE_ADD,
                         amount=len(video_bytes),
-                        properties={"source": "trace_video"},
+                        source="trace_video",
                     )
-                )
+                except Exception:
+                    pass
             return url
     except Exception as e:
         logger.exception(f"Error uploading video to S3: {str(e)}")

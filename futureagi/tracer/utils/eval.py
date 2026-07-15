@@ -41,10 +41,7 @@ from tracer.utils.helper import (
 
 logger = structlog.get_logger(__name__)
 
-try:
-    from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
-except ImportError:
-    log_and_deduct_cost_for_api_request = None
+from tfc.billing.boundary import get_billing, token_usage_properties
 
 custom_prompt_eval_types = ["CustomPrompt"]
 EXPERIMENT = "experiment"
@@ -812,54 +809,37 @@ def _emit_eval_billing(
     """Emit a UsageEvent for the new billing pipeline after a successful eval.
 
     Centralizes the dual-write block used by span/trace/session eval paths.
-    Silently no-ops when ee billing modules are unavailable or on any error.
+    Fails-open (metering must not break the eval) but logs the exception
+    so silent drops are diagnoseable — swallowing without a log line
+    hides real breakage in prod.
     """
     try:
-        from ee.usage.schemas.events import UsageEvent
-    except ImportError:
-        return
-    try:
-        from ee.usage.services.config import BillingConfig
-    except ImportError:
-        return
-    try:
-        from ee.usage.services.emitter import emit
-    except ImportError:
-        return
-    try:
-        from ee.usage.utils.event_properties import token_usage_properties
-    except ImportError:
-
-        def token_usage_properties(token_usage):
-            return {}
-
-    try:
-        billing_config = BillingConfig.get()
+        billing = get_billing()
         _llm_cost = (result.cost or {}).get("total_cost", 0)
-        _per_run_fee = billing_config.get_eval_per_run_fee()
+        _per_run_fee = billing.eval_per_run_fee()
         _actual_cost = _llm_cost + _per_run_fee
         _token_usage = result.token_usage or {}
-        credits = billing_config.calculate_ai_credits(_actual_cost)
+        credits = billing.ai_credits(_actual_cost)
 
-        emit(
-            UsageEvent(
-                org_id=org_id,
-                event_type=api_call_type,
-                amount=credits,
-                properties={
-                    "source": "tracer" if not feedback_id else "feedback",
-                    "source_id": source_id,
-                    "model": custom_eval_config.model or "",
-                    "workspace_id": ws_id or "",
-                    "log_id": str(api_call_log_row.log_id) if api_call_log_row else "",
-                    "raw_cost_usd": str(_actual_cost),
-                    "target_type": target_type,
-                    **token_usage_properties(_token_usage),
-                },
-            )
+        billing.record_usage(
+            org_id,
+            api_call_type,
+            amount=credits,
+            source="tracer" if not feedback_id else "feedback",
+            source_id=source_id,
+            model=custom_eval_config.model or "",
+            workspace_id=ws_id or "",
+            log_id=str(api_call_log_row.log_id) if api_call_log_row else "",
+            raw_cost_usd=str(_actual_cost),
+            target_type=target_type,
+            **token_usage_properties(_token_usage),
         )
     except Exception:
-        pass  # Metering failure must not break eval
+        # Fail-open: metering issues never break an eval. Log at debug so
+        # the failure is diagnoseable without spamming Sentry — legitimate
+        # OSS deploys hit this path (Noop is a no-op, no exception) and
+        # only actual EE-side failures produce a log line.
+        logger.debug("eval_billing_emit_failed", exc_info=True)
 
 
 def _run_evaluation(
@@ -904,35 +884,24 @@ def _run_evaluation(
                 is_active=True,
             )
 
-        # Pre-check: enforce free tier limits
-        try:
-            from ee.usage.services.metering import check_usage
-        except ImportError:
-            check_usage = None
-
         org = observation_span.project.organization
-        if check_usage is not None:
-            usage_check = check_usage(str(org.id), api_call_type)
-            if not usage_check.allowed:
-                raise ValueError(usage_check.reason or "Usage limit exceeded")
+        billing = get_billing()
+        usage_check = billing.check_usage(str(org.id), api_call_type)
+        if not usage_check.allowed:
+            raise ValueError(usage_check.reason or "Usage limit exceeded")
 
-        api_call_log_row = None
-        if log_and_deduct_cost_for_api_request is not None:
-            api_call_log_row = log_and_deduct_cost_for_api_request(
-                organization=org,
-                api_call_type=api_call_type,
-                source="tracer" if not feedback_id else "feedback",
-                source_id=eval_model.id,
-                config=source_config,
-                workspace=workspace,
-            )
-            if not api_call_log_row:
-                raise ValueError(
-                    "API call not allowed : Error validating the api call."
-                )
-
-            if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-                raise ValueError("API call not allowed : ", api_call_log_row.status)
+        api_call_log_row = billing.log_and_deduct(
+            organization=org,
+            api_call_type=api_call_type,
+            source="tracer" if not feedback_id else "feedback",
+            source_id=eval_model.id,
+            config=source_config,
+            workspace=workspace,
+        )
+        if billing.deduct_denied(api_call_log_row):
+            if api_call_log_row is None:
+                raise ValueError("API call not allowed : Error validating the api call.")
+            raise ValueError("API call not allowed : ", api_call_log_row.status)
 
         # Apply the same empty-input rules the dataset and playground
         # paths use, so eval tasks behave consistently with everywhere
@@ -981,56 +950,25 @@ def _run_evaluation(
             api_call_log_row.status = APICallStatusChoices.SUCCESS.value
             api_call_log_row.save()
 
-        # Dual-write: emit usage event for new billing system (cost-based)
+        # Emit usage event for billing
+
         try:
-            try:
-                from ee.usage.schemas.events import UsageEvent
-            except ImportError:
-                UsageEvent = None
-            try:
-                from ee.usage.services.config import BillingConfig
-            except ImportError:
-                BillingConfig = None
-            try:
-                from ee.usage.services.emitter import emit
-            except ImportError:
-                emit = None
-            try:
-                from ee.usage.utils.event_properties import token_usage_properties
-            except ImportError:
-
-                def token_usage_properties(token_usage):
-                    return {}
-
             _token_usage = getattr(eval_instance, "token_usage", {})
             actual_cost = getattr(eval_instance, "cost", {}).get("total_cost", 0)
-            credits = 0
-            if BillingConfig is not None:
-                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
-
-            if emit is not None and UsageEvent is not None:
-                emit(
-                    UsageEvent(
-                        org_id=str(observation_span.project.organization_id),
-                        event_type=api_call_type,
-                        amount=credits,
-                        properties={
-                            "source": "tracer" if not feedback_id else "feedback",
-                            "source_id": str(eval_model.id),
-                            "model": (
-                                custom_eval_config.model if custom_eval_config else ""
-                            ),
-                            "workspace_id": str(workspace.id) if workspace else "",
-                            "log_id": (
-                                str(api_call_log_row.log_id)
-                                if api_call_log_row
-                                else None
-                            ),
-                            "raw_cost_usd": str(actual_cost),
-                            **token_usage_properties(_token_usage),
-                        },
-                    )
-                )
+            billing = get_billing()
+            credits = billing.ai_credits(actual_cost)
+            billing.record_usage(
+                str(observation_span.project.organization_id),
+                api_call_type,
+                amount=credits,
+                source="tracer" if not feedback_id else "feedback",
+                source_id=str(eval_model.id),
+                model=custom_eval_config.model if custom_eval_config else "",
+                workspace_id=str(workspace.id) if workspace else "",
+                log_id=str(api_call_log_row.log_id) if api_call_log_row else None,
+                raw_cost_usd=str(actual_cost),
+                **token_usage_properties(_token_usage),
+            )
         except Exception:
             pass  # Metering failure must not break eval
 
@@ -1580,20 +1518,19 @@ def _execute_evaluation(
             is_active=True,
         )
 
-    api_call_log_row = None
-    if log_and_deduct_cost_for_api_request is not None:
-        api_call_log_row = log_and_deduct_cost_for_api_request(
-            organization=observation_span.project.organization,
-            api_call_type=api_call_type,
-            source="tracer" if not feedback_id else "feedback",
-            source_id=eval_model.id,
-            config=source_config,
-            workspace=workspace,
-        )
-        if not api_call_log_row:
+    billing = get_billing()
+    api_call_log_row = billing.log_and_deduct(
+        organization=observation_span.project.organization,
+        api_call_type=api_call_type,
+        source="tracer" if not feedback_id else "feedback",
+        source_id=eval_model.id,
+        config=source_config,
+        workspace=workspace,
+    )
+    if billing.deduct_denied(api_call_log_row):
+        if api_call_log_row is None:
             raise ValueError("API call not allowed : Error validating the api call.")
-        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-            raise ValueError("API call not allowed : ", api_call_log_row.status)
+        raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # --- Build context for data_injection support ---
     _eval_inputs = dict(run_params or {})
@@ -3256,20 +3193,19 @@ def _execute_evaluation_for_trace(
     _stamp_eval_version(source_config, eval_template)
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
-    api_call_log_row = None
-    if log_and_deduct_cost_for_api_request is not None:
-        api_call_log_row = log_and_deduct_cost_for_api_request(
-            organization=trace.project.organization,
-            api_call_type=api_call_type,
-            source="tracer" if not feedback_id else "feedback",
-            source_id=eval_template.id,
-            config=source_config,
-            workspace=workspace,
-        )
-        if not api_call_log_row:
+    billing = get_billing()
+    api_call_log_row = billing.log_and_deduct(
+        organization=trace.project.organization,
+        api_call_type=api_call_type,
+        source="tracer" if not feedback_id else "feedback",
+        source_id=eval_template.id,
+        config=source_config,
+        workspace=workspace,
+    )
+    if billing.deduct_denied(api_call_log_row):
+        if api_call_log_row is None:
             raise ValueError("API call not allowed : Error validating the api call.")
-        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-            raise ValueError("API call not allowed : ", api_call_log_row.status)
+        raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # --- Set workspace context for tools that need org-scoping ---
     # See _execute_evaluation_for_session for rationale; same applies here.
@@ -3491,20 +3427,19 @@ def _execute_evaluation_for_session(
     _stamp_eval_version(source_config, eval_template)
 
     api_call_type = _get_api_call_type(custom_eval_config.model)
-    api_call_log_row = None
-    if log_and_deduct_cost_for_api_request is not None:
-        api_call_log_row = log_and_deduct_cost_for_api_request(
-            organization=trace_session.project.organization,
-            api_call_type=api_call_type,
-            source="tracer" if not feedback_id else "feedback",
-            source_id=eval_template.id,
-            config=source_config,
-            workspace=workspace,
-        )
-        if not api_call_log_row:
+    billing = get_billing()
+    api_call_log_row = billing.log_and_deduct(
+        organization=trace_session.project.organization,
+        api_call_type=api_call_type,
+        source="tracer" if not feedback_id else "feedback",
+        source_id=eval_template.id,
+        config=source_config,
+        workspace=workspace,
+    )
+    if billing.deduct_denied(api_call_log_row):
+        if api_call_log_row is None:
             raise ValueError("API call not allowed : Error validating the api call.")
-        if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-            raise ValueError("API call not allowed : ", api_call_log_row.status)
+        raise ValueError("API call not allowed : ", api_call_log_row.status)
 
     # --- Set workspace context for tools that need org-scoping ---
     # The explore_trace tool's live DB actions (list_trace_spans, span_detail)

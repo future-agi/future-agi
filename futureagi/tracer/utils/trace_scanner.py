@@ -12,6 +12,7 @@ from typing import List
 import structlog
 
 # Activity-aware stub: used inside Temporal trace-scanner activities.
+from tfc.billing.boundary import get_billing, BillingEventType, token_usage_properties
 from tfc.ee_stub import _ee_activity_stub as _ee_stub
 
 try:
@@ -142,26 +143,6 @@ def _emit_scanner_billing(
             return
 
         from tracer.models.project import Project
-        try:
-            from ee.usage.schemas.event_types import BillingEventType
-        except ImportError:
-            BillingEventType = None
-        try:
-            from ee.usage.schemas.events import UsageEvent
-        except ImportError:
-            UsageEvent = None
-        try:
-            from ee.usage.services.config import BillingConfig
-        except ImportError:
-            BillingConfig = None
-        try:
-            from ee.usage.services.emitter import emit
-        except ImportError:
-            emit = None
-        try:
-            from ee.usage.utils.event_properties import token_usage_properties
-        except ImportError:
-            token_usage_properties = lambda token_usage: {}
 
         project = Project.objects.select_related("organization").filter(
             id=project_id
@@ -169,22 +150,19 @@ def _emit_scanner_billing(
         if not project or not project.organization:
             return
 
-        credits = BillingConfig.get().calculate_ai_credits(cost_usd)
-        emit(
-            UsageEvent(
-                org_id=str(project.organization.id),
-                event_type=BillingEventType.TRACE_ERROR_ANALYSIS,
-                amount=credits,
-                properties={
-                    "source": "trace_scanner",
-                    "source_id": str(project_id),
-                    "traces_scanned": len(results),
-                    "issues_found": sum(len(r.issues) for r in results),
-                    "raw_cost_usd": str(cost_usd),
-                    "model": scanner.model_config.model_name,
-                    **token_usage_properties(getattr(scanner, "token_usage", {})),
-                },
-            )
+        billing = get_billing()
+        credits = billing.ai_credits(cost_usd)
+        billing.record_usage(
+            str(project.organization.id),
+            BillingEventType.TRACE_ERROR_ANALYSIS,
+            amount=credits,
+            source="trace_scanner",
+            source_id=str(project_id),
+            traces_scanned=len(results),
+            issues_found=sum(len(r.issues) for r in results),
+            raw_cost_usd=str(cost_usd),
+            model=scanner.model_config.model_name,
+            **token_usage_properties(getattr(scanner, "token_usage", {})),
         )
     except Exception:
         logger.exception("scanner_billing_emit_failed", project_id=project_id)

@@ -66,13 +66,7 @@ from tfc.utils.api_contracts import validated_api_request
 from tfc.utils.email import email_helper
 from tfc.utils.general_methods import GeneralMethods
 
-try:
-    from ee.usage.utils.usage_entries import (
-        create_organization_subscription_if_not_exists,
-    )
-except ImportError:
-    create_organization_subscription_if_not_exists = None
-
+from tfc.billing.boundary import get_billing as _get_billing_sub
 logger = structlog.get_logger(__name__)
 _gm = GeneralMethods()
 
@@ -285,8 +279,7 @@ def activate_account(request, uidb64, token):
                 )
 
                 # create organization subscription (skipped when ee is absent)
-                if create_organization_subscription_if_not_exists is not None:
-                    create_organization_subscription_if_not_exists(organization)
+                _get_billing_sub().setup_org_subscription(organization)
                 # Use .exists() for efficiency instead of len()
                 if not OrgApiKey.no_workspace_objects.filter(
                     organization=organization, type="system", enabled=True

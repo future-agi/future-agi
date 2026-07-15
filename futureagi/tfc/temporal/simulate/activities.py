@@ -42,10 +42,7 @@ try:
     )
 except ImportError:
     PersonaConfigurator = _ee_stub("PersonaConfigurator")
-try:
-    from ee.usage.utils.event_properties import token_usage_properties
-except ImportError:
-    token_usage_properties = lambda token_usage: {}
+from tfc.billing.boundary import get_billing, BillingEventType, token_usage_properties
 from agentic_eval.core.llm.llm import LLM
 from model_hub.models.choices import (
     CellStatus,
@@ -176,16 +173,8 @@ async def generate_synthetic_data_activity(
         close_old_connections()
 
         if input.organization_id:
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.services.metering import check_usage
-            except ImportError:
-                check_usage = None
-
-            usage_check = check_usage(
+            billing = get_billing()
+            usage_check = billing.check_usage(
                 input.organization_id, BillingEventType.SYNTHETIC_DATA_GENERATION
             )
             if not usage_check.allowed:
@@ -225,32 +214,16 @@ async def generate_synthetic_data_activity(
 
         if input.organization_id:
             try:
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.config import BillingConfig
-                except ImportError:
-                    BillingConfig = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-
+                billing = get_billing()
                 actual_cost = agent.llm.cost.get("total_cost", 0)
-                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
-                emit(
-                    UsageEvent(
-                        org_id=input.organization_id,
-                        event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                        amount=credits,
-                        properties={
-                            "source": "simulate_scenario_generation",
-                            "raw_cost_usd": str(actual_cost),
-                            **token_usage_properties(agent.llm.token_usage),
-                        },
-                    )
+                credits = billing.ai_credits(actual_cost)
+                billing.record_usage(
+                    str(input.organization_id),
+                    BillingEventType.SYNTHETIC_DATA_GENERATION,
+                    amount=credits,
+                    source="simulate_scenario_generation",
+                    raw_cost_usd=str(actual_cost),
+                    **token_usage_properties(agent.llm.token_usage),
                 )
             except Exception:
                 pass
@@ -571,16 +544,8 @@ async def generate_column_data_activity(
         close_old_connections()
 
         if input.organization_id:
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.services.metering import check_usage
-            except ImportError:
-                check_usage = None
-
-            usage_check = check_usage(
+            billing = get_billing()
+            usage_check = billing.check_usage(
                 input.organization_id, BillingEventType.SYNTHETIC_DATA_GENERATION
             )
             if not usage_check.allowed:
@@ -621,32 +586,16 @@ async def generate_column_data_activity(
 
         if input.organization_id:
             try:
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.config import BillingConfig
-                except ImportError:
-                    BillingConfig = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-
+                billing = get_billing()
                 actual_cost = agent.llm.cost.get("total_cost", 0)
-                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
-                emit(
-                    UsageEvent(
-                        org_id=input.organization_id,
-                        event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                        amount=credits,
-                        properties={
-                            "source": "simulate_column_generation",
-                            "raw_cost_usd": str(actual_cost),
-                            **token_usage_properties(agent.llm.token_usage),
-                        },
-                    )
+                credits = billing.ai_credits(actual_cost)
+                billing.record_usage(
+                    str(input.organization_id),
+                    BillingEventType.SYNTHETIC_DATA_GENERATION,
+                    amount=credits,
+                    source="simulate_column_generation",
+                    raw_cost_usd=str(actual_cost),
+                    **token_usage_properties(agent.llm.token_usage),
                 )
             except Exception:
                 pass
@@ -807,19 +756,11 @@ async def add_scenario_columns_activity(
         try:
             from django.db import close_old_connections as _close_check
 
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.services.metering import check_usage
-            except ImportError:
-                check_usage = None
-
             _close_check()
             _asc_scenario = Scenarios.objects.get(id=input.scenario_id)
             _asc_org_id = str(_asc_scenario.organization.id)
-            usage_check = check_usage(
+            billing = get_billing()
+            usage_check = billing.check_usage(
                 _asc_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
             )
             if not usage_check.allowed:
@@ -1270,17 +1211,9 @@ def _create_dataset_scenario_sync(
         # Usage pre-check
         _cds_org_id = None
         try:
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.services.metering import check_usage
-            except ImportError:
-                check_usage = None
-
+            billing = get_billing()
             _cds_org_id = str(scenario.organization.id)
-            usage_check = check_usage(
+            usage_check = billing.check_usage(
                 _cds_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
             )
             if not usage_check.allowed:
@@ -1853,39 +1786,17 @@ def _create_dataset_scenario_sync(
         # Usage emit
         try:
             if _cds_org_id:
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.config import BillingConfig
-                except ImportError:
-                    BillingConfig = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-
+                billing = get_billing()
                 _total_cost = graph_generator.sda.llm.cost.get("total_cost", 0)
-                credits = BillingConfig.get().calculate_ai_credits(_total_cost)
-                emit(
-                    UsageEvent(
-                        org_id=_cds_org_id,
-                        event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                        amount=credits,
-                        properties={
-                            "source": "simulate_dataset_scenario_creation",
-                            "source_id": str(scenario_id),
-                            "raw_cost_usd": str(_total_cost),
-                            **token_usage_properties(
-                                graph_generator.sda.llm.token_usage
-                            ),
-                        },
-                    )
+                credits = billing.ai_credits(_total_cost)
+                billing.record_usage(
+                    str(_cds_org_id),
+                    BillingEventType.SYNTHETIC_DATA_GENERATION,
+                    amount=credits,
+                    source="simulate_dataset_scenario_creation",
+                    source_id=str(scenario_id),
+                    raw_cost_usd=str(_total_cost),
+                    **token_usage_properties(graph_generator.sda.llm.token_usage),
                 )
         except Exception:
             pass
@@ -1989,17 +1900,9 @@ def _create_script_scenario_sync(
 
         # Usage pre-check
         try:
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.services.metering import check_usage
-            except ImportError:
-                check_usage = None
-
+            billing = get_billing()
             _org_id = str(scenario.organization.id)
-            usage_check = check_usage(
+            usage_check = billing.check_usage(
                 _org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
             )
             if not usage_check.allowed:
@@ -2072,32 +1975,16 @@ def _create_script_scenario_sync(
 
         try:
             if _org_id:
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.config import BillingConfig
-                except ImportError:
-                    BillingConfig = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-
+                billing = get_billing()
                 _cost = enhanced_agent.llm.cost.get("total_cost", 0)
-                emit(
-                    UsageEvent(
-                        org_id=_org_id,
-                        event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                        amount=BillingConfig.get().calculate_ai_credits(_cost),
-                        properties={
-                            "source": "simulate_dataset_scenario",
-                            "source_id": scenario_id,
-                            "raw_cost_usd": str(_cost),
-                            **token_usage_properties(enhanced_agent.llm.token_usage),
-                        },
-                    )
+                billing.record_usage(
+                    str(_org_id),
+                    BillingEventType.SYNTHETIC_DATA_GENERATION,
+                    amount=billing.ai_credits(_cost),
+                    source="simulate_dataset_scenario",
+                    source_id=scenario_id,
+                    raw_cost_usd=str(_cost),
+                    **token_usage_properties(enhanced_agent.llm.token_usage),
                 )
         except Exception:
             pass
@@ -2402,17 +2289,9 @@ def _create_graph_scenario_sync(
 
         # Usage pre-check
         try:
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.services.metering import check_usage
-            except ImportError:
-                check_usage = None
-
+            billing = get_billing()
             _org_id = str(scenario.organization.id)
-            usage_check = check_usage(
+            usage_check = billing.check_usage(
                 _org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
             )
             if not usage_check.allowed:
@@ -2617,32 +2496,16 @@ def _create_graph_scenario_sync(
 
         try:
             if _org_id:
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.config import BillingConfig
-                except ImportError:
-                    BillingConfig = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-
+                billing = get_billing()
                 _cost = enhanced_agent.llm.cost.get("total_cost", 0)
-                emit(
-                    UsageEvent(
-                        org_id=_org_id,
-                        event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                        amount=BillingConfig.get().calculate_ai_credits(_cost),
-                        properties={
-                            "source": "simulate_script_scenario",
-                            "source_id": scenario_id,
-                            "raw_cost_usd": str(_cost),
-                            **token_usage_properties(enhanced_agent.llm.token_usage),
-                        },
-                    )
+                billing.record_usage(
+                    str(_org_id),
+                    BillingEventType.SYNTHETIC_DATA_GENERATION,
+                    amount=billing.ai_credits(_cost),
+                    source="simulate_script_scenario",
+                    source_id=scenario_id,
+                    raw_cost_usd=str(_cost),
+                    **token_usage_properties(enhanced_agent.llm.token_usage),
                 )
         except Exception:
             pass
@@ -2815,17 +2678,9 @@ def _setup_graph_scenario_sync(
         # Usage pre-check
         _sgs_org_id = None
         try:
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.services.metering import check_usage
-            except ImportError:
-                check_usage = None
-
+            billing = get_billing()
             _sgs_org_id = str(scenario.organization.id)
-            usage_check = check_usage(
+            usage_check = billing.check_usage(
                 _sgs_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
             )
             if not usage_check.allowed:
@@ -3030,39 +2885,17 @@ def _setup_graph_scenario_sync(
         # Usage emit (graph generation LLM cost)
         try:
             if _sgs_org_id and graph_generator:
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.config import BillingConfig
-                except ImportError:
-                    BillingConfig = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-
+                billing = get_billing()
                 _total_cost = graph_generator.sda.llm.cost.get("total_cost", 0)
-                credits = BillingConfig.get().calculate_ai_credits(_total_cost)
-                emit(
-                    UsageEvent(
-                        org_id=_sgs_org_id,
-                        event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                        amount=credits,
-                        properties={
-                            "source": "simulate_graph_scenario_setup",
-                            "source_id": str(scenario_id),
-                            "raw_cost_usd": str(_total_cost),
-                            **token_usage_properties(
-                                graph_generator.sda.llm.token_usage
-                            ),
-                        },
-                    )
+                credits = billing.ai_credits(_total_cost)
+                billing.record_usage(
+                    str(_sgs_org_id),
+                    BillingEventType.SYNTHETIC_DATA_GENERATION,
+                    amount=credits,
+                    source="simulate_graph_scenario_setup",
+                    source_id=str(scenario_id),
+                    raw_cost_usd=str(_total_cost),
+                    **token_usage_properties(graph_generator.sda.llm.token_usage),
                 )
         except Exception:
             pass
@@ -3177,18 +3010,10 @@ def _extract_intents_sync(
         _ei_org_id = None
         try:
             from simulate.models.scenario_graph import ScenarioGraph
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.services.metering import check_usage
-            except ImportError:
-                check_usage = None
-
+            billing = get_billing()
             _ei_graph = ScenarioGraph.objects.get(id=graph_id)
             _ei_org_id = str(_ei_graph.organization.id)
-            usage_check = check_usage(
+            usage_check = billing.check_usage(
                 _ei_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
             )
             if not usage_check.allowed:
@@ -3326,39 +3151,17 @@ def _extract_intents_sync(
                     # Usage emit
                     try:
                         if _ei_org_id:
-                            try:
-                                from ee.usage.schemas.event_types import BillingEventType
-                            except ImportError:
-                                BillingEventType = None
-                            try:
-                                from ee.usage.schemas.events import UsageEvent
-                            except ImportError:
-                                UsageEvent = None
-                            try:
-                                from ee.usage.services.config import BillingConfig
-                            except ImportError:
-                                BillingConfig = None
-                            try:
-                                from ee.usage.services.emitter import emit
-                            except ImportError:
-                                emit = None
-
+                            billing = get_billing()
                             _total_cost = llm.cost.get("total_cost", 0)
-                            credits = BillingConfig.get().calculate_ai_credits(
-                                _total_cost
-                            )
-                            emit(
-                                UsageEvent(
-                                    org_id=_ei_org_id,
-                                    event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                                    amount=credits,
-                                    properties={
-                                        "source": "simulate_extract_intents",
-                                        "source_id": str(graph_id),
-                                        "raw_cost_usd": str(_total_cost),
-                                        **token_usage_properties(llm.token_usage),
-                                    },
-                                )
+                            credits = billing.ai_credits(_total_cost)
+                            billing.record_usage(
+                                str(_ei_org_id),
+                                BillingEventType.SYNTHETIC_DATA_GENERATION,
+                                amount=credits,
+                                source="simulate_extract_intents",
+                                source_id=str(graph_id),
+                                raw_cost_usd=str(_total_cost),
+                                **token_usage_properties(llm.token_usage),
                             )
                     except Exception:
                         pass
@@ -3461,18 +3264,10 @@ def _process_branches_sync(
         _pb_org_id = None
         try:
             from simulate.models.scenario_graph import ScenarioGraph
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.services.metering import check_usage
-            except ImportError:
-                check_usage = None
-
+            billing = get_billing()
             _pb_graph = ScenarioGraph.objects.get(id=graph_id)
             _pb_org_id = str(_pb_graph.organization.id)
-            usage_check = check_usage(
+            usage_check = billing.check_usage(
                 _pb_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
             )
             if not usage_check.allowed:
@@ -3501,37 +3296,17 @@ def _process_branches_sync(
         # Usage emit
         try:
             if _pb_org_id:
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.config import BillingConfig
-                except ImportError:
-                    BillingConfig = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-
+                billing = get_billing()
                 _total_cost = agent.llm.cost.get("total_cost", 0)
-                credits = BillingConfig.get().calculate_ai_credits(_total_cost)
-                emit(
-                    UsageEvent(
-                        org_id=_pb_org_id,
-                        event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                        amount=credits,
-                        properties={
-                            "source": "simulate_process_branches",
-                            "source_id": str(graph_id),
-                            "raw_cost_usd": str(_total_cost),
-                            **token_usage_properties(agent.llm.token_usage),
-                        },
-                    )
+                credits = billing.ai_credits(_total_cost)
+                billing.record_usage(
+                    str(_pb_org_id),
+                    BillingEventType.SYNTHETIC_DATA_GENERATION,
+                    amount=credits,
+                    source="simulate_process_branches",
+                    source_id=str(graph_id),
+                    raw_cost_usd=str(_total_cost),
+                    **token_usage_properties(agent.llm.token_usage),
                 )
         except Exception:
             pass
@@ -3682,18 +3457,10 @@ def _generate_cases_for_intent_sync(
 
         # Usage pre-check
         try:
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.services.metering import check_usage
-            except ImportError:
-                check_usage = None
-
             _gc_org_id = agent_context.get("organization_id") if agent_context else None
             if _gc_org_id:
-                usage_check = check_usage(
+                billing = get_billing()
+                usage_check = billing.check_usage(
                     str(_gc_org_id), BillingEventType.SYNTHETIC_DATA_GENERATION
                 )
                 if not usage_check.allowed:
@@ -3768,32 +3535,16 @@ def _generate_cases_for_intent_sync(
 
             try:
                 if _gc_org_id:
-                    try:
-                        from ee.usage.schemas.events import UsageEvent
-                    except ImportError:
-                        UsageEvent = None
-                    try:
-                        from ee.usage.services.config import BillingConfig
-                    except ImportError:
-                        BillingConfig = None
-                    try:
-                        from ee.usage.services.emitter import emit
-                    except ImportError:
-                        emit = None
-
+                    billing = get_billing()
                     _cost = agent.llm.cost.get("total_cost", 0)
-                    emit(
-                        UsageEvent(
-                            org_id=str(_gc_org_id),
-                            event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                            amount=BillingConfig.get().calculate_ai_credits(_cost),
-                            properties={
-                                "source": "simulate_generate_cases_intent",
-                                "source_id": str(intent_id),
-                                "raw_cost_usd": str(_cost),
-                                **token_usage_properties(agent.llm.token_usage),
-                            },
-                        )
+                    billing.record_usage(
+                        str(_gc_org_id),
+                        BillingEventType.SYNTHETIC_DATA_GENERATION,
+                        amount=billing.ai_credits(_cost),
+                        source="simulate_generate_cases_intent",
+                        source_id=str(intent_id),
+                        raw_cost_usd=str(_cost),
+                        **token_usage_properties(agent.llm.token_usage),
                     )
             except Exception:
                 pass
@@ -4285,21 +4036,14 @@ async def create_graph_scenario_activity(
 
     try:
         from simulate.models import Scenarios
-        try:
-            from ee.usage.schemas.event_types import BillingEventType
-        except ImportError:
-            BillingEventType = None
-        try:
-            from ee.usage.services.metering import check_usage
-        except ImportError:
-            check_usage = None
 
         scenario = Scenarios.objects.select_related("dataset__organization").get(
             id=input.scenario_id
         )
         org_id = str(scenario.dataset.organization.id) if scenario.dataset else None
         if org_id:
-            usage_check = check_usage(
+            billing = get_billing()
+            usage_check = billing.check_usage(
                 org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
             )
             if not usage_check.allowed:
@@ -4565,16 +4309,8 @@ def _process_single_branch_sync(
         _psb_org_id = agent_context.get("organization_id")
         try:
             if _psb_org_id:
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-                try:
-                    from ee.usage.services.metering import check_usage
-                except ImportError:
-                    check_usage = None
-
-                usage_check = check_usage(
+                billing = get_billing()
+                usage_check = billing.check_usage(
                     str(_psb_org_id), BillingEventType.SYNTHETIC_DATA_GENERATION
                 )
                 if not usage_check.allowed:
@@ -4604,39 +4340,17 @@ def _process_single_branch_sync(
         # Usage emit
         try:
             if _psb_org_id:
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.config import BillingConfig
-                except ImportError:
-                    BillingConfig = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-
+                billing = get_billing()
                 _total_cost = _branch_llm_cost.get("total_cost", 0)
-                credits = BillingConfig.get().calculate_ai_credits(_total_cost)
-                emit(
-                    UsageEvent(
-                        org_id=str(_psb_org_id),
-                        event_type=BillingEventType.SYNTHETIC_DATA_GENERATION,
-                        amount=credits,
-                        properties={
-                            "source": "simulate_process_single_branch",
-                            "source_id": str(graph_id),
-                            "raw_cost_usd": str(_total_cost),
-                            **token_usage_properties(
-                                _branch_llm_cost.get("token_usage")
-                            ),
-                        },
-                    )
+                credits = billing.ai_credits(_total_cost)
+                billing.record_usage(
+                    str(_psb_org_id),
+                    BillingEventType.SYNTHETIC_DATA_GENERATION,
+                    amount=credits,
+                    source="simulate_process_single_branch",
+                    source_id=str(graph_id),
+                    raw_cost_usd=str(_total_cost),
+                    **token_usage_properties(_branch_llm_cost.get("token_usage")),
                 )
         except Exception:
             pass
@@ -5121,18 +4835,10 @@ def _prepare_scenario_sync(
 
         # Usage pre-check
         try:
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.services.metering import check_usage
-            except ImportError:
-                check_usage = None
-
+            billing = get_billing()
             _ps_scenario = Scenarios.objects.get(id=scenario_id)
             _ps_org_id = str(_ps_scenario.organization.id)
-            usage_check = check_usage(
+            usage_check = billing.check_usage(
                 _ps_org_id, BillingEventType.SYNTHETIC_DATA_GENERATION
             )
             if not usage_check.allowed:

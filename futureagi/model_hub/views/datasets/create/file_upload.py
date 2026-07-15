@@ -56,14 +56,7 @@ from tfc.utils.storage_client import (
     get_storage_client,
 )
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
-try:
-    from ee.usage.utils.usage_entries import (
-        ROW_LIMIT_REACHED_MESSAGE,
-        log_and_deduct_cost_for_resource_request,
-    )
-except ImportError:
-    ROW_LIMIT_REACHED_MESSAGE = None
-    log_and_deduct_cost_for_resource_request = None
+from tfc.billing.boundary import get_billing, BillingEventType
 
 logger = structlog.get_logger(__name__)
 
@@ -153,31 +146,13 @@ def upload_file_to_minio(file_obj, object_key, org_id=None):
         )
 
         if org_id:
-            try:
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-
-                if emit is not None and UsageEvent is not None and BillingEventType is not None:
-                    emit(
-                        UsageEvent(
-                            org_id=str(org_id),
-                            event_type=BillingEventType.OBSERVE_ADD,
-                            amount=len(file_content),
-                            properties={"source": "dataset_file"},
-                        )
-                    )
-            except (ImportError, TypeError):
-                pass
+            billing = get_billing()
+            billing.record_usage(
+                str(org_id),
+                BillingEventType.OBSERVE_ADD,
+                amount=len(file_content),
+                source="dataset_file",
+            )
 
         url = get_object_url(bucket_name, object_key)
         return url
@@ -1027,37 +1002,34 @@ class CreateDatasetFromLocalFileView(CreateAPIView):
             rows_in_dataset = data.shape[0]
 
             # Check usage limits after validation so failed requests do not consume quota.
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row_entry = log_and_deduct_cost_for_resource_request(
-                    organization=organization,
-                    api_call_type=APICallTypeChoices.DATASET_ADD.value,
-                    sdk_source=True if source == DatasetSourceChoices.SDK.value else False,
-                    workspace=request.workspace,
+            billing = get_billing()
+            call_log_row_entry = billing.log_and_deduct_resource(
+                organization=organization,
+                api_call_type=APICallTypeChoices.DATASET_ADD.value,
+                sdk_source=True if source == DatasetSourceChoices.SDK.value else False,
+                workspace=request.workspace,
+            )
+            # SDK uploads are exempt from the dataset limit (not from billing errors).
+            if billing.resource_denied(call_log_row_entry) and (
+                call_log_row_entry is None
+                or source != DatasetSourceChoices.SDK.value
+            ):
+                return self._gm.too_many_requests(
+                    get_error_message("DATASET_CREATE_LIMIT_REACHED")
                 )
-                if (
-                    call_log_row_entry is None
-                    or call_log_row_entry.status
-                    == APICallStatusChoices.RESOURCE_LIMIT.value
-                    and source != DatasetSourceChoices.SDK.value
-                ):
-                    return self._gm.too_many_requests(
-                        get_error_message("DATASET_CREATE_LIMIT_REACHED")
-                    )
+            if call_log_row_entry is not None:
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row = log_and_deduct_cost_for_resource_request(
-                    organization,
-                    api_call_type=APICallTypeChoices.ROW_ADD.value,
-                    config={"total_rows": rows_in_dataset},
-                    workspace=request.workspace,
-                )
-                if (
-                    call_log_row is None
-                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            call_log_row = billing.log_and_deduct_resource(
+                organization=organization,
+                api_call_type=APICallTypeChoices.ROW_ADD.value,
+                config={"total_rows": rows_in_dataset},
+                workspace=request.workspace,
+            )
+            if billing.resource_denied(call_log_row):
+                return self._gm.too_many_requests("Row limit reached")
+            if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
                 call_log_row.save()
 

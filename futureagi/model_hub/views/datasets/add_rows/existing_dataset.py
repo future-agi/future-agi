@@ -20,14 +20,7 @@ from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
-try:
-    from ee.usage.utils.usage_entries import (
-        ROW_LIMIT_REACHED_MESSAGE,
-        log_and_deduct_cost_for_resource_request,
-    )
-except ImportError:
-    ROW_LIMIT_REACHED_MESSAGE = None
-    log_and_deduct_cost_for_resource_request = None
+from tfc.billing.boundary import get_billing
 
 logger = structlog.get_logger(__name__)
 
@@ -169,18 +162,16 @@ class AddRowsFromExistingView(APIView):
             new_rows_count = Row.objects.filter(
                 dataset=source_dataset, deleted=False
             ).count()
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row = log_and_deduct_cost_for_resource_request(
-                    getattr(request, "organization", None) or request.user.organization,
-                    api_call_type=APICallTypeChoices.ROW_ADD.value,
-                    config={"total_rows": new_rows_count + existing_rows_count},
-                    workspace=request.workspace,
-                )
-                if (
-                    call_log_row is None
-                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            billing = get_billing()
+            call_log_row = billing.log_and_deduct_resource(
+                organization=getattr(request, "organization", None) or request.user.organization,
+                api_call_type=APICallTypeChoices.ROW_ADD.value,
+                config={"total_rows": new_rows_count + existing_rows_count},
+                workspace=request.workspace,
+            )
+            if billing.resource_denied(call_log_row):
+                return self._gm.too_many_requests("Row limit reached")
+            if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
                 call_log_row.save()
             # --- Row Limit Check End ---

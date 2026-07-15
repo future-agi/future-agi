@@ -29,14 +29,7 @@ from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
-try:
-    from ee.usage.utils.usage_entries import (
-        ROW_LIMIT_REACHED_MESSAGE,
-        log_and_deduct_cost_for_resource_request,
-    )
-except ImportError:
-    ROW_LIMIT_REACHED_MESSAGE = None
-    log_and_deduct_cost_for_resource_request = None
+from tfc.billing.boundary import get_billing
 
 
 def _request_organization(request):
@@ -146,18 +139,16 @@ class AddRowsFromHuggingFaceView(APIView):
                 dataset=dataset, deleted=False
             ).count()
             prospective_total = existing_rows_count + new_rows_count
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row = log_and_deduct_cost_for_resource_request(
-                    organization,
-                    api_call_type=APICallTypeChoices.ROW_ADD.value,
-                    config={"total_rows": prospective_total},
-                    workspace=request.workspace,
-                )
-                if (
-                    call_log_row is None
-                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+            billing = get_billing()
+            call_log_row = billing.log_and_deduct_resource(
+                organization=organization,
+                api_call_type=APICallTypeChoices.ROW_ADD.value,
+                config={"total_rows": prospective_total},
+                workspace=request.workspace,
+            )
+            if billing.resource_denied(call_log_row):
+                return self._gm.too_many_requests("Row limit reached")
+            if call_log_row is not None:
                 call_log_row.status = APICallStatusChoices.SUCCESS.value
                 call_log_row.save()
             # --- Row Limit Check End ---

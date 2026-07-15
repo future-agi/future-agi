@@ -16,6 +16,7 @@ from django.db import close_old_connections
 from django.db.models import F
 from django.utils import timezone
 
+from tfc.billing.boundary import get_billing, BillingEventType, llm_usage_properties
 from tfc.temporal import temporal_activity
 from tracer.models.trace_error_analysis import TraceErrorAnalysis
 
@@ -47,11 +48,6 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
     from tracer.queries.helpers import get_default_workspace_for_project
     from tracer.services.clickhouse.v2 import get_reader
     from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
-    try:
-        from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request, refund_cost_for_api_call
-    except ImportError:
-        log_and_deduct_cost_for_api_request = None
-        refund_cost_for_api_call = None
 
     api_call_log_row = None
     organization = None
@@ -89,39 +85,33 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
         workspace = get_default_workspace_for_project(project)
 
         # Pre-check usage before the LLM call
-        try:
-            from ee.usage.services.metering import check_usage
-        except ImportError:
-            check_usage = None
-
-        if check_usage is not None:
-            usage_check = check_usage(
-                str(organization.id), APICallTypeChoices.TRACE_ERROR_ANALYSIS.value
-            )
-            if not usage_check.allowed:
-                deep_analysis_state.set_failed(str(trace_id))
-                raise ValueError(usage_check.reason or "Usage limit exceeded")
+        billing = get_billing()
+        usage_check = billing.check_usage(
+            str(organization.id), APICallTypeChoices.TRACE_ERROR_ANALYSIS.value
+        )
+        if not usage_check.allowed:
+            deep_analysis_state.set_failed(str(trace_id))
+            raise ValueError(usage_check.reason or "Usage limit exceeded")
 
         # Log and deduct cost for the analysis upfront.
-        if log_and_deduct_cost_for_api_request is not None:
-            api_call_log_row = log_and_deduct_cost_for_api_request(
-                organization=organization,
-                api_call_type=APICallTypeChoices.TRACE_ERROR_ANALYSIS.value,
-                source="trace_error_analysis",
-                workspace=workspace,
-                source_id=str(trace_id),
-                config={
-                    "trace_id": str(trace_id),
-                    "project_id": str(project.id),
-                    "reference_id": str(project.id),
-                },
-            )
+        api_call_log_row = billing.log_and_deduct(
+            organization=organization,
+            api_call_type=APICallTypeChoices.TRACE_ERROR_ANALYSIS.value,
+            source="trace_error_analysis",
+            workspace=workspace,
+            source_id=str(trace_id),
+            config={
+                "trace_id": str(trace_id),
+                "project_id": str(project.id),
+                "reference_id": str(project.id),
+            },
+        )
 
-            if not api_call_log_row:
-                error_message = "Failed to create API call log for trace analysis."
-                logger.error(error_message)
-                deep_analysis_state.set_failed(str(trace_id))
-                return {"success": False, "trace_id": trace_id, "error": error_message}
+        if billing.deduct_denied(api_call_log_row):
+            error_message = "Failed to create API call log for trace analysis."
+            logger.error(error_message)
+            deep_analysis_state.set_failed(str(trace_id))
+            return {"success": False, "trace_id": trace_id, "error": error_message}
 
         agent = TraceErrorAnalysisAgent(
             trace_id=str(trace_id),
@@ -151,52 +141,24 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
             api_call_log_row.status = APICallStatusChoices.SUCCESS.value
             api_call_log_row.save(update_fields=["status"])
 
-        # Dual-write: emit usage event for new billing system (cost-based)
+        # Emit usage event for billing
         try:
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-            except ImportError:
-                BillingEventType = None
-            try:
-                from ee.usage.schemas.events import UsageEvent
-            except ImportError:
-                UsageEvent = None
-            try:
-                from ee.usage.services.config import BillingConfig
-            except ImportError:
-                BillingConfig = None
-            try:
-                from ee.usage.services.emitter import emit
-            except ImportError:
-                emit = None
-            try:
-                from ee.usage.utils.event_properties import llm_usage_properties
-            except ImportError:
-                llm_usage_properties = lambda obj: {}
-
             actual_cost = getattr(agent, "cost", {}).get("total_cost", 0)
             if not actual_cost and hasattr(agent, "llm"):
                 actual_cost = getattr(agent.llm, "cost", {}).get("total_cost", 0)
 
-            credits = 0
-            if BillingConfig is not None:
-                credits = BillingConfig.get().calculate_ai_credits(actual_cost)
-
-            if emit is not None and UsageEvent is not None and BillingEventType is not None:
-                emit(
-                    UsageEvent(
-                        org_id=str(organization.id),
-                        event_type=BillingEventType.TRACE_ERROR_ANALYSIS,
-                        amount=credits,
-                        properties={
-                            "source": "trace_error_analysis",
-                            "source_id": str(trace_id),
-                            "errors_found": error_count,
-                            "raw_cost_usd": str(actual_cost),
-                            **llm_usage_properties(agent),
-                        },
-                    )
-                )
+            billing = get_billing()
+            credits = billing.ai_credits(actual_cost)
+            billing.record_usage(
+                str(organization.id),
+                BillingEventType.TRACE_ERROR_ANALYSIS,
+                amount=credits,
+                source="trace_error_analysis",
+                source_id=str(trace_id),
+                errors_found=error_count,
+                raw_cost_usd=str(actual_cost),
+                **llm_usage_properties(agent),
+            )
         except Exception:
             pass
 
@@ -208,8 +170,10 @@ def analyze_single_trace(trace_id, task_id, ingest_embeddings: bool = True):
         # If something went wrong, refund the cost.
         if api_call_log_row:
             logger.info(f"Refunding cost for failed trace analysis {trace_id}.")
-            if refund_cost_for_api_call is not None:
-                refund_cost_for_api_call(api_call_log_row, config={"error": str(e)})
+            try:
+                get_billing().refund(api_call_log_row, error=str(e))
+            except Exception:
+                logger.exception("refund_failed")
             api_call_log_row.status = APICallStatusChoices.ERROR.value
             api_call_log_row.save(update_fields=["status"])
 
@@ -415,14 +379,8 @@ def _falcon_analyze_single_trace(trace_id: str, project_id: str):
     # Falcon is gated on deployment mode (EE / Cloud) AND code presence.
     # In OSS mode or when ee/falcon_ai/ isn't installed, skip cleanly so
     # the enclosing task doesn't surface an ImportError.
-    try:
-        from ee.usage.deployment import DeploymentMode
-
-        _is_oss = DeploymentMode.is_oss()
-    except ImportError:
-        _is_oss = True
-
-    if _is_oss:
+    from tfc.ee_gating import is_oss as _is_oss_fn
+    if _is_oss_fn():
         logger.warning(
             "falcon_trace_analysis_skipped_no_ee",
             trace_id=trace_id,

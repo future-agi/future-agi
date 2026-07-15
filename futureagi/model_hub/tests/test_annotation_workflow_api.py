@@ -297,6 +297,20 @@ def allow_queue_creation_entitlement():
                     return_value=SimpleNamespace(allowed=True, reason=None),
                 )
             )
+        else:
+            # OSS checkout: the _NoopBilling singleton denies EE features by
+            # design, so bypass the gate on the singleton instance only. The
+            # explicit OSS-denial tests build their own _NoopBilling() (via a
+            # view-level get_billing patch), which stays unpatched and denies.
+            from tfc.billing.boundary import UsageDecision, get_billing
+
+            stack.enter_context(
+                patch.object(
+                    get_billing(),
+                    "check_feature_gate",
+                    return_value=UsageDecision(allowed=True),
+                )
+            )
         yield check_can_create
 
 
@@ -2204,7 +2218,10 @@ class TestReviewItem:
         second_user,
         organization,
     ):
-        if importlib.util.find_spec("ee.usage.services.entitlements") is None:
+        try:
+            if importlib.util.find_spec("ee.usage.services.entitlements") is None:
+                pytest.skip("Enterprise entitlement module is not available.")
+        except ModuleNotFoundError:
             pytest.skip("Enterprise entitlement module is not available.")
 
         queue_id, item_ids, label = queue_with_items
@@ -2241,6 +2258,23 @@ class TestReviewItem:
             queue_item=item,
             action=QueueItemReviewComment.ACTION_APPROVE,
         ).exists()
+
+    def test_bulk_review_denied_on_oss(self, auth_client, queue_with_items):
+        """review_workflow is an EE feature: OSS (_NoopBilling) must deny
+        review actions, not just the queue-settings endpoints."""
+        from tfc.billing.boundary import _NoopBilling
+
+        queue_id, item_ids, _label = queue_with_items
+        with patch(
+            "model_hub.views.annotation_queues.get_billing",
+            return_value=_NoopBilling(),
+        ):
+            resp = auth_client.post(
+                bulk_review_url(queue_id),
+                {"item_ids": [str(item_ids[0])], "action": "approve"},
+                format="json",
+            )
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
 
     def test_bulk_review_reports_own_annotations_without_approving_them(
         self,

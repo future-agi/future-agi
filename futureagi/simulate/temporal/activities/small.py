@@ -14,6 +14,8 @@ accumulate and hit PgBouncer's pool limit (~20 by default).
 from django.db import close_old_connections
 from temporalio import activity
 
+from tfc.billing.boundary import get_billing
+
 from simulate.models.test_execution import CallExecution
 from simulate.temporal.types.activities import (
     CheckBalanceInput,
@@ -211,13 +213,9 @@ async def check_call_balance(input: CheckBalanceInput) -> CheckBalanceOutput:
 
         from asgiref.sync import sync_to_async
 
-        try:
-            from ee.usage.services.metering import check_usage
-        except ImportError:
-            check_usage = None
-
+        billing = get_billing()
         # Check voice_call limit (covers both voice and text — both are sim calls)
-        result = await sync_to_async(check_usage)(input.org_id, "voice_call")
+        result = await sync_to_async(billing.check_usage)(input.org_id, "voice_call")
 
         if not result.allowed:
             activity.logger.warning(

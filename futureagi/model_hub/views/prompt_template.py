@@ -174,16 +174,8 @@ def _safe_background_task(func, *args, **kwargs):
     return wrapped
 
 
+from tfc.billing.boundary import BillingEventType, get_billing, token_usage_properties
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
-
-try:
-    from ee.usage.utils.usage_entries import (
-        count_text_tokens,
-        log_and_deduct_cost_for_api_request,
-    )
-except ImportError:
-    count_text_tokens = None
-    log_and_deduct_cost_for_api_request = None
 
 MIME_TO_EXT = {
     # Documents
@@ -1984,43 +1976,23 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                         }
                         # print("token config is here:",token_config)
                         if organization:
-                            if log_and_deduct_cost_for_api_request is not None:
-                                log_and_deduct_cost_for_api_request(
-                                    organization,
-                                    APICallTypeChoices.PROMPT_BENCH.value,
-                                    config=token_config,
-                                    source="run_prompt_gen",
-                                    workspace=workspace,
-                                )
-                            # log_and_deduct_cost_for_api_request_async = sync_to_async(log_and_deduct_cost_for_api_request)
-                            # async_to_sync(log_and_deduct_cost_for_api_request_async)(organization, APICallTypeChoices.PROMPT_BENCH.value, config=token_config, source="run_prompt_gen")
+                            billing = get_billing()
+                            billing.log_and_deduct(
+                                organization=organization,
+                                api_call_type=APICallTypeChoices.PROMPT_BENCH.value,
+                                config=token_config,
+                                source="run_prompt_gen",
+                                workspace=workspace,
+                            )
 
                             # Dual-write: emit usage event for new billing system
                             try:
-                                try:
-                                    from ee.usage.schemas.events import UsageEvent
-                                except ImportError:
-                                    UsageEvent = None
-                                try:
-                                    from ee.usage.services.emitter import emit
-                                except ImportError:
-                                    emit = None
-
-                                if (
-                                    emit is not None
-                                    and UsageEvent is not None
-                                    and BillingEventType is not None
-                                ):
-                                    emit(
-                                        UsageEvent(
-                                            org_id=str(organization.id),
-                                            event_type=APICallTypeChoices.PROMPT_BENCH.value,
-                                            properties={
-                                                "source": "run_prompt_gen",
-                                                "source_id": str(template.id),
-                                            },
-                                        )
-                                    )
+                                billing.record_usage(
+                                    str(organization.id),
+                                    APICallTypeChoices.PROMPT_BENCH.value,
+                                    source="run_prompt_gen",
+                                    source_id=str(template.id),
+                                )
                             except Exception:
                                 pass  # Metering failure must not break the action
 
@@ -2725,23 +2697,20 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                 }
             )
             org = Organization.objects.get(id=organization_id)
-            if log_and_deduct_cost_for_api_request is not None:
-                api_call_log_row = log_and_deduct_cost_for_api_request(
-                    organization=org,
-                    api_call_type=APICallTypeChoices.DATASET_EVALUATION.value,
-                    source="prompt_template",
-                    source_id=eval_template.id,
-                    config=source_config,
-                    workspace=evaluation.prompt_template.workspace,
-                )
+            billing = get_billing()
+            api_call_log_row = billing.log_and_deduct(
+                organization=org,
+                api_call_type=APICallTypeChoices.DATASET_EVALUATION.value,
+                source="prompt_template",
+                source_id=eval_template.id,
+                config=source_config,
+                workspace=evaluation.prompt_template.workspace,
+            )
 
-                if not api_call_log_row:
-                    raise ValueError(
-                        "API call not allowed : Error validating the api call."
-                    )
-
-                if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-                    raise ValueError("API call not allowed : ", api_call_log_row.status)
+            if billing.deduct_denied(api_call_log_row):
+                if api_call_log_row is None:
+                    raise ValueError("API call not allowed : Error validating the api call.")
+                raise ValueError("API call not allowed : ", api_call_log_row.status)
             # Apply the shared empty-input rules so prompt-template evals
             # behave the same as dataset/playground/tracing/SDK paths.
             from model_hub.utils.eval_input_validation import (
@@ -2811,39 +2780,14 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
 
             # Dual-write: emit usage event for new billing system
             try:
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-                try:
-                    from ee.usage.utils.event_properties import token_usage_properties
-                except ImportError:
-                    token_usage_properties = lambda token_usage: {}
 
-                if (
-                    emit is not None
-                    and UsageEvent is not None
-                    and BillingEventType is not None
-                ):
-                    emit(
-                        UsageEvent(
-                            org_id=str(org.id),
-                            event_type=BillingEventType.EVAL_EXPLANATION,
-                            properties={
-                                "source": "prompt_template",
-                                "source_id": str(eval_template.id),
-                                **token_usage_properties(metadata.get("usage", {})),
-                            },
-                        )
-                    )
+                billing.record_usage(
+                    str(org.id),
+                    BillingEventType.EVAL_EXPLANATION,
+                    source="prompt_template",
+                    source_id=str(eval_template.id),
+                    **token_usage_properties(metadata.get("usage", {})),
+                )
             except Exception:
                 pass  # Metering failure must not break the action
 
@@ -3437,66 +3381,35 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
             if not statement:
                 return self._gm.bad_request(get_error_message("MISSING_STATEMENT"))
 
+            billing = get_billing()
             config = {
-                "input_tokens": (
-                    count_text_tokens(statement) if count_text_tokens else 0
-                )
+                "input_tokens": billing.count_tokens(statement)
             }
-            call_log_row = None
-            if log_and_deduct_cost_for_api_request is not None:
-                call_log_row = log_and_deduct_cost_for_api_request(
-                    getattr(request, "organization", None) or request.user.organization,
-                    APICallTypeChoices.PROMPT_BENCH.value,
-                    config=config,
-                    source="run_prompt_gen",
-                    workspace=request.workspace,
+            call_log_row = billing.log_and_deduct(
+                organization=getattr(request, "organization", None) or request.user.organization,
+                api_call_type=APICallTypeChoices.PROMPT_BENCH.value,
+                config=config,
+                source="run_prompt_gen",
+                workspace=request.workspace,
+            )
+            if billing.deduct_denied(call_log_row):
+                return self._gm.bad_request(
+                    get_error_message("INSUFFICIENT_CREDITS")
                 )
-                if (
-                    call_log_row is None
-                    or call_log_row.status != APICallStatusChoices.PROCESSING.value
-                ):
-                    return self._gm.bad_request(
-                        get_error_message("INSUFFICIENT_CREDITS")
-                    )
 
             # Dual-write: emit usage event for new billing system
             try:
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-                try:
-                    from ee.usage.utils.event_properties import token_usage_properties
-                except ImportError:
-                    token_usage_properties = lambda token_usage: {}
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
                 )
-                if (
-                    emit is not None
-                    and UsageEvent is not None
-                    and BillingEventType is not None
-                ):
-                    emit(
-                        UsageEvent(
-                            org_id=str(_org.id),
-                            event_type=BillingEventType.AI_PROMPT_CREATION,
-                            properties={
-                                "source": "run_prompt_gen",
-                                "source_id": str(call_log_row.log_id),
-                                **token_usage_properties(config),
-                            },
-                        )
-                    )
+                billing.record_usage(
+                    str(_org.id),
+                    BillingEventType.AI_PROMPT_CREATION,
+                    source="run_prompt_gen",
+                    source_id=str(call_log_row.log_id) if call_log_row is not None else "",
+                    **token_usage_properties(config),
+                )
             except Exception:
                 pass  # Metering failure must not break the action
 
@@ -3573,68 +3486,35 @@ class PromptTemplateViewSet(BaseModelViewSetMixin, viewsets.ModelViewSet):
                     get_error_message("MISSING_IMPROVEMENT_REQUIREMENTS")
                 )
 
+            billing = get_billing()
             config = {
-                "input_tokens": (
-                    count_text_tokens(existing_prompt + improvement_requirements)
-                    if count_text_tokens
-                    else 0
-                )
+                "input_tokens": billing.count_tokens(existing_prompt + improvement_requirements)
             }
-            call_log_row = None
-            if log_and_deduct_cost_for_api_request is not None:
-                call_log_row = log_and_deduct_cost_for_api_request(
-                    getattr(request, "organization", None) or request.user.organization,
-                    APICallTypeChoices.PROMPT_BENCH.value,
-                    config=config,
-                    source="run_prompt_improve",
-                    workspace=request.workspace,
+            call_log_row = billing.log_and_deduct(
+                organization=getattr(request, "organization", None) or request.user.organization,
+                api_call_type=APICallTypeChoices.PROMPT_BENCH.value,
+                config=config,
+                source="run_prompt_improve",
+                workspace=request.workspace,
+            )
+            if billing.deduct_denied(call_log_row):
+                return self._gm.bad_request(
+                    get_error_message("INSUFFICIENT_CREDITS")
                 )
-                if (
-                    call_log_row is None
-                    or call_log_row.status != APICallStatusChoices.PROCESSING.value
-                ):
-                    return self._gm.bad_request(
-                        get_error_message("INSUFFICIENT_CREDITS")
-                    )
 
             # Dual-write: emit usage event for new billing system
             try:
-                try:
-                    from ee.usage.schemas.event_types import BillingEventType
-                except ImportError:
-                    BillingEventType = None
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-                try:
-                    from ee.usage.utils.event_properties import token_usage_properties
-                except ImportError:
-                    token_usage_properties = lambda token_usage: {}
 
                 _org = (
                     getattr(request, "organization", None) or request.user.organization
                 )
-                if (
-                    emit is not None
-                    and UsageEvent is not None
-                    and BillingEventType is not None
-                ):
-                    emit(
-                        UsageEvent(
-                            org_id=str(_org.id),
-                            event_type=BillingEventType.AI_PROMPT_IMPROVEMENT,
-                            properties={
-                                "source": "run_prompt_improve",
-                                "source_id": str(call_log_row.log_id),
-                                **token_usage_properties(config),
-                            },
-                        )
-                    )
+                billing.record_usage(
+                    str(_org.id),
+                    BillingEventType.AI_PROMPT_IMPROVEMENT,
+                    source="run_prompt_improve",
+                    source_id=str(call_log_row.log_id) if call_log_row is not None else "",
+                    **token_usage_properties(config),
+                )
             except Exception:
                 pass  # Metering failure must not break the action
 

@@ -140,6 +140,45 @@ def is_oss() -> bool:
         return True
 
 
+@functools.lru_cache(maxsize=1)
+def is_cloud() -> bool:
+    """True when the deployment is the FutureAGI-hosted Cloud.
+
+    Companion to :func:`is_oss` — call this from OSS code that needs to
+    ask ``am I on cloud?`` without directly importing ``DeploymentMode``
+    from ``ee.usage``. In OSS builds (no ``ee.usage`` module) returns
+    False; in EE builds delegates to ``DeploymentMode.is_cloud()``.
+    """
+    if not has_ee("ee.usage"):
+        return False
+    try:
+        from ee.usage.deployment import DeploymentMode
+
+        return DeploymentMode.is_cloud()
+    except Exception:  # pragma: no cover — defensive, ee present but broken
+        logger.warning("ee.usage.deployment import failed; assuming not cloud")
+        return False
+
+
+@functools.lru_cache(maxsize=1)
+def is_ee() -> bool:
+    """True when the deployment is a self-hosted EE install (not OSS, not Cloud).
+
+    Same OSS oracle contract as :func:`is_oss` — never touches
+    ``ee.usage`` from OSS code paths. Returns False when the module
+    is absent.
+    """
+    if not has_ee("ee.usage"):
+        return False
+    try:
+        from ee.usage.deployment import DeploymentMode
+
+        return DeploymentMode.is_ee()
+    except Exception:  # pragma: no cover — defensive, ee present but broken
+        logger.warning("ee.usage.deployment import failed; assuming not ee")
+        return False
+
+
 def check_ee_feature(
     feature: FeatureName,
     *,

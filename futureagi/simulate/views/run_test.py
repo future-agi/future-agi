@@ -171,7 +171,6 @@ from tfc.ee_gates import strip_turing_from_config_options
 from tfc.settings import settings as app_settings
 from tfc.settings.settings import VAPI_INDIAN_PHONE_NUMBER_ID
 from tfc.utils.api_contracts import validated_request
-from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.api_serializers import (
     ApiTextErrorResponseSerializer,
     EmptyRequestSerializer,
@@ -213,28 +212,14 @@ def _voice_sim_gate_response(user_organization, gm):
     if oss_gate is not None:
         return oss_gate
 
-    try:
-        from ee.usage.services.entitlements import Entitlements
-    except ImportError:
-        # ee.usage.deployment exists but entitlements is missing — partial
-        # EE install. Fail closed.
-        message = (
-            "Voice simulation is not available on this deployment. "
-            "Upgrade to cloud or enterprise to run voice calls."
-        )
-        return Response(
-            build_error_envelope(
-                message,
-                status_code=status.HTTP_402_PAYMENT_REQUIRED,
-                code="payment_required",
-                extra={"upgrade_required": True, "feature": "voice_sim"},
-            ),
-            status=status.HTTP_402_PAYMENT_REQUIRED,
-        )
-
-    feat_check = Entitlements.check_feature(str(user_organization.id), "has_voice_sim")
-    if not feat_check.allowed:
-        return gm.forbidden_response(feat_check.reason)
+    from tfc.billing.boundary import get_billing
+    billing = get_billing()
+    if not billing.has_ee_billing:
+        # OSS handled by voice_sim_oss_gate_response above; nothing more to do.
+        return None
+    gate = billing.check_feature_gate(str(user_organization.id), "has_voice_sim")
+    if not gate.allowed:
+        return gm.forbidden_response(gate.reason)
     return None
 
 

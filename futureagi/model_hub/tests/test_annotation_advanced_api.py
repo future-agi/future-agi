@@ -69,6 +69,28 @@ def allow_advanced_api_entitlements():
                     return_value=SimpleNamespace(allowed=True, reason=None),
                 )
             )
+        else:
+            # OSS checkout: the _NoopBilling singleton denies EE features by
+            # design, so bypass the gate on the singleton instance only. The
+            # explicit OSS-denial tests build their own _NoopBilling() (via a
+            # view-level get_billing patch), which stays unpatched and denies.
+            from tfc.billing.boundary import UsageDecision, get_billing
+
+            billing_singleton = get_billing()
+            stack.enter_context(
+                patch.object(
+                    billing_singleton,
+                    "check_feature_gate",
+                    return_value=UsageDecision(allowed=True),
+                )
+            )
+            stack.enter_context(
+                patch.object(
+                    billing_singleton,
+                    "can_create",
+                    return_value=UsageDecision(allowed=True),
+                )
+            )
         yield
 
 QUEUE_URL = "/model-hub/annotation-queues/"
@@ -687,6 +709,19 @@ class TestAgreement:
         assert "overall_agreement" in result
         assert "labels" in result
         assert "annotator_pairs" in result
+
+    def test_agreement_denied_on_oss(self, auth_client, organization, workspace):
+        """agreement_metrics is an EE feature: OSS (_NoopBilling) must deny
+        the agreement endpoint instead of computing metrics for free."""
+        from tfc.billing.boundary import _NoopBilling
+
+        queue_id = _create_queue(auth_client, name="Agree OSS Q")
+        with patch(
+            "model_hub.views.annotation_queues.get_billing",
+            return_value=_NoopBilling(),
+        ):
+            resp = auth_client.get(f"{QUEUE_URL}{queue_id}/agreement/")
+        assert resp.status_code == status.HTTP_403_FORBIDDEN
 
     def test_full_agreement(self, auth_client, organization, workspace, user):
         queue_id = _create_queue(auth_client, name="Agree Q2", annotations_required=2)

@@ -42,12 +42,12 @@ def public_config(request):
     Cloud returns the current region and available regions list.
 
     """
-    try:
-        from ee.usage.deployment import DeploymentMode
+    # Use the OSS-safe oracle `tfc.ee_gating.is_cloud()` instead of importing
+    # `DeploymentMode` from `ee.usage` — same one-boundary-per-domain rule the
+    # billing boundary follows (TH-5971).
+    from tfc.ee_gating import is_cloud as _is_cloud
 
-        is_cloud = DeploymentMode.is_cloud()
-    except ImportError:
-        is_cloud = False
+    is_cloud = _is_cloud()
 
     return Response(
         {

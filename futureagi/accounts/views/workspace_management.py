@@ -79,7 +79,7 @@ from analytics.utils import (
     get_mixpanel_properties,
     track_mixpanel_event,
 )
-from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
+from tfc.constants.api_calls import APICallTypeChoices
 from tfc.constants.levels import Level
 from tfc.constants.roles import RoleMapping, RolePermissions
 from tfc.middleware.workspace_context import get_current_workspace
@@ -101,11 +101,6 @@ try:
 except ImportError:
     OrganizationSubscription = None
     SubscriptionTierChoices = None
-try:
-    from ee.usage.utils.usage_entries import log_and_deduct_cost_for_resource_request
-except ImportError:
-    log_and_deduct_cost_for_resource_request = None
-
 logger = structlog.get_logger(__name__)
 
 
@@ -2051,21 +2046,23 @@ class ManageTeamView(APIView):
             ).values_list("user_id", flat=True)
             user_count = User.objects.filter(id__in=org_user_ids).count()
             logger.info(f"member_count: {len(members_data)} user_count: {user_count}")
-            # Resource limit / billing requires ee — skip the deduction and
-            # treat as always-allowed when absent.
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row = log_and_deduct_cost_for_resource_request(
-                    organization,
-                    APICallTypeChoices.USER_ADD.value,
-                    config={"user_count": user_count, "extra_users": len(members_data)},
-                    workspace=workspace,
-                )
-            else:
-                call_log_row = None
-            if log_and_deduct_cost_for_resource_request is not None and (
-                call_log_row is None
-                or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-            ):
+            # Resource-limit deduction via the billing boundary.  Noop in OSS
+            # returns None (no deduction), so callers must treat that as
+            # "allowed" — same semantics as the old inline guard.
+            from tfc.billing.boundary import get_billing
+
+            billing = get_billing()
+            call_log_row = billing.log_and_deduct_resource(
+                organization,
+                APICallTypeChoices.USER_ADD.value,
+                config={"user_count": user_count, "extra_users": len(members_data)},
+                workspace=workspace,
+            )
+            if billing.resource_denied(call_log_row):
+                if call_log_row is None:
+                    return self._gm.too_many_requests(
+                        {"errors": [{"error": "Could not verify member limits. Please try again."}]}
+                    )
                 config = json.loads(call_log_row.config)
                 return self._gm.too_many_requests(
                     {

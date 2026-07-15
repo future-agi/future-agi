@@ -22,15 +22,11 @@ from model_hub.views.eval_runner import (
     process_mapping,
 )
 from sdk.utils.helpers import _get_api_call_type
+from tfc.billing.boundary import BillingEventType, get_billing, token_usage_properties, UsageLimitExceeded
 from tfc.constants.api_calls import APICallStatusChoices
 from tfc.middleware.workspace_context import get_current_organization
 from tfc.temporal import temporal_activity
 from tfc.utils.error_codes import get_specific_error_message
-
-try:
-    from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
-except ImportError:
-    log_and_deduct_cost_for_api_request = None
 
 
 def _canonical_playground_output(value, response, template, api_call_log_row):
@@ -256,55 +252,34 @@ def run_eval_func(
             source_config["version_id"] = str(tracked_version.id)
             source_config["version_number"] = tracked_version.version_number
 
-        try:
-            from ee.usage.schemas.event_types import BillingEventType
-        except ImportError:
-            BillingEventType = None
-
+        # BillingEventType comes from tfc.billing.boundary (imported at the
+        # top) — the OSS stub handles `.value`, so no local try/except import.
         _is_code_eval = getattr(template, "eval_type", "") == "code"
         api_call_type = (
             BillingEventType.CODE_EVALUATOR.value
-            if _is_code_eval and BillingEventType is not None
+            if _is_code_eval
             else _get_api_call_type(model)
         )
 
         # Pre-check: enforce free tier limits before running eval
-        try:
-            from ee.usage.exceptions import UsageLimitExceeded
-        except ImportError:
-            UsageLimitExceeded = None
-        try:
-            from ee.usage.services.metering import check_usage
-        except ImportError:
-            check_usage = None
+        billing = get_billing()
+        usage_check = billing.check_usage(str(org.id), api_call_type)
+        if not usage_check.allowed:
+            raise UsageLimitExceeded(usage_check)
 
-        if check_usage is not None:
-            usage_check = check_usage(str(org.id), api_call_type)
-            if not usage_check.allowed:
-                if UsageLimitExceeded is not None:
-                    raise UsageLimitExceeded(usage_check)
-                else:
-                    raise ValueError(str(usage_check))
+        api_call_log_row = billing.log_and_deduct(
+            organization=org,
+            api_call_type=api_call_type,
+            config=source_config,
+            source=source,
+            source_id=template.id,
+            workspace=workspace,
+        )
 
-        if log_and_deduct_cost_for_api_request is not None:
-            api_call_log_row = log_and_deduct_cost_for_api_request(
-                organization=org,
-                api_call_type=api_call_type,
-                config=source_config,
-                source=source,
-                source_id=template.id,
-                workspace=workspace,
-            )
-
-            if not api_call_log_row:
-                raise ValueError(
-                    "API call not allowed : Error validating the api call."
-                )
-
-            if api_call_log_row.status != APICallStatusChoices.PROCESSING.value:
-                raise ValueError("API call not allowed : ", api_call_log_row.status)
-        else:
-            api_call_log_row = None
+        if billing.deduct_denied(api_call_log_row):
+            if api_call_log_row is None:
+                raise ValueError("API call not allowed : Error validating the api call.")
+            raise ValueError("API call not allowed : ", api_call_log_row.status)
 
         start_time = time.time()
         # Layer in auto-context kwargs alongside the mapped variables. Any
@@ -420,30 +395,8 @@ def run_eval_func(
 
         # Dual-write: emit usage event for new billing system (cost-based)
         try:
-            try:
-                from ee.usage.schemas.events import UsageEvent
-            except ImportError:
-                UsageEvent = None
-            try:
-                from ee.usage.services.config import BillingConfig
-            except ImportError:
-                BillingConfig = None
-            try:
-                from ee.usage.services.emitter import emit
-            except ImportError:
-                emit = None
-            try:
-                from ee.usage.utils.event_properties import token_usage_properties
-            except ImportError:
-                token_usage_properties = lambda token_usage: {}
-
-            billing_config = None
-            if BillingConfig is not None:
-                billing_config = BillingConfig.get()
             eval_cost = getattr(eval_instance, "cost", {})
             llm_cost = eval_cost.get("total_cost", 0)
-            per_run_fee = billing_config.get_eval_per_run_fee() if billing_config else 0
-            actual_cost = llm_cost + per_run_fee
             _token_usage = getattr(eval_instance, "token_usage", {})
 
             # Fallback cost for comparison logging and composite eval billing.
@@ -466,6 +419,13 @@ def run_eval_func(
                 _pricing_source = _fallback.get("pricing_source", "")
             except Exception:
                 pass
+
+            per_run_fee = 0
+            try:
+                per_run_fee = get_billing().eval_per_run_fee()
+            except Exception:
+                pass
+            actual_cost = llm_cost + per_run_fee
 
             is_composite_source = source in {
                 "composite_eval",
@@ -495,32 +455,18 @@ def run_eval_func(
                 token_usage=getattr(eval_instance, "token_usage", {}),
             )
 
-            credits = (
-                billing_config.calculate_ai_credits(actual_cost)
-                if billing_config
-                else 0
+            credits = billing.ai_credits(actual_cost)
+
+            billing.record_usage(
+                str(org.id),
+                api_call_type,
+                amount=credits,
+                source=source,
+                source_id=str(template.id),
+                raw_cost_usd=str(actual_cost),
+                **cost_properties,
+                **token_usage_properties(_token_usage),
             )
-
-            if (
-                emit is not None
-                and UsageEvent is not None
-                and BillingEventType is not None
-            ):
-
-                emit(
-                    UsageEvent(
-                        org_id=str(org.id),
-                        event_type=api_call_type,
-                        amount=credits,
-                        properties={
-                            "source": source,
-                            "source_id": str(template.id),
-                            "raw_cost_usd": str(actual_cost),
-                            **cost_properties,
-                            **token_usage_properties(_token_usage),
-                        },
-                    )
-                )
         except Exception:
             pass  # Metering failure must not break the action
 

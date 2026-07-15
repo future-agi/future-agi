@@ -60,11 +60,8 @@ class RunPromptTool(BaseTool):
         from model_hub.utils.column_utils import is_json_response_format
         from model_hub.utils.utils import remove_empty_text_from_messages
         from model_hub.views.prompt_template import replace_variables
+        from tfc.billing.boundary import BillingEventType, get_billing
         from tfc.constants.api_calls import APICallTypeChoices
-        try:
-            from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
-        except ImportError:
-            log_and_deduct_cost_for_api_request = None
 
         template_obj, err = resolve_prompt_template(
             params.template_id, context.organization, context.workspace
@@ -216,21 +213,14 @@ class RunPromptTool(BaseTool):
         # This ensures model resolution, provider detection, API key handling,
         # payload building, and response formatting are all identical.
         try:
-            # Usage check requires ee — skip when unavailable and allow the
-            # prompt to run.
-            try:
-                from ee.usage.schemas.event_types import BillingEventType
-                from ee.usage.services.metering import check_usage
-
-                if check_usage is not None:
-                    usage_check = check_usage(
-                    str(context.organization.id),
-                    BillingEventType.AI_PROMPT_CREATION,
-                )
-                if not usage_check.allowed:
-                    raise ValueError(usage_check.reason or "Usage limit exceeded")
-            except ImportError:
-                pass
+            # Usage check — fails open in OSS via NoopBilling.
+            billing = get_billing()
+            usage_check = billing.check_usage(
+                str(context.organization.id),
+                BillingEventType.AI_PROMPT_CREATION,
+            )
+            if not usage_check.allowed:
+                raise ValueError(usage_check.reason or "Usage limit exceeded")
 
             run_prompt = RunPrompt(
                 model=model,
@@ -263,40 +253,26 @@ class RunPromptTool(BaseTool):
             metadata = value_info.get("metadata", {})
             token_config = metadata.get("usage", {})
 
-            # Log usage and deduct cost (skipped when ee is absent).
-            if log_and_deduct_cost_for_api_request is not None:
-                try:
-                    if log_and_deduct_cost_for_api_request is not None:
-                        log_and_deduct_cost_for_api_request(
-                        context.organization,
-                        APICallTypeChoices.PROMPT_BENCH.value,
-                        config=token_config,
-                        source="run_prompt_gen",
-                        workspace=context.workspace,
-                    )
-                except Exception as cost_err:
-                    logger.warning("failed_to_log_usage", error=str(cost_err))
-
-            # Dual-write: emit usage event for new billing system (ee-only).
+            # Log usage and deduct cost.
             try:
-                from ee.usage.schemas.events import UsageEvent
-                from ee.usage.services.emitter import emit
-
-                if emit is not None and UsageEvent is not None:
-
-
-                    emit(
-                    UsageEvent(
-                        org_id=str(context.organization.id),
-                        event_type=APICallTypeChoices.PROMPT_BENCH.value,
-                        properties={
-                            "source": "run_prompt_gen",
-                            "source_id": str(template.id),
-                        },
-                    )
+                billing.log_and_deduct(
+                    organization=context.organization,
+                    api_call_type=APICallTypeChoices.PROMPT_BENCH.value,
+                    config=token_config,
+                    source="run_prompt_gen",
+                    workspace=context.workspace,
                 )
-            except ImportError:
-                pass  # No usage emitter when ee is absent.
+            except Exception as cost_err:
+                logger.warning("failed_to_log_usage", error=str(cost_err))
+
+            # Emit usage event for billing system.
+            try:
+                billing.record_usage(
+                    str(context.organization.id),
+                    APICallTypeChoices.PROMPT_BENCH.value,
+                    source="run_prompt_gen",
+                    source_id=str(template.id),
+                )
             except Exception:
                 pass  # Metering failure must not break the action
 

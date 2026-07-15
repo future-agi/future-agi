@@ -46,12 +46,8 @@ from model_hub.serializers.develop_optimisation import OptimizationDetailSeriali
 from model_hub.utils.workspace_scope import scoped_optimization_queryset
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.prompt_template import replace_ids_with_column_name
+from tfc.billing.boundary import get_billing
 from tfc.constants.api_calls import APICallTypeChoices
-try:
-    from ee.usage.utils.usage_entries import count_tiktoken_tokens, log_and_deduct_cost_for_api_request
-except ImportError:
-    count_tiktoken_tokens = None
-    log_and_deduct_cost_for_api_request = None
 
 
 class DevelopOptimizer:
@@ -99,9 +95,10 @@ class DevelopOptimizer:
                     cell_values_strings.append("")
 
             input_words_string = " ".join(cell_values_strings)
-            opt_column_token_count = (count_tiktoken_tokens(
-                input_words_string, input_image_urls=cell_values_image_urls
-            ) if count_tiktoken_tokens else 0)
+            billing = get_billing()
+            opt_column_token_count = billing.count_tiktoken_tokens(
+                input_words_string, image_urls=cell_values_image_urls
+            )
 
             # print("optimisation token_count : ", opt_column_token_count)
             reference_id = str(self.optimize_dataset.id)
@@ -113,11 +110,10 @@ class DevelopOptimizer:
             }
             organization = column.dataset.organization
             api_call_type = APICallTypeChoices.DATASET_OPTIMIZATION.value
-            if log_and_deduct_cost_for_api_request is not None:
-                log_and_deduct_cost_for_api_request(
-                organization,
-                api_call_type,
-                config,
+            billing.log_and_deduct(
+                organization=organization,
+                api_call_type=api_call_type,
+                config=config,
                 source="optimisation",
                 workspace=column.dataset.workspace,
             )
@@ -126,25 +122,11 @@ class DevelopOptimizer:
             # Eval runs within optimisation emit ai_credits events via run_eval_func().
             # "dataset_optimization" is intentionally not in billing.yaml.
             try:
-                try:
-                    from ee.usage.schemas.events import UsageEvent
-                except ImportError:
-                    UsageEvent = None
-                try:
-                    from ee.usage.services.emitter import emit
-                except ImportError:
-                    emit = None
-
-                if emit is not None and UsageEvent is not None:
-                    emit(
-                    UsageEvent(
-                        org_id=str(organization.id),
-                        event_type=api_call_type,
-                        properties={
-                            "source": "optimisation",
-                            "source_id": str(self.optimize_dataset.id),
-                        },
-                    )
+                billing.record_usage(
+                    str(organization.id),
+                    api_call_type,
+                    source="optimisation",
+                    source_id=str(self.optimize_dataset.id),
                 )
             except Exception:
                 pass  # Metering failure must not break the action
@@ -156,36 +138,30 @@ class DevelopOptimizer:
 
     def _update_api_call_log_row(self):
         try:
-            # get the optimisation object by id
+            from tfc.billing.boundary import get_billing
             from tfc.constants.api_calls import APICallStatusChoices
             try:
                 from ee.usage.models.usage import APICallLog
             except ImportError:
                 APICallLog = None
-            try:
-                from ee.usage.utils.usage_entries import refund_cost_for_api_call
-            except ImportError:
-                refund_cost_for_api_call = None
 
             optimizer_row = OptimizationDataset.objects.get(id=self.optimize_dataset.id)
             optimisation_id = str(optimizer_row.id)
-            # get the api call log row by reference id
+            api_call_log_row = None
             if APICallLog is not None:
                 api_call_log_row = APICallLog.objects.filter(
-                reference_id=optimisation_id, deleted=False
-            ).first()
+                    reference_id=optimisation_id, deleted=False
+                ).first()
             if optimizer_row.status == StatusType.FAILED.value:
-                # refund the cost
-                # update the api call log row
-                api_call_log_row.status = APICallStatusChoices.ERROR.value
-                api_call_log_row.save()
-                refund_config = {"reference_id": str(optimizer_row.id)}
-                if refund_cost_for_api_call is not None:
-                    refund_cost_for_api_call(api_call_log_row, config=refund_config)
+                if api_call_log_row:
+                    api_call_log_row.status = APICallStatusChoices.ERROR.value
+                    api_call_log_row.save()
+                    refund_config = {"reference_id": str(optimizer_row.id)}
+                    get_billing().refund(api_call_log_row, **refund_config)
             else:
-                # update the api call log row
-                api_call_log_row.status = APICallStatusChoices.SUCCESS.value
-                api_call_log_row.save()
+                if api_call_log_row:
+                    api_call_log_row.status = APICallStatusChoices.SUCCESS.value
+                    api_call_log_row.save()
 
         except Exception as e:
             logger.exception(f"error in refunding cost : {e}")

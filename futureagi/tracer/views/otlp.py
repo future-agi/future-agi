@@ -143,20 +143,13 @@ class OTLPTraceView(APIView):
             organization_id = str(user.organization.id)
 
             # Ingestion rate limit check
-            try:
-                try:
-                    from ee.usage.services.rate_limiter import RateLimiter
-                except ImportError:
-                    RateLimiter = None
-
-                if RateLimiter is not None:
-                    rl_result = RateLimiter.check(organization_id, "ingestion")
-                    if not rl_result.allowed:
-                        response = self._error_response(request, rl_result.reason, 429)
-                        response["Retry-After"] = str(rl_result.retry_after)
-                        return response
-            except ImportError:
-                pass
+            from tfc.billing.boundary import get_billing
+            rl_result = get_billing().check_rate_limit(organization_id, "ingestion")
+            if not rl_result.allowed:
+                response = self._error_response(request, rl_result.reason, 429)
+                if rl_result.retry_after is not None:
+                    response["Retry-After"] = str(rl_result.retry_after)
+                return response
 
             user_id = str(user.id)
             workspace = getattr(request, "workspace", None)
