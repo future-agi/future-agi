@@ -878,7 +878,10 @@ class EvaluationRunner:
                 inputs=mapping,
                 input_cols=required_field,
                 organization_id=self.organization_id,
-                workspace_id=None,  # feedback is org-scoped by design
+                # Retrieval is org-scoped for now; the write path still
+                # tags rows with workspace_id so we can flip to workspace
+                # -aware later without a backfill.
+                workspace_id=None,
             )
             end_time = datetime.now()
             elapsed_time = (end_time - start_time).total_seconds()

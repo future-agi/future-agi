@@ -418,7 +418,11 @@ class ExperimentFeedbackSubmitV2View(APIView):
                 metadatas=row_dict,
                 inputs_formater=required_field,
                 organization_id=organization.id,
-                workspace_id=None,
+                workspace_id=(
+                    experiment.dataset.workspace.id
+                    if experiment.dataset.workspace
+                    else None
+                ),
             )
             embedding_manager.close()
 
