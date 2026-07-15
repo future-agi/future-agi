@@ -91,19 +91,7 @@ def resolve_feedback_template_data(
     user_eval_metric: UserEvalMetric,
     eval_template: EvalTemplate,
 ) -> dict[str, Any]:
-    """Build the feedback-template payload the FE reads to render the
-    "right value" widget.
-
-    Which widget renders is a function of three eval config fields:
-      * ``output_type`` — the template's declared shape (score/choices/…)
-      * ``choices`` — the choice labels available for picker widgets
-      * ``choice_scores`` — a choice→score map; when present, the LLM emits
-        choice labels and the FE must render a picker (radio or checkbox)
-        regardless of ``output_type``
-      * ``multi_choice`` (checkbox vs radio for the CHOICES branch) is
-        sourced from the pinned/default template version snapshot, else
-        the template's canonical ``multi_choice`` field.
-    """
+    """Build the feedback-template payload the FE renders the widget from."""
 
     template_config = eval_template.config or {}
     data: dict[str, Any] = {

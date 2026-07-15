@@ -1639,15 +1639,8 @@ class EvaluationRunner:
         ):
             from model_hub.models.choices import OwnerChoices
 
-            # Fetch few-shot feedback examples for these eval types
-            # (not covered by the futureagi_eval block above)
             if not self.futureagi_eval and "few_shots" not in required_field:
-                # Feedback embeddings are keyed by the metric's column-ids
-                # at the write side (submit_feedback_action); the raw
-                # runtime `required_field` here carries runtime aliases
-                # (e.g. "output") and would miss every stored row via the
-                # CH `has(metadata.key, X)` filter. Resolve to the
-                # write-side keys so retrieval hits.
+                # Match the write side's column-id keying so retrieval hits.
                 (
                     resolved_required_field,
                     resolved_mapping,
