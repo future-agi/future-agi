@@ -615,6 +615,9 @@ def _resolve_voice_call_ids_clickhouse(
         from tracer.services.clickhouse.query_builders import (
             VoiceCallListQueryBuilder,
         )
+        from tracer.services.clickhouse.query_builders.filters import (
+            FilterTranslationError,
+        )
         from tracer.services.clickhouse.query_service import (
             AnalyticsQueryService,
         )
@@ -629,12 +632,25 @@ def _resolve_voice_call_ids_clickhouse(
         filters=filters or [],
         annotation_label_ids=annotation_label_ids,
         remove_simulation_calls=remove_simulation_calls,
+        # See _resolve_trace_ids_clickhouse: an untranslatable filter fails loud
+        # so the resolve falls back to PG instead of silently over-matching.
+        strict_filters=True,
     )
     # Skip the separate `uniqExact(trace_id)` count query — on large filter
     # results it was the dominant /preview timeout. ``build()`` already adds
     # ``LIMIT cap + 1`` (voice_call_list.py:97), so the cap+1 sentinel gives
     # us "≥ cap" without a second scan.
-    ids_query, ids_params = builder.build()
+    try:
+        ids_query, ids_params = builder.build()
+    except FilterTranslationError as exc:
+        # Untranslatable filter → PG fallback (full operator coverage), not an
+        # over-matched CH set. Expected, not an outage — log at info.
+        logger.info(
+            "bulk_selection_resolve_voice_ch_untranslatable_filter",
+            project_id=str(project_id),
+            error=str(exc),
+        )
+        return None
     ids_result = analytics.execute_ch_query(ids_query, ids_params, timeout_ms=15_000)
     ids = [str(r.get("trace_id", "")) for r in ids_result.data if r.get("trace_id")]
     raw_truncated = len(ids) > cap
@@ -731,6 +747,9 @@ def _resolve_trace_ids_clickhouse(
     back to the PG path.
     """
     try:
+        from tracer.services.clickhouse.query_builders.filters import (
+            FilterTranslationError,
+        )
         from tracer.services.clickhouse.query_builders.trace_list import (
             TraceListQueryBuilder,
         )
@@ -749,11 +768,26 @@ def _resolve_trace_ids_clickhouse(
         annotation_label_ids=annotation_label_ids,
         # Phase 1 light columns are all we need — we only want trace_id.
         columns=["trace_id"],
+        # A rule resolve must add exactly the filtered set: if a filter can't be
+        # translated to CH it would silently drop and over-match, so fail loud and
+        # let the caller fall back to the PG FilterEngine (full operator coverage).
+        strict_filters=True,
     )
     # Skip the separate count query — the builder already does ``LIMIT cap + 1``
     # (trace_list.py:134) so the cap+1 sentinel tells us "≥ cap" without a
     # second uniqExact scan that was the dominant /preview timeout source.
-    ids_query, ids_params = builder.build()
+    try:
+        ids_query, ids_params = builder.build()
+    except FilterTranslationError as exc:
+        # A supported-looking filter can't be translated to CH → return None so
+        # the caller uses the PG FilterEngine (which covers it) rather than an
+        # over-matched CH set. Expected, not an outage — log at info.
+        logger.info(
+            "bulk_selection_resolve_trace_ch_untranslatable_filter",
+            project_id=str(project_id),
+            error=str(exc),
+        )
+        return None
     ids_result = analytics.execute_ch_query(ids_query, ids_params, timeout_ms=15_000)
     ids = [str(r.get("trace_id", "")) for r in ids_result.data if r.get("trace_id")]
     raw_truncated = len(ids) > cap
@@ -886,6 +920,12 @@ def resolve_filtered_trace_ids(
     if ch_result is not None and ch_result.total_matching > 0:
         return ch_result
     if ch_result is not None:
+        # CH returned zero — treat as a possible CH gap (e.g. replication lag)
+        # and confirm on PG rather than trust the empty. A rule whose filter
+        # genuinely matches nothing therefore still pays the PG cost on every
+        # run (manual AND scheduled). Distinguishing "project has no CH rows"
+        # (gap → PG justified) from "CH has rows, filter matched 0" (trust the 0)
+        # with a cheap existence probe is a tracked follow-up.
         logger.info(
             "bulk_selection_resolve_trace_ch_empty_pg_fallback",
             project_id=str(project_id),

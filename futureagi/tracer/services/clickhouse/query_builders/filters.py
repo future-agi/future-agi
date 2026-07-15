@@ -56,6 +56,16 @@ _SPAN_ATTR_TYPE_META: dict[str, tuple[str, Callable[[Any], Any]]] = {
 }
 
 
+class FilterTranslationError(ValueError):
+    """A filter reached the general condition builder but produced no WHERE
+    fragment — i.e. its operator/value shape isn't translatable to ClickHouse and
+    it would silently vanish from the query, matching MORE rows than the filter
+    implies. Raised only in ``strict`` translation (the automation-rule resolve
+    path) so the caller can fall back to the Postgres FilterEngine, which covers
+    the full operator set. The grid path stays lenient (a dropped filter there is
+    a visible, recoverable over-match, not an unattended queue write)."""
+
+
 class ClickHouseFilterBuilder:
     """Translates frontend filter format to ClickHouse WHERE clauses.
 
@@ -541,7 +551,9 @@ class ClickHouseFilterBuilder:
     # Public API
     # ------------------------------------------------------------------
 
-    def translate(self, filters: list[dict]) -> tuple[str, dict[str, Any]]:
+    def translate(
+        self, filters: list[dict], *, strict: bool = False
+    ) -> tuple[str, dict[str, Any]]:
         """Translate a filter list to ClickHouse WHERE clause fragments.
 
         Returns only the filter conditions **without** the ``WHERE`` keyword.
@@ -613,6 +625,15 @@ class ClickHouseFilterBuilder:
             )
             if condition:
                 conditions.append(condition)
+            elif strict:
+                # A filter with a real column/operator that the builder can't
+                # translate would drop out of the WHERE clause and silently
+                # widen the result. Fail loud so the resolve falls back to PG.
+                raise FilterTranslationError(
+                    f"filter not translatable to ClickHouse: "
+                    f"column_id={col_id!r} col_type={col_type!r} "
+                    f"filter_op={filter_op!r} filter_type={filter_type!r}"
+                )
 
         where = " AND ".join(conditions) if conditions else ""
         return where, self._params

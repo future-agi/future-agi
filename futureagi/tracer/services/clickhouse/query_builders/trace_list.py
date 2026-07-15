@@ -93,6 +93,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         search: str | None = None,
         columns: list[str] | None = None,
         annotation_label_ids: list[str] | None = None,
+        strict_filters: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id=project_id, project_ids=project_ids, **kwargs)
@@ -105,6 +106,10 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         self.search = search.strip() if search else None
         self.columns = columns
         self.annotation_label_ids = annotation_label_ids or []
+        # Raise on a filter the CH builder can't translate instead of silently
+        # dropping it (over-match). Set by the automation-rule resolve so the
+        # add falls back to PG; the grid stays lenient.
+        self.strict_filters = strict_filters
         self.start_date: datetime | None = None
         self.end_date: datetime | None = None
 
@@ -130,7 +135,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             project_id=self.project_id,
             project_ids=self.project_ids,
         )
-        extra_where, extra_params = fb.translate(self.filters)
+        extra_where, extra_params = fb.translate(
+            self.filters, strict=self.strict_filters
+        )
         self.params.update(extra_params)
 
         # Sorting
@@ -246,7 +253,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             project_id=self.project_id,
             project_ids=self.project_ids,
         )
-        extra_where, extra_params = fb.translate(self.filters)
+        extra_where, extra_params = fb.translate(
+            self.filters, strict=self.strict_filters
+        )
         self.params.update(extra_params)
         filter_fragment = f"AND {extra_where}" if extra_where else ""
 
@@ -346,7 +355,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             project_id=self.project_id,
             project_ids=self.project_ids,
         )
-        extra_where, extra_params = fb.translate(self.filters)
+        extra_where, extra_params = fb.translate(
+            self.filters, strict=self.strict_filters
+        )
         # Merge params -- reuse the same start/end dates
         params = dict(self.params)
         params.update(extra_params)
