@@ -116,6 +116,23 @@ class TestAddItemsEnumeratedRegression:
         assert result["added"] == 0
         assert result["duplicates"] == 1
 
+    def test_enumerated_add_populates_project_id(
+        self, auth_client, active_queue, observe_project
+    ):
+        """The denormalized project_id is stamped on add so the render/list read can
+        scope its CH scan to one tenant (TH-6864). Fails if the write path drops it —
+        NULL project_id degrades to the full-table wide scan the fix removes."""
+        t = Trace.objects.create(project=observe_project, name="t-proj")
+        _seed_ch_trace_root(t)
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {"items": [{"source_type": "trace", "source_id": str(t.id)}]},
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        item = QueueItem.objects.get(queue=active_queue, trace=t, deleted=False)
+        assert str(item.project_id) == str(observe_project.id)
+
 
 # --------------------------------------------------------------------------
 # Filter-mode — happy + exclude + duplicates + truncation
@@ -147,6 +164,28 @@ class TestAddItemsFilterMode:
         assert result["duplicates"] == 0
         assert result["errors"] == []
         assert result["total_matching"] == 3
+
+    def test_filter_mode_add_populates_project_id(
+        self, auth_client, active_queue, observe_project
+    ):
+        """Filter-mode add stamps project_id from the selection too (TH-6864), so
+        every path that fills a queue leaves items scope-able by the render read."""
+        Trace.objects.create(project=observe_project, name="t-fp")
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "trace",
+                    "project_id": str(observe_project.id),
+                }
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        items = list(QueueItem.objects.filter(queue=active_queue, deleted=False))
+        assert items
+        assert all(str(it.project_id) == str(observe_project.id) for it in items)
 
     def test_filter_mode_respects_exclude_ids(
         self, auth_client, active_queue, observe_project
