@@ -70,7 +70,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # EE overlay (ee/Dockerfile.ee) targets the same site-packages dir.
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 COPY --from=builder /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/
-COPY --from=builder /usr/local/bin/celery /usr/local/bin/granian /usr/local/bin/
+COPY --from=builder /usr/local/bin/celery /usr/local/bin/granian /usr/local/bin/watchfiles /usr/local/bin/
 
 RUN groupadd --gid 1000 appuser && \
     useradd --uid 1000 --gid appuser --shell /bin/bash --create-home appuser

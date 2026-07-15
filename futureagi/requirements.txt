@@ -1043,6 +1043,8 @@ weaviate-client==4.22.0
     # via core-backend (pyproject.toml)
 webauthn==3.0.0
     # via core-backend (pyproject.toml)
+websocket-client==1.9.0
+    # via core-backend (pyproject.toml)
 websockets==15.0.1
     # via
     #   google-genai

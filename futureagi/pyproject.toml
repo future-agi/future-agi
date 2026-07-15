@@ -104,7 +104,11 @@ dependencies = [
     # lifecycle bug that raises spurious "Transport not initialized" on WS
     # consumer dispatch — revisit when either side fixes it upstream).
     "channels-rabbitmq",
+    # Audio segmentation for STT providers (Deepgram). Tiny pure-python lib.
     "pydub",
+    # WebSocket client used by Deepgram streaming STT in
+    # agentic_eval/.../other_services/deepgram_response.py.
+    "websocket-client",
     "filetype",
     "google-genai",
     "json-repair",
