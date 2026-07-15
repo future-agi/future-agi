@@ -244,7 +244,7 @@ Every row below uses the **same methodology** each vendor uses for their own cla
 
 - **Against Bifrost**, the fastest published Go gateway: Bifrost claims **5 000 req/s** at 11 µs overhead on t3.xlarge (4 vCPU). **On the same t3.xlarge profile** our gateway sustains **~28 900 req/s — roughly 5.7×** the RPS at P99 ≤ 21 ms with 100 % success. On the apples-to-apples microbench, our **weighted target selection runs at ~9.9 ns** (vs their ~10 ns key-pick — we're slightly faster) and our **HTTP router dispatches in 36 ns**. Full chat pipeline in-process measures ~5 µs for a read path and ~66 µs for a full proxy round-trip through the plugin pipeline.
 
-- **Against Portkey**, the Node.js gateway: Portkey ships a 122 KB binary and claims "< 1 ms latency" (unqualified). Our binary is ~140× bigger because it includes the full guardrail stack (18 built-in scanners), 6 exact + 4 semantic cache backends, MCP/A2A/batch/files/realtime/responses/video endpoints, multi-tenant RBAC, and clustering — all compiled in, no plugin marketplace required. The "< 1 ms" claim has no hardware or workload attached; any face-value comparison is apples-to-oranges.
+- **Against Portkey**, the Node.js gateway: Portkey ships a 122 KB binary and claims "< 1 ms latency" (unqualified). Our binary is ~140× bigger because it includes the full guardrail stack (18 built-in scanners), 6 exact + 5 semantic cache backends, MCP/A2A/batch/files/realtime/responses/video endpoints, multi-tenant RBAC, and clustering — all compiled in, no plugin marketplace required. The "< 1 ms" claim has no hardware or workload attached; any face-value comparison is apples-to-oranges.
 
 - **Against Helicone + Kong AI Gateway**: neither publishes performance numbers. Run our harness, then theirs, then tell us.
 
@@ -306,7 +306,7 @@ Nobody publishes a head-to-head gateway comparison. So we did.
 | **Providers** | 100+ | 250+ | 15+ | 100+ | 100+ | ~20 |
 | **OpenAI-compatible** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | **Exact cache backends** | **6** (mem · redis · disk · s3 · gcs · azblob) | mem + redis | mem + redis | redis | ⚠️ limited | redis |
-| **Semantic cache backends** | **4** (mem · pinecone · qdrant · weaviate) | mem | mem | ⚠️ basic | ❌ | ✅ |
+| **Semantic cache backends** | **5** (mem · pinecone · qdrant · weaviate · valkey) | mem | mem | ⚠️ basic | ❌ | ✅ |
 | **Built-in guardrails** | **18 + 15 vendor adapters** ¹ | 40+ plugins | basic | via Lakera | ❌ | basic |
 | **Virtual keys** | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
 | **Budget / cost tracking** | ✅ | ✅ | ✅ | ✅ | ✅ | ⚠️ |
@@ -369,7 +369,7 @@ Corrections welcome — open an issue or send a PR.
 <td>
 
 - **6 exact-cache backends**<br>mem · redis · disk · s3 · gcs · azblob
-- **4 semantic backends**<br>mem · pinecone · qdrant · weaviate
+- **5 semantic backends**<br>mem · pinecone · qdrant · weaviate · valkey
 - TTL, LRU eviction
 - Per-tenant isolation
 - Configurable similarity threshold
@@ -454,7 +454,7 @@ Corrections welcome — open an issue or send a PR.
 
 **One gateway, every modality your providers expose.** Text · chat · vision · embeddings · reranking · speech-to-text · text-to-speech (+ streaming) · realtime WebSocket · image generation · video generation · OCR · grounded search · tool calling · structured output · Assistants + threads · vector stores · batch jobs — all have dedicated gateway routes. The specific model you reach is whatever the configured upstream provider serves at that endpoint; we pass the full provider-native payload through.
 
-**Surface area at a glance:** 🔌 **109 routes** across 23 endpoint categories · 🛡️ **18 built-in guardrails + 15 external vendor adapters** · 🧠 **15 routing strategies** · 🔧 **16 pipeline plugins** · 🔄 **2 cross-provider translators** (OpenAI ↔ Anthropic · OpenAI ↔ Gemini) · 🌐 **7 native provider packages** · 🔒 **6 secret resolvers** (AWS SM · Azure KV · GCP SM · HashiCorp Vault · env · file) · 💾 **10 cache backends** (6 exact + 4 semantic) · 🧩 **39 internal subsystems**. Every count is grep-verifiable in the tree.
+**Surface area at a glance:** 🔌 **109 routes** across 23 endpoint categories · 🛡️ **18 built-in guardrails + 15 external vendor adapters** · 🧠 **15 routing strategies** · 🔧 **16 pipeline plugins** · 🔄 **2 cross-provider translators** (OpenAI ↔ Anthropic · OpenAI ↔ Gemini) · 🌐 **7 native provider packages** · 🔒 **6 secret resolvers** (AWS SM · Azure KV · GCP SM · HashiCorp Vault · env · file) · 💾 **11 cache backends** (6 exact + 5 semantic) · 🧩 **39 internal subsystems**. Every count is grep-verifiable in the tree.
 
 ### 🌈 Modalities
 
@@ -715,7 +715,7 @@ One gateway HTTP endpoint, each provider's native protocol preserved — we don'
 
 Add a new provider with ~30 lines of YAML — no code changes. See [`config.example.yaml`](./config.example.yaml).
 
-### 💾 Cache — 6 exact backends + 4 semantic
+### 💾 Cache — 6 exact backends + 5 semantic
 
 Two-tier: L1 exact-match on the request hash, L2 semantic on the embedding. First gateway to ship both in production.
 

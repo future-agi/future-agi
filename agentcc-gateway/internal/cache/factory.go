@@ -106,7 +106,16 @@ func NewSemanticBackend(cfg config.SemanticCacheConfig) (SemanticBackend, error)
 		slog.Info("semantic cache backend: pinecone", "url", p.URL)
 		return backend, nil
 
+	case "valkey":
+		vk := cfg.Valkey
+		backend, err := NewValkeyBackend(vk.Address, vk.Password, vk.Index, vk.Prefix, threshold, dims, vk.Timeout)
+		if err != nil {
+			return nil, fmt.Errorf("valkey semantic cache: %w", err)
+		}
+		slog.Info("semantic cache backend: valkey", "address", vk.Address, "index", vk.Index)
+		return backend, nil
+
 	default:
-		return nil, fmt.Errorf("unknown semantic cache backend %q (supported: memory, qdrant, weaviate, pinecone)", cfg.Backend)
+		return nil, fmt.Errorf("unknown semantic cache backend %q (supported: memory, qdrant, weaviate, pinecone, valkey)", cfg.Backend)
 	}
 }
