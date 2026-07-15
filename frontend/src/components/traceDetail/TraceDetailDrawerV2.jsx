@@ -62,11 +62,11 @@ const ACTION_ITEMS = [
     icon: "mdi:pencil-box-outline",
     spanTypes: ["llm"],
   },
-  // {
-  //   id: "playground",
-  //   label: "Iterate in agent playground",
-  //   icon: "mdi:gamepad-variant-outline",
-  // },
+  {
+    id: "playground",
+    label: "Iterate in agent playground",
+    icon: "mdi:gamepad-variant-outline",
+  },
   { id: "tags", label: "Add Tags", icon: "mdi:tag-outline" },
   { id: "annotate", label: "Annotate", icon: "mdi:comment-text-outline" },
   { id: "queue", label: "Add to annotation queue", icon: "mdi:playlist-plus" },
