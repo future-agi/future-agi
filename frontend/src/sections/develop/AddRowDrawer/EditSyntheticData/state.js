@@ -13,6 +13,8 @@ export const useEditSyntheticDataStore = create((set) => ({
   failedToGenerateData: false,
   setFailedToGenerateData: (failedToGenerateData) =>
     set({ failedToGenerateData }),
+  failureReason: null,
+  setFailureReason: (failureReason) => set({ failureReason }),
 }));
 
 export const resetEditSyntheticStates = () => {
@@ -22,5 +24,6 @@ export const resetEditSyntheticStates = () => {
     openConfirmEdit: false,
     openDatasetCreateOptions: false,
     failedToGenerateData: false,
+    failureReason: null,
   });
 };
