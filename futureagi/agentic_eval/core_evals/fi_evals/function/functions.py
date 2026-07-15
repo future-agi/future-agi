@@ -3573,19 +3573,36 @@ def _parse_number_list(val):
     return [float(val)]
 
 
+def _pearson_r(x, y):
+    """
+    Compute the Pearson correlation coefficient between two equal-length lists.
+
+    Args:
+        x (List[float]): First series.
+        y (List[float]): Second series.
+
+    Returns:
+        float | None: The coefficient, or None if either series has zero variance
+            (the correlation is undefined there rather than zero).
+    """
+    n = len(x)
+    mx, my = sum(x) / n, sum(y) / n
+    ss_x = sum((xi - mx) ** 2 for xi in x)
+    ss_y = sum((yi - my) ** 2 for yi in y)
+    if ss_x == 0 or ss_y == 0:
+        return None
+    return sum((xi - mx) * (yi - my) for xi, yi in zip(x, y)) / (ss_x * ss_y) ** 0.5
+
+
 def calculate_pearson_correlation(output, expected, **kwargs):
     """Compute Pearson correlation coefficient between two sets of values."""
     x = _parse_number_list(output)
     y = _parse_number_list(expected)
     if len(x) != len(y) or len(x) < 2:
         return {"result": 0.0, "reason": f"Invalid input: {len(x)} vs {len(y)} values (need >=2)"}
-    n = len(x)
-    mx, my = sum(x) / n, sum(y) / n
-    ss_x = sum((xi - mx) ** 2 for xi in x)
-    ss_y = sum((yi - my) ** 2 for yi in y)
-    if ss_x == 0 or ss_y == 0:
+    r = _pearson_r(x, y)
+    if r is None:
         return {"result": 0.0, "reason": "Zero variance in one or both inputs"}
-    r = sum((xi - mx) * (yi - my) for xi, yi in zip(x, y)) / (ss_x * ss_y) ** 0.5
     score = (r + 1) / 2  # Normalize from [-1,1] to [0,1]
     return {"result": score, "reason": f"Pearson r={r:.4f}, normalized={score:.4f}"}
 
@@ -3612,9 +3629,14 @@ def calculate_spearman_correlation(output, expected, **kwargs):
             i = j + 1
         return ranks
 
+    # Spearman's rho is Pearson's r over the ranks. The 1 - 6*sum(d^2)/(n(n^2-1))
+    # shortcut is an algebraic simplification that only holds when both rank
+    # vectors are permutations of 1..n; with tied values _rank returns midranks,
+    # which breaks that assumption and yields a wrong (sometimes sign-flipped) rho.
     rx, ry = _rank(x), _rank(y)
-    d_sq = sum((rxi - ryi) ** 2 for rxi, ryi in zip(rx, ry))
-    rho = 1 - (6 * d_sq) / (n * (n ** 2 - 1))
+    rho = _pearson_r(rx, ry)
+    if rho is None:
+        return {"result": 0.0, "reason": "Zero variance in one or both inputs"}
     score = (rho + 1) / 2
     return {"result": score, "reason": f"Spearman rho={rho:.4f}, normalized={score:.4f}"}
 
