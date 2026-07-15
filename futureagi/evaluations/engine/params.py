@@ -118,9 +118,6 @@ def _get_few_shot_examples(
                 inputs=input_values,
                 input_cols=input_keys,
                 organization_id=organization_id,
-                # Retrieval is org-scoped for now; the write path still
-                # tags rows with workspace_id so we can flip to workspace
-                # -aware later without a backfill.
                 workspace_id=None,
             )
             # print(f"[FEEDBACK RETRIEVAL] RAG returned {len(examples)} examples for eval_template={eval_template.id}", flush=True)

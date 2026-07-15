@@ -101,8 +101,8 @@ def resolve_feedback_template_data(
         choice labels and the FE must render a picker (radio or checkbox)
         regardless of ``output_type``
       * ``multi_choice`` (checkbox vs radio for the CHOICES branch) is
-        sourced from the template's canonical ``multi_choice`` field;
-        metrics do not override this.
+        sourced from the pinned/default template version snapshot, else
+        the template's canonical ``multi_choice`` field.
     """
 
     template_config = eval_template.config or {}
@@ -128,26 +128,13 @@ def resolve_feedback_template_data(
         else:
             data["choices"] = []
 
-        # `multi_choice` resolution: prefer the version snapshot when the
-        # metric resolves to a template version that captured it (users can
-        # create multiple versions that toggle multi_choice); fall back to
-        # the template's canonical direct field. The `template.config`
-        # nested key is intentionally ignored because it is often unset
-        # even when the direct field is True (e.g. the tone system
-        # template, whose yaml populates the direct field only).
         resolved_version = EvalTemplateVersion.objects.resolve_for_metric(
             user_eval_metric
         )
-        version_snapshot = (
-            (resolved_version.config_snapshot or {})
-            if resolved_version
-            else {}
-        )
-        if "multi_choice" in version_snapshot:
-            data["multi_choice"] = bool(version_snapshot["multi_choice"])
+        snapshot = (resolved_version.config_snapshot or {}) if resolved_version else {}
+        if "multi_choice" in snapshot:
+            data["multi_choice"] = bool(snapshot["multi_choice"])
         else:
-            data["multi_choice"] = bool(
-                getattr(eval_template, "multi_choice", False)
-            )
+            data["multi_choice"] = bool(getattr(eval_template, "multi_choice", False))
 
     return data

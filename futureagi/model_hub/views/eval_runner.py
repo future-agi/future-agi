@@ -878,9 +878,6 @@ class EvaluationRunner:
                 inputs=mapping,
                 input_cols=required_field,
                 organization_id=self.organization_id,
-                # Retrieval is org-scoped for now; the write path still
-                # tags rows with workspace_id so we can flip to workspace
-                # -aware later without a backfill.
                 workspace_id=None,
             )
             end_time = datetime.now()
