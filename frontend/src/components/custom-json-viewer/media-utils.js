@@ -1,3 +1,5 @@
+import { isAudioUrlString } from "src/components/inline-audio/audio-detection";
+
 /**
  * Shared media detection and src sanitization helpers for JSON viewers.
  * Detection patterns adapted from content-panel.jsx (lines 756-770)
@@ -49,18 +51,14 @@ export function isImageValue(value) {
   if (typeof value !== "string") return false;
   return (
     value.startsWith("data:image") ||
-    /\.(png|jpg|jpeg|gif|webp|svg)(\?|$)/i.test(value)
+    /\.(png|jpg|jpeg|gif|webp|svg)(\?|#|$)/i.test(value)
   );
 }
 
 /**
- * Returns true when `value` looks like audio — either a data:audio
- * base64 string or a URL whose path ends with a common audio extension.
+ * Returns true when `value` looks like audio — reuses the existing
+ * audio-detection helper so we have one source of truth for audio URLs.
  */
 export function isAudioValue(value) {
-  if (typeof value !== "string") return false;
-  return (
-    value.startsWith("data:audio") ||
-    /\.(mp3|wav|ogg|m4a|aac|flac|webm)(\?|$)/i.test(value)
-  );
+  return isAudioUrlString(value);
 }

@@ -19,7 +19,10 @@ const MiniImageRender = ({ value }) => {
         src={safeSrc}
         alt="Preview"
         style={{ display: "inline-block", cursor: "pointer" }}
-        onClick={() => setOpen(true)}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
       />
       <Dialog open={open} onClose={() => setOpen(false)} maxWidth="lg">
         <DialogContent
@@ -43,7 +46,11 @@ const MiniAudioRender = ({ value }) => {
 
   if (!safeSrc) return <span>{value}</span>;
 
-  return <InlineAudio src={safeSrc} />;
+  return (
+    <div onClick={(e) => e.stopPropagation()}>
+      <InlineAudio src={safeSrc} />
+    </div>
+  );
 };
 
 MiniAudioRender.propTypes = {
