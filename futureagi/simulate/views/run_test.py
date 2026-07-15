@@ -3474,12 +3474,41 @@ class CallExecutionLogsView(APIView):
                             call_execution_id=str(call_execution.id),
                         )
                     else:
+                        # Resolve the customer api_key so the ingest task can
+                        # hit the authenticated call-log endpoint. Absent, the
+                        # task falls back to the legacy unauthenticated URL.
+                        provider_call_id = None
+                        provider_api_key = None
+                        try:
+                            from tracer.utils.vapi_recording import (
+                                VapiRecordingService,
+                            )
+
+                            test_exec = getattr(
+                                call_execution, "test_execution", None
+                            )
+                            agent_def = getattr(test_exec, "agent_definition", None) if test_exec else None
+                            if agent_def is not None:
+                                provider_api_key = (
+                                    VapiRecordingService.get_api_key_for_agent_definition(
+                                        agent_def.id
+                                    )
+                                )
+                            provider_call_id = (
+                                vapi.get("id") if isinstance(vapi, dict) else None
+                            )
+                        except Exception:
+                            provider_api_key = None
+                            provider_call_id = None
+
                         try:
                             ingest_call_logs_task.apply_async(
                                 args=(str(call_execution.id), log_url),
                                 kwargs={
                                     "verify_ssl": False,
                                     "source": CallLogEntry.LogSource.CUSTOMER,
+                                    "call_id": provider_call_id,
+                                    "api_key": provider_api_key,
                                 },
                             )
                         except Exception:

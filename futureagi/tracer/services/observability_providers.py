@@ -437,7 +437,12 @@ class ObservabilityService:
             return None
 
     @staticmethod
-    def _process_vapi_logs(raw_log: dict) -> VoiceCallLogs:
+    def _process_vapi_logs(
+        raw_log: dict,
+        span_attributes: dict | None = None,
+    ) -> VoiceCallLogs:
+
+        sa = span_attributes or {}
 
         def raw_log_get(key: str) -> Any:
             return raw_log.get(key)
@@ -451,15 +456,22 @@ class ObservabilityService:
         created_at = raw_log_get("createdAt")
         ended_at = raw_log_get("endedAt")
         status = "completed" if raw_log_get("status") == "ended" else "in-progress"
-        stereo_recording_url = (
-            raw_log_get("artifact").get("stereoRecordingUrl")
-            if raw_log_get("artifact")
-            else None
+        recording_url = (
+            sa.get("recording_url")
+            or sa.get("conversation.recording.mono.combined")
+            or (raw_log.get("artifact") or {}).get("recording", {}).get("mono", {}).get("combinedUrl")
+            or raw_log.get("recordingUrl")
         )
+        stereo_recording_url = (
+            sa.get("stereo_recording_url")
+            or sa.get("conversation.recording.stereo")
+            or (raw_log.get("artifact") or {}).get("recording", {}).get("stereoUrl")
+            or (raw_log.get("artifact") or {}).get("stereoRecordingUrl")
+        )
+
+        recording_available = bool(recording_url)
         summary = raw_log_get("summary")
         ended_reason = raw_log_get("endedReason")
-        recording_url = raw_log_get("recordingUrl")
-        recording_available = bool(recording_url)
         messages = raw_log_get("messages") or []
         transcript_available = len(messages) > 0
         cost = raw_log_get("cost")
@@ -820,7 +832,7 @@ class ObservabilityService:
             }
 
         if provider == ProviderChoices.VAPI:
-            processed = ObservabilityService._process_vapi_logs(raw_log)
+            processed = ObservabilityService._process_vapi_logs(raw_log, span_attributes)
         elif provider == ProviderChoices.RETELL:
             processed = ObservabilityService._process_retell_logs(raw_log)
         elif provider == ProviderChoices.ELEVEN_LABS:
@@ -833,12 +845,24 @@ class ObservabilityService:
             raise ValueError(f"Invalid choice for provider: {provider}")
 
         if span_attributes:
-            mono_combined = span_attributes.get("conversation.recording.mono.combined")
-            stereo = span_attributes.get("conversation.recording.stereo")
-            if mono_combined:
-                processed["recording_url"] = mono_combined
-            if stereo:
-                processed["stereo_recording_url"] = stereo
+            from tracer.utils.vapi_recording import VapiRecordingService
+
+            mono_s3 = (
+                span_attributes.get("recording_url")
+                or span_attributes.get("conversation.recording.mono.combined")
+            )
+            stereo_s3 = (
+                span_attributes.get("stereo_recording_url")
+                or span_attributes.get("conversation.recording.stereo")
+            )
+            if mono_s3 and VapiRecordingService.is_s3_url(mono_s3) and not VapiRecordingService.is_s3_url(
+                processed.get("recording_url")
+            ):
+                processed["recording_url"] = mono_s3
+            if stereo_s3 and VapiRecordingService.is_s3_url(stereo_s3) and not VapiRecordingService.is_s3_url(
+                processed.get("stereo_recording_url")
+            ):
+                processed["stereo_recording_url"] = stereo_s3
 
         return processed
 

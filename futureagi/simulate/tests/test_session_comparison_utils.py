@@ -206,8 +206,8 @@ class TestFetchSimulatedCallRecordings:
         result = session_comparison.fetch_simulated_call_recordings(call_exec)
         assert result == {}
 
-    def test_single_provider_key(self):
-        """When provider_call_data has a single key, use its value."""
+    def test_non_vapi_single_provider_returns_empty(self):
+        """A Retell-only payload does not match the Vapi extractor shape and returns empty."""
         call_exec = SimpleNamespace(
             provider_call_data={
                 "retell": {
@@ -221,8 +221,7 @@ class TestFetchSimulatedCallRecordings:
             recording_url=None,
             stereo_recording_url=None,
         )
-        result = session_comparison.fetch_simulated_call_recordings(call_exec)
-        assert result == {"stereo": "https://example.com/retell-stereo.wav"}
+        assert session_comparison.fetch_simulated_call_recordings(call_exec) == {}
 
 
 @pytest.mark.unit

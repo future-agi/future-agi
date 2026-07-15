@@ -6,6 +6,7 @@ in high-concurrency scenarios.
 
 Uses httpx for async HTTP operations (already available in the project).
 """
+from typing import Optional
 
 import httpx
 import structlog
@@ -20,9 +21,14 @@ DOWNLOAD_TIMEOUT = 200.0  # seconds
 
 
 async def download_audio_from_url_async(
-    audio_url: str,
+    audio_url: Optional[str],
     max_retries: int = 5,
     timeout: float = DOWNLOAD_TIMEOUT,
+    *,
+    provider: Optional[str] = None,
+    api_key: Optional[str] = None,
+    call_id: Optional[str] = None,
+    artifact_type: Optional[str] = None,
 ) -> bytes:
     """
     Async version of download_audio_from_url using httpx.
@@ -42,6 +48,19 @@ async def download_audio_from_url_async(
         httpx.HTTPError: On download failure after retries
         ValueError: If file exceeds size limit
     """
+    from tracer.utils.vapi_recording import VapiRecordingService
+
+    if VapiRecordingService.is_authenticated_download(provider, api_key, call_id, artifact_type):
+        return await VapiRecordingService.download_artifact_async(
+            call_id=call_id,
+            artifact_type=artifact_type,
+            api_key=api_key,
+            timeout_seconds=timeout,
+        )
+
+    if not audio_url:
+        raise ValueError("audio_url is required for unauthenticated download")
+
     last_error = None
 
     async with httpx.AsyncClient(timeout=timeout) as client:
@@ -89,8 +108,13 @@ async def download_audio_from_url_async(
 
 async def _convert_audio_url_to_s3_async_with_size(
     call_id: str,
-    audio_url: str,
+    audio_url: Optional[str],
     url_type: str = "audio",
+    *,
+    provider: Optional[str] = None,
+    api_key: Optional[str] = None,
+    vapi_call_id: Optional[str] = None,
+    artifact_type: Optional[str] = None,
 ) -> tuple[str, int]:
     """Internal worker that does the download + upload and reports size.
 
@@ -98,11 +122,22 @@ async def _convert_audio_url_to_s3_async_with_size(
     bytes count is 0 when the source URL was already on S3 or the upload
     did not succeed; callers can use that to decide whether to bill.
     """
-    if not audio_url:
+    from tracer.utils.vapi_recording import VapiRecordingService
+
+    # ``call_id`` positional is the S3-object-key ID. ``vapi_call_id`` kwarg
+    # is the provider-side call ID used for the authenticated endpoint. In
+    # the observability rehost path the two happen to be equal, so callers
+    # that don't split them fall back to positional.
+    auth_call_id = vapi_call_id or call_id
+    vapi_authenticated = VapiRecordingService.is_authenticated_download(
+        provider, api_key, auth_call_id, artifact_type
+    )
+
+    if not audio_url and not vapi_authenticated:
         return audio_url, 0
 
     # Check if already an S3 URL
-    if "amazonaws.com" in str(audio_url) or "minio" in str(audio_url):
+    if audio_url and ("amazonaws.com" in str(audio_url) or "minio" in str(audio_url)):
         logger.info(f"{url_type} URL is already S3: {audio_url}")
         return audio_url, 0
 
@@ -110,7 +145,13 @@ async def _convert_audio_url_to_s3_async_with_size(
         logger.info(f"Converting {url_type} URL to S3: {audio_url}")
 
         # Async download
-        audio_bytes = await download_audio_from_url_async(audio_url)
+        audio_bytes = await download_audio_from_url_async(
+            audio_url,
+            provider=provider,
+            api_key=api_key,
+            call_id=auth_call_id,
+            artifact_type=artifact_type,
+        )
 
         # S3 upload (still sync - minio client doesn't have async support)
         # We use run_in_executor for just the upload, which is faster than download
@@ -144,8 +185,13 @@ async def _convert_audio_url_to_s3_async_with_size(
 
 async def convert_audio_url_to_s3_async(
     call_id: str,
-    audio_url: str,
+    audio_url: Optional[str],
     url_type: str = "audio",
+    *,
+    provider: Optional[str] = None,
+    api_key: Optional[str] = None,
+    vapi_call_id: Optional[str] = None,
+    artifact_type: Optional[str] = None,
 ) -> str:
     """
     Async version of convert_audio_url_to_s3.
@@ -164,15 +210,26 @@ async def convert_audio_url_to_s3_async(
         str: S3 URL or original URL if conversion fails
     """
     s3_url, _ = await _convert_audio_url_to_s3_async_with_size(
-        call_id, audio_url, url_type
+        call_id,
+        audio_url,
+        url_type,
+        provider=provider,
+        api_key=api_key,
+        vapi_call_id=vapi_call_id,
+        artifact_type=artifact_type,
     )
     return s3_url
 
 
 async def convert_audio_url_to_s3_async_with_size(
     call_id: str,
-    audio_url: str,
+    audio_url: Optional[str],
     url_type: str = "audio",
+    *,
+    provider: Optional[str] = None,
+    api_key: Optional[str] = None,
+    vapi_call_id: Optional[str] = None,
+    artifact_type: Optional[str] = None,
 ) -> tuple[str, int]:
     """Like `convert_audio_url_to_s3_async` but also reports uploaded bytes.
 
@@ -181,5 +238,11 @@ async def convert_audio_url_to_s3_async_with_size(
     billing call sites can sum it directly without re-checking the URL.
     """
     return await _convert_audio_url_to_s3_async_with_size(
-        call_id, audio_url, url_type
+        call_id,
+        audio_url,
+        url_type,
+        provider=provider,
+        api_key=api_key,
+        vapi_call_id=vapi_call_id,
+        artifact_type=artifact_type,
     )
