@@ -133,6 +133,165 @@ class TestAddItemsEnumeratedRegression:
         item = QueueItem.objects.get(queue=active_queue, trace=t, deleted=False)
         assert str(item.project_id) == str(observe_project.id)
 
+    def test_enumerated_scoped_with_project_id(
+        self, auth_client, active_queue, observe_project
+    ):
+        """With the payload ``project_id``, the source resolves through the scoped batch
+        read (the fast path the FE now sends) and the item is added + stamped."""
+        t = Trace.objects.create(project=observe_project, name="t-scoped")
+        _seed_ch_trace_root(t)
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "items": [{"source_type": "trace", "source_id": str(t.id)}],
+                "project_id": str(observe_project.id),
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        assert resp.data["result"]["added"] == 1
+        item = QueueItem.objects.get(queue=active_queue, trace=t, deleted=False)
+        assert str(item.project_id) == str(observe_project.id)
+
+    def test_enumerated_payload_dedupe_counts_once(
+        self, auth_client, active_queue, observe_project
+    ):
+        """A repeated (source_type, id) in ONE payload creates a single row — the batch
+        resolve-then-create path dedupes within the payload (the old per-item .exists()
+        only caught ids already committed, so two copies in one request slipped through)."""
+        t = Trace.objects.create(project=observe_project, name="t-dedupe")
+        _seed_ch_trace_root(t)
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "items": [
+                    {"source_type": "trace", "source_id": str(t.id)},
+                    {"source_type": "trace", "source_id": str(t.id)},
+                ],
+                "project_id": str(observe_project.id),
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        assert resp.data["result"]["added"] == 1
+        assert resp.data["result"]["duplicates"] == 1
+        assert (
+            QueueItem.objects.filter(queue=active_queue, trace=t, deleted=False).count()
+            == 1
+        )
+
+    def test_enumerated_project_id_scopes_out_other_project(
+        self, auth_client, active_queue, organization, workspace
+    ):
+        """A ``project_id`` scopes the CH read to that tenant: a trace living in another
+        project can't be resolved under it (reported not-found), while the same trace
+        resolves under its real project. Pins the scoped-resolution semantics."""
+        proj_a = Project.objects.create(
+            name="scope-proj-a",
+            organization=organization,
+            workspace=workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        proj_b = Project.objects.create(
+            name="scope-proj-b",
+            organization=organization,
+            workspace=workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        t = Trace.objects.create(project=proj_a, name="t-in-a")
+        _seed_ch_trace_root(t)
+
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "items": [{"source_type": "trace", "source_id": str(t.id)}],
+                "project_id": str(proj_b.id),
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        assert resp.data["result"]["added"] == 0
+        assert resp.data["result"]["errors"]
+
+        resp_a = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "items": [{"source_type": "trace", "source_id": str(t.id)}],
+                "project_id": str(proj_a.id),
+            },
+            format="json",
+        )
+        assert resp_a.data["result"]["added"] == 1
+
+    def test_enumerated_add_batches_span_reads(
+        self, auth_client, active_queue, observe_project
+    ):
+        """N collector-span items resolve in ONE batched CH read (``list_by_ids`` once
+        with every id), never a point-read per item — the N+1 this change removes."""
+        from unittest import mock
+
+        from model_hub.tests.test_ch25_annotation_collector_source_resolution import (
+            _CountingReaderCM,
+            _make_chspan,
+        )
+
+        spans = [_make_chspan(project_id=observe_project.id) for _ in range(3)]
+        reader_cm = _CountingReaderCM(spans)
+        payload = {
+            "items": [
+                {"source_type": "observation_span", "source_id": str(s.id)}
+                for s in spans
+            ],
+            "project_id": str(observe_project.id),
+        }
+        with mock.patch(
+            "tracer.services.clickhouse.v2.get_reader", return_value=reader_cm
+        ):
+            resp = auth_client.post(
+                _add_items_url(active_queue.id), payload, format="json"
+            )
+        assert resp.status_code == 200, resp.data
+        assert resp.data["result"]["added"] == 3
+        assert len(reader_cm.list_by_ids_calls) == 1, reader_cm.list_by_ids_calls
+        assert set(reader_cm.list_by_ids_calls[0]) == {str(s.id) for s in spans}
+        assert reader_cm.get_calls == []
+
+    def test_enumerated_add_ch_failure_fails_open(
+        self, auth_client, active_queue, observe_project
+    ):
+        """A CH read failure during resolve fails OPEN — the unresolved items surface in
+        ``errors`` and the request is a clean 200, never a 500 that pins a worker."""
+        import uuid
+        from unittest import mock
+
+        class _RaisingReaderCM:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def list_by_ids(self, *args, **kwargs):
+                raise RuntimeError("CH unavailable")
+
+        span_id = f"ch-span-{uuid.uuid4().hex[:12]}"
+        payload = {
+            "items": [{"source_type": "observation_span", "source_id": span_id}],
+            "project_id": str(observe_project.id),
+        }
+        with mock.patch(
+            "tracer.services.clickhouse.v2.get_reader",
+            return_value=_RaisingReaderCM(),
+        ):
+            resp = auth_client.post(
+                _add_items_url(active_queue.id), payload, format="json"
+            )
+        assert resp.status_code == 200, resp.data
+        assert resp.data["result"]["added"] == 0
+        assert resp.data["result"]["errors"]
+
 
 # --------------------------------------------------------------------------
 # Filter-mode — happy + exclude + duplicates + truncation

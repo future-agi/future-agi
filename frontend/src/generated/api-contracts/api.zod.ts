@@ -13143,7 +13143,8 @@ export const ModelHubAnnotationQueuesItemsAddItemsBody = zod.object({
   "exclude_ids": zod.array(zod.string().min(1)).default(modelHubAnnotationQueuesItemsAddItemsBodySelectionExcludeIdsDefault),
   "remove_simulation_calls": zod.boolean().default(modelHubAnnotationQueuesItemsAddItemsBodySelectionRemoveSimulationCallsDefault),
   "is_voice_call": zod.boolean().default(modelHubAnnotationQueuesItemsAddItemsBodySelectionIsVoiceCallDefault)
-}).optional()
+}).optional(),
+  "project_id": zod.string().uuid().optional()
 })
 
 export const modelHubAnnotationQueuesItemsAddItemsResponseStatusDefault = true;

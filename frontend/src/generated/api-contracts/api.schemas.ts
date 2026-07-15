@@ -6038,6 +6038,7 @@ export interface SelectionApi {
 export interface AddItemsApi {
   items?: AddQueueItemApi[];
   selection?: SelectionApi;
+  project_id?: string;
 }
 
 export interface QueueAddItemsResultApi {

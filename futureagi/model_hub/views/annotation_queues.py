@@ -127,6 +127,7 @@ from model_hub.utils.annotation_queue_helpers import (
     is_source_available_for_annotation,
     resolve_source_content,
     resolve_source_object,
+    resolve_source_objects_bulk,
 )
 from model_hub.utils.utils import send_message_to_channel
 from simulate.models.test_execution import CallTranscript
@@ -2684,6 +2685,11 @@ def _ensure_default_queue_member_can_manage(queue, user):
     )
 
 
+# Cap the rows per INSERT / UPDATE round-trip so a large add (thousands of items) can't
+# build one oversized statement — the FE already chunks add-items requests at 500.
+_BULK_ADD_BATCH_SIZE = 500
+
+
 def _finalize_bulk_add(queue, items_to_create):
     """Bulk-create QueueItems, run auto-assign, flip queue status if needed.
 
@@ -2699,14 +2705,18 @@ def _finalize_bulk_add(queue, items_to_create):
     created = []
     if items_to_create:
         with transaction.atomic():
-            created = QueueItem.objects.bulk_create(items_to_create)
+            created = QueueItem.objects.bulk_create(
+                items_to_create, batch_size=_BULK_ADD_BATCH_SIZE
+            )
 
     # Auto-assign: when auto_assign is True, assign all items to all annotators
     # (each item gets no specific assigned_to — all members can work on any
     # item). When using round-robin/load-balanced strategy, distribute items.
     if created and queue.assignment_strategy != "manual":
         auto_assign_items(queue, created)
-        QueueItem.objects.bulk_update(created, ["assigned_to"])
+        QueueItem.objects.bulk_update(
+            created, ["assigned_to"], batch_size=_BULK_ADD_BATCH_SIZE
+        )
     elif created and queue.auto_assign:
         assign_items_to_all_annotators(queue, created)
 
@@ -4362,7 +4372,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                     if _trace_source_ids:
                         _ch_project_by_trace = {
                             tid: pid
-                            for tid, (_root_id, pid) in _reader_bulk.root_ids_by_trace_ids(
+                            for tid, (
+                                _root_id,
+                                pid,
+                            ) in _reader_bulk.root_ids_by_trace_ids(
                                 _trace_source_ids
                             ).items()
                         }
@@ -4760,37 +4773,49 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         if data.get("selection"):
             return self._add_items_filter_mode(request, queue, data["selection"])
 
-        return self._add_items_enumerated(request, queue, data["items"])
-
-    def _add_items_enumerated(self, request, queue, items_data):
-        """Add QueueItems from an explicit list of (source_type, source_id) dicts."""
-        duplicates = 0
-        errors = []
-        items_to_create = []
-
-        max_order = (
-            QueueItem.objects.filter(queue=queue, deleted=False)
-            .order_by("-order")
-            .values_list("order", flat=True)
-            .first()
-            or 0
+        return self._add_items_enumerated(
+            request, queue, data["items"], project_id=data.get("project_id")
         )
 
+    def _add_items_enumerated(self, request, queue, items_data, project_id=None):
+        """Add QueueItems from an explicit list of (source_type, source_id) dicts.
+
+        Resolves every source in one batched read per kind — scoped by *project_id* for
+        the CH-native kinds — then bulk-creates, replacing the former per-item N+1 (a
+        fresh CH client + point read + ``.exists()`` dup-check per item) that blew the
+        30s gateway on large adds. *project_id* is the payload's project (the add dialog
+        is project-scoped, like filter mode); without it the CH kinds resolve per item,
+        bounded but unscoped."""
+        from collections import defaultdict
+
+        organization = request.organization
+        workspace = getattr(request, "workspace", None)
+
+        resolved = resolve_source_objects_bulk(
+            items_data,
+            project_id=project_id,
+            organization=organization,
+            workspace=workspace,
+        )
+
+        duplicates = 0
+        errors = []
+        # (source_type, fk_field, source_pk, source_obj), deduped within the payload so
+        # a repeated id can't create two rows (the old per-item .exists() only caught
+        # ids already committed to the DB).
+        candidates = []
+        seen_in_payload = set()
+        pks_by_fk = defaultdict(list)
         for item_data in items_data:
             source_type = item_data["source_type"]
-            source_id = item_data["source_id"]
+            source_id = str(item_data["source_id"])
             fk_field = get_fk_field_name(source_type)
 
             if not fk_field:
                 errors.append(f"Invalid source_type: {source_type}")
                 continue
 
-            source_obj = resolve_source_object(
-                source_type,
-                source_id,
-                organization=request.organization,
-                workspace=getattr(request, "workspace", None),
-            )
+            source_obj = resolved.get((source_type, source_id))
             if not source_obj:
                 errors.append(f"Not found: {source_type}={source_id}")
                 continue
@@ -4804,26 +4829,47 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
 
             # Soft id, not the FK object (CH source isn't a Django instance;
             # QueueItem FKs are db_constraint=False). Mirrors the serializer.
-            source_pk = getattr(source_obj, "pk", None) or getattr(
-                source_obj, "id", None
+            source_pk = str(
+                getattr(source_obj, "pk", None) or getattr(source_obj, "id", None)
             )
 
-            dup_filter = {
-                "queue": queue,
-                f"{fk_field}_id": source_pk,
-                "deleted": False,
-            }
-            if QueueItem.objects.filter(**dup_filter).exists():
+            if (fk_field, source_pk) in seen_in_payload:
                 duplicates += 1
                 continue
+            seen_in_payload.add((fk_field, source_pk))
+            candidates.append((source_type, fk_field, source_pk, source_obj))
+            pks_by_fk[fk_field].append(source_pk)
 
+        # One dup-check IN per FK field (vs a .exists() per item).
+        existing_by_fk = {
+            fk_field: {
+                str(existing)
+                for existing in QueueItem.objects.filter(
+                    queue=queue, deleted=False, **{f"{fk_field}_id__in": pks}
+                ).values_list(f"{fk_field}_id", flat=True)
+            }
+            for fk_field, pks in pks_by_fk.items()
+        }
+
+        max_order = (
+            QueueItem.objects.filter(queue=queue, deleted=False)
+            .order_by("-order")
+            .values_list("order", flat=True)
+            .first()
+            or 0
+        )
+        items_to_create = []
+        for source_type, fk_field, source_pk, source_obj in candidates:
+            if source_pk in existing_by_fk.get(fk_field, ()):
+                duplicates += 1
+                continue
             max_order += 1
             items_to_create.append(
                 QueueItem(
                     queue=queue,
                     source_type=source_type,
-                    organization=request.organization,
-                    workspace=getattr(request, "workspace", None) or queue.workspace,
+                    organization=organization,
+                    workspace=workspace or queue.workspace,
                     project_id=getattr(source_obj, "project_id", None),
                     order=max_order,
                     **{f"{fk_field}_id": source_pk},
