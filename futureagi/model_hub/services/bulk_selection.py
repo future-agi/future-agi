@@ -31,11 +31,14 @@ CH 25.3 migration status (KEEP-PG transitional bridge):
 
   Hot-path production traffic already routes through ClickHouse via
   ``_resolve_trace_ids_clickhouse`` and ``_resolve_voice_call_ids_clickhouse``
-  (lines 469-664) using the v2 ``query_builders`` package and the
-  ``ClickHouseFilterBuilder`` translator. The PG paths below are
-  fallbacks for: (a) missing time-filter case (see
-  ``_has_explicit_time_filter``), (b) span filter-mode (no CH dispatch
-  exists at this layer yet), and (c) session filter-mode.
+  using the ``query_builders`` package and the ``ClickHouseFilterBuilder``
+  translator. Trace, voice and session filter-mode all dispatch to CH
+  unconditionally: a payload with no explicit time filter widens to an
+  all-history window (``_has_explicit_time_filter`` → wide-open ``start_time``
+  bound) instead of routing to PG, so automation rules and "select all
+  matching" resolves stay on the fast columnar backend. The PG paths below
+  are the CH-outage fallback only, plus span filter-mode, which has no CH
+  dispatch at this layer yet.
 
   Reader-extension proposals (status updated wave-3):
 
@@ -165,6 +168,28 @@ def _has_explicit_time_filter(filters: list[dict] | None) -> bool:
         if value not in (None, "", []):
             return True
     return False
+
+
+def _all_history_time_filter() -> dict:
+    """A wide-open ``start_time`` bound that cancels the CH list builders'
+    default now-30d narrowing so a filter resolves across ALL history.
+
+    Start is 1971-01-01, NOT the 1970-01-01 epoch: the trace and voice list
+    builders add ``created_at >= start_date - INTERVAL 1 DAY`` for partition
+    pruning, and CH ``DateTime`` is a 32-bit epoch — subtracting a day from
+    1970-01-01 UNDERFLOWS to ~2106, and the clause then matches nothing (an
+    automation rule would resolve zero rows). A year of margin keeps the lower
+    bound safely past the epoch while still covering every real timestamp. The
+    session builder has no ``- INTERVAL 1 DAY`` clause and is unaffected.
+    """
+    return {
+        "column_id": "start_time",
+        "filter_config": {
+            "filter_type": "datetime",
+            "filter_op": "between",
+            "filter_value": ["1971-01-01T00:00:00", "2099-12-31T23:59:59"],
+        },
+    }
 
 
 def _filter_col_type(filter_item: dict) -> str:
@@ -818,12 +843,27 @@ def resolve_filtered_trace_ids(
     # was matching the full project instead of the filtered subset.
     annotation_labels = get_annotation_labels_for_project(project.id, organization)
     annotation_label_ids = [str(lbl.id) for lbl in annotation_labels]
-    ch_result = None
-    if _has_explicit_time_filter(filters):
+
+    # CH is the primary path for both grids (regular + voice); PG is the
+    # outage fallback only. The CH list builders default to a now-30d window
+    # when the payload sends no time bound (a dashboard-perf default in
+    # parse_time_range), which would silently drop older rows a "select all
+    # matching" / automation-rule resolve must include. So when there is no
+    # explicit time filter, widen the window to all-history — this preserves
+    # the PG path's full-history semantics while keeping the resolve on the
+    # fast columnar backend. An explicit user time filter prunes normally.
+    # Mirrors _resolve_session_ids_clickhouse.
+    ch_filters = list(filters or [])
+    if not _has_explicit_time_filter(filters):
+        ch_filters.append(_all_history_time_filter())
+
+    # A reachable-but-failing CH (timeout/transient) must not 500 the add:
+    # swallow to None so the PG fallback below runs (fail-open, logged).
+    try:
         if is_voice_call:
             ch_result = _resolve_voice_call_ids_clickhouse(
                 project_id=project_id,
-                filters=filters or [],
+                filters=ch_filters,
                 exclude_ids=set(exclude_ids or ()),
                 cap=cap,
                 remove_simulation_calls=remove_simulation_calls,
@@ -832,11 +872,17 @@ def resolve_filtered_trace_ids(
         else:
             ch_result = _resolve_trace_ids_clickhouse(
                 project_id=project_id,
-                filters=filters or [],
+                filters=ch_filters,
                 exclude_ids=set(exclude_ids or ()),
                 cap=cap,
                 annotation_label_ids=annotation_label_ids,
             )
+    except Exception:
+        logger.exception(
+            "bulk_selection_resolve_trace_ch_query_failed",
+            project_id=str(project_id),
+        )
+        ch_result = None
     if ch_result is not None and ch_result.total_matching > 0:
         return ch_result
     if ch_result is not None:

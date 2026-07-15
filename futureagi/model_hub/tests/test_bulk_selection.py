@@ -834,3 +834,164 @@ class TestParityWithListEndpoint:
         list_ids = _list_endpoint_ids(auth_client, observe_project.id, filters)
 
         assert {str(i) for i in resolver.ids} == list_ids == {str(match.id)}
+
+
+# --------------------------------------------------------------------------
+# All-history ClickHouse dispatch (no explicit time filter)
+# --------------------------------------------------------------------------
+
+
+class TestAllHistoryCHDispatch:
+    """A payload with no explicit time filter must still resolve on ClickHouse
+    with an all-history window — not the slow PG fallback.
+
+    Automation rules and "select all matching" carry no time bound by design,
+    yet must return every matching row across all history. Routing them to CH
+    (which defaults to a now-30d window) requires widening the window so no
+    older row is dropped, while keeping the resolve on the fast columnar path.
+    """
+
+    _TRACE_BUILDER = (
+        "tracer.services.clickhouse.query_builders.trace_list.TraceListQueryBuilder"
+    )
+    _VOICE_BUILDER = (
+        "tracer.services.clickhouse.query_builders.VoiceCallListQueryBuilder"
+    )
+    _ANALYTICS = "tracer.services.clickhouse.query_service.AnalyticsQueryService"
+
+    @staticmethod
+    def _install_fake_ch(monkeypatch, captured, builder_path, trace_ids=("t-1", "t-2")):
+        class FakeBuilder:
+            def __init__(self, **kwargs):
+                captured["filters"] = kwargs.get("filters")
+
+            def build(self):
+                return "SELECT trace_id", {}
+
+        class FakeResult:
+            data = [{"trace_id": t} for t in trace_ids]
+
+        class FakeAnalytics:
+            def execute_ch_query(self, *_args, **_kwargs):
+                return FakeResult()
+
+        monkeypatch.setattr(builder_path, FakeBuilder)
+        monkeypatch.setattr(TestAllHistoryCHDispatch._ANALYTICS, FakeAnalytics)
+
+    @staticmethod
+    def _has_all_history_window(filters):
+        return any(
+            f.get("column_id") == "start_time"
+            and f.get("filter_config", {}).get("filter_op") == "between"
+            and str(f.get("filter_config", {}).get("filter_value", [""])[0]).startswith(
+                "1971"
+            )
+            for f in filters or []
+        )
+
+    def test_all_history_window_start_does_not_underflow_ch_datetime(self):
+        """The injected lower bound must stay clear of the CH DateTime epoch.
+
+        The trace/voice list builders add ``created_at >= start_date - INTERVAL
+        1 DAY``; CH DateTime is a 32-bit epoch, so 1970-01-01 minus a day
+        underflows to ~2106 and the resolve matches nothing. Exercises the REAL
+        parse_time_range (the fake-builder tests above can't catch this).
+        """
+        from datetime import datetime
+
+        from tracer.services.clickhouse.query_builders.trace_list import (
+            TraceListQueryBuilder,
+        )
+
+        from model_hub.services.bulk_selection import _all_history_time_filter
+
+        start, _end = TraceListQueryBuilder.parse_time_range(
+            [_all_history_time_filter()]
+        )
+        assert start >= datetime(1970, 1, 2)
+
+    @pytest.mark.django_db
+    def test_no_time_filter_dispatches_to_ch_with_all_history_window(
+        self, observe_project, organization, monkeypatch
+    ):
+        captured = {}
+        self._install_fake_ch(monkeypatch, captured, self._TRACE_BUILDER)
+
+        result = resolve_filtered_trace_ids(
+            project_id=observe_project.id,
+            filters=[],
+            organization=organization,
+        )
+
+        # CH was used (fake builder ran) and received the widened window.
+        assert captured.get("filters") is not None
+        assert self._has_all_history_window(captured["filters"])
+        assert result.ids == ["t-1", "t-2"]
+
+    @pytest.mark.django_db
+    def test_explicit_time_filter_passes_through_unmodified(
+        self, observe_project, organization, monkeypatch
+    ):
+        captured = {}
+        self._install_fake_ch(monkeypatch, captured, self._TRACE_BUILDER)
+        user_filter = {
+            "column_id": "start_time",
+            "filter_config": {
+                "filter_type": "datetime",
+                "filter_op": "greater_than",
+                "filter_value": "2026-01-01T00:00:00",
+            },
+        }
+
+        resolve_filtered_trace_ids(
+            project_id=observe_project.id,
+            filters=[user_filter],
+            organization=organization,
+        )
+
+        # No all-history window injected — the user's own bound is the only one.
+        assert captured["filters"] == [user_filter]
+
+    @pytest.mark.django_db
+    def test_ch_failure_falls_back_to_pg_without_raising(
+        self, observe_project, seeded_traces, organization, monkeypatch
+    ):
+        class FakeBuilder:
+            def __init__(self, **_kwargs):
+                pass
+
+            def build(self):
+                return "SELECT trace_id", {}
+
+        class FakeAnalytics:
+            def execute_ch_query(self, *_args, **_kwargs):
+                raise RuntimeError("clickhouse unreachable")
+
+        monkeypatch.setattr(self._TRACE_BUILDER, FakeBuilder)
+        monkeypatch.setattr(self._ANALYTICS, FakeAnalytics)
+
+        # Must not raise; the PG fallback resolves the seeded traces.
+        result = resolve_filtered_trace_ids(
+            project_id=observe_project.id,
+            filters=[],
+            organization=organization,
+        )
+
+        assert set(result.ids) == {t.id for t in seeded_traces}
+
+    @pytest.mark.django_db
+    def test_voice_no_time_filter_dispatches_to_ch_with_all_history_window(
+        self, observe_project, organization, monkeypatch
+    ):
+        captured = {}
+        self._install_fake_ch(monkeypatch, captured, self._VOICE_BUILDER)
+
+        resolve_filtered_trace_ids(
+            project_id=observe_project.id,
+            filters=[],
+            organization=organization,
+            is_voice_call=True,
+        )
+
+        assert captured.get("filters") is not None
+        assert self._has_all_history_window(captured["filters"])
