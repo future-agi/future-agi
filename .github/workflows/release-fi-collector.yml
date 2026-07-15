@@ -12,9 +12,11 @@ on:
         required: true
         type: string
       branch:
+        # fi-collector currently lives only on dev (not yet merged to main),
+        # so dev is the default until it lands there.
         description: "Branch to build from"
         required: true
-        default: "main"
+        default: "dev"
         type: choice
         options:
           - main
