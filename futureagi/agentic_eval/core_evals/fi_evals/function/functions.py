@@ -3749,8 +3749,15 @@ def calculate_mean_average_precision(reference, hypothesis, **kwargs):
             gt_set = set(str(x) for x in gt)
             hits = 0
             sum_prec = 0.0
+            seen_relevant = set()
             for rank, item in enumerate(ret, 1):
-                if str(item) in gt_set:
+                # Binary relevance credits each relevant item at most once, as in
+                # ndcg_at_k. Re-retrieving the same item must not add a hit: the
+                # denominator counts distinct items, so counting occurrences in the
+                # numerator lets AP exceed its 1.0 upper bound.
+                key = str(item)
+                if key in gt_set and key not in seen_relevant:
+                    seen_relevant.add(key)
                     hits += 1
                     sum_prec += hits / rank
             ap = sum_prec / len(gt_set) if gt_set else 0.0
@@ -3763,8 +3770,12 @@ def calculate_mean_average_precision(reference, hypothesis, **kwargs):
         return {"result": 0.0, "reason": "Empty ground truth"}
     hits = 0
     sum_prec = 0.0
+    seen_relevant = set()
     for rank, item in enumerate(retrieved, 1):
-        if str(item) in gt_set:
+        # See the nested-query loop above: each relevant item is credited once.
+        key = str(item)
+        if key in gt_set and key not in seen_relevant:
+            seen_relevant.add(key)
             hits += 1
             sum_prec += hits / rank
     ap = sum_prec / len(gt_set)
