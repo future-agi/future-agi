@@ -37,94 +37,96 @@ CHOICE_OPTIONS = ["good", "bad", "neutral"]
 # ---------- Voice-call metric spec (single source of truth) ------------------
 # Drives both the voice-corpus seeding and the voice FilterCase matrix. Each
 # entry: (FE column_id, stored CH attr key, seed formula f(i)->value, display
-# precision, contract_gap). Precision is how the *displayed* value is derived
-# from the stored value; a gap marks a filter that disagrees with the display.
+# precision). Precision is how the *displayed* value is derived from the stored
+# value:
 #   raw  -> value as stored          int  -> round to integer
 #   pct2 -> round(v/(v+1)*100, 2)    (agent-talk-percentage style)
-_V_WPM_GAP = "filter round()s wpm to integer; displayed value is raw"
-_V_STATUS_GAP = "filter matches raw call.status='ended'; UI shows 'completed'"
-_V_TYPE_GAP = "call_type reads raw_log.type (not stored) -> always 'outbound'"
+#
+# Three known display-vs-filter mismatches are currently NOT covered here:
+#   - wpm: filter round()s to int; displayed value is raw.
+#   - call.status: filter matches raw 'ended'; UI shows 'completed'.
+#   - call_type: filter reads raw_log.type (not stored) -> always 'outbound'.
+# The auto-matrix pins the filter's own rounding/raw-value semantics (so it
+# passes), leaving the display divergence untested.
+# TODO: add an explicit known-bug family to pin these display-vs-filter gaps.
 
-# (col_id, seed_key, formula, precision, gap)
+# (col_id, seed_key, formula, precision)
 VOICE_NUM_SPEC: list[tuple] = [
     # curated + FE aliases (handled) — read the real stored key
-    ("talk_ratio", "call.talk_ratio", lambda i: round(0.2 + i * 0.12, 4), "pct2", None),
+    ("talk_ratio", "call.talk_ratio", lambda i: round(0.2 + i * 0.12, 4), "pct2"),
     # wpm carry a fractional .4 (rounds down): the auto-matrix uses the filter's
-    # int precision so it passes; the display-vs-filter mismatch is documented
-    # by the explicit known-bug family instead (avoids XPASS on non-boundary vals).
-    ("bot_wpm", "call.bot_wpm", lambda i: round(120.0 + i * 4 + 0.4, 4), "int", None),
-    ("user_wpm", "call.user_wpm", lambda i: round(110.0 + i * 5 + 0.4, 4), "int", None),
-    ("duration", "call.duration", lambda i: float(20 + i), "raw", None),
-    ("agent_latency", "avg_agent_latency_ms", lambda i: float(500 + i * 25), "int", None),
-    ("ai_interruptions", "ai_interruption_count", lambda i: float(i % 4), "int", None),
-    ("user_interruptions", "user_interruption_count", lambda i: float(i % 5), "int", None),
-    ("ai_interruption_rate", "ai_interruption_rate", lambda i: round((i % 8) / 10.0 + 0.03, 4), "raw", None),
-    ("user_interruption_rate", "user_interruption_rate", lambda i: round((i % 10) / 10.0 + 0.05, 4), "raw", None),
-    ("stop_time_after_interruption", "avg_stop_time_after_interruption_ms", lambda i: float(100 + i * 10), "raw", None),
-    ("total_cost", "cost_breakdown.total", lambda i: round(0.01 * (i + 1), 4), "raw", None),
-    ("customer_cost", "cost_breakdown.total", lambda i: round(0.01 * (i + 1), 4), "raw", None),
-    ("llm_cost", "cost_breakdown.llm", lambda i: round(0.005 * (i + 1), 4), "raw", None),
-    ("stt_cost", "cost_breakdown.stt", lambda i: round(0.002 * (i + 1), 4), "raw", None),
-    ("tts_cost", "cost_breakdown.tts", lambda i: round(0.003 * (i + 1), 4), "raw", None),
-    ("llm_latency", "modelLatencyAverage", lambda i: float(200 + i * 15), "raw", None),
-    ("stt_latency", "transcriberLatencyAverage", lambda i: float(150 + i * 10), "raw", None),
-    ("tts_latency", "voiceLatencyAverage", lambda i: float(180 + i * 12), "raw", None),
-    ("response_time", "turnLatencyAverage", lambda i: float(300 + i * 20), "raw", None),
+    # int precision so it passes (display-vs-filter gap not covered — see above).
+    ("bot_wpm", "call.bot_wpm", lambda i: round(120.0 + i * 4 + 0.4, 4), "int"),
+    ("user_wpm", "call.user_wpm", lambda i: round(110.0 + i * 5 + 0.4, 4), "int"),
+    ("duration", "call.duration", lambda i: float(20 + i), "raw"),
+    ("agent_latency", "avg_agent_latency_ms", lambda i: float(500 + i * 25), "int"),
+    ("ai_interruptions", "ai_interruption_count", lambda i: float(i % 4), "int"),
+    ("user_interruptions", "user_interruption_count", lambda i: float(i % 5), "int"),
+    ("ai_interruption_rate", "ai_interruption_rate", lambda i: round((i % 8) / 10.0 + 0.03, 4), "raw"),
+    ("user_interruption_rate", "user_interruption_rate", lambda i: round((i % 10) / 10.0 + 0.05, 4), "raw"),
+    ("stop_time_after_interruption", "avg_stop_time_after_interruption_ms", lambda i: float(100 + i * 10), "raw"),
+    ("total_cost", "cost_breakdown.total", lambda i: round(0.01 * (i + 1), 4), "raw"),
+    ("customer_cost", "cost_breakdown.total", lambda i: round(0.01 * (i + 1), 4), "raw"),
+    ("llm_cost", "cost_breakdown.llm", lambda i: round(0.005 * (i + 1), 4), "raw"),
+    ("stt_cost", "cost_breakdown.stt", lambda i: round(0.002 * (i + 1), 4), "raw"),
+    ("tts_cost", "cost_breakdown.tts", lambda i: round(0.003 * (i + 1), 4), "raw"),
+    ("llm_latency", "modelLatencyAverage", lambda i: float(200 + i * 15), "raw"),
+    ("stt_latency", "transcriberLatencyAverage", lambda i: float(150 + i * 10), "raw"),
+    ("tts_latency", "voiceLatencyAverage", lambda i: float(180 + i * 12), "raw"),
+    ("response_time", "turnLatencyAverage", lambda i: float(300 + i * 20), "raw"),
     # fallback metrics — seeded under the FE col_id key so the span-attr
     # fallback path can filter them (as it will once ingestion emits them).
-    ("message_count", "message_count", lambda i: float(2 + (i % 10)), "raw", None),
-    ("overall_score", "overall_score", lambda i: round(0.5 + (i % 6) * 0.08, 4), "raw", None),
-    ("time_to_first_token", "time_to_first_token", lambda i: float(50 + i * 5), "raw", None),
-    ("call_count", "call_count", lambda i: float(1 + (i % 3)), "raw", None),
-    ("session_count", "session_count", lambda i: float(1 + (i % 4)), "raw", None),
-    ("span_count", "span_count", lambda i: float(1 + (i % 6)), "raw", None),
-    ("trace_count", "trace_count", lambda i: float(1 + (i % 5)), "raw", None),
-    ("user_count", "user_count", lambda i: float(1 + (i % 2)), "raw", None),
-    ("error_rate", "error_rate", lambda i: round((i % 5) / 10.0, 4), "raw", None),
-    ("failure_rate", "failure_rate", lambda i: round((i % 4) / 10.0, 4), "raw", None),
-    ("success_rate", "success_rate", lambda i: round(0.5 + (i % 5) / 10.0, 4), "raw", None),
+    ("message_count", "message_count", lambda i: float(2 + (i % 10)), "raw"),
+    ("overall_score", "overall_score", lambda i: round(0.5 + (i % 6) * 0.08, 4), "raw"),
+    ("time_to_first_token", "time_to_first_token", lambda i: float(50 + i * 5), "raw"),
+    ("call_count", "call_count", lambda i: float(1 + (i % 3)), "raw"),
+    ("session_count", "session_count", lambda i: float(1 + (i % 4)), "raw"),
+    ("span_count", "span_count", lambda i: float(1 + (i % 6)), "raw"),
+    ("trace_count", "trace_count", lambda i: float(1 + (i % 5)), "raw"),
+    ("user_count", "user_count", lambda i: float(1 + (i % 2)), "raw"),
+    ("error_rate", "error_rate", lambda i: round((i % 5) / 10.0, 4), "raw"),
+    ("failure_rate", "failure_rate", lambda i: round((i % 4) / 10.0, 4), "raw"),
+    ("success_rate", "success_rate", lambda i: round(0.5 + (i % 5) / 10.0, 4), "raw"),
 ]
 
-# (col_id, seed_key, formula, gap)
+# (col_id, seed_key, formula)
 _PERSONA = ["formal", "casual", "curt"]
 VOICE_STR_SPEC: list[tuple] = [
-    ("ended_reason", "ended_reason", lambda i: "customer-ended-call" if i % 2 == 0 else "exceeded-max-duration", None),
+    ("ended_reason", "ended_reason", lambda i: "customer-ended-call" if i % 2 == 0 else "exceeded-max-duration"),
     # call.status is stored raw ('ended'); the auto-matrix filters that raw value
-    # (passes). The 'ended'->'completed' display normalization gap is documented
-    # by the known-bug family. call_type is omitted (source raw_log.type is not
-    # stored — out of scope; covered as a known bug).
-    ("call_status", "call.status", lambda i: "ended", None),
-    # call_type seeded for the known-bug family's ground truth; the auto-matrix
-    # SKIPS it (its filter reads raw_log.type, not this key).
-    ("call_type", "call_type", lambda i: "inbound" if i % 2 == 0 else "outbound", None),
+    # (passes). The 'ended'->'completed' display normalization gap is NOT covered
+    # (see the spec header). call_type is seeded below but SKIPPED by the matrix
+    # (its filter reads raw_log.type, not this key — display gap uncovered).
+    ("call_status", "call.status", lambda i: "ended"),
+    ("call_type", "call_type", lambda i: "inbound" if i % 2 == 0 else "outbound"),
     # fallback string metrics — seeded under the FE col_id key.
-    ("scenario", "scenario", lambda i: ["refund", "billing", "support"][i % 3], None),
-    ("scenario_type", "scenario_type", lambda i: "inbound" if i % 2 == 0 else "outbound", None),
-    ("simulation", "simulation", lambda i: f"sim_{i % 3}", None),
-    ("run_test", "run_test", lambda i: f"run_{i % 4}", None),
-    ("test_execution", "test_execution", lambda i: f"exec_{i % 3}", None),
-    ("agent_definition", "agent_definition", lambda i: f"agent_{i % 2}", None),
-    ("agent_version", "agent_version", lambda i: f"v{i % 3}", None),
-    ("dataset", "dataset", lambda i: f"ds_{i % 2}", None),
-    ("eval_source", "eval_source", lambda i: ["observe", "dataset"][i % 2], None),
-    ("prompt_label", "prompt_label", lambda i: f"lbl_{i % 3}", None),
-    ("prompt_name", "prompt_name", lambda i: f"prompt_{i % 2}", None),
-    ("prompt_version", "prompt_version", lambda i: f"pv{i % 3}", None),
-    ("persona", "persona", lambda i: _PERSONA[i % 3], None),
-    ("persona_gender", "persona_gender", lambda i: ["male", "female"][i % 2], None),
-    ("persona_accent", "persona_accent", lambda i: ["us", "uk", "in"][i % 3], None),
-    ("persona_age_group", "persona_age_group", lambda i: ["18-25", "26-40", "40+"][i % 3], None),
-    ("persona_language", "persona_language", lambda i: ["en", "es"][i % 2], None),
-    ("persona_location", "persona_location", lambda i: ["us", "eu"][i % 2], None),
-    ("persona_profession", "persona_profession", lambda i: ["eng", "sales"][i % 2], None),
-    ("persona_personality", "persona_personality", lambda i: _PERSONA[i % 3], None),
-    ("persona_communication_style", "persona_communication_style", lambda i: _PERSONA[i % 3], None),
-    ("persona_conversation_speed", "persona_conversation_speed", lambda i: ["slow", "fast"][i % 2], None),
+    ("scenario", "scenario", lambda i: ["refund", "billing", "support"][i % 3]),
+    ("scenario_type", "scenario_type", lambda i: "inbound" if i % 2 == 0 else "outbound"),
+    ("simulation", "simulation", lambda i: f"sim_{i % 3}"),
+    ("run_test", "run_test", lambda i: f"run_{i % 4}"),
+    ("test_execution", "test_execution", lambda i: f"exec_{i % 3}"),
+    ("agent_definition", "agent_definition", lambda i: f"agent_{i % 2}"),
+    ("agent_version", "agent_version", lambda i: f"v{i % 3}"),
+    ("dataset", "dataset", lambda i: f"ds_{i % 2}"),
+    ("eval_source", "eval_source", lambda i: ["observe", "dataset"][i % 2]),
+    ("prompt_label", "prompt_label", lambda i: f"lbl_{i % 3}"),
+    ("prompt_name", "prompt_name", lambda i: f"prompt_{i % 2}"),
+    ("prompt_version", "prompt_version", lambda i: f"pv{i % 3}"),
+    ("persona", "persona", lambda i: _PERSONA[i % 3]),
+    ("persona_gender", "persona_gender", lambda i: ["male", "female"][i % 2]),
+    ("persona_accent", "persona_accent", lambda i: ["us", "uk", "in"][i % 3]),
+    ("persona_age_group", "persona_age_group", lambda i: ["18-25", "26-40", "40+"][i % 3]),
+    ("persona_language", "persona_language", lambda i: ["en", "es"][i % 2]),
+    ("persona_location", "persona_location", lambda i: ["us", "eu"][i % 2]),
+    ("persona_profession", "persona_profession", lambda i: ["eng", "sales"][i % 2]),
+    ("persona_personality", "persona_personality", lambda i: _PERSONA[i % 3]),
+    ("persona_communication_style", "persona_communication_style", lambda i: _PERSONA[i % 3]),
+    ("persona_conversation_speed", "persona_conversation_speed", lambda i: ["slow", "fast"][i % 2]),
 ]
 
 # stored_key -> formula (deduped) for the seeder.
-_VOICE_NUM_SEED = {k: f for _, k, f, _, _ in VOICE_NUM_SPEC}
-_VOICE_STR_SEED = {k: f for _, k, f, _ in VOICE_STR_SPEC}
+_VOICE_NUM_SEED = {k: f for _, k, f, _ in VOICE_NUM_SPEC}
+_VOICE_STR_SEED = {k: f for _, k, f in VOICE_STR_SPEC}
 
 
 @dataclass

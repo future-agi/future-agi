@@ -7,8 +7,8 @@ typed maps + flatten helper):
   * the v1 builder's ``build`` / ``build_count_query`` / ``build_id_query``
     SQL shape (project scope, time window, pagination, ordering),
   * ``build_eval_query`` semantics under the DEFAULT (legacy) eval-logger
-    table — grouping, per-status averaging, the rewrite-safe
-    ``(deleted = 0 OR deleted IS NULL)`` predicate (RECENT-FIX #1),
+    table — grouping, per-status averaging, and (being rewrite-EXCLUDED) both
+    delete guards ``_peerdb_is_deleted = 0 AND (deleted = 0 OR deleted IS NULL)``,
   * ``build_annotation_query`` (model_hub_score, still peerdb-gated),
   * empty-input ``("", {})`` contracts for all three helpers,
   * both static pivots: ``pivot_eval_results`` (SCORE ×100, PASS_FAIL
@@ -310,18 +310,18 @@ class TestBuildEvalQuery:
         assert "max_bytes_before_external_group_by = 1073741824" in sql
 
     @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger")
-    def test_legacy_table_rewrite_safe_predicate(self):
-        # RECENT-FIX #1: legacy predicate is the rewrite-safe `deleted` form,
-        # NOT `_peerdb_is_deleted` (which the v2 rewriter would rename to a
-        # column the legacy tracer_eval_logger lacks). Override is required: the
-        # test stack (tfc/settings/test.py) defaults CH25_EVAL_LOGGER_TABLE to
-        # `tracer_eval_logger_v2`, so without it this would read the v2 table.
+    def test_legacy_table_keeps_both_delete_guards(self):
+        # build_eval_query is rewrite-EXCLUDED, so it keeps BOTH the CDC
+        # tombstone (`_peerdb_is_deleted`) and the app `deleted` soft-delete
+        # guards, matching the display queries. The version-only legacy engine's
+        # FINAL does not drop tombstones, so a hard-deleted row would otherwise
+        # leak into eval filters. Override is required: the test stack defaults
+        # CH25_EVAL_LOGGER_TABLE to `tracer_eval_logger_v2`.
         sql, _ = _make_builder(
             eval_config_ids=[EVAL_CONFIG_ID]
         ).build_eval_query(span_ids=["s1"])
         assert "tracer_eval_logger FINAL" in sql
-        assert "(deleted = 0 OR deleted IS NULL)" in sql
-        assert "_peerdb_is_deleted" not in sql
+        assert "_peerdb_is_deleted = 0 AND (deleted = 0 OR deleted IS NULL)" in sql
 
     @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
     def test_v2_table_uses_is_deleted(self):

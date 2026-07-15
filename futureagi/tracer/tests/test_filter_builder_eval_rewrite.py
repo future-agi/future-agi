@@ -182,6 +182,37 @@ class TestEvalLoggerSource:
         _, pred = eval_logger_source("el")
         assert pred == "el.is_deleted = 0"
 
+    def test_default_omits_cdc_tombstone_guard(self, settings):
+        # Default stays rewrite-safe: `deleted`-only, no `_peerdb_is_deleted`
+        # (the v2 rewriter renames it, so rewritten fragments must not carry it).
+        settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
+        _, pred = eval_logger_source()
+        assert pred == "(deleted = 0 OR deleted IS NULL)"
+        assert "_peerdb_is_deleted" not in pred
+
+    def test_cdc_tombstone_guard_flag_emits_both_predicates(self, settings):
+        # Rewrite-EXCLUDED callers keep both guards: the version-only legacy
+        # engine's FINAL does not drop CDC tombstones.
+        settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
+        _, pred = eval_logger_source(include_cdc_tombstone_guard=True)
+        assert pred == (
+            "_peerdb_is_deleted = 0 AND (deleted = 0 OR deleted IS NULL)"
+        )
+
+    def test_cdc_tombstone_guard_flag_respects_alias(self, settings):
+        settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger"
+        _, pred = eval_logger_source("e", include_cdc_tombstone_guard=True)
+        assert pred == (
+            "e._peerdb_is_deleted = 0 AND (e.deleted = 0 OR e.deleted IS NULL)"
+        )
+
+    def test_cdc_tombstone_guard_flag_noop_on_v2(self, settings):
+        # v2 has no CDC columns — the flag must not inject `_peerdb_is_deleted`.
+        settings.CH25_EVAL_LOGGER_TABLE = "tracer_eval_logger_v2"
+        _, pred = eval_logger_source(include_cdc_tombstone_guard=True)
+        assert pred == "is_deleted = 0"
+        assert "_peerdb_is_deleted" not in pred
+
 
 # ===========================================================================
 # 2. rewrite_v1_sql_to_v2 — the soft-delete rename must leave bare "deleted".

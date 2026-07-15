@@ -136,7 +136,8 @@ def test_build_eval_query_keeps_legacy_table_and_predicate():
     )
     assert "tracer_eval_logger FINAL" in sql
     assert "tracer_eval_logger_v2" not in sql
-    # Deletion is filtered via `deleted`, not `_peerdb_is_deleted`, so the
-    # predicate is rewrite-safe (the v2 rewriter renames `_peerdb_is_deleted`).
-    assert "deleted = 0 OR deleted IS NULL" in sql
-    assert "_peerdb_is_deleted" not in sql
+    # build_eval_query is rewrite-EXCLUDED, so it keeps BOTH delete guards: the
+    # CDC tombstone (`_peerdb_is_deleted`) plus the app `deleted` soft-delete,
+    # matching the display queries. The version-only legacy engine's FINAL does
+    # not drop tombstones, so the guard is required to hide hard-deleted rows.
+    assert "_peerdb_is_deleted = 0 AND (deleted = 0 OR deleted IS NULL)" in sql

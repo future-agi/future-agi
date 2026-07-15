@@ -210,7 +210,7 @@ const CallLogsCellRenderer = (props) => {
     const n = value != null && value !== "" ? Number(value) : NaN;
     content = (
       <Typography variant="body2" sx={{ fontSize: 13 }}>
-        {Number.isFinite(n) ? `${n.toFixed(1)}%` : "-"}
+        {Number.isFinite(n) ? `${n}%` : "-"}
       </Typography>
     );
   } else if (columnId === "avg_agent_latency_ms") {

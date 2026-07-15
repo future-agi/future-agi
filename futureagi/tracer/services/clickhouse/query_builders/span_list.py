@@ -377,7 +377,12 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             "eval_config_ids": tuple(self.eval_config_ids),
         }
 
-        eval_table, eval_not_deleted = eval_logger_source()
+        # Rewrite-EXCLUDED in v2 subclasses, so keep both delete guards. Rewritten
+        # fragments retain only the `deleted` guard (the rewriter breaks
+        # `_peerdb_is_deleted`); residual tombstone visibility is accepted there.
+        eval_table, eval_not_deleted = eval_logger_source(
+            include_cdc_tombstone_guard=True
+        )
 
         # Aggregates are computed only over *completed*, non-errored rows so a
         # non-terminal (pending/running) or skipped row never skews a score or

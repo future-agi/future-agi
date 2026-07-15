@@ -298,7 +298,6 @@ export const RunPromptOutputTypeOptions = [
 export const SpanChipColors = {
   chain: { backgroundColor: "#FF3EFA14", borderColor: "#FF3EFA29" },
   retriever: { backgroundColor: "#2F7CF714", borderColor: "#2F7CF729" },
-  generation: { backgroundColor: "#4CAF5014", borderColor: "#4CAF5029" },
   llm: { backgroundColor: "#FF950014", borderColor: "#FF950029" },
   tool: { backgroundColor: "#F5E65F29", borderColor: "#F5E65F" },
   agent: { backgroundColor: "action.selected", borderColor: "primary.light" },

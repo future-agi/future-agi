@@ -1,5 +1,6 @@
 """Provider-pull -> fi-collector export: pulled calls reach CH `spans`/`traces` (collector-owned write)."""
 
+import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -38,6 +39,18 @@ def test_provider_collector_span_id_is_project_scoped():
     assert a == a_again  # deterministic within a project
     assert a != b  # distinct per project
     assert len(a) == 16 and int(a, 16) >= 0  # still a valid 64-bit OTLP span id
+
+
+@pytest.mark.unit
+def test_provider_collector_ids_match_frozen_golden():
+    # Pins the exact bytes so a change to the separator, field order, `trace:`
+    # prefix, or `_PROVIDER_SPAN_NS` fails loudly instead of silently re-keying
+    # every CH row. Uses a real uuid.UUID to exercise the str-coercion path.
+    pid = uuid.UUID("11111111-1111-1111-1111-111111111111")
+    assert op._provider_collector_span_id(pid, "vapi", "log1") == "d3c32aa30f055dc6"
+    assert op._provider_collector_trace_id(pid, "vapi", "log1") == uuid.UUID(
+        "fad7cd61-5094-5d22-be97-a1c264c7365c"
+    )
 
 
 @pytest.mark.unit

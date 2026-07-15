@@ -2,7 +2,7 @@ import json
 from collections.abc import MutableMapping
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Any, TypedDict, Union
 
 import pandas as pd
 from rest_framework import serializers
@@ -328,10 +328,43 @@ def _normalize_eval_output_type(output_type: str | None) -> str:
     return (output_type or "").replace("/", "_").replace(" ", "_").upper()
 
 
+class EvalErrorScore(TypedDict):
+    """All eval rows for a ``(trace, config)`` pair errored."""
+
+    error: bool
+
+
+class EvalChoicesScore(TypedDict):
+    """CHOICES eval — ``{choice: percentage}`` across non-errored rows."""
+
+    per_choice: dict[str, float]
+
+
+class EvalMarkerScore(TypedDict, total=False):
+    """Non-terminal / skipped lifecycle marker (no completed score, no error)."""
+
+    status: str
+    skipped_reason: str
+
+
+class EvalNumericScore(TypedDict):
+    """Completed numeric score — ``avg_score``/``pass_rate`` pre-scaled ×100."""
+
+    avg_score: float | None
+    pass_rate: float | None
+    count: int
+
+
+# Closed set of shapes emitted by ``pivot_eval_results`` per (trace, config).
+PivotEvalScore = Union[
+    EvalErrorScore, EvalChoicesScore, EvalMarkerScore, EvalNumericScore
+]
+
+
 def flatten_eval_score_into_entry(
     entry: dict,
     config_id: str,
-    scores: Any,
+    scores: PivotEvalScore | Any,
     output_type: str | None,
 ) -> None:
     """Flatten one pivoted ``(trace, config)`` eval score onto a list-grid row.
@@ -360,15 +393,25 @@ def flatten_eval_score_into_entry(
             entry[f"{config_id}**{choice}"] = pct
         return
     if "avg_score" in scores or "pass_rate" in scores:
-        if _normalize_eval_output_type(output_type) == "PASS_FAIL":
-            entry[config_id] = scores.get("pass_rate")
-        else:
-            entry[config_id] = scores.get("avg_score")
+        entry[config_id] = select_eval_score(scores, output_type)
         return
     entry[config_id] = scores
 
 
-def eval_output_type_for_config(config: Any) -> str | None:
+def select_eval_score(
+    scores: EvalNumericScore, output_type: str | None
+) -> float | None:
+    """Pick the output-type-aware scalar from a pivoted score dict.
+
+    PASS_FAIL → ``pass_rate`` (rate), everything else → ``avg_score``. Returns
+    the value as-is (may be ``0.0``); ``None`` only when the field is absent.
+    """
+    if _normalize_eval_output_type(output_type) == "PASS_FAIL":
+        return scores.get("pass_rate")
+    return scores.get("avg_score")
+
+
+def eval_output_type_for_config(config: CustomEvalConfig) -> str | None:
     """Read an eval config's configured ``output`` type from its template."""
     template = getattr(config, "eval_template", None)
     if template is None:

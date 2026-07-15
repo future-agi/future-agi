@@ -7,7 +7,7 @@ import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRendere
 import EvalStatusIndicator from "src/components/eval/EvalStatusIndicator";
 import { getEvalNonScoreStatusFromValue } from "src/utils/evalStatus";
 
-const EvaluationCell = ({ value, column }) => {
+const EvaluationCell = ({ value, column, isSpanLevel = false }) => {
   const shouldReverse = column?.reverseOutput;
 
   // No eval value (missing / not yet evaluated) — render dash so callers
@@ -57,10 +57,48 @@ const EvaluationCell = ({ value, column }) => {
     return <NumericCell value={value} sx={{ padding: "0 12px" }} />;
   }
 
-  // Pass/Fail columns carry the averaged pass rate (0-100) in the list — a trace
-  // with 2 of 3 spans passing arrives as 66.67 — so they render through the
-  // numeric-percentage path below ("66.67%"). Collapsing to a binary
-  // "Pass"/"Fail" label would drop the average across the trace's spans.
+  // Pass/Fail columns: a single span is always 0 or 100, so span-level cells
+  // render a binary "Pass"/"Fail" label. Aggregated trace/voice cells carry the
+  // averaged pass rate (a trace with 2 of 3 spans passing arrives as 66.67), so
+  // they fall through to the numeric-percentage path below ("66.67%") — a binary
+  // label there would drop the average across the trace's spans.
+  if (isSpanLevel && column?.outputType === "Pass/Fail") {
+    if (isMissing) {
+      return (
+        <div
+          style={{
+            padding: "0 12px",
+            display: "flex",
+            alignItems: "center",
+            height: "100%",
+          }}
+        >
+          -
+        </div>
+      );
+    }
+    const isPass = !!value;
+    const { bgcolor: backgroundColor, color } =
+      interpolateColorTokenBasedOnScore(isPass ? 100 : 0, 100);
+
+    return (
+      <div
+        style={{
+          height: "100%",
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          backgroundColor,
+          padding: "0 12px",
+          margin: 0,
+          fontSize: "14px",
+          color,
+        }}
+      >
+        {isPass ? "Pass" : "Fail"}
+      </div>
+    );
+  }
 
   // Array of values
   if (Array.isArray(value)) {
@@ -153,4 +191,5 @@ export default EvaluationCell;
 EvaluationCell.propTypes = {
   value: PropTypes.any,
   column: PropTypes.object,
+  isSpanLevel: PropTypes.bool,
 };

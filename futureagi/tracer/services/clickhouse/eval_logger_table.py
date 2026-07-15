@@ -16,11 +16,23 @@ from __future__ import annotations
 from django.conf import settings
 
 
-def eval_logger_source(alias: str = "") -> tuple[str, str]:
+def eval_logger_source(
+    alias: str = "", include_cdc_tombstone_guard: bool = False
+) -> tuple[str, str]:
     """Return ``(table_name, not_deleted_predicate)`` for the configured table.
 
     ``alias`` prefixes the column references (e.g. ``"e"`` →
     ``e.is_deleted = 0``) for queries that alias the table in a JOIN.
+
+    ``include_cdc_tombstone_guard`` adds the legacy CDC tombstone guard
+    (``_peerdb_is_deleted = 0``) alongside the app ``deleted`` soft-delete
+    filter. Only rewrite-EXCLUDED callers may pass True: the v2 rewriter renames
+    ``_peerdb_is_deleted`` → ``is_deleted`` (which the legacy table lacks), so
+    rewritten fragments must keep the ``deleted``-only predicate (default).
+    Residual tombstone visibility is accepted there. The version-only legacy
+    engine's ``FINAL`` does not drop CDC tombstones, so unrewritten eval reads
+    need this guard to match the display queries. No-op on the v2 table (no CDC
+    columns).
     """
     table = getattr(settings, "CH25_EVAL_LOGGER_TABLE", "tracer_eval_logger")
     p = f"{alias}." if alias else ""
@@ -33,4 +45,6 @@ def eval_logger_source(alias: str = "") -> tuple[str, str]:
         # `is_deleted` (which this legacy table lacks), so `deleted` is the
         # rewrite-safe soft-delete marker (mirrors the model_hub_score reads).
         predicate = f"({p}deleted = 0 OR {p}deleted IS NULL)"
+        if include_cdc_tombstone_guard:
+            predicate = f"{p}_peerdb_is_deleted = 0 AND {predicate}"
     return table, predicate

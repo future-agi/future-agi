@@ -24,7 +24,16 @@ from tracer.utils.helper import (
     _normalize_eval_output_type,
     eval_output_type_for_config,
     flatten_eval_score_into_entry,
+    select_eval_score,
 )
+
+
+def _config(config_id, output_type):
+    """Fake eval config mirroring ``config.eval_template.config['output']``."""
+    return SimpleNamespace(
+        id=config_id,
+        eval_template=SimpleNamespace(config={"output": output_type}),
+    )
 
 
 def _flatten(entry, config_id, scores, output_type):
@@ -183,3 +192,75 @@ class TestNormalizeEvalOutputType:
         # Guards the flatten branch: "score"/"choices" must NOT be read as PASS_FAIL.
         assert _normalize_eval_output_type("score") != "PASS_FAIL"
         assert _normalize_eval_output_type("choices") != "PASS_FAIL"
+
+
+@pytest.mark.unit
+class TestSelectEvalScore:
+    """``select_eval_score`` picks the output-type-aware scalar: PASS_FAIL →
+    ``pass_rate``, everything else → ``avg_score``. A legit ``0.0`` must survive
+    (the historic ``avg_score or pass_rate`` idiom silently dropped it)."""
+
+    def test_passfail_uses_pass_rate(self):
+        scores = {"avg_score": 0.0, "pass_rate": 100.0, "count": 1}
+        assert select_eval_score(scores, "Pass/Fail") == 100.0
+
+    def test_score_uses_avg_score(self):
+        scores = {"avg_score": 60.0, "pass_rate": None, "count": 3}
+        assert select_eval_score(scores, "score") == 60.0
+
+    def test_score_zero_preserved(self):
+        assert select_eval_score({"avg_score": 0.0, "pass_rate": None}, "score") == 0.0
+
+    def test_passfail_zero_pass_rate_preserved(self):
+        assert select_eval_score({"avg_score": 100.0, "pass_rate": 0.0}, "Pass/Fail") == 0.0
+
+    def test_missing_field_returns_none(self):
+        assert select_eval_score({"pass_rate": 50.0}, "score") is None
+
+
+@pytest.mark.unit
+class TestListTracesEvalMerge:
+    """Simulates the per-row eval merge in ``_list_traces_clickhouse`` (now the
+    shared helper): iterate ``eval_configs``, flatten each pivoted score onto the
+    row via its template output type. Regression cover that PASS_FAIL renders the
+    pass rate, SCORE keeps ``0.0``, and CHOICES spread into ``**`` keys."""
+
+    def _merge(self, entry, eval_configs, trace_evals):
+        for config in eval_configs:
+            config_id = str(config.id)
+            if config_id not in trace_evals:
+                continue
+            flatten_eval_score_into_entry(
+                entry, config_id, trace_evals[config_id],
+                eval_output_type_for_config(config),
+            )
+        return entry
+
+    def test_passfail_renders_pass_rate_score_zero_choices_spread(self):
+        eval_configs = [
+            _config("pf", "Pass/Fail"),
+            _config("sc", "score"),
+            _config("ch", "choices"),
+        ]
+        trace_evals = {
+            # PASS_FAIL that also wrote avg_score=0 → must surface pass_rate 100.
+            "pf": {"avg_score": 0.0, "pass_rate": 100.0, "count": 1},
+            # A legitimate SCORE of 0 must be kept, not dropped.
+            "sc": {"avg_score": 0.0, "pass_rate": None, "count": 2},
+            # CHOICES spread into per-choice flat keys.
+            "ch": {"per_choice": {"joy": 75.0, "sad": 25.0}},
+        }
+        entry = self._merge({"trace_id": "t1"}, eval_configs, trace_evals)
+        assert entry == {
+            "trace_id": "t1",
+            "pf": 100.0,
+            "sc": 0.0,
+            "ch**joy": 75.0,
+            "ch**sad": 25.0,
+        }
+
+    def test_config_without_eval_row_is_skipped(self):
+        eval_configs = [_config("a", "score"), _config("b", "score")]
+        trace_evals = {"a": {"avg_score": 42.0, "pass_rate": None}}
+        entry = self._merge({}, eval_configs, trace_evals)
+        assert entry == {"a": 42.0}

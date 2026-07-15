@@ -120,6 +120,11 @@ def ch_schema(ch_client):
             f"ALTER TABLE {db}.tracer_eval_logger_v2 ADD COLUMN IF NOT EXISTS {col_ddl}"
         )
     ch_client.command(f"DROP TABLE IF EXISTS {db}.tracer_eval_logger")
+    # Coverage boundary: this rebuilds tracer_eval_logger as a v2 clone with CDC
+    # columns bolted on (below) — a hybrid shape that exists NOWHERE in prod. The
+    # matrix therefore validates filter SEMANTICS but cannot catch prod-shape
+    # missing-column failures (the exact bug class this PR's eval-filter fix
+    # addresses).
     ch_client.command(
         f"CREATE TABLE {db}.tracer_eval_logger AS {db}.tracer_eval_logger_v2"
     )
@@ -190,8 +195,11 @@ def ch_routes_on():
     # makes eval-config discovery succeed, which then *triggers* that broken
     # enrichment on every traces/voice request (breaking non-eval cases too).
     # Leaving it unrouted keeps the enrichment dormant unless an eval filter
-    # forces discovery; those eval/has_eval cases on traces/voice are xfailed as
-    # a known backend v1/v2-coupling bug (see the plan's Blocker section).
+    # forces discovery.
+    # NOTE: the endpoint xfail (test_list_endpoints_filter_count) triggers ONLY
+    # on ``case.contract_gap``, and no eval/has_eval traces/voice case currently
+    # carries one — so any v1/v2-coupling breakage on those cases would surface
+    # as a hard failure, not an xfail. Not covered as xfail today.
     routes_v2 = {
         **getattr(settings, "CLICKHOUSE_V2", {}),
         "QUERY_TYPES_V2_ONLY": "SPAN_LIST,TRACE_LIST,SESSION_LIST,VOICE_CALL_LIST",

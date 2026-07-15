@@ -175,9 +175,11 @@ class ClickHouseFilterBuilder:
     # Voice system metrics — use typed Map columns (span_attr_num) instead of
     # simpleJSONExtractFloat which fails on JSON with spaces after colons.
     VOICE_SYSTEM_METRIC_EXPRS: dict[str, str] = {
+        # Duration: truncate to integer seconds to match the API's int()
+        # (trace.py duration_seconds), so equals matches the displayed value.
         "duration": (
             "if(mapContains(span_attr_num, 'call.duration'), "
-            "span_attr_num['call.duration'], null)"
+            "toInt64(span_attr_num['call.duration']), null)"
         ),
         "turn_count": (
             "if(mapContains(span_attr_num, 'call.total_turns'), "
@@ -220,11 +222,14 @@ class ClickHouseFilterBuilder:
             "if(mapContains(span_attr_num, 'ai_interruption_rate'), "
             "span_attr_num['ai_interruption_rate'], null)"
         ),
+        # Talk ratio: the API returns the raw ratio; the FE (TalkRatioCell)
+        # derives an integer bot percentage via Math.round. Match that integer
+        # percentage so equals filters the value the user sees.
         "talk_ratio": (
             "if(mapContains(span_attr_num, 'call.talk_ratio') "
             "AND span_attr_num['call.talk_ratio'] > 0, "
             "round(span_attr_num['call.talk_ratio'] / "
-            "(span_attr_num['call.talk_ratio'] + 1) * 100, 2), null)"
+            "(span_attr_num['call.talk_ratio'] + 1) * 100), null)"
         ),
         "agent_latency": (
             "if(mapContains(span_attr_num, 'avg_agent_latency_ms'), "

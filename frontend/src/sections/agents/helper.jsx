@@ -447,11 +447,19 @@ export const generateEvalColumnsFromConfig = (items = []) => {
             </Box>
           );
         }
+        // PASS_FAIL carries a numeric pass rate — route it through the score
+        // (percentage) renderer so it shows "X%" instead of the pill path,
+        // which string-matches "fail" and would render 0% as a false "Pass".
+        const rawType = evalData?.output_type;
+        const isPassFail =
+          String(rawType || "")
+            .toLowerCase()
+            .replace(/[/ ]/g, "_") === "pass_fail";
         return (
           <EvalCellRenderer
             value={{
               ...evalData,
-              type: evalData?.output_type,
+              type: isPassFail ? "percentage" : rawType,
               value: evalData.output,
             }}
           />
