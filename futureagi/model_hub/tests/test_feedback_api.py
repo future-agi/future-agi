@@ -295,13 +295,12 @@ def test_get_template_returns_choice_scores_when_defined(
 
 
 @pytest.mark.django_db
-def test_get_template_metric_multi_choice_override_wins_over_template(
+def test_get_template_multi_choice_sourced_from_template_field(
     auth_client, user, workspace
 ):
-    """A metric that overrides `multi_choice` while reusing the template's
-    choices (e.g. `tone`) must surface the metric's flag — the elif branch
-    used to read multi_choice from the template config and drop the override,
-    forcing the FE to render radios instead of checkboxes."""
+    """multi_choice is sourced from the template's canonical direct field
+    (mirrors how the YAML seeder populates it). Metric-side multi_choice
+    overrides are ignored."""
     organization = user.organization
     dataset = Dataset.objects.create(
         name="Multi-choice override dataset",
@@ -312,12 +311,13 @@ def test_get_template_metric_multi_choice_override_wins_over_template(
     )
     eval_template = EvalTemplate.objects.create(
         name=f"tone-like-{uuid.uuid4().hex[:8]}",
-        description="Template with choices but no multi_choice set",
+        description="Template with choices and multi_choice on the direct field",
         organization=organization,
         workspace=workspace,
         owner=OwnerChoices.USER.value,
         config={"output": "choices", "eval_type_id": "test_eval_type"},
         choices=["joy", "anger", "sadness"],
+        multi_choice=True,
     )
     metric = UserEvalMetric.objects.create(
         name="Tone-like Metric",
@@ -326,7 +326,7 @@ def test_get_template_metric_multi_choice_override_wins_over_template(
         user=user,
         template=eval_template,
         dataset=dataset,
-        config={"config": {"multi_choice": True}},
+        config={"config": {"multi_choice": False}},
         status=StatusType.COMPLETED.value,
     )
 

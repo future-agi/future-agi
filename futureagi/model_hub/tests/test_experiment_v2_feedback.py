@@ -142,6 +142,7 @@ def eval_template_choices(db, organization):
         owner=OwnerChoices.USER.value,
         config={"output": "choices", "eval_type_id": "test_eval_type"},
         choices=["Good", "Bad", "Neutral"],
+        multi_choice=True,
     )
 
 
@@ -363,7 +364,7 @@ class TestExperimentFeedbackGetTemplateV2:
         assert data["choices"] == ["A", "B", "C"]
         assert data["multi_choice"] is True
 
-    def test_get_template_metric_multi_choice_override_wins_over_template(
+    def test_get_template_multi_choice_ignores_metric_side_override(
         self,
         auth_client,
         experiment,
@@ -372,15 +373,15 @@ class TestExperimentFeedbackGetTemplateV2:
         organization,
         workspace,
     ):
-        # Metric overrides multi_choice but does not override choices; the
-        # returned multi_choice must reflect the metric, not the template.
+        # Metric-side multi_choice override is ignored; the template's
+        # canonical direct field is the single source of truth.
         metric = UserEvalMetric.objects.create(
             name="Tone-like Metric",
             organization=organization,
             workspace=workspace,
             template=eval_template_choices,
             dataset=dataset,
-            config={"config": {"multi_choice": True}},
+            config={"config": {"multi_choice": False}},
             status=StatusType.COMPLETED.value,
         )
         experiment.user_eval_template_ids.add(metric)
