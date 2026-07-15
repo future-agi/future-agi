@@ -134,6 +134,8 @@ cd future-agi
 # Windows (PowerShell)
 git clone https://github.com/future-agi/future-agi.git
 cd future-agi
+cp futureagi/.env.example /Windows/system32/.env.example
+cp futureagi/.env.example /Windows/system32/.env
 .\bin\install.ps1
 ```
 
