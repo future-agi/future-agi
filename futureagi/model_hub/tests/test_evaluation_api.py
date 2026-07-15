@@ -601,9 +601,7 @@ class TestEvalConfigContracts:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_get_eval_config_returns_multi_choice_true(self, auth_client, user):
-        """A choices template with multi_choice=True must surface the flag —
-        the eval-tab edit-feedback drawer reads it to render checkboxes vs
-        radios."""
+        """GetEvalConfigView surfaces multi_choice for choices templates."""
         template = EvalTemplate.objects.create(
             name=f"multi-choice-{uuid.uuid4().hex[:8]}",
             description="Multi-choice template",

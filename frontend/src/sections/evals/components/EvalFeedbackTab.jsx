@@ -21,8 +21,6 @@ import { normalizeEvalCellValue } from "src/sections/develop-detail/DataTab/comm
 import { useEvalFeedbackList } from "../hooks/useEvalFeedback";
 import { isEditableElement } from "src/utils/keyboardUtils";
 
-// Same shape a feedback `value` can take as any other eval cell — hand it
-// to the shared normalizer and join arrays for a readable label.
 const displayFeedbackValue = (raw) => {
   const normalized = normalizeEvalCellValue(raw);
   return Array.isArray(normalized)

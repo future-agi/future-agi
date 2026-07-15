@@ -213,11 +213,6 @@ const EvaluationFeeback = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [feedbackData, existingFeedback, isMulti]);
 
-  // Submit the chosen re-tune action (and the value/explanation) against the
-  // created/existing feedback record. Both submit endpoints (dataset and
-  // experiment) read row_id off the feedback record itself; sending it in
-  // the payload is redundant and the experiment endpoint's strict
-  // serializer rejects it.
   const submitAction = (feedbackId) => {
     submitFeedbackField({
       action_type: pendingRef.current.actionType,
@@ -375,10 +370,6 @@ export const FeedBackForm = ({
   const renderValueInput = () => {
     if (!feedbackData) return null;
 
-    // When choice_scores is defined the LLM always emits a choice label (the
-    // score is derived from the map), so the feedback widget must be a picker
-    // regardless of the eval's raw output_type. Multi-choice evals still get
-    // checkboxes; single-choice ones get radios.
     if (choiceScores && Object.keys(choiceScores).length > 0) {
       const labels = Object.keys(choiceScores);
       if (isMulti) {
@@ -571,9 +562,6 @@ export const FeedBackForm = ({
   );
 };
 
-// Multi-choice value input — checkboxes. `renderLabel` optionally decorates
-// the visible label (e.g. "Polite (score 1)") while the stored value stays
-// the raw choice key.
 const ChoiceCheckboxGroup = ({ control, label, choices, renderLabel }) => {
   return (
     <Controller

@@ -176,11 +176,6 @@ def test_custom_eval_config_id_surfaces_for_observe(user, workspace):
     assert result[observe.id]["user_eval_metric_id"] == str(metric.id)
 
 
-# ---------------------------------------------------------------------------
-# resolve_feedback_template_data
-# ---------------------------------------------------------------------------
-
-
 def _template(user, workspace, **fields) -> EvalTemplate:
     defaults = dict(
         name=f"tpl-{uuid.uuid4().hex[:8]}",
@@ -256,8 +251,6 @@ class TestResolveFeedbackTemplateData:
 
         data = resolve_feedback_template_data(metric, tpl)
 
-        # Metric choices override still wins; multi_choice is now
-        # sourced from the template only (unset here → False).
         assert data["choices"] == ["X", "Y", "Z"]
         assert data["multi_choice"] is False
 

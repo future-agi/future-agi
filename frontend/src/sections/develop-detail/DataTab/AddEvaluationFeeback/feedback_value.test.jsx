@@ -69,7 +69,7 @@ describe("feedback_value helpers", () => {
     });
   });
 
-  describe("getCurrentValue — display of the eval's current output", () => {
+  describe("getCurrentValue: display of the eval's current output", () => {
     it("returns empty string when the cell has no value", () => {
       expect(getCurrentValue({}, null)).toBe("");
       expect(getCurrentValue({ value: null }, null)).toBe("");
@@ -97,8 +97,6 @@ describe("feedback_value helpers", () => {
     });
 
     it("extracts choices out of {score, choices: [...]} object values", () => {
-      // normalizeEvalCellValue lifts the choices array out — this is the same
-      // shape shown as chips elsewhere in the platform.
       expect(
         getCurrentValue(
           { value: { score: 0.3, choices: ["Toxic", "Abrupt"] } },
