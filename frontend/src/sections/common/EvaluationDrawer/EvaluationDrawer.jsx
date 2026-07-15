@@ -555,6 +555,9 @@ const EvaluationDrawerChild = ({
         // Dataset adds save-only — keep the picker open so the user can
         // queue more evals back-to-back without re-opening the drawer.
         keepOpenAfterSave={(module || "dataset") === "dataset"}
+        // Multi-select lets the user pick several evals with checkboxes
+        // and add them in one bulk action instead of one-by-one.
+        multiSelect
         initialEval={editingEval}
         source={module || "dataset"}
         sourceId={id || ""}

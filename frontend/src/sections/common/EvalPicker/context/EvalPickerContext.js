@@ -19,6 +19,23 @@ export const EvalPickerContext = createContext({
   selectedEval: null,
   setSelectedEval: (_eval) => {},
 
+  // Multi-select mode — when true the list renders checkboxes instead
+  // of per-row "Add" buttons and a footer action bar with "Add Selected (N)".
+  multiSelect: false,
+
+  // Selected evals (multi-select mode). Checkbox state per row.
+  selectedEvals: [],
+  setSelectedEvals: (_evals) => {},
+  toggleSelectedEval: (_evalItem) => {},
+
+  // Bulk config queue — when the user picks multiple evals and skipConfig
+  // is off, we walk through config for each one sequentially. The first
+  // eval is set as selectedEval immediately; the rest live here.
+  pendingEvals: [],
+  setPendingEvals: (_evals) => {},
+  startBulkConfig: (_evals) => {},
+  clearConfigQueue: () => {},
+
   // Existing evals (to prevent duplicates)
   existingEvals: [],
 

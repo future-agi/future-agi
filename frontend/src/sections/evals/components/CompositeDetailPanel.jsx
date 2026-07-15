@@ -157,7 +157,9 @@ const CompositeDetailPanel = ({
       },
     ];
     onChildrenChange?.(next);
-    setPickerOpen(false);
+    // Don't close here — the EvalPickerDrawer manages its own lifecycle.
+    // In multi-select mode the picker walks through a config queue per
+    // eval and calls onClose only after the last one.
   };
 
   const handleRemoveChild = (childId) => {
@@ -588,6 +590,10 @@ const CompositeDetailPanel = ({
           // skipConfig=true bypassed all of that and added the child
           // straight to the list with template defaults.
           skipConfig={false}
+          // Multi-select lets the user pick several child evals with
+          // checkboxes and add them in one pass, replacing the
+          // one-child-per-open-close cycle.
+          multiSelect
           source={pickerSource || (pickerSourceId ? "dataset" : "composite")}
           sourceId={pickerSourceId || ""}
           sourceRowType={pickerSourceRowType}
