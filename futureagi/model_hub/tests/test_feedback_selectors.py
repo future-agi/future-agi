@@ -18,6 +18,7 @@ from model_hub.models.choices import (
 from model_hub.models.develop_dataset import Column, Dataset
 from model_hub.models.evals_metric import (
     EvalTemplate,
+    EvalTemplateVersion,
     Feedback,
     UserEvalMetric,
 )
@@ -296,6 +297,41 @@ class TestResolveFeedbackTemplateData:
         metric = _metric_for(
             user, workspace, tpl, config={"config": {"multi_choice": False}}
         )
+
+        data = resolve_feedback_template_data(metric, tpl)
+
+        assert data["multi_choice"] is True
+
+    def test_multi_choice_from_pinned_version_beats_template_field(
+        self, user, workspace
+    ):
+        """When the metric resolves to a template version whose snapshot
+        captured a different multi_choice, honor the version. Templates
+        with multiple versions can toggle multi_choice per version; the
+        template's direct field only reflects the latest edit."""
+        tpl = _template(
+            user,
+            workspace,
+            config={"output": "choices"},
+            choices=["A", "B"],
+            multi_choice=False,
+        )
+        # v1 captured multi_choice=True in its snapshot; not the default.
+        version = EvalTemplateVersion.objects.create(
+            eval_template=tpl,
+            version_number=1,
+            config_snapshot={
+                "multi_choice": True,
+                "choices": ["A", "B"],
+                "output": "choices",
+            },
+            is_default=False,
+            organization=user.organization,
+            workspace=workspace,
+        )
+        metric = _metric_for(user, workspace, tpl)
+        metric.pinned_version = version
+        metric.save(update_fields=["pinned_version"])
 
         data = resolve_feedback_template_data(metric, tpl)
 

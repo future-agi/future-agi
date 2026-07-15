@@ -7,7 +7,12 @@ from typing import Any, TypedDict
 from uuid import UUID
 
 from model_hub.models.develop_dataset import Column
-from model_hub.models.evals_metric import EvalTemplate, Feedback, UserEvalMetric
+from model_hub.models.evals_metric import (
+    EvalTemplate,
+    EvalTemplateVersion,
+    Feedback,
+    UserEvalMetric,
+)
 from model_hub.models.experiments import ExperimentsTable
 from model_hub.views.utils.constants import EVAL_OUTPUT_TYPES
 
@@ -123,9 +128,26 @@ def resolve_feedback_template_data(
         else:
             data["choices"] = []
 
-        # `multi_choice` is a canonical template field on EvalTemplate,
-        # not a nested config key. The nested key is often unset even
-        # when the direct field is True (e.g. the `tone` system template).
-        data["multi_choice"] = bool(getattr(eval_template, "multi_choice", False))
+        # `multi_choice` resolution: prefer the version snapshot when the
+        # metric resolves to a template version that captured it (users can
+        # create multiple versions that toggle multi_choice); fall back to
+        # the template's canonical direct field. The `template.config`
+        # nested key is intentionally ignored because it is often unset
+        # even when the direct field is True (e.g. the tone system
+        # template, whose yaml populates the direct field only).
+        resolved_version = EvalTemplateVersion.objects.resolve_for_metric(
+            user_eval_metric
+        )
+        version_snapshot = (
+            (resolved_version.config_snapshot or {})
+            if resolved_version
+            else {}
+        )
+        if "multi_choice" in version_snapshot:
+            data["multi_choice"] = bool(version_snapshot["multi_choice"])
+        else:
+            data["multi_choice"] = bool(
+                getattr(eval_template, "multi_choice", False)
+            )
 
     return data
