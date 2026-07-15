@@ -71,6 +71,19 @@ def _split_env(name: str, default: str = "") -> list[str]:
     return [x.strip() for x in raw.split(",") if x.strip()]
 
 
+def _cors_policy(
+    is_local: bool, explicit: list[str], frontend_hosts: tuple[str, ...]
+) -> tuple[bool, list[str]]:
+    """(CORS_ALLOW_ALL_ORIGINS, CORS_ALLOWED_ORIGINS): wildcard only for local/test with no
+    allowlist; otherwise the explicit origins plus the first-party frontend hosts."""
+    if is_local and not explicit:
+        return True, []
+    origins = list(explicit)
+    for host in (h.strip().rstrip("/") for h in frontend_hosts if h.strip()):
+        origins += [host] if "://" in host else [f"https://{host}", f"http://{host}"]
+    return False, list(dict.fromkeys(origins))
+
+
 def _bounded_env_int(
     name: str,
     default: int,
@@ -172,15 +185,21 @@ DEBUG = os.getenv("DEBUG", "True" if _IS_LOCAL else "False").lower() in (
 ALLOWED_HOSTS = _split_env("ALLOWED_HOSTS", "*")
 
 # ── CORS (django-cors-headers) ────────────────────────────────────────────
-# Default: permissive — any browser origin can hit the API. Production
-# self-hosters should set CORS_ALLOWED_ORIGINS (comma-separated) to flip
-# CORS_ALLOW_ALL_ORIGINS off when explicit origins are configured.
-_cors_origins = _split_env("CORS_ALLOWED_ORIGINS")
-if _cors_origins:
-    CORS_ALLOW_ALL_ORIGINS = False
-    CORS_ALLOWED_ORIGINS = _cors_origins
-else:
-    CORS_ALLOW_ALL_ORIGINS = True
+# Fail closed outside local/test: credentialed CORS is never paired with a
+# wildcard origin. The allowlist is CORS_ALLOWED_ORIGINS plus the first-party
+# frontend hosts (APP_URL / FRONTEND_URL), so a self-hosted stack needs no config.
+CORS_ALLOW_ALL_ORIGINS, CORS_ALLOWED_ORIGINS = _cors_policy(
+    _IS_LOCAL,
+    _split_env("CORS_ALLOWED_ORIGINS"),
+    (os.getenv("APP_URL", ""), os.getenv("FRONTEND_URL", "")),
+)
+if not _IS_LOCAL and not CORS_ALLOWED_ORIGINS:
+    import sys as _sys
+
+    _sys.stderr.write(
+        "[WARN] CORS is disabled: set CORS_ALLOWED_ORIGINS (or APP_URL / "
+        "FRONTEND_URL) to allow browser access in a non-local environment.\n"
+    )
 # Legacy alias (django-cors-headers pre-4.0)
 CORS_ORIGIN_ALLOW_ALL = CORS_ALLOW_ALL_ORIGINS
 
