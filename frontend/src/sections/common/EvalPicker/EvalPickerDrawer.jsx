@@ -157,6 +157,8 @@ const EvalPickerContent = ({ onStepChange }) => {
       setStep,
       keepOpenAfterSave,
       pendingEvals,
+      setPendingEvals,
+      setSelectedEvals,
     ],
   );
 

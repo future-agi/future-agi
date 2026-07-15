@@ -626,98 +626,96 @@ const EvalPickerList = ({ onSelectEval, onAddSelectedEvals }) => {
             }
           />
 
-            <Button
-              size="small"
-              variant="outlined"
-              startIcon={<Iconify icon="mage:filter" width={14} />}
-              onClick={(e) => setFilterAnchorEl(e.currentTarget)}
-              sx={{
-                textTransform: "none",
-                fontSize: "12px",
-                height: "32px",
-                borderColor: activeFilterCount > 0 ? "primary.main" : "divider",
-                color:
-                  activeFilterCount > 0 ? "primary.main" : "text.secondary",
-              }}
-            >
-              Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
-            </Button>
-  
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<Iconify icon="mage:filter" width={14} />}
+            onClick={(e) => setFilterAnchorEl(e.currentTarget)}
+            sx={{
+              textTransform: "none",
+              fontSize: "12px",
+              height: "32px",
+              borderColor: activeFilterCount > 0 ? "primary.main" : "divider",
+              color: activeFilterCount > 0 ? "primary.main" : "text.secondary",
+            }}
+          >
+            Filter{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
+          </Button>
         </Box>
       </Box>
 
       {/* Quick tag filters */}
-    
-        <Box
-          sx={{
-            display: "flex",
-            gap: 0.5,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
-        >
-          {EVAL_TAGS.map((tag) => {
-            const activeTagValues = filters?.tags || [];
-            const tagValues = tag.match || [tag.value];
-            const isActive = tagValues.some((v) => activeTagValues.includes(v));
-            return (
-              <Chip
-                key={tag.value}
-                icon={<Iconify icon={tag.icon} width={14} />}
-                label={tag.label}
-                size="small"
-                variant={isActive ? "filled" : "outlined"}
-                color={isActive ? "primary" : "default"}
-                onClick={() => {
-                  if (isActive) {
-                    const toRemove = new Set(tagValues);
-                    setFilters((prev) => {
-                      const safe = prev || {};
-                      const remaining = (safe.tags || []).filter(
-                        (v) => !toRemove.has(v),
-                      );
-                      if (!remaining.length) {
-                        const next = { ...safe };
-                        delete next.tags;
-                        return Object.keys(next).length ? next : null;
-                      }
-                      return { ...safe, tags: remaining };
-                    });
-                  } else {
-                    setFilters((prev) => {
-                      const safe = prev || {};
-                      return {
-                        ...safe,
-                        tags: [...(safe.tags || []), ...tagValues],
-                      };
-                    });
-                  }
-                  setPage(0);
-                  setExpandedEvalId(null);
-                }}
-                sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
-              />
-            );
-          })}
-          {filters?.tags?.length ? (
+
+      <Box
+        sx={{
+          display: "flex",
+          gap: 0.5,
+          flexWrap: "wrap",
+          alignItems: "center",
+        }}
+      >
+        {EVAL_TAGS.map((tag) => {
+          const activeTagValues = filters?.tags || [];
+          const tagValues = tag.match || [tag.value];
+          const isActive = tagValues.some((v) => activeTagValues.includes(v));
+          return (
             <Chip
-              label="Clear"
+              key={tag.value}
+              icon={<Iconify icon={tag.icon} width={14} />}
+              label={tag.label}
               size="small"
-              variant="outlined"
-              onDelete={() => {
-                setFilters((prev) => {
-                  const safe = prev || {};
-                  const next = { ...safe };
-                  delete next.tags;
-                  return Object.keys(next).length ? next : null;
-                });
+              variant={isActive ? "filled" : "outlined"}
+              color={isActive ? "primary" : "default"}
+              onClick={() => {
+                if (isActive) {
+                  const toRemove = new Set(tagValues);
+                  setFilters((prev) => {
+                    const safe = prev || {};
+                    const remaining = (safe.tags || []).filter(
+                      (v) => !toRemove.has(v),
+                    );
+                    if (!remaining.length) {
+                      const next = { ...safe };
+                      delete next.tags;
+                      return Object.keys(next).length ? next : null;
+                    }
+                    return { ...safe, tags: remaining };
+                  });
+                } else {
+                  setFilters((prev) => {
+                    const safe = prev || {};
+                    return {
+                      ...safe,
+                      tags: [...(safe.tags || []), ...tagValues],
+                    };
+                  });
+                }
                 setPage(0);
                 setExpandedEvalId(null);
               }}
-              sx={{ fontSize: "11px", height: 26 }}
+              sx={{ fontSize: "11px", height: 26, cursor: "pointer" }}
             />
-          ) : null}
-        </Box>
+          );
+        })}
+        {filters?.tags?.length ? (
+          <Chip
+            label="Clear"
+            size="small"
+            variant="outlined"
+            onDelete={() => {
+              setFilters((prev) => {
+                const safe = prev || {};
+                const next = { ...safe };
+                delete next.tags;
+                return Object.keys(next).length ? next : null;
+              });
+              setPage(0);
+              setExpandedEvalId(null);
+            }}
+            sx={{ fontSize: "11px", height: 26 }}
+          />
+        ) : null}
+      </Box>
 
       {/* Scrollable Table */}
       <TableContainer sx={{ flex: 1, overflow: "auto", minHeight: 0 }}>
@@ -819,16 +817,17 @@ const EvalPickerList = ({ onSelectEval, onAddSelectedEvals }) => {
                         sx={{ ...bodyCellSx, width: 48, px: 0.5 }}
                         align="center"
                       >
-                        <Checkbox
-                          size="small"
-                          disabled={added}
-                          checked={isSelected(evalItem.id) && !added}
-                          onChange={(e) => {
-                            e.stopPropagation();
-                            toggleSelectedEval(evalItem);
-                          }}
-                          sx={{ p: 0.5 }}
-                        />
+                        <div onClick={(e) => e.stopPropagation()}>
+                          <Checkbox
+                            size="small"
+                            disabled={added}
+                            checked={isSelected(evalItem.id) && !added}
+                            onChange={() => {
+                              toggleSelectedEval(evalItem);
+                            }}
+                            sx={{ p: 0.5 }}
+                          />
+                        </div>
                       </TableCell>
                     ) : (
                       <TableCell sx={{ ...bodyCellSx, width: 72, px: 0.5 }}>
@@ -977,7 +976,8 @@ const EvalPickerList = ({ onSelectEval, onAddSelectedEvals }) => {
             py: 1.5,
             borderTop: "1px solid",
             borderColor: "divider",
-            bgcolor: (theme) => theme.palette.mode === "dark" ? "grey.900" : "grey.50",
+            bgcolor: (theme) =>
+              theme.palette.mode === "dark" ? "grey.900" : "grey.50",
           }}
         >
           <Typography variant="body2" color="text.secondary">

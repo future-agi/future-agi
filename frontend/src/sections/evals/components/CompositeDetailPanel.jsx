@@ -18,7 +18,7 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useState } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import Iconify from "src/components/iconify";
 import EvalPickerDrawer from "src/sections/common/EvalPicker/EvalPickerDrawer";
 import { useCompositeChildrenSchemas } from "../hooks/useCompositeChildrenKeys";
@@ -88,6 +88,14 @@ const CompositeDetailPanel = ({
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pendingAxis, setPendingAxis] = useState(null);
 
+  // Ref to accumulate children across synchronous calls to handleEvalAdded,
+  // avoiding the stale-closure problem when multi-select bulk-add loops call
+  // handleEvalAdded multiple times in the same event-loop tick.
+  const accumulatedChildrenRef = useRef(childrenList);
+  useEffect(() => {
+    accumulatedChildrenRef.current = childrenList;
+  }, [childrenList]);
+
   const showWeightInput =
     aggregationEnabled && aggregationFunction === "weighted_avg";
   const weightsInteractive = !disabled && (editable || weightEditable);
@@ -120,7 +128,11 @@ const CompositeDetailPanel = ({
     const childId =
       evalMeta?.id || evalMeta?.templateId || evalMeta?.evalTemplateId;
     if (!childId) return;
-    if (childrenList.some((c) => c.child_id === childId)) {
+    // Use the accumulator ref so that when handleEvalAdded is called
+    // multiple times in the same tick (multi-select bulk add) each call
+    // sees the results of the previous one, not the stale closure value.
+    const current = accumulatedChildrenRef.current;
+    if (current.some((c) => c.child_id === childId)) {
       setPickerOpen(false);
       return;
     }
@@ -133,11 +145,11 @@ const CompositeDetailPanel = ({
         ? { params }
         : {};
     const next = [
-      ...childrenList,
+      ...current,
       {
         child_id: childId,
         child_name: evalMeta.name || childId,
-        order: childrenList.length,
+        order: current.length,
         eval_type: evalMeta.evalType || evalMeta.eval_type || "llm",
         weight: 1.0,
         // Persist the per-child version the user pinned in the picker
@@ -156,6 +168,7 @@ const CompositeDetailPanel = ({
         ...(Object.keys(childConfig).length ? { config: childConfig } : {}),
       },
     ];
+    accumulatedChildrenRef.current = next;
     onChildrenChange?.(next);
     // Don't close here — the EvalPickerDrawer manages its own lifecycle.
     // In multi-select mode the picker walks through a config queue per
@@ -527,8 +540,7 @@ const CompositeDetailPanel = ({
                     </Typography>
                     {paramEntries.map(([key, schema]) => {
                       const isNumeric =
-                        schema?.type === "integer" ||
-                        schema?.type === "number";
+                        schema?.type === "integer" || schema?.type === "number";
                       const value = childParams[key];
                       return (
                         <TextField
@@ -583,13 +595,11 @@ const CompositeDetailPanel = ({
           onClose={() => setPickerOpen(false)}
           onEvalAdded={handleEvalAdded}
           existingEvals={childrenList.map((c) => ({ id: c.child_id }))}
-          // Always step into the EvalPickerConfigFull screen — users
-          // need the version selector, scoring settings and (when a
-          // dataset is bound) the variable-mapping editor before the
-          // child is committed to the composite. The previous
-          // skipConfig=true bypassed all of that and added the child
+          // Direct-add mode: adding a child eval to a composite does
+          // not need the version / scoring / mapping editor — the
+          // parent composite owns the mapping. The child is added
           // straight to the list with template defaults.
-          skipConfig={false}
+          skipConfig={true}
           // Multi-select lets the user pick several child evals with
           // checkboxes and add them in one pass, replacing the
           // one-child-per-open-close cycle.
