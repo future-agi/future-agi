@@ -9,10 +9,7 @@ from django.db.models import Q
 
 from model_hub.services import bulk_selection
 from model_hub.services.bulk_selection import (
-    _SESSION_FIELD_MAP,
-    _SESSION_PRE_AGG_FIELDS,
     _apply_call_execution_filters,
-    _apply_span_filters,
     _apply_trace_filters,
     _filter_col_type,
     _filter_column_id,
@@ -262,33 +259,21 @@ def _mixed_observe_filters():
     ]
 
 
-@pytest.mark.parametrize(
-    "apply_filters,expected_has_eval_type",
-    [
-        (
-            lambda qs, filters, calls: _apply_trace_filters(
-                qs,
-                filters,
-                user=FakeUser(),
-                organization=object(),
-                annotation_label_ids=[],
-            ),
-            "trace",
-        ),
-        (
-            lambda qs, filters, calls: _apply_span_filters(
-                qs, filters, user=FakeUser(), organization=object()
-            ),
-            "span",
-        ),
-    ],
-)
-def test_trace_and_span_filter_mode_do_not_route_annotation_filters_to_eval_branch(
-    monkeypatch, apply_filters, expected_has_eval_type
+def test_trace_filter_mode_does_not_route_annotation_filters_to_eval_branch(
+    monkeypatch,
 ):
+    # Span filter-mode is CH-only (no PG FilterEngine path), so only the trace
+    # PG fallback routing is exercised here; the CH span routing is covered by
+    # the SPAN_LIST builder tests.
     calls = _install_filter_engine_spies(monkeypatch)
 
-    apply_filters(RecordingQuerySet(), _mixed_observe_filters(), calls)
+    _apply_trace_filters(
+        RecordingQuerySet(),
+        _mixed_observe_filters(),
+        user=FakeUser(),
+        organization=object(),
+        annotation_label_ids=[],
+    )
 
     non_system_columns = {_filter_column_id(f) for f in calls["non_system"]}
     assert "metric-1" in non_system_columns
@@ -296,51 +281,7 @@ def test_trace_and_span_filter_mode_do_not_route_annotation_filters_to_eval_bran
     assert "label-category" not in non_system_columns
     assert "annotator" not in non_system_columns
     assert calls["annotations"]
-    assert calls["has_eval_kwargs"] == {"observe_type": expected_has_eval_type}
-
-
-def test_span_filter_mode_passes_span_scoped_annotation_subquery_kwargs(monkeypatch):
-    calls = _install_filter_engine_spies(monkeypatch)
-
-    _apply_span_filters(
-        RecordingQuerySet(),
-        _mixed_observe_filters(),
-        user=FakeUser(),
-        organization=object(),
-    )
-
-    assert "span_filter_kwargs" in calls["annotation_kwargs"]
-    assert "observation_span_id" in calls["annotation_kwargs"]["span_filter_kwargs"]
-
-
-@pytest.mark.parametrize(
-    "column_id,filter_type,filter_op,field_map",
-    [
-        ("duration", "number", "between", _SESSION_FIELD_MAP),
-        ("first_message", "text", "starts_with", _SESSION_FIELD_MAP),
-        ("last_message", "text", "not_contains", _SESSION_FIELD_MAP),
-        ("total_cost", "number", "greater_than_or_equal", _SESSION_FIELD_MAP),
-        ("total_tokens", "number", "not_between", _SESSION_FIELD_MAP),
-        ("user_id", "text", "in", _SESSION_PRE_AGG_FIELDS),
-    ],
-)
-def test_session_field_maps_accept_contract_operator_shapes(
-    column_id, filter_type, filter_op, field_map
-):
-    q_filter = FilterEngine.get_filter_conditions_for_system_metrics(
-        [
-            _filter(
-                column_id,
-                "SYSTEM_METRIC",
-                filter_type,
-                filter_op,
-                _value_for(filter_type, filter_op),
-            )
-        ],
-        field_map=field_map,
-    )
-
-    assert q_filter
+    assert calls["has_eval_kwargs"] == {"observe_type": "trace"}
 
 
 def test_apply_created_at_filters_accepts_canonical_filter_payload():

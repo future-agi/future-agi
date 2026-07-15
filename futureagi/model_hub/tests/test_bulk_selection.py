@@ -23,14 +23,11 @@ from model_hub.services.bulk_selection import (
     ResolveResult,
     _validate_user_scoped_filters,
     _resolve_trace_ids_clickhouse,
-    resolve_filtered_span_ids,
-    resolve_filtered_session_ids,
     resolve_filtered_trace_ids,
 )
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
 from tracer.models.trace import Trace
-from tracer.models.trace_session import TraceSession
 
 
 # --------------------------------------------------------------------------
@@ -255,6 +252,49 @@ class TestCap:
         assert result.total_matching == 11
         assert result.truncated is True
 
+    def test_clickhouse_requests_cap_plus_one_page(self, monkeypatch):
+        """The resolver must request cap+1 as the page size so a >cap result
+        trips truncation. The trace ``build()`` LIMIT is exactly page_size (no
+        internal +1), so without this a >cap add would silently cap at ``cap``
+        instead of reporting truncation (→ ``selection_too_large`` upstream)."""
+        captured: dict = {}
+
+        class FakeBuilder:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def build(self):
+                return "SELECT trace_id", {}
+
+        class FakeResult:
+            # cap+1 rows — the sentinel a correct page_size must be able to fetch.
+            data = [{"trace_id": f"trace-{i}"} for i in range(11)]
+
+        class FakeAnalytics:
+            def execute_ch_query(self, *_args, **_kwargs):
+                return FakeResult()
+
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.query_builders.trace_list.TraceListQueryBuilder",
+            FakeBuilder,
+        )
+        monkeypatch.setattr(
+            "tracer.services.clickhouse.query_service.AnalyticsQueryService",
+            FakeAnalytics,
+        )
+
+        result = _resolve_trace_ids_clickhouse(
+            project_id="project-1",
+            filters=[],
+            exclude_ids=set(),
+            cap=10,
+            annotation_label_ids=[],
+        )
+
+        assert captured["page_size"] == 11  # cap + 1, not cap
+        assert result.truncated is True
+        assert result.total_matching == 11
+
 
 # --------------------------------------------------------------------------
 # Isolation
@@ -343,76 +383,6 @@ class TestIsolation:
 
         assert result.total_matching == 1
         assert result.ids == [legacy_trace.id]
-
-    def test_default_workspace_includes_legacy_null_workspace_spans(
-        self, organization, workspace, db
-    ):
-        legacy_project = Project.objects.create(
-            name="Legacy Null Workspace Spans",
-            organization=organization,
-            workspace=None,
-            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
-            trace_type="observe",
-        )
-        legacy_trace = Trace.objects.create(project=legacy_project, name="legacy-trace")
-        legacy_span = ObservationSpan.objects.create(
-            id="legacy-null-workspace-span",
-            project=legacy_project,
-            trace=legacy_trace,
-            name="legacy span",
-            observation_type="llm",
-            start_time=timezone.now(),
-            status="ok",
-        )
-
-        result = resolve_filtered_span_ids(
-            project_id=legacy_project.id,
-            filters=[],
-            organization=organization,
-            workspace=workspace,
-        )
-
-        assert result.total_matching == 1
-        assert result.ids == [legacy_span.id]
-
-    def test_default_workspace_includes_legacy_null_workspace_sessions(
-        self, organization, workspace, db
-    ):
-        legacy_project = Project.objects.create(
-            name="Legacy Null Workspace Sessions",
-            organization=organization,
-            workspace=None,
-            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
-            trace_type="observe",
-        )
-        legacy_session = TraceSession.objects.create(
-            project=legacy_project,
-            name="legacy session",
-        )
-        legacy_trace = Trace.objects.create(
-            project=legacy_project,
-            session=legacy_session,
-            name="legacy session trace",
-        )
-        ObservationSpan.objects.create(
-            id="legacy-null-workspace-session-span",
-            project=legacy_project,
-            trace=legacy_trace,
-            name="legacy session span",
-            observation_type="llm",
-            start_time=timezone.now(),
-            status="ok",
-        )
-
-        result = resolve_filtered_session_ids(
-            project_id=legacy_project.id,
-            filters=[],
-            organization=organization,
-            workspace=workspace,
-        )
-
-        assert result.total_matching == 1
-        assert result.ids == [legacy_session.id]
 
     def test_project_scoping(
         self, observe_project, seeded_traces, organization, workspace
