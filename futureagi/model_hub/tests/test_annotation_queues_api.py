@@ -604,7 +604,7 @@ class TestCreateQueue:
             resp = create_queue(auth_client, name="Denied Cross Workspace Queue")
 
         assert resp.status_code == status.HTTP_402_PAYMENT_REQUIRED
-        assert "2 existing queues" in resp.data["error"]["message"]
+        assert "2 user-created queues" in resp.data["error"]["message"]
         assert "1 in the current workspace" in resp.data["error"]["message"]
         assert "1 in other workspaces" in resp.data["error"]["message"]
         assert resp.data["error"]["detail"]["current_usage"] == 2
@@ -614,61 +614,18 @@ class TestCreateQueue:
             name="Denied Cross Workspace Queue"
         ).exists()
 
-    def test_get_or_create_default_checks_queue_plan_limit(
+    def test_get_or_create_default_create_branch_exempt_from_plan_limit(
         self, auth_client, organization, workspace
     ):
+        """Opening Add Label must never 402: a default queue is auto-provisioned
+        plumbing, so its create path is exempt from the plan quota even at the
+        cap (where check_ee_can_create would otherwise deny)."""
         project = Project.objects.create(
-            name="Default Queue Limit Project",
+            name="Default Queue Exempt Project",
             organization=organization,
             workspace=workspace,
             model_type="GenerativeLLM",
             trace_type="observe",
-        )
-
-        with (
-            patch("tfc.ee_gating.is_oss", return_value=False),
-            patch("tfc.ee_gating.check_ee_can_create") as check_can_create,
-        ):
-            resp = auth_client.post(
-                f"{QUEUE_URL}get-or-create-default/",
-                {"project_id": str(project.id)},
-                format="json",
-            )
-
-        assert resp.status_code == status.HTTP_200_OK, resp.data
-        check_can_create.assert_called_once_with(
-            EEResource.ANNOTATION_QUEUES,
-            org_id=str(organization.id),
-            current_count=0,
-        )
-
-    def test_get_or_create_default_limit_message_explains_org_queue_count(
-        self, auth_client, organization, user, workspace
-    ):
-        other_workspace = Workspace.objects.create(
-            name="Other Default Queue Workspace",
-            organization=organization,
-            is_active=True,
-            created_by=user,
-        )
-        project = Project.objects.create(
-            name="Default Queue Limit Message Project",
-            organization=organization,
-            workspace=workspace,
-            model_type="GenerativeLLM",
-            trace_type="observe",
-        )
-        AnnotationQueue.objects.create(
-            name="Current Workspace Queue",
-            organization=organization,
-            workspace=workspace,
-            created_by=user,
-        )
-        AnnotationQueue.objects.create(
-            name="Other Workspace Queue",
-            organization=organization,
-            workspace=other_workspace,
-            created_by=user,
         )
 
         with (
@@ -677,15 +634,15 @@ class TestCreateQueue:
                 "tfc.ee_gating.check_ee_can_create",
                 side_effect=FeatureUnavailable(
                     EEResource.ANNOTATION_QUEUES.value,
-                    detail="You've reached the 2 annotation queues limit",
+                    detail="You've reached the 3 annotation queues limit",
                     code="ENTITLEMENT_LIMIT",
                     metadata={
                         "resource": EEResource.ANNOTATION_QUEUES.value,
-                        "current_usage": 2,
-                        "limit": 2,
+                        "current_usage": 3,
+                        "limit": 3,
                     },
                 ),
-            ),
+            ) as check_can_create,
         ):
             resp = auth_client.post(
                 f"{QUEUE_URL}get-or-create-default/",
@@ -693,16 +650,103 @@ class TestCreateQueue:
                 format="json",
             )
 
-        assert resp.status_code == status.HTTP_402_PAYMENT_REQUIRED
-        assert "2 existing queues" in resp.data["error"]["message"]
-        assert "1 in the current workspace" in resp.data["error"]["message"]
-        assert "1 in other workspaces" in resp.data["error"]["message"]
-        assert resp.data["error"]["detail"]["current_usage"] == 2
-        assert resp.data["error"]["detail"]["workspace_usage"] == 1
-        assert resp.data["error"]["detail"]["other_workspace_usage"] == 1
-        assert not AnnotationQueue.objects.filter(
-            name__startswith="Default - Default Queue Limit Message Project"
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert resp.data["result"]["action"] == "created"
+        check_can_create.assert_not_called()
+        assert AnnotationQueue.objects.filter(
+            project=project, is_default=True, deleted=False
         ).exists()
+
+    def test_get_or_create_default_restore_branch_exempt_from_plan_limit(
+        self, auth_client, organization, workspace, user
+    ):
+        """Un-archiving a scope's default queue is also exempt: the restore
+        branch must not resurrect the silent-402 at the cap."""
+        project = Project.objects.create(
+            name="Default Queue Restore Exempt Project",
+            organization=organization,
+            workspace=workspace,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+        archived = AnnotationQueue.objects.create(
+            name="Default - Default Queue Restore Exempt Project",
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+            organization=organization,
+            workspace=workspace,
+            project=project,
+            created_by=user,
+            is_default=True,
+        )
+        archived.delete()  # soft-archive (flips deleted=True)
+
+        with (
+            patch("tfc.ee_gating.is_oss", return_value=False),
+            patch(
+                "tfc.ee_gating.check_ee_can_create",
+                side_effect=FeatureUnavailable(
+                    EEResource.ANNOTATION_QUEUES.value,
+                    detail="You've reached the 3 annotation queues limit",
+                    code="ENTITLEMENT_LIMIT",
+                    metadata={
+                        "resource": EEResource.ANNOTATION_QUEUES.value,
+                        "current_usage": 3,
+                        "limit": 3,
+                    },
+                ),
+            ) as check_can_create,
+        ):
+            resp = auth_client.post(
+                f"{QUEUE_URL}get-or-create-default/",
+                {"project_id": str(project.id)},
+                format="json",
+            )
+
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+        assert resp.data["result"]["action"] == "restored"
+        assert resp.data["result"]["queue"]["id"] == str(archived.id)
+        check_can_create.assert_not_called()
+
+    def test_default_queues_excluded_from_create_count(
+        self, auth_client, organization, user, workspace
+    ):
+        """Auto-provisioned default queues don't consume the plan quota, so a
+        real-queue create counts only user-created queues (the blast radius:
+        without this, N default queues would silently exhaust the org's cap)."""
+        AnnotationQueue.objects.create(
+            name="Existing Real Queue",
+            organization=organization,
+            created_by=user,
+        )
+        project = Project.objects.create(
+            name="Default Count Project",
+            organization=organization,
+            workspace=workspace,
+            model_type="GenerativeLLM",
+            trace_type="observe",
+        )
+        AnnotationQueue.objects.create(
+            name="Default - Default Count Project",
+            status=AnnotationQueueStatusChoices.ACTIVE.value,
+            organization=organization,
+            workspace=workspace,
+            project=project,
+            created_by=user,
+            is_default=True,
+        )
+
+        with (
+            patch("tfc.ee_gating.is_oss", return_value=False),
+            patch("tfc.ee_gating.check_ee_can_create") as check_can_create,
+        ):
+            resp = create_queue(auth_client, name="Plan Counted Real Queue")
+
+        assert resp.status_code == status.HTTP_201_CREATED, resp.data
+        check_can_create.assert_called_once_with(
+            EEResource.ANNOTATION_QUEUES,
+            org_id=str(organization.id),
+            current_count=1,  # the default queue is not counted
+        )
 
     def test_get_or_create_default_gives_requester_full_manager_access(
         self, auth_client, organization, workspace, user

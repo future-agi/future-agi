@@ -2766,7 +2766,9 @@ def _is_review_workspace_request(
 
 
 def _workspace_visible_queue_count(org, workspace):
-    queryset = AnnotationQueue.no_workspace_objects.filter(organization=org)
+    queryset = AnnotationQueue.no_workspace_objects.filter(
+        organization=org, is_default=False
+    )
     if not workspace:
         return queryset.count()
     if getattr(workspace, "is_default", False):
@@ -2792,11 +2794,14 @@ def _check_annotation_queue_create_limit(org, workspace=None):
     if is_oss():
         return
 
-    # Queue pricing limits are org-level entitlements. Do not use the default
-    # manager here because it applies the current workspace context and would
-    # under-count queues that exist in other workspaces in the same org.
+    # Queue pricing limits are org-level entitlements. Use the workspace-agnostic
+    # manager so queues in sibling workspaces are still counted, and exclude
+    # auto-provisioned default queues: they are plumbing for the quick add-label
+    # flow (one per scope), not deliberate user artefacts, so they do not consume
+    # the plan quota.
     current_count = AnnotationQueue.no_workspace_objects.filter(
         organization=org,
+        is_default=False,
     ).count()
     try:
         check_ee_can_create(
@@ -2814,7 +2819,7 @@ def _check_annotation_queue_create_limit(org, workspace=None):
             limit_text = f"{limit} " if limit is not None else ""
             detail = (
                 f"You've reached the {limit_text}annotation queues limit across "
-                f"this organization ({current_count} existing queues; "
+                f"this organization ({current_count} user-created queues; "
                 f"{workspace_count} in the current workspace and "
                 f"{metadata['other_workspace_usage']} in other workspaces). "
                 "Archive unused queues in another workspace or upgrade your plan."
@@ -3904,6 +3909,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         ).first()
         action = "fetched"
         if not queue:
+            # Default queues are auto-provisioned plumbing for the quick
+            # add-label flow — one per scope, bounded by the unique index — not
+            # deliberate user queues, so they are exempt from the plan quota.
+            # Do NOT gate this path on the create limit: at the cap it would 402
+            # and the add-label button would silently do nothing.
             archived = (
                 AnnotationQueue.all_objects.filter(
                     **lookup, is_default=True, deleted=True, organization=org
@@ -3912,16 +3922,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                 .first()
             )
             if archived:
-                _check_annotation_queue_create_limit(
-                    org, getattr(request, "workspace", None)
-                )
                 _restore_archived_default_queue(archived)
                 queue = archived
                 action = "restored"
             else:
-                _check_annotation_queue_create_limit(
-                    org, getattr(request, "workspace", None)
-                )
                 queue = AnnotationQueue.objects.create(
                     is_default=True,
                     name=f"Default - {getattr(entity, 'name', None) or getattr(entity, 'agent_name', str(entity))}",
