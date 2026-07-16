@@ -11,6 +11,7 @@ package clickhouse25exporter
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -64,6 +65,13 @@ var knownObservationTypes = map[string]struct{}{
 	"tool": {}, "chain": {}, "llm": {}, "retriever": {}, "embedding": {},
 	"agent": {}, "reranker": {}, "guardrail": {}, "evaluator": {},
 	"conversation": {}, "unknown": {},
+}
+
+// Pricer computes token-based cost for spans that carried no user cost
+// attributes. *pricing.Pricer satisfies this; nil disables token pricing
+// (cost falls back to the user-provided value or 0).
+type Pricer interface {
+	TokenCost(ctx context.Context, orgID, model string, promptTokens, completionTokens int32) (float64, bool)
 }
 
 // spanKindAttrKeys mirrors AttributeAliases.SPAN_KIND: attribute keys a span
@@ -135,7 +143,7 @@ func resolveObservationType(attrsStr map[string]string) string {
 // identities — keeping a stable signature for callers that only need the span
 // rows.
 func Convert(traces ptrace.Traces) ([]map[string]any, error) {
-	rows, _, err := ConvertWithIdentities(traces)
+	rows, _, err := ConvertWithIdentities(context.Background(), traces, nil)
 	return rows, err
 }
 
@@ -155,7 +163,7 @@ func Convert(traces ptrace.Traces) ([]map[string]any, error) {
 // distinct end_user_id / trace_session_id); cross-batch duplicates collapse on
 // the CH side via ReplacingMergeTree(version), so only within-batch dedup is
 // done here.
-func ConvertWithIdentities(traces ptrace.Traces) ([]map[string]any, *curatedwriter.Batch, error) {
+func ConvertWithIdentities(ctx context.Context, traces ptrace.Traces, pricer Pricer) ([]map[string]any, *curatedwriter.Batch, error) {
 	rows := make([]map[string]any, 0, traces.SpanCount())
 	ids := curatedwriter.NewBatch()
 
@@ -183,7 +191,7 @@ func ConvertWithIdentities(traces ptrace.Traces) ([]map[string]any, *curatedwrit
 			ss := scope.Spans()
 			for k := 0; k < ss.Len(); k++ {
 				span := ss.At(k)
-				row, identity, err := spanToRow(span, projectID, orgID, serviceName, semconv, projectType, resourceAttrs)
+				row, identity, err := spanToRow(ctx, span, projectID, orgID, serviceName, semconv, projectType, resourceAttrs, pricer)
 				if err != nil {
 					return nil, nil, fmt.Errorf("span %s: %w", span.SpanID().String(), err)
 				}
@@ -258,9 +266,11 @@ func collectTrace(ids *curatedwriter.Batch, row map[string]any, rawProjectID str
 // The identity's end_user_id / trace_session_id are the SAME values stamped
 // onto the span row below — computed once, reused for both.
 func spanToRow(
+	ctx context.Context,
 	span ptrace.Span,
 	projectID, orgID, serviceName, semconv, projectType string,
 	resourceAttrs map[string]any,
+	pricer Pricer,
 ) (map[string]any, spanIdentity, error) {
 	// Pre-allocate destination maps. Sizing is a heuristic — typical LLM
 	// spans have 20-50 attrs, but customer-instrumented spans run smaller.
@@ -271,6 +281,17 @@ func spanToRow(
 
 	adapter.Split(span.Attributes(), attrsStr, attrsNum, attrsBool, overflow)
 	hot := adapter.DeriveHotKeys(attrsStr, attrsNum)
+
+	// Cost — Django _convert_single_span parity: a user-supplied
+	// gen_ai.cost.*/llm.cost.* value (already promoted onto hot.Cost, even an
+	// explicit 0) wins; otherwise price from tokens (litellm table → per-org
+	// CustomAIModel via the injected Pricer).
+	cost := hot.Cost
+	if !hot.CostUserSet && pricer != nil {
+		if c, ok := pricer.TokenCost(ctx, orgID, hot.Model, hot.PromptTokens, hot.CompletionTokens); ok {
+			cost = c
+		}
+	}
 
 	startNanos := span.StartTimestamp().AsTime()
 	endNanos := span.EndTimestamp().AsTime()
@@ -368,7 +389,7 @@ func spanToRow(
 		"prompt_tokens":     hot.PromptTokens,
 		"completion_tokens": hot.CompletionTokens,
 		"total_tokens":      hot.TotalTokens,
-		"cost":              hot.Cost,
+		"cost":              cost,
 		"attrs_string":      attrsStr,
 		"attrs_number":      attrsNum,
 		"attrs_bool":        attrsBool,

@@ -31,6 +31,7 @@ import (
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/pricing"
 	"github.com/future-agi/future-agi/fi-collector/pkg/server"
 	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
@@ -86,7 +87,21 @@ func main() {
 		metering = auth.NewMetering(rdb, authenticator.PGRead(), log)
 	}
 
-	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, server.WithLogger(log))
+	priceTable := loadPriceTable(log, os.Getenv("FI_PRICING_JSON"))
+	var pricer *pricing.Pricer
+	if priceTable != nil {
+		var custom *pricing.CustomPricing
+		if authenticator != nil && authenticator.PGRead() != nil {
+			custom = pricing.NewCustomPricing(authenticator.PGRead(), 24*time.Hour, log)
+		}
+		pricer = pricing.New(priceTable, custom)
+	}
+
+	opts := []server.Option{server.WithLogger(log)}
+	if pricer != nil {
+		opts = append(opts, server.WithPricer(pricer))
+	}
+	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
 	// Admin HTTP server — internal only, health check endpoint.
 	go runAdmin(":9464", writer, log)
@@ -106,6 +121,25 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("shutdown complete", "stats", writer.Snapshot())
+}
+
+// loadPriceTable resolves the token-pricing table. FI_PRICING_JSON is
+// best-effort: a bad override file must not silently disable pricing for
+// every span, so a failed override load falls back to the embedded snapshot
+// (with an error log) rather than returning nil. Only a failure of the
+// embedded snapshot itself (near-impossible — it's compiled in) leaves
+// pricing disabled.
+func loadPriceTable(log *slog.Logger, path string) *pricing.Table {
+	table, err := pricing.LoadTable(path)
+	if err != nil && path != "" {
+		log.Error("FI_PRICING_JSON override load failed; falling back to embedded pricing snapshot",
+			"env", "FI_PRICING_JSON", "path", path, "err", err)
+		table, err = pricing.LoadTable("")
+	}
+	if err != nil {
+		log.Error("pricing table load failed; token-based cost disabled", "err", err)
+	}
+	return table
 }
 
 func loadConfig(log *slog.Logger, path string) rootConfig {
