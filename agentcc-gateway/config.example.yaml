@@ -331,6 +331,17 @@ providers:
 #   #   x-agentcc-cache-namespace: "prod"    # Isolate cache by namespace
 #   #   x-agentcc-cache-force-refresh: true  # Skip cache read, refresh entry
 #   #   Cache-Control: no-store            # Skip caching entirely
+#   semantic:
+#     enabled: true
+#     backend: valkey                        # "memory", "qdrant", "weaviate", "pinecone", "valkey"
+#     threshold: 0.85                        # Cosine similarity threshold (0.0-1.0)
+#     dimensions: 256                        # Embedding dimensions
+#     valkey:
+#       address: "valkey:6379"               # Valkey address (requires valkey-search module)
+#       password: ""
+#       index: "agentcc_semantic_cache"      # FT index name
+#       prefix: "sc:"                        # Hash key prefix
+#       timeout: 3s
 
 # rate_limiting:
 #   enabled: true

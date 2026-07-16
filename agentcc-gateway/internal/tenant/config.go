@@ -278,13 +278,14 @@ type GCSCacheConfig struct {
 // SemanticCacheConfig holds L2 semantic/vector cache settings.
 type SemanticCacheConfig struct {
 	Enabled    bool              `json:"enabled"`
-	Backend    string            `json:"backend,omitempty"` // "qdrant", "weaviate", "pinecone"
+	Backend    string            `json:"backend,omitempty"` // "qdrant", "weaviate", "pinecone", "valkey"
 	Threshold  float64           `json:"threshold,omitempty"`
 	Dimensions int               `json:"dimensions,omitempty"`
 	MaxEntries int               `json:"max_entries,omitempty"`
 	Qdrant     *QdrantConfig     `json:"qdrant,omitempty"`
 	Weaviate   *WeaviateConfig   `json:"weaviate,omitempty"`
 	Pinecone   *PineconeConfig   `json:"pinecone,omitempty"`
+	Valkey     *ValkeyConfig     `json:"valkey,omitempty"`
 }
 
 // QdrantConfig holds Qdrant vector DB settings.
@@ -305,6 +306,16 @@ type WeaviateConfig struct {
 type PineconeConfig struct {
 	URL    string `json:"url,omitempty"`
 	APIKey string `json:"api_key,omitempty"`
+}
+
+// ValkeyConfig holds Valkey vector search settings for semantic caching.
+type ValkeyConfig struct {
+	Address  string `json:"address,omitempty"`
+	Password string `json:"password,omitempty"`
+	Index    string `json:"index,omitempty"`   // FT index name
+	Prefix   string `json:"prefix,omitempty"`  // hash key prefix
+	Timeout  int    `json:"timeout,omitempty"` // operation timeout in seconds
+	TLS      bool   `json:"tls,omitempty"`     // enable TLS for managed cloud
 }
 
 // EdgeCacheConfig holds CDN edge caching settings.

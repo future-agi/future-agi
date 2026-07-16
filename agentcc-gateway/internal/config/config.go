@@ -383,13 +383,14 @@ type CacheConfig struct {
 // SemanticCacheConfig controls semantic similarity caching.
 type SemanticCacheConfig struct {
 	Enabled    bool           `yaml:"enabled" json:"enabled"`
-	Backend    string         `yaml:"backend" json:"backend"`     // "memory" (default), "qdrant", "weaviate", "pinecone"
+	Backend    string         `yaml:"backend" json:"backend"`     // "memory" (default), "qdrant", "weaviate", "pinecone", "valkey"
 	Threshold  float64        `yaml:"threshold" json:"threshold"` // 0.0-1.0 cosine similarity
 	Dimensions int            `yaml:"dimensions" json:"dimensions"`
 	MaxEntries int            `yaml:"max_entries" json:"max_entries"`
 	Qdrant     QdrantConfig   `yaml:"qdrant" json:"qdrant"`
 	Weaviate   WeaviateConfig `yaml:"weaviate" json:"weaviate"`
 	Pinecone   PineconeConfig `yaml:"pinecone" json:"pinecone"`
+	Valkey     ValkeyConfig   `yaml:"valkey" json:"valkey"`
 }
 
 // DiskCacheConfig configures the local file-based cache backend.
@@ -466,6 +467,17 @@ type PineconeConfig struct {
 	URL     string        `yaml:"url" json:"url"`
 	APIKey  string        `yaml:"api_key" json:"-"`
 	Timeout time.Duration `yaml:"timeout" json:"timeout"`
+}
+
+// ValkeyConfig configures the Valkey vector search backend for semantic caching.
+// Requires Valkey 8.0+ with the valkey-search module enabled.
+type ValkeyConfig struct {
+	Address  string        `yaml:"address" json:"address"`
+	Password string        `yaml:"password" json:"-"`
+	Index    string        `yaml:"index" json:"index"`     // FT index name, default "agentcc_semantic_cache"
+	Prefix   string        `yaml:"prefix" json:"prefix"`   // hash key prefix, default "sc:"
+	Timeout  time.Duration `yaml:"timeout" json:"timeout"`
+	TLS      bool          `yaml:"tls" json:"tls"`         // Enable TLS for managed cloud (ElastiCache, MemoryDB, etc.)
 }
 
 // CacheEdgeConfig configures CDN edge caching.
