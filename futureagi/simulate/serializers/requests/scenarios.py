@@ -438,3 +438,18 @@ class ScenarioAddColumnsRequestSerializer(serializers.Serializer):
                     )
 
         return data
+
+
+class ScenarioBulkDeleteRequestSerializer(serializers.Serializer):
+    """
+    Request serializer for DELETE /scenarios/ (bulk delete).
+    Validates the scenario_ids list.
+    """
+
+    scenario_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=True,
+        min_length=1,
+        help_text="List of scenario UUIDs to delete.",
+    )
+

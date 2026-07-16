@@ -1513,3 +1513,96 @@ class TestGetDatasetsNamesRowCount:
         assert "row_count" in by_id[str(small.id)]
         assert by_id[str(small.id)]["row_count"] == 3
         assert by_id[str(big.id)]["row_count"] == 15
+
+
+# ============================================================================
+# ScenariosListView DELETE Tests (Bulk Delete)
+# ============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.api
+class TestScenariosListViewDelete:
+    """Tests for DELETE /simulate/scenarios/ (bulk delete)"""
+
+    def test_bulk_delete_scenarios_success(self, auth_client, scenario):
+        """Test bulk soft deleting scenarios."""
+        # Create another scenario in the same org
+        from simulate.models import Scenarios
+        another_scenario = Scenarios.objects.create(
+            name="Another Test Scenario",
+            description="Another description",
+            organization=scenario.organization,
+            source="Test source",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+        )
+
+        response = auth_client.delete(
+            "/simulate/scenarios/",
+            data={"scenario_ids": [str(scenario.id), str(another_scenario.id)]},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["message"] == "Scenarios deleted successfully"
+        assert response.json()["scenarios_updated"] == 1 + 1
+
+        # Verify soft delete in database
+        scenario.refresh_from_db()
+        another_scenario.refresh_from_db()
+        assert scenario.deleted is True
+        assert another_scenario.deleted is True
+
+    def test_bulk_delete_scenarios_unauthenticated(self, api_client, scenario):
+        """Test bulk deleting scenarios without authentication returns 401/403."""
+        response = api_client.delete(
+            "/simulate/scenarios/",
+            data={"scenario_ids": [str(scenario.id)]},
+            format="json",
+        )
+
+        assert response.status_code in [
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ]
+
+    def test_bulk_delete_scenarios_validation_error(self, auth_client):
+        """Test that invalid payload returns 400."""
+        response = auth_client.delete(
+            "/simulate/scenarios/",
+            data={"scenario_ids": []},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_bulk_delete_scenarios_other_organization(self, auth_client, scenario, db):
+        """Test that user cannot delete scenarios from other organization (silently ignored)."""
+        from accounts.models.organization import Organization
+        from simulate.models import Scenarios
+
+        other_org = Organization.objects.create(name="Other Org")
+        other_scenario = Scenarios.objects.create(
+            name="Other Scenario",
+            description="Other description",
+            organization=other_org,
+            source="Test source",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+        )
+
+        # Try to delete both our scenario and the other org's scenario
+        response = auth_client.delete(
+            "/simulate/scenarios/",
+            data={"scenario_ids": [str(scenario.id), str(other_scenario.id)]},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["message"] == "Scenarios deleted successfully"
+        # Only our scenario should be deleted (so count = 1)
+        assert response.json()["scenarios_updated"] == 1
+
+        scenario.refresh_from_db()
+        other_scenario.refresh_from_db()
+        assert scenario.deleted is True
+        assert other_scenario.deleted is False
+
