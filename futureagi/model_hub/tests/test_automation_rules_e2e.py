@@ -306,11 +306,11 @@ class TestAutomationRulesE2E:
         assert result["matched"] == 3
         assert result["added"] == 3
         assert result["duplicates"] == 0
-        assert set(
-            QueueItem.objects.filter(queue_id=queue_id).values_list(
-                "workspace_id", flat=True
-            )
-        ) == {workspace.id}
+        items = QueueItem.objects.filter(queue_id=queue_id)
+        assert set(items.values_list("workspace_id", flat=True)) == {workspace.id}
+        # The denormalized project_id is stamped on rule-created items too, so the
+        # continuously-fed queue stays scope-able by the render read (TH-6864).
+        assert set(items.values_list("project_id", flat=True)) == {project.id}
 
     # -----------------------------------------------------------------------
     # 2. Conditions-based filtering

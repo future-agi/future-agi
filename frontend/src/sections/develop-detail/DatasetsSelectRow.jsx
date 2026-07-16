@@ -61,7 +61,7 @@ const DatasetsSelectRow = ({
   );
 
   const isData = Boolean(tableData?.data?.result?.table?.length);
-  const isSyntheticDataset = Boolean(tableData?.data?.result?.syntheticDataset);
+  const isSyntheticDataset = Boolean(tableData?.data?.result?.synthetic_dataset);
   const plusRef = useRef(null);
   const compareRef = useRef(null);
   const theme = useTheme();
@@ -171,7 +171,7 @@ const DatasetsSelectRow = ({
 
     if (shouldHideDevelopBar) {
       const datasetId = currentPath.split("/")[3];
-      navigate(`/dashboard/develop/${datasetId}?tab=annotations`);
+      navigate(`/dashboard/develop/${datasetId}?tab=data`);
       return;
     }
 

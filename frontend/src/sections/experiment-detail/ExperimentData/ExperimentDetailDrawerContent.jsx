@@ -32,6 +32,8 @@ import SvgColor from "src/components/svg-color/svg-color";
 import NumericCell from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/NumericCell";
 import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 import ImageDatapointCard from "src/sections/common/ImageDatapointCard";
+import ImagesDatapointCard from "src/sections/common/ImagesDatapointCard";
+import DocumentDatapointCard from "src/sections/common/DocumentDatapointCard";
 import AgentFlowRenderer from "./AgentFlowRenderer";
 import { useAddEvaluationFeebackStore } from "src/sections/develop-detail/states";
 import AddEvaluationFeeback from "src/sections/develop-detail/DataTab/AddEvaluationFeeback/AddEvaluationFeeback";
@@ -461,6 +463,24 @@ export default function ExperimentDetailDrawerContent({
     if (col?.data_type === "image") {
       return (
         <ImageDatapointCard
+          value={row?.[col.id]}
+          column={{ ...col, headerName: col?.name, status: col?.status }}
+        />
+      );
+    }
+
+    if (col?.data_type === "images") {
+      return (
+        <ImagesDatapointCard
+          value={row?.[col.id]}
+          column={{ ...col, headerName: col?.name, status: col?.status }}
+        />
+      );
+    }
+
+    if (col?.data_type === "document") {
+      return (
+        <DocumentDatapointCard
           value={row?.[col.id]}
           column={{ ...col, headerName: col?.name, status: col?.status }}
         />

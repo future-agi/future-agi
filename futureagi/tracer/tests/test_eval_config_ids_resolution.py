@@ -49,14 +49,16 @@ class TestEvalLoggerSource:
     """``eval_logger_source()`` resolves the table + not-deleted predicate."""
 
     @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger")
-    def test_legacy_table_uses_peerdb_predicate(self):
+    def test_legacy_table_uses_deleted_predicate(self):
+        # Legacy table filters on `deleted`, not `_peerdb_is_deleted`: the v2
+        # rewriter renames `_peerdb_is_deleted` → `is_deleted` (which this table
+        # lacks), so `deleted` is the rewrite-safe soft-delete marker.
         from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 
         table, not_deleted = eval_logger_source()
         assert table == "tracer_eval_logger"
-        assert not_deleted == (
-            "_peerdb_is_deleted = 0 AND (deleted = 0 OR deleted IS NULL)"
-        )
+        assert not_deleted == "(deleted = 0 OR deleted IS NULL)"
+        assert "_peerdb_is_deleted" not in not_deleted
 
     @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
     def test_v2_table_uses_is_deleted_predicate(self):
@@ -78,9 +80,7 @@ class TestEvalLoggerSource:
         from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 
         _, not_deleted = eval_logger_source("e")
-        assert not_deleted == (
-            "e._peerdb_is_deleted = 0 AND (e.deleted = 0 OR e.deleted IS NULL)"
-        )
+        assert not_deleted == "(e.deleted = 0 OR e.deleted IS NULL)"
 
 
 @pytest.mark.unit
@@ -109,7 +109,8 @@ class TestEvalConfigIdSelectors:
 
         query = captured["query"]
         assert "tracer_eval_logger FINAL" in query
-        assert "_peerdb_is_deleted = 0" in query
+        assert "(deleted = 0 OR deleted IS NULL)" in query
+        assert "_peerdb_is_deleted" not in query
 
     def test_project_selector_forwards_timeout(self):
         svc, captured = _capturing_service([])

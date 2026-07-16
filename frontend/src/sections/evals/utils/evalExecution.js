@@ -4,14 +4,9 @@
 // composite-vs-single decision lives in one place.
 
 import axios, { endpoints } from "src/utils/axios";
-import { canonicalEntries, stripAttributePathPrefix } from "src/utils/utils";
 
+import { resolvePath } from "./rowPathWalker";
 import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
-
-// Walk limits match the mapping-dropdown walker so every path the user can
-// pick during mapping also resolves at test time.
-const ARRAY_PEEK = 500;
-const DICT_LIMIT = 5000;
 
 export const normalizeRowType = (value) => {
   if (!value) return "Span";
@@ -56,59 +51,16 @@ export const buildCompositeCtx = ({ rowType, currentRow, spanDetail }) => {
   return ctx;
 };
 
-// Walks spanDetail into a flat `{ "soft-flattened.path": value }` lookup.
-// "span_attributes.x.y" collapses to "x.y" so saved mappings (which store
-// the stripped form) resolve. Top-level paths win over stripped ones.
-export const buildFlatValueMap = (spanDetail) => {
-  if (!spanDetail) return {};
-  const valueMap = {};
-  const walk = (node, prefix) => {
-    if (Array.isArray(node)) {
-      node.slice(0, ARRAY_PEEK).forEach((item, idx) => {
-        const path = prefix ? `${prefix}.${idx}` : String(idx);
-        valueMap[path] = item;
-        if (item && typeof item === "object") {
-          walk(item, path);
-        }
-      });
-      return;
-    }
-    // canonicalEntries skips the camelCase aliases the axios interceptor
-    // layers on, so we only walk the snake side.
-    for (const [k, v] of canonicalEntries(node)) {
-      if (k.startsWith("_")) continue;
-      const path = prefix ? `${prefix}.${k}` : k;
-      valueMap[path] = v;
-      if (v && typeof v === "object") {
-        if (Array.isArray(v) || Object.keys(v).length < DICT_LIMIT) {
-          walk(v, path);
-        }
-      }
-    }
-  };
-  walk(spanDetail, "");
-
-  const flat = {};
-  for (const [path, val] of Object.entries(valueMap)) {
-    const short = stripAttributePathPrefix(path);
-    if (!(short in flat) || short === path) {
-      flat[short] = val;
-    }
-  }
-  return flat;
-};
-
 // `rowFields` is an optional fallback for fields not present in spanDetail
 // (e.g. annotation columns in the TracingTestMode mapping panel).
-export const resolveMappingFromRow = (mapping, flatValueMap, rowFields) => {
+export const resolveMappingFromRow = (mapping, spanDetail, rowFields) => {
   const resolved = {};
   for (const [variable, field] of Object.entries(mapping || {})) {
     if (!field) continue;
-    let val = flatValueMap?.[field];
+    const hit = resolvePath(spanDetail, field);
+    let val = hit.status === "resolved" ? hit.value : undefined;
     if (val === undefined && Array.isArray(rowFields)) {
-      const rf = rowFields.find(
-        (f) => f.key === field || f.colId === field,
-      );
+      const rf = rowFields.find((f) => f.key === field || f.colId === field);
       if (rf?.raw !== undefined && rf.raw !== null) {
         val = rf.raw;
       }
@@ -132,7 +84,6 @@ export const executeEvalForRow = async ({
   currentRow,
   spanDetail,
   mapping,
-  flatValueMap,
   rowFields,
   codeParams,
   errorLocalizerEnabled = false,
@@ -150,11 +101,9 @@ export const executeEvalForRow = async ({
 
   // Sessions skip the walk — single delegates via `mapping_paths`, composite
   // uses `session_context = currentRow`.
-  const flat =
-    flatValueMap ??
-    (isSession ? {} : buildFlatValueMap(spanDetail));
-
-  const resolvedMapping = resolveMappingFromRow(mapping, flat, rowFields);
+  const resolvedMapping = isSession
+    ? {}
+    : resolveMappingFromRow(mapping, spanDetail, rowFields);
 
   try {
     if (isComposite) {

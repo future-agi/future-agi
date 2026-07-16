@@ -62,7 +62,6 @@ export default function CustomInstruction({ control }) {
             >
               <Typography
                 fontWeight={"fontWeightRegular"}
-                color={"background.paper"}
                 typography={"s2"}
               >
                 {watchedCustomInstructionDisabled

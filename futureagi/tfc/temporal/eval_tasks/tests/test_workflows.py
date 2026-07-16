@@ -40,6 +40,15 @@ def _patch_noop_reconcile(monkeypatch):
     monkeypatch.setattr("tracer.services.eval_tasks.reconciler.reconcile", _noop)
 
 
+def _patch_failing_reconcile(monkeypatch):
+    """reconcile raises so the activity exhausts its retries and the run fails."""
+
+    def _boom(task):
+        raise RuntimeError("simulated reconcile failure")
+
+    monkeypatch.setattr("tracer.services.eval_tasks.reconciler.reconcile", _boom)
+
+
 def _patch_completing_run_entry(monkeypatch):
     def _complete(entry):
         EvalLogger.objects.filter(id=entry.id).update(
@@ -392,7 +401,29 @@ class TestHistoricalWorkflow:
         counts = await _status_counts(str(eval_task.id))
         assert counts["completed"] == 3  # the healthy entries still drained
         assert counts["running"] == 1  # the stranded one, left non-terminal
-        assert await _task_status(str(eval_task.id)) != EvalTaskStatus.COMPLETED
+        # Wrapper persists FAILED to the DB, not just the SA.
+        assert await _task_status(str(eval_task.id)) == EvalTaskStatus.FAILED
+
+    async def test_reconcile_failure_marks_task_failed(
+        self, workflow_environment, eval_task, monkeypatch
+    ):
+        """A failed activity (here reconcile) must leave the task FAILED, not
+        stuck ``running`` — it was flipped to running by _mark_running."""
+        from temporalio.client import WorkflowFailureError
+        from temporalio.common import RetryPolicy
+
+        import tfc.temporal.eval_tasks.workflows as wf
+
+        _patch_failing_reconcile(monkeypatch)
+        # One-shot so the reconcile activity exhausts its retries fast.
+        monkeypatch.setattr(wf, "CONTROL_RETRY_POLICY", RetryPolicy(maximum_attempts=1))
+
+        with pytest.raises(WorkflowFailureError):
+            await _run_historical(
+                workflow_environment, str(eval_task.id), batch_size=2, max_concurrent=4
+            )
+
+        assert await _task_status(str(eval_task.id)) == EvalTaskStatus.FAILED
 
     async def test_entry_passes_through_running_mid_drain(
         self, workflow_environment, eval_task, make_pending_entries, monkeypatch

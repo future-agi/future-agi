@@ -90,6 +90,7 @@ import {
 } from "./add-items-session-utils";
 import "src/styles/clean-data-table.css";
 import { fetchRootSpans } from "src/api/project/llm-tracing";
+import { summarizeAddResults, addResultToast } from "./add-items-results";
 
 const panelFilterToApi = (panel) =>
   panelFilterToApiBase(panel, { includeMeta: true });
@@ -509,6 +510,8 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
   // obs page's "Add to queue") instead of being converted to root spans.
   const [isVoiceTraceSelection, setIsVoiceTraceSelection] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
+  // Trace project (from TraceSelector) — passed to fetchRootSpans to prune CH.
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
   const { mutate: addItems, isPending } = useAddQueueItems();
   const queryClient = useQueryClient();
   const isDefaultQueue = !!queue?.is_default;
@@ -551,8 +554,6 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
           sourceType === "call_execution");
 
       if (isBackendFilterMode) {
-        const totalCount =
-          selectAllInfo.totalCount - selectAllInfo.excludedIds.size;
         addItems(
           {
             queueId,
@@ -568,11 +569,11 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
             },
           },
           {
-            onSuccess: () => {
-              enqueueSnackbar(
-                `${totalCount} item${totalCount !== 1 ? "s" : ""} added to queue`,
-                { variant: "success" },
+            onSuccess: (resp) => {
+              const { message, variant } = addResultToast(
+                summarizeAddResults([resp]),
               );
+              enqueueSnackbar(message, { variant });
               resetSelection();
               setSourceType(null);
               onClose();
@@ -620,7 +621,10 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               selectAllInfo.filters,
               selectAllInfo.projectVersionId,
             );
-            const rootSpanMap = await fetchRootSpans(traceIds);
+            const rootSpanMap = await fetchRootSpans(
+              traceIds,
+              selectAllInfo.projectId ? [selectAllInfo.projectId] : [],
+            );
             const mappedIds = traceIds
               .map((traceId) => rootSpanMap[traceId])
               .filter(Boolean);
@@ -651,7 +655,10 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
         // annotator workspace's span-oriented UI (consistent with the
         // ``mappedIds`` branch above at lines 540-548).
         if (sourceType === "trace" && !isVoiceTraceSelection) {
-          const rootSpanMap = await fetchRootSpans(ids);
+          const rootSpanMap = await fetchRootSpans(
+            ids,
+            selectedProjectId ? [selectedProjectId] : [],
+          );
           const originalCount = ids.length;
           ids = ids.map((traceId) => rootSpanMap[traceId]).filter(Boolean);
           effectiveSourceType = "observation_span";
@@ -674,18 +681,21 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
       const BATCH_SIZE = 500;
       const totalCount = itemsToAdd.length;
       if (totalCount > BATCH_SIZE) {
+        const responses = [];
         for (let i = 0; i < totalCount; i += BATCH_SIZE) {
           const batch = itemsToAdd.slice(i, i + BATCH_SIZE);
-          await new Promise((resolve, reject) => {
+          const resp = await new Promise((resolve, reject) => {
             addItems(
               { queueId, items: batch },
               { onSuccess: resolve, onError: reject },
             );
           });
+          responses.push(resp);
         }
-        enqueueSnackbar(`${totalCount} items added to queue`, {
-          variant: "success",
-        });
+        const { message, variant } = addResultToast(
+          summarizeAddResults(responses),
+        );
+        enqueueSnackbar(message, { variant });
         resetSelection();
         setSourceType(null);
         onClose();
@@ -693,11 +703,11 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
         addItems(
           { queueId, items: itemsToAdd },
           {
-            onSuccess: () => {
-              enqueueSnackbar(
-                `${totalCount} item${totalCount !== 1 ? "s" : ""} added to queue`,
-                { variant: "success" },
+            onSuccess: (resp) => {
+              const { message, variant } = addResultToast(
+                summarizeAddResults([resp]),
               );
+              enqueueSnackbar(message, { variant });
               resetSelection();
               setSourceType(null);
               onClose();
@@ -846,6 +856,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
                 onSetSelection={handleSetSelection}
                 onSelectAll={handleSelectAll}
                 onVoiceProjectChange={setIsVoiceTraceSelection}
+                onProjectChange={setSelectedProjectId}
               />
             )}
             {sourceType === "observation_span" && (
@@ -1765,7 +1776,12 @@ const traceDefaultFilterBase = {
   },
 };
 
-function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
+function TraceSelector({
+  onSetSelection,
+  onSelectAll,
+  onVoiceProjectChange,
+  onProjectChange,
+}) {
   const [projectId, setProjectId] = useState("");
   const [versionId, setVersionId] = useState("");
   const [columns, setColumns] = useState([]);
@@ -1825,6 +1841,12 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   useEffect(() => {
     onVoiceProjectChange?.(isVoiceProject);
   }, [isVoiceProject, onVoiceProjectChange]);
+
+  // Surface the selected project so handleSubmit can pass it to fetchRootSpans
+  // (prunes the CH scan).
+  useEffect(() => {
+    onProjectChange?.(projectId || null);
+  }, [projectId, onProjectChange]);
 
   // Fetch versions for prototype projects
   const {
@@ -2435,6 +2457,7 @@ TraceSelector.propTypes = {
   onSetSelection: PropTypes.func.isRequired,
   onSelectAll: PropTypes.func.isRequired,
   onVoiceProjectChange: PropTypes.func,
+  onProjectChange: PropTypes.func,
 };
 
 // ---------------------------------------------------------------------------

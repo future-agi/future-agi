@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from model_hub.models.api_key import ApiKey
-from tfc.utils.serializer_fields import JsonValueField
+from tfc.utils.serializer_fields import JsonValueField, StringOrObjectField
 
 
 class ApiKeyCreateSerializer(serializers.Serializer):
@@ -127,9 +127,12 @@ class LitellmSerializer(serializers.Serializer):
         default=None,
         help_text="Controls diversity via nucleus sampling. Value between 0 and 1.",
     )
-    response_format = serializers.JSONField(
+    response_format = StringOrObjectField(
         required=False,
-        help_text="JSON schema for response format if required. Defaults to None.",
+        help_text=(
+            "Response format: a string (e.g. 'text', 'json_object') or a JSON "
+            "schema object. Defaults to None."
+        ),
     )
     tool_choice = serializers.ChoiceField(
         choices=["auto", "required", None],
@@ -224,10 +227,13 @@ class PromptConfigSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Controls diversity via nucleus sampling. Value between 0 and 1.",
     )
-    response_format = JsonValueField(
+    response_format = StringOrObjectField(
         required=False,
         allow_null=True,
-        help_text="JSON schema for response format if required. Can be a JSON object or string. Defaults to None.",
+        help_text=(
+            "Response format: a string (e.g. 'text', 'json_object') or a JSON "
+            "schema object. Defaults to None."
+        ),
     )
     tool_choice = serializers.ChoiceField(
         choices=["auto", "required", None],

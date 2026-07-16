@@ -82,6 +82,7 @@ from tfc.utils.error_codes import (
     get_error_for_api_status,
     get_error_message,
     get_specific_error_message,
+    get_usage_error_code,
 )
 from tfc.utils.functions import get_eval_stats
 from tfc.utils.general_methods import GeneralMethods
@@ -923,8 +924,22 @@ class EvaluationRunner:
                 self.dataset.workspace.id if self.dataset.workspace else None
             )
 
-        if self.version_number is None and self.user_eval_metric.pinned_version_id:
-            self.version_number = self.user_eval_metric.pinned_version.version_number
+        if self.version_number is None:
+            # Resolve the version that will actually run (pinned wins, else
+            # template default) so run records and usage logs agree.
+            try:
+                self._resolved_version = EvalTemplateVersion.objects.resolve_for_metric(
+                    self.user_eval_metric
+                )
+            except Exception:
+                logger.warning(
+                    "version_tracking_failed",
+                    path="eval_runner",
+                    user_eval_metric_id=str(self.user_eval_metric_id),
+                    exc_info=True,
+                )
+            if self._resolved_version:
+                self.version_number = self._resolved_version.version_number
 
         self.user_eval_metric.status = StatusType.RUNNING.value
         self.user_eval_metric.save(update_fields=["status"])
@@ -1295,6 +1310,11 @@ class EvaluationRunner:
                     response=response,
                     cell=cell,
                     log_id=str(api_call_log_row.log_id) if api_call_log_row else None,
+                    eval_config=(
+                        self.user_eval_metric.config
+                        if self.user_eval_metric
+                        else None
+                    ),
                 )
 
         except Exception as e:
@@ -1315,6 +1335,10 @@ class EvaluationRunner:
             error_message = get_specific_error_message(e)
 
             response, status, value = self._handle_error(error_message)
+           
+            usage_error_code = get_usage_error_code(e)
+            if usage_error_code:
+                response["error_code"] = usage_error_code
             self._handle_api_call_status(api_call_log_row, CellStatus.ERROR.value)
 
             # Create reason column and cell with error status. Always-on for
@@ -1383,6 +1407,12 @@ class EvaluationRunner:
         }
         if self.source_configs:
             api_call_config.update(self.source_configs)
+        # Version stamp for the Usage tab. source_configs from the dataset
+        # paths already carry it (setdefault-safe); this covers callers that
+        # constructed the runner without one.
+        if "version_id" not in api_call_config and self._resolved_version:
+            api_call_config["version_id"] = str(self._resolved_version.id)
+            api_call_config["version_number"] = self._resolved_version.version_number
         # else:
         api_call_config.update(config)
         if preview:
@@ -2164,18 +2194,16 @@ class EvaluationRunner:
                 workspace_id=self.workspace_id,
             )
 
-        # For code evals, inject static user-defined params stored in the
-        # UserEvalMetric config so they reach evaluate() as **kwargs.
-        if getattr(self.eval_template, "eval_type", "") == "code":
-            user_metric_params = {}
-            if self.user_eval_metric:
-                user_metric_params = self.user_eval_metric.config.get("params", {})
-            elif isinstance(config, dict):
-                user_metric_params = config.get("params", {})
-            if isinstance(user_metric_params, dict):
-                _mapped.update(user_metric_params)
+        from model_hub.utils.function_eval_params import merge_code_eval_kwargs
 
-            # Preprocess inputs for code evals that need external data (e.g. CLIP embeddings)
+        binding_config = (
+            self.user_eval_metric.config
+            if self.user_eval_metric
+            else config if isinstance(config, dict) else None
+        )
+        _mapped = merge_code_eval_kwargs(_mapped, self.eval_template, binding_config)
+
+        if getattr(self.eval_template, "eval_type", "") == "code":
             from evaluations.engine.preprocessing import preprocess_inputs
 
             _mapped = preprocess_inputs(self.eval_template.name, _mapped)
@@ -3104,6 +3132,13 @@ class EvaluationRunner:
                 if not usage_check.allowed:
                     self.user_eval_metric.status = StatusType.FAILED.value
                     self.user_eval_metric.save(update_fields=["status"])
+                    from model_hub.tasks.user_evaluation import (
+                        _mark_cells_usage_limit_error,
+                    )
+
+                    _mark_cells_usage_limit_error(
+                        self.user_eval_metric, usage_check
+                    )
                     raise ValueError(usage_check.reason or "Usage limit exceeded")
 
             self.update_cell(row_ids=row_ids)

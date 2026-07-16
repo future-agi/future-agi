@@ -14,6 +14,7 @@ from simulate.models.agent_definition import ProviderCredentials
 from simulate.services.agent_definition import (
     is_masked,
     resolve_api_key_for_version,
+    resolve_stored_api_key,
     sync_provider_credentials,
 )
 from simulate.services.types.agent_definition import ProviderCredentialsInput
@@ -255,3 +256,70 @@ class TestResolveApiKeyForVersion:
             api_key="sk-legacy-fallback-key",
         )
         assert resolve_api_key_for_version(agent_version) == "sk-legacy-fallback-key"
+
+
+class TestResolveStoredApiKey:
+    def test_returns_none_for_none_org(self):
+        assert resolve_stored_api_key(organization=None) is None
+
+    def test_returns_none_when_agent_not_found(self, organization):
+        assert resolve_stored_api_key(
+            organization=organization, agent_id="00000000-0000-0000-0000-000000000000"
+        ) is None
+
+    def test_returns_key_when_no_masked_value(self, organization, agent_definition):
+        version = agent_definition.create_version(
+            description="v1", commit_message="v1", status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        ProviderCredentials.objects.create(
+            agent_version=version,
+            provider_type=ProviderCredentials.ProviderType.VAPI,
+            api_key="sk-real-key-12345",
+        )
+        key = resolve_stored_api_key(
+            organization=organization, agent_id=str(agent_definition.id)
+        )
+        assert key == "sk-real-key-12345"
+
+    def test_returns_key_when_masked_value_matches(self, organization, agent_definition):
+        version = agent_definition.create_version(
+            description="v1", commit_message="v1", status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        ProviderCredentials.objects.create(
+            agent_version=version,
+            provider_type=ProviderCredentials.ProviderType.VAPI,
+            api_key="sk-real-key-12345",
+        )
+        key = resolve_stored_api_key(
+            organization=organization,
+            agent_id=str(agent_definition.id),
+            masked_value="sk-r...2345",
+        )
+        assert key == "sk-real-key-12345"
+
+    def test_returns_none_when_masked_value_mismatches(self, organization, agent_definition):
+        version = agent_definition.create_version(
+            description="v1", commit_message="v1", status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        ProviderCredentials.objects.create(
+            agent_version=version,
+            provider_type=ProviderCredentials.ProviderType.VAPI,
+            api_key="sk-real-key-12345",
+        )
+        key = resolve_stored_api_key(
+            organization=organization,
+            agent_id=str(agent_definition.id),
+            masked_value="sk-r...9999",
+        )
+        assert key is None
+
+    def test_returns_none_when_no_key_and_masked_value_provided(self, organization, agent_definition):
+        agent_definition.create_version(
+            description="v1", commit_message="v1", status=AgentVersion.StatusChoices.ACTIVE,
+        )
+        key = resolve_stored_api_key(
+            organization=organization,
+            agent_id=str(agent_definition.id),
+            masked_value="sk-r...2345",
+        )
+        assert key is None

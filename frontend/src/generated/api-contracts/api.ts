@@ -663,6 +663,7 @@ import type {
   ModelHubEvalConfigResponseApi,
   ModelHubEvalGroupsList200,
   ModelHubEvalGroupsListParams,
+  ModelHubEvalTemplatesUsageListParams,
   ModelHubExperimentDetailList200,
   ModelHubExperimentDetailListParams,
   ModelHubExperimentsDataList200,
@@ -896,6 +897,7 @@ import type {
   ResourceLimitMutationResponseApi,
   ResourceTypeListResponseApi,
   ReviewItemRequestApi,
+  RootSpansResponseApi,
   RunNewEvalsOnTestExecutionApi,
   RunNewEvalsResponseApi,
   RunPromptColumnConfigResponseApi,
@@ -1084,6 +1086,7 @@ import type {
   TraceErrorTaskResponseApi,
   TraceErrorTaskUpdateRequestApi,
   TraceErrorTaskUpdateResponseApi,
+  TraceObserveListResponseApi,
   TraceSessionApi,
   TraceSessionGraphDataRequestApi,
   TraceTagsUpdateApi,
@@ -1150,7 +1153,6 @@ import type {
   TracerObservationSpanListSpansParams,
   TracerObservationSpanRetrieveLoading200,
   TracerObservationSpanRetrieveLoadingParams,
-  TracerObservationSpanRootSpans200,
   TracerObservationSpanRootSpansParams,
   TracerProjectFetchSystemMetrics200,
   TracerProjectFetchSystemMetricsParams,
@@ -1191,7 +1193,6 @@ import type {
   TracerTraceList200,
   TracerTraceListParams,
   TracerTraceListTraces200,
-  TracerTraceListTracesOfSession200,
   TracerTraceListTracesOfSessionParams,
   TracerTraceListTracesParams,
   TracerTraceListVoiceCalls200,
@@ -35765,22 +35766,41 @@ export type modelHubEvalTemplatesUsageListResponseError = (modelHubEvalTemplates
 
 export type modelHubEvalTemplatesUsageListResponse = (modelHubEvalTemplatesUsageListResponseSuccess | modelHubEvalTemplatesUsageListResponseError)
 
-export const getModelHubEvalTemplatesUsageListUrl = (templateId: string,) => {
+export const getModelHubEvalTemplatesUsageListUrl = (templateId: string,
+    params?: ModelHubEvalTemplatesUsageListParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (Array.isArray(value)) {
+      value
+        .filter((item) => item !== undefined && item !== null)
+        .forEach((item) => normalizedParams.append(key, item.toString()))
+    } else if (value !== undefined && value !== null) {
+      normalizedParams.append(key, value.toString())
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/model-hub/eval-templates/${templateId}/usage/`
+  return stringifiedParams.length > 0 ? `/model-hub/eval-templates/${templateId}/usage/?${stringifiedParams}` : `/model-hub/eval-templates/${templateId}/usage/`
 }
 
 /**
- * Returns usage stats, chart data, and paginated eval logs.
-Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d|180d|365d)
+ * Returns usage stats, chart data, and the paginated usage table.
+Query params: page (0-based), page_size, period
+(30m|6h|1d|7d|30d|90d|180d|365d), optional start_date/end_date pair
+(overrides period — sent by the FE for Today / Yesterday / Custom).
+
+The response is rendered through
+``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the
+boundary so shape drift surfaces here instead of shipping silently.
  * @summary GET /model-hub/eval-templates/<id>/usage/
  */
-export const modelHubEvalTemplatesUsageList = async (templateId: string, options?: RequestInit): Promise<modelHubEvalTemplatesUsageListResponse> => {
+export const modelHubEvalTemplatesUsageList = async (templateId: string,
+    params?: ModelHubEvalTemplatesUsageListParams, options?: RequestInit): Promise<modelHubEvalTemplatesUsageListResponse> => {
 
-  return apiMutator<modelHubEvalTemplatesUsageListResponse>(getModelHubEvalTemplatesUsageListUrl(templateId),
+  return apiMutator<modelHubEvalTemplatesUsageListResponse>(getModelHubEvalTemplatesUsageListUrl(templateId,params),
   {
     ...options,
     method: 'GET'
@@ -62446,7 +62466,7 @@ export const tracerObservationSpanRetrieveLoading = async (params?: TracerObserv
 
 
 export type tracerObservationSpanRootSpansResponse200 = {
-  data: TracerObservationSpanRootSpans200
+  data: RootSpansResponseApi
   status: 200
 }
 
@@ -62464,7 +62484,7 @@ export type tracerObservationSpanRootSpansResponseError = (tracerObservationSpan
 
 export type tracerObservationSpanRootSpansResponse = (tracerObservationSpanRootSpansResponseSuccess | tracerObservationSpanRootSpansResponseError)
 
-export const getTracerObservationSpanRootSpansUrl = (params?: TracerObservationSpanRootSpansParams,) => {
+export const getTracerObservationSpanRootSpansUrl = (params: TracerObservationSpanRootSpansParams,) => {
   const normalizedParams = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
@@ -62487,9 +62507,11 @@ export const getTracerObservationSpanRootSpansUrl = (params?: TracerObservationS
  * Given a list of trace_ids, return the root span ID for each trace.
 Root span = the span where parent_span_id IS NULL for that trace.
 
-Query param: trace_ids (repeated, e.g. ?trace_ids=<id>&trace_ids=<id>)
+Query params (repeated): trace_ids (required,
+?trace_ids=<id>&trace_ids=<id>) + optional project_ids (prunes the CH
+scan). Response: { "result": { "<trace_id>": "<span_id>", ... } }
  */
-export const tracerObservationSpanRootSpans = async (params?: TracerObservationSpanRootSpansParams, options?: RequestInit): Promise<tracerObservationSpanRootSpansResponse> => {
+export const tracerObservationSpanRootSpans = async (params: TracerObservationSpanRootSpansParams, options?: RequestInit): Promise<tracerObservationSpanRootSpansResponse> => {
 
   return apiMutator<tracerObservationSpanRootSpansResponse>(getTracerObservationSpanRootSpansUrl(params),
   {
@@ -66652,19 +66674,29 @@ export const tracerTraceListTraces = async (params: TracerTraceListTracesParams,
 
 
 export type tracerTraceListTracesOfSessionResponse200 = {
-  data: TracerTraceListTracesOfSession200
+  data: TraceObserveListResponseApi
   status: 200
+}
+
+export type tracerTraceListTracesOfSessionResponse400 = {
+  data: ApiErrorResponseApi
+  status: 400
+}
+
+export type tracerTraceListTracesOfSessionResponse500 = {
+  data: ApiErrorResponseApi
+  status: 500
 }
 
 export type tracerTraceListTracesOfSessionResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 500>
 }
 
 export type tracerTraceListTracesOfSessionResponseSuccess = (tracerTraceListTracesOfSessionResponse200) & {
   headers: Headers;
 };
-export type tracerTraceListTracesOfSessionResponseError = (tracerTraceListTracesOfSessionResponseDefault) & {
+export type tracerTraceListTracesOfSessionResponseError = (tracerTraceListTracesOfSessionResponse400 | tracerTraceListTracesOfSessionResponse500 | tracerTraceListTracesOfSessionResponseDefault) & {
   headers: Headers;
 };
 

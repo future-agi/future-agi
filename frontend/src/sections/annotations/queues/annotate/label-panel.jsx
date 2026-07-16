@@ -510,9 +510,8 @@ const LabelPanel = forwardRef(function LabelPanel(
     // Read from ref to capture any values flushed above
     const currentValues = valuesRef.current;
 
-    // Check required labels have values
-    const missingRequired = labels.filter((ql) => {
-      if (!ql.required) return false;
+    // Every label must be annotated before submitting
+    const missingLabels = labels.filter((ql) => {
       const labelId = ql.label_id;
       const v = currentValues[labelId];
       if (v === null || v === undefined) return true;
@@ -526,13 +525,13 @@ const LabelPanel = forwardRef(function LabelPanel(
       return false;
     });
 
-    if (missingRequired.length > 0) {
-      const names = missingRequired.map((l) => l.name).join(", ");
-      enqueueSnackbar(`Required labels missing: ${names}`, {
+    if (missingLabels.length > 0) {
+      const names = missingLabels.map((l) => l.name).join(", ");
+      enqueueSnackbar(`Please annotate all labels: ${names}`, {
         variant: "warning",
       });
-      // Highlight the missing required labels
-      const errorSet = new Set(missingRequired.map((l) => l.label_id));
+      // Highlight the labels still missing a value
+      const errorSet = new Set(missingLabels.map((l) => l.label_id));
       setErrorLabels(errorSet);
       return;
     }

@@ -21,10 +21,30 @@ from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project, ProjectSourceChoices
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.tests._ch_seed import seed_ch_span
 
 # --------------------------------------------------------------------------
 # Fixtures
 # --------------------------------------------------------------------------
+
+
+def _seed_ch_trace_root(trace):
+    """Give a bare PG ``trace`` a CH-only root span so the enumerated add path
+    resolves it CH-native (tracer sources are read from ClickHouse only). Built in
+    memory and seeded to CH — never written to PG (the tracer tables are dropped)."""
+    import uuid
+
+    span = ObservationSpan(
+        id=f"chroot_{uuid.uuid4().hex[:16]}",
+        project=trace.project,
+        trace=trace,
+        name="trace root",
+        observation_type="agent",
+        start_time=timezone.now() - timedelta(seconds=1),
+        end_time=timezone.now(),
+        status="OK",
+    )
+    seed_ch_span(span)  # CH only — NOT ObservationSpan.objects.create
 
 
 @pytest.fixture
@@ -71,6 +91,7 @@ def _api_filter(column_id, filter_type, filter_op, filter_value):
 class TestAddItemsEnumeratedRegression:
     def test_enumerated_happy_path(self, auth_client, active_queue, observe_project):
         t = Trace.objects.create(project=observe_project, name="t1")
+        _seed_ch_trace_root(t)
         resp = auth_client.post(
             _add_items_url(active_queue.id),
             {"items": [{"source_type": "trace", "source_id": str(t.id)}]},
@@ -86,6 +107,7 @@ class TestAddItemsEnumeratedRegression:
         self, auth_client, active_queue, observe_project
     ):
         t = Trace.objects.create(project=observe_project, name="t-dup")
+        _seed_ch_trace_root(t)
         payload = {"items": [{"source_type": "trace", "source_id": str(t.id)}]}
         auth_client.post(_add_items_url(active_queue.id), payload, format="json")
         resp = auth_client.post(_add_items_url(active_queue.id), payload, format="json")
@@ -93,6 +115,23 @@ class TestAddItemsEnumeratedRegression:
         result = resp.data["result"]
         assert result["added"] == 0
         assert result["duplicates"] == 1
+
+    def test_enumerated_add_populates_project_id(
+        self, auth_client, active_queue, observe_project
+    ):
+        """The denormalized project_id is stamped on add so the render/list read can
+        scope its CH scan to one tenant (TH-6864). Fails if the write path drops it —
+        NULL project_id degrades to the full-table wide scan the fix removes."""
+        t = Trace.objects.create(project=observe_project, name="t-proj")
+        _seed_ch_trace_root(t)
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {"items": [{"source_type": "trace", "source_id": str(t.id)}]},
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        item = QueueItem.objects.get(queue=active_queue, trace=t, deleted=False)
+        assert str(item.project_id) == str(observe_project.id)
 
 
 # --------------------------------------------------------------------------
@@ -125,6 +164,28 @@ class TestAddItemsFilterMode:
         assert result["duplicates"] == 0
         assert result["errors"] == []
         assert result["total_matching"] == 3
+
+    def test_filter_mode_add_populates_project_id(
+        self, auth_client, active_queue, observe_project
+    ):
+        """Filter-mode add stamps project_id from the selection too (TH-6864), so
+        every path that fills a queue leaves items scope-able by the render read."""
+        Trace.objects.create(project=observe_project, name="t-fp")
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "trace",
+                    "project_id": str(observe_project.id),
+                }
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        items = list(QueueItem.objects.filter(queue=active_queue, deleted=False))
+        assert items
+        assert all(str(it.project_id) == str(observe_project.id) for it in items)
 
     def test_filter_mode_respects_exclude_ids(
         self, auth_client, active_queue, observe_project
@@ -187,6 +248,8 @@ class TestAddItemsFilterMode:
             Trace.objects.create(project=observe_project, name=f"t-{i}")
             for i in range(3)
         ]
+        for _t in traces:
+            _seed_ch_trace_root(_t)
         # Pre-add one via the enumerated path.
         auth_client.post(
             _add_items_url(active_queue.id),
@@ -525,18 +588,18 @@ class TestAddItemsFilterModeSpan:
         now = timezone.now()
         spans = []
         for i in range(3):
-            spans.append(
-                ObservationSpan.objects.create(
-                    id=f"spd-{i}-{span_parent_trace.id.hex[:6]}",
-                    project=observe_project,
-                    trace=span_parent_trace,
-                    name=f"spd-{i}",
-                    observation_type="llm",
-                    start_time=now - timedelta(minutes=i),
-                    end_time=now - timedelta(minutes=i) + timedelta(seconds=1),
-                    parent_span_id=None,
-                )
+            span = ObservationSpan.objects.create(
+                id=f"spd-{i}-{span_parent_trace.id.hex[:6]}",
+                project=observe_project,
+                trace=span_parent_trace,
+                name=f"spd-{i}",
+                observation_type="llm",
+                start_time=now - timedelta(minutes=i),
+                end_time=now - timedelta(minutes=i) + timedelta(seconds=1),
+                parent_span_id=None,
             )
+            seed_ch_span(span)
+            spans.append(span)
         # Pre-add one via enumerated path
         auth_client.post(
             _add_items_url(active_queue.id),

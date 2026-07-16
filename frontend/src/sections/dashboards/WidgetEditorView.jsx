@@ -75,11 +75,19 @@ import {
   DEFAULT_DECIMALS,
   escapeHtml,
   formatValueWithConfig,
+  getAggColumnLabel,
   getAutoDecimals,
   getSeriesAverage,
   getSuggestedUnitConfig,
+  getUnitRendering,
   getYAxisRangeWarning,
 } from "./widgetUtils";
+import {
+  AGGREGATION_OPTIONS,
+  ALL_AGGREGATIONS,
+  PERCENTILE_OPTIONS,
+  DATE_PRESETS,
+} from "./constants";
 
 const escapeCsvField = (field) => {
   const str = String(field ?? "");
@@ -91,19 +99,6 @@ const escapeCsvField = (field) => {
 
 const SAVED_NAV_DELAY_MS = 400;
 const AXIS_LABEL_MAX_LENGTH = 50;
-
-const TIME_PRESETS = [
-  { label: "Custom", value: "custom" },
-  { label: "30 mins", value: "30m" },
-  { label: "6 hrs", value: "6h" },
-  { label: "Today", value: "today" },
-  { label: "Yesterday", value: "yesterday" },
-  { label: "7D", value: "7D" },
-  { label: "30D", value: "30D" },
-  { label: "3M", value: "3M" },
-  { label: "6M", value: "6M" },
-  { label: "12M", value: "12M" },
-];
 
 const GRANULARITY_OPTIONS = [
   { label: "Minute", value: "minute" },
@@ -185,27 +180,6 @@ const CHART_TYPES = [
   { label: "Table", value: "table", icon: "mdi:table", group: "other" },
   { label: "Metric", value: "metric", icon: "mdi:pound", group: "other" },
 ];
-
-const AGGREGATION_OPTIONS = [
-  { label: "Sum", value: "sum" },
-  { label: "Average", value: "avg" },
-  { label: "Median", value: "median" },
-  { label: "Distinct Count", value: "count_distinct" },
-  { label: "Count", value: "count" },
-  { label: "Minimum", value: "min" },
-  { label: "Maximum", value: "max" },
-];
-
-const PERCENTILE_OPTIONS = [
-  { label: "25th Percentile", value: "p25" },
-  { label: "50th Percentile", value: "p50" },
-  { label: "75th Percentile", value: "p75" },
-  { label: "90th Percentile", value: "p90" },
-  { label: "95th Percentile", value: "p95" },
-  { label: "99th Percentile", value: "p99" },
-];
-
-const ALL_AGGREGATIONS = [...AGGREGATION_OPTIONS, ...PERCENTILE_OPTIONS];
 
 // Curated list of unit presets shown in the widget editor's Unit
 // dropdown. Keep in sync with ``UNIT_RENDERING`` in ``widgetUtils.js``
@@ -369,6 +343,37 @@ const SERIES_COLORS = [
   "#00CEC9", // teal
   "#A29BFE", // lavender
 ];
+
+
+const hashSeriesName = (name) => {
+  const s = String(name || "");
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) {
+    h = (h * 31 + s.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+};
+const buildSeriesColorMap = (names) => {
+  const map = {};
+  const used = new Set();
+  (names || []).forEach((name) => {
+    const start = hashSeriesName(name) % SERIES_COLORS.length;
+    let picked = start;
+    for (let i = 0; i < SERIES_COLORS.length; i += 1) {
+      const candidate = (start + i) % SERIES_COLORS.length;
+      if (!used.has(candidate)) {
+        picked = candidate;
+        break;
+      }
+    }
+    used.add(picked);
+    map[name] = SERIES_COLORS[picked];
+  });
+  return map;
+};
+const getSeriesColor = (name, map) =>
+  (map && map[name]) ||
+  SERIES_COLORS[hashSeriesName(name) % SERIES_COLORS.length];
 
 const LETTER_LABELS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -1246,21 +1251,23 @@ export default function WidgetEditorView() {
       custom_attribute: "custom_attribute",
       custom_column: "custom_column",
     };
-    return paginatedMetrics.map((m) => ({
-      id: m.name,
-      name: m.displayName || m.display_name || m.name,
-      type: categoryMap[m.category] || m.category,
-      source: m.source,
-      sources: m.sources,
-      dataType: m.type || "number",
-      outputType: m.outputType || m.output_type,
-      columnDataType: m.dataType || m.data_type,
-      configIds: m.configIds || m.config_ids,
-      evalKey: m.evalKey || m.eval_key,
-      unit: m.unit,
-      choices: m.choices,
-    }));
-  }, [paginatedMetrics]);
+    return paginatedMetrics
+      .filter((m) => pickerMode !== "metric" || m.role !== "dimension")
+      .map((m) => ({
+        id: m.name,
+        name: m.displayName || m.display_name || m.name,
+        type: categoryMap[m.category] || m.category,
+        source: m.source,
+        sources: m.sources,
+        dataType: m.type || "number",
+        outputType: m.outputType || m.output_type,
+        columnDataType: m.dataType || m.data_type,
+        configIds: m.configIds || m.config_ids,
+        evalKey: m.evalKey || m.eval_key,
+        unit: m.unit,
+        choices: m.choices,
+      }));
+  }, [paginatedMetrics, pickerMode]);
 
   // Infinite scroll handler for the picker's right panel
   const pickerListRef = useRef(null);
@@ -2096,6 +2103,7 @@ export default function WidgetEditorView() {
         }
         allSeries.push({
           name: seriesLabel,
+          unit: metric.unit ?? "",
           data: (s.data || []).map((point) => ({
             x: new Date(point.timestamp).getTime(),
             y: point.value != null ? Number(point.value) : null,
@@ -2147,6 +2155,12 @@ export default function WidgetEditorView() {
   const isPie = chartType === "pie";
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
+  const isLineChart = apexType === "line";
+
+  const aggColumnLabel = useMemo(
+    () => getAggColumnLabel(metrics, ALL_AGGREGATIONS),
+    [metrics],
+  );
 
   // Filtered series for chart — respects checkbox visibility, preserving original colors
   const chartSeries = useMemo(() => {
@@ -2169,15 +2183,20 @@ export default function WidgetEditorView() {
   );
   const leftAxisFormatConfig = useMemo(() => {
     const leftAxis = axisConfig.leftY || {};
+    const metricUnits = (previewResult?.metrics || [])
+      .map((m) => m?.unit ?? "");
+    const isMixedUnits = new Set(metricUnits).size > 1;
+    const effectiveUnit = isMixedUnits
+      ? ""
+      : leftAxis.unit || suggestedLeftAxisUnit.unit;
     return {
       ...leftAxis,
-      unit: leftAxis.unit || suggestedLeftAxisUnit.unit,
-      prefixSuffix:
-        leftAxis.unit || !suggestedLeftAxisUnit.unit
-          ? leftAxis.prefixSuffix || "prefix"
-          : suggestedLeftAxisUnit.prefixSuffix,
+      unit: effectiveUnit,
+      prefixSuffix: effectiveUnit
+        ? leftAxis.prefixSuffix || suggestedLeftAxisUnit.prefixSuffix || "prefix"
+        : suggestedLeftAxisUnit.prefixSuffix,
     };
-  }, [axisConfig.leftY, suggestedLeftAxisUnit]);
+  }, [axisConfig.leftY, suggestedLeftAxisUnit, previewResult?.metrics]);
 
   useEffect(() => {
     const currentUnit = axisConfig.leftY.unit;
@@ -2201,16 +2220,18 @@ export default function WidgetEditorView() {
     setAutoAppliedLeftAxisUnit(suggested || null);
   }, [axisConfig.leftY.unit, autoAppliedLeftAxisUnit, suggestedLeftAxisUnit]);
 
-  // Colors that match chartSeries — preserves original color assignment even when series are filtered out
-  const chartColors = useMemo(() => {
-    if (visibleSeries === null) return SERIES_COLORS;
-    const colors = [];
-    previewSeries.forEach((_, i) => {
-      if (visibleSeries.has(i))
-        colors.push(SERIES_COLORS[i % SERIES_COLORS.length]);
-    });
-    return colors;
-  }, [previewSeries, visibleSeries]);
+  // Hash-derived colors give cross-reload stability; the map walker
+  // advances to the next free slot on collision so ≤10 series never
+  // share a color inside one widget. Built from previewSeries so hidden
+  // series keep their color when re-checked.
+  const seriesColorMap = useMemo(
+    () => buildSeriesColorMap(previewSeries.map((s) => s.name)),
+    [previewSeries],
+  );
+  const chartColors = useMemo(
+    () => chartSeries.map((s) => getSeriesColor(s.name, seriesColorMap)),
+    [chartSeries, seriesColorMap],
+  );
 
   // Legend hover → highlight series by dimming others via SVG opacity
   const handleLegendHover = useCallback((seriesIndex) => {
@@ -2582,10 +2603,12 @@ export default function WidgetEditorView() {
         };
       })(),
       markers: {
-        size: apexType === "line" || apexType === "area" ? 4 : 0,
+        size: isLineChart ? 5 : apexType === "area" ? 4 : 0,
         strokeWidth: 2,
         strokeColors: isDark ? theme.palette.background.paper : "#fff",
-        hover: { size: 6, sizeOffset: 3 },
+        hover: isLineChart
+          ? { size: 8, sizeOffset: 2 }
+          : { size: 6, sizeOffset: 3 },
       },
       states: {
         hover: {
@@ -2621,7 +2644,7 @@ export default function WidgetEditorView() {
         : {
             enabled: true,
             shared: false,
-            intersect: false,
+            intersect: isLineChart,
             custom: ({ series, seriesIndex, dataPointIndex, w }) => {
               const sName = w.globals.seriesNames[seriesIndex] || "";
               const color = w.globals.colors[seriesIndex] || "#6366F1";
@@ -2664,6 +2687,7 @@ export default function WidgetEditorView() {
     };
   }, [
     apexType,
+    isLineChart,
     isStacked,
     isHorizontal,
     isPie,
@@ -3021,7 +3045,7 @@ export default function WidgetEditorView() {
               if (!previewSeries.length) return;
               const header = [
                 "Metric",
-                "Average",
+                aggColumnLabel,
                 ...(previewSeries[0]?.data || []).map((pt) =>
                   format(new Date(pt.x), "yyyy-MM-dd"),
                 ),
@@ -3057,7 +3081,7 @@ export default function WidgetEditorView() {
               if (!previewSeries.length) return;
               const header = [
                 "Metric",
-                "Average",
+                aggColumnLabel,
                 ...(previewSeries[0]?.data || []).map((pt) =>
                   format(new Date(pt.x), "yyyy-MM-dd"),
                 ),
@@ -3167,7 +3191,7 @@ export default function WidgetEditorView() {
                 flexShrink: 0,
               }}
             >
-              {TIME_PRESETS.map((p, i) => (
+              {DATE_PRESETS.map((p, i) => (
                 <Box
                   key={p.value}
                   ref={p.value === "custom" ? customDateAnchorRef : undefined}
@@ -3196,7 +3220,7 @@ export default function WidgetEditorView() {
                           : "rgba(0,0,0,0.06)"
                         : "transparent",
                     borderRight:
-                      i < TIME_PRESETS.length - 1
+                      i < DATE_PRESETS.length - 1
                         ? `1px solid ${theme.palette.divider}`
                         : "none",
                     whiteSpace: "nowrap",
@@ -3372,12 +3396,7 @@ export default function WidgetEditorView() {
                         sx={{ px: 2, pt: 2, pb: 1 }}
                       >
                         {chartSeries.map((s, i) => {
-                          const origIdx = previewSeries.indexOf(s);
-                          const color =
-                            SERIES_COLORS[
-                              (origIdx >= 0 ? origIdx : i) %
-                                SERIES_COLORS.length
-                            ];
+                          const color = getSeriesColor(s.name, seriesColorMap);
                           return (
                             <Stack
                               key={i}
@@ -3460,17 +3479,7 @@ export default function WidgetEditorView() {
                           <Box sx={{ flex: 1, overflow: "auto", px: 2 }}>
                             {barData.rows.map((row, i) => {
                               const val = row.numericValue;
-                              const origIdx =
-                                visibleSeries === null
-                                  ? i
-                                  : [...(visibleSeries || [])].sort(
-                                      (a, b) => a - b,
-                                    )[i];
-                              const color =
-                                SERIES_COLORS[
-                                  (origIdx != null ? origIdx : i) %
-                                    SERIES_COLORS.length
-                                ];
+                              const color = getSeriesColor(row.name || row.label, seriesColorMap);
                               const pct =
                                 maxVal > 0 ? (Math.abs(val) / maxVal) * 100 : 0;
                               const fmtVal =
@@ -3647,8 +3656,7 @@ export default function WidgetEditorView() {
                               const checked =
                                 visibleSeries === null ||
                                 visibleSeries?.has(si);
-                              const color =
-                                SERIES_COLORS[si % SERIES_COLORS.length];
+                              const color = getSeriesColor(s.name, seriesColorMap);
                               return (
                                 <Box
                                   key={si}
@@ -3826,10 +3834,7 @@ export default function WidgetEditorView() {
                                             width: 8,
                                             height: 8,
                                             borderRadius: "2px",
-                                            bgcolor:
-                                              SERIES_COLORS[
-                                                i % SERIES_COLORS.length
-                                              ],
+                                            bgcolor: getSeriesColor(s.name, seriesColorMap),
                                             display: "inline-block",
                                           }}
                                         />
@@ -4383,7 +4388,7 @@ export default function WidgetEditorView() {
                                 zIndex: 2,
                               }}
                             >
-                              Average
+                              {aggColumnLabel}
                             </th>
                             {displayData.map((pt, ci) => (
                               <th
@@ -4421,8 +4426,7 @@ export default function WidgetEditorView() {
                             const checked =
                               visibleSeries === null || visibleSeries.has(si);
                             const avg = getSeriesAverage(s.data);
-                            const color =
-                              SERIES_COLORS[si % SERIES_COLORS.length];
+                            const color = getSeriesColor(s.name, seriesColorMap);
                             return (
                               <tr
                                 key={si}
@@ -4479,7 +4483,18 @@ export default function WidgetEditorView() {
                                     borderLeft: `1px solid ${theme.palette.divider}`,
                                   }}
                                 >
-                                  {avg == null ? "—" : formatValFn(avg)}
+                                  {avg == null
+                                    ? "—"
+                                    : formatValueWithConfig(
+                                        avg,
+                                        s.unit
+                                          ? {
+                                              ...leftAxisFormatConfig,
+                                              ...getUnitRendering(s.unit),
+                                            }
+                                          : leftAxisFormatConfig,
+                                        { fallbackDecimals: autoDecimals },
+                                      )}
                                 </td>
                                 {s.data.map((pt, ci) => {
                                   if (!displayIndicesSet.has(ci)) return null;
@@ -6001,7 +6016,9 @@ export default function WidgetEditorView() {
                     >
                       Axis Assignment
                     </Typography>
-                    {previewSeries.map((s, si) => (
+                    {previewSeries.map((s, si) => {
+                      const seriesColor = getSeriesColor(s.name, seriesColorMap);
+                      return (
                       <Stack
                         key={si}
                         direction="row"
@@ -6023,9 +6040,8 @@ export default function WidgetEditorView() {
                               display: "flex",
                               alignItems: "center",
                               justifyContent: "center",
-                              bgcolor:
-                                SERIES_COLORS[si % SERIES_COLORS.length] + "22",
-                              color: SERIES_COLORS[si % SERIES_COLORS.length],
+                              bgcolor: seriesColor + "22",
+                              color: seriesColor,
                               fontSize: "11px",
                               fontWeight: 700,
                             }}
@@ -6036,7 +6052,7 @@ export default function WidgetEditorView() {
                             icon="mdi:chart-line"
                             width={16}
                             sx={{
-                              color: SERIES_COLORS[si % SERIES_COLORS.length],
+                              color: seriesColor,
                               flexShrink: 0,
                             }}
                           />
@@ -6058,7 +6074,8 @@ export default function WidgetEditorView() {
                           theme={theme}
                         />
                       </Stack>
-                    ))}
+                      );
+                    })}
                     {previewSeries.length === 0 && (
                       <Typography
                         variant="body2"

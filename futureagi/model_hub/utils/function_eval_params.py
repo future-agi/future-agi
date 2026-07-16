@@ -168,6 +168,19 @@ def normalize_eval_runtime_config(
     return normalized_config
 
 
+def merge_code_eval_kwargs(
+    mapped_kwargs: dict,
+    eval_template,
+    binding_config: dict | None,
+) -> dict:
+    if getattr(eval_template, "eval_type", "") != "code":
+        return mapped_kwargs
+    params = (binding_config or {}).get("params") or {}
+    if isinstance(params, dict) and params:
+        mapped_kwargs.update(params)
+    return mapped_kwargs
+
+
 def params_with_defaults_for_response(
     template_config: dict | None, runtime_config: dict | None
 ):

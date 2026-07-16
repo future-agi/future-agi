@@ -92,7 +92,8 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
             ).select_related("organization", "created_by")
 
             if name:
-                eval_groups = eval_groups.filter(name__icontains=name)
+                from model_hub.utils.eval_list import normalize_search_for_name
+                eval_groups = eval_groups.filter(normalize_search_for_name(name))
 
             # Get total count before pagination
             total_count = eval_groups.count()
@@ -206,7 +207,8 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             if name:
-                eval_templates = eval_templates.filter(name__icontains=name)
+                from model_hub.utils.eval_list import normalize_search_for_name
+                eval_templates = eval_templates.filter(normalize_search_for_name(name))
 
             # Get all template IDs for efficient querying
             template_ids = [str(template.id) for template in eval_templates]

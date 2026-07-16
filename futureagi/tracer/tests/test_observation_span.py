@@ -176,6 +176,8 @@ class TestObservationSpanWorkspaceScopeAPI:
     def test_root_spans_omits_same_org_other_workspace_trace(
         self, auth_client, organization, user
     ):
+        """GET root-spans is fail-closed: a same-org other-workspace trace is
+        omitted from the {trace_id: root_span_id} map."""
         _, _, _, other_trace, other_span = make_same_org_other_workspace_span(
             organization, user, trace_type="observe"
         )
