@@ -96,11 +96,17 @@ class ValkeyVectorDB:
             self._created_indices.add(index_name)
             return
         except redis.ResponseError as e:
-            if "Unknown index name" not in str(e) and "Unknown Index name" not in str(e):
+            # Redis Stack says "Unknown index name"; valkey-search says
+            # "Index with name '...' not found". Treat both as "index missing".
+            msg = str(e).lower()
+            if "unknown index" not in msg and "not found" not in msg:
                 raise
 
         prefix = self._key_prefix(table_name)
         try:
+            # Only VECTOR, TAG, and NUMERIC field types are supported by
+            # valkey-search. metadata_json is stored in the hash but not
+            # indexed; FT.SEARCH returns all hash fields regardless.
             self.client.execute_command(
                 "FT.CREATE", index_name,
                 "ON", "HASH",
@@ -108,8 +114,7 @@ class ValkeyVectorDB:
                 "SCHEMA",
                 "id", "TAG",
                 "eval_id", "TAG",
-                "metadata_json", "TEXT", "NOINDEX",
-                "deleted", "NUMERIC", "SORTABLE",
+                "deleted", "NUMERIC",
                 "vector", "VECTOR", "HNSW", "6",
                 "TYPE", "FLOAT32",
                 "DIM", str(self.dims),
@@ -333,7 +338,6 @@ class ValkeyVectorDB:
             result = self.client.execute_command(
                 "FT.SEARCH", index_name, query,
                 "PARAMS", "2", "BLOB", blob,
-                "SORTBY", "distance", "ASC",
                 "LIMIT", "0", str(top_k),
                 "DIALECT", "2",
             )
@@ -374,7 +378,6 @@ class ValkeyVectorDB:
             result = self.client.execute_command(
                 "FT.SEARCH", index_name, query,
                 "PARAMS", "2", "BLOB", blob,
-                "SORTBY", "distance", "ASC",
                 "LIMIT", "0", str(search_k),
                 "DIALECT", "2",
             )
