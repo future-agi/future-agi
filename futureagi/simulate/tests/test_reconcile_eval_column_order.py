@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 from simulate.utils.test_execution_utils import (
-    _build_eval_column,
+    build_eval_column,
     reconcile_eval_column_order,
 )
 
@@ -58,13 +58,13 @@ def test_appends_missing_eval_column():
     )
     assert changed is True
     assert reconciled[: len(BASE_COLS)] == BASE_COLS
-    assert _eval_cols(reconciled) == [_build_eval_column(e1)]
+    assert _eval_cols(reconciled) == [build_eval_column(e1)]
 
 
 def test_soft_deleted_eval_column_is_dropped():
     e1 = _EC(id="e1", name="toxicity", template_config={"a": 1})
     e2 = _EC(id="e2", name="bias", template_config={"b": 2})
-    starting = list(BASE_COLS) + [_build_eval_column(e1), _build_eval_column(e2)]
+    starting = list(BASE_COLS) + [build_eval_column(e1), build_eval_column(e2)]
     reconciled, changed = reconcile_eval_column_order(
         column_order=starting, eval_configs=[e2]  # e1 soft-deleted
     )
@@ -76,7 +76,7 @@ def test_soft_deleted_eval_column_is_dropped():
 def test_rename_refreshes_column_name_in_place():
     e1_old = _EC(id="e1", name="toxicity", template_config={"a": 1})
     e1_renamed = _EC(id="e1", name="toxicity_v2", template_config={"a": 1})
-    starting = list(BASE_COLS) + [_build_eval_column(e1_old)]
+    starting = list(BASE_COLS) + [build_eval_column(e1_old)]
     reconciled, changed = reconcile_eval_column_order(
         column_order=starting, eval_configs=[e1_renamed]
     )
@@ -90,7 +90,7 @@ def test_rename_refreshes_column_name_in_place():
 def test_template_config_change_is_reflected():
     e1_v1 = _EC(id="e1", name="toxicity", template_config={"threshold": 0.5})
     e1_v2 = _EC(id="e1", name="toxicity", template_config={"threshold": 0.9})
-    starting = list(BASE_COLS) + [_build_eval_column(e1_v1)]
+    starting = list(BASE_COLS) + [build_eval_column(e1_v1)]
     reconciled, changed = reconcile_eval_column_order(
         column_order=starting, eval_configs=[e1_v2]
     )
@@ -100,7 +100,7 @@ def test_template_config_change_is_reflected():
 
 def test_idempotent_when_columns_match_configs():
     e1 = _EC(id="e1", name="toxicity", template_config={"a": 1})
-    starting = list(BASE_COLS) + [_build_eval_column(e1)]
+    starting = list(BASE_COLS) + [build_eval_column(e1)]
     reconciled, changed = reconcile_eval_column_order(
         column_order=starting, eval_configs=[e1]
     )
@@ -115,8 +115,8 @@ def test_preserves_position_of_surviving_evals():
     # User reordered so evals sit before the base "scenario" column.
     starting = [
         BASE_COLS[0],
-        _build_eval_column(e2),
-        _build_eval_column(e1),
+        build_eval_column(e2),
+        build_eval_column(e1),
         BASE_COLS[1],
     ]
     reconciled, changed = reconcile_eval_column_order(
@@ -135,7 +135,7 @@ def test_preserves_position_of_surviving_evals():
 def test_add_delete_rename_in_one_pass():
     e1_old = _EC(id="e1", name="toxicity", template_config={})
     e2 = _EC(id="e2", name="bias", template_config={})
-    starting = list(BASE_COLS) + [_build_eval_column(e1_old), _build_eval_column(e2)]
+    starting = list(BASE_COLS) + [build_eval_column(e1_old), build_eval_column(e2)]
     e1_renamed = _EC(id="e1", name="toxicity_final", template_config={})
     e3_new = _EC(id="e3", name="quality", template_config={})
     reconciled, changed = reconcile_eval_column_order(

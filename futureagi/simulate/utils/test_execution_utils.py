@@ -1435,7 +1435,7 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
     return rebuilt_column_order, changed
 
 
-def _build_eval_column(eval_config):
+def build_eval_column(eval_config):
     return {
         "column_name": eval_config.name,
         "id": str(eval_config.id),
@@ -1488,6 +1488,6 @@ def reconcile_eval_column_order(*, column_order, eval_configs):
     }
     for eval_config in eval_configs:
         if str(eval_config.id) not in preserved:
-            reconciled.append(_build_eval_column(eval_config))
+            reconciled.append(build_eval_column(eval_config))
             changed = True
     return reconciled, changed

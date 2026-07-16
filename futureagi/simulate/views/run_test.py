@@ -164,7 +164,7 @@ from simulate.utils.test_execution import (
 )
 from simulate.utils.test_execution_utils import (
     TestExecutionUtils,
-    _build_eval_column,
+    build_eval_column,
     reconcile_eval_column_order,
     reconcile_scenario_column_order,
 )
@@ -2105,7 +2105,7 @@ class TestExecutionDetailView(APIView):
                     default_columns = copy.deepcopy(DEFAULT_CHAT_SIM_COL)
 
                 for eval_config in eval_configs:
-                    default_columns.append(_build_eval_column(eval_config))
+                    default_columns.append(build_eval_column(eval_config))
 
                 # Save the default column order
                 test_execution.execution_metadata["column_order"] = default_columns
