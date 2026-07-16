@@ -204,3 +204,67 @@ class TestSoftDeleteLive:
             ).count()
             == 4
         )
+
+
+class _RecordingReader:
+    """Wraps a real CHSpanReader, recording the ``include_heavy`` kwarg each
+    id-resolution method was called with while delegating everything else."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.calls: dict[str, object] = {}
+
+    def list_by_ids(self, *args, **kwargs):
+        self.calls["list_by_ids"] = kwargs.get("include_heavy")
+        return self._inner.list_by_ids(*args, **kwargs)
+
+    def list_root_spans_by_trace_ids(self, *args, **kwargs):
+        self.calls["list_root_spans_by_trace_ids"] = kwargs.get("include_heavy")
+        return self._inner.list_root_spans_by_trace_ids(*args, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+
+def _spy_reader(monkeypatch):
+    from tracer.services.eval_tasks import entries as entries_mod
+
+    spy = _RecordingReader(entries_mod.get_reader())
+    monkeypatch.setattr(entries_mod, "get_reader", lambda: spy)
+    return spy
+
+
+@pytest.mark.integration
+@pytest.mark.django_db
+class TestMaterializeLeanRead:
+    """Materialize only needs id/trace_id, so it must issue the lean read (no
+    attributes_extra) — hydrating the fat columns OOMs large tasks."""
+
+    def test_spans_materialize_requests_lean_read(
+        self, project, custom_eval_config, monkeypatch
+    ):
+        _make_spans(project, 3)
+        task = _task(project, evals=[custom_eval_config])
+        spy = _spy_reader(monkeypatch)
+        materialize_pending(task)
+        assert spy.calls.get("list_by_ids") is False
+        assert _live(task).count() == 3  # still materializes correctly
+
+    def test_traces_materialize_requests_lean_read(
+        self, project, custom_eval_config, monkeypatch
+    ):
+        trace = Trace.objects.create(project=project, name="tr-lean")
+        root = ObservationSpan.objects.create(
+            id=f"root-lean-{uuid.uuid4().hex[:8]}",
+            project=project,
+            trace=trace,
+            name="root",
+            observation_type="llm",
+            parent_span_id="",
+        )
+        _seed_past([root])
+        task = _task(project, row_type=RowType.TRACES, evals=[custom_eval_config])
+        spy = _spy_reader(monkeypatch)
+        materialize_pending(task)
+        assert spy.calls.get("list_root_spans_by_trace_ids") is False
+        assert _live(task).count() == 1  # still anchored + materialized

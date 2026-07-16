@@ -478,6 +478,74 @@ class TestScenarioDetailView:
         assert "prompts" in data
         assert "dataset_rows" in data
 
+
+    def test_get_scenario_detail_dataset_column_config_shape_and_null(self, auth_client, scenario):
+        # 1. Test null branch when scenario has no dataset
+        scenario.dataset = None
+        scenario.save()
+        response = auth_client.get(f"/simulate/scenarios/{scenario.id}/")
+        assert response.status_code == 200
+        assert response.json()["dataset_column_config"] is None
+
+        # 2. Test response shape when dataset exists
+        from model_hub.models.develop_dataset import Dataset, Column
+        dataset = Dataset.objects.create(name="test", project=scenario.project)
+        col1 = Column.objects.create(name="Age", data_type="integer", dataset=dataset, project=scenario.project)
+        dataset.column_order = [str(col1.id)]
+        dataset.save()
+        scenario.dataset = dataset
+        scenario.save()
+
+        response = auth_client.get(f"/simulate/scenarios/{scenario.id}/")
+        assert response.status_code == 200
+        config = response.json()["dataset_column_config"]
+        assert isinstance(config, dict)
+        assert str(col1.id) in config
+        assert config[str(col1.id)] == {"name": "Age", "type": "integer"}
+
+    def test_get_scenario_detail_dataset_column_ordering(self, auth_client, scenario):
+        from model_hub.models.develop_dataset import Dataset, Column
+        dataset = Dataset.objects.create(name="test", project=scenario.project)
+        col1 = Column.objects.create(name="Col1", data_type="text", dataset=dataset, project=scenario.project)
+        col2 = Column.objects.create(name="Col2", data_type="text", dataset=dataset, project=scenario.project)
+        
+        # Declare in reverse order of creation
+        dataset.column_order = [str(col2.id), str(col1.id)]
+        dataset.save()
+        scenario.dataset = dataset
+        scenario.save()
+
+        response = auth_client.get(f"/simulate/scenarios/{scenario.id}/")
+        assert response.status_code == 200
+        config = response.json()["dataset_column_config"]
+        
+        # dicts preserve insertion order in Python 3.7+
+        keys = list(config.keys())
+        assert keys == [str(col2.id), str(col1.id)]
+
+    def test_get_scenario_detail_dataset_column_isolation(self, auth_client, scenario):
+        from model_hub.models.develop_dataset import Dataset, Column
+        dataset = Dataset.objects.create(name="test", project=scenario.project)
+        col1 = Column.objects.create(name="Valid", data_type="text", dataset=dataset, project=scenario.project)
+        
+        # Create a foreign column in another dataset
+        other_dataset = Dataset.objects.create(name="other", project=scenario.project)
+        col_foreign = Column.objects.create(name="Foreign", data_type="text", dataset=other_dataset, project=scenario.project)
+
+        # Pollute column_order with foreign column ID
+        dataset.column_order = [str(col1.id), str(col_foreign.id)]
+        dataset.save()
+        scenario.dataset = dataset
+        scenario.save()
+
+        response = auth_client.get(f"/simulate/scenarios/{scenario.id}/")
+        assert response.status_code == 200
+        config = response.json()["dataset_column_config"]
+        
+        # Should only contain col1, foreign column should be isolated out
+        assert str(col1.id) in config
+        assert str(col_foreign.id) not in config
+
     def test_get_scenario_detail_unauthenticated(self, api_client, scenario):
         """Test getting scenario without authentication returns 401/403."""
         response = api_client.get(f"/simulate/scenarios/{scenario.id}/")

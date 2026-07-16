@@ -141,8 +141,14 @@ _TOKEN_KEYS = [
 ]
 
 
-def fetch_trace_data(trace_ids: list[str]) -> list[TraceData]:
-    """Fetch trace spans from DB and build nested span trees for the scanner."""
+def fetch_trace_data(trace_ids: list[str], project_id: str) -> list[TraceData]:
+    """Fetch trace spans from DB and build nested span trees for the scanner.
+
+    ``project_id`` scopes the read to its (single-project) batch — bounds it and
+    stops a cross-project trace_id collision merging a foreign project's spans into
+    the tree. ``include_heavy=False`` stubs the fat columns the scanner never reads
+    (``_ch_span_to_span`` takes tool defs from ``attrs_string``).
+    """
     # Was: ObservationSpan.objects.filter(trace_id=).order_by("start_time")
     #      .values("id", "name", "parent_span_id", "start_time", "end_time",
     #              "input", "output", "metadata", "model", "observation_type",
@@ -159,7 +165,11 @@ def fetch_trace_data(trace_ids: list[str]) -> list[TraceData]:
         return []
 
     with get_reader() as reader:
-        all_spans = reader.list_by_trace_ids([str(t) for t in trace_ids])
+        all_spans = reader.list_by_trace_ids(
+            [str(t) for t in trace_ids],
+            project_id=str(project_id),
+            include_heavy=False,
+        )
 
     # Group CH spans by trace_id while preserving CH's start_time order.
     by_trace: dict[str, list] = {}
@@ -234,10 +244,12 @@ def _ch_span_to_span(span) -> SpanData:
     # Surface function-calling tool definitions so the scanner can derive the
     # AVAILABLE tool set (vs. tools actually called). Kept verbatim from the raw
     # span attributes — no transformation, the scanner parses the names.
-    # The definitions are a top-level key living in the typed string map or
-    # the attributes_extra JSON overflow, depending on value size. Some
-    # producers wrote attributes_extra as a stringified dict, so the reader
-    # can hand back a double-encoded value — decode up to twice.
+    # Routing is by OTLP value TYPE, not size: a string value lands in attrs_string
+    # (any length), a structured value overflows to attributes_extra. fetch_trace_data
+    # reads spans lean (attributes_extra stubbed to ''), so only the attrs_string form
+    # is available here — a structured-value tool list degrades the tools_available
+    # signal, not correctness. Some producers wrote attributes_extra as a stringified
+    # dict, so the reader can hand back a double-encoded value — decode up to twice.
     extra_attrs: dict = {}
     if span.attributes_extra:
         try:

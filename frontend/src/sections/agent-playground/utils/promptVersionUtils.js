@@ -4,6 +4,14 @@ import {
   resolveResponseSchema,
 } from "../AgentBuilder/NodeDrawer/nodeFormUtils";
 
+// Agent builder has no attachment upload and can't surface media, so drop
+// non-text content items when importing a workbench prompt into a node.
+function toTextOnlyContent(content) {
+  if (!Array.isArray(content)) return content;
+  const textOnly = content.filter((block) => block?.type === "text");
+  return textOnly.length ? textOnly : [{ type: "text", text: "" }];
+}
+
 /**
  * Maps a version's promptConfigSnapshot into a form-compatible config shape.
  * Used when importing a prompt and when changing versions in the dropdown.
@@ -36,7 +44,7 @@ export function mapVersionToFormConfig(version) {
       const msgs = (snapshot?.messages || []).map((m) => ({
         id: getRandomId(),
         role: m.role,
-        content: m?.content,
+        content: toTextOnlyContent(m?.content),
       }));
       if (!msgs.some((m) => m.role === "system")) {
         msgs.unshift({

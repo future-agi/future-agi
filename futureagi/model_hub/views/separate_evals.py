@@ -1,3 +1,4 @@
+import copy
 import json
 import math
 import traceback
@@ -78,6 +79,8 @@ from model_hub.serializers.contracts import (
     EvalTemplateVersionListResponseSerializer,
     EvalTemplateVersionResponseSerializer,
     EvalTemplateVersionRestoreResponseSerializer,
+    EvalUsageQuerySerializer,
+    EvalUsageStatsResponseResultSerializer,
     EvalUsageStatsResponseSerializer,
     GroundTruthDataResponseSerializer,
     GroundTruthDeleteResponseSerializer,
@@ -106,6 +109,7 @@ from model_hub.serializers.eval_runner import (
     UpdateColumnConfigSerializer,
     UpdateEvalTemplateSerializer,
 )
+from model_hub.utils.api_log_config import parse_api_log_config
 from model_hub.utils.eval_playground_call_context import (
     build_eval_playground_scenario_context,
 )
@@ -573,7 +577,7 @@ class GetAPICallLogView(APIView):
                 )
             row_data = {}
 
-            config = json.loads(log_row.config)
+            config = parse_api_log_config(log_row.config)
             error_localizer = config.get("error_localizer", {})
             if not isinstance(error_localizer, dict):
                 error_localizer = {}
@@ -1170,7 +1174,8 @@ class GetEvalTemplateNameView(APIView):
                 .order_by("name")
             )
             if search_text:
-                eval_templates = eval_templates.filter(name__icontains=search_text)
+                from model_hub.utils.eval_list import normalize_search_for_name
+                eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
             eval_template_names = [
                 {
                     "id": str(eval_template.id),
@@ -2023,9 +2028,18 @@ class EvalTemplateCreateV2View(APIView):
                         if hasattr(req, "data_injection") and req.data_injection
                         else False
                     )
+                    # LLM evals can put the variable in any turn (System /
+                    # User / Assistant), so scan every message body, not
+                    # just req.instructions (which mirrors the System turn).
+                    _prompt_texts = [req.instructions or ""]
+                    if req.messages:
+                        for _m in req.messages:
+                            if isinstance(_m, dict):
+                                _prompt_texts.append(_m.get("content", "") or "")
+                    _combined_prompt = "\n".join(t for t in _prompt_texts if t)
                     if (
-                        req.instructions
-                        and not re.search(variable_pattern, req.instructions)
+                        _combined_prompt.strip()
+                        and not re.search(variable_pattern, _combined_prompt)
                         and not has_data_injection
                     ):
                         return self._gm.bad_request(
@@ -2461,7 +2475,11 @@ class EvalTemplateUpdateView(APIView):
             )
 
             try:
-                template = EvalTemplate.objects.get(
+                # select_related caches the org + workspace FKs so downstream
+                # accesses stay in Python instead of firing fresh SELECTs.
+                template = EvalTemplate.objects.select_related(
+                    "organization", "workspace"
+                ).get(
                     id=template_id,
                     organization=organization,
                     owner=OwnerChoices.USER.value,
@@ -2472,14 +2490,23 @@ class EvalTemplateUpdateView(APIView):
                     "Eval template not found or cannot be edited (system templates are read-only)."
                 )
 
+            # Snapshot for update_fields diffing at save() below.
+            # deepcopy so in-place JSONField mutations (template.config[...] = ...)
+            # register as changes; a shallow reference would alias the same dict.
+            _original_field_values = {
+                f.attname: copy.deepcopy(getattr(template, f.attname))
+                for f in template._meta.concrete_fields
+            }
+
             # Update fields if provided
-            if req.name is not None:
+            # Skip the validation + uniqueness scan when the name is unchanged;
+            # autosave otherwise fires the collision query on every keystroke.
+            if req.name is not None and req.name.strip() != template.name:
                 cleaned = req.name.strip()
                 if not re.match(r"^[a-z0-9_-]+$", cleaned):
                     return self._gm.bad_request(
                         "Name can only contain lowercase letters, numbers, hyphens, or underscores."
                     )
-                # Check uniqueness
                 if (
                     EvalTemplate.objects.filter(
                         name=cleaned, organization=organization, deleted=False
@@ -2718,7 +2745,17 @@ class EvalTemplateUpdateView(APIView):
             if req.publish:
                 template.visible_ui = True
 
-            template.save()
+            # Write only dirty columns; default save() rewrites the whole row.
+            _dirty_fields = [
+                name
+                for name, orig in _original_field_values.items()
+                if getattr(template, name) != orig
+            ]
+            if _dirty_fields:
+                # auto_now=True on updated_at only fires if it's in update_fields.
+                if "updated_at" not in _dirty_fields:
+                    _dirty_fields.append("updated_at")
+                template.save(update_fields=_dirty_fields)
 
             # Lazy V1 on first publish (idempotent).
             if req.publish:
@@ -4808,12 +4845,36 @@ class GroundTruthTriggerEmbeddingView(APIView):
             return self._gm.bad_request(str(e))
 
 
+def _round_to_usage_bucket(ts, bucket_minutes):
+    """Round `ts` down to a chart bucket boundary.
+
+    The rounding MUST match between the per-log key computation and the
+    zero-fill loop below — otherwise a log at 14:35 keys to ``14:00`` while
+    the zero-fill walks ``00:00 / 06:00 / 12:00 / 18:00`` and the call never
+    lands in an emitted bucket (this was a real bug for the 6h/1d periods).
+    """
+    if bucket_minutes >= 1440:
+        return ts.replace(hour=0, minute=0, second=0, microsecond=0)
+    if bucket_minutes >= 60:
+        hour_size = bucket_minutes // 60
+        rounded_hour = (ts.hour // hour_size) * hour_size
+        return ts.replace(hour=rounded_hour, minute=0, second=0, microsecond=0)
+    rounded_minute = (ts.minute // bucket_minutes) * bucket_minutes
+    return ts.replace(minute=rounded_minute, second=0, microsecond=0)
+
+
 class EvalUsageStatsView(APIView):
     """
     GET /model-hub/eval-templates/<id>/usage/
 
-    Returns usage stats, chart data, and paginated eval logs.
-    Query params: page (0-based), page_size, period (30m|6h|1d|7d|30d|90d|180d|365d)
+    Returns usage stats, chart data, and the paginated usage table.
+    Query params: page (0-based), page_size, period
+    (30m|6h|1d|7d|30d|90d|180d|365d), optional start_date/end_date pair
+    (overrides period — sent by the FE for Today / Yesterday / Custom).
+
+    The response is rendered through
+    ``EvalUsageStatsResponseResultSerializer(instance=...).data`` at the
+    boundary so shape drift surfaces here instead of shipping silently.
     """
 
     _gm = GeneralMethods()
@@ -4830,43 +4891,89 @@ class EvalUsageStatsView(APIView):
         "365d": timedelta(days=365),
     }
 
-    @swagger_auto_schema(
-        responses={200: EvalUsageStatsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    @validated_request(
+        query_serializer=EvalUsageQuerySerializer,
+        responses={200: EvalUsageStatsResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
     )
     def get(self, request, template_id, *args, **kwargs):
         try:
+            query = request.validated_query_data
+            page = query["page"]
+            page_size = query["page_size"]
+            period = query["period"]
+
             if APICallLog is None:
-                return self._gm.success_response([])
-            try:
-                template = EvalTemplate.no_workspace_objects.get(
-                    id=template_id, deleted=False
+                # OSS build — no usage app. Return an empty-but-contracted
+                # shape instead of a bare [] so the FE parses it uniformly.
+                empty = {
+                    "template_id": str(template_id),
+                    "is_composite": False,
+                    "stats": {
+                        "total_runs": 0,
+                        "runs_period": 0,
+                        "success_count": 0,
+                        "error_count": 0,
+                        "pass_rate": 0.0,
+                    },
+                    "chart": [],
+                    "table": [],
+                    "logs": {"total": 0, "page": page, "page_size": page_size},
+                }
+                return self._gm.success_response(
+                    EvalUsageStatsResponseResultSerializer(instance=empty).data
                 )
-            except EvalTemplate.DoesNotExist:
-                return self._gm.not_found("Eval template not found.")
 
             organization = (
                 getattr(request, "organization", None) or request.user.organization
             )
+            workspace = getattr(request, "workspace", None)
 
-            # Parse query params
-            page = int(request.GET.get("page", 0))
-            page_size = min(int(request.GET.get("page_size", 25)), 100)
-            period = request.GET.get("period", "30d")
+            # System templates are global (organization=NULL) and must stay
+            # readable — only user-owned templates are org- and
+            # workspace-scoped. Without the workspace clause a caller in
+            # workspace B could read workspace A's usage just by knowing the
+            # template UUID.
+            template_qs = EvalTemplate.no_workspace_objects.filter(
+                id=template_id, deleted=False
+            ).filter(
+                Q(owner=OwnerChoices.SYSTEM.value)
+                | Q(owner=OwnerChoices.USER.value, organization=organization)
+            )
+            if workspace:
+                template_qs = template_qs.filter(
+                    Q(owner=OwnerChoices.SYSTEM.value)
+                    | Q(workspace=workspace)
+                    | Q(workspace__isnull=True)
+                )
+            template = template_qs.first()
+            if template is None:
+                return self._gm.not_found("Eval template not found.")
 
-            period_delta = self.PERIOD_MAP.get(period, timedelta(days=30))
-            end_date = timezone.now()
-            start_date = end_date - period_delta
+            # Explicit date range wins over the period string. The query
+            # serializer guarantees start/end are both present or both absent.
+            if query.get("start_date") and query.get("end_date"):
+                start_date = query["start_date"]
+                end_date = query["end_date"]
+            else:
+                period_delta = self.PERIOD_MAP.get(period, timedelta(days=30))
+                end_date = timezone.now()
+                start_date = end_date - period_delta
 
-            # Base queryset
+            # Base queryset — workspace-scoped so usage numbers don't leak
+            # across workspaces of the same org.
             base_qs = APICallLog.objects.filter(
                 organization=organization,
                 source_id=str(template_id),
                 deleted=False,
             )
+            if workspace:
+                base_qs = base_qs.filter(workspace=workspace)
             total_runs = base_qs.count()
 
             # Period-filtered queryset
-            period_qs = base_qs.filter(created_at__gte=start_date)
+            period_qs = base_qs.filter(
+                created_at__gte=start_date, created_at__lte=end_date
+            )
             runs_period = period_qs.count()
 
             success_count = period_qs.filter(
@@ -4896,21 +5003,9 @@ class EvalUsageStatsView(APIView):
                 buckets_fail = defaultdict(int)
 
                 for log in period_qs.values("created_at", "config", "status"):
-                    ts = log["created_at"]
-                    # Round to bucket
-                    bucket_ts = ts.replace(
-                        minute=(
-                            (ts.minute // max(bucket_minutes, 1))
-                            * min(bucket_minutes, 60)
-                            if bucket_minutes < 1440
-                            else 0
-                        ),
-                        second=0,
-                        microsecond=0,
-                    )
-                    if bucket_minutes >= 1440:
-                        bucket_ts = bucket_ts.replace(hour=0)
-                    bucket_key = bucket_ts.isoformat()
+                    bucket_key = _round_to_usage_bucket(
+                        log["created_at"], bucket_minutes
+                    ).isoformat()
                     buckets_calls[bucket_key] += 1
 
                     # Extract latency + score from config
@@ -4942,6 +5037,18 @@ class EvalUsageStatsView(APIView):
                                         buckets_pass[bucket_key] += 1
                                     elif agg_pass is False:
                                         buckets_fail[bucket_key] += 1
+                            elif isinstance(score, dict):
+                                # Choice-format output {label, score} — was
+                                # previously skipped, leaving the chart empty
+                                # for choice evals even when logs exist.
+                                numeric = score.get("score")
+                                if isinstance(numeric, int | float):
+                                    buckets_scores[bucket_key].append(float(numeric))
+                                label = score.get("label", "")
+                                if label in ("Passed", "Pass"):
+                                    buckets_pass[bucket_key] += 1
+                                elif label in ("Failed", "Fail"):
+                                    buckets_fail[bucket_key] += 1
                             elif score in ("Passed", "Pass"):
                                 buckets_pass[bucket_key] += 1
                                 buckets_scores[bucket_key].append(1.0)
@@ -4949,14 +5056,9 @@ class EvalUsageStatsView(APIView):
                                 buckets_fail[bucket_key] += 1
                                 buckets_scores[bucket_key].append(0.0)
 
-                # Zero-fill: generate all buckets in the range
-                current_bucket = start_date.replace(
-                    minute=0,
-                    second=0,
-                    microsecond=0,
-                )
-                if bucket_minutes >= 1440:
-                    current_bucket = current_bucket.replace(hour=0)
+                # Zero-fill: generate all buckets in the range, rounded with
+                # the SAME function as the per-log keys so they line up.
+                current_bucket = _round_to_usage_bucket(start_date, bucket_minutes)
                 all_bucket_keys = []
                 while current_bucket <= end_date:
                     all_bucket_keys.append(current_bucket.isoformat())
@@ -5013,7 +5115,7 @@ class EvalUsageStatsView(APIView):
                         "user": fb.user.email if fb.user else "",
                     }
 
-            log_items = []
+            table_rows = []
             _skip_keys = {
                 "call_type",
                 "image_urls",
@@ -5142,51 +5244,96 @@ class EvalUsageStatsView(APIView):
                     else None
                 )
 
-                log_item = {
-                    "id": str(log.log_id),
-                    "input": input_str[:200],
-                    "result": result_label,
-                    "score": score,
-                    "reason": ((reason[:150] + "...") if len(reason) > 150 else reason),
-                    "status": log.status,
-                    "source": source,
-                    "created_at": (
-                        log.created_at.isoformat() if log.created_at else ""
-                    ),
-                    "warnings": warnings or [],
+                # Version column. System templates aren't versioned — show a
+                # dash ("" renders as —). User templates: str(version_number)
+                # stamped at execution time (null for pre-tracking rows).
+                # Stringified deliberately: the contract types this cell as
+                # a nullable string, not a string/number union.
+                if template.owner == OwnerChoices.SYSTEM.value:
+                    version_value = ""
+                else:
+                    version_number = (
+                        config.get("version_number")
+                        if isinstance(config, dict)
+                        else None
+                    )
+                    version_value = (
+                        str(version_number) if version_number is not None else None
+                    )
+
+                fallback_input = (
+                    config.get("input", {}) if isinstance(config, dict) else {}
+                )
+                detail_vars = input_vars or (
+                    fallback_input if isinstance(fallback_input, dict) else {}
+                )
+
+                row = {
+                    "row_id": str(log.log_id),
+                    "score": {"cell_value": score},
+                    "result": {"cell_value": result_label},
+                    "input": {"cell_value": input_str[:200]},
+                    "reason": {
+                        "cell_value": (
+                            (reason[:150] + "...") if len(reason) > 150 else reason
+                        )
+                    },
+                    "source": {"cell_value": source},
+                    "version": {"cell_value": version_value},
+                    "feedback": {"cell_value": feedback_map.get(str(log.log_id))},
+                    "created_at": {
+                        "cell_value": (
+                            log.created_at.isoformat() if log.created_at else ""
+                        )
+                    },
+                    "status": {"cell_value": log.status},
+                    "warnings": {"cell_value": warnings or []},
                     "detail": {
-                        "input_variables": input_vars or config.get("input", {}),
+                        "input_variables": detail_vars,
                         "output": output_data,
                         "warnings": warnings or [],
-                        "mappings": mappings,
+                        "mappings": mappings if isinstance(mappings, dict) else {},
                         "model": (
                             config.get("model") if isinstance(config, dict) else None
                         ),
+                        "version_id": (
+                            config.get("version_id")
+                            if isinstance(config, dict)
+                            else None
+                        ),
+                        "version_number": (
+                            config.get("version_number")
+                            if isinstance(config, dict)
+                            else None
+                        ),
                     },
-                    "feedback": feedback_map.get(str(log.log_id)),
                 }
+
+                # Per-variable cell column so the FE can sort/show/hide each
+                # input variable individually (dynamic input_var_<name> keys,
+                # covered by additionalProperties in the contract).
+                for var_key, var_val in detail_vars.items():
+                    row[f"input_var_{var_key}"] = {"cell_value": var_val}
 
                 if is_composite_log:
                     children = config.get("children", [])
-                    log_item["composite"] = True
-                    log_item["aggregate_pass"] = (
+                    row["composite"] = True
+                    row["aggregate_pass"] = (
                         output_data.get("aggregate_pass")
                         if isinstance(output_data, dict)
                         else None
                     )
-                    log_item["detail"]["children"] = children
-                    log_item["detail"]["aggregation_function"] = config.get(
+                    row["detail"]["children"] = children
+                    row["detail"]["aggregation_function"] = config.get(
                         "aggregation_function"
                     )
-                    log_item["detail"]["total_children"] = config.get("total_children")
-                    log_item["detail"]["completed_children"] = config.get(
+                    row["detail"]["total_children"] = config.get("total_children")
+                    row["detail"]["completed_children"] = config.get(
                         "completed_children"
                     )
-                    log_item["detail"]["failed_children"] = config.get(
-                        "failed_children"
-                    )
+                    row["detail"]["failed_children"] = config.get("failed_children")
 
-                log_items.append(log_item)
+                table_rows.append(row)
 
             response = {
                 "template_id": str(template_id),
@@ -5201,14 +5348,19 @@ class EvalUsageStatsView(APIView):
                     ),
                 },
                 "chart": chart_data,
+                "table": table_rows,
                 "logs": {
-                    "items": log_items,
                     "total": total_logs,
                     "page": page,
                     "page_size": page_size,
                 },
             }
-            return self._gm.success_response(response)
+            # Contract boundary: the serializer builds the wire format. A
+            # missing/mistyped field raises here (caught below → 400 + log)
+            # instead of shipping a drifted shape to the FE.
+            return self._gm.success_response(
+                EvalUsageStatsResponseResultSerializer(instance=response).data
+            )
 
         except Exception as e:
             logger.error(
@@ -6349,7 +6501,7 @@ class EvalPlayGroundFeedbackAPIView(APIView):
                     organization=getattr(request, "organization", None)
                     or request.user.organization,
                 )
-                config = json.loads(log.config)
+                config = parse_api_log_config(log.config)
                 required_keys = config.get("required_keys", [])
                 input_data_types = config.get("input_data_types", {})
                 if not required_keys or len(required_keys) == 0:
@@ -6942,7 +7094,7 @@ def populate_log_row_data(eval_template, logs, key_map):
     try:
         row_data = []
         for log in logs:
-            config = json.loads(log.config)
+            config = parse_api_log_config(log.config)
             row_id = str(uuid.uuid4())
             column_config = {
                 "row_id": row_id,

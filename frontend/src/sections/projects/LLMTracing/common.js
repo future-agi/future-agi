@@ -2,6 +2,7 @@ import { getRandomId, safeParse } from "src/utils/utils";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { AnnotationLabelTypes, PROJECT_SOURCE } from "src/utils/constants";
+import { SpanTypes } from "src/utils/constant";
 import CustomTraceHeaderRenderer from "./Renderers/CustomTraceHeaderRenderer";
 import {
   getAnnotationMetricFilterDefinition,
@@ -92,15 +93,7 @@ export const generateObserveTraceFilterDefinition = (
       multiSelect: true,
       filterType: {
         type: "option",
-        options: [
-          { label: "Chain", value: "chain" },
-          { label: "Retriever", value: "retriever" },
-          { label: "Generation", value: "generation" },
-          { label: "LLM", value: "llm" },
-          { label: "Tool", value: "tool" },
-          { label: "Agent", value: "agent" },
-          { label: "Embedding", value: "embedding" },
-        ],
+        options: [...SpanTypes],
       },
     },
     {
@@ -186,15 +179,7 @@ export const generateSpanObserveFilterDefinition = (
       multiSelect: true,
       filterType: {
         type: "option",
-        options: [
-          { label: "Chain", value: "chain" },
-          { label: "Retriever", value: "retriever" },
-          { label: "Generation", value: "generation" },
-          { label: "LLM", value: "llm" },
-          { label: "Tool", value: "tool" },
-          { label: "Agent", value: "agent" },
-          { label: "Embedding", value: "embedding" },
-        ],
+        options: [...SpanTypes],
       },
     },
   ];
@@ -896,6 +881,10 @@ export const FILTER_FOR_HAS_EVAL = {
     filter_value: true,
   },
 };
+
+// Strip UI-only keys per UI_FILTER_ITEM_KEYS in src/api/contracts/filter-contract.js.
+export const toBackendFilters = (filters) =>
+  (filters || []).map(({ id, _meta, col_type, ...rest }) => rest);
 
 export const FILTER_FOR_ERRORS = {
   column_id: "status",

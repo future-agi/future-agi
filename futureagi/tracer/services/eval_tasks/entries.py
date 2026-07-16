@@ -34,6 +34,7 @@ _TARGET_TYPE = {
 }
 
 _MATERIALIZE_BATCH = 5_000
+_FK_CHUNK = 1000
 
 # Set to the materialized entry's id while the engine runs one entry; the eval
 # core's result write then lands on that entry instead of creating a new row.
@@ -116,7 +117,9 @@ def materialize_pending(task: EvalTask) -> int:
     reader = get_reader()
     try:
         for batch in iter_desired_rows(task, batch_size=_MATERIALIZE_BATCH):
-            fk_by_id = _resolve_entry_fks(reader, task.row_type, batch)
+            fk_by_id = _resolve_entry_fks(
+                reader, task.row_type, batch, project_id=str(task.project_id)
+            )
             rows = []
             for identity in batch:
                 fks = fk_by_id.get(identity)
@@ -213,22 +216,44 @@ def mark_terminal(
 
 
 def _resolve_entry_fks(
-    reader: CHSpanReader, row_type: str, identities: Iterable[str]
+    reader: CHSpanReader,
+    row_type: str,
+    identities: Iterable[str],
+    *,
+    project_id: str,
 ) -> dict[str, dict[str, Any]]:
     """Map each desired row identity to the EvalLogger FK fields for its
     target_type. Rows that can't be shaped (missing span / rootless trace) are
-    absent from the result and skipped by the caller."""
-    if row_type in (RowType.SPANS, RowType.VOICE_CALLS):
-        spans = reader.list_by_ids(list(identities))
-        return {
-            s.id: {"observation_span_id": s.id, "trace_id": s.trace_id} for s in spans
-        }
-    if row_type == RowType.TRACES:
-        roots = reader.list_root_spans_by_trace_ids(list(identities))
-        return {
-            trace_id: {"observation_span_id": root.id, "trace_id": trace_id}
-            for trace_id, root in roots.items()
-        }
+    absent from the result and skipped by the caller. CH reads are
+    project-scoped and chunked into ``_FK_CHUNK``-sized IN-lists."""
+    ids = list(identities)
     if row_type == RowType.SESSIONS:
-        return {sid: {"trace_session_id": sid} for sid in identities}
-    raise ValueError(f"Unsupported row_type: {row_type!r}")
+        return {sid: {"trace_session_id": sid} for sid in ids}
+    if row_type not in (RowType.SPANS, RowType.VOICE_CALLS, RowType.TRACES):
+        raise ValueError(f"Unsupported row_type: {row_type!r}")
+    fks: dict[str, dict[str, Any]] = {}
+    for start in range(0, len(ids), _FK_CHUNK):
+        chunk = ids[start : start + _FK_CHUNK]
+        if row_type == RowType.TRACES:
+            # Only root.id is used below, so skip the fat JSON columns.
+            roots = reader.list_root_spans_by_trace_ids(
+                chunk, include_heavy=False, project_id=project_id
+            )
+            fks.update(
+                {
+                    trace_id: {"observation_span_id": root.id, "trace_id": trace_id}
+                    for trace_id, root in roots.items()
+                }
+            )
+        else:
+            # SPANS / VOICE_CALLS: only id + trace_id are used.
+            spans = reader.list_by_ids(
+                chunk, include_heavy=False, project_id=project_id
+            )
+            fks.update(
+                {
+                    s.id: {"observation_span_id": s.id, "trace_id": s.trace_id}
+                    for s in spans
+                }
+            )
+    return fks

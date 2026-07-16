@@ -40,7 +40,8 @@ import _ from "lodash";
 import GraphSkeleton from "./GraphSkeleton";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
-import { FILTER_FOR_HAS_EVAL } from "../common";
+import { toBackendFilters } from "../common";
+import { combineGraphFilters } from "./graphFilterUtils";
 
 // ---------------------------------------------------------------------------
 // Map dashboard category → graph API type
@@ -157,6 +158,7 @@ function useGraphMetrics() {
 // ---------------------------------------------------------------------------
 const PrimaryGraph = ({
   filters = [],
+  extraFilters,
   dateFilter,
   setDateFilter,
   selectedInterval = "day",
@@ -304,36 +306,11 @@ const PrimaryGraph = ({
     return result;
   }, [metricGroups, pickerSearch]);
 
-  // Combine filters with date filter + eval filter
-  const combinedFilters = useMemo(() => {
-    const base = filters || [];
-    const hasDateFilter = base.some((f) => f?.column_id === "created_at");
-    const startDate = dateFilter?.dateFilter?.[0];
-    const endDate = dateFilter?.dateFilter?.[1];
-
-    const dateEntry =
-      !hasDateFilter && startDate && endDate
-        ? [
-            {
-              column_id: "created_at",
-              filter_config: {
-                filter_type: "datetime",
-                filter_op: "between",
-                filter_value: [
-                  new Date(startDate).toISOString(),
-                  new Date(endDate).toISOString(),
-                ],
-              },
-            },
-          ]
-        : [];
-
-    return [
-      ...base,
-      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-      ...dateEntry,
-    ];
-  }, [filters, dateFilter, hasEvalFilter]);
+  const combinedFilters = useMemo(
+    () =>
+      combineGraphFilters({ filters, extraFilters, dateFilter, hasEvalFilter }),
+    [filters, extraFilters, dateFilter, hasEvalFilter],
+  );
 
   // Fetch graph data
   const apiEndpoint = graphEndpoint || endpoints.project.getTraceGraphData();
@@ -349,7 +326,7 @@ const PrimaryGraph = ({
     queryFn: () =>
       axios.post(apiEndpoint, {
         interval: selectedInterval,
-        filters: combinedFilters,
+        filters: toBackendFilters(combinedFilters),
         property: "average",
         req_data_config: {
           id: metricDef.id,
@@ -875,6 +852,7 @@ const PrimaryGraph = ({
 
 PrimaryGraph.propTypes = {
   filters: PropTypes.array,
+  extraFilters: PropTypes.array,
   dateFilter: PropTypes.object,
   setDateFilter: PropTypes.func,
   selectedInterval: PropTypes.string,

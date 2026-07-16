@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 import structlog
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Count
 from django.utils import timezone
 from rest_framework.decorators import action
@@ -17,9 +17,10 @@ from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tracer.db_routing import DATABASE_FOR_PROJECT_LIST
+from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.eval_task import EvalTask
 from tracer.models.monitor import UserAlertMonitor
-from tracer.models.observation_span import ObservationSpan
+from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project
 from tracer.models.project_version import ProjectVersion
 from tracer.models.trace import Trace
@@ -100,26 +101,32 @@ class ProjectView(BaseModelViewSetMixinWithUserOrg, ModelViewSet):
         return self._project_scope_queryset().filter(id=project_id).first()
 
     def _soft_delete_projects(self, projects, project_type):
-        now = timezone.now()
-        if project_type == "experiment":
-            ProjectVersion.objects.filter(project__in=projects).update(
+        with transaction.atomic():
+            now = timezone.now()
+            if project_type == "experiment":
+                ProjectVersion.objects.filter(project__in=projects).update(
+                    deleted=True, deleted_at=now
+                )
+            else:
+                TraceSession.objects.filter(project__in=projects).update(
+                    deleted=True, deleted_at=now
+                )
+            Trace.objects.filter(project__in=projects).update(deleted=True, deleted_at=now)
+            ObservationSpan.objects.filter(project__in=projects).update(
                 deleted=True, deleted_at=now
             )
-        else:
-            TraceSession.objects.filter(project__in=projects).update(
+            UserAlertMonitor.objects.filter(project__in=projects).update(
                 deleted=True, deleted_at=now
             )
-        Trace.objects.filter(project__in=projects).update(deleted=True, deleted_at=now)
-        ObservationSpan.objects.filter(project__in=projects).update(
-            deleted=True, deleted_at=now
-        )
-        UserAlertMonitor.objects.filter(project__in=projects).update(
-            deleted=True, deleted_at=now
-        )
-        EvalTask.objects.filter(project__in=projects).update(
-            deleted=True, deleted_at=now
-        )
-        projects.update(deleted=True, deleted_at=now)
+            EvalTask.objects.filter(project__in=projects).update(
+                deleted=True, deleted_at=now
+            )
+            eval_configs = CustomEvalConfig.objects.filter(project__in=projects)
+            EvalLogger.objects.filter(custom_eval_config__in=eval_configs).update(
+                deleted=True, deleted_at=now
+            )
+            eval_configs.update(deleted=True, deleted_at=now)
+            projects.update(deleted=True, deleted_at=now)
 
     def get_queryset(self):
         # Get base queryset with automatic filtering from mixin

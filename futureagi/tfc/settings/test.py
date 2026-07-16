@@ -67,6 +67,12 @@ CLICKHOUSE_V2 = {
     "CH25_USER": os.environ.get("CH25_USER", "default"),
     "CH25_PASSWORD": os.environ.get("CH25_PASSWORD", ""),
     "CH25_DATABASE": os.environ.get("CH25_DATABASE", "test_tfc"),
+    "QUERY_TYPES_V2_PRIMARY": os.environ.get(
+        "CH25_QUERY_TYPES_V2_PRIMARY", "dashboard"
+    ),
+    "QUERY_TYPES_V2_ONLY": os.environ.get("CH25_QUERY_TYPES_V2_ONLY", ""),
+    "QUERY_TYPES_SHADOW": os.environ.get("CH25_QUERY_TYPES_SHADOW", ""),
+    "QUERY_TYPES_DISABLED": os.environ.get("CH25_QUERY_TYPES_DISABLED", ""),
 }
 
 CH25_EVAL_LOGGER_TABLE = os.environ.get(

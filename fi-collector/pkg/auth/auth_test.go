@@ -921,7 +921,7 @@ func TestResolveResultMissingProjects(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNewUsageEmitterNilRedis(t *testing.T) {
-	u := NewUsageEmitter(nil, slog.Default())
+	u := NewUsageEmitter(nil, nil, slog.Default())
 	if u != nil {
 		t.Fatal("NewUsageEmitter with nil redis must return nil")
 	}
@@ -933,20 +933,17 @@ func TestUsageEmitterEmitIngestionNil(t *testing.T) {
 }
 
 func TestBillingEventIDDeterministic(t *testing.T) {
-	a := billingEventID("trace-abc", "tracing_event")
-	if a != billingEventID("trace-abc", "tracing_event") {
-		t.Error("same dedupKey+eventType must yield the same event_id (re-poll must dedup)")
+	a := billingEventID("trace-abc")
+	if a != billingEventID("trace-abc") {
+		t.Error("same dedupKey must yield the same event_id (re-poll must dedup, even across a mode flip)")
 	}
-	if billingEventID("trace-abc", "observe_add") == a {
-		t.Error("different eventType must yield distinct ids (else the two events collide on unique event_id)")
-	}
-	if billingEventID("trace-xyz", "tracing_event") == a {
+	if billingEventID("trace-xyz") == a {
 		t.Error("different dedupKey must yield distinct ids")
 	}
 }
 
 func TestBillingEventIDEmptyKeyIsRandom(t *testing.T) {
-	if billingEventID("", "tracing_event") == billingEventID("", "tracing_event") {
+	if billingEventID("") == billingEventID("") {
 		t.Error("empty dedupKey must fall back to a random event_id (SDK batches)")
 	}
 }
@@ -962,7 +959,8 @@ func TestEmitIngestionEventIDDedupViaRedis(t *testing.T) {
 	}
 	defer mr.Close()
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
-	u := NewUsageEmitter(rdb, slog.Default())
+	u := NewUsageEmitter(rdb, nil, slog.Default())
+	setTracingMode(t, rdb, "org-1", "events") // events mode → tracing_event is emitted
 
 	// Order: same call twice (re-poll), a different call, then an SDK batch twice.
 	u.EmitIngestion("org-1", 1, 1, 100, "trace-A")
@@ -992,6 +990,123 @@ func TestEmitIngestionEventIDDedupViaRedis(t *testing.T) {
 	}
 	if ids[3] == ids[4] {
 		t.Error("SDK batch (empty dedupKey) must get random event_ids")
+	}
+}
+
+// setTracingMode seeds the org's billing-mode cache key so EmitIngestion
+// resolves a known mode without a Postgres pool.
+func setTracingMode(t *testing.T, rdb *redis.Client, orgID, mode string) {
+	t.Helper()
+	if err := rdb.Set(context.Background(), "tracing_billing_mode:"+orgID, mode, 0).Err(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// usageStreamEvents returns every event currently on the usage stream.
+func usageStreamEvents(t *testing.T, rdb *redis.Client) []map[string]any {
+	t.Helper()
+	msgs, err := rdb.XRange(context.Background(), usageStreamKey, "-", "+").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([]map[string]any, 0, len(msgs))
+	for _, m := range msgs {
+		out = append(out, m.Values)
+	}
+	return out
+}
+
+// storage mode → one observe_add (amount = payloadBytes), no tracing_event.
+func TestEmitIngestionStorageModeEmitsOnlyStorage(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	u := NewUsageEmitter(rdb, nil, slog.Default())
+	setTracingMode(t, rdb, "org-s", "storage")
+
+	u.EmitIngestion("org-s", 3, 7, 500, "trace-1")
+
+	evs := usageStreamEvents(t, rdb)
+	if len(evs) != 1 {
+		t.Fatalf("storage mode must emit exactly one event, got %d: %v", len(evs), evs)
+	}
+	if evs[0]["event_type"] != "observe_add" {
+		t.Errorf("storage mode must emit observe_add, got %v", evs[0]["event_type"])
+	}
+	if evs[0]["amount"] != "500" {
+		t.Errorf("observe_add amount must be payloadBytes=500, got %v", evs[0]["amount"])
+	}
+}
+
+// events mode → one tracing_event (amount = traces+spans), no observe_add.
+func TestEmitIngestionEventsModeEmitsOnlyTracing(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	u := NewUsageEmitter(rdb, nil, slog.Default())
+	setTracingMode(t, rdb, "org-e", "events")
+
+	u.EmitIngestion("org-e", 3, 7, 500, "trace-1")
+
+	evs := usageStreamEvents(t, rdb)
+	if len(evs) != 1 {
+		t.Fatalf("events mode must emit exactly one event, got %d: %v", len(evs), evs)
+	}
+	if evs[0]["event_type"] != "tracing_event" {
+		t.Errorf("events mode must emit tracing_event, got %v", evs[0]["event_type"])
+	}
+	if evs[0]["amount"] != "10" {
+		t.Errorf("tracing_event amount must be traces+spans=10, got %v", evs[0]["amount"])
+	}
+}
+
+// Unknown mode (no cache key, no PG) defaults to storage — matches Python.
+func TestEmitIngestionDefaultsToStorageWhenModeUnknown(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	u := NewUsageEmitter(rdb, nil, slog.Default())
+
+	u.EmitIngestion("org-x", 3, 7, 500, "")
+
+	evs := usageStreamEvents(t, rdb)
+	if len(evs) != 1 || evs[0]["event_type"] != "observe_add" {
+		t.Fatalf("unknown mode must default to storage (observe_add only), got %v", evs)
+	}
+}
+
+// events-mode tracing amount is traces+spans, and payloadBytes is ignored.
+func TestEmitIngestionEventsModeAmountIncludesSpans(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	u := NewUsageEmitter(rdb, nil, slog.Default())
+	setTracingMode(t, rdb, "org-b", "events")
+
+	u.EmitIngestion("org-b", 2, 5, 999, "trace-1")
+
+	evs := usageStreamEvents(t, rdb)
+	if len(evs) != 1 {
+		t.Fatalf("events mode must emit exactly one event (bytes ignored), got %d: %v", len(evs), evs)
+	}
+	if evs[0]["event_type"] != "tracing_event" || evs[0]["amount"] != "7" {
+		t.Errorf("want tracing_event amount=7 (2 traces + 5 spans), got type=%v amount=%v",
+			evs[0]["event_type"], evs[0]["amount"])
+	}
+}
+
+// events mode with spans=0 pins the other boundary of the traces+spans sum.
+func TestEmitIngestionEventsModeTracesOnly(t *testing.T) {
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	u := NewUsageEmitter(rdb, nil, slog.Default())
+	setTracingMode(t, rdb, "org-t", "events")
+
+	u.EmitIngestion("org-t", 2, 0, 999, "trace-1")
+
+	evs := usageStreamEvents(t, rdb)
+	if len(evs) != 1 {
+		t.Fatalf("events mode must emit exactly one event, got %d: %v", len(evs), evs)
+	}
+	if evs[0]["event_type"] != "tracing_event" || evs[0]["amount"] != "2" {
+		t.Errorf("want tracing_event amount=2 (2 traces + 0 spans), got type=%v amount=%v",
+			evs[0]["event_type"], evs[0]["amount"])
 	}
 }
 

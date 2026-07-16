@@ -280,7 +280,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const buildPayload = useCallback(
     () => ({
       eval_type: evalType,
-      instructions: evalType === "code" ? "" : instructions,
+      instructions: evalType === "code" ? undefined : instructions || undefined,
       code: evalType === "code" ? code : undefined,
       code_language: evalType === "code" ? codeLanguage : undefined,
       model,
@@ -598,6 +598,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         evalType: result?.eval_type || "llm",
         outputType:
           compositeChildAxis === "percentage" ? "percentage" : "pass_fail",
+        // EvalPickerConfigFull seeds its mapping panel from this.
+        mapping: sourceMapping,
       });
       setStep("config");
     } catch (error) {
@@ -622,6 +624,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     setSelectedEval,
     setStep,
     enqueueSnackbar,
+    sourceMapping,
   ]);
 
   const isComposite = mode === "composite";
@@ -1168,7 +1171,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
                 {(source === "dataset" ||
                   source === "workbench" ||
                   source === "custom" ||
-                  source === "run-experiment" ||
+                  source === "experiment" ||
                   source === "run-optimization") && (
                   <DatasetTestMode
                     ref={sourceRef}

@@ -648,6 +648,10 @@ class SingleEvaluationConfigSerializer(serializers.Serializer):
     config = serializers.JSONField(required=False, default=dict)
     mapping = serializers.JSONField(required=False, default=dict)
     params = serializers.JSONField(required=False, default=dict)
+    error_localizer = serializers.BooleanField(required=False, default=False)
+    kb_id = serializers.CharField(
+        required=False, allow_null=True, allow_blank=True, default=None
+    )
 
     def validate(self, data):
         """Validate the evaluation configuration"""

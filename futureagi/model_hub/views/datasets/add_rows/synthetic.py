@@ -79,9 +79,9 @@ class AddSyntheticData(APIView):
                 return self._gm.bad_request(get_error_message("10_ROWS_REQUIRED"))
 
             columns = validated_data["columns"]
-            gen_columns = [col for col in columns if not col["skip"]]
-            new_columns = [col for col in columns if col["is_new"]]
-            gen_new_columns = [col for col in gen_columns if col["is_new"]]
+            gen_columns = [col for col in columns if not col.get("skip", False)]
+            new_columns = [col for col in columns if col.get("is_new", False)]
+            gen_new_columns = [col for col in gen_columns if col.get("is_new", False)]
 
             # Generate New Columns
             generated_columns = []

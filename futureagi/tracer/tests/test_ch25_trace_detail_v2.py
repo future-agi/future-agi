@@ -208,6 +208,49 @@ class TestV2SynthesisFromRootSpan:
 
 
 # --------------------------------------------------------------------------- #
+# 2b) span_attributes = typed maps ∪ attributes_extra
+# --------------------------------------------------------------------------- #
+class TestV2SpanAttributesMerge:
+    """span_attributes = typed maps ∪ attributes_extra. Regression: a non-empty
+    attributes_extra used to suppress the maps entirely."""
+
+    def _span_attrs(self, **overrides):
+        row = _root_span_row(
+            # aliased to `span_attributes` in the SQL — this is attributes_extra
+            span_attributes='{"input.value": "hi", "output.value": "yo"}',
+            attrs_string={"test_string": "beta", "user.id": "dave"},
+            attrs_number={"test_number": 100},
+            attrs_bool={"streaming": 1},
+        )
+        row.update(overrides)
+        analytics = _FakeAnalytics(project_rows=[{"project_id": "P1"}], span_rows=[row])
+        with ExitStack() as stack:
+            _patch_v2_pg(stack, project_accessible=True, pg_trace=None)
+            result = retrieve_trace_detail_ch(MagicMock(), MagicMock(), "T1", analytics)
+        return result["observation_spans"][0]["observation_span"]["span_attributes"]
+
+    def test_merges_all_four_sources(self):
+        attrs = self._span_attrs()
+        # attributes_extra overflow
+        assert attrs["input.value"] == "hi"
+        assert attrs["output.value"] == "yo"
+        # typed maps — previously dropped when attributes_extra was non-empty
+        assert attrs["test_string"] == "beta"
+        assert attrs["user.id"] == "dave"
+        assert attrs["test_number"] == 100
+
+    def test_bool_map_coerced_to_bool(self):
+        assert self._span_attrs()["streaming"] is True
+
+    def test_attributes_extra_overrides_maps_on_collision(self):
+        attrs = self._span_attrs(
+            attrs_string={"dupe": "from_map"},
+            span_attributes='{"dupe": "from_extra"}',
+        )
+        assert attrs["dupe"] == "from_extra"
+
+
+# --------------------------------------------------------------------------- #
 # 3) v1 (PG) <-> v2 (CH) response-envelope parity
 # --------------------------------------------------------------------------- #
 class TestV1V2EnvelopeParity:

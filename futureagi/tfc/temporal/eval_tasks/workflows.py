@@ -131,6 +131,14 @@ async def _mark_running(task_id: str) -> None:
     await _set_db_status(task_id, STATUS_RUNNING, expected_status=STATUS_PENDING)
 
 
+async def _fail_task(task_id: str) -> None:
+    """Persist FAILED to the DB row (the UI's source of truth) and the Temporal
+    Search Attribute. Forced (unguarded) — the run only reaches here on a genuine
+    error, since paused / deleted exit through the graceful state check."""
+    _set_status(STATUS_FAILED)
+    await _set_db_status(task_id, STATUS_FAILED)
+
+
 async def _reconcile(task_id: str) -> None:
     await workflow.execute_activity(
         "reconcile_eval_task_activity",
@@ -289,6 +297,16 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
 
     @workflow.run
     async def run(self, input: EvalTaskWorkflowInput) -> EvalTaskWorkflowOutput:
+        try:
+            return await self._run(input)
+        except Exception:
+            # Persist FAILED so a failed run doesn't stay stuck ``running``,
+            # then re-raise. continue_as_new / cancellation are BaseException,
+            # not caught here.
+            await _fail_task(input.task_id)
+            raise
+
+    async def _run(self, input: EvalTaskWorkflowInput) -> EvalTaskWorkflowOutput:
         self._phase = PHASE_MATERIALIZING
         await _apply_labels(input.task_id)
         _set_status(STATUS_RUNNING)
@@ -353,8 +371,8 @@ class HistoricalEvalTaskWorkflow(_ObservableEvalWorkflow):
             # run_entry and fail_eval_entry exhausted their retries. reap only
             # runs at first start (skipped across continue-as-new), so these
             # can't self-heal here; fail loudly rather than report COMPLETED
-            # over undrained work. A fresh workflow start reaps and re-drains.
-            _set_status(STATUS_FAILED)
+            # over undrained work (the wrapper persists FAILED). A fresh
+            # workflow start reaps and re-drains.
             raise ApplicationError(
                 f"eval task {input.task_id} drained but did not finalize",
                 non_retryable=True,
@@ -372,6 +390,14 @@ class ContinuousEvalTaskWorkflow(_ObservableEvalWorkflow):
 
     @workflow.run
     async def run(self, state: ContinuousDrainState) -> None:
+        try:
+            await self._run(state)
+        except Exception:
+            # Same fail-then-reraise as HistoricalEvalTaskWorkflow.run.
+            await _fail_task(state.task_id)
+            raise
+
+    async def _run(self, state: ContinuousDrainState) -> None:
         self._phase = PHASE_MATERIALIZING
         await _apply_labels(state.task_id)
         _set_status(STATUS_RUNNING)

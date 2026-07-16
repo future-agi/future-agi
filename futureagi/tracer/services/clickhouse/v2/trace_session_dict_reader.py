@@ -89,6 +89,7 @@ from tracer.services.clickhouse.v2.id_remap_sql import (
     remap_left_join,
     resolved_id_expr,
 )
+from tracer.services.clickhouse.v2.query_settings import current_settings
 
 log = structlog.get_logger("ch25.trace_session_dict_reader")
 
@@ -109,12 +110,55 @@ _LABEL_ATTR = "external_session_id"
 
 _client = None
 _client_lock = threading.Lock()
+# Per-thread cached client for non-empty settings contexts. Thread-local (not a
+# module global) so a concurrent caller with a different settings key can never
+# ``.close()`` a client another thread is mid-query on — ``_get_client`` returns
+# the cached handle and the caller queries it outside ``_client_lock``, so a
+# shared module-global client was a cross-thread close race. At most one live
+# settings-client per thread; replaced (old closed) when that thread's key changes.
+_settings_tls = threading.local()
 
 
 def _get_client():
     """Lazily build + cache a clickhouse-connect client (mirrors
     ``end_user_dict_reader._get_client``; kept separate so a reset here can't
-    disturb the enduser reader's or writer's cached handle)."""
+    disturb the enduser reader's or writer's cached handle).
+
+    When ``ch_query_settings`` is active, returns a thread-local client keyed by
+    the merged settings dict. Reuses it while this thread's key matches; closes
+    and replaces this thread's cached client when the key changes. Thread-local,
+    so a settings-client is never shared across threads and a concurrent caller
+    with a different key cannot close a client this thread is mid-query on. The
+    empty-settings path is unchanged."""
+    overrides = current_settings()
+    if overrides:
+        key = tuple(sorted(overrides.items()))
+        client = getattr(_settings_tls, "client", None)
+        if client is not None and getattr(_settings_tls, "key", None) == key:
+            return client
+        # Key changed or first use on this thread: close this thread's old
+        # client and build a new one. Only ever touches this thread's client,
+        # so no other thread's in-flight query can be closed out from under it.
+        if client is not None:
+            try:
+                client.close()
+            except Exception:
+                pass
+        import clickhouse_connect
+
+        cfg = get_v2_config()
+        client = clickhouse_connect.get_client(
+            host=cfg["host"],
+            port=cfg["http_port"],
+            username=cfg["user"],
+            password=cfg["password"] or "",
+            database=cfg["database"],
+            send_receive_timeout=15,
+            settings=overrides,
+        )
+        _settings_tls.client = client
+        _settings_tls.key = key
+        return client
     global _client
     if _client is not None:
         return _client
@@ -143,6 +187,15 @@ def _reset_client() -> None:
         except Exception:
             pass
         _client = None
+    # Settings-clients are thread-local; only the calling thread's is reachable.
+    client = getattr(_settings_tls, "client", None)
+    if client is not None:
+        try:
+            client.close()
+        except Exception:
+            pass
+    _settings_tls.client = None
+    _settings_tls.key = None
 
 
 def resolve_external_session_ids(
@@ -304,6 +357,8 @@ def session_exists(project_id: object, trace_session_id: object) -> bool:
 
 def resolve_session_fields(
     trace_session_ids: Iterable[object],
+    *,
+    project_id: str | None = None,
 ) -> dict[str, dict[str, object]]:
     """Batch-resolve ``{trace_session_id (str) -> {external_session_id,
     first_seen, project_id, bookmarked, display_name}}`` — the curated CH identity
@@ -336,6 +391,10 @@ def resolve_session_fields(
       • ``project_id`` is returned as a ``str``.
       • When several input ids resolve to the SAME survivor (straddler old+new
         both passed), each input id maps to its own copy of the one entity.
+      • ``project_id`` (optional kwarg): scope the WHERE to one tenant, pruning on
+        the ``trace_sessions`` ORDER BY ``(project_id, trace_session_id)``
+        sort-key prefix so an eval-path caller reads ~its own sessions instead
+        of the whole table.
       • Returns ``{}`` for empty input (no CH round-trip).
     """
     ids = {str(s) for s in trace_session_ids if s}
@@ -345,6 +404,11 @@ def resolve_session_fields(
     client = _get_client()
     resolved = resolved_id_expr("ids.sid")
     remap_join = remap_left_join("ids.sid", _SESSION_REMAP)
+    params: dict[str, object] = {"ids": list(ids)}
+    project_clause = ""
+    if project_id:
+        params["pid"] = str(project_id)
+        project_clause = " AND ts.project_id = %(pid)s"
     try:
         # Resolve new→old in the inner subquery (plain (input_id, resolved_id)
         # columns), join the curated table on the resolved id as a plain column,
@@ -363,9 +427,9 @@ def resolve_session_fields(
                 # alias BEFORE FINAL (CH syntax); see _resolve_existing_ids.
                 f"INNER JOIN {_SESSIONS_TABLE} AS ts FINAL "
                 f"  ON ts.trace_session_id = r.resolved_id "
-                f"WHERE ts.is_deleted = 0"
+                f"WHERE ts.is_deleted = 0{project_clause}"
             ),
-            parameters={"ids": list(ids)},
+            parameters=params,
         )
     except Exception:
         _reset_client()
@@ -374,14 +438,14 @@ def resolve_session_fields(
     out: dict[str, dict[str, object]] = {}
     resolved_by_input: dict[str, str] = {}
     for row in result.result_rows:
-        input_id, resolved_id, external, first_seen, project_id = row
+        input_id, resolved_id, external, first_seen, proj_id = row
         resolved_by_input[input_id] = resolved_id
         out[input_id] = {
             # '' (PG NULL name coerced on write) → None, parity with the old
             # PG-name read. Overlay defaults filled below.
             "external_session_id": external or None,
             "first_seen": first_seen,
-            "project_id": project_id,
+            "project_id": proj_id,
             "bookmarked": False,
             "display_name": None,
         }

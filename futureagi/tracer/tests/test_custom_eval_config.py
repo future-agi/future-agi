@@ -315,3 +315,139 @@ class TestCustomEvalConfigRunEvaluationAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.unit
+@pytest.mark.django_db
+class TestProjectDeleteCascade:
+    """Verify _soft_delete_projects cascades to CustomEvalConfig and EvalLogger."""
+
+    def _make_eval_config(self, observe_project, eval_template):
+        from tracer.models.custom_eval_config import CustomEvalConfig
+        return CustomEvalConfig.objects.create(
+            name="Cascade Test Config",
+            project=observe_project,
+            eval_template=eval_template,
+            config={},
+            mapping={},
+            filters={},
+        )
+
+    def _make_eval_logger(self, eval_config, trace_session):
+        from tracer.models.observation_span import EvalLogger
+        return EvalLogger.objects.create(
+            custom_eval_config=eval_config,
+            target_type="session",
+            trace_session=trace_session,
+            eval_type_id="CustomPromptEvaluator",
+            output_metadata={},
+            results_tags=[],
+            results_explanation={},
+            eval_tags=[],
+            eval_explanation="",
+            output_str_list=[],
+            error=False,
+        )
+
+    def test_delete_project_soft_deletes_eval_config(
+        self, observe_project, eval_template
+    ):
+        """Deleting a project soft-deletes its CustomEvalConfig records."""
+        from tracer.views.project import ProjectView
+
+        cfg = self._make_eval_config(observe_project, eval_template)
+        assert cfg.deleted is False
+
+        view = ProjectView()
+        view._soft_delete_projects(
+            observe_project.__class__.objects.filter(id=observe_project.id),
+            "observe",
+        )
+
+        cfg.refresh_from_db()
+        assert cfg.deleted is True
+
+    def test_delete_project_soft_deletes_eval_logger(
+        self, observe_project, eval_template, trace_session
+    ):
+        """Deleting a project soft-deletes EvalLogger entries for its eval configs."""
+        from tracer.views.project import ProjectView
+
+        cfg = self._make_eval_config(observe_project, eval_template)
+        el = self._make_eval_logger(cfg, trace_session)
+        assert el.deleted is False
+
+        view = ProjectView()
+        view._soft_delete_projects(
+            observe_project.__class__.objects.filter(id=observe_project.id),
+            "observe",
+        )
+
+        el.refresh_from_db()
+        assert el.deleted is True
+
+    def test_delete_project_does_not_affect_other_project_configs(
+        self, observe_project, eval_template, organization, workspace
+    ):
+        """Eval configs for OTHER projects are untouched when one project is deleted."""
+        from tracer.models.custom_eval_config import CustomEvalConfig
+        from tracer.models.project import Project
+        from model_hub.models.choices import ModelChoices
+        from tracer.views.project import ProjectView
+
+        from model_hub.models.ai_model import AIModel
+        other_project = Project.objects.create(
+            name="Other Project",
+            organization=organization,
+            workspace=workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        other_cfg = CustomEvalConfig.objects.create(
+            name="Other Config",
+            project=other_project,
+            eval_template=eval_template,
+            config={},
+            mapping={},
+            filters={},
+        )
+
+        view = ProjectView()
+        view._soft_delete_projects(
+            observe_project.__class__.objects.filter(id=observe_project.id),
+            "observe",
+        )
+
+        other_cfg.refresh_from_db()
+        assert other_cfg.deleted is False
+
+
+BYO_MODEL_STRINGS = ["gpt-4o-mini", "gpt-4o", "claude-3-5-sonnet-latest", "turing_large", ""]
+
+
+@pytest.mark.unit
+class TestEvalConfigBYOModel:
+    @pytest.mark.parametrize("model_value", BYO_MODEL_STRINGS)
+    def test_custom_eval_config_serializer_accepts_byo(self, db, model_value):
+        from tracer.serializers.custom_eval_config import CustomEvalConfigSerializer
+
+        serializer = CustomEvalConfigSerializer(
+            data={
+                "name": "eval",
+                "eval_template": str(uuid.uuid4()),
+                "project": str(uuid.uuid4()),
+                "mapping": {},
+                "config": {},
+                "model": model_value,
+            }
+        )
+        serializer.is_valid(raise_exception=False)
+        assert "model" not in serializer.errors, serializer.errors["model"]
+
+    @pytest.mark.parametrize("model_value", BYO_MODEL_STRINGS)
+    def test_external_eval_config_clean_fields_accepts_byo(self, model_value):
+        from tracer.models.external_eval_config import ExternalEvalConfig
+
+        config = ExternalEvalConfig(model=model_value)
+        exclude = [f.name for f in ExternalEvalConfig._meta.fields if f.name != "model"]
+        config.clean_fields(exclude=exclude)

@@ -527,4 +527,59 @@ describe("OpenAPI runtime contract", () => {
       }),
     ).toMatchObject({ ok: true });
   });
+
+  it("accepts traces-of-session rows with scalar, null, array, and object cells", () => {
+    // Regression: DictField(child=JSONField) typed cells as objects and
+    // rejected every real (scalar) cell; a strict scalar union would reject
+    // the array/object cells the row builder emits for aggregated span
+    // attributes and verbatim metadata values. x-json-value now maps to a
+    // real recursive JsonValue, so all valid JSON cells pass.
+    const tracesOfSessionResponse = (table) => ({
+      status: 200,
+      config: {
+        url: "/tracer/trace/list_traces_of_session/?project_id=p1",
+        method: "get",
+      },
+      data: {
+        status: true,
+        result: {
+          metadata: { total_rows: table.length },
+          table,
+          config: [
+            {
+              id: "trace_name",
+              name: "Trace Name",
+              is_visible: true,
+              group_by: null,
+              choices: [null],
+            },
+          ],
+        },
+      },
+    });
+
+    expect(
+      validateContractedResponse(
+        tracesOfSessionResponse([
+          {
+            trace_id: "a2f1c9d0-0000-4000-8000-000000000001",
+            trace_name: "checkout-flow",
+            latency: 1.42,
+            is_error: false,
+            cost: null,
+            "llm.model": ["gpt-4o", "gpt-4o-mini"],
+            user_context: { plan: "pro", region: "us" },
+          },
+        ]),
+      ),
+    ).toMatchObject({ ok: true });
+
+    // A malformed cell (undefined is not valid JSON) must fail — the old
+    // z.any() mapping silently accepted it.
+    expect(
+      validateContractedResponse(
+        tracesOfSessionResponse([{ trace_id: undefined }]),
+      ),
+    ).toMatchObject({ ok: false });
+  });
 });
