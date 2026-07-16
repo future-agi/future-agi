@@ -42,6 +42,17 @@ MAX_LOGIN_ATTEMPTS_PER_HOUR: int = getattr(settings, "MAX_LOGIN_ATTEMPTS_PER_HOU
 IP_BLOCK_DURATION: int = getattr(settings, "IP_BLOCK_DURATION", 3600)
 RATE_LIMIT_WINDOW_SECONDS: int = 3600
 
+# Exact route suffixes gated by the per-IP login limiter. A bare
+# endswith("login/") also swept up pages that carry no credentials
+# (e.g. /saml2_auth/login/, which just returns a redirect URL), so
+# unrelated traffic consumed the shared per-IP budget (TH-7023).
+RATE_LIMITED_AUTH_PATH_SUFFIXES = (
+    "/accounts/login/",
+    "/accounts/token/",
+    "/accounts/signup/",
+    "/admin/login/",
+)
+
 ANNOTATION_QUEUE_ROLE_SCOPED_WRITE_PATHS = (
     re.compile(
         r"/model-hub/annotation-queues/[^/]+/items/" r"(?:assign|bulk-review)/?$"
@@ -716,11 +727,7 @@ class AuthMonitoringMiddleware:
                 f"rate_limit_requests_{client_ip}", requests, RATE_LIMIT_WINDOW_SECONDS
             )
 
-        if (
-            request.path.endswith("login/")
-            or request.path.endswith("token/")
-            or request.path.endswith("signup/")
-        ):
+        if request.path.endswith(RATE_LIMITED_AUTH_PATH_SUFFIXES):
             # Check if IP is blocked
             if cache.get(f"blocked_ip_{client_ip}"):
                 return self._json_forbidden(
@@ -746,10 +753,31 @@ class AuthMonitoringMiddleware:
                     blocked=True,
                 )
 
-            requests.append(now)
-            cache.set(f"ip_requests_{client_ip}", requests, RATE_LIMIT_WINDOW_SECONDS)
+            response = self.get_response(request)
+
+            # Only failed credential submissions consume the budget. Counting
+            # every request (page views, CORS preflights, successful logins)
+            # let one office NAT exhaust the shared per-IP budget within
+            # minutes and lock out everyone behind it (TH-7023).
+            if self._is_failed_attempt(request, response):
+                requests.append(now)
+                cache.set(
+                    f"ip_requests_{client_ip}", requests, RATE_LIMIT_WINDOW_SECONDS
+                )
+
+            return response
 
         return self.get_response(request)
+
+    @staticmethod
+    def _is_failed_attempt(request, response) -> bool:
+        if request.method != "POST":
+            return False
+        if request.path.endswith("/admin/login/"):
+            # Django admin re-renders the form with 200 on bad credentials;
+            # success is a 302 redirect.
+            return response.status_code == 200
+        return response.status_code >= 400
 
 
 def generate_encrypted_message(key_value_pairs: dict) -> str:
