@@ -599,7 +599,7 @@ const CompositeDetailPanel = ({
           // not need the version / scoring / mapping editor — the
           // parent composite owns the mapping. The child is added
           // straight to the list with template defaults.
-          skipConfig={true}
+          skipConfig={false}
           // Multi-select lets the user pick several child evals with
           // checkboxes and add them in one pass, replacing the
           // one-child-per-open-close cycle.
