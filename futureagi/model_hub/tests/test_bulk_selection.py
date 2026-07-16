@@ -555,9 +555,14 @@ def _list_endpoint_ids(auth_client, project_id, filters):
 
 
 @pytest.mark.skip(
-    reason="list_traces_of_session is now CH-only post-migration; "
-    "CH is empty in unit tests so parity is unverifiable. "
-    "Resolver uses PG fallback; list endpoint returns empty set from CH."
+    reason="The resolve and the CH-only list_traces_of_session grid share the "
+    "same TraceListQueryBuilder/ClickHouseFilterBuilder, so their id sets match "
+    "by construction — the resolve only widens the time window (all-history) and "
+    "fails strict-open to PG on an untranslatable filter, both of which broaden, "
+    "never narrow. That parity is not executable as a *unit* test: CH is empty "
+    "here, so the resolve falls back to PG while the CH grid returns empty. The "
+    "executed resolve-vs-grid row-parity check belongs to the CH-wired container "
+    "suite (the real-CH parity work), not this PG-seeded unit file."
 )
 @pytest.mark.django_db
 class TestParityWithListEndpoint:
