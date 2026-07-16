@@ -403,6 +403,7 @@ export default function NodeDrawer({
                   <span>
                     <IconButton
                       size="small"
+                      aria-label="Delete node"
                       onClick={() => setShowDeleteDialog(true)}
                       disabled={isWorkflowRunning}
                       sx={{
@@ -427,16 +428,25 @@ export default function NodeDrawer({
                   flexItem
                   sx={{ mx: 0.25, height: 20, alignSelf: "center" }}
                 />
-                <IconButton
+                <CustomTooltip
+                  show
+                  title="Close"
                   size="small"
-                  onClick={handleClose}
-                  sx={{ color: "text.primary" }}
+                  arrow
+                  placement="bottom"
                 >
-                  <SvgColor
-                    src="/assets/icons/ic_close.svg"
-                    sx={{ height: 20, width: 20 }}
-                  />
-                </IconButton>
+                  <IconButton
+                    size="small"
+                    aria-label="Close node editor"
+                    onClick={handleClose}
+                    sx={{ color: "text.primary" }}
+                  >
+                    <SvgColor
+                      src="/assets/icons/ic_close.svg"
+                      sx={{ height: 20, width: 20 }}
+                    />
+                  </IconButton>
+                </CustomTooltip>
               </Stack>
             </Stack>
             <Divider
