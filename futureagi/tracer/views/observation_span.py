@@ -1590,7 +1590,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             end_user_id = None
-            if user_id:
+            if user_id and project is not None:
                 try:
                     end_user_id = str(
                         EndUser.objects.get(
@@ -3714,7 +3714,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             )
 
             end_user_id = None
-            if user_id:
+            if user_id and project is not None:
                 try:
                     end_user_id = str(
                         EndUser.objects.get(
