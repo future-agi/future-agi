@@ -323,13 +323,13 @@ services:
     restart: unless-stopped
 
   valkey:
-    image: redis/redis-stack-server:latest
+    image: valkey/valkey-bundle:latest
     ports:
       - "127.0.0.1:${VALKEY_PORT:-6389}:6379"
     volumes:
       - valkey-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "valkey-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
