@@ -20,7 +20,7 @@ def _reencrypt(apps, schema_editor):
 
     if not CredentialManager.require_encryption_key("re-encrypt stored secrets"):
         logger.warning(
-            "0112_encrypt_api_keys_fernet: INTEGRATION_ENCRYPTION_KEY is not set "
+            "0118_encrypt_api_keys_fernet: INTEGRATION_ENCRYPTION_KEY is not set "
             "(local/test); skipping secret re-encryption. Rows stay readable via "
             "dual-read. Set the key and re-run `migrate model_hub` to upgrade at rest."
         )
@@ -58,7 +58,7 @@ def _reencrypt(apps, schema_editor):
 
 class Migration(migrations.Migration):
     dependencies = [
-        ("model_hub", "0111_userevalmetric_pinned_version"),
+        ("model_hub", "0117_backfill_queueitem_project"),
     ]
 
     operations = [

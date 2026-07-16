@@ -8,7 +8,7 @@ from django.core.exceptions import ImproperlyConfigured
 
 from integrations.services.credentials import CredentialManager
 
-MIGRATION = "model_hub.migrations.0112_encrypt_api_keys_fernet"
+MIGRATION = "model_hub.migrations.0118_encrypt_api_keys_fernet"
 
 
 @pytest.fixture(autouse=True)
@@ -26,7 +26,7 @@ def historical_apps():
     from django.db.migrations.executor import MigrationExecutor
 
     state = MigrationExecutor(connection).loader.project_state(
-        ("model_hub", "0112_encrypt_api_keys_fernet")
+        ("model_hub", "0118_encrypt_api_keys_fernet")
     )
     return state.apps
 
