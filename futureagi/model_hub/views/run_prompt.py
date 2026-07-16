@@ -3,7 +3,6 @@ import json
 import os
 import re
 import string
-import traceback
 import uuid
 from collections.abc import Collection, Mapping
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -118,8 +117,7 @@ def _request_organization(request):
     return getattr(request, "organization", None) or request.user.organization
 
 
-def _request_workspace_filter(request, field_name="workspace"):
-    workspace = getattr(request, "workspace", None)
+def _workspace_filter(workspace, field_name="workspace"):
     if not workspace:
         return Q()
 
@@ -136,6 +134,10 @@ def _request_workspace_filter(request, field_name="workspace"):
         )
 
     return Q(**{field_name: workspace})
+
+
+def _request_workspace_filter(request, field_name="workspace"):
+    return _workspace_filter(getattr(request, "workspace", None), field_name)
 
 
 def _request_dataset_queryset(request):
@@ -173,6 +175,39 @@ def _extract_tool_ids(tools):
         if tool_id:
             tool_ids.append(tool_id)
     return tool_ids
+
+
+RUN_PROMPT_UNAVAILABLE_TOOL_ERROR = (
+    "One or more tools are unavailable for this workspace."
+)
+
+
+def _resolve_tools_for_scope(tools, *, organization, workspace=None):
+    tool_ids = _extract_tool_ids(tools)
+    if not tool_ids:
+        return []
+
+    tools_queryset = list(
+        Tools.objects.filter(
+            _workspace_filter(workspace),
+            id__in=tool_ids,
+            organization=organization,
+            deleted=False,
+        )
+    )
+    requested_tool_ids = {str(tool_id) for tool_id in tool_ids}
+    resolved_tool_ids = {str(tool.id) for tool in tools_queryset}
+    if resolved_tool_ids != requested_tool_ids:
+        raise ValueError(RUN_PROMPT_UNAVAILABLE_TOOL_ERROR)
+    return tools_queryset
+
+
+def _resolve_request_tools(request, tools):
+    return _resolve_tools_for_scope(
+        tools,
+        organization=_request_organization(request),
+        workspace=getattr(request, "workspace", None),
+    )
 
 
 PROVIDERS_WITH_JSON = ["vertex_ai", "azure", "bedrock", "sagemaker"]
@@ -573,6 +608,28 @@ RUN_PROMPT_LOCAL_VALIDATION_ERROR = (
     "Run prompt failed before provider dispatch. Check prompt placeholders, "
     "template syntax, and media support."
 )
+RUN_PROMPT_LOCAL_VALIDATION_PHASES = {
+    "placeholder_validation",
+    "media_validation",
+}
+
+
+def _is_run_prompt_local_validation_error(
+    error: Exception,
+    *,
+    is_llm_error: bool = False,
+    phase: str | None = None,
+) -> bool:
+    return phase in RUN_PROMPT_LOCAL_VALIDATION_PHASES or (
+        not is_llm_error
+        and isinstance(
+            error,
+            (
+                UnresolvedPromptPlaceholdersError,
+                PromptTemplateSyntaxError,
+            ),
+        )
+    )
 
 
 def _safe_run_prompt_error_message(
@@ -585,26 +642,41 @@ def _safe_run_prompt_error_message(
 
     Strict placeholder/template/media validation runs before provider dispatch
     and may include column names, raw template expressions, or media URLs in the
-    exception detail. Keep those details in logs only; persisted cells and
-    preview responses get a small actionable allowlisted message.
+    exception detail. Persisted cells and preview responses get a small
+    actionable allowlisted message instead of those raw details.
     """
 
-    local_validation_phases = {
-        "placeholder_validation",
-        "media_validation",
-    }
-    if phase in local_validation_phases or (
-        not is_llm_error
-        and isinstance(
-            error,
-            (
-                UnresolvedPromptPlaceholdersError,
-                PromptTemplateSyntaxError,
-            ),
-        )
+    if _is_run_prompt_local_validation_error(
+        error,
+        is_llm_error=is_llm_error,
+        phase=phase,
     ):
         return RUN_PROMPT_LOCAL_VALIDATION_ERROR
     return get_specific_error_message(error, is_llm_error)
+
+
+def _log_run_prompt_error(
+    event: str,
+    error: Exception,
+    *,
+    is_llm_error: bool = False,
+    phase: str | None = None,
+    **context,
+):
+    log_context = {
+        **context,
+        "error_type": type(error).__name__,
+        "phase": phase,
+        "is_llm_error": is_llm_error,
+    }
+    if _is_run_prompt_local_validation_error(
+        error,
+        is_llm_error=is_llm_error,
+        phase=phase,
+    ):
+        logger.warning(event, **log_context)
+        return
+    logger.exception(event, error=str(error), **log_context)
 
 
 def _build_placeholder_display_map(template_str: str) -> dict[str, str]:
@@ -1866,8 +1938,7 @@ def populate_placeholders(
             raise
         if fail_closed:
             raise
-        traceback.print_exc()
-        logger.exception(f"Fatal error processing messages: {e}")
+        logger.exception("Fatal error processing messages", error_type=type(e).__name__)
         # Return original messages as fallback
         return messages
 
@@ -2190,12 +2261,15 @@ def process_text_with_media(
                 except json.JSONDecodeError:
                     logger.warning(f"Failed to parse images array for column {col_id}")
 
-        # Debug: Log the context keys and template for troubleshooting
-        logger.debug(f"Template text (first 500 chars): {text[:500]}")
-        logger.debug(f"Context keys: {list(context.keys())}")
-        for key, value in context.items():
-            if isinstance(value, dict):
-                logger.debug(f"Context[{key}] is dict with keys: {list(value.keys())}")
+        # Debug metadata only: prompt text and context keys can include user data.
+        logger.debug(
+            "Prompt template render input",
+            template_length=len(text or ""),
+            context_key_count=len(context),
+            nested_context_count=sum(
+                1 for value in context.values() if isinstance(value, dict)
+            ),
+        )
 
         # IMPORTANT: Sanitize UUID placeholders BEFORE Jinja2 rendering
         # UUIDs contain hyphens which Jinja2 interprets as subtraction operators
@@ -2203,7 +2277,10 @@ def process_text_with_media(
         # We replace hyphens with underscores to make valid Jinja2 identifiers
         placeholder_display_map = _build_placeholder_display_map(text)
         text = _sanitize_uuid_placeholders_for_template(text)
-        logger.debug(f"Template after UUID sanitization: {text[:500]}")
+        logger.debug(
+            "Prompt template UUID sanitization complete",
+            template_length=len(text or ""),
+        )
 
         # Render template using multi-format renderer
         # Map frontend format names to backend constants
@@ -2230,8 +2307,10 @@ def process_text_with_media(
         except (UnresolvedPromptPlaceholdersError, PromptTemplateSyntaxError):
             raise
         except Exception as render_error:
-            logger.exception(
-                f"Template rendering failed: {render_error}. Template: {text[:200]}..."
+            logger.warning(
+                "Template rendering failed during prompt rendering",
+                error_type=type(render_error).__name__,
+                fail_closed=fail_closed,
             )
             # Re-raise to see full error - template syntax issue
             raise
@@ -2277,12 +2356,20 @@ def process_text_with_media(
     except PromptTemplateSyntaxError:
         raise
     except ValueError as e:
-        logger.exception(f"Error VALUEERROR text with media: {e}")
+        logger.warning(
+            "Prompt text media processing value error",
+            error_type=type(e).__name__,
+            fail_closed=fail_closed,
+        )
         raise
     except Exception as e:
-        logger.exception(f"Error processing text with media: {e}")
-        logger.exception(f"Template text: {text[:200]}...")
-        logger.exception(f"Context keys: {list(context.keys())}")
+        logger.warning(
+            "Prompt text media processing error",
+            error_type=type(e).__name__,
+            fail_closed=fail_closed,
+            template_length=len(text or ""),
+            context_key_count=len(context),
+        )
         if fail_closed:
             raise
         if strict_render:
@@ -2403,7 +2490,11 @@ def process_media_markers(text, image_markers, model_name, fail_closed: bool = F
                 raise e
 
             except Exception as e:
-                logger.exception(f"Error processing audio from {info['url']}: {e}")
+                logger.warning(
+                    "Error processing audio placeholder",
+                    error_type=type(e).__name__,
+                    fail_closed=fail_closed,
+                )
                 if fail_closed:
                     raise
                 # segments.append({
@@ -2467,7 +2558,12 @@ class LitellmAPIView(CreateAPIView):
             value_info["reason"] = value_info.get("data", {}).get("response")
 
         except Exception as e:
-            logger.exception(f"Error in processing the row: {str(e)}")
+            _log_run_prompt_error(
+                "LitellmAPIView_process_row_error",
+                e,
+                is_llm_error=is_llm_error,
+                phase=error_phase,
+            )
             error_message = _safe_run_prompt_error_message(
                 e,
                 is_llm_error=is_llm_error,
@@ -2511,14 +2607,12 @@ class LitellmAPIView(CreateAPIView):
         )
         if not dataset:
             return self._gm.not_found("Dataset not found")
-        # Retrieve tools based on the IDs from the validated data
-        tool_ids = _extract_tool_ids(validated_data.get("tools"))
-        tools = Tools.objects.filter(
-            _request_workspace_filter(request),
-            id__in=tool_ids,
-            organization=organization,
-            deleted=False,
-        )
+        # Retrieve tools based on the IDs from the validated data, scoped to
+        # the request organization/workspace before they are attached.
+        try:
+            tools = _resolve_request_tools(request, validated_data.get("tools"))
+        except ValueError as e:
+            return self._gm.bad_request(str(e))
 
         # Use transaction to ensure atomicity
         with transaction.atomic():
@@ -3034,12 +3128,13 @@ class RunPrompts:
                 value_info["reason"] = value_info.get("data", {}).get("response")
 
             except Exception as e:
-                logger.exception(
+                _log_run_prompt_error(
                     "RunPrompts_process_row_error",
+                    e,
                     run_prompt_id=str(self.run_prompt_id),
                     row_id=row_id,
-                    error=str(e),
                     is_llm_error=is_llm_error,
+                    phase=error_phase,
                 )
                 error_message = _safe_run_prompt_error_message(
                     e,
@@ -3242,7 +3337,13 @@ class RunPrompts:
                 except Exception as terminal_status_error:
                     terminal_error_message = (
                         "Provider response was saved, but final API call status "
-                        f"could not be persisted: {terminal_status_error}"
+                        "could not be persisted."
+                    )
+                    logger.error(
+                        "RunPrompts_process_row_api_call_status_terminal_error",
+                        run_prompt_id=str(self.run_prompt_id),
+                        row_id=row_id,
+                        error_type=type(terminal_status_error).__name__,
                     )
                     mark_persisted_cell_error(terminal_error_message)
                     if persist_api_call_terminal_status(
@@ -3348,6 +3449,13 @@ class AddRunPromptColumnView(APIView):
             ).exists():
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
 
+            try:
+                requested_tools = _resolve_request_tools(
+                    request, config.get("tools", [])
+                )
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
+
             output_format = config.get("output_format")
             messages = config.get("messages", [])
             if output_format != "audio":
@@ -3393,13 +3501,9 @@ class AddRunPromptColumnView(APIView):
                     dataset.column_order = column_order
                     dataset.save()
 
-                # Handle tools if provided in config
-                tools = config.get("tools", [])
-                if tools:
-                    tool_ids = [tool.get("id") for tool in tools if "id" in tool]
-                    if tool_ids:
-                        tools_queryset = Tools.objects.filter(id__in=tool_ids)
-                        run_prompter.tools.set(tools_queryset)
+                # Handle tools if provided in config.
+                if requested_tools:
+                    run_prompter.tools.set(requested_tools)
 
                 run_prompter_id = str(run_prompter.id)
 
@@ -3437,7 +3541,6 @@ class AddRunPromptColumnView(APIView):
             return self._gm.success_response("Run prompt column added successfully")
 
         except Exception as e:
-            traceback.print_exc()
             error_message = get_specific_error_message(e)
             logger.exception(f"Error in adding run prompt column: {error_message}")
             return self._gm.internal_server_error_response(error_message)
@@ -3496,13 +3599,14 @@ class PreviewRunPromptColumnView(APIView):
             if not rows:
                 return self._gm.bad_request(get_error_message("ROW_INDICES_NOT_EXIST"))
 
-            # Process tools if provided in config
-            tools_config = []
-            if config.get("tools"):
-                tool_ids = [tool.get("id") for tool in config["tools"] if "id" in tool]
-                if tool_ids:
-                    tools = Tools.objects.filter(id__in=tool_ids)
-                    tools_config = [tool.config for tool in tools]
+            # Process tools if provided in config.
+            try:
+                requested_tools = _resolve_request_tools(
+                    request, config.get("tools", [])
+                )
+            except ValueError as e:
+                return self._gm.bad_request(str(e))
+            tools_config = [tool.config for tool in requested_tools]
 
             rf = config.get("response_format")
             if rf and not isinstance(rf, dict):
@@ -3700,6 +3804,16 @@ class EditRunPromptColumnView(APIView):
                     status=CellStatus.RUNNING.value,
                 )
 
+                if "tools" in config:
+                    try:
+                        requested_tools = _resolve_request_tools(
+                            request, config.get("tools") or []
+                        )
+                    except ValueError as e:
+                        return self._gm.bad_request(str(e))
+                else:
+                    requested_tools = None
+
                 run_prompt_config = merge_run_prompt_config(
                     run_prompter.run_prompt_config, config
                 )
@@ -3746,11 +3860,8 @@ class EditRunPromptColumnView(APIView):
 
                 # Replace tools only when the edit payload explicitly includes
                 # tools. Omitted config fields preserve the existing prompt.
-                if "tools" in config:
-                    tools = config.get("tools") or []
-                    tool_ids = [tool.get("id") for tool in tools if "id" in tool]
-                    tools_queryset = Tools.objects.filter(id__in=tool_ids)
-                    run_prompter.tools.set(tools_queryset)
+                if requested_tools is not None:
+                    run_prompter.tools.set(requested_tools)
 
                 run_prompter.save()
 
@@ -4006,10 +4117,12 @@ class RetrieveRunPromptOptionsView(APIView):
                 provider = model.get("providers")
                 model["is_available"] = provider_has_key.get(provider, False)
 
-            # Get available tools for the organization
+            # Get available tools for the request organization/workspace.
             given_tools = Tools.objects.filter(
+                _request_workspace_filter(request),
                 organization=getattr(request, "organization", None)
-                or request.user.organization
+                or request.user.organization,
+                deleted=False,
             ).values("id", "name", "config", "config_type", "description")
             tools = []
             for tool in given_tools:

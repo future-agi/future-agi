@@ -1,6 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { validateContractedRequestConfig } from "../openapi-contract";
-import { ModelHubDevelopsAddRunPromptColumnCreateBody } from "src/generated/api-contracts/api.zod";
+import {
+  ModelHubDevelopsAddRunPromptColumnCreateBody,
+  ModelHubDevelopsEditRunPromptColumnCreateBody,
+  ModelHubDevelopsPreviewRunPromptColumnCreateBody,
+} from "src/generated/api-contracts/api.zod";
 
 // Round-trip guard (TH-6280): a representative run payload must pass the
 // add_run_prompt_column request contract. The PromptConfig serializer used
@@ -41,9 +45,24 @@ describe("add_run_prompt_column request contract", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("accepts the payload in the generated zod request schema", () => {
+  it("accepts the payload in all generated zod run-prompt request schemas", () => {
     expect(() =>
       ModelHubDevelopsAddRunPromptColumnCreateBody.parse(runRequest.data),
+    ).not.toThrow();
+    expect(() =>
+      ModelHubDevelopsEditRunPromptColumnCreateBody.parse({
+        dataset_id: runRequest.data.dataset_id,
+        column_id: "1b30d52f-3b9c-424e-9011-f0e1d3c91c0b",
+        config: runRequest.data.config,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      ModelHubDevelopsPreviewRunPromptColumnCreateBody.parse({
+        dataset_id: runRequest.data.dataset_id,
+        name: runRequest.data.name,
+        config: runRequest.data.config,
+        row_indices: [0],
+      }),
     ).not.toThrow();
   });
 

@@ -410,6 +410,96 @@ def test_litellm_api_process_row_sanitizes_local_validation_errors(monkeypatch):
     }
 
 
+def test_resolve_request_tools_scopes_tools_to_request_workspace(monkeypatch):
+    organization = SimpleNamespace(id=uuid.uuid4())
+    workspace = SimpleNamespace(id=uuid.uuid4(), is_default=False)
+    tool_id = uuid.uuid4()
+    resolved_tool = SimpleNamespace(id=tool_id, config={"name": "allowed"})
+    captured_filters = []
+
+    class ToolManager:
+        def __init__(self, result):
+            self.result = result
+
+        def filter(self, *args, **kwargs):
+            captured_filters.append({"args": args, "kwargs": kwargs})
+            return self.result
+
+    request = SimpleNamespace(
+        organization=organization,
+        workspace=workspace,
+        user=SimpleNamespace(organization=organization),
+    )
+
+    monkeypatch.setattr(
+        run_prompt_module.Tools, "objects", ToolManager([resolved_tool])
+    )
+
+    assert run_prompt_module._resolve_request_tools(
+        request,
+        [{"id": str(tool_id)}],
+    ) == [resolved_tool]
+
+    assert captured_filters
+    assert captured_filters[0]["args"], "workspace Q filter must be applied"
+    assert captured_filters[0]["kwargs"] == {
+        "id__in": [str(tool_id)],
+        "organization": organization,
+        "deleted": False,
+    }
+
+    missing_tool_id = uuid.uuid4()
+    monkeypatch.setattr(run_prompt_module.Tools, "objects", ToolManager([]))
+    with pytest.raises(ValueError) as exc_info:
+        run_prompt_module._resolve_request_tools(
+            request,
+            [{"id": str(missing_tool_id)}],
+        )
+
+    assert str(exc_info.value) == run_prompt_module.RUN_PROMPT_UNAVAILABLE_TOOL_ERROR
+    assert str(missing_tool_id) not in str(exc_info.value)
+
+
+def test_log_run_prompt_error_redacts_local_validation_details(monkeypatch):
+    warnings = []
+    exceptions = []
+
+    monkeypatch.setattr(
+        run_prompt_module.logger,
+        "warning",
+        lambda event, **kwargs: warnings.append((event, kwargs)),
+    )
+    monkeypatch.setattr(
+        run_prompt_module.logger,
+        "exception",
+        lambda event, *args, **kwargs: exceptions.append((event, args, kwargs)),
+    )
+
+    run_prompt_module._log_run_prompt_error(
+        "run_prompt_local_validation_failed",
+        UnresolvedPromptPlaceholdersError(
+            "Secret Column from https://signed.example.test/file?token=secret"
+        ),
+        phase="placeholder_validation",
+    )
+
+    assert exceptions == []
+    assert warnings == [
+        (
+            "run_prompt_local_validation_failed",
+            {
+                "error_type": "UnresolvedPromptPlaceholdersError",
+                "phase": "placeholder_validation",
+                "is_llm_error": False,
+            },
+        )
+    ]
+    warning_payload = json.dumps(warnings, default=str)
+    assert "Secret Column" not in warning_payload
+    assert "signed.example.test" not in warning_payload
+    assert "token=secret" not in warning_payload
+
+
 def test_edit_run_prompt_view_preserves_config_and_terminalizes_enqueue_failure(
     monkeypatch,
 ):
@@ -833,7 +923,7 @@ def test_edit_run_prompt_view_explicit_empty_tools_replaces_existing_tools(monke
     )
 
     assert response == "Run prompt column updated successfully"
-    assert tool_filters == [{"id__in": []}]
+    assert tool_filters == []
     assert tool_sets == [[]]
 
 
@@ -2281,7 +2371,10 @@ def test_run_prompts_process_row_success_save_failure_skips_usage_after_cell_sav
     ]
     assert api_call_log_row.status == APICallStatusChoices.ERROR.value
     assert created_cells[0].status == CellStatus.ERROR.value
-    assert "Failed to persist API call success status" in created_cells[0].value
+    assert created_cells[0].value == (
+        "Provider response was saved, but final API call status could not be persisted."
+    )
+    assert "Failed to persist API call success status" not in created_cells[0].value
 
 
 def test_run_prompts_process_row_cell_create_failure_marks_api_call_error_and_skips_usage(
