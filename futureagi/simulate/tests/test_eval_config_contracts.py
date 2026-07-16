@@ -86,6 +86,21 @@ def test_eval_config_definition_rejects_camel_case_filter_contract():
     assert "filters" in serializer.errors
 
 
+def test_eval_config_update_accepts_template_id_and_filters():
+    serializer = EvalConfigUpdateRequestSerializer(
+        data={
+            "template_id": str(uuid.uuid4()),
+            "filters": [_filter()],
+            "config": {"temperature": 0.2},
+            "mapping": {"hypothesis": "output"},
+        }
+    )
+
+    assert serializer.is_valid(), serializer.errors
+    assert "template_id" in serializer.validated_data
+    assert serializer.validated_data["filters"] == [_filter()]
+
+
 def test_eval_config_update_rejects_unknown_root_fields():
     serializer = EvalConfigUpdateRequestSerializer(
         data={

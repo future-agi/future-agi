@@ -185,7 +185,7 @@ const TestRunHeader = () => {
               simulationType={agentType}
             />
           </Suspense>
-          <CustomTooltip
+          {/* <CustomTooltip
             show
             title="In beta, send early access request"
             size="small"
@@ -231,7 +231,7 @@ const TestRunHeader = () => {
                 Github Actions
               </Button>
             </Box>
-          </CustomTooltip>
+          </CustomTooltip> */}
           <CustomTooltip
             show={
               isAgentDefinitionDeleted ||

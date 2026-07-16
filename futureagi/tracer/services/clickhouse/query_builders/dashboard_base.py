@@ -142,14 +142,16 @@ class DashboardQueryBuilderBase:
         if not series_data:
             series_data["total"] = {}
 
-        # Limit breakdown series
+        # Keep the highest-volume series first.
         MAX_SERIES = 100
-        if len(series_data) > MAX_SERIES and "total" not in series_data:
+        if "total" not in series_data:
             ranked = sorted(
                 series_data.items(),
                 key=lambda kv: sum(v for v in kv[1].values() if v is not None),
                 reverse=True,
-            )[:MAX_SERIES]
+            )
+            if len(ranked) > MAX_SERIES:
+                ranked = ranked[:MAX_SERIES]
             series_data = dict(ranked)
 
         return series_data
@@ -184,8 +186,7 @@ class DashboardQueryBuilderBase:
         series_data = self._build_series_data(rows, name_map, name_map_breakdown)
 
         series = []
-        for name in sorted(series_data.keys()):
-            data_map = series_data[name]
+        for name, data_map in series_data.items():
             filled = []
             for bucket_ts in all_buckets:
                 filled.append(

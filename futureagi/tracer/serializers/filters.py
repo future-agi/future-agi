@@ -116,6 +116,7 @@ EVAL_TASK_FILTERS_SCHEMA = {
             "items": {"type": "string"},
             "description": "Observation span type(s), for example llm, tool, or chain.",
         },
+        "filters": FILTER_LIST_SCHEMA,
         "span_attributes_filters": FILTER_LIST_SCHEMA,
     },
     "additionalProperties": False,

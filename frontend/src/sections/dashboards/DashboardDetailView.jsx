@@ -668,7 +668,7 @@ export default function DashboardDetailView() {
 
   const [confirmDelete, setConfirmDelete] = useState(null);
   const lastConfirmDeleteRef = useRef(null);
-  
+
   if (confirmDelete) lastConfirmDeleteRef.current = confirmDelete;
   const confirmDeleteView = confirmDelete ?? lastConfirmDeleteRef.current;
 
@@ -692,6 +692,10 @@ export default function DashboardDetailView() {
   );
 
   const rows = useMemo(() => computeRows(widgets), [widgets]);
+
+  // The time filter only acts on widgets — hide the bar until one exists
+  // (an interactive-but-inert bar on an empty dashboard reads as broken).
+  const hasWidgets = widgets.length > 0;
 
   // --- Handlers ---
 
@@ -1104,74 +1108,80 @@ export default function DashboardDetailView() {
         </Stack>
       </Stack>
 
-      {/* ---- Global date filter bar ---- */}
-      <Stack
-        direction="row"
-        alignItems="center"
-        spacing={0.5}
-        sx={{
-          px: 3,
-          py: 1.5,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          flexWrap: "wrap",
-          gap: 0.5,
-        }}
-      >
-        <Chip
-          ref={customDateAnchorRef}
-          icon={
-            <Iconify
-              icon="mdi:calendar-outline"
-              width={15}
-              sx={{ color: "inherit !important" }}
+      {/* ---- Global date filter bar (hidden until the dashboard has widgets) ---- */}
+      {hasWidgets && (
+        <>
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={0.5}
+            sx={{
+              px: 3,
+              py: 1.5,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+              flexWrap: "wrap",
+              gap: 0.5,
+            }}
+          >
+            <Chip
+              ref={customDateAnchorRef}
+              icon={
+                <Iconify
+                  icon="mdi:calendar-outline"
+                  width={15}
+                  sx={{ color: "inherit !important" }}
+                />
+              }
+              label={
+                datePreset === "custom" && customDateRange
+                  ? `${format(customDateRange[0], "MMM dd")} - ${format(customDateRange[1], "MMM dd")}`
+                  : "Custom"
+              }
+              size="small"
+              variant={datePreset === "custom" ? "filled" : "outlined"}
+              color={datePreset === "custom" ? "primary" : "default"}
+              onClick={() => setIsDatePickerOpen(true)}
+              sx={DATE_CHIP_SX}
             />
-          }
-          label={
-            datePreset === "custom" && customDateRange
-              ? `${format(customDateRange[0], "MMM dd")} - ${format(customDateRange[1], "MMM dd")}`
-              : "Custom"
-          }
-          size="small"
-          variant={datePreset === "custom" ? "filled" : "outlined"}
-          color={datePreset === "custom" ? "primary" : "default"}
-          onClick={() => setIsDatePickerOpen(true)}
-          sx={DATE_CHIP_SX}
-        />
-        {DATE_PRESETS.filter((p) => p.value !== "custom").map((preset) => (
-          <Chip
-            key={preset.value}
-            label={preset.label}
-            size="small"
-            variant={datePreset === preset.value ? "filled" : "outlined"}
-            color={datePreset === preset.value ? "primary" : "default"}
-            onClick={() =>
-              setDatePreset(datePreset === preset.value ? null : preset.value)
-            }
-            sx={DATE_CHIP_SX}
-          />
-        ))}
-        <Chip
-          label="Default"
-          size="small"
-          variant={!datePreset ? "filled" : "outlined"}
-          color={!datePreset ? "primary" : "default"}
-          onClick={() => setDatePreset(null)}
-          sx={DATE_CHIP_SX}
-        />
-      </Stack>
+            {DATE_PRESETS.filter((p) => p.value !== "custom").map((preset) => (
+              <Chip
+                key={preset.value}
+                label={preset.label}
+                size="small"
+                variant={datePreset === preset.value ? "filled" : "outlined"}
+                color={datePreset === preset.value ? "primary" : "default"}
+                onClick={() =>
+                  setDatePreset(
+                    datePreset === preset.value ? null : preset.value,
+                  )
+                }
+                sx={DATE_CHIP_SX}
+              />
+            ))}
+            <Chip
+              label="Default"
+              size="small"
+              variant={!datePreset ? "filled" : "outlined"}
+              color={!datePreset ? "primary" : "default"}
+              onClick={() => setDatePreset(null)}
+              sx={DATE_CHIP_SX}
+            />
+          </Stack>
 
-      <CustomDateRangePicker
-        open={isDatePickerOpen}
-        onClose={() => setIsDatePickerOpen(false)}
-        anchorEl={customDateAnchorRef.current}
-        setDateFilter={(filter) => {
-          if (filter && filter[0] && filter[1]) {
-            setCustomDateRange([new Date(filter[0]), new Date(filter[1])]);
-          }
-        }}
-        setDateOption={() => setDatePreset("custom")}
-      />
+          <CustomDateRangePicker
+            open={isDatePickerOpen}
+            onClose={() => setIsDatePickerOpen(false)}
+            anchorEl={customDateAnchorRef.current}
+            setDateFilter={(filter) => {
+              if (filter && filter[0] && filter[1]) {
+                setCustomDateRange([new Date(filter[0]), new Date(filter[1])]);
+              }
+            }}
+            setDateOption={() => setDatePreset("custom")}
+          />
+        </>
+      )}
 
       {/* ---- Dashboard title & description (inline editable) ---- */}
       <Box sx={{ px: 3, pt: 2 }}>
@@ -1211,7 +1221,7 @@ export default function DashboardDetailView() {
         ref={gridContainerRef}
         sx={{ px: 3, pt: 2, pb: 4, flex: 1, overflow: "visible" }}
       >
-        {widgets.length === 0 ? (
+        {!hasWidgets ? (
           <Box
             sx={{
               display: "flex",

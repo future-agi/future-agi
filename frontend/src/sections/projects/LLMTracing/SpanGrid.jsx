@@ -24,6 +24,7 @@ import {
   mergeCellStyle,
   generateAnnotationColumnsForTracing,
   normalizeConfigKeys,
+  toBackendFilters,
 } from "./common";
 import CustomTraceRenderer from "./Renderers/CustomTraceRenderer";
 import CustomTraceHeaderRenderer from "./Renderers/CustomTraceHeaderRenderer";
@@ -403,12 +404,14 @@ const SpanGrid = React.forwardRef(
                 ...(observeId ? { project_id: observeId } : {}),
                 page_number: page,
                 page_size: ROWS_LIMIT,
-                filters: JSON.stringify([
-                  ...filters,
-                  ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-                  ...(extraFilters || EMPTY_EXTRA_FILTERS),
-                  ...(metricFilters || []),
-                ]),
+                filters: JSON.stringify(
+                  toBackendFilters([
+                    ...filters,
+                    ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
+                    ...(extraFilters || EMPTY_EXTRA_FILTERS),
+                    ...(metricFilters || []),
+                  ]),
+                ),
               });
 
               // Use prefetched data if available, otherwise fetch
@@ -573,6 +576,9 @@ const SpanGrid = React.forwardRef(
           return;
         }
         if (event?.column?.colId === "status") {
+          return;
+        }
+        if (RENDERER_CONFIG.tagColumns.includes(event?.column?.getColId())) {
           return;
         }
         if (

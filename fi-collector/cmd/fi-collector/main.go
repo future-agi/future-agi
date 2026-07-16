@@ -82,7 +82,7 @@ func main() {
 	var usageEmitter server.UsageEmitter = server.NoopUsageEmitter{}
 	var metering server.Metering = server.NoopMetering{}
 	if rdb != nil {
-		usageEmitter = auth.NewUsageEmitter(rdb, log)
+		usageEmitter = auth.NewUsageEmitter(rdb, authenticator.PGRead(), log)
 		metering = auth.NewMetering(rdb, authenticator.PGRead(), log)
 	}
 

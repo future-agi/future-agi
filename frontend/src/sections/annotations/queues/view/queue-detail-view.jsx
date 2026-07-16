@@ -753,6 +753,20 @@ export default function QueueDetailView() {
               onSelectAll={handleSelectAll}
               onRemove={isManager ? handleRemove : undefined}
               onItemClick={(item) => {
+                const assignedUsers = item?.assigned_users || [];
+                const assignedToOther =
+                  queue?.auto_assign === false &&
+          
+                  !assignedUsers?.some(
+                    (a) => String(a.id) === currentUserId,
+                  );
+                if (assignedToOther && !canViewSubmissions && !isManager) {
+                  enqueueSnackbar(
+                    "You cannot annotate items that are not assigned to you",
+                    { variant: "warning" },
+                  );
+                  return;
+                }
                 if (
                   queue?.status === "active" ||
                   queue?.status === "completed"

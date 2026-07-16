@@ -185,3 +185,61 @@ class TestExistingBehaviorPreserved:
         assert "tracer_eval_logger" in query
         assert params["trace_ids"] == ("t1",)
         assert params["eval_config_ids"] == ("ec1",)
+
+
+class TestEvalAveragingAcrossSpans:
+    """Eval scores are aggregated per (trace, config) across ALL of the trace's
+    spans — not the root span. The averaging happens in ``build_eval_query``
+    (SQL ``avgIf``) and, for CHOICES, in ``pivot_eval_results``."""
+
+    def test_eval_query_averages_across_spans(self, project_id):
+        builder = TraceListQueryBuilder(project_id=project_id, eval_config_ids=["ec1"])
+        query, _ = builder.build_eval_query(["t1"])
+        # SCORE = avg(output_float); PASS_FAIL = avg(output_bool as 0/100).
+        assert "avgIf(\n                output_float" in query
+        assert "output_bool = 1 THEN 100.0 ELSE 0.0" in query
+        # One aggregated row per (trace, config) → averages every span's eval.
+        assert "GROUP BY trace_id, custom_eval_config_id" in query
+
+    _COLS = [
+        "trace_id", "eval_config_id", "avg_score", "pass_rate", "success_count",
+        "error_count", "eval_count", "str_lists", "skipped_count", "running_count",
+        "pending_count", "skipped_reason",
+    ]
+
+    def _row(self, **kw):
+        base = {c: None for c in self._COLS}
+        base.update(
+            trace_id="t1", eval_config_id="c1", success_count=0, error_count=0,
+            eval_count=0, str_lists=[], skipped_count=0, running_count=0,
+            pending_count=0,
+        )
+        base.update(kw)
+        return base
+
+    def _pivot(self, rows):
+        return TraceListQueryBuilder.pivot_eval_results(rows, self._COLS)
+
+    def test_choices_percentage_averaged_over_spans(self):
+        # 3 spans: neutral, neutral, joy → neutral 66.67%, joy 33.33%.
+        row = self._row(
+            success_count=3, eval_count=3,
+            str_lists=['["neutral"]', '["neutral"]', '["joy"]'],
+        )
+        pc = self._pivot([row])["t1"]["c1"]["per_choice"]
+        assert pc["neutral"] == 66.67
+        assert pc["joy"] == 33.33
+
+    def test_score_avg_scaled_to_percentage(self):
+        # avg(output_float)=0.6 (0-1 in CH) → 60.0 after ×100.
+        row = self._row(avg_score=0.6, success_count=2, eval_count=2)
+        assert self._pivot([row])["t1"]["c1"]["avg_score"] == 60.0
+
+    def test_pass_rate_passthrough(self):
+        # 1 pass + 1 fail across two spans → 50% pass rate.
+        row = self._row(pass_rate=50.0, success_count=2, eval_count=2)
+        assert self._pivot([row])["t1"]["c1"]["pass_rate"] == 50.0
+
+    def test_all_errored_yields_error_marker(self):
+        row = self._row(success_count=0, error_count=2, eval_count=2)
+        assert self._pivot([row])["t1"]["c1"] == {"error": True}

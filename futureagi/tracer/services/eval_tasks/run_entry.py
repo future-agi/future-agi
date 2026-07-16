@@ -87,9 +87,9 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
         _execute_evaluation_for_trace,
         _find_anchor_span,
         _process_mapping,
-        _process_session_mapping,
-        _process_trace_mapping,
         _write_eval_logger,
+        resolve_session_mapping_lean_first,
+        resolve_trace_mapping_lean_first,
     )
 
     task_id = entry.eval_task_id
@@ -104,6 +104,7 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
                     "project__organization",
                     "project__workspace",
                 ),
+                project_id=config.project_id,
             )
             run_params = _process_mapping(config.mapping, span, template_id)
             result = _execute_evaluation(
@@ -125,8 +126,11 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
                     "project__organization",
                     "project__workspace",
                 ),
+                project_id=config.project_id,
             )
-            run_params = _process_trace_mapping(config.mapping, trace, template_id)
+            run_params = resolve_trace_mapping_lean_first(
+                config.mapping, trace, template_id
+            )
             _execute_evaluation_for_trace(
                 trace=trace,
                 anchor_span=_find_anchor_span(trace),
@@ -136,7 +140,9 @@ def _run_for_target(entry: EvalLogger, config: CustomEvalConfig) -> None:
             )
         elif entry.target_type == EvalTargetType.SESSION:
             session = get_trace_session(entry.trace_session_id, project=config.project)
-            run_params = _process_session_mapping(config.mapping, session, template_id)
+            run_params = resolve_session_mapping_lean_first(
+                config.mapping, session, template_id
+            )
             _execute_evaluation_for_session(
                 trace_session=session,
                 custom_eval_config=config,

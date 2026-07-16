@@ -156,7 +156,7 @@ class TestGetSystemPrompt:
 class TestGetAgentSuggestions:
     """Tests for get_agent_suggestions function."""
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     def test_returns_existing_agent_definition(self, mock_get_agent_def_from_sessions):
         """Should return existing agent definition data when found."""
         mock_project = MagicMock()
@@ -189,7 +189,7 @@ class TestGetAgentSuggestions:
         assert "scenario_name" in suggestions
         assert agent_def == mock_agent_def
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     def test_generates_defaults_when_no_agent_definition(
         self, mock_get_agent_def_from_sessions
     ):
@@ -223,7 +223,7 @@ class TestGetAgentSuggestions:
         assert suggestions["version_name"] is None
         assert agent_def is None
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     def test_handles_agent_definition_not_found(self, mock_get_agent_def_from_sessions):
         """Should generate defaults when no agent_def is found from replay sessions."""
         mock_project = MagicMock()
@@ -247,7 +247,7 @@ class TestGetAgentSuggestions:
         assert suggestions["agent_description"] == ""
         assert agent_def is None
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     def test_handles_none_latest_version(self, mock_get_agent_def_from_sessions):
         """Should handle agent_def with no latest_version."""
         mock_project = MagicMock()
@@ -341,7 +341,7 @@ class TestUpdateAgentDefinition:
 class TestGetOrCreateAgentDefinition:
     """Tests for get_or_create_agent_definition function."""
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     @patch("tracer.utils.replay_session._update_agent_definition")
     def test_returns_existing_and_updates(
         self, mock_update, mock_get_agent_def_from_sessions
@@ -367,7 +367,7 @@ class TestGetOrCreateAgentDefinition:
             voice_config=None,
         )
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     @patch("tracer.utils.replay_session.AgentDefinition")
     def test_creates_new_when_no_existing(
         self, mock_agent_def_model, mock_get_agent_def_from_sessions
@@ -391,7 +391,7 @@ class TestGetOrCreateAgentDefinition:
         mock_agent_def_model.objects.create.assert_called_once()
         mock_new_agent_def.create_version.assert_called_once()
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     @patch("tracer.utils.replay_session.AgentDefinition")
     def test_creates_new_with_correct_params(
         self, mock_agent_def_model, mock_get_agent_def_from_sessions
@@ -421,7 +421,7 @@ class TestGetOrCreateAgentDefinition:
             languages=["en"],
         )
 
-    @patch("tracer.utils.replay_session._get_agent_definition_from_replay_sessions")
+    @patch("tracer.utils.replay_session._resolve_agent_definition_for_project")
     @patch("tracer.utils.replay_session.AgentDefinition")
     def test_creates_version_after_agent_def(
         self, mock_agent_def_model, mock_get_agent_def_from_sessions
@@ -876,3 +876,44 @@ class TestCreateScenario:
 
         call_kwargs = mock_scenarios.objects.create.call_args[1]
         assert call_kwargs["description"] == "Custom description"
+
+
+@pytest.mark.django_db
+class TestResolveAgentDefinitionForProject:
+    def test_existing_replay_session_returns_agent(self, project):
+        from model_hub.models.agent_registry import AgentDefinition
+        from tracer.models import ReplaySession
+        agent = AgentDefinition.objects.create(name="ReplayAgent", project=project)
+        ReplaySession.objects.create(project=project, agent_definition=agent)
+        
+        from tracer.utils.replay_session import _resolve_agent_definition_for_project
+        result = _resolve_agent_definition_for_project(project)
+        assert result == agent
+
+    def test_empty_and_no_providers_returns_none(self, project):
+        from tracer.utils.replay_session import _resolve_agent_definition_for_project
+        result = _resolve_agent_definition_for_project(project)
+        assert result is None
+
+    def test_empty_replay_sessions_returns_newest_provider_agent(self, project):
+        from model_hub.models.agent_registry import AgentDefinition
+        from tfc.models import ObservabilityProvider
+        from datetime import datetime, timedelta
+        
+        provider = ObservabilityProvider.objects.create(project=project, name="TestProv")
+        
+        # Create older agent
+        old_agent = AgentDefinition.objects.create(name="Old", project=project, observability_provider=provider)
+        old_agent.created_at = datetime.now() - timedelta(days=1)
+        old_agent.save()
+        
+        # Create newer agent
+        new_agent = AgentDefinition.objects.create(name="New", project=project, observability_provider=provider)
+        new_agent.created_at = datetime.now()
+        new_agent.save()
+        
+        from tracer.utils.replay_session import _resolve_agent_definition_for_project
+        result = _resolve_agent_definition_for_project(project)
+        
+        # Should return the newest one
+        assert result == new_agent

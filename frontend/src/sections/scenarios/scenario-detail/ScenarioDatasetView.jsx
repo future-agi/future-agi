@@ -107,9 +107,6 @@ const ScenarioDatasetView = () => {
   const createdAt = scenario?.createdAt || scenario?.created_at;
   const agentChipConfig = getChipConfig(agentType);
   const scenarioTypeChipConfig = getChipConfig(scenarioType);
-  const hasGraph = Boolean(
-    scenario?.graph && Object.keys(scenario.graph).length > 0,
-  );
 
   return (
     <DevelopDetailProvider>
@@ -170,9 +167,7 @@ const ScenarioDatasetView = () => {
             height: "50%",
           }}
         >
-          <ShowComponent condition={scenarioType !== "dataset" || hasGraph}>
             <GraphPreview agentType={agentType} scenario={scenario} />
-          </ShowComponent>
           <PromptPreview scenario={scenario} />
         </Box>
         <Box

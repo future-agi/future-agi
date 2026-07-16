@@ -17,6 +17,7 @@ import {
   ListItemText,
   MenuItem,
   Select,
+  Skeleton,
   TextField,
   Tooltip,
   Typography,
@@ -76,9 +77,25 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
   );
 
   // Fetch prompt versions using existing hook
-  const { versions, isLoading: isLoadingVersions } = usePromptVersions(
-    open ? promptTemplateId : null,
-  );
+  const {
+    versions,
+    isLoading: isLoadingVersions,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = usePromptVersions(open ? promptTemplateId : null);
+
+  // Load the next page when the version dropdown is scrolled near the bottom.
+  const handleVersionMenuScroll = (e) => {
+    const { scrollTop, scrollHeight, clientHeight } = e.currentTarget;
+    if (
+      scrollHeight - scrollTop - clientHeight < 50 &&
+      hasNextPage &&
+      !isFetchingNextPage
+    ) {
+      fetchNextPage();
+    }
+  };
 
   // Reset form when modal opens with auto-generated name
   useEffect(() => {
@@ -229,7 +246,12 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
                 setFormData((prev) => ({ ...prev, versionId: e.target.value }))
               }
               disabled={isLoadingVersions}
-              MenuProps={{ PaperProps: { sx: { maxHeight: 300 } } }}
+              MenuProps={{
+                PaperProps: {
+                  sx: { maxHeight: 300 },
+                  onScroll: handleVersionMenuScroll,
+                },
+              }}
             >
               {versions.map((version) => (
                 <MenuItem key={version.id} value={version.id}>
@@ -270,6 +292,12 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
                   </Box>
                 </MenuItem>
               ))}
+              {isFetchingNextPage &&
+                Array.from({ length: 2 }).map((_, index) => (
+                  <MenuItem key={`version-skeleton-${index}`} disabled>
+                    <Skeleton variant="text" width={60} />
+                  </MenuItem>
+                ))}
             </Select>
           </FormControl>
 

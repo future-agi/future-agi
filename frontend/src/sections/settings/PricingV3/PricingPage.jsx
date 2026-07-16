@@ -591,7 +591,7 @@ export default function PricingPage() {
 
   const upgradeMutation = useMutation({
     mutationFn: async () => {
-      const res = await axios.post(endpoints.settings.v2.upgradeToPayg);
+      const res = await axios.post(endpoints.settings.v2.upgradeToPayg, {});
       const checkoutUrl = res.data?.result?.checkout_url;
       if (!checkoutUrl) throw new Error("Failed to create checkout session");
       // Redirect to Stripe Checkout — user enters card on Stripe's hosted page
@@ -652,7 +652,7 @@ export default function PricingPage() {
   });
 
   const downgradeMutation = useMutation({
-    mutationFn: () => axios.post(endpoints.settings.v2.downgradeToFree),
+    mutationFn: () => axios.post(endpoints.settings.v2.downgradeToFree, {}),
     onSuccess: () => {
       enqueueSnackbar("Downgraded to Free plan", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: PLANS_QUERY_KEY });
