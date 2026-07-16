@@ -1,0 +1,15 @@
+{
+  "sample_spec": {
+    "input_cost_per_token": 0.0,
+    "output_cost_per_token": 0.0,
+    "litellm_provider": "one of https://docs.litellm.ai/docs/providers"
+  },
+  "gpt-4o": {
+    "input_cost_per_token": 0.0000025,
+    "output_cost_per_token": 0.00001,
+    "litellm_provider": "openai"
+  },
+  "no-price-model": {
+    "litellm_provider": "openai"
+  }
+}
