@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import pytest
 from rest_framework import status
 
@@ -538,3 +540,206 @@ def test_retrieve_table_row_shape_for_trial_without_baseline(
     assert metric_id in row["eval_scores"]
     assert row["eval_scores"][metric_id]["score"] == 0.75
     assert row["eval_scores"][metric_id]["percentage_change"] is None
+
+
+# ==================== Serializer: _prepare_dataset_execution_data ====================
+#
+# The dataset-optimization Temporal serializer feeds an execution_data dict
+# to the downstream shell EvalTemplate reconstructor. These tests drive the
+# serializer end to end with real DB rows and assert the five columnar keys
+# it must now emit for each eval template output type. Without these keys
+# the downstream shell's ``output_type_normalized`` is ``None`` and the
+# scorer falls back to ``percentage`` for every row.
+
+
+def _make_template(organization, workspace, name, output_type_normalized, choice_scores=None, pass_threshold=0.5):
+    return EvalTemplate.objects.create(
+        name=name,
+        organization=organization,
+        workspace=workspace,
+        criteria="Evaluate {{output}}",
+        model="gpt-4o-mini",
+        output_type_normalized=output_type_normalized,
+        choice_scores=choice_scores,
+        pass_threshold=pass_threshold,
+        config={
+            "output": "choices" if output_type_normalized != "pass_fail" else "Pass/Fail",
+            "required_keys": ["output"],
+            "eval_type_id": "AgentEvaluator",
+        },
+    )
+
+
+def _make_user_eval_metric(organization, workspace, dataset, template):
+    return UserEvalMetric.no_workspace_objects.create(
+        name=f"{template.name}_metric",
+        organization=organization,
+        workspace=workspace,
+        template=template,
+        dataset=dataset,
+        config={"mapping": {"output": "output"}, "config": {}},
+        model="gpt-4o-mini",
+    )
+
+
+@pytest.mark.django_db
+def test_serializer_emits_scoring_fields_for_pass_fail_template(
+    organization, workspace, dataset, output_column
+):
+    from tfc.temporal.dataset_optimization.activities import (
+        _prepare_dataset_execution_data,
+    )
+
+    template = _make_template(
+        organization, workspace, "esc_pass_fail_tpl", "pass_fail",
+        choice_scores=None, pass_threshold=0.7,
+    )
+    uem = _make_user_eval_metric(organization, workspace, dataset, template)
+
+    result = _prepare_dataset_execution_data(
+        output_column, dataset, [uem], initial_prompt="hello {{Prompt Output}}"
+    )
+    # No dataset rows so no call_executions, but eval_configs is populated
+    # only when at least one row exists; we check the emitted call_executions
+    # after adding a row below.
+
+    from model_hub.models.develop_dataset import Row, Cell
+    row = Row.objects.create(dataset=dataset, order=0)
+    Cell.objects.create(dataset=dataset, column=output_column, row=row, value="Passed")
+
+    result = _prepare_dataset_execution_data(
+        output_column, dataset, [uem], initial_prompt="hello {{Prompt Output}}"
+    )
+    assert len(result["call_executions"]) == 1
+    evals = result["call_executions"][0]["evaluations"]
+    assert len(evals) == 1
+    ev = evals[0]
+    assert ev["output_type_normalized"] == "pass_fail"
+    assert ev["choice_scores"] is None
+    assert ev["pass_threshold"] == 0.7
+    assert ev["eval_config_id"] == str(uem.id)
+    assert ev["eval_name"] == uem.name
+
+
+@pytest.mark.django_db
+def test_serializer_emits_scoring_fields_for_deterministic_with_choice_scores(
+    organization, workspace, dataset, output_column
+):
+    from tfc.temporal.dataset_optimization.activities import (
+        _prepare_dataset_execution_data,
+    )
+    from model_hub.models.develop_dataset import Row, Cell
+
+    template = _make_template(
+        organization, workspace, "det_choice_tpl", "deterministic",
+        choice_scores={"Good": 1.0, "Neutral": 0.5, "Bad": 0.0},
+    )
+    uem = _make_user_eval_metric(organization, workspace, dataset, template)
+    row = Row.objects.create(dataset=dataset, order=0)
+    Cell.objects.create(dataset=dataset, column=output_column, row=row, value="Good")
+
+    result = _prepare_dataset_execution_data(
+        output_column, dataset, [uem], initial_prompt="hello {{Prompt Output}}"
+    )
+    ev = result["call_executions"][0]["evaluations"][0]
+    assert ev["output_type_normalized"] == "deterministic"
+    assert ev["choice_scores"] == {"Good": 1.0, "Neutral": 0.5, "Bad": 0.0}
+
+
+@pytest.mark.django_db
+def test_serializer_emits_scoring_fields_for_percentage_no_choice_scores(
+    organization, workspace, dataset, output_column
+):
+    from tfc.temporal.dataset_optimization.activities import (
+        _prepare_dataset_execution_data,
+    )
+    from model_hub.models.develop_dataset import Row, Cell
+
+    template = _make_template(
+        organization, workspace, "pct_tpl", "percentage",
+    )
+    uem = _make_user_eval_metric(organization, workspace, dataset, template)
+    row = Row.objects.create(dataset=dataset, order=0)
+    Cell.objects.create(dataset=dataset, column=output_column, row=row, value="0.75")
+
+    result = _prepare_dataset_execution_data(
+        output_column, dataset, [uem], initial_prompt="hello {{Prompt Output}}"
+    )
+    ev = result["call_executions"][0]["evaluations"][0]
+    assert ev["output_type_normalized"] == "percentage"
+    assert ev["choice_scores"] is None
+
+
+@pytest.mark.django_db
+def test_serializer_preserves_pre_existing_keys(
+    organization, workspace, dataset, output_column
+):
+    from tfc.temporal.dataset_optimization.activities import (
+        _prepare_dataset_execution_data,
+    )
+    from model_hub.models.develop_dataset import Row, Cell
+
+    template = _make_template(
+        organization, workspace, "pre_existing_keys_tpl", "deterministic",
+    )
+    uem = _make_user_eval_metric(organization, workspace, dataset, template)
+    row = Row.objects.create(dataset=dataset, order=0)
+    Cell.objects.create(dataset=dataset, column=output_column, row=row, value="X")
+
+    result = _prepare_dataset_execution_data(
+        output_column, dataset, [uem], initial_prompt="hello {{Prompt Output}}"
+    )
+    ev = result["call_executions"][0]["evaluations"][0]
+    for key in (
+        "eval_template_id",
+        "eval_template_name",
+        "description",
+        "criteria",
+        "template_config",
+        "config",
+        "mapping",
+        "model",
+        "eval_type_id",
+        "output_type",
+        "required_keys",
+    ):
+        assert key in ev, f"pre-existing key {key!r} dropped"
+
+
+# ==================== /stop/ endpoint: select_for_update(of=("self",)) ====================
+#
+# Regression: before scoping the lock to the target table, the queryset
+# raised ``FOR UPDATE cannot be applied to the nullable side of an outer
+# join`` because ``get_queryset`` on the viewset joins across a nullable
+# workspace FK. These tests drive the endpoint end to end and assert that
+# a run in ``running`` status transitions to ``cancelled`` on POST /stop/.
+
+
+@pytest.mark.django_db(transaction=True)
+def test_stop_endpoint_transitions_running_run_via_scoped_lock(
+    auth_client, output_column, user_eval_metric
+):
+    """Regression: before ``select_for_update(of=("self",))`` this endpoint
+    raised ``FOR UPDATE cannot be applied to the nullable side of an outer
+    join`` (Postgres) and returned 400 with a generic error. The workspace
+    fixture used here is the default one, which exercises the outer-join
+    branch of ``_request_workspace_filter``. Scoping the lock to the target
+    table lets the same request return 200 and transition the run to
+    ``cancelled``.
+    """
+    run = create_optimization_run(
+        output_column,
+        status=OptimizeDataset.StatusType.RUNNING,
+    )
+    run.user_eval_template_ids.add(user_eval_metric)
+
+    with patch(
+        "model_hub.views.dataset_optimization.cancel_dataset_optimization",
+        return_value=True,
+    ):
+        response = auth_client.post(f"/model-hub/dataset-optimization/{run.id}/stop/")
+    assert response.status_code == status.HTTP_200_OK
+    body = response.json()
+    assert body["result"]["success"] is True
+    run.refresh_from_db()
+    assert run.status == OptimizeDataset.StatusType.CANCELLED
