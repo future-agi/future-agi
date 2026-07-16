@@ -3,6 +3,9 @@ import PropTypes from "prop-types";
 import React from "react";
 
 const ToolsHoverState = ({ tools, disableHover }) => {
+  if (!tools || tools.length === 0) {
+    return "No tools";
+  }
   if (disableHover) {
     return "Tools";
   }
