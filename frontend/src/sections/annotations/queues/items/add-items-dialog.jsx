@@ -657,19 +657,24 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
         // annotator workspace's span-oriented UI (consistent with the
         // ``mappedIds`` branch above at lines 540-548).
         if (sourceType === "trace" && !isVoiceTraceSelection) {
-          const rootSpanMap = await fetchRootSpans(
-            ids,
-            selectedProjectId ? [selectedProjectId] : [],
-          );
-          const originalCount = ids.length;
-          ids = ids.map((traceId) => rootSpanMap[traceId]).filter(Boolean);
-          effectiveSourceType = "observation_span";
-          const droppedCount = originalCount - ids.length;
-          if (droppedCount > 0) {
-            enqueueSnackbar(
-              `${droppedCount} trace${droppedCount !== 1 ? "s" : ""} skipped — no root span found yet`,
-              { variant: "warning" },
+          setIsResolving(true);
+          try {
+            const rootSpanMap = await fetchRootSpans(
+              ids,
+              selectedProjectId ? [selectedProjectId] : [],
             );
+            const originalCount = ids.length;
+            ids = ids.map((traceId) => rootSpanMap[traceId]).filter(Boolean);
+            effectiveSourceType = "observation_span";
+            const droppedCount = originalCount - ids.length;
+            if (droppedCount > 0) {
+              enqueueSnackbar(
+                `${droppedCount} trace${droppedCount !== 1 ? "s" : ""} skipped — no root span found yet`,
+                { variant: "warning" },
+              );
+            }
+          } finally {
+            setIsResolving(false);
           }
         }
 
