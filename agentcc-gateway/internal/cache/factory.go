@@ -108,11 +108,11 @@ func NewSemanticBackend(cfg config.SemanticCacheConfig) (SemanticBackend, error)
 
 	case "valkey":
 		vk := cfg.Valkey
-		backend, err := NewValkeyBackend(vk.Address, vk.Password, vk.Index, vk.Prefix, threshold, dims, vk.Timeout)
+		backend, err := NewValkeyBackend(vk.Address, vk.Password, vk.Index, vk.Prefix, threshold, dims, vk.Timeout, vk.TLS)
 		if err != nil {
 			return nil, fmt.Errorf("valkey semantic cache: %w", err)
 		}
-		slog.Info("semantic cache backend: valkey", "address", vk.Address, "index", vk.Index)
+		slog.Info("semantic cache backend: valkey", "address", vk.Address, "index", vk.Index, "tls", vk.TLS)
 		return backend, nil
 
 	default:

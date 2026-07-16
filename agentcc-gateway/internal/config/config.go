@@ -477,6 +477,7 @@ type ValkeyConfig struct {
 	Index    string        `yaml:"index" json:"index"`     // FT index name, default "agentcc_semantic_cache"
 	Prefix   string        `yaml:"prefix" json:"prefix"`   // hash key prefix, default "sc:"
 	Timeout  time.Duration `yaml:"timeout" json:"timeout"`
+	TLS      bool          `yaml:"tls" json:"tls"`         // Enable TLS for managed cloud (ElastiCache, MemoryDB, etc.)
 }
 
 // CacheEdgeConfig configures CDN edge caching.

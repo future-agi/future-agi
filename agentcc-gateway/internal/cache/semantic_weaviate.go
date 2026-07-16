@@ -213,6 +213,8 @@ func (w *WeaviateBackend) Dims() int {
 	return w.dims
 }
 
+func (w *WeaviateBackend) Close() {}
+
 func (w *WeaviateBackend) ensureClass() {
 	// Check if class exists.
 	req, _ := http.NewRequest("GET", w.baseURL+"/v1/schema/"+w.className, nil)

@@ -312,8 +312,10 @@ type PineconeConfig struct {
 type ValkeyConfig struct {
 	Address  string `json:"address,omitempty"`
 	Password string `json:"password,omitempty"`
-	Index    string `json:"index,omitempty"`  // FT index name
-	Prefix   string `json:"prefix,omitempty"` // hash key prefix
+	Index    string `json:"index,omitempty"`   // FT index name
+	Prefix   string `json:"prefix,omitempty"`  // hash key prefix
+	Timeout  int    `json:"timeout,omitempty"` // operation timeout in seconds
+	TLS      bool   `json:"tls,omitempty"`     // enable TLS for managed cloud
 }
 
 // EdgeCacheConfig holds CDN edge caching settings.

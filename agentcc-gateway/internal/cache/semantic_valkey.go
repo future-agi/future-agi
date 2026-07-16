@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
@@ -24,11 +25,12 @@ type ValkeyBackend struct {
 	prefix    string
 	threshold float64
 	dims      int
+	timeout   time.Duration
 }
 
 // NewValkeyBackend creates a Valkey-backed semantic cache.
 // Requires Valkey 8.0+ with the valkey-search module enabled.
-func NewValkeyBackend(address, password, index, prefix string, threshold float64, dims int, timeout time.Duration) (*ValkeyBackend, error) {
+func NewValkeyBackend(address, password, index, prefix string, threshold float64, dims int, timeout time.Duration, useTLS bool) (*ValkeyBackend, error) {
 	if timeout <= 0 {
 		timeout = 3 * time.Second
 	}
@@ -60,6 +62,10 @@ func NewValkeyBackend(address, password, index, prefix string, threshold float64
 	opts.Dialer = net.Dialer{Timeout: timeout}
 	opts.ConnWriteTimeout = timeout
 
+	if useTLS {
+		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
+
 	client, err := valkey.NewClient(opts)
 	if err != nil {
 		return nil, fmt.Errorf("valkey connect: %w", err)
@@ -79,17 +85,19 @@ func NewValkeyBackend(address, password, index, prefix string, threshold float64
 		prefix:    prefix,
 		threshold: threshold,
 		dims:      dims,
+		timeout:   timeout,
 	}
 
 	if err := v.ensureIndex(ctx); err != nil {
-		slog.Warn("valkey: failed to ensure index, will retry on first use", "error", err)
+		client.Close()
+		return nil, fmt.Errorf("valkey: failed to create search index: %w", err)
 	}
 
 	return v, nil
 }
 
 func (v *ValkeyBackend) Search(vector []float32, model string) *SearchResult {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), v.timeout)
 	defer cancel()
 
 	blob := float32SliceToBytes(vector)
@@ -146,7 +154,7 @@ func (v *ValkeyBackend) Set(key string, vector []float32, model string, resp *mo
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), v.timeout)
 	defer cancel()
 
 	expiresAt := time.Now().Add(ttl).Unix()
@@ -339,6 +347,8 @@ func float32SliceToBytes(v []float32) []byte {
 
 func escapeTag(s string) string {
 	replacer := strings.NewReplacer(
+		"\\", "\\\\",
+		"|", "\\|",
 		",", "\\,",
 		".", "\\.",
 		"<", "\\<",

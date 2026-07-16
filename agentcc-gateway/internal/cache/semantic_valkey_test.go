@@ -45,6 +45,9 @@ func TestEscapeTag(t *testing.T) {
 		{"has space", "has\\ space"},
 		{"colon:value", "colon\\:value"},
 		{"meta/llama-3", "meta\\/llama\\-3"},
+		{"a|b", "a\\|b"},
+		{"back\\slash", "back\\\\slash"},
+		{"back\\|combo", "back\\\\\\|combo"},
 	}
 	for _, tc := range cases {
 		got := escapeTag(tc.input)
@@ -66,7 +69,7 @@ func TestValkeyBackendIntegration(t *testing.T) {
 	dims := 4
 	threshold := 0.80
 
-	backend, err := NewValkeyBackend(addr, password, "test_semantic_cache", "test_sc:", threshold, dims, 5*time.Second)
+	backend, err := NewValkeyBackend(addr, password, "test_semantic_cache", "test_sc:", threshold, dims, 5*time.Second, false)
 	if err != nil {
 		t.Fatalf("NewValkeyBackend: %v", err)
 	}
