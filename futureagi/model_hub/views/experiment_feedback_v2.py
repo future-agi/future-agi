@@ -12,6 +12,7 @@ from model_hub.models.choices import CellStatus, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Row
 from model_hub.models.evals_metric import Feedback, UserEvalMetric
 from model_hub.models.experiments import ExperimentsTable
+from model_hub.selectors.feedback import resolve_feedback_template_data
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     ExperimentFeedbackSubmitRequestSerializer,
@@ -24,7 +25,6 @@ from model_hub.serializers.experiment_contracts import (
     ExperimentFeedbackTemplateResponseSerializer,
 )
 from model_hub.views.eval_runner import EvaluationRunner
-from model_hub.selectors.feedback import resolve_feedback_template_data
 from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods

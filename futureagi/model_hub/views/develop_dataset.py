@@ -125,6 +125,7 @@ from model_hub.models.evals_metric import (
 from model_hub.models.experiments import ExperimentDatasetTable, ExperimentsTable
 from model_hub.models.optimize_dataset import OptimizeDataset
 from model_hub.models.run_prompt import PromptVersion, RunPrompter
+from model_hub.selectors.feedback import resolve_feedback_template_data
 from model_hub.serializers.contracts import (
     MODEL_HUB_ERROR_RESPONSES,
     AddAsNewDatasetRequestSerializer,
@@ -256,7 +257,6 @@ from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from model_hub.utils.utils import contains_sql, get_diff
 from model_hub.views.eval_runner import EvaluationRunner
 from model_hub.views.run_prompt import PROVIDERS_WITH_JSON
-from model_hub.selectors.feedback import resolve_feedback_template_data
 from model_hub.views.utils.evals import process_eval_for_single_row
 from model_hub.views.utils.utils import (
     get_recommendations,
@@ -7287,7 +7287,7 @@ class GetEvalConfigView(APIView):
                     template.config.get("config_params_option", {})
                 ),
                 "param_modalities": template.config.get("param_modalities", {}),
-                "multi_choice": bool(template.config.get("multi_choice", False)),
+                "multi_choice": bool(getattr(template, "multi_choice", False)),
                 "kb_id": None,
                 "error_localizer": template.error_localizer_enabled,
                 "api_key_available": (
@@ -7358,7 +7358,7 @@ class GetEvalConfigView(APIView):
                 ),
                 "param_modalities": template.config.get("param_modalities", {}),
                 "choices": choices,
-                "multi_choice": bool(template.config.get("multi_choice", False)),
+                "multi_choice": bool(getattr(template, "multi_choice", False)),
                 "check_internet": template.config.get("check_internet", False),
             }
 

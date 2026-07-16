@@ -878,6 +878,7 @@ class EvaluationRunner:
                 inputs=mapping,
                 input_cols=required_field,
                 organization_id=self.organization_id,
+                # Feedback retrieval is org-scoped; writes still tag workspace_id.
                 workspace_id=None,
             )
             end_time = datetime.now()

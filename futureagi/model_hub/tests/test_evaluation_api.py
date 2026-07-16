@@ -601,18 +601,15 @@ class TestEvalConfigContracts:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_get_eval_config_returns_multi_choice_true(self, auth_client, user):
-        """GetEvalConfigView surfaces multi_choice for choices templates."""
+        """multi_choice is sourced from the template's direct field."""
         template = EvalTemplate.objects.create(
             name=f"multi-choice-{uuid.uuid4().hex[:8]}",
             description="Multi-choice template",
             organization=user.organization,
             owner=OwnerChoices.USER.value,
-            config={
-                "output": "choices",
-                "eval_type_id": "test_eval_type",
-                "multi_choice": True,
-            },
+            config={"output": "choices", "eval_type_id": "test_eval_type"},
             choices=["A", "B", "C"],
+            multi_choice=True,
         )
 
         response = auth_client.get(
