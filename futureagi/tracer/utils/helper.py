@@ -419,6 +419,22 @@ def eval_output_type_for_config(config: CustomEvalConfig) -> str | None:
     return (getattr(template, "config", None) or {}).get("output")
 
 
+def get_project_eval_configs(
+    project_id,
+) -> tuple[list[CustomEvalConfig], list[str]]:
+    """Non-deleted eval configs for a project, read from PG (no ClickHouse).
+
+    Replaces the CH ``dictGet('trace_dict',...)`` discovery scan on the voice
+    endpoints. Uses the ``(project, created_at)`` index. Returns
+    ``(eval_configs, eval_config_ids)``.
+    """
+    qs = CustomEvalConfig.objects.filter(
+        project_id=project_id, deleted=False
+    ).select_related("eval_template")
+    configs = list(qs)
+    return configs, [str(c.id) for c in configs]
+
+
 def _validate_span_attribute_filter(column_id, filter_config):
     """Enforce the SPAN_ATTRIBUTE type/op/value contract; raise on mismatch."""
     ftype = (filter_config.get("filter_type") or "").lower()
