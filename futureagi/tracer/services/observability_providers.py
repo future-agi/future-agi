@@ -477,7 +477,7 @@ class ObservabilityService:
         cost = raw_log_get("cost")
         assistant_id = raw_log_get("assistantId")
         duration_seconds = None
-        analysis_data = raw_log_get("analysis")
+        analysis_data = raw_log_get("analysis") or None
 
         # Cost breakdown (STT/LLM/TTS)
         raw_cost_breakdown = raw_log_get("costBreakdown") or {}
@@ -855,14 +855,41 @@ class ObservabilityService:
                 span_attributes.get("stereo_recording_url")
                 or span_attributes.get("conversation.recording.stereo")
             )
-            if mono_s3 and VapiRecordingService.is_s3_url(mono_s3) and not VapiRecordingService.is_s3_url(
+            logger.info(
+                "process_raw_logs: rehost decision",
+                provider=provider,
+                mono_s3=mono_s3,
+                mono_s3_is_fagi=(
+                    VapiRecordingService.is_fagi_s3_url(mono_s3) if mono_s3 else None
+                ),
+                processed_recording_url=processed.get("recording_url"),
+                processed_recording_url_is_fagi=(
+                    VapiRecordingService.is_fagi_s3_url(processed.get("recording_url"))
+                    if processed.get("recording_url")
+                    else None
+                ),
+                stereo_s3=stereo_s3,
+                stereo_s3_is_fagi=(
+                    VapiRecordingService.is_fagi_s3_url(stereo_s3) if stereo_s3 else None
+                ),
+                processed_stereo_url=processed.get("stereo_recording_url"),
+                processed_stereo_url_is_fagi=(
+                    VapiRecordingService.is_fagi_s3_url(processed.get("stereo_recording_url"))
+                    if processed.get("stereo_recording_url")
+                    else None
+                ),
+                fagi_buckets=list(VapiRecordingService._FAGI_S3_BUCKETS),
+            )
+            if mono_s3 and VapiRecordingService.is_fagi_s3_url(mono_s3) and not VapiRecordingService.is_fagi_s3_url(
                 processed.get("recording_url")
             ):
                 processed["recording_url"] = mono_s3
-            if stereo_s3 and VapiRecordingService.is_s3_url(stereo_s3) and not VapiRecordingService.is_s3_url(
+                logger.info("process_raw_logs: mono_s3 rehosted", mono_s3=mono_s3)
+            if stereo_s3 and VapiRecordingService.is_fagi_s3_url(stereo_s3) and not VapiRecordingService.is_fagi_s3_url(
                 processed.get("stereo_recording_url")
             ):
                 processed["stereo_recording_url"] = stereo_s3
+                logger.info("process_raw_logs: stereo_s3 rehosted", stereo_s3=stereo_s3)
 
         return processed
 

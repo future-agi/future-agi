@@ -54,7 +54,7 @@ RECORDING_KEYS_BY_PROVIDER: dict[str, list[tuple[str, str]]] = {
 
 
 def is_already_s3_url(url: str) -> bool:
-    return VapiRecordingService.is_s3_url(url)
+    return VapiRecordingService.is_fagi_s3_url(url)
 
 
 def _resolve_call_id(span: ObservationSpan) -> str:

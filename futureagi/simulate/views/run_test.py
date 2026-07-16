@@ -3480,20 +3480,16 @@ class CallExecutionLogsView(APIView):
                         provider_call_id = None
                         provider_api_key = None
                         try:
-                            from tracer.utils.vapi_recording import (
-                                VapiRecordingService,
-                            )
-
                             test_exec = getattr(
                                 call_execution, "test_execution", None
                             )
-                            agent_def = getattr(test_exec, "agent_definition", None) if test_exec else None
-                            if agent_def is not None:
-                                provider_api_key = (
-                                    VapiRecordingService.get_api_key_for_agent_definition(
-                                        agent_def.id
-                                    )
-                                )
+                            version = (
+                                getattr(test_exec, "agent_version", None) if test_exec else None
+                            )
+                            if version is not None:
+                                from simulate.services.agent_definition import resolve_api_key_for_version
+
+                                provider_api_key = resolve_api_key_for_version(version)
                             provider_call_id = (
                                 vapi.get("id") if isinstance(vapi, dict) else None
                             )

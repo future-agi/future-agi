@@ -124,6 +124,18 @@ async def _convert_audio_url_to_s3_async_with_size(
     """
     from tracer.utils.vapi_recording import VapiRecordingService
 
+    logger.info(
+        "_convert_audio_url_to_s3: ENTRY",
+        call_id=call_id,
+        url_type=url_type,
+        audio_url=audio_url,
+        audio_url_type=type(audio_url).__name__,
+        audio_url_is_str=isinstance(audio_url, str),
+        provider=provider,
+        api_key_present=bool(api_key),
+        vapi_call_id=vapi_call_id,
+        artifact_type=artifact_type,
+    )
     # ``call_id`` positional is the S3-object-key ID. ``vapi_call_id`` kwarg
     # is the provider-side call ID used for the authenticated endpoint. In
     # the observability rehost path the two happen to be equal, so callers
@@ -132,8 +144,14 @@ async def _convert_audio_url_to_s3_async_with_size(
     vapi_authenticated = VapiRecordingService.is_authenticated_download(
         provider, api_key, auth_call_id, artifact_type
     )
+    logger.info(
+        "_convert_audio_url_to_s3: auth check",
+        vapi_authenticated=vapi_authenticated,
+        auth_call_id=auth_call_id,
+    )
 
     if not audio_url and not vapi_authenticated:
+        logger.info("_convert_audio_url_to_s3: no url and not authenticated -> return original", audio_url=audio_url)
         return audio_url, 0
 
     # Check if already an S3 URL
@@ -142,8 +160,11 @@ async def _convert_audio_url_to_s3_async_with_size(
         return audio_url, 0
 
     try:
-        logger.info(f"Converting {url_type} URL to S3: {audio_url}")
-
+        logger.info(
+            "_convert_audio_url_to_s3: starting download",
+            audio_url=audio_url,
+            vapi_authenticated=vapi_authenticated,
+        )
         # Async download
         audio_bytes = await download_audio_from_url_async(
             audio_url,
@@ -151,6 +172,10 @@ async def _convert_audio_url_to_s3_async_with_size(
             api_key=api_key,
             call_id=auth_call_id,
             artifact_type=artifact_type,
+        )
+        logger.info(
+            "_convert_audio_url_to_s3: download complete",
+            bytes=len(audio_bytes),
         )
 
         # S3 upload (still sync - minio client doesn't have async support)
@@ -178,7 +203,7 @@ async def _convert_audio_url_to_s3_async_with_size(
         return s3_url, len(audio_bytes)
 
     except Exception as e:
-        logger.error(f"Error converting {url_type} URL to S3: {e}")
+        logger.error(f"Error converting {url_type} URL to S3: {e}", exc_info=True)
         # Return original URL on failure
         return audio_url, 0
 

@@ -206,8 +206,8 @@ class TestFetchSimulatedCallRecordings:
         result = session_comparison.fetch_simulated_call_recordings(call_exec)
         assert result == {}
 
-    def test_non_vapi_single_provider_returns_empty(self):
-        """A Retell-only payload does not match the Vapi extractor shape and returns empty."""
+    def test_non_vapi_single_provider_returns_model_urls(self):
+        """A Retell payload returns recording URLs from model fields."""
         call_exec = SimpleNamespace(
             provider_call_data={
                 "retell": {
@@ -218,10 +218,12 @@ class TestFetchSimulatedCallRecordings:
                     }
                 }
             },
-            recording_url=None,
-            stereo_recording_url=None,
+            recording_url="https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-mono.mp3",
+            stereo_recording_url="https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-stereo.mp3",
         )
-        assert session_comparison.fetch_simulated_call_recordings(call_exec) == {}
+        result = session_comparison.fetch_simulated_call_recordings(call_exec)
+        assert result["mono_combined"] == "https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-mono.mp3"
+        assert result["stereo"] == "https://fi-content-dev.s3.ap-south-1.amazonaws.com/call-recordings/rehosted-stereo.mp3"
 
 
 @pytest.mark.unit

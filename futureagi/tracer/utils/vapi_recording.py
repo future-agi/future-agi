@@ -6,6 +6,7 @@ import gzip
 import io
 import json
 import logging
+import os
 import uuid
 from datetime import datetime
 from datetime import timezone as dt_timezone
@@ -42,7 +43,6 @@ _URL_TYPE_TO_ARTIFACT: dict[str, str] = {
 
 
 DEFAULT_TIMEOUT_SECONDS = 60.0
-S3_URL_MARKERS = ("amazonaws.com", "minio")
 
 
 class VapiAuthError(Exception):
@@ -59,6 +59,15 @@ class VapiRateLimitError(Exception):
 
 class VapiRecordingService:
     """Single entry point for Vapi recording and call-log operations."""
+
+    _FAGI_S3_BUCKETS: tuple[str, ...] = tuple(
+        b.strip()
+        for b in os.getenv(
+            "OWN_S3_BUCKETS",
+            "fi-customer-data,fi-customer-data-dev,fi-content,fi-content-dev",
+        ).split(",")
+        if b.strip()
+    )
 
     @classmethod
     def build_artifact_url(cls, call_id: str, artifact_type: VapiArtifactType) -> str:
@@ -86,14 +95,20 @@ class VapiRecordingService:
         return provider == ProviderChoices.VAPI
 
     @classmethod
-    def is_s3_url(cls, url: Optional[str]) -> bool:
-        """True if url points to an S3 (amazonaws.com) or MinIO host.
+    def is_fagi_s3_url(cls, url: Optional[str]) -> bool:
+        """True if ``url`` is an S3/MinIO URL owned by FutureAGI.
 
-        Note: this matches ANY S3 host, not only FutureAGI's own buckets.
+        Delegates to :func:`tfc.utils.storage.is_own_storage_url` which
+        validates the bucket name and host pattern against the
+        ``OWN_S3_BUCKETS`` env-var list — not a blind substring match.
         """
+        from tfc.utils.storage import is_own_storage_url
+
         if not url:
             return False
-        return any(marker in url for marker in S3_URL_MARKERS)
+        return any(
+            is_own_storage_url(url, bucket) for bucket in cls._FAGI_S3_BUCKETS
+        )
 
     @classmethod
     def get_api_key_for_project(cls, project_id: Any) -> Optional[str]:
@@ -125,34 +140,6 @@ class VapiRecordingService:
                 project_id=str(project_id),
             )
             return None
-
-    @classmethod
-    def get_api_key_for_agent_definition(
-        cls, agent_definition_id: Any
-    ) -> Optional[str]:
-        """Resolve the Vapi api_key for an AgentDefinition; None on failure."""
-        if agent_definition_id is None:
-            return None
-
-        try:
-            from simulate.models.agent_definition import AgentDefinition
-        except Exception:
-            return None
-
-        if isinstance(agent_definition_id, str):
-            try:
-                agent_definition_id = uuid.UUID(agent_definition_id)
-            except ValueError:
-                return None
-
-        agent_def = (
-            AgentDefinition.objects.filter(id=agent_definition_id)
-            .only("id", "api_key")
-            .first()
-        )
-        if agent_def is None:
-            return None
-        return cls._api_key_from_agent_definition(agent_def)
 
     @classmethod
     def _get_vapi_provider_for_project(cls, project_id: Any):
@@ -208,17 +195,13 @@ class VapiRecordingService:
 
     @classmethod
     def _api_key_from_agent_definition(cls, agent_def) -> Optional[str]:
-        try:
-            latest_version = getattr(agent_def, "latest_version", None)
-        except Exception:
-            latest_version = None
-        if latest_version is not None:
-            snapshot = getattr(latest_version, "configuration_snapshot", None) or {}
-            snapshot_key = snapshot.get("api_key") if isinstance(snapshot, dict) else None
-            if snapshot_key:
-                return snapshot_key
-        raw_key = getattr(agent_def, "api_key", None) or None
-        return raw_key or None
+        """Resolve Vapi api_key through the canonical ProviderCredentials chain."""
+        from simulate.services.agent_definition import resolve_api_key_for_version
+
+        version = agent_def.active_version or agent_def.latest_version
+        if version is None:
+            return None
+        return resolve_api_key_for_version(version)
 
     @classmethod
     async def download_artifact_async(
@@ -327,9 +310,9 @@ class VapiRecordingService:
         mono_s3 = s3_url_by_url_type.get("mono_combined")
         stereo_s3 = s3_url_by_url_type.get("stereo")
 
-        if mono_s3 and not cls.is_s3_url(attrs.get("recording_url")):
+        if mono_s3 and not cls.is_fagi_s3_url(attrs.get("recording_url")):
             attrs["recording_url"] = mono_s3
-        if stereo_s3 and not cls.is_s3_url(attrs.get("stereo_recording_url")):
+        if stereo_s3 and not cls.is_fagi_s3_url(attrs.get("stereo_recording_url")):
             attrs["stereo_recording_url"] = stereo_s3
 
         if call_id and (mono_s3 or stereo_s3):
@@ -361,10 +344,10 @@ class VapiRecordingService:
             return
 
         update_fields: list[str] = []
-        if mono_s3 and not cls.is_s3_url(row.recording_url or ""):
+        if mono_s3 and not cls.is_fagi_s3_url(row.recording_url or ""):
             row.recording_url = mono_s3
             update_fields.append("recording_url")
-        if stereo_s3 and not cls.is_s3_url(row.stereo_recording_url or ""):
+        if stereo_s3 and not cls.is_fagi_s3_url(row.stereo_recording_url or ""):
             row.stereo_recording_url = stereo_s3
             update_fields.append("stereo_recording_url")
         if update_fields:
@@ -390,10 +373,10 @@ class VapiRecordingService:
         )
         for row in rows:
             update_fields: list[str] = []
-            if mono_s3 and not cls.is_s3_url(row.recording_url or ""):
+            if mono_s3 and not cls.is_fagi_s3_url(row.recording_url or ""):
                 row.recording_url = mono_s3
                 update_fields.append("recording_url")
-            if stereo_s3 and not cls.is_s3_url(row.stereo_recording_url or ""):
+            if stereo_s3 and not cls.is_fagi_s3_url(row.stereo_recording_url or ""):
                 row.stereo_recording_url = stereo_s3
                 update_fields.append("stereo_recording_url")
             if update_fields:
@@ -411,12 +394,24 @@ class VapiRecordingService:
         verify_ssl: bool = True,
     ) -> Optional[list[dict[str, Any]]]:
         """Fetch and parse gzip-JSONL call logs (Tier 1 auth then Tier 2 legacy fallback)."""
+        logger.info(
+            "fetch_and_parse_call_logs: ENTRY",
+            call_id=call_id,
+            api_key_present=bool(api_key),
+            legacy_url=legacy_url,
+            verify_ssl=verify_ssl,
+        )
         content = cls._fetch_call_logs_content(
             call_id=call_id,
             api_key=api_key,
             legacy_url=legacy_url,
             timeout_seconds=timeout_seconds,
             verify_ssl=verify_ssl,
+        )
+        logger.info(
+            "fetch_and_parse_call_logs: content fetched",
+            content_is_none=content is None,
+            content_len=len(content) if content else 0,
         )
         if content is None:
             return None
@@ -456,18 +451,39 @@ class VapiRecordingService:
         timeout_seconds: float,
         verify_ssl: bool,
     ) -> Optional[bytes]:
+        logger.info(
+            "fetch_call_logs_content: ENTRY",
+            call_id=call_id,
+            api_key_present=bool(api_key),
+            legacy_url=legacy_url,
+            will_try_tier1=bool(call_id and api_key),
+            will_try_tier2=bool(legacy_url),
+        )
         if call_id and api_key:
             try:
                 url = cls.build_artifact_url(
                     call_id, VapiArtifactType.CALL_LOGS
                 )
                 headers = {"Authorization": f"Bearer {api_key}"}
+                logger.info(
+                    "fetch_call_logs_content: TIER1 request",
+                    url=url,
+                    call_id=call_id,
+                    api_key_len=len(api_key),
+                )
                 response = requests.get(
                     url,
                     headers=headers,
                     timeout=timeout_seconds,
                     verify=verify_ssl,
                     allow_redirects=True,
+                )
+                logger.info(
+                    "fetch_call_logs_content: TIER1 response",
+                    call_id=call_id,
+                    status=response.status_code,
+                    content_len=len(response.content),
+                    final_url=response.url,
                 )
                 if response.status_code in (401, 403):
                     logger.warning(
@@ -487,11 +503,21 @@ class VapiRecordingService:
 
         if legacy_url:
             try:
+                logger.info(
+                    "fetch_call_logs_content: TIER2 request",
+                    legacy_url=legacy_url,
+                )
                 response = requests.get(
                     legacy_url,
                     timeout=timeout_seconds,
                     verify=verify_ssl,
                     stream=True,
+                )
+                logger.info(
+                    "fetch_call_logs_content: TIER2 response",
+                    legacy_url=legacy_url,
+                    status=response.status_code,
+                    content_len=len(response.content),
                 )
                 response.raise_for_status()
                 return response.content
@@ -519,8 +545,16 @@ class VapiRecordingService:
                 try:
                     payload = json.loads(line)
                 except json.JSONDecodeError:
+                    logger.warning(
+                        "vapi_call_logs_line_json_decode_failed",
+                        line_repr=line[:300],
+                    )
                     payload = {"raw_line": line}
                 entries.append(cls._normalise_call_log_entry(payload))
+        logger.info(
+            "parse_call_log_content: DONE",
+            entries_count=len(entries),
+        )
         return entries
 
     @classmethod

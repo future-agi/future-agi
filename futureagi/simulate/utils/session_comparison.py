@@ -579,7 +579,10 @@ def fetch_simulated_call_recordings(call_execution: CallExecution) -> dict:
     provider_data = call_execution.provider_call_data
     payload = None
     if isinstance(provider_data, dict):
-        payload = provider_data.get("vapi", {})
+        if len(provider_data) == 1:
+            payload = next(iter(provider_data.values()))
+        else:
+            payload = provider_data.get("vapi", {})
     if not isinstance(payload, dict):
         payload = {}
 

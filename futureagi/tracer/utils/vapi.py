@@ -30,6 +30,21 @@ metrics_calculator = ConversationMetricsCalculator() if ConversationMetricsCalcu
 
 def normalize_vapi_data(log: dict, *, api_key: str | None = None) -> dict:
     """Normalize a Vapi log entry; api_key routes call-logs through the auth endpoint."""
+    logger.info(
+        "normalize_vapi_data: ENTRY",
+        log_type=type(log).__name__,
+        is_dict=isinstance(log, dict),
+        log_repr=(repr(log)[:500] if not isinstance(log, dict) else f"dict_keys={list(log.keys())[:20]}"),
+        api_key_present=bool(api_key),
+        api_key_len=len(api_key) if api_key else 0,
+    )
+    if not isinstance(log, dict):
+        logger.error(
+            "normalize_vapi_data: LOG IS NOT A DICT — skipping",
+            log_type=type(log).__name__,
+            log_repr=repr(log)[:1000],
+        )
+        return {"id": None, "span_attributes": {}}
     status = _map_status(log.get("status", ""))
     start_time, end_time = _extract_timestamps(log)
     eval_attributes = _extract_eval_attributes(log, api_key=api_key)
@@ -39,7 +54,7 @@ def normalize_vapi_data(log: dict, *, api_key: str | None = None) -> dict:
     total_tokens = eval_attributes.get(SpanAttributes.USAGE_TOTAL_TOKENS)
     latency_ms = eval_attributes.get("avg_agent_latency_ms")
 
-    return {
+    out = {
         "id": log.get("id"),
         "start_time": start_time,
         "end_time": end_time,
@@ -52,6 +67,13 @@ def normalize_vapi_data(log: dict, *, api_key: str | None = None) -> dict:
         "metadata": log.get("metadata"),
         "span_attributes": eval_attributes,
     }
+    logger.info(
+        "normalize_vapi_data: EXIT",
+        out_id=out.get("id"),
+        span_attr_keys=list(eval_attributes.keys())[:30],
+        has_call_logs="call_logs" in eval_attributes,
+    )
+    return out
 
 
 def _map_status(vapi_status: str) -> str:
@@ -81,11 +103,26 @@ def _extract_eval_attributes(
     api_key: str | None = None,
 ) -> dict:
     """Extract and flatten eval attributes from a Vapi log; skip call-logs via include_call_logs=False."""
+    logger.info(
+        "extract_eval_attributes: ENTRY",
+        log_type=type(log).__name__,
+        is_dict=isinstance(log, dict),
+        include_call_logs=include_call_logs,
+        api_key_present=bool(api_key),
+    )
+    if not isinstance(log, dict):
+        logger.error(
+            "extract_eval_attributes: LOG IS NOT A DICT",
+            log_type=type(log).__name__,
+            log_repr=repr(log)[:1000],
+        )
+        return {}
     eval_attributes = {
         SpanAttributes.SPAN_KIND: "conversation",
         "raw_log": log,
         "vapi.call_id": log.get("id"),
     }
+    logger.info("extract_eval_attributes: calling sub-extractors")
     _extract_llm_and_token_details(log, eval_attributes)
     _extract_conversation(log, eval_attributes)
     _extract_recording_urls(log, eval_attributes)
@@ -93,8 +130,16 @@ def _extract_eval_attributes(
     _extract_metadata(log, eval_attributes)
     _extract_common_call_fields(log, eval_attributes)
     if include_call_logs:
+        logger.info("extract_eval_attributes: -> _extract_call_logs")
         _extract_call_logs(log, eval_attributes, api_key=api_key)
+    else:
+        logger.info("extract_eval_attributes: call_logs SKIPPED (include_call_logs=False)")
 
+    logger.info(
+        "extract_eval_attributes: EXIT",
+        attr_count=len(eval_attributes),
+        has_call_logs="call_logs" in eval_attributes,
+    )
     return eval_attributes
 
 
@@ -356,9 +401,32 @@ def _extract_call_logs(log: dict, eval_attributes: dict, *, api_key: str | None 
     """Fetch call logs (Tier 1 auth then Tier 2 legacy) and store under call_logs in span_attributes."""
     from tracer.utils.vapi_recording import VapiRecordingService
 
+    logger.info(
+        "extract_call_logs: ENTRY",
+        log_type=type(log).__name__,
+        is_dict=isinstance(log, dict),
+        log_repr=(repr(log)[:500] if not isinstance(log, dict) else "dict"),
+    )
+    if not isinstance(log, dict):
+        logger.error(
+            "extract_call_logs: LOG IS NOT A DICT — cannot extract call_id/artifact",
+            log_type=type(log).__name__,
+            log_repr=repr(log)[:1000],
+        )
+        return
+
     call_id = log.get("id")
-    legacy_url = log.get("artifact", {}).get("logUrl")
+    artifact = log.get("artifact", {})
+    legacy_url = artifact.get("logUrl") if isinstance(artifact, dict) else None
+    logger.info(
+        "extract_call_logs: resolved ids",
+        call_id=call_id,
+        artifact_type=type(artifact).__name__,
+        artifact_is_dict=isinstance(artifact, dict),
+        legacy_url=legacy_url,
+    )
     if not (call_id or legacy_url):
+        logger.info("extract_call_logs: no call_id or legacy_url, returning")
         return
 
     entries = VapiRecordingService.fetch_and_parse_call_logs(
@@ -367,6 +435,7 @@ def _extract_call_logs(log: dict, eval_attributes: dict, *, api_key: str | None 
         legacy_url=legacy_url,
     )
     if entries is None:
+        logger.warning("extract_call_logs: fetch returned None")
         return
 
     eval_attributes["call_logs"] = entries

@@ -78,20 +78,21 @@ class TestIsAuthenticatedDownload:
         ) is False
 
 
-class TestIsS3Url:
+class TestIsFagiS3Url:
     @pytest.mark.parametrize(
         "url,expected",
         [
-            ("https://bucket.s3.amazonaws.com/x.mp3", True),
-            ("http://minio:9000/bucket/x.mp3", True),
             ("https://fi-content-dev.s3.ap-south-1.amazonaws.com/y.mp3", True),
+            ("https://fi-content.s3.amazonaws.com/x.mp3", True),
+            ("https://fi-customer-data.s3.us-east-1.amazonaws.com/z.mp3", True),
             ("https://storage.vapi.ai/x.mp3", False),
+            ("https://other-bucket.s3.amazonaws.com/x.mp3", False),
             ("", False),
             (None, False),
         ],
     )
-    def test_matches_s3_markers(self, url, expected):
-        assert VapiRecordingService.is_s3_url(url) is expected
+    def test_matches_fagi_buckets_only(self, url, expected):
+        assert VapiRecordingService.is_fagi_s3_url(url) is expected
 
 
 class _FakeHttpResponse:

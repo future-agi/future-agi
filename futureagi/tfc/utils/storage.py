@@ -1698,6 +1698,17 @@ def upload_audio_to_s3(
         _generated_object_key = object_key is None
 
         bucket_name = UPLOAD_BUCKET_NAME
+        logger.info(
+            "upload_audio_to_s3: ENTRY",
+            resolved_bucket=bucket_name,
+            upload_bucket_name_env=os.getenv("UPLOAD_BUCKET_NAME"),
+            minio_bucket_name_env=os.getenv("MINIO_BUCKET_NAME"),
+            object_key=object_key,
+            audio_data_type=type(audio_data).__name__,
+            org_id=org_id,
+            storage_backend=os.getenv("STORAGE_BACKEND"),
+            s3_endpoint=os.getenv("S3_ENDPOINT") or os.getenv("S3_ENDPOINT_URL"),
+        )
 
         if isinstance(audio_data, str) and is_own_storage_url(audio_data, bucket_name):
             return audio_data
@@ -1828,6 +1839,13 @@ def upload_audio_to_s3(
             object_key = f"tempcust/{uuid.uuid4()}.{ext}"
 
         minio_client = get_storage_client()
+        logger.info(
+            "upload_audio_to_s3: about to ensure_bucket + put_object",
+            bucket=bucket_name,
+            object_key=object_key,
+            bytes=len(audio_bytes),
+            client_host=getattr(minio_client, "_base_url", None),
+        )
         ensure_bucket(minio_client, bucket_name)
 
         # Upload the audio bytes to S3
@@ -1840,6 +1858,11 @@ def upload_audio_to_s3(
                 length=len(audio_bytes),
                 content_type=content_type,
             )
+        logger.info(
+            "upload_audio_to_s3: put_object OK",
+            bucket=bucket_name,
+            object_key=object_key,
+        )
 
         if org_id:
             try:

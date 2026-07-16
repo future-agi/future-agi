@@ -125,6 +125,23 @@ def fetch_logs_for_provider(
                     start_time=last_fetched_at,
                     end_time=end_time_to_use,
                 )
+                logger.info(
+                    "fetch_logs_for_provider: get_call_logs RETURNED",
+                    provider_id=str(provider_id),
+                    logs_type=type(logs).__name__,
+                    logs_is_list=isinstance(logs, list),
+                    logs_len=len(logs) if hasattr(logs, "__len__") else "n/a",
+                    sample_types=(
+                        [type(x).__name__ for x in logs[:5]]
+                        if isinstance(logs, (list, tuple))
+                        else "n/a"
+                    ),
+                    first_elem_repr=(
+                        repr(logs[0])[:400]
+                        if isinstance(logs, (list, tuple)) and logs
+                        else "n/a"
+                    ),
+                )
             except HTTPError as e:
                 if e.response is not None and e.response.status_code in (401, 403):
                     logger.error(
@@ -390,7 +407,30 @@ def process_and_store_logs(
 
     normalize_fn = normalization_functions[provider.provider]
 
-    for log in logs:
+    logger.info(
+        "process_and_store_logs: LOOP START",
+        provider_id=str(provider.id),
+        provider_type=provider.provider,
+        logs_len=len(logs) if isinstance(logs, (list, tuple)) else "NOT_A_LIST",
+        logs_type=type(logs).__name__,
+        api_key_present=bool(api_key),
+    )
+    if not isinstance(logs, (list, tuple)):
+        logger.error(
+            "process_and_store_logs: logs is NOT a list/tuple",
+            logs_type=type(logs).__name__,
+            logs_repr=repr(logs)[:1000],
+        )
+        return
+
+    for log_idx, log in enumerate(logs):
+        logger.info(
+            "process_and_store_logs: ITER",
+            idx=log_idx,
+            log_type=type(log).__name__,
+            is_dict=isinstance(log, dict),
+            log_repr=(repr(log)[:300] if not isinstance(log, dict) else f"keys={list(log.keys())[:15]}"),
+        )
         provider_log_id = None
         try:
             normalized_data = normalize_fn(log)
@@ -502,7 +542,10 @@ def normalize_and_store_logs(body, agent_definition_id) -> None:
         # Webhook path already has the AgentDefinition in scope, so pass
         # the api_key directly. process_and_store_logs falls back to the
         # Selector otherwise.
-        api_key = getattr(agent_definition, "api_key", None) or None
+        version = agent_definition.active_version or agent_definition.latest_version
+        from simulate.services.agent_definition import resolve_api_key_for_version
+
+        api_key = resolve_api_key_for_version(version) if version else None
         process_and_store_logs([call_log], provider, api_key=api_key)
 
         logger.info("normalize_and_store_logs completed")
