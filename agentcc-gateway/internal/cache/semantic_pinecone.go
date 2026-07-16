@@ -181,6 +181,3 @@ func (p *PineconeBackend) Len() int {
 func (p *PineconeBackend) Dims() int {
 	return p.dims
 }
-
-func (p *PineconeBackend) Close() {}
-

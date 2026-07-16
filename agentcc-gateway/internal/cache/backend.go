@@ -34,7 +34,4 @@ type SemanticBackend interface {
 
 	// Dims returns the configured vector dimensions.
 	Dims() int
-
-	// Close releases resources held by the backend (connections, file handles, etc.).
-	Close()
 }

@@ -31,6 +31,3 @@ func (m *MemorySemanticBackend) Len() int {
 func (m *MemorySemanticBackend) Dims() int {
 	return m.store.Dims()
 }
-
-func (m *MemorySemanticBackend) Close() {}
-

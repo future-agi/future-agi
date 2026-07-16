@@ -692,8 +692,9 @@ func main() {
 		if redisClient != nil {
 			redisClient.Close()
 		}
-		if semBackend != nil {
-			semBackend.Close()
+		// Backends holding persistent connections (e.g. Valkey) implement Close.
+		if closer, ok := semBackend.(interface{ Close() }); ok {
+			closer.Close()
 		}
 	}()
 

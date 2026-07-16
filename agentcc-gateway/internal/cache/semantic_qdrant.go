@@ -202,8 +202,6 @@ func (q *QdrantBackend) Dims() int {
 	return q.dims
 }
 
-func (q *QdrantBackend) Close() {}
-
 func (q *QdrantBackend) ensureCollection() error {
 	// Check if collection exists.
 	req, err := http.NewRequest("GET", q.baseURL+"/collections/"+q.collection, nil)
