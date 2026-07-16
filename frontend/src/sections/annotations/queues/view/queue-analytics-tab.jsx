@@ -272,9 +272,20 @@ export default function QueueAnalyticsTab({ queueId }) {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-    } catch {
+    } catch (err) {
       const { enqueueSnackbar } = await import("notistack");
-      enqueueSnackbar("Export failed", { variant: "error" });
+      let message = "Export failed";
+      // The request uses responseType:"blob", so an error body arrives as a Blob —
+      // read and parse it to surface the server's actionable message (e.g. the 413
+      // export_too_large cap) instead of a generic failure.
+      try {
+        const data = err?.response?.data;
+        const parsed = data instanceof Blob ? JSON.parse(await data.text()) : data;
+        message = parsed?.result || parsed?.message || message;
+      } catch {
+        // non-JSON / unreadable error body — keep the generic message
+      }
+      enqueueSnackbar(message, { variant: "error" });
     }
   };
 
