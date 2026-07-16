@@ -34282,6 +34282,9 @@ it reaches any query builder.
 export const tracerDashboardQueryBodyWorkflowDefault = `observability`;
 export const tracerDashboardQueryBodyProjectIdsDefault = [];
 export const tracerDashboardQueryBodyGranularityDefault = `day`;
+export const tracerDashboardQueryBodyTimezoneDefault = `UTC`;
+
+
 export const tracerDashboardQueryBodyMetricsItemSourceDefault = `traces`;
 export const tracerDashboardQueryBodyMetricsItemAggregationDefault = `avg`;
 export const tracerDashboardQueryBodyMetricsItemAttributeTypeDefault = `string`;
@@ -34303,6 +34306,7 @@ export const TracerDashboardQueryBody = zod.object({
   "custom_end": zod.string().datetime({"offset":true}).optional()
 }),
   "granularity": zod.enum(['minute', 'hour', 'day', 'week', 'month']).default(tracerDashboardQueryBodyGranularityDefault),
+  "timezone": zod.string().min(1).default(tracerDashboardQueryBodyTimezoneDefault),
   "metrics": zod.array(zod.object({
   "id": zod.string().optional(),
   "name": zod.string().min(1),
@@ -34585,6 +34589,9 @@ export const TracerDashboardWidgetsPreviewQueryParams = zod.object({
 export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigWorkflowDefault = `observability`;
 export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigProjectIdsDefault = [];
 export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigGranularityDefault = `day`;
+export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigTimezoneDefault = `UTC`;
+
+
 export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigMetricsItemSourceDefault = `traces`;
 export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigMetricsItemAggregationDefault = `avg`;
 export const tracerDashboardWidgetsPreviewQueryBodyQueryConfigMetricsItemAttributeTypeDefault = `string`;
@@ -34607,6 +34614,7 @@ export const TracerDashboardWidgetsPreviewQueryBody = zod.object({
   "custom_end": zod.string().datetime({"offset":true}).optional()
 }),
   "granularity": zod.enum(['minute', 'hour', 'day', 'week', 'month']).default(tracerDashboardWidgetsPreviewQueryBodyQueryConfigGranularityDefault),
+  "timezone": zod.string().min(1).default(tracerDashboardWidgetsPreviewQueryBodyQueryConfigTimezoneDefault),
   "metrics": zod.array(zod.object({
   "id": zod.string().optional(),
   "name": zod.string().min(1),

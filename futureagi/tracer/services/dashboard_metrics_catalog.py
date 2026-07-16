@@ -733,6 +733,11 @@ def build_metrics_catalog(
                 "source": "both",
                 "sources": ["datasets", "traces"],
                 "output_type": label_type,
+                "type": (
+                    "string"
+                    if label_type in ("categorical", "choice", "thumbs_up_down", "text")
+                    else "number"
+                ),
             }
 
             if label_type == "categorical":
@@ -1191,8 +1196,8 @@ def _annotate_metric_roles(metrics: list[dict]) -> list[dict]:
 
     Derived from ``type`` (not a name whitelist) so a new string-typed
     dimension added later can't silently become a selectable Y-axis metric.
-    Entries without ``type`` (eval / annotation / custom_column) default to
-    ``metric`` — they are all numeric aggregatable today.
+    Annotation labels remain metrics even when string-typed because categorical
+    labels support count aggregation as well as filter/breakdown use.
 
     Also applies the ``user_count → Users`` family of display renames — the
     frontend already groups these under a "Users"/"Sessions" tab, so the
@@ -1202,7 +1207,11 @@ def _annotate_metric_roles(metrics: list[dict]) -> list[dict]:
         name = m.get("name", "")
         if name in _COUNT_METRIC_RENAMES:
             m["display_name"] = _COUNT_METRIC_RENAMES[name]
-        m["role"] = "dimension" if m.get("type") == "string" else "metric"
+        is_string_dimension = (
+            m.get("type") == "string"
+            and m.get("category") != "annotation_metric"
+        )
+        m["role"] = "dimension" if is_string_dimension else "metric"
     return metrics
 
 

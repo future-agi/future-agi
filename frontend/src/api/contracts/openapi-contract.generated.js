@@ -50661,6 +50661,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
           ],
           "default": "day"
         },
+        "timezone": {
+          "title": "Timezone",
+          "type": "string",
+          "default": "UTC",
+          "minLength": 1
+        },
         "metrics": {
           "type": "array",
           "items": {

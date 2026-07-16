@@ -1,5 +1,6 @@
 import structlog
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime
 from django.http import Http404
 from django.utils import timezone
 from rest_framework.decorators import action
@@ -105,6 +106,51 @@ def _dashboard_filter_to_internal(filter_item):
     return internal
 
 
+def _resolve_project_filter_values(query_config, workspace):
+    project_filters = list(query_config.get("filters", []))
+    for metric in query_config.get("metrics", []):
+        project_filters.extend(metric.get("filters", []))
+
+    for filter_item in project_filters:
+        if (
+            filter_item.get("metric_type") != "system_metric"
+            or (filter_item.get("metric_name") or "").lower() != "project"
+        ):
+            continue
+
+        operator = filter_item.get("operator")
+        value = filter_item.get("value")
+        if value in (None, "", []):
+            continue
+
+        values = value if isinstance(value, list) else [value]
+        if operator in ("str_contains", "str_not_contains"):
+            query = Project.objects.filter(workspace=workspace)
+            for part in values:
+                query = query.filter(name__icontains=str(part))
+            resolved = [str(project_id) for project_id in query.values_list("id", flat=True)]
+        else:
+            candidates = Project.objects.filter(workspace=workspace)
+            ids = {str(project_id) for project_id in candidates.values_list("id", flat=True)}
+            names = {
+                name.casefold(): str(project_id)
+                for project_id, name in candidates.values_list("id", "name")
+            }
+            resolved = [
+                str(item) if str(item) in ids else names.get(str(item).casefold())
+                for item in values
+            ]
+            resolved = [item for item in resolved if item]
+
+        is_negative = operator in ("not_contains", "str_not_contains")
+        filter_item["operator"] = "not_contains" if is_negative else "contains"
+        filter_item["value"] = resolved or (
+            [] if is_negative else ["00000000-0000-0000-0000-000000000000"]
+        )
+
+    return query_config
+
+
 def _normalize_dashboard_query_filters(query_config):
     """Translate canonical API filters to the dashboard builders' internal shape."""
     query_config = dict(query_config)
@@ -191,14 +237,36 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
         formatter = DatasetQueryBuilder(
             {**query_config, "metrics": query_config["metrics"]}
         )
-        start_date, end_date = formatter.parse_time_range()
-        from tracer.services.clickhouse.query_builders.dashboard_base import (
+        trace_formatter = DashboardQueryBuilder(query_config)
+        start_date, end_date = trace_formatter.parse_time_range()
+        from tracer.services.clickhouse.query_builders.dashboard import (
             _generate_time_buckets,
         )
 
         all_buckets = _generate_time_buckets(
-            start_date, end_date, formatter.granularity
+            start_date,
+            end_date,
+            formatter.granularity,
+            trace_formatter.timezone,
         )
+        for _metric_info, rows in all_metric_results:
+            for row in rows:
+                timestamp = row.get("time_bucket")
+                if hasattr(timestamp, "isoformat"):
+                    if isinstance(timestamp, date) and not isinstance(
+                        timestamp, datetime
+                    ):
+                        timestamp = datetime(
+                            timestamp.year,
+                            timestamp.month,
+                            timestamp.day,
+                            tzinfo=trace_formatter.timezone,
+                        )
+                    elif timestamp.tzinfo is None:
+                        timestamp = timestamp.replace(tzinfo=trace_formatter.timezone)
+                    else:
+                        timestamp = timestamp.astimezone(trace_formatter.timezone)
+                    row["time_bucket"] = timestamp.isoformat()
         unit_map = {**METRIC_UNITS, **DATASET_METRIC_UNITS, **SIMULATION_METRIC_UNITS}
         formatted_metrics = []
         for metric_info, rows in all_metric_results:
@@ -399,6 +467,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
                 # Resolve project_ids
                 project_ids = trace_config.get("project_ids", [])
+                trace_config["all_workspace_projects"] = not project_ids
                 if not project_ids:
                     project_ids = list(
                         Project.objects.filter(
@@ -416,6 +485,10 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         return self._gm.bad_request(
                             "One or more project_ids do not belong to this workspace"
                         )
+
+                trace_config = _resolve_project_filter_values(
+                    trace_config, request.workspace
+                )
 
                 # Build project name map from current workspace projects
                 project_name_map = dict(
@@ -1795,6 +1868,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
         if trace_metrics:
             trace_config = {**query_config, "metrics": trace_metrics}
             project_ids = trace_config.get("project_ids", [])
+            trace_config["all_workspace_projects"] = not project_ids
             if not project_ids:
                 project_ids = list(
                     Project.objects.filter(
@@ -1812,6 +1886,7 @@ class DashboardWidgetViewSet(BaseModelViewSetMixin, ModelViewSet):
                     return self._gm.bad_request(
                         "Some project_ids are invalid or not in this workspace"
                     )
+            trace_config = _resolve_project_filter_values(trace_config, workspace)
             trace_config["organization_id"] = str(workspace.organization_id)
             trace_config["workspace_id"] = str(workspace.id)
             # v1↔v2 dispatch — flips with CH25_QUERY_TYPES_V2_PRIMARY=DASHBOARD
