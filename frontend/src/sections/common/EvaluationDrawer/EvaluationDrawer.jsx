@@ -581,7 +581,7 @@ const EvaluationDrawerChild = ({
               ]
             : []
         }
-        existingEvals={existingEvals?.length ? existingEvals : (SavedEvals || [])}
+        existingEvals={existingEvals?.length ? existingEvals : SavedEvals || []}
         requiredColumnId={requiredColumnIds || ""}
         onEvalAdded={async (evalConfig) => {
           const { handleRun } = actionButtonConfig;
