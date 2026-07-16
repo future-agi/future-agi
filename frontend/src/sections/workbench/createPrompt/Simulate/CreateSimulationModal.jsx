@@ -55,6 +55,7 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
     scenarioIds: [],
     versionId: "",
   });
+  const [isStarting, setIsStarting] = useState(false);
 
   // Fetch available scenarios using existing hook
   const {
@@ -166,15 +167,37 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
         },
       );
     },
-    onSuccess: (response) => {
-      enqueueSnackbar("Simulation created successfully", {
-        variant: "success",
-      });
+    onSuccess: async (response) => {
+      const simulationId = response?.data?.result?.id;
       // Invalidate the simulations list cache to trigger a refresh
       queryClient.invalidateQueries({
         queryKey: ["run-tests", "prompt", promptTemplateId],
       });
-      onSuccess?.(response?.data?.result?.id);
+        if (simulationId) {
+        setIsStarting(true);
+        try {
+          await axios.post(
+            endpoints.promptSimulation.execute(promptTemplateId, simulationId),
+            {},
+          );
+          enqueueSnackbar("Simulation created and execution started", {
+            variant: "success",
+          });
+        } catch (error) {
+          enqueueSnackbar(
+            error?.response?.data?.error ||
+              "Simulation created, but failed to start execution",
+            { variant: "warning" },
+          );
+        } finally {
+          setIsStarting(false);
+        }
+      } else {
+        enqueueSnackbar("Simulation created successfully", {
+          variant: "success",
+        });
+      }
+      onSuccess?.(simulationId);
     },
     onError: (error) => {
       enqueueSnackbar(
@@ -469,12 +492,15 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
           onClick={handleSubmit}
           disabled={
             isCreating ||
+            isStarting ||
             !formData.name.trim() ||
             !formData.versionId ||
             formData.scenarioIds.length === 0
           }
           startIcon={
-            isCreating && <CircularProgress size={16} color="inherit" />
+            (isCreating || isStarting) && (
+              <CircularProgress size={16} color="inherit" />
+            )
           }
           sx={{
             backgroundColor: "primary.main",
@@ -483,7 +509,11 @@ const CreateSimulationModal = ({ open, onClose, onSuccess }) => {
             },
           }}
         >
-          {isCreating ? "Creating..." : "Create Simulation"}
+          {isCreating
+            ? "Creating..."
+            : isStarting
+              ? "Starting..."
+              : "Create Simulation"}
         </Button>
       </DialogActions>
     </Dialog>

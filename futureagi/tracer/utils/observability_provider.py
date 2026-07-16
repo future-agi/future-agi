@@ -223,8 +223,9 @@ def _create_observation_span(
 
     CDC is off (CH25): the fi-collector export owns the CH ``spans``/``traces``
     write — there are no PG ``tracer_trace`` / ``tracer_observation_span`` tables.
-    The trace id is deterministic (provider + log id) so a re-poll upserts in
-    place under the CH RMT sort keys (both include trace_id) instead of duplicating.
+    The trace id is deterministic (project id : provider : log id) so a re-poll
+    upserts in place under the CH RMT sort keys (both include trace_id) instead
+    of duplicating.
     """
     span_kwargs = dict(
         id=uuid.uuid4(),
@@ -246,7 +247,7 @@ def _create_observation_span(
         latency_ms=normalized_data.get("latency_ms"),
     )
     trace = Trace(
-        id=_provider_collector_trace_id(provider.provider, provider_log_id),
+        id=_provider_collector_trace_id(project.id, provider.provider, provider_log_id),
         project=project,
         metadata=metadata,
     )
@@ -256,15 +257,27 @@ def _create_observation_span(
 _PROVIDER_SPAN_NS = uuid.UUID("4d61d4e2-7b3c-4a1e-9f02-2c6a5b8e1d70")
 
 
-def _provider_collector_span_id(provider: str, provider_log_id: str) -> str:
+def _provider_collector_span_id(
+    project_id: str | uuid.UUID, provider: str, provider_log_id: str
+) -> str:
     """Deterministic id stable across re-polls so CH ``spans`` (ReplacingMergeTree) upserts in place.
+    Keyed by ``project_id`` so a call shared across projects (one provider account, many
+    projects) gets a distinct id per project — only the project-scoping convention matches
+    deterministic_id.py; this natural key (``:``-joined, provider-call) is local to this module.
     Caveat: re-emits reuse the same ``_version`` (start_time), so late data may lose the merge."""
-    return uuid.uuid5(_PROVIDER_SPAN_NS, f"{provider}:{provider_log_id}").hex[:16]
+    return uuid.uuid5(
+        _PROVIDER_SPAN_NS, f"{str(project_id)}:{provider}:{provider_log_id}"
+    ).hex[:16]
 
 
-def _provider_collector_trace_id(provider: str, provider_log_id: str) -> uuid.UUID:
-    """Deterministic trace id stable across re-polls. The CH ``spans`` and ``traces`` RMT sort keys both include trace_id, so a random id per poll would duplicate; this keys both writes to the call."""
-    return uuid.uuid5(_PROVIDER_SPAN_NS, f"trace:{provider}:{provider_log_id}")
+def _provider_collector_trace_id(
+    project_id: str | uuid.UUID, provider: str, provider_log_id: str
+) -> uuid.UUID:
+    """Deterministic trace id stable across re-polls. The CH ``spans`` and ``traces`` RMT sort keys both include trace_id, so a random id per poll would duplicate; this keys both writes to the call.
+    Keyed by ``project_id`` so the same provider call ingested into multiple projects yields a distinct trace per project."""
+    return uuid.uuid5(
+        _PROVIDER_SPAN_NS, f"trace:{str(project_id)}:{provider}:{provider_log_id}"
+    )
 
 
 def _to_epoch_ns(value) -> int | None:
@@ -319,7 +332,7 @@ def _export_provider_call_to_collector(span, provider: str, provider_log_id: str
         start_ns = _to_epoch_ns(span.start_time)
         span_dict = {
             "trace_id": span.trace.id.hex,
-            "span_id": _provider_collector_span_id(provider, provider_log_id),
+            "span_id": _provider_collector_span_id(project.id, provider, provider_log_id),
             "parent_span_id": None,
             "parent_id": None,
             "name": span.name,

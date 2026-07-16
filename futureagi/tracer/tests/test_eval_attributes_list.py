@@ -307,6 +307,58 @@ class TestSpanAttributeKeysNormalisation:
         assert bad == [], f"Found malformed paths: {bad[:5]}"
 
 
+class TestSpanAttributeKeysPartitionPruning:
+    """The recent-window discovery query must prune by the partition key.
+
+    ``spans`` is partitioned by ``toDate(start_time)``; ``created_at`` is
+    neither the partition key nor in the sort key. Windowing/ordering by
+    ``created_at`` defeats partition pruning and scans the whole project
+    (measured ~23x over-read at 100k spans -> Code: 159 timeouts). Pin that
+    the query windows and orders by ``start_time`` instead.
+    """
+
+    def _capture_sql(self, monkeypatch, *, recent_days=7) -> str:
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+        captured: dict = {}
+
+        class _Result:
+            data: list = []
+
+        def _capture(self, query, params, timeout_ms=None):
+            captured["query"] = query
+            return _Result()
+
+        monkeypatch.setattr(
+            AnalyticsQueryService, "execute_ch_query", _capture, raising=True
+        )
+        AnalyticsQueryService().get_span_attribute_keys_ch_for_projects(
+            ["c4de3065-12b5-488c-a814-aa1c8e3f856f"], recent_days=recent_days
+        )
+        return captured["query"]
+
+    def test_windows_and_orders_by_start_time(self, monkeypatch):
+        sql = self._capture_sql(monkeypatch, recent_days=7)
+        # start_time is the partition key -> CH can prune to the window.
+        assert "start_time >= now() - toIntervalDay" in sql
+        assert "ORDER BY start_time DESC" in sql
+
+    def test_does_not_window_or_order_by_created_at(self, monkeypatch):
+        sql = self._capture_sql(monkeypatch, recent_days=7)
+        # created_at defeats pruning; it must not gate the recent window.
+        assert "created_at >= now()" not in sql
+        assert "ORDER BY created_at" not in sql
+
+    def test_full_project_discovery_skips_order_by_to_short_circuit(self, monkeypatch):
+        # recent_days=None (dashboard/metrics filter discovery): no window, so
+        # the ORDER BY must be dropped or LIMIT 10000 can't short-circuit and
+        # CH scans the whole project (~477k rows) instead of ~15k.
+        sql = self._capture_sql(monkeypatch, recent_days=None)
+        assert "start_time >= now()" not in sql
+        assert "ORDER BY start_time" not in sql
+        assert "LIMIT 10000" in sql
+
+
 @pytest.mark.integration
 @pytest.mark.api
 class TestGetEvalAttributesListUnknownRowType:

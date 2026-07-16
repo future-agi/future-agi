@@ -4824,6 +4824,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                     source_type=source_type,
                     organization=request.organization,
                     workspace=getattr(request, "workspace", None) or queue.workspace,
+                    project_id=getattr(source_obj, "project_id", None),
                     order=max_order,
                     **{f"{fk_field}_id": source_pk},
                 )
@@ -4948,6 +4949,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                 source_type=source_type,
                 organization=request.organization,
                 workspace=getattr(request, "workspace", None) or queue.workspace,
+                project_id=project_id,
                 order=max_order + i,
                 **{f"{fk_field}_id": tid},
             )

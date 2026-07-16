@@ -715,18 +715,22 @@ def _ch_session_fields_for_item(session_id):
         return None
 
 
-def _batch_ch_spans(span_ids):
+def _batch_ch_spans(span_ids, *, project_id=None):
     """Batch CH point-read for a render path: ``{str(id): CHSpan}`` over *span_ids*
     in one query. CH error → ``{}`` (FAIL OPEN — the per-item collector branch then
     renders the ``deleted`` sentinel, same as a single-read miss). Backs
-    :class:`CollectorSourceCache` so list/export pages do one CH read, not one per item."""
+    :class:`CollectorSourceCache` so list/export pages do one CH read, not one per item.
+    ``project_id`` (optional) scopes the read to one tenant on the ``spans`` PK prefix;
+    omit for prior behavior — see :func:`_batch_ch_trace_roots` on why not ``org_id``."""
     if not span_ids:
         return {}
     from tracer.services.clickhouse.v2 import get_reader
 
     try:
         with get_reader() as reader:
-            spans = reader.list_by_ids([str(s) for s in span_ids])
+            spans = reader.list_by_ids(
+                [str(s) for s in span_ids], project_id=project_id
+            )
     except Exception as exc:
         logger.warning(
             "ch_span_batch_render_error", count=len(span_ids), error=str(exc)
@@ -781,9 +785,10 @@ def _batch_ch_trace_roots(trace_ids, *, project_id=None):
     }
 
 
-def _batch_ch_session_fields(session_ids):
+def _batch_ch_session_fields(session_ids, *, project_id=None):
     """Batch CH read of session identity fields: ``{str(id): fields}`` in one query.
-    CH error → ``{}`` (FAIL OPEN). Companion to :func:`_batch_ch_spans`."""
+    CH error → ``{}`` (FAIL OPEN). Companion to :func:`_batch_ch_spans`. ``project_id``
+    (optional) scopes the read to one tenant on the ``trace_sessions`` PK prefix."""
     if not session_ids:
         return {}
     from tracer.services.clickhouse.v2.trace_session_dict_reader import (
@@ -791,7 +796,12 @@ def _batch_ch_session_fields(session_ids):
     )
 
     try:
-        return resolve_session_fields([str(s) for s in session_ids]) or {}
+        return (
+            resolve_session_fields(
+                [str(s) for s in session_ids], project_id=project_id
+            )
+            or {}
+        )
     except Exception as exc:
         logger.warning(
             "ch_session_batch_render_error", count=len(session_ids), error=str(exc)
@@ -821,32 +831,50 @@ class CollectorSourceCache:
     @classmethod
     def for_items(cls, items):
         """Collect the tracer source ids across *items* and batch-resolve each kind
-        from CH in one read. Traces resolve to their root span (LEAN), spans and
-        sessions by soft id. Empty id-sets short-circuit, so a page with no items of
-        a kind pays for no read of that kind."""
-        span_ids, session_ids, trace_ids = set(), set(), set()
+        from CH. Traces resolve to their root span (LEAN), spans and sessions by soft id.
+
+        Reads are grouped by the item's denormalized ``project_id`` and scoped to it,
+        so each read prunes the ``spans`` PK prefix to one tenant instead of scanning
+        the whole multi-tenant table. A page's items can legitimately span projects
+        (add-items only tenant-scopes the source), so a single queue-wide scope would
+        drop off-project items and render them ``deleted`` — hence per-item project.
+        Items whose ``project_id`` is NULL (pre-denormalization rows) fall into one
+        unscoped group: correct, just unpruned. A page spans few distinct projects, so
+        this is a handful of scoped reads, not one per item. Empty id-sets short-circuit."""
+        # project_id (str, or None for pre-denorm rows) -> per-kind soft-id sets
+        by_project: dict[object, dict] = {}
         for item in items or []:
             source_type = getattr(item, "source_type", None)
+            pid = getattr(item, "project_id", None)
+            buckets = by_project.setdefault(
+                str(pid) if pid else None,
+                {"spans": set(), "sessions": set(), "traces": set()},
+            )
             if (
                 source_type == QueueItemSourceType.OBSERVATION_SPAN.value
                 and item.observation_span_id
             ):
-                span_ids.add(str(item.observation_span_id))
+                buckets["spans"].add(str(item.observation_span_id))
             elif (
                 source_type == QueueItemSourceType.TRACE_SESSION.value
                 and item.trace_session_id
             ):
-                session_ids.add(str(item.trace_session_id))
+                buckets["sessions"].add(str(item.trace_session_id))
             elif source_type == QueueItemSourceType.TRACE.value and item.trace_id:
-                trace_ids.add(str(item.trace_id))
-        # A page's items can span projects, so the trace-root read isn't project-
-        # scoped; the ids are the tenant's own queue items. (No org_id scoping —
-        # a collector span row may carry a NULL org_id; see _batch_ch_trace_roots.)
-        return cls(
-            spans=_batch_ch_spans(span_ids),
-            sessions=_batch_ch_session_fields(session_ids),
-            trace_roots=_batch_ch_trace_roots(trace_ids),
-        )
+                buckets["traces"].add(str(item.trace_id))
+
+        # A soft id belongs to exactly one project, so the per-group results never
+        # collide on merge. NULL-project group (project_id=None) is the prior read.
+        spans, sessions, trace_roots = {}, {}, {}
+        for pid, buckets in by_project.items():
+            spans.update(_batch_ch_spans(buckets["spans"], project_id=pid))
+            sessions.update(
+                _batch_ch_session_fields(buckets["sessions"], project_id=pid)
+            )
+            trace_roots.update(
+                _batch_ch_trace_roots(buckets["traces"], project_id=pid)
+            )
+        return cls(spans=spans, sessions=sessions, trace_roots=trace_roots)
 
     def span(self, span_id):
         return self._spans.get(str(span_id)) if span_id else None
@@ -2259,7 +2287,9 @@ def _resolve_dataset_rule_ids(rule, filters, dataset_id, cap):
     return total_matching, ids
 
 
-def _add_source_ids_to_queue(rule, source_ids, total_matching, dry_run=False):
+def _add_source_ids_to_queue(
+    rule, source_ids, total_matching, dry_run=False, project_id=None
+):
     from model_hub.models.annotation_queues import QueueItem
 
     fk_field = get_fk_field_name(rule.source_type)
@@ -2304,6 +2334,7 @@ def _add_source_ids_to_queue(rule, source_ids, total_matching, dry_run=False):
                 source_type=rule.source_type,
                 organization=rule.organization,
                 workspace=rule.queue.workspace,
+                project_id=project_id,
                 order=max_order,
                 **{f"{fk_field}_id": source_id},
             )
@@ -2516,6 +2547,15 @@ def _evaluate_filter_mode_rule(
         result.ids,
         result.total_matching,
         dry_run=dry_run,
+        # ``project_id`` here is a real project only for trace/span/session; for
+        # call_execution the same local holds an agent_definition_id (not a
+        # Project), so leave those items' project NULL — they aren't read through
+        # the project-scoped span path anyway.
+        project_id=(
+            project_id
+            if source_type != QueueItemSourceType.CALL_EXECUTION.value
+            else None
+        ),
     )
 
 
@@ -2786,6 +2826,7 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
                     source_type=rule.source_type,
                     organization=rule.organization,
                     workspace=rule.queue.workspace,
+                    project_id=getattr(obj, "project_id", None),
                     order=max_order,
                     **{fk_field: obj},
                 )
