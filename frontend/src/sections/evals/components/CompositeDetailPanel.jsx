@@ -595,10 +595,10 @@ const CompositeDetailPanel = ({
           onClose={() => setPickerOpen(false)}
           onEvalAdded={handleEvalAdded}
           existingEvals={childrenList.map((c) => ({ id: c.child_id }))}
-          // Direct-add mode: adding a child eval to a composite does
-          // not need the version / scoring / mapping editor — the
-          // parent composite owns the mapping. The child is added
-          // straight to the list with template defaults.
+          // Sequential config mode: multi-select items are queued
+          // through the version / scoring / mapping editor one at a
+          // time so each child eval can be configured before the
+          // parent composite finalizes the mapping.
           skipConfig={false}
           // Multi-select lets the user pick several child evals with
           // checkboxes and add them in one pass, replacing the
