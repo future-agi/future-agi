@@ -422,8 +422,6 @@ def generate_scenario_rows(
             f"Generated {len(cases)} cases, updating cells for {num_rows} rows..."
         )
 
-        # Pre-fetch every existing cell once instead of a `Cell.objects.get(...)`
-        # per (row, column) pair inside the double loop.
         target_row_ids = new_rows_id[: min(len(cases), num_rows)]
         existing_cells = {
             (str(cell.row_id), str(cell.column_id)): cell
@@ -460,7 +458,6 @@ def generate_scenario_rows(
                     cell.status = CellStatus.PASS.value
                     cells_to_update.append(cell)
                 else:
-                    # Fallback: row-creation didn't seed this cell.
                     cells_to_update.append(
                         Cell(
                             id=uuid.uuid4(),
@@ -509,8 +506,6 @@ def generate_scenario_rows(
                 ]
             )
 
-            # Pre-fetch cells to avoid a `.get()` per (row, column) inside the
-            # error path's double loop.
             existing_error_cells = Cell.objects.filter(
                 dataset=dataset,
                 column__in=total_columns,
