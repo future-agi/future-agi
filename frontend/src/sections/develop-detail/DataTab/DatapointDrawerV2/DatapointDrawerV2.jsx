@@ -988,6 +988,11 @@ const DatapointDrawerChild = () => {
                         ...evalColumn,
                         ...datapoint,
                         rowData: datapoint?.rowData,
+                        value:
+                          evalOpen?.cell_value ??
+                          evalOpen?.value ??
+                          datapoint?.cell_value ??
+                          datapoint?.value,
                         valueInfos:
                           evalOpen?.value_infos ??
                           evalOpen?.valueInfos ??

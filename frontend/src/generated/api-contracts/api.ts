@@ -483,6 +483,7 @@ import type {
   FeedUpdateBodyApi,
   FeedbackApi,
   FeedbackDetailsResponseApi,
+  FeedbackTemplateResponseApi,
   FetchAssistantRequestApi,
   FetchAssistantResponseApi,
   FileUploadResponseApi,
@@ -673,7 +674,6 @@ import type {
   ModelHubFeedbackGetFeedbackDetailsParams,
   ModelHubFeedbackGetFeedbackSummary200,
   ModelHubFeedbackGetFeedbackSummaryParams,
-  ModelHubFeedbackGetTemplate200,
   ModelHubFeedbackGetTemplateParams,
   ModelHubFeedbackList200,
   ModelHubFeedbackListParams,
@@ -39004,7 +39004,7 @@ export const modelHubFeedbackGetFeedbackSummary = async (params?: ModelHubFeedba
 
 
 export type modelHubFeedbackGetTemplateResponse200 = {
-  data: ModelHubFeedbackGetTemplate200
+  data: FeedbackTemplateResponseApi
   status: 200
 }
 
