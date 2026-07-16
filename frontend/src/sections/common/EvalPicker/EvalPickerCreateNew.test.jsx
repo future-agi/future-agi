@@ -75,8 +75,20 @@ vi.mock("src/sections/tasks/components/TaskFilterBar", () => ({
   default: () => <div />,
 }));
 
-vi.mock("src/sections/tasks/components/TaskLivePreview", () => ({
-  buildApiFilterArray: () => [],
+// Real buildApiFilterArray so the task time-window test exercises the
+// actual created_at filter construction.
+vi.mock(
+  "src/sections/tasks/components/TaskLivePreview",
+  async (importOriginal) => {
+    const actual = await importOriginal();
+    return { buildApiFilterArray: actual.buildApiFilterArray };
+  },
+);
+
+// Transitive import of the real TaskLivePreview; its module-scope
+// localStorage read breaks under the test environment.
+vi.mock("src/sections/evals/components/EvalResultDisplay", () => ({
+  default: () => <div />,
 }));
 
 vi.mock("src/sections/evals/hooks/useCreateEval", () => ({
@@ -104,11 +116,15 @@ vi.mock("src/hooks/useDeploymentMode", () => ({
   useDeploymentMode: () => ({ isOSS: false }),
 }));
 
-vi.mock("notistack", () => ({
-  useSnackbar: () => ({ enqueueSnackbar: vi.fn() }),
-}));
+vi.mock("notistack", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useSnackbar: () => ({ enqueueSnackbar: vi.fn() }),
+  };
+});
 
-const renderWithSource = (source) =>
+const renderWithSource = (source, providerProps = {}) =>
   render(
     <EvalPickerProvider
       source={source}
@@ -117,6 +133,7 @@ const renderWithSource = (source) =>
       existingEvals={[]}
       onEvalAdded={() => {}}
       onClose={() => {}}
+      {...providerProps}
     >
       <EvalPickerCreateNew onBack={() => {}} onSave={() => {}} />
     </EvalPickerProvider>,
@@ -145,5 +162,30 @@ describe("EvalPickerCreateNew — onReadyChange wiring (TH-5013 regression)", ()
     renderWithSource("dataset");
     expect(capturedProps.dataset).not.toBeNull();
     expect(typeof capturedProps.dataset.onReadyChange).toBe("function");
+  });
+});
+
+describe("EvalPickerCreateNew — task preview time window", () => {
+  beforeEach(() => {
+    capturedProps.tracing = null;
+  });
+
+  it("passes the task's time window to TracingTestMode as a created_at filter", () => {
+    const timeWindow = {
+      startDate: "2025-05-18T13:37:41.000Z",
+      endDate: "2026-05-18T18:29:59.000Z",
+    };
+    renderWithSource("task", { sourceTimeWindow: timeWindow });
+
+    expect(capturedProps.tracing).not.toBeNull();
+    const createdAt = (capturedProps.tracing.localFilters || []).find(
+      (f) => f.column_id === "created_at",
+    );
+    // Without this filter the backend defaults to a 30-day lookback and the
+    // drawer previews empty for tasks whose data is older than that.
+    expect(createdAt?.filter_config?.filter_value).toEqual([
+      timeWindow.startDate,
+      timeWindow.endDate,
+    ]);
   });
 });

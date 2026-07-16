@@ -194,7 +194,7 @@ const NewModelRenderWithParamsTool = ({
           >
             <Image
               ratio="1/1"
-              src={selectedModel?.logoUrl}
+              src={selectedModel?.logoUrl ?? selectedModel?.logo_url}
               alt={selectedModel?.model_name}
               flexShrink={0}
               style={{

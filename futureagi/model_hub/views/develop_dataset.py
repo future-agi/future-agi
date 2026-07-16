@@ -7972,6 +7972,9 @@ class EditAndRunUserEvalView(APIView):
                         choices=template.choices,
                         multi_choice=template.multi_choice,
                         error_localizer_enabled=template.error_localizer_enabled,
+                        output_type_normalized=template.output_type_normalized,
+                        choice_scores=template.choice_scores,
+                        pass_threshold=template.pass_threshold,
                     )
                     new_config = template.config
                     runtime_config = normalize_eval_runtime_config(
@@ -8308,6 +8311,9 @@ class AddUserEvalView(CreateAPIView):
                         choices=template.choices,
                         multi_choice=template.multi_choice,
                         error_localizer_enabled=template.error_localizer_enabled,
+                        output_type_normalized=template.output_type_normalized,
+                        choice_scores=template.choice_scores,
+                        pass_threshold=template.pass_threshold,
                     )
                     new_config = template.config
                     runtime_config = normalize_eval_runtime_config(
@@ -14305,6 +14311,9 @@ class AddCompareExperimentEvalView(APIView):
                     criteria=template.criteria,
                     choices=template.choices,
                     multi_choice=template.multi_choice,
+                    output_type_normalized=template.output_type_normalized,
+                    choice_scores=template.choice_scores,
+                    pass_threshold=template.pass_threshold,
                 )
                 new_config = template.config
                 try:

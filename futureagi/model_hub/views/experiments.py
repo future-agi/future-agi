@@ -3396,6 +3396,9 @@ class AddExperimentEvalView(APIView):
                     multi_choice=template.multi_choice,
                     organization=organization,
                     owner=OwnerChoices.USER.value,
+                    output_type_normalized=template.output_type_normalized,
+                    choice_scores=template.choice_scores,
+                    pass_threshold=template.pass_threshold,
                 )
                 new_config = template.config
                 runtime_config = normalize_eval_runtime_config(
