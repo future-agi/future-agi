@@ -149,7 +149,6 @@ const EvaluationStepExperimentCreation = ({
       append({ ...evalEntry, name: versionedName });
     }
     setEditingEval(null);
-    setOpenEvaluationDialog(false);
   };
 
   const handleRemoveEval = (evalId) => {

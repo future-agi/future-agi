@@ -36,6 +36,11 @@ const EvalPickerContent = ({ onStepChange }) => {
     skipConfig,
     isEditMode,
     keepOpenAfterSave,
+    pendingEvals,
+    setPendingEvals,
+    setSelectedEvals,
+    startBulkConfig,
+    clearConfigQueue,
   } = useEvalPickerContext();
 
   const [isSaving, setIsSaving] = useState(false);
@@ -69,32 +74,73 @@ const EvalPickerContent = ({ onStepChange }) => {
     [skipConfig, onEvalAdded, onClose, setSelectedEval, setStep],
   );
 
+  // Bulk add — called from the footer "Add Selected (N)" button. When
+  // skipConfig is on, all selected evals are added directly. When off,
+  // we walk through config for each one sequentially.
+  const handleAddSelectedEvals = useCallback(
+    async (evals) => {
+      if (!evals || evals.length === 0) return;
+      if (skipConfig) {
+        setIsSaving(true);
+        try {
+          for (const evalItem of evals) {
+            await onEvalAdded?.(normalizeEvalPickerEval(evalItem));
+          }
+          onClose?.();
+        } catch {
+          // Parent handles error display
+        } finally {
+          setIsSaving(false);
+        }
+        return;
+      }
+      // Start sequential config walk: first eval becomes selected,
+      // the rest are queued in pendingEvals.
+      startBulkConfig(evals);
+    },
+    [skipConfig, onEvalAdded, onClose, startBulkConfig],
+  );
+
   // In edit mode, back closes the drawer (returns to the SavedEvalsList).
-  // In create mode, back returns to the list step.
+  // In create mode, back returns to the list step. When a bulk config
+  // walk is in progress, cancel it and return to list.
   const handleBackToList = useCallback(() => {
     if (isEditMode) {
       onClose?.();
       return;
     }
+    clearConfigQueue();
     setSelectedEval(null);
     setStep("list");
-  }, [isEditMode, onClose, setSelectedEval, setStep]);
+  }, [isEditMode, onClose, setSelectedEval, setStep, clearConfigQueue]);
 
   const handleSaveEval = useCallback(
     async (evalConfig) => {
       setIsSaving(true);
       try {
         await onEvalAdded?.(evalConfig);
+
+        // Bulk config walk: if there are more evals in the pending
+        // queue, pop the next one and stay on the config step.
+        if (pendingEvals.length > 0) {
+          const nextEval = pendingEvals[0];
+          setSelectedEval(normalizeEvalPickerEval(nextEval));
+          // Remove the just-promoted eval from the queue.
+          // startBulkConfig already sliced off the first eval, so
+          // pendingEvals still has the remaining ones. We use an
+          // updater so the parent closure doesn't go stale.
+          setPendingEvals((prev) => prev.slice(1));
+          return;
+        }
+
+        // No pending evals — either single-select or last eval in a
+        // bulk walk. Return to list (or close).
+        setSelectedEvals([]);
         if (isEditMode) {
-          // Edit mode: just close, no list to return to
           onClose?.();
         } else {
           setSelectedEval(null);
           setStep("list");
-          // When the host wants the picker to stay open (e.g. dataset
-          // adds, where the user often queues several evals back-to-back),
-          // skip the close so the user lands back on the list step
-          // without re-opening the drawer.
           if (!keepOpenAfterSave) onClose?.();
         }
       } catch {
@@ -110,6 +156,9 @@ const EvalPickerContent = ({ onStepChange }) => {
       setSelectedEval,
       setStep,
       keepOpenAfterSave,
+      pendingEvals,
+      setPendingEvals,
+      setSelectedEvals,
     ],
   );
 
@@ -207,7 +256,10 @@ const EvalPickerContent = ({ onStepChange }) => {
           resetKeys={[step, selectedEval?.id]}
         >
           {step === "list" && (
-            <EvalPickerList onSelectEval={handleSelectEval} />
+            <EvalPickerList
+              onSelectEval={handleSelectEval}
+              onAddSelectedEvals={handleAddSelectedEvals}
+            />
           )}
           {step === "config" && selectedEval && (
             <EvalPickerConfigFull
@@ -282,6 +334,7 @@ const EvalPickerDrawer = ({
   keepOpenAfterSave = false,
   sourceFilters = null,
   onFiltersChange = null,
+  multiSelect = true,
 }) => {
   const [currentStep, setCurrentStep] = useState("list");
 
@@ -334,6 +387,7 @@ const EvalPickerDrawer = ({
         keepOpenAfterSave={keepOpenAfterSave}
         sourceFilters={sourceFilters}
         onFiltersChange={onFiltersChange}
+        multiSelect={multiSelect}
       >
         <EvalPickerContent onStepChange={setCurrentStep} />
       </EvalPickerProvider>
@@ -361,6 +415,7 @@ EvalPickerDrawer.propTypes = {
   keepOpenAfterSave: PropTypes.bool,
   sourceFilters: PropTypes.array,
   onFiltersChange: PropTypes.func,
+  multiSelect: PropTypes.bool,
 };
 
 export default EvalPickerDrawer;

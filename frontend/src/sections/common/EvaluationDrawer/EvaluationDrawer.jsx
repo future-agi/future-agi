@@ -552,9 +552,12 @@ const EvaluationDrawerChild = ({
           setEvalPickerOpen(false);
           setEditingEval(null);
         }}
-        // Dataset adds save-only — keep the picker open so the user can
-        // queue more evals back-to-back without re-opening the drawer.
-        keepOpenAfterSave={(module || "dataset") === "dataset"}
+        // Keep the picker open so the user can queue more evals
+        // back-to-back without re-opening the drawer.
+        keepOpenAfterSave={true}
+        // Multi-select lets the user pick several evals with checkboxes
+        // and add them in one bulk action instead of one-by-one.
+        multiSelect={true}
         initialEval={editingEval}
         source={module || "dataset"}
         sourceId={id || ""}
@@ -576,7 +579,7 @@ const EvaluationDrawerChild = ({
               ]
             : []
         }
-        existingEvals={existingEvals}
+        existingEvals={existingEvals?.length ? existingEvals : SavedEvals || []}
         requiredColumnId={requiredColumnIds || ""}
         onEvalAdded={async (evalConfig) => {
           const { handleRun } = actionButtonConfig;
@@ -752,10 +755,10 @@ const EvaluationDrawerChild = ({
           }
           // await so errors propagate to EvalPickerDrawer's handleSaveEval
           // catch block — keeps the drawer open on failure.
-          await handleRun(payload, () => {
-            setEvalPickerOpen(false);
-            setVisibleSection("list");
-          });
+          // EvalPickerDrawer's keepOpenAfterSave + pending queue manage
+          // the lifecycle — do NOT close here or the multi-select config
+          // walk (A→B→…) breaks at the first save.
+          await handleRun(payload, () => {});
         }}
       />
     </>

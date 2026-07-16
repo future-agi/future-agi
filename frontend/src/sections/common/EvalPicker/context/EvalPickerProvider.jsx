@@ -39,6 +39,7 @@ const EvalPickerProvider = ({
   keepOpenAfterSave = false,
   sourceFilters = null,
   onFiltersChange = null,
+  multiSelect = false,
 }) => {
   const [step, setStep] = useState(initialEval ? "config" : "list");
   const [selectedEval, setSelectedEvalState] = useState(
@@ -47,6 +48,13 @@ const EvalPickerProvider = ({
   // True when the drawer was opened in edit mode (initialEval was provided).
   // In edit mode the back button closes the drawer instead of going to list.
   const isEditMode = !!initialEval;
+
+  // ── Multi-select state ──
+  const [selectedEvals, setSelectedEvalsState] = useState([]);
+  // Evals still waiting to be configured during a bulk config walk.
+  // The eval currently being configured is in `selectedEval`. When the
+  // user saves it, the next one from `pendingEvals` becomes selectedEval.
+  const [pendingEvals, setPendingEvals] = useState([]);
 
   // When initialEval changes (e.g. user clicks Edit on a different eval),
   // jump to config with that eval pre-selected.
@@ -61,9 +69,40 @@ const EvalPickerProvider = ({
     setSelectedEvalState(normalizeEvalPickerEval(evalData));
   }, []);
 
+  const setSelectedEvals = useCallback((evals) => {
+    setSelectedEvalsState(evals);
+  }, []);
+
+  const toggleSelectedEval = useCallback((evalItem) => {
+    setSelectedEvalsState((prev) => {
+      const exists = prev.some((e) => e.id === evalItem.id);
+      if (exists) return prev.filter((e) => e.id !== evalItem.id);
+      return [...prev, evalItem];
+    });
+  }, []);
+
+  // Start a sequential config walk: the first eval becomes selectedEval
+  // immediately, the rest are queued in pendingEvals. Called when the user
+  // clicks "Add Selected (N)" with skipConfig off.
+  const startBulkConfig = useCallback((evals) => {
+    if (!evals || evals.length === 0) return;
+    setPendingEvals(evals.slice(1));
+    setSelectedEvalState(normalizeEvalPickerEval(evals[0]));
+    setStep("config");
+  }, []);
+
+  const clearConfigQueue = useCallback(() => {
+    setPendingEvals([]);
+    setSelectedEvalsState([]);
+    setSelectedEvalState(null);
+    setStep("list");
+  }, []);
+
   const handleReset = useCallback(() => {
     setStep("list");
     setSelectedEvalState(null);
+    setSelectedEvalsState([]);
+    setPendingEvals([]);
   }, []);
 
   const handleClose = useCallback(() => {
@@ -88,6 +127,14 @@ const EvalPickerProvider = ({
         sourcePreviewData,
         selectedEval,
         setSelectedEval,
+        multiSelect,
+        selectedEvals,
+        setSelectedEvals,
+        toggleSelectedEval,
+        pendingEvals,
+        setPendingEvals,
+        startBulkConfig,
+        clearConfigQueue,
         existingEvals,
         onEvalAdded,
         onClose: handleClose,
@@ -125,6 +172,7 @@ EvalPickerProvider.propTypes = {
   keepOpenAfterSave: PropTypes.bool,
   sourceFilters: PropTypes.array,
   onFiltersChange: PropTypes.func,
+  multiSelect: PropTypes.bool,
 };
 
 export default EvalPickerProvider;

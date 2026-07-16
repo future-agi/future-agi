@@ -222,7 +222,6 @@ const ManageExperimentEvalsDrawer = ({
       });
     }
     setEditingEval(null);
-    setOpenEvaluationDialog(false);
   };
 
   const handleRemoveEval = (evalId) => {
