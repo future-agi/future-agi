@@ -559,7 +559,7 @@ const EvaluationDrawerChild = ({
         // and add them in one bulk action instead of one-by-one. Scoped
         // to dataset only — workbench / task / experiment / run-optimization
         // stay single-select (#1592).
-        multiSelect={(module || "dataset") === "dataset"}
+        multiSelect={true}
         initialEval={editingEval}
         source={module || "dataset"}
         sourceId={id || ""}
