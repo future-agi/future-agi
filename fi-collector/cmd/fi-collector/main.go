@@ -126,18 +126,25 @@ func main() {
 // loadPriceTable resolves the token-pricing table. FI_PRICING_JSON is
 // best-effort: a bad override file must not silently disable pricing for
 // every span, so a failed override load falls back to the embedded snapshot
-// (with an error log) rather than returning nil. Only a failure of the
-// embedded snapshot itself (near-impossible — it's compiled in) leaves
-// pricing disabled.
+// (with a warn log — pricing still works — rather than an error log) rather
+// than returning nil. Only a failure of the embedded snapshot itself
+// (near-impossible — it's compiled in) leaves pricing disabled and logs at
+// Error.
 func loadPriceTable(log *slog.Logger, path string) *pricing.Table {
 	table, err := pricing.LoadTable(path)
 	if err != nil && path != "" {
-		log.Error("FI_PRICING_JSON override load failed; falling back to embedded pricing snapshot",
+		// Pricing still works on this path — the embedded snapshot load
+		// below succeeds — so Warn, not Error; Error is reserved for the
+		// double-failure case below.
+		log.Warn("FI_PRICING_JSON override load failed; falling back to embedded pricing snapshot",
 			"env", "FI_PRICING_JSON", "path", path, "err", err)
 		table, err = pricing.LoadTable("")
 	}
 	if err != nil {
 		log.Error("pricing table load failed; token-based cost disabled", "err", err)
+	}
+	if table != nil && table.Skipped > 0 {
+		log.Warn("pricing table loaded with skipped entries", "skipped", table.Skipped)
 	}
 	return table
 }

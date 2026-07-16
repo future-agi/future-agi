@@ -41,6 +41,18 @@ type customEntry struct {
 // spans read cost 0 for up to 45s after PG recovers.
 const errTTL = 45 * time.Second
 
+// pgQueryTimeout bounds the detached PG lookup (see Cost). 500ms is well
+// above a healthy query's latency but short enough that a wedged PG doesn't
+// hold the query goroutine open indefinitely.
+const pgQueryTimeout = 500 * time.Millisecond
+
+// cacheSweepThreshold triggers an expired-entry sweep on the write path once
+// the cache grows this large. Live (org,model) cardinality bounds
+// steady-state size well below this in practice; the sweep exists only to
+// reclaim space from entries whose TTL has passed (dead weight), not to cap
+// live cardinality.
+const cacheSweepThreshold = 8192
+
 // CustomPricing resolves per-org model prices from PG with a TTL cache.
 // Mirrors Django's Redis cache custom_model_pricing:{org}:{model} (24h,
 // negative results included).
@@ -69,8 +81,16 @@ func (c *CustomPricing) Cost(
 	c.mu.RUnlock()
 
 	if !hit || time.Now().After(e.expires) {
+		// Detach from the caller's (request) context: a client-cancelled
+		// export request must not stall this PG lookup, and it must not
+		// poison the 45s negative/error cache entry with a query that was
+		// never really given a chance to complete. qctx keeps span
+		// deadlines/values-free cancellation off the query, bounded by its
+		// own timeout instead.
+		qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), pgQueryTimeout)
 		var in, out float64
-		err := c.db.QueryRow(ctx, customPricingQuery, orgID, model).Scan(&in, &out)
+		err := c.db.QueryRow(qctx, customPricingQuery, orgID, model).Scan(&in, &out)
+		cancel()
 		switch {
 		case err == nil:
 			e = customEntry{inPer1K: in, outPer1K: out, found: true, expires: time.Now().Add(c.ttl)}
@@ -84,6 +104,17 @@ func (c *CustomPricing) Cost(
 			e = customEntry{found: false, expires: time.Now().Add(errTTL)}
 		}
 		c.mu.Lock()
+		if len(c.cache) >= cacheSweepThreshold {
+			// Reclaim dead entries before growing further. Live
+			// (org,model) cardinality bounds steady-state size; this only
+			// clears entries whose TTL has already passed.
+			now := time.Now()
+			for k, v := range c.cache {
+				if now.After(v.expires) {
+					delete(c.cache, k)
+				}
+			}
+		}
 		c.cache[key] = e
 		c.mu.Unlock()
 	}

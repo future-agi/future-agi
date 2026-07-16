@@ -31,6 +31,37 @@ func TestTableCost(t *testing.T) {
 	if _, ok := tbl.Cost("sample_spec", 10, 10); ok {
 		t.Fatal("sample_spec must be excluded from the table")
 	}
+
+	// Malformed entry (string-typed input_cost_per_token) is skipped, not
+	// fatal — gpt-4o (and the rest of the file) still loads and prices.
+	if tbl.Skipped != 1 {
+		t.Fatalf("want Skipped=1 for the malformed fixture entry, got %d", tbl.Skipped)
+	}
+	if _, ok := tbl.Cost("malformed-model", 10, 10); ok {
+		t.Fatal("malformed-model must not be present in the table")
+	}
+}
+
+func TestTableCost_Tiered128k(t *testing.T) {
+	tbl, err := LoadTable("testdata/prices_fixture.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Below threshold: base rates apply on both sides.
+	// 1000*0.000001 + 500*0.000002 = 0.002
+	c, ok := tbl.Cost("tiered-model", 1000, 500)
+	if !ok || c < 0.00199 || c > 0.00201 {
+		t.Fatalf("below-threshold: want ~0.002, got %v ok=%v", c, ok)
+	}
+
+	// Above threshold (prompt > 128_000): ALL tokens on both sides price at
+	// the above-128k rate, not just the marginal tokens past the boundary.
+	// 200000*0.000003 + 500*0.000004 = 0.6 + 0.002 = 0.602
+	c, ok = tbl.Cost("tiered-model", 200_000, 500)
+	if !ok || c < 0.6019 || c > 0.6021 {
+		t.Fatalf("above-threshold: want ~0.602, got %v ok=%v", c, ok)
+	}
 }
 
 func TestLoadEmbedded(t *testing.T) {

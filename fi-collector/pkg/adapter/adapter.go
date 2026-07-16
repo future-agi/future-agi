@@ -236,9 +236,26 @@ func DeriveHotKeys(
 	// User-provided cost — Django calculate_cost precedence (otel.py:1666):
 	// cost.total wins; else input+output when either side present. An explicit
 	// user 0 is respected (CostUserSet gates the token-pricing fallback later).
-	// Deviation: Django coerced an unparseable user-cost string to cost=0
-	// (still user-set); we skip it via firstNumber's ParseFloat failure and
-	// fall through to token-based pricing instead.
+	//
+	// Three precise deviations from Django here, all a consequence of
+	// firstNumber returning ok=false on an unparseable string instead of
+	// Django's int()/float() coercion (which raised and was caught to 0):
+	//
+	//  1. Unparseable cost string on BOTH sides, or on the only side present
+	//     (e.g. cost.total alone is garbage): we fall through to token-based
+	//     pricing below. Django: cost=0, and CostUserSet-equivalent stays
+	//     true (still user-set, just zero) — i.e. Django never falls back to
+	//     token pricing here, we do.
+	//  2. One side unparseable, the other side parseable (e.g. cost.input is
+	//     garbage but cost.output parses): we keep the parseable side's value
+	//     as the user cost (in + out, with the bad side contributing 0).
+	//     Django: the whole sum resolves to 0 (its int()/float() coercion
+	//     wraps the combined expression, not each side independently).
+	//  3. TotalTokens: when no total-tokens alias is present, we synthesize
+	//     TotalTokens = PromptTokens + CompletionTokens (see below). Django
+	//     never derived this — Django-backfilled rows have TotalTokens 0/NULL
+	//     in cases where a live (fi-collector-written) row for the same
+	//     shape has the derived sum.
 	if v, ok := firstNumber(attrsString, attrsNumber, costTotalKeys); ok {
 		hk.Cost = v
 		hk.CostUserSet = true
