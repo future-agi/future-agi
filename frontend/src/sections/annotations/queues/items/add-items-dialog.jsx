@@ -54,7 +54,9 @@ import {
   generateObserveTraceFilterDefinition,
   generateSpanObserveFilterDefinition,
   SPAN_DEFAULT_COLUMNS,
+  applyQuickFilters,
 } from "src/sections/projects/LLMTracing/common";
+import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
 import DateRangePill, {
   dateFilterForOption,
 } from "src/sections/projects/LLMTracing/DateRangePill";
@@ -1795,6 +1797,7 @@ function TraceSelector({
   const [, setFilterDefinition] = useState([]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
+  const [openQuickFilter, setOpenQuickFilter] = useState(null);
   const [gridApi, setGridApi] = useState(null);
   const gridRef = useRef(null);
   const filterButtonRef = useRef(null);
@@ -1996,6 +1999,13 @@ function TraceSelector({
       },
       suppressSizeToFit: false,
       sortable: false,
+      cellRendererParams: {
+        applyQuickFilters: applyQuickFilters(
+          setFilters,
+          setOpenQuickFilter,
+          setFilterOpen,
+        ),
+      },
     }),
     [],
   );
@@ -2259,6 +2269,8 @@ function TraceSelector({
           open={filterOpen}
           onClose={() => setFilterOpen(false)}
           projectId={projectId}
+          source="traces"
+          tab="trace"
           isSimulator={isVoiceProject}
           currentFilters={validatedMainFilters
             .filter((f) => f?.column_id)
@@ -2445,6 +2457,7 @@ function TraceSelector({
               rowModelType="serverSide"
               onGridReady={onGridReady}
               onSelectionChanged={onSelectionChanged}
+              context={{ disableCellNavigation: true }}
               getRowId={(d) => d?.data?.trace_id ?? d?.data?.traceId}
               animateRows={false}
               blockLoadDebounceMillis={300}
@@ -2453,6 +2466,14 @@ function TraceSelector({
           <StatusBar api={gridApi} />
         </Box>
       )}
+
+      <NumberQuickFilterPopover
+        open={Boolean(openQuickFilter)}
+        filterData={openQuickFilter}
+        onClose={() => setOpenQuickFilter(null)}
+        setFilters={setFilters}
+        setFilterOpen={setFilterOpen}
+      />
     </Box>
   );
 }
@@ -2481,6 +2502,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   const [, setFilterDefinition] = useState([]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
+  const [openQuickFilter, setOpenQuickFilter] = useState(null);
   const [gridApi, setGridApi] = useState(null);
   const gridRef = useRef(null);
   const filterButtonRef = useRef(null);
@@ -2649,6 +2671,13 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
       },
       suppressSizeToFit: false,
       sortable: false,
+      cellRendererParams: {
+        applyQuickFilters: applyQuickFilters(
+          setFilters,
+          setOpenQuickFilter,
+          setFilterOpen,
+        ),
+      },
     }),
     [],
   );
@@ -3016,6 +3045,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
               rowModelType="serverSide"
               onGridReady={onGridReady}
               onSelectionChanged={onSelectionChanged}
+              context={{ disableCellNavigation: true }}
               getRowId={(d) => d?.data?.span_id ?? d?.data?.spanId}
               animateRows={false}
               blockLoadDebounceMillis={300}
@@ -3024,6 +3054,14 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           <StatusBar api={gridApi} />
         </Box>
       )}
+
+      <NumberQuickFilterPopover
+        open={Boolean(openQuickFilter)}
+        filterData={openQuickFilter}
+        onClose={() => setOpenQuickFilter(null)}
+        setFilters={setFilters}
+        setFilterOpen={setFilterOpen}
+      />
     </Box>
   );
 }

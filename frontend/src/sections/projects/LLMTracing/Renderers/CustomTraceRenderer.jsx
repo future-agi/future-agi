@@ -149,6 +149,7 @@ const CustomTraceRenderer = (params) => {
       alignRight={alignRight}
       applyQuickFilters={params.applyQuickFilters}
       onCellClick={() => {
+        if (params.context?.disableCellNavigation) return;
         if (colId === CELL_TYPES.TRACE_ID) {
           handleTraceClick(traceIdFromCell);
         }
