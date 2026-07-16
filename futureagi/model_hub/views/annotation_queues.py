@@ -4739,6 +4739,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             400: ApiSelectionTooLargeErrorSerializer,
             403: ApiTextErrorResponseSerializer,
             404: ApiTextErrorResponseSerializer,
+            503: ApiTextErrorResponseSerializer,
         },
     )
     @action(detail=False, methods=["post"], url_path="add-items")
