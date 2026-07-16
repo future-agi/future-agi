@@ -90,6 +90,17 @@ describe("buildParameterRows", () => {
     expect(valueOf(rows, "Size")).toBe("Auto");
   });
 
+  it("renders null booleans/dropdowns/sliders as '-' (consistent with scalars)", () => {
+    const rows = buildParameterRows({
+      booleans: { stream: null },
+      dropdowns: { size: null },
+      reasoning: { sliders: { budget: null } },
+    });
+    expect(valueOf(rows, "Stream")).toBe("-");
+    expect(valueOf(rows, "Size")).toBe("-");
+    expect(valueOf(rows, "Budget")).toBe("-");
+  });
+
   it("flattens the nested reasoning object", () => {
     const rows = buildParameterRows({
       reasoning: {

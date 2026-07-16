@@ -57,8 +57,6 @@ const CustomModelOptions = ({
   }, [modelConfig]);
 
   const handleOpenDropdown = () => {
-    // View-only (e.g. version history): the button stays enabled so the
-    // read-only params hover renders, but clicking must not open the editor.
     if (viewOnly) return;
     if (!openDropdown) {
       onClick?.();

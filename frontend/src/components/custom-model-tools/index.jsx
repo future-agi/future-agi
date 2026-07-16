@@ -24,8 +24,6 @@ const CustomModelTools = ({
   };
 
   const handleOpenDropdown = () => {
-    // View-only (e.g. version history): the button stays enabled so the
-    // read-only tools hover renders, but clicking must not open the editor.
     if (viewOnly) return;
     if (!showModelTool) {
       onClick?.();

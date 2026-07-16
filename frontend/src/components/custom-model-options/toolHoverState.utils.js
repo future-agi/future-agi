@@ -59,16 +59,19 @@ const getScalarRows = (config) => {
 
 const getMapRows = (map, formatValue) =>
   map && typeof map === "object"
-    ? Object.entries(map)
-        .filter(([, value]) => value !== null && value !== undefined)
-        .map(([key, value]) => toRow(key, formatValue(value)))
+    ? Object.entries(map).map(([key, value]) =>
+        toRow(
+          key,
+          value === null || value === undefined ? "-" : formatValue(value),
+        ),
+      )
     : [];
 
 // Reasoning is a nested object ({ sliders, dropdowns, showReasoningProcess }).
 const getReasoningRows = (reasoning) => {
   if (!reasoning || typeof reasoning !== "object") return [];
   const rows = [
-    ...getMapRows(reasoning.sliders, (value) => value ?? "-"),
+    ...getMapRows(reasoning.sliders, (value) => value),
     ...getMapRows(reasoning.dropdowns, (value) => _.startCase(String(value))),
   ];
   const { showReasoningProcess } = reasoning;
