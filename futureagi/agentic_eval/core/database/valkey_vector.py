@@ -74,7 +74,10 @@ class ValkeyVectorDB:
             socket_timeout=10,
             retry_on_timeout=True,
         )
-        self.client.ping()
+        try:
+            self.client.ping()
+        except redis.ConnectionError as e:
+            logger.warning("valkey: ping failed on init, will retry on first use", error=str(e))
         self._created_indices: set[str] = set()
 
     def _index_name(self, table_name: str) -> str:
@@ -195,46 +198,48 @@ class ValkeyVectorDB:
             filter_parts.append(f"@eval_id:{{{_escape_tag(str(eval_id))}}}")
 
         filter_query = " ".join(filter_parts)
-
-        try:
-            result = self.client.execute_command(
-                "FT.SEARCH", index_name, filter_query,
-                "LIMIT", "0", "10000",
-                "NOCONTENT",
-            )
-        except redis.ResponseError:
-            return
-
-        if not result or result[0] == 0:
-            return
-
+        prefix = self._key_prefix(table_name)
         keys_to_mark = []
-        count = result[0]
-        for i in range(1, min(count + 1, len(result))):
-            doc_key = result[i]
-            if isinstance(doc_key, bytes):
-                doc_key = doc_key.decode()
+        page_size = 500
+        offset = 0
 
-            data = self.client.hgetall(doc_key)
-            if not data or data.get(b"deleted", b"0") == b"1":
-                continue
+        while True:
+            try:
+                result = self.client.execute_command(
+                    "FT.SEARCH", index_name, filter_query,
+                    "LIMIT", str(offset), str(page_size),
+                )
+            except redis.ResponseError:
+                break
 
-            stored_meta = self._parse_metadata_from_field(data.get(b"metadata_json", b"{}"))
+            if not result or result[0] == 0:
+                break
 
-            match = True
-            for uk in unique_keys:
-                if stored_meta.get(uk) != str(metadata.get(uk, "")):
-                    match = False
-                    break
+            parsed = self._parse_raw_results(result)
+            if not parsed:
+                break
 
-            if match and exclude_keys:
-                for ek in exclude_keys:
-                    if ek in stored_meta:
+            for doc_id, fields in parsed:
+                stored_meta = self._parse_metadata_from_field(fields.get("metadata_json"))
+
+                match = True
+                for uk in unique_keys:
+                    if stored_meta.get(uk) != str(metadata.get(uk, "")):
                         match = False
                         break
 
-            if match:
-                keys_to_mark.append(doc_key)
+                if match and exclude_keys:
+                    for ek in exclude_keys:
+                        if ek in stored_meta:
+                            match = False
+                            break
+
+                if match:
+                    keys_to_mark.append(f"{prefix}{doc_id}")
+
+            if len(parsed) < page_size:
+                break
+            offset += page_size
 
         if keys_to_mark:
             pipe = self.client.pipeline(transaction=False)
@@ -315,6 +320,8 @@ class ValkeyVectorDB:
             if isinstance(eval_id, (list, tuple)):
                 id_filter = "|".join(_escape_tag(str(eid)) for eid in eval_id)
                 filter_parts.append(f"@id:{{{id_filter}}}")
+            else:
+                filter_parts.append(f"@id:{{{_escape_tag(str(eval_id))}}}")
 
         filter_query = " ".join(filter_parts) if filter_parts else "*"
         query = f"({filter_query})=>[KNN {top_k} @vector $BLOB AS distance]"
@@ -441,7 +448,7 @@ class ValkeyVectorDB:
                 doc_key = doc_key.decode()
             fields_flat = result[i + 1] if i + 1 < len(result) else []
             fields = {}
-            for j in range(0, len(fields_flat), 2):
+            for j in range(0, len(fields_flat) - 1, 2):
                 k = fields_flat[j]
                 v = fields_flat[j + 1]
                 if isinstance(k, bytes):
@@ -546,39 +553,50 @@ class ValkeyVectorDB:
             filter_parts.append(f"@eval_id:{{{_escape_tag(str(eval_id))}}}")
         filter_query = " ".join(filter_parts)
 
-        try:
-            result = self.client.execute_command(
-                "FT.SEARCH", index_name, filter_query,
-                "LIMIT", "0", "10000",
-            )
-        except redis.ResponseError:
-            return
-
-        if not result or result[0] == 0:
-            return
-
         unique_values_set = set()
         for metadata in metadata_list:
             key_tuple = tuple(str(metadata.get(uk, "")) for uk in unique_keys)
             unique_values_set.add(key_tuple)
 
+        prefix = self._key_prefix(table_name)
         keys_to_mark = []
-        parsed = self._parse_raw_results(result)
-        for doc_key_id, fields in parsed:
-            stored_meta = self._parse_metadata_from_field(fields.get("metadata_json"))
-            stored_tuple = tuple(stored_meta.get(uk, "") for uk in unique_keys)
+        page_size = 500
+        offset = 0
 
-            if stored_tuple in unique_values_set:
-                if exclude_keys:
-                    skip = False
-                    for ek in exclude_keys:
-                        if ek in stored_meta:
-                            skip = True
-                            break
-                    if skip:
-                        continue
-                prefix = self._key_prefix(table_name)
-                keys_to_mark.append(f"{prefix}{doc_key_id}")
+        while True:
+            try:
+                result = self.client.execute_command(
+                    "FT.SEARCH", index_name, filter_query,
+                    "LIMIT", str(offset), str(page_size),
+                )
+            except redis.ResponseError:
+                break
+
+            if not result or result[0] == 0:
+                break
+
+            parsed = self._parse_raw_results(result)
+            if not parsed:
+                break
+
+            for doc_key_id, fields in parsed:
+                stored_meta = self._parse_metadata_from_field(fields.get("metadata_json"))
+                stored_tuple = tuple(stored_meta.get(uk, "") for uk in unique_keys)
+
+                if stored_tuple in unique_values_set:
+                    if exclude_keys:
+                        skip = False
+                        for ek in exclude_keys:
+                            if ek in stored_meta:
+                                skip = True
+                                break
+                        if skip:
+                            continue
+                    keys_to_mark.append(f"{prefix}{doc_key_id}")
+
+            if len(parsed) < page_size:
+                break
+            offset += page_size
 
         if keys_to_mark:
             pipe = self.client.pipeline(transaction=False)
@@ -638,10 +656,14 @@ class ValkeyVectorDB:
         if not organization_id and not workspace_id:
             return total
 
-        result = self.client.execute_command(
-            "FT.SEARCH", index_name, filter_query,
-            "LIMIT", "0", str(total),
-        )
+        try:
+            result = self.client.execute_command(
+                "FT.SEARCH", index_name, filter_query,
+                "LIMIT", "0", str(total),
+            )
+        except redis.ResponseError:
+            return 0
+
         count = 0
         parsed = self._parse_raw_results(result)
         for _, fields in parsed:

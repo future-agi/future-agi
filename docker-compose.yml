@@ -323,14 +323,13 @@ services:
     restart: unless-stopped
 
   valkey:
-    image: valkey/valkey:8.1-alpine
-    command: valkey-server --appendonly yes --loadmodule /opt/valkey/lib/valkey-search.so
+    image: redis/redis-stack-server:latest
     ports:
       - "127.0.0.1:${VALKEY_PORT:-6389}:6379"
     volumes:
       - valkey-data:/data
     healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5

@@ -16,7 +16,6 @@ from PIL import Image
 from tfc.telemetry import wrap_for_thread
 
 from agentic_eval.core.database import get_vector_db
-from agentic_eval.core.database.ch_vector import ClickHouseVectorDB
 from agentic_eval.core.embeddings.serving_client import get_serving_client
 from agentic_eval.core.utils.functions import detect_input_type
 import structlog
