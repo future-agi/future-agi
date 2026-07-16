@@ -468,10 +468,7 @@ def _call_executor_service(code: str, input_data: dict, language: str, timeout: 
         req = urllib.request.Request(
             f"{CODE_EXECUTOR_URL}/execute",
             data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "X-Internal-Api-Key": os.environ.get("AGENTCC_INTERNAL_API_KEY", ""),
-            },
+            headers={"Content-Type": "application/json"},
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=timeout + 10) as resp:

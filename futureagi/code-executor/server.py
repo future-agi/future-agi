@@ -19,7 +19,6 @@ Returns:
 }
 """
 
-import hmac
 import json
 import os
 import shutil
@@ -67,6 +66,7 @@ def _execute_python_nsjail(code: str, input_data: dict, timeout: int) -> dict:
             "64",  # Max open files (needs more for network)
             "--time_limit",
             str(timeout),  # Wall clock limit
+            "-N",  # Allow network access — code can fetch URLs
             "-R",
             "/",  # Bind-mount root read-only (includes /sandbox/scripts)
             "-T",
@@ -184,6 +184,7 @@ def _execute_javascript(code: str, input_data: dict, timeout: int) -> dict:
                 "64",
                 "--time_limit",
                 str(timeout),
+                "-N",  # Allow network
                 "-R",
                 "/",
                 "-T",
@@ -378,19 +379,6 @@ class HealthResource:
         }
 
 
-class AuthMiddleware:
-    """Reject /execute calls that don't present the shared internal API key."""
-
-    def __init__(self):
-        self._key = os.environ.get("AGENTCC_INTERNAL_API_KEY")
-
-    def process_request(self, req, resp):
-        if req.path == "/health":
-            return
-        if not self._key or not hmac.compare_digest(req.get_header("X-Internal-Api-Key") or "", self._key):
-            raise falcon.HTTPUnauthorized(title="Unauthorized")
-
-
-app = falcon.App(middleware=[AuthMiddleware()])
+app = falcon.App()
 app.add_route("/execute", ExecuteResource())
 app.add_route("/health", HealthResource())

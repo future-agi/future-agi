@@ -281,9 +281,7 @@ services:
   code-executor:
     image: futureagi/code-executor:${CODE_EXECUTOR_VERSION:-latest}
     ports:
-      - "127.0.0.1:${CODE_EXECUTOR_PORT:-8060}:8060"
-    environment:
-      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?AGENTCC_INTERNAL_API_KEY must be set}
+      - "${CODE_EXECUTOR_PORT:-8060}:8060"
     privileged: true
     deploy:
       resources:

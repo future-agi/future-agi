@@ -136,9 +136,7 @@ services:
       context: ./code-executor
       dockerfile: Dockerfile
     ports:
-      - "127.0.0.1:8060:8060"
-    environment:
-      AGENTCC_INTERNAL_API_KEY: ${AGENTCC_INTERNAL_API_KEY:?AGENTCC_INTERNAL_API_KEY must be set}
+      - "8060:8060"
     # Privileged needed for nsjail namespace creation
     privileged: true
     restart: unless-stopped
