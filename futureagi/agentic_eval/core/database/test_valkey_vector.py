@@ -56,6 +56,12 @@ class TestEscapeTag:
 
         assert _escape_tag("id1|id2") == "id1\\|id2"
 
+    def test_backslash_escaped(self):
+        from agentic_eval.core.database.valkey_vector import _escape_tag
+
+        assert _escape_tag("path\\to\\file") == "path\\\\to\\\\file"
+        assert _escape_tag("no\\|inject") == "no\\\\\\|inject"
+
 
 class TestValkeyVectorDBUnit:
     """Unit tests with mocked redis client."""

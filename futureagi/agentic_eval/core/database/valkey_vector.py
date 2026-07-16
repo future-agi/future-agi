@@ -27,6 +27,8 @@ def _float_list_to_bytes(vector: list[float]) -> bytes:
 
 def _escape_tag(value: str) -> str:
     """Escape special characters for RediSearch TAG field queries."""
+    # Escape backslash first to avoid double-escaping the escapes added below.
+    value = value.replace("\\", "\\\\")
     special = set(r' ,.<>{}[]"' + r"':;!@#$%^&*()-+=~/|")
     escaped = []
     for ch in value:
@@ -61,6 +63,7 @@ class ValkeyVectorDB:
         port = int(os.getenv("VALKEY_PORT", "6379"))
         password = os.getenv("VALKEY_PASSWORD", "")
         db = int(os.getenv("VALKEY_DB", "0"))
+        use_ssl = os.getenv("VALKEY_SSL", "false").lower() in ("1", "true", "yes")
         self.dims = dims or int(os.getenv("VALKEY_VECTOR_DIMS", "768"))
 
         self.client = redis.Redis(
@@ -68,6 +71,8 @@ class ValkeyVectorDB:
             port=port,
             password=password or None,
             db=db,
+            ssl=use_ssl,
+            ssl_cert_reqs="required" if use_ssl else None,
             decode_responses=False,
             protocol=2,
             socket_connect_timeout=5,
@@ -214,8 +219,12 @@ class ValkeyVectorDB:
                     "FT.SEARCH", index_name, filter_query,
                     "LIMIT", str(offset), str(page_size),
                 )
-            except redis.ResponseError:
-                break
+            except redis.ResponseError as e:
+                msg = str(e).lower()
+                if "not found" in msg or "unknown index" in msg:
+                    break
+                logger.warning("valkey _mark_deleted search error", error=str(e))
+                raise
 
             if not result or result[0] == 0:
                 break
@@ -572,8 +581,12 @@ class ValkeyVectorDB:
                     "FT.SEARCH", index_name, filter_query,
                     "LIMIT", str(offset), str(page_size),
                 )
-            except redis.ResponseError:
-                break
+            except redis.ResponseError as e:
+                msg = str(e).lower()
+                if "not found" in msg or "unknown index" in msg:
+                    break
+                logger.warning("valkey _bulk_mark_deleted search error", error=str(e))
+                raise
 
             if not result or result[0] == 0:
                 break
@@ -659,6 +672,12 @@ class ValkeyVectorDB:
         if not organization_id and not workspace_id:
             return total
 
+        if total > 5000:
+            logger.warning(
+                "valkey get_feedback_count: client-side filtering over large result set",
+                eval_id=eval_id, total=total,
+            )
+
         try:
             result = self.client.execute_command(
                 "FT.SEARCH", index_name, filter_query,
@@ -687,33 +706,45 @@ class ValkeyVectorDB:
         filter_parts = ["@deleted:[0 0]", f"@eval_id:{{{_escape_tag(kb_id)}}}"]
         filter_query = " ".join(filter_parts)
 
-        try:
-            result = self.client.execute_command(
-                "FT.SEARCH", index_name, filter_query,
-                "LIMIT", "0", "10000",
-            )
-        except redis.ResponseError:
-            return
-
-        if not result or result[0] == 0:
-            return
-
-        keys_to_delete = []
         prefix = self._key_prefix(table_name)
-        parsed = self._parse_raw_results(result)
-        for doc_id, fields in parsed:
-            metadata = self._parse_metadata_from_field(fields.get("metadata_json"))
-            if metadata.get("file_id") == file_id and metadata.get("organization_id") == organization_id:
-                keys_to_delete.append(f"{prefix}{doc_id}")
+        keys_to_mark = []
+        page_size = 500
+        offset = 0
 
-        if keys_to_delete:
+        while True:
+            try:
+                result = self.client.execute_command(
+                    "FT.SEARCH", index_name, filter_query,
+                    "LIMIT", str(offset), str(page_size),
+                )
+            except redis.ResponseError as e:
+                logger.warning("valkey delete_chunks_by_file search error", error=str(e))
+                break
+
+            if not result or result[0] == 0:
+                break
+
+            parsed = self._parse_raw_results(result)
+            if not parsed:
+                break
+
+            for doc_id, fields in parsed:
+                metadata = self._parse_metadata_from_field(fields.get("metadata_json"))
+                if metadata.get("file_id") == file_id and metadata.get("organization_id") == organization_id:
+                    keys_to_mark.append(f"{prefix}{doc_id}")
+
+            if len(parsed) < page_size:
+                break
+            offset += page_size
+
+        if keys_to_mark:
             pipe = self.client.pipeline(transaction=False)
-            for key in keys_to_delete:
-                pipe.delete(key)
+            for key in keys_to_mark:
+                pipe.hset(key, b"deleted", b"1")
             pipe.execute()
             logger.info(
-                "valkey deleted chunks",
-                kb_id=kb_id, file_id=file_id, count=len(keys_to_delete),
+                "valkey soft-deleted chunks",
+                kb_id=kb_id, file_id=file_id, count=len(keys_to_mark),
             )
 
     def table_exists(self, table_name: str) -> bool:
