@@ -16,7 +16,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from model_hub.models.choices import DatasetSourceChoices, SourceChoices, StatusType
+from model_hub.models.choices import (
+    CellStatus,
+    DatasetSourceChoices,
+    SourceChoices,
+    StatusType,
+)
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
 from simulate.models import AgentDefinition, Scenarios
 from simulate.models.simulator_agent import SimulatorAgent
@@ -816,3 +821,183 @@ class TestScenarioTypeVariations:
         # Verify relationship
         assert graph.scenario == scenario
         assert ScenarioGraph.objects.filter(scenario=scenario).exists()
+
+
+@pytest.mark.integration
+class TestGenerateScenarioRowsPrefetch:
+    """Tests for cell resolution in generate_scenario_rows."""
+
+    @staticmethod
+    def _make_scenario_and_graph(dataset, agent_definition, organization, workspace):
+        from simulate.models.scenario_graph import ScenarioGraph
+
+        scenario = Scenarios.objects.create(
+            name="Prefetch Test",
+            source="",
+            scenario_type=Scenarios.ScenarioTypes.GRAPH,
+            organization=organization,
+            workspace=workspace,
+            agent_definition=agent_definition,
+            dataset=dataset,
+        )
+        ScenarioGraph.objects.create(
+            name="Prefetch Graph",
+            scenario=scenario,
+            organization=organization,
+            graph_config={"nodes": [], "edges": []},
+        )
+        return scenario
+
+    @staticmethod
+    def _seed_rows(dataset, num_rows):
+        Row.objects.bulk_create(
+            [Row(dataset=dataset, order=i) for i in range(num_rows)]
+        )
+        return list(
+            Row.objects.filter(dataset=dataset).order_by("order").values_list("id", flat=True)
+        )
+
+    @staticmethod
+    def _seed_cells(dataset, columns, row_ids):
+        Cell.objects.bulk_create(
+            [
+                Cell(dataset=dataset, column=c, row_id=rid, value="")
+                for rid in row_ids
+                for c in columns
+            ]
+        )
+
+    @staticmethod
+    def _build_cases(num_rows, columns):
+        return [
+            {c.name.lower(): f"val_r{i}_c{c.name}" for c in columns}
+            for i in range(num_rows)
+        ]
+
+    def test_prefetch_updates_existing_cells(
+        self, db, scenario_dataset, agent_definition, organization, workspace
+    ):
+        from simulate.tasks.scenario_tasks import generate_scenario_rows
+
+        columns = list(Column.objects.filter(dataset=scenario_dataset))
+        row_ids = self._seed_rows(scenario_dataset, num_rows=3)
+        self._seed_cells(scenario_dataset, columns, row_ids)
+        scenario = self._make_scenario_and_graph(
+            scenario_dataset, agent_definition, organization, workspace
+        )
+        cases = self._build_cases(3, columns)
+
+        with patch(
+            "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
+        ) as mock_agent_cls, patch(
+            "simulate.tasks.scenario_tasks.close_old_connections"
+        ):
+            agent = mock_agent_cls.return_value
+            agent.graph_generator.get_branches.return_value = []
+            agent._generate_cases_for_branches.return_value = cases
+
+            generate_scenario_rows(
+                dataset_id=scenario_dataset.id,
+                scenario_id=scenario.id,
+                num_rows=3,
+                description="test",
+                new_rows_id=row_ids,
+            )
+
+        for i, rid in enumerate(row_ids):
+            for c in columns:
+                cell = Cell.objects.get(row_id=rid, column=c)
+                assert cell.value == f"val_r{i}_c{c.name}"
+                assert cell.status == CellStatus.PASS.value
+        assert Cell.objects.filter(dataset=scenario_dataset).count() == 3 * len(columns)
+
+    def test_error_path_marks_seeded_cells_error(
+        self, db, scenario_dataset, agent_definition, organization, workspace
+    ):
+        from simulate.tasks.scenario_tasks import generate_scenario_rows
+
+        columns = list(Column.objects.filter(dataset=scenario_dataset))
+        row_ids = self._seed_rows(scenario_dataset, num_rows=2)
+        self._seed_cells(scenario_dataset, columns, row_ids)
+        scenario = self._make_scenario_and_graph(
+            scenario_dataset, agent_definition, organization, workspace
+        )
+
+        with patch(
+            "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
+        ) as mock_agent_cls, patch(
+            "simulate.tasks.scenario_tasks.close_old_connections"
+        ):
+            agent = mock_agent_cls.return_value
+            agent.graph_generator.get_branches.return_value = []
+            agent._generate_cases_for_branches.return_value = []
+
+            with pytest.raises(ValueError):
+                generate_scenario_rows(
+                    dataset_id=scenario_dataset.id,
+                    scenario_id=scenario.id,
+                    num_rows=2,
+                    description="test",
+                    new_rows_id=row_ids,
+                )
+
+        cells = Cell.objects.filter(dataset=scenario_dataset)
+        assert cells.count() == 2 * len(columns)
+        assert set(cells.values_list("status", flat=True)) == {CellStatus.ERROR.value}
+        columns_qs = Column.objects.filter(dataset=scenario_dataset)
+        assert set(columns_qs.values_list("status", flat=True)) == {
+            StatusType.FAILED.value
+        }
+
+    def test_conversation_branch_reads_branch_name_fallback(
+        self, db, scenario_dataset, agent_definition, organization, workspace
+    ):
+        from simulate.tasks.scenario_tasks import generate_scenario_rows
+
+        conv_col = Column.objects.create(
+            dataset=scenario_dataset,
+            name="conversation_branch",
+            data_type="text",
+            source=SourceChoices.OTHERS.value,
+        )
+        scenario_dataset.column_order = [
+            *scenario_dataset.column_order,
+            str(conv_col.id),
+        ]
+        scenario_dataset.save()
+
+        columns = list(Column.objects.filter(dataset=scenario_dataset))
+        row_ids = self._seed_rows(scenario_dataset, num_rows=1)
+        self._seed_cells(scenario_dataset, columns, row_ids)
+        scenario = self._make_scenario_and_graph(
+            scenario_dataset, agent_definition, organization, workspace
+        )
+        cases = [
+            {
+                "persona": "p",
+                "situation": "s",
+                "outcome": "o",
+                "branch_name": "greeting-then-verify",
+            }
+        ]
+
+        with patch(
+            "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
+        ) as mock_agent_cls, patch(
+            "simulate.tasks.scenario_tasks.close_old_connections"
+        ):
+            agent = mock_agent_cls.return_value
+            agent.graph_generator.get_branches.return_value = []
+            agent._generate_cases_for_branches.return_value = cases
+
+            generate_scenario_rows(
+                dataset_id=scenario_dataset.id,
+                scenario_id=scenario.id,
+                num_rows=1,
+                description="test",
+                new_rows_id=row_ids,
+            )
+
+        conv_cell = Cell.objects.get(row_id=row_ids[0], column=conv_col)
+        assert conv_cell.value == "greeting-then-verify"
+        assert conv_cell.status == CellStatus.PASS.value
