@@ -1104,9 +1104,9 @@ export function buildReadOnlyColumnDefs(columnConfig) {
   return columnConfig
     .filter((col) => col.is_visible !== false)
     .map((col) => {
-      const colDataType = col.data_type
-      const colIsFrozen = col.is_frozen
-      const colOriginType = col.origin_type
+      const colDataType = col.data_type;
+      const colIsFrozen = col.is_frozen;
+      const colOriginType = col.origin_type;
       const enrichedCol = {
         ...col,
         dataType: colDataType,
@@ -1930,7 +1930,9 @@ function TraceSelector({
             project_id: projectId,
             page_number: pageNumber,
             page_size: TRACE_ROWS_LIMIT,
-            filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
+            filters: JSON.stringify(
+              stripUiFilterKeys(filtersRef.current || []),
+            ),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
@@ -2374,7 +2376,7 @@ function TraceSelector({
                 excludedIds: new Set(),
                 projectId,
                 projectVersionId: versionId || undefined,
-                filters: validatedFilters,
+                filters: stripUiFilterKeys(validatedFilters || []),
               });
             }}
           />
@@ -2385,7 +2387,9 @@ function TraceSelector({
             cellHeight="Short"
             params={{
               project_id: projectId,
-              filters: JSON.stringify(validatedFilters || []),
+              filters: JSON.stringify(
+                stripUiFilterKeys(validatedFilters || []),
+              ),
             }}
             onSelectionChanged={(traceIds) => {
               onSetSelection(traceIds);
@@ -2578,7 +2582,9 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: SPAN_ROWS_LIMIT,
-            filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
+            filters: JSON.stringify(
+              stripUiFilterKeys(filtersRef.current || []),
+            ),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
@@ -3142,7 +3148,9 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
                     direction: sort,
                   })),
                 ),
-                filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
+                filters: JSON.stringify(
+                  stripUiFilterKeys(filtersRef.current || []),
+                ),
               },
             },
           );
