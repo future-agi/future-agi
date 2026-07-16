@@ -684,7 +684,6 @@ const CreateRunTestPage = ({ open, onClose }) => {
       return [...updated, toLegacyEvalShape(evalConfig, versionedName)];
     });
 
-    setOpenEvaluationDialog(false);
     setEditingEvalId(null);
   };
 
