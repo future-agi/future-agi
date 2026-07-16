@@ -334,7 +334,7 @@ const EvalPickerDrawer = ({
   keepOpenAfterSave = false,
   sourceFilters = null,
   onFiltersChange = null,
-  multiSelect = false,
+  multiSelect = true,
 }) => {
   const [currentStep, setCurrentStep] = useState("list");
 
