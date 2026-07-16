@@ -256,13 +256,13 @@ def _extract_model_name(
     if model:
         return model
 
+    invocation_params = kwargs.get("invocation_params") or {}
+
     if serialized.get("id")[-1] == "AzureChatOpenAI":
-        invocation_params = kwargs.get("invocation_params") or {}
         if invocation_params.get("model"):
             return invocation_params.get("model")
 
     if serialized.get("id")[-1] == "AzureOpenAI":
-        invocation_params = kwargs.get("invocation_params") or {}
         if invocation_params.get("model_name"):
             return invocation_params.get("model_name")
 
@@ -351,6 +351,6 @@ def _extract_model_by_key(
         for key in keys:
             current_obj = current_obj.get(key)
             if not current_obj:
-                raise ValueError(f"Key {key} not found in {object}")
+                return None
 
         return current_obj if current_obj else default if default else None
