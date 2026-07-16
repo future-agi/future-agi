@@ -274,6 +274,13 @@ class ScenarioPromptsUpdateResponseSerializer(serializers.Serializer):
     prompts = serializers.CharField(read_only=True)
 
 
+class ScenarioBulkDeleteResponseSerializer(serializers.Serializer):
+    """Response serializer for DELETE /scenarios/ (bulk delete)."""
+
+    message = serializers.CharField(read_only=True)
+    scenarios_updated = serializers.IntegerField(read_only=True)
+
+
 class ScenarioErrorResponseSerializer(serializers.Serializer):
     """Standardized error response shape — used only for Swagger documentation.
 

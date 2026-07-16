@@ -1158,11 +1158,11 @@ export const endpoints = {
   },
   scenarios: {
     list: "/simulate/scenarios/",
+    delete: "/simulate/scenarios/",
     getColumns: "/simulate/scenarios/get-columns/",
     create: "/simulate/scenarios/create/",
     detail: (id) => `/simulate/scenarios/${id}/`,
     edit: (id) => `/simulate/scenarios/${id}/edit/`,
-    delete: (id) => `/simulate/scenarios/${id}/delete/`,
     addRowUsingAi: (scenarioId) =>
       `/simulate/scenarios/${scenarioId}/add-rows/`,
     addCols: (scenarioId) => `/simulate/scenarios/${scenarioId}/add-columns/`,

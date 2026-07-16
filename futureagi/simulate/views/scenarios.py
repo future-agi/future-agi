@@ -7,6 +7,7 @@ from django.db import close_old_connections, models, transaction
 from django.db.models import Count, Max, OuterRef, Q, Subquery
 from django.http import Http404
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.exceptions import NotFound
 from rest_framework.permissions import IsAuthenticated
@@ -53,6 +54,7 @@ from simulate.models.simulator_agent import SimulatorAgent
 from simulate.serializers.requests.scenarios import (
     ScenarioAddColumnsRequestSerializer,
     ScenarioAddRowsRequestSerializer,
+    ScenarioBulkDeleteRequestSerializer,
     ScenarioCreateRequestSerializer,
     ScenarioEditPromptsRequestSerializer,
     ScenarioEditRequestSerializer,
@@ -62,6 +64,7 @@ from simulate.serializers.requests.scenarios import (
 from simulate.serializers.response.scenarios import (
     ScenarioAddColumnsResponseSerializer,
     ScenarioAddRowsResponseSerializer,
+    ScenarioBulkDeleteResponseSerializer,
     ScenarioCreateResponseSerializer,
     ScenarioDeleteResponseSerializer,
     ScenarioDetailResponseSerializer,
@@ -330,6 +333,49 @@ class ScenariosListView(APIView):
             )
         except Exception as e:
             return self._gm.bad_request(f"Error fetching column configs: {str(e)}")
+
+    @swagger_auto_schema(
+        tags=["Scenarios"],
+        operation_summary="Bulk delete scenarios",
+        operation_description="Bulk soft-deletes scenarios by setting deleted=True.",
+        request_body=ScenarioBulkDeleteRequestSerializer,
+        responses={
+            200: ScenarioBulkDeleteResponseSerializer,
+            400: ScenarioErrorResponseSerializer,
+            500: ScenarioErrorResponseSerializer,
+        },
+    )
+    def delete(self, request, *args, **kwargs):
+        """
+        Bulk soft-delete scenarios.
+        """
+        try:
+            serializer = ScenarioBulkDeleteRequestSerializer(data=request.data)
+            if not serializer.is_valid():
+                return self._gm.bad_request(serializer.errors)
+
+            scenario_ids = serializer.validated_data["scenario_ids"]
+
+            with transaction.atomic():
+                updated_scenarios = Scenarios.objects.filter(
+                    id__in=scenario_ids,
+                    organization=getattr(request, "organization", None)
+                    or request.user.organization,
+                ).update(deleted=True, deleted_at=timezone.now())
+
+            response_data = {
+                "message": "Scenarios deleted successfully",
+                "scenarios_updated": updated_scenarios,
+            }
+            return Response(
+                ScenarioBulkDeleteResponseSerializer(response_data).data,
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to delete scenarios: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class CreateScenarioView(APIView):
