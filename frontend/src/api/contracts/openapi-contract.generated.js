@@ -11329,6 +11329,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "404": {
             "$ref": "#/definitions/ApiTextErrorResponse"
           },
+          "503": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
           }

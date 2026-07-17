@@ -516,25 +516,6 @@ class TestSessionBulkSelectAndScoreColSliceF:
         assert len(result.ids) == 1
         assert result.total_matching == 2  # cap + 1 sentinel
 
-    def test_bulkselect_pg_fallback_returns_historical(
-        self, ch_sessions, django_db_blocker, monkeypatch
-    ):
-        """When CH is unavailable the resolver falls back to the PG aggregate
-        (``_resolve_filtered_session_ids_pg``). This ALSO pins the exact
-        monkeypatch target string the existing PG-seeded unit suites patch
-        (``_resolve_session_ids_clickhouse`` → ``None``): if that path moved,
-        this fails. The historical session (real PG chain) is returned; the
-        net-new (CH-only, no PG row) is NOT — the very gap the CH path closes."""
-        monkeypatch.setattr(
-            "model_hub.services.bulk_selection._resolve_session_ids_clickhouse",
-            lambda **kwargs: None,
-        )
-        client, ids = ch_sessions
-        with django_db_blocker.unblock():
-            post = _post_bulkselect_session_ids(ids["proj"], ids["org"])
-        assert ids["hist_id"] in post  # PG fallback surfaces the historical
-        assert ids["netnew_id"] not in post  # ...but not the CH-only net-new
-
     def test_bulkselect_wrong_org_raises_does_not_exist(
         self, ch_sessions, django_db_blocker
     ):

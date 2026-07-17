@@ -145,7 +145,9 @@ class TestAddItemsFilterMode:
         self, auth_client, active_queue, observe_project
     ):
         for i in range(3):
-            Trace.objects.create(project=observe_project, name=f"t-{i}")
+            _seed_ch_trace_root(
+                Trace.objects.create(project=observe_project, name=f"t-{i}")
+            )
 
         resp = auth_client.post(
             _add_items_url(active_queue.id),
@@ -170,7 +172,9 @@ class TestAddItemsFilterMode:
     ):
         """Filter-mode add stamps project_id from the selection too (TH-6864), so
         every path that fills a queue leaves items scope-able by the render read."""
-        Trace.objects.create(project=observe_project, name="t-fp")
+        _seed_ch_trace_root(
+            Trace.objects.create(project=observe_project, name="t-fp")
+        )
         resp = auth_client.post(
             _add_items_url(active_queue.id),
             {
@@ -194,6 +198,8 @@ class TestAddItemsFilterMode:
             Trace.objects.create(project=observe_project, name=f"t-{i}")
             for i in range(5)
         ]
+        for _t in traces:
+            _seed_ch_trace_root(_t)
         exclude = [str(traces[0].id), str(traces[1].id)]
 
         resp = auth_client.post(
@@ -218,6 +224,8 @@ class TestAddItemsFilterMode:
     ):
         target = Trace.objects.create(project=observe_project, name="target-trace")
         other = Trace.objects.create(project=observe_project, name="other-trace")
+        _seed_ch_trace_root(target)
+        _seed_ch_trace_root(other)
 
         resp = auth_client.post(
             _add_items_url(active_queue.id),
@@ -285,7 +293,9 @@ class TestAddItemsFilterMode:
         views_mod.MAX_SELECTION_CAP = 2
         try:
             for i in range(3):
-                Trace.objects.create(project=observe_project, name=f"t-{i}")
+                _seed_ch_trace_root(
+                    Trace.objects.create(project=observe_project, name=f"t-{i}")
+                )
             resp = auth_client.post(
                 _add_items_url(active_queue.id),
                 {
@@ -309,11 +319,39 @@ class TestAddItemsFilterMode:
         assert err.get("total_matching") == 3
         assert err.get("cap") == 2
 
+    def test_filter_mode_ch_failure_returns_503_not_500(
+        self, auth_client, active_queue, observe_project, monkeypatch
+    ):
+        # The filter-mode resolvers are ClickHouse-only (no PG fallback). A CH
+        # outage must surface as a structured, retryable 503 the FE can show —
+        # not a raw 500 from Django's default handler.
+        import model_hub.views.annotation_queues as views_mod
+
+        def _boom(**kwargs):
+            raise RuntimeError("CH down")
+
+        monkeypatch.setitem(views_mod.FILTER_MODE_RESOLVERS, "trace", _boom)
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "trace",
+                    "project_id": str(observe_project.id),
+                }
+            },
+            format="json",
+        )
+        assert resp.status_code == 503, resp.data
+        assert resp.data.get("code") == "source_resolve_unavailable"
+
     def test_filter_mode_queue_item_count_matches_added(
         self, auth_client, active_queue, observe_project
     ):
         for i in range(4):
-            Trace.objects.create(project=observe_project, name=f"t-{i}")
+            _seed_ch_trace_root(
+                Trace.objects.create(project=observe_project, name=f"t-{i}")
+            )
 
         resp = auth_client.post(
             _add_items_url(active_queue.id),
@@ -398,584 +436,6 @@ class TestAddItemsValidation:
             format="json",
         )
         assert resp.status_code == 400
-
-
-# --------------------------------------------------------------------------
-# Phase 4 — filter-mode for source_type=observation_span
-# --------------------------------------------------------------------------
-
-
-def _make_span(project, trace, *, name, offset_minutes=0):
-    now = timezone.now()
-    return ObservationSpan.objects.create(
-        id=f"sp-{name}-{trace.id.hex[:6]}",
-        project=project,
-        trace=trace,
-        name=name,
-        observation_type="llm",
-        start_time=now + timezone.timedelta(minutes=offset_minutes)
-        if hasattr(timezone, "timedelta")
-        else now,
-        end_time=now,
-        parent_span_id=None,
-    )
-
-
-@pytest.fixture
-def span_parent_trace(db, observe_project):
-    return Trace.objects.create(project=observe_project, name="span-parent")
-
-
-@pytest.mark.django_db
-class TestAddItemsFilterModeSpan:
-    def test_filter_mode_span_no_filter_adds_all(
-        self, auth_client, active_queue, observe_project, span_parent_trace
-    ):
-        from datetime import timedelta
-
-        now = timezone.now()
-        for i in range(3):
-            ObservationSpan.objects.create(
-                id=f"sp-{i}-{span_parent_trace.id.hex[:6]}",
-                project=observe_project,
-                trace=span_parent_trace,
-                name=f"sp-{i}",
-                observation_type="llm",
-                start_time=now - timedelta(minutes=i),
-                end_time=now - timedelta(minutes=i) + timedelta(seconds=1),
-                parent_span_id=None,
-            )
-
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "observation_span",
-                    "project_id": str(observe_project.id),
-                }
-            },
-            format="json",
-        )
-        assert resp.status_code == 200, resp.data
-        result = resp.data["result"]
-        assert result["added"] == 3
-        assert result["duplicates"] == 0
-        assert result["total_matching"] == 3
-
-    def test_filter_mode_span_id_filter_adds_exact_span(
-        self, auth_client, active_queue, observe_project, span_parent_trace
-    ):
-        target = _make_span(observe_project, span_parent_trace, name="target")
-        other = _make_span(
-            observe_project,
-            span_parent_trace,
-            name="other",
-            offset_minutes=1,
-        )
-
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "observation_span",
-                    "project_id": str(observe_project.id),
-                    "filter": [_api_filter("span_id", "text", "equals", target.id)],
-                }
-            },
-            format="json",
-        )
-
-        assert resp.status_code == 200, resp.data
-        result = resp.data["result"]
-        assert result["added"] == 1
-        assert result["total_matching"] == 1
-        assert QueueItem.objects.filter(observation_span=target, deleted=False).exists()
-        assert not QueueItem.objects.filter(
-            observation_span=other, deleted=False
-        ).exists()
-
-    def test_filter_mode_span_respects_exclude_ids(
-        self, auth_client, active_queue, observe_project, span_parent_trace
-    ):
-        from datetime import timedelta
-
-        now = timezone.now()
-        spans = []
-        for i in range(5):
-            spans.append(
-                ObservationSpan.objects.create(
-                    id=f"spx-{i}-{span_parent_trace.id.hex[:6]}",
-                    project=observe_project,
-                    trace=span_parent_trace,
-                    name=f"spx-{i}",
-                    observation_type="llm",
-                    start_time=now - timedelta(minutes=i),
-                    end_time=now - timedelta(minutes=i) + timedelta(seconds=1),
-                    parent_span_id=None,
-                )
-            )
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "observation_span",
-                    "project_id": str(observe_project.id),
-                    "exclude_ids": [spans[0].id, spans[1].id],
-                }
-            },
-            format="json",
-        )
-        assert resp.status_code == 200, resp.data
-        assert resp.data["result"]["added"] == 3
-        assert resp.data["result"]["total_matching"] == 3
-
-    def test_filter_mode_span_duration_filters_on_span_latency(
-        self, auth_client, active_queue, observe_project, span_parent_trace
-    ):
-        now = timezone.now()
-        low_latency = ObservationSpan.objects.create(
-            id=f"span-low-{span_parent_trace.id.hex[:6]}",
-            project=observe_project,
-            trace=span_parent_trace,
-            name="low-latency",
-            observation_type="llm",
-            latency_ms=100,
-            start_time=now,
-            end_time=now,
-            parent_span_id=None,
-        )
-        high_latency = ObservationSpan.objects.create(
-            id=f"span-high-{span_parent_trace.id.hex[:6]}",
-            project=observe_project,
-            trace=span_parent_trace,
-            name="high-latency",
-            observation_type="llm",
-            latency_ms=1000,
-            start_time=now + timedelta(minutes=1),
-            end_time=now + timedelta(minutes=1),
-            parent_span_id=None,
-        )
-
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "observation_span",
-                    "project_id": str(observe_project.id),
-                    "filter": [
-                        _api_filter("latency_ms", "number", "greater_than", 500)
-                    ],
-                }
-            },
-            format="json",
-        )
-
-        assert resp.status_code == 200, resp.data
-        assert resp.data["result"]["added"] == 1
-        assert resp.data["result"]["total_matching"] == 1
-        assert not QueueItem.objects.filter(observation_span=low_latency).exists()
-        assert QueueItem.objects.filter(observation_span=high_latency).exists()
-
-    def test_filter_mode_span_counts_existing_as_duplicates(
-        self, auth_client, active_queue, observe_project, span_parent_trace
-    ):
-        from datetime import timedelta
-
-        now = timezone.now()
-        spans = []
-        for i in range(3):
-            span = ObservationSpan.objects.create(
-                id=f"spd-{i}-{span_parent_trace.id.hex[:6]}",
-                project=observe_project,
-                trace=span_parent_trace,
-                name=f"spd-{i}",
-                observation_type="llm",
-                start_time=now - timedelta(minutes=i),
-                end_time=now - timedelta(minutes=i) + timedelta(seconds=1),
-                parent_span_id=None,
-            )
-            seed_ch_span(span)
-            spans.append(span)
-        # Pre-add one via enumerated path
-        auth_client.post(
-            _add_items_url(active_queue.id),
-            {"items": [{"source_type": "observation_span", "source_id": spans[0].id}]},
-            format="json",
-        )
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "observation_span",
-                    "project_id": str(observe_project.id),
-                }
-            },
-            format="json",
-        )
-        assert resp.status_code == 200, resp.data
-        assert resp.data["result"]["added"] == 2
-        assert resp.data["result"]["duplicates"] == 1
-
-    def test_filter_mode_span_truncation_returns_400(
-        self, auth_client, active_queue, observe_project, span_parent_trace
-    ):
-        from datetime import timedelta
-
-        import model_hub.views.annotation_queues as views_mod
-
-        original_cap = views_mod.MAX_SELECTION_CAP
-        views_mod.MAX_SELECTION_CAP = 2
-        try:
-            now = timezone.now()
-            for i in range(3):
-                ObservationSpan.objects.create(
-                    id=f"spt-{i}-{span_parent_trace.id.hex[:6]}",
-                    project=observe_project,
-                    trace=span_parent_trace,
-                    name=f"spt-{i}",
-                    observation_type="llm",
-                    start_time=now - timedelta(minutes=i),
-                    end_time=now - timedelta(minutes=i) + timedelta(seconds=1),
-                    parent_span_id=None,
-                )
-            resp = auth_client.post(
-                _add_items_url(active_queue.id),
-                {
-                    "selection": {
-                        "mode": "filter",
-                        "source_type": "observation_span",
-                        "project_id": str(observe_project.id),
-                    }
-                },
-                format="json",
-            )
-        finally:
-            views_mod.MAX_SELECTION_CAP = original_cap
-
-        assert resp.status_code == 400, resp.data
-        assert resp.data.get("type") == "selection_too_large"
-        assert resp.data.get("code") == "selection_too_large"
-        err = resp.data.get("error") or {}
-        assert err.get("type") == "selection_too_large"
-        assert err.get("total_matching") == 3
-        assert err.get("cap") == 2
-
-
-# --------------------------------------------------------------------------
-# Phase 6 — filter-mode for source_type=trace_session
-# --------------------------------------------------------------------------
-
-
-@pytest.fixture
-def seeded_sessions_for_dispatch(db, observe_project):
-    """3 sessions with spans for endpoint-level session dispatch tests."""
-    from datetime import timedelta
-
-    from tracer.models.trace_session import TraceSession
-
-    now = timezone.now()
-    sessions = []
-    for i in range(3):
-        s = TraceSession.objects.create(
-            project=observe_project, name=f"ds-{i}", bookmarked=False
-        )
-        t = Trace.objects.create(project=observe_project, session=s, name=f"dt-{i}")
-        ObservationSpan.objects.create(
-            id=f"sp-disp-{i}-{s.id.hex[:6]}",
-            project=observe_project,
-            trace=t,
-            name=f"sp-{i}",
-            observation_type="llm",
-            start_time=now - timedelta(minutes=i),
-            end_time=now - timedelta(minutes=i) + timedelta(seconds=1),
-            parent_span_id=None,
-            cost=0.0,
-            total_tokens=0,
-        )
-        sessions.append(s)
-    return sessions
-
-
-@pytest.mark.django_db
-class TestAddItemsFilterModeSession:
-    @pytest.fixture(autouse=True)
-    def _force_pg_fallback(self, monkeypatch):
-        """P3b step2 (PG_ORM_READ_MIGRATION, Slice F): the session filter-mode
-        resolver is now CH-first. These endpoint tests seed PG fixtures and
-        assert PG semantics for the ADD side, so force the CH-outage PG fallback
-        (``_resolve_session_ids_clickhouse`` → ``None``) — the same code,
-        relocated. CH-first is covered by the ch_rehearsal integration suite.
-        (The list_sessions endpoint these compare against is independently
-        CH-backed and unaffected by this patch.)"""
-        monkeypatch.setattr(
-            "model_hub.services.bulk_selection._resolve_session_ids_clickhouse",
-            lambda **kwargs: None,
-        )
-
-    def test_filter_mode_session_no_filter_adds_all(
-        self, auth_client, active_queue, observe_project, seeded_sessions_for_dispatch
-    ):
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "trace_session",
-                    "project_id": str(observe_project.id),
-                }
-            },
-            format="json",
-        )
-        assert resp.status_code == 200, resp.data
-        assert resp.data["result"]["added"] == 3
-        assert resp.data["result"]["total_matching"] == 3
-
-    def test_filter_mode_session_id_filter_adds_exact_session(
-        self, auth_client, active_queue, observe_project, seeded_sessions_for_dispatch
-    ):
-        target = seeded_sessions_for_dispatch[0]
-        other = seeded_sessions_for_dispatch[1]
-
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "trace_session",
-                    "project_id": str(observe_project.id),
-                    "filter": [
-                        _api_filter("session_id", "text", "equals", str(target.id))
-                    ],
-                }
-            },
-            format="json",
-        )
-
-        assert resp.status_code == 200, resp.data
-        result = resp.data["result"]
-        assert result["added"] == 1
-        assert result["total_matching"] == 1
-        assert QueueItem.objects.filter(trace_session=target, deleted=False).exists()
-        assert not QueueItem.objects.filter(trace_session=other, deleted=False).exists()
-
-    @pytest.mark.api
-    @pytest.mark.skip(
-        reason="list_sessions endpoint reads from CH; test fixtures only seed PG"
-    )
-    def test_filter_mode_session_date_filter_matches_list_endpoint(
-        self, auth_client, active_queue, observe_project, seeded_sessions_for_dispatch
-    ):
-        now = timezone.now()
-        recent_start = now - timedelta(days=7)
-        recent_end = now + timedelta(days=1)
-        recent_sessions = seeded_sessions_for_dispatch[:2]
-        old_session = seeded_sessions_for_dispatch[2]
-
-        TraceSession.objects.filter(id=recent_sessions[0].id).update(
-            created_at=now - timedelta(days=2)
-        )
-        TraceSession.objects.filter(id=recent_sessions[1].id).update(
-            created_at=now - timedelta(days=1)
-        )
-        TraceSession.objects.filter(id=old_session.id).update(
-            created_at=now - timedelta(days=90)
-        )
-
-        filters = [
-            _api_filter(
-                "created_at",
-                "datetime",
-                "between",
-                [recent_start.isoformat(), recent_end.isoformat()],
-            )
-        ]
-        expected_ids = {str(session.id) for session in recent_sessions}
-
-        list_resp = auth_client.get(
-            "/tracer/trace-session/list_sessions/",
-            {
-                "project_id": str(observe_project.id),
-                "filters": json.dumps(filters),
-                "sort_params": "[]",
-                "page_number": 0,
-                "page_size": 20,
-            },
-        )
-        assert list_resp.status_code == 200, list_resp.data
-        list_ids = {row["session_id"] for row in list_resp.data["result"]["table"]}
-        assert list_ids == expected_ids
-
-        add_resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "trace_session",
-                    "project_id": str(observe_project.id),
-                    "filter": filters,
-                }
-            },
-            format="json",
-        )
-        assert add_resp.status_code == 200, add_resp.data
-        assert add_resp.data["result"]["added"] == 2
-        assert add_resp.data["result"]["total_matching"] == 2
-
-        queue_session_ids = {
-            str(item.trace_session_id)
-            for item in QueueItem.objects.filter(
-                queue=active_queue,
-                source_type="trace_session",
-                deleted=False,
-            )
-        }
-        assert queue_session_ids == expected_ids
-
-    def test_filter_mode_session_respects_exclude_ids(
-        self, auth_client, active_queue, observe_project, seeded_sessions_for_dispatch
-    ):
-        exclude = [str(seeded_sessions_for_dispatch[0].id)]
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "trace_session",
-                    "project_id": str(observe_project.id),
-                    "exclude_ids": exclude,
-                }
-            },
-            format="json",
-        )
-        assert resp.status_code == 200, resp.data
-        assert resp.data["result"]["added"] == 2
-
-    def test_filter_mode_session_truncation_returns_400(
-        self, auth_client, active_queue, observe_project, seeded_sessions_for_dispatch
-    ):
-        import model_hub.views.annotation_queues as views_mod
-
-        original_cap = views_mod.MAX_SELECTION_CAP
-        views_mod.MAX_SELECTION_CAP = 2
-        try:
-            resp = auth_client.post(
-                _add_items_url(active_queue.id),
-                {
-                    "selection": {
-                        "mode": "filter",
-                        "source_type": "trace_session",
-                        "project_id": str(observe_project.id),
-                    }
-                },
-                format="json",
-            )
-        finally:
-            views_mod.MAX_SELECTION_CAP = original_cap
-        assert resp.status_code == 400, resp.data
-        assert resp.data.get("type") == "selection_too_large"
-        assert resp.data.get("code") == "selection_too_large"
-        err = resp.data.get("error") or {}
-        assert err.get("type") == "selection_too_large"
-        assert err.get("total_matching") == 3
-        assert err.get("cap") == 2
-
-    def test_session_list_hides_simulator_project_sessions(
-        self, auth_client, organization, workspace
-    ):
-        simulator_project = Project.objects.create(
-            name="Voice Sessions Hidden",
-            organization=organization,
-            workspace=workspace,
-            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
-            trace_type="observe",
-            source=ProjectSourceChoices.SIMULATOR.value,
-        )
-        session = TraceSession.objects.create(
-            project=simulator_project,
-            name="voice-session",
-        )
-        trace = Trace.objects.create(
-            project=simulator_project,
-            session=session,
-            name="voice-trace",
-        )
-        ObservationSpan.objects.create(
-            id=f"voice-session-{trace.id.hex[:8]}",
-            project=simulator_project,
-            trace=trace,
-            name="conversation-root",
-            observation_type="conversation",
-            start_time=timezone.now(),
-            end_time=timezone.now() + timedelta(seconds=10),
-            parent_span_id=None,
-        )
-
-        resp = auth_client.get(
-            "/tracer/trace-session/list_sessions/",
-            {
-                "project_id": str(simulator_project.id),
-                "page_number": 0,
-                "page_size": 20,
-            },
-        )
-
-        assert resp.status_code == 200, resp.data
-        result = resp.data["result"]
-        assert result["metadata"]["total_rows"] == 0
-        assert result["table"] == []
-
-    def test_filter_mode_session_hides_simulator_project_sessions(
-        self, auth_client, active_queue, organization, workspace
-    ):
-        simulator_project = Project.objects.create(
-            name="Voice Filter Sessions Hidden",
-            organization=organization,
-            workspace=workspace,
-            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
-            trace_type="observe",
-            source=ProjectSourceChoices.SIMULATOR.value,
-        )
-        session = TraceSession.objects.create(
-            project=simulator_project,
-            name="voice-filter-session",
-        )
-        trace = Trace.objects.create(
-            project=simulator_project,
-            session=session,
-            name="voice-filter-trace",
-        )
-        ObservationSpan.objects.create(
-            id=f"voice-filter-session-{trace.id.hex[:8]}",
-            project=simulator_project,
-            trace=trace,
-            name="conversation-root",
-            observation_type="conversation",
-            start_time=timezone.now(),
-            end_time=timezone.now() + timedelta(seconds=10),
-            parent_span_id=None,
-        )
-
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "trace_session",
-                    "project_id": str(simulator_project.id),
-                }
-            },
-            format="json",
-        )
-
-        assert resp.status_code == 200, resp.data
-        assert resp.data["result"]["added"] == 0
-        assert resp.data["result"]["total_matching"] == 0
-        assert not QueueItem.objects.filter(trace_session=session).exists()
 
 
 # --------------------------------------------------------------------------

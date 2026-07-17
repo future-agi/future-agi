@@ -221,6 +221,25 @@ class TestBuildIdQuery:
         assert "project_version_id = %(project_version_id)s" in sql
         assert params["project_version_id"] == "pv-3"
 
+    def test_limit_adds_ordered_cap(self):
+        sql, params = _make_builder().build_id_query(limit=5)
+        # Capped resolve orders newest-first and caps via a bound param, on top
+        # of the existing per-id dedup.
+        assert "ORDER BY start_time DESC, id DESC" in sql
+        assert "LIMIT 1 BY id" in sql
+        assert "LIMIT %(id_limit)s" in sql
+        assert params["id_limit"] == 5
+        # Clause order: ORDER BY, then LIMIT n BY, then the plain LIMIT.
+        assert sql.index("ORDER BY") < sql.index("LIMIT 1 BY id")
+        assert sql.index("LIMIT 1 BY id") < sql.index("LIMIT %(id_limit)s")
+
+    def test_default_limit_is_unbounded_and_unordered(self):
+        # The eval-resolver caller passes no limit — behaviour must be unchanged.
+        sql, params = _make_builder().build_id_query()
+        assert "ORDER BY" not in sql
+        assert "LIMIT %(id_limit)s" not in sql
+        assert "id_limit" not in params
+
 
 # --------------------------------------------------------------------------- #
 # build_content_query() — empty contract only (typed maps covered elsewhere)
