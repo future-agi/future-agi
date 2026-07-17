@@ -1,17 +1,23 @@
 """Routable source for annotation-label discovery (which labels have scores in a project).
 
-Routed via ``_REGISTRY["ANNOTATION_LABELS"]`` (see v2/dispatch.py): ``V1_ONLY``
-uses the PG source (joins ``Score`` through ``trace``/``observation_span`` — valid
-while the legacy PG tables exist); ``V2_ONLY``/``V2_PRIMARY`` use the CH source
-(scopes ``model_hub_score`` via ``spans`` — valid post-CH25 once those PG tables
-are dropped).
+Routed via ``_REGISTRY["ANNOTATION_LABELS"]`` (see v2/dispatch.py):
 
-Both expose ``label_ids_for_project(project_id) -> list[str]``
-so the dispatcher stays backend-blind (self-executing, returns rows not SQL).
+- ``V1_ONLY`` → :class:`AnnotationLabelScoresPG` — joins ``Score`` through
+  ``trace``/``observation_span`` (valid only while the legacy PG tables exist).
+- ``V2_ONLY``/``V2_PRIMARY`` → :class:`AnnotationLabelScoresProjectPG` — filters
+  ``Score`` on the denormalized ``tracer_project_id`` (valid post-CH25, cheap).
+
+:class:`AnnotationLabelScoresCH` scopes ``model_hub_score`` via the CH ``spans``
+table. Its ``spans`` scan OOMs at scale, so label discovery moved to the PG
+source above; the CH class is retained for the annotator / categorical
+filter-value reads that have no PG equivalent.
+
+``label_ids_for_project(project_id) -> list[str]`` is the dispatched entrypoint
+(all sources expose it) so the dispatcher stays backend-blind.
 
 Note: ``Score.project``/``model_hub_score.project_id`` point at
-``model_hub.DevelopAI`` (a different id space), so neither source filters on it —
-project scoping goes through trace/span which carry the ``tracer.Project`` id.
+``model_hub.DevelopAI`` (a different id space) and are NOT used for scoping; the
+denormalized ``Score.tracer_project_id`` carries the ``tracer.Project`` id.
 """
 from __future__ import annotations
 
@@ -50,8 +56,41 @@ _CH_PROJECT_SCOPE = """(
     )"""
 
 
+class AnnotationLabelScoresProjectPG:
+    """v2: label ids of scores in a project, via denormalized ``Score.tracer_project_id``.
+
+    Replaces the CH ``spans``-scoped scan (see :class:`AnnotationLabelScoresCH`),
+    which OOMs at scale. Keeps trace+span parity with that query via the
+    ``trace_id``/``observation_span_id`` not-null predicate — session-only and
+    other non-trace/span scores stay excluded, matching prior behavior.
+    """
+
+    def label_ids_for_project(self, project_id) -> list[str]:
+        from django.db.models import Q
+
+        from model_hub.models.score import Score
+
+        return [
+            str(lid)
+            for lid in Score.objects.filter(
+                Q(trace_id__isnull=False) | Q(observation_span_id__isnull=False),
+                tracer_project_id=project_id,
+                deleted=False,
+            )
+            .values_list("label_id", flat=True)
+            .distinct()
+            if lid
+        ]
+
+
 class AnnotationLabelScoresCH:
-    """v2: label ids + filter-value reads over ``model_hub_score``, scoped by ``spans``."""
+    """label ids + filter-value reads over ``model_hub_score``, scoped by ``spans``.
+
+    Label discovery for the ANNOTATION_LABELS dispatch now routes to
+    :class:`AnnotationLabelScoresProjectPG` (the ``spans`` scan here OOMs at
+    scale); this class is retained for the annotator / categorical filter-value
+    reads below, which have no PG equivalent.
+    """
 
     _QUERY = f"""
         SELECT DISTINCT toString(label_id) AS label_id

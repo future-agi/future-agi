@@ -136,6 +136,7 @@ class Score(BaseModel):
         blank=True,
         related_name="scores",
     )
+    tracer_project_id = models.UUIDField(null=True, blank=True)
     workspace = models.ForeignKey(
         Workspace,
         on_delete=models.CASCADE,
@@ -154,6 +155,10 @@ class Score(BaseModel):
             models.Index(fields=["dataset_row", "label"]),
             models.Index(fields=["prototype_run", "label"]),
             models.Index(fields=["queue_item"]),
+            models.Index(
+                fields=["tracer_project_id", "label"],
+                name="idx_score_tracer_project_label",
+            ),
         ]
         constraints = [
             # One score per (source, label, annotator, queue_item). Including
