@@ -67,6 +67,7 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         eval_config_ids: list[str] | None = None,
         remove_simulation_calls: bool = False,
         annotation_label_ids: list[str] | None = None,
+        strict_filters: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
@@ -76,6 +77,9 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
         self.eval_config_ids = eval_config_ids or []
         self.remove_simulation_calls = remove_simulation_calls
         self.annotation_label_ids = annotation_label_ids or []
+        # Fail loud on an untranslatable filter (rule resolve) instead of
+        # silently dropping it; the grid stays lenient. See TraceListQueryBuilder.
+        self.strict_filters = strict_filters
 
     # ------------------------------------------------------------------
     # Phase 1: Paginated root conversation spans
@@ -93,7 +97,9 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             project_id=self.project_id,
             project_ids=self.project_ids,
         )
-        extra_where, extra_params = fb.translate(self.filters)
+        extra_where, extra_params = fb.translate(
+            self.filters, strict=self.strict_filters
+        )
         self.params.update(extra_params)
 
         offset = self.page_number * self.page_size
@@ -147,7 +153,9 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             project_id=self.project_id,
             project_ids=self.project_ids,
         )
-        extra_where, extra_params = fb.translate(self.filters)
+        extra_where, extra_params = fb.translate(
+            self.filters, strict=self.strict_filters
+        )
         self.params.update(extra_params)
         filter_fragment = f"AND {extra_where}" if extra_where else ""
 
@@ -187,7 +195,9 @@ class VoiceCallListQueryBuilder(BaseQueryBuilder):
             project_id=self.project_id,
             project_ids=self.project_ids,
         )
-        extra_where, extra_params = fb.translate(self.filters)
+        extra_where, extra_params = fb.translate(
+            self.filters, strict=self.strict_filters
+        )
         params = dict(self.params)
         params.update(extra_params)
 

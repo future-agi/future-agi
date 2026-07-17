@@ -57,6 +57,16 @@ _SPAN_ATTR_TYPE_META: dict[str, tuple[str, Callable[[Any], Any]]] = {
 }
 
 
+class FilterTranslationError(ValueError):
+    """A filter reached the general condition builder but produced no WHERE
+    fragment — i.e. its operator/value shape isn't translatable to ClickHouse and
+    it would silently vanish from the query, matching MORE rows than the filter
+    implies. Raised only in ``strict`` translation (the automation-rule resolve
+    path) so the caller can fall back to the Postgres FilterEngine, which covers
+    the full operator set. The grid path stays lenient (a dropped filter there is
+    a visible, recoverable over-match, not an unattended queue write)."""
+
+
 class ClickHouseFilterBuilder:
     """Translates frontend filter format to ClickHouse WHERE clauses.
 
@@ -605,7 +615,9 @@ class ClickHouseFilterBuilder:
     # Public API
     # ------------------------------------------------------------------
 
-    def translate(self, filters: list[dict]) -> tuple[str, dict[str, Any]]:
+    def translate(
+        self, filters: list[dict], *, strict: bool = False
+    ) -> tuple[str, dict[str, Any]]:
         """Translate a filter list to ClickHouse WHERE clause fragments.
 
         Returns only the filter conditions **without** the ``WHERE`` keyword.
@@ -613,6 +625,38 @@ class ClickHouseFilterBuilder:
 
         Datetime filters on ``created_at`` / ``start_time`` are skipped here
         because the base query builder handles date-range scoping separately.
+
+        Parity with the Postgres path (``_apply_trace_filters`` ->
+        ``FilterEngine``): with ``strict=True`` (the automation-rule resolve)
+        any filter that yields no WHERE fragment raises
+        ``FilterTranslationError``, so an untranslatable filter falls back to
+        the full-coverage PG engine instead of silently widening the set. The
+        residual risk is therefore only *semantic drift within a translatable
+        filter*:
+
+        Operators covered: equals, not_equals, greater_than(_or_equal),
+        less_than(_or_equal), between, not_between, in, not_in, contains,
+        not_contains, starts_with, ends_with, is_null, is_not_null.
+
+        Col-types covered: NORMAL, SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC,
+        ANNOTATION (my_annotations / annotator / has_annotation), the has_eval
+        toggle, and the curated end-user string columns.
+
+        Known semantic diffs vs the PG engine (same payload, different rows):
+
+        * Case sensitivity: text equality / LIKE-family ops are
+          case-insensitive (``lower()`` / ``ILIKE``) only for the columns in
+          ``_CASE_INSENSITIVE_COLUMNS`` (status, observation_type, name,
+          trace_name, model, provider) and text-typed span attributes -- these
+          match PG's ``__iexact`` / ``__icontains``. Text ops on any other
+          column are case-*sensitive* here. The UI only exposes text
+          contains/starts/ends on the covered columns, so a reachable rule
+          filter stays at parity.
+        * is_null / is_not_null on a text column also folds empty string into
+          null (``col IS NULL OR col = ''``); PG ``__isnull`` matches SQL NULL
+          only, so the two disagree on empty-string rows.
+        * Case folding is ASCII-oriented (``lower()``); Postgres folding is
+          collation-dependent, so non-ASCII text may fold differently.
 
         Args:
             filters: The list of filter dicts from the frontend.
@@ -677,6 +721,15 @@ class ClickHouseFilterBuilder:
             )
             if condition:
                 conditions.append(condition)
+            elif strict:
+                # A filter with a real column/operator that the builder can't
+                # translate would drop out of the WHERE clause and silently
+                # widen the result. Fail loud so the resolve falls back to PG.
+                raise FilterTranslationError(
+                    f"filter not translatable to ClickHouse: "
+                    f"column_id={col_id!r} col_type={col_type!r} "
+                    f"filter_op={filter_op!r} filter_type={filter_type!r}"
+                )
 
         where = " AND ".join(conditions) if conditions else ""
         return where, self._params

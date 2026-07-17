@@ -101,8 +101,7 @@ def test_filter_helpers_read_canonical_snake_filter_payloads_only():
 def test_rule_field_mapping_uses_canonical_snake_case_ids_only():
     for source_mapping in annotation_queue_helpers.FIELD_MAPPING.values():
         assert not any(
-            any(char.isupper() for char in field_id)
-            for field_id in source_mapping
+            any(char.isupper() for char in field_id) for field_id in source_mapping
         )
 
 
@@ -370,3 +369,78 @@ def test_call_execution_unknown_simulation_filter_fails_closed():
     )
 
     assert unsupported == ["unmapped_simulation_metric"]
+
+
+# --------------------------------------------------------------------------
+# Strict CH filter translation — the automation-rule resolve must fail loud on
+# a filter it can't translate (which would silently drop from the WHERE clause
+# and over-match) so the caller falls back to the PG FilterEngine.
+# --------------------------------------------------------------------------
+
+
+def _ch_filter(col_id, col_type, filter_type, filter_op, filter_value):
+    return {
+        "column_id": col_id,
+        "filter_config": {
+            "col_type": col_type,
+            "filter_type": filter_type,
+            "filter_op": filter_op,
+            "filter_value": filter_value,
+        },
+    }
+
+
+def test_strict_translation_raises_on_dropped_filter():
+    """A filter that reaches the general condition builder but yields no WHERE
+    fragment silently vanishes → over-match. Strict mode raises so the rule
+    resolve falls back to PG; lenient mode (the grid) keeps dropping it."""
+    from tracer.services.clickhouse.query_builders.filters import (
+        ClickHouseFilterBuilder,
+        FilterTranslationError,
+    )
+
+    class _DropBuilder(ClickHouseFilterBuilder):
+        # Stand in for any operator/value shape the real builder can't translate.
+        def _build_condition(self, *args, **kwargs):
+            return None
+
+    payload = [_ch_filter("x", "NORMAL", "text", "equals", "y")]
+
+    where, _params = _DropBuilder(table="spans").translate(payload, strict=False)
+    assert where == ""  # lenient: silently dropped (pre-existing grid behavior)
+
+    with pytest.raises(FilterTranslationError):
+        _DropBuilder(table="spans").translate(payload, strict=True)
+
+
+def test_strict_translation_allows_supported_filter():
+    """A translatable filter passes strict mode unchanged — the guard must not
+    force the PG fallback for filters CH handles (that would reintroduce the
+    slow path this PR removed)."""
+    from tracer.services.clickhouse.query_builders.filters import (
+        ClickHouseFilterBuilder,
+    )
+
+    payload = [_ch_filter("customer_tier", "SPAN_ATTRIBUTE", "text", "equals", "vip")]
+    where, _params = ClickHouseFilterBuilder(table="spans").translate(
+        payload, strict=True
+    )
+    assert where  # a real WHERE fragment, no raise
+
+
+def test_strict_translation_skips_legitimate_non_condition_filters():
+    """Date filters (handled by parse_time_range) and empty toggle filters are
+    legitimate skips, not translation failures — strict mode must not raise."""
+    from tracer.services.clickhouse.query_builders.filters import (
+        ClickHouseFilterBuilder,
+    )
+
+    payload = [
+        _ch_filter(
+            "start_time", "NORMAL", "datetime", "between", ["2020-01-01", "2020-01-02"]
+        ),
+        _ch_filter("has_eval", "NORMAL", "boolean", "equals", None),
+    ]
+    # Must not raise; the date filter is scoped separately and the empty toggle
+    # is a no-op, so neither reaches the general condition builder.
+    ClickHouseFilterBuilder(table="spans").translate(payload, strict=True)

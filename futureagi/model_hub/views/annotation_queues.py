@@ -7371,9 +7371,13 @@ class AutomationRuleViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelView
         return 202 immediately. The activity emails creator + queue managers
         on completion.
 
-        The peek is a cheap dry-run (``[:cap+1]`` LIMIT, no COUNT(*)) — sub-
-        100ms even on 10M+ row trace tables — so this branch costs little
-        even when it ends up taking the sync path.
+        The peek is a cheap dry-run (``[:cap+1]`` LIMIT, no COUNT(*)) resolved
+        on ClickHouse — low hundreds of ms on a typical project — so this
+        branch costs little even when it ends up taking the sync path. It scales
+        with project size (an automation-rule resolve carries no time bound to
+        prune by), so a very large project runs a few seconds, still well under
+        the gateway timeout. The sync branch resolves a second time to write;
+        that repeat is a known minor cost now that the resolve is on ClickHouse.
         """
         manager_error = self._queue_manager_error(request, queue_id=queue_id)
         if manager_error:
