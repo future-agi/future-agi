@@ -232,6 +232,10 @@ from model_hub.services.derived_variable_service import (
 )
 from model_hub.tasks.develop_dataset import ingest_files_to_s3, remove_kb_files
 from model_hub.types import ConversionResult
+from model_hub.utils.annotation_queue_helpers import (
+    TEXT_FILTER_LOOKUPS,
+    or_text_filter_q,
+)
 from model_hub.utils.eval_reasons import (
     MIN_ROWS_FOR_CRITICAL_ISSUES,
     get_explanation_summary,
@@ -2034,36 +2038,15 @@ class GetDatasetTableView(APIView):
                         )
                         continue
 
-                    filter_value = str(filter_value).lower()
-                    text_ops = {
-                        "contains": {"value__icontains": filter_value},
-                        "not_contains": {
-                            "value__icontains": filter_value,
-                            "negate": True,
-                        },
-                        "equals": {"value__iexact": filter_value},
-                        "not_equals": {
-                            "value__iexact": filter_value,
-                            "negate": True,
-                        },
-                        "starts_with": {"value__istartswith": filter_value},
-                        "ends_with": {"value__iendswith": filter_value},
-                    }
-
-                    if filter_op not in text_ops:
+                    condition = or_text_filter_q("value", filter_op, filter_value)
+                    if condition is None:
                         message = (
-                            "Invalid filter operation. \
-                            Allowed operations are: "
-                            + ", ".join(text_ops.keys())
+                            "Invalid filter operation. Allowed operations are: "
+                            + ", ".join(TEXT_FILTER_LOOKUPS)
                         )
                         error_messages.append(message)
                         raise ValueError(message)
-
-                    filter_kwargs = text_ops[filter_op]
-                    if filter_kwargs.pop("negate", False):
-                        cells = cells.filter(~Q(**filter_kwargs), deleted=False)
-                    else:
-                        cells = cells.filter(**filter_kwargs, deleted=False)
+                    cells = cells.filter(condition, deleted=False)
 
                 elif filter_type == "boolean":
                     filter_value = str(filter_value).lower()

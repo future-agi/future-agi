@@ -2109,6 +2109,43 @@ def _apply_scalar_filter(qs, field_name, op, value):
     return qs.filter(**{lookup: value})
 
 
+# The six case-insensitive substring/equality operators shared by the
+# dataset-table filter and the annotation-queue cell filter. Kept separate from
+# _op_to_lookup, whose ``equals``/``not_equals`` map to a case-SENSITIVE exact
+# match — do not merge the two maps.
+TEXT_FILTER_LOOKUPS = {
+    "contains": "__icontains",
+    "not_contains": "__icontains",
+    "equals": "__iexact",
+    "not_equals": "__iexact",
+    "starts_with": "__istartswith",
+    "ends_with": "__iendswith",
+}
+_NEGATED_TEXT_OPS = ("not_contains", "not_equals")
+
+
+def or_text_filter_q(field, op, value):
+    """Build a case-insensitive text filter for ``op``, OR-ed across the terms.
+
+    The UI sends a list value for array-typed columns (e.g. ``["C"]``);
+    stringifying the whole list yields a Python repr (``"['c']"``) that never
+    matches a ``json.dumps`` cell, so match each element instead. ``value`` may
+    be a scalar or a list. ``not_contains`` / ``not_equals`` return the De
+    Morgan complement (matches none of the terms). Returns ``None`` for an
+    unrecognized op so the caller can reject it in its own way.
+    """
+    lookup = TEXT_FILTER_LOOKUPS.get(op)
+    if lookup is None:
+        return None
+    terms = value if isinstance(value, list) else [value]
+    condition = Q()
+    for term in terms:
+        condition |= Q(**{f"{field}{lookup}": "" if term is None else str(term)})
+    if op in _NEGATED_TEXT_OPS:
+        return ~condition
+    return condition
+
+
 def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_type):
     """Apply one DevelopFilterRow-style filter to a Cell queryset."""
     if filter_type == "number":
@@ -2165,20 +2202,9 @@ def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_ty
             if filter_op == "not_in":
                 return cells.filter(~condition)
             return cells.filter(condition)
-        text_value = "" if filter_value is None else str(filter_value)
-        op_map = {
-            "contains": Q(value__icontains=text_value),
-            "not_contains": Q(value__icontains=text_value),
-            "equals": Q(value__iexact=text_value),
-            "not_equals": Q(value__iexact=text_value),
-            "starts_with": Q(value__istartswith=text_value),
-            "ends_with": Q(value__iendswith=text_value),
-        }
-        condition = op_map.get(filter_op)
+        condition = or_text_filter_q("value", filter_op, values)
         if condition is None:
             return cells.none()
-        if filter_op in ("not_contains", "not_equals"):
-            return cells.filter(~condition)
         return cells.filter(condition)
 
     if filter_type == "boolean":
