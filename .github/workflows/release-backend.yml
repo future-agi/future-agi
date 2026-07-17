@@ -19,6 +19,7 @@ on:
         options:
           - main
           - dev
+          - fix/annotation_labels
 
 permissions:
   contents: read
