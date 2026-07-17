@@ -11327,7 +11327,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "413": {
-            "$ref": "#/definitions/ApiTextErrorResponse"
+            "$ref": "#/definitions/ApiTooLargeError"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -46598,9 +46598,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Type",
           "type": "string",
           "enum": [
-            "selection_too_large",
-            "export_too_large",
-            "items_too_large"
+            "selection_too_large"
           ]
         },
         "code": {
@@ -46656,6 +46654,82 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Code",
           "type": "string",
           "x-nullable": true
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string",
+          "x-nullable": true
+        },
+        "result": {
+          "title": "Result",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "error": {
+          "title": "Error",
+          "type": "string",
+          "x-nullable": true
+        },
+        "attr": {
+          "title": "Attr",
+          "type": "string",
+          "x-nullable": true
+        },
+        "details": {
+          "title": "Details",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "ApiTooLargeError": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": false
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error"
+          ],
+          "x-nullable": true
+        },
+        "code": {
+          "title": "Code",
+          "type": "string",
+          "enum": [
+            "export_too_large",
+            "items_too_large"
+          ]
         },
         "detail": {
           "title": "Detail",
@@ -76268,9 +76342,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Type",
           "type": "string",
           "enum": [
-            "selection_too_large",
-            "export_too_large",
-            "items_too_large"
+            "selection_too_large"
           ]
         },
         "message": {

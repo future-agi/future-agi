@@ -194,6 +194,7 @@ import type {
   ApiKeySuccessResponseApi,
   ApiSelectionTooLargeErrorApi,
   ApiTextErrorResponseApi,
+  ApiTooLargeErrorApi,
   ApiTracesSpanAttributeDetailListParams,
   ApiTracesSpanAttributeKeysListParams,
   ApiTracesSpanAttributeValuesListParams,
@@ -22636,7 +22637,7 @@ export type modelHubAnnotationQueuesItemsAddItemsResponse404 = {
 }
 
 export type modelHubAnnotationQueuesItemsAddItemsResponse413 = {
-  data: ApiTextErrorResponseApi
+  data: ApiTooLargeErrorApi
   status: 413
 }
 

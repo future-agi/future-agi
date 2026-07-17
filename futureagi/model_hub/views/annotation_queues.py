@@ -137,6 +137,7 @@ from tfc.utils.api_errors import ApiErrorCode
 from tfc.utils.api_serializers import (
     ApiSelectionTooLargeErrorSerializer,
     ApiTextErrorResponseSerializer,
+    ApiTooLargeErrorSerializer,
     EmptyRequestSerializer,
 )
 from tfc.utils.base_viewset import BaseModelViewSetMixinWithUserOrg
@@ -4760,7 +4761,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             400: ApiSelectionTooLargeErrorSerializer,
             403: ApiTextErrorResponseSerializer,
             404: ApiTextErrorResponseSerializer,
-            413: ApiTextErrorResponseSerializer,
+            413: ApiTooLargeErrorSerializer,
         },
     )
     @action(detail=False, methods=["post"], url_path="add-items")
