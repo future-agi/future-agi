@@ -10,6 +10,7 @@ from model_hub.serializers.contracts import (
     DatasetRowDataRequestSerializer,
     DatasetTableQuerySerializer,
 )
+from model_hub.utils.annotation_queue_helpers import _filter_dataset_cells
 from model_hub.views.develop_dataset import GetDatasetTableView
 
 
@@ -254,3 +255,119 @@ def test_dataset_row_data_api_rejects_legacy_filter_shape(
     )
 
     assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.fixture
+def array_col_seed(organization, workspace):
+    """A dataset with an array-typed column (e.g. PDF-to-text / extracted
+    entities) whose cells are stored as ``json.dumps([...])``."""
+    dataset = Dataset.objects.create(
+        name="Array filter dataset",
+        organization=organization,
+        workspace=workspace,
+    )
+    arr_col = Column.objects.create(
+        name="pdf_to_text",
+        data_type=DataTypeChoices.ARRAY.value,
+        dataset=dataset,
+        source=SourceChoices.OTHERS.value,
+    )
+    rows = [
+        Row.objects.create(dataset=dataset, order=1),
+        Row.objects.create(dataset=dataset, order=2),
+        Row.objects.create(dataset=dataset, order=3),
+    ]
+    Cell.objects.create(
+        dataset=dataset, row=rows[0], column=arr_col,
+        value=json.dumps(["CIRCULAR NO. 123 dated 2024"]),
+    )
+    Cell.objects.create(
+        dataset=dataset, row=rows[1], column=arr_col,
+        value=json.dumps(["internal memo, no reference"]),
+    )
+    Cell.objects.create(
+        dataset=dataset, row=rows[2], column=arr_col,
+        value=json.dumps(["see CIRCULAR appendix"]),
+    )
+    return dataset, rows, arr_col
+
+
+@pytest.mark.django_db
+def test_dataset_table_array_contains_list_value(array_col_seed):
+    """The UI sends ``filter_value`` as a list (``["CIRCULAR"]``) for array
+    columns. ``contains`` must match the same rows a scalar text search does —
+    it must not stringify the list into a Python repr that can never match.
+    """
+    dataset, rows, arr_col = array_col_seed
+
+    # Sanity: the data and search term are fine — a scalar text search matches.
+    assert _apply(
+        dataset,
+        [_filter(arr_col.id, "text", "contains", "CIRCULAR")],
+        [arr_col],
+    ) == [rows[0], rows[2]]
+
+    # The array-typed list payload the UI actually sends must match the same rows.
+    assert _apply(
+        dataset,
+        [_filter(arr_col.id, "array", "contains", ["CIRCULAR"])],
+        [arr_col],
+    ) == [rows[0], rows[2]]
+
+
+@pytest.mark.django_db
+def test_dataset_table_array_contains_not_contains_and_multi_term(array_col_seed):
+    """not_contains is the exact complement of contains, and a multi-element
+    list matches on any element (OR)."""
+    dataset, rows, arr_col = array_col_seed
+
+    # not_contains ["CIRCULAR"] → the rows contains did NOT return.
+    assert _apply(
+        dataset,
+        [_filter(arr_col.id, "array", "not_contains", ["CIRCULAR"])],
+        [arr_col],
+    ) == [rows[1]]
+
+    # multi-element list → any element matches (OR): "memo" hits row 1 only,
+    # "CIRCULAR" hits rows 0 and 2 → union of all three rows.
+    assert _apply(
+        dataset,
+        [_filter(arr_col.id, "array", "contains", ["memo", "CIRCULAR"])],
+        [arr_col],
+    ) == [rows[0], rows[1], rows[2]]
+
+
+@pytest.mark.django_db
+def test_dataset_table_none_value_contains_is_noop(dataset_filter_seed):
+    """A text ``contains`` sent without a filter_value degrades to a no-op
+    (matches every row) instead of matching the literal repr of ``None``. Pins
+    the unified None handling that ``or_text_filter_q`` shares across both sites.
+    """
+    dataset, rows, text_col, bool_col = dataset_filter_seed
+
+    assert (
+        _apply(
+            dataset,
+            [_filter(text_col.id, "text", "contains")],
+            [text_col, bool_col],
+        )
+        == rows
+    )
+
+
+@pytest.mark.django_db
+def test_filter_dataset_cells_array_contains_list_value(array_col_seed):
+    """The annotation-queue cell filter (``_filter_dataset_cells``) has the same
+    list-payload path and must match per-element, not the list's repr."""
+    dataset, rows, arr_col = array_col_seed
+    cells = Cell.objects.filter(column=arr_col)
+
+    matched = _filter_dataset_cells(cells, "array", "contains", ["CIRCULAR"], "array")
+    assert set(matched.values_list("row_id", flat=True)) == {rows[0].id, rows[2].id}
+
+    # in/not_in keep exact-value membership (a separate branch, unchanged by the
+    # fix) — it matches the whole stored cell value, not a substring.
+    exact = _filter_dataset_cells(
+        cells, "array", "in", [json.dumps(["see CIRCULAR appendix"])], "array"
+    )
+    assert set(exact.values_list("row_id", flat=True)) == {rows[2].id}

@@ -1,5 +1,6 @@
 import { enqueueSnackbar } from "notistack";
 import { PromptRoles, WS_CLOSE_CODES } from "src/utils/constants";
+import { normalizeModelOption } from "src/components/custom-model-dropdown/common";
 import { extractVariables } from "./Playground/common";
 
 /**
@@ -219,6 +220,9 @@ export function normalizeConfigurationForLoad(configuration) {
     delete result[snake];
     delete result[camel];
     if (value !== undefined) result[camel] = value;
+  }
+  if (result.model_detail) {
+    result.model_detail = normalizeModelOption(result.model_detail);
   }
   return result;
 }

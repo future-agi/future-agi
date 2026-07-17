@@ -11094,6 +11094,8 @@ export interface ExperimentFeedbackDetailsResponseApi {
   result: ExperimentFeedbackDetailsResultApi;
 }
 
+export type ExperimentFeedbackTemplateResultApiChoiceScores = {[key: string]: number};
+
 export interface ExperimentFeedbackTemplateResultApi {
   /** @minLength 1 */
   output_type?: string;
@@ -11104,6 +11106,7 @@ export interface ExperimentFeedbackTemplateResultApi {
   user_eval_name: string;
   choices?: string[];
   multi_choice?: boolean;
+  choice_scores?: ExperimentFeedbackTemplateResultApiChoiceScores;
 }
 
 export interface ExperimentFeedbackTemplateResponseApi {
@@ -11317,6 +11320,26 @@ export interface FeedbackDetailsResponseApi {
   result: FeedbackDetailsResultApi;
 }
 
+export type FeedbackTemplateResultApiChoiceScores = {[key: string]: number};
+
+export interface FeedbackTemplateResultApi {
+  /** @minLength 1 */
+  output_type?: string;
+  eval_description?: string;
+  /** @minLength 1 */
+  eval_name: string;
+  /** @minLength 1 */
+  user_eval_name: string;
+  choices?: string[];
+  multi_choice?: boolean;
+  choice_scores?: FeedbackTemplateResultApiChoiceScores;
+}
+
+export interface FeedbackTemplateResponseApi {
+  status: boolean;
+  result: FeedbackTemplateResultApi;
+}
+
 export type ColumnValuesRequestApiColumnPlaceholders = { [key: string]: unknown };
 
 export interface ColumnValuesRequestApi {
@@ -11403,6 +11426,7 @@ export interface EvalConfigApi {
   config_params_option?: EvalConfigApiConfigParamsOption;
   param_modalities?: EvalConfigApiParamModalities;
   choices?: EvalConfigApiChoices;
+  multi_choice?: boolean;
   check_internet?: boolean;
   kb_id?: EvalConfigApiKbId;
   error_localizer?: boolean;
@@ -24411,13 +24435,6 @@ page?: number;
  * Number of results to return per page.
  */
 limit?: number;
-};
-
-export type ModelHubFeedbackGetTemplate200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: FeedbackApi[];
 };
 
 export type ModelHubGetEvalConfigListParams = {

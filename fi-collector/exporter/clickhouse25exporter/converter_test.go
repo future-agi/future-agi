@@ -1,6 +1,7 @@
 package clickhouse25exporter
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -154,7 +155,7 @@ func TestConvertParentSpan(t *testing.T) {
 // ingest (the only other `traces` writer) is disabled CDC-off, so no double-write.
 
 func TestConvertWithIdentities_TraceFromRootSpan(t *testing.T) {
-	rows, ids, err := ConvertWithIdentities(buildOTLPSpan())
+	rows, ids, err := ConvertWithIdentities(context.Background(), buildOTLPSpan(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +194,7 @@ func TestConvertWithIdentities_NoTraceFromChildSpan(t *testing.T) {
 	traces := buildOTLPSpan()
 	traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).
 		SetParentSpanID([8]byte{0xa, 0xb, 0xc, 0xd, 0xe, 0xf, 0x1, 0x2})
-	_, ids, err := ConvertWithIdentities(traces)
+	_, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +209,7 @@ func TestConvertWithIdentities_NoTraceWhenTraceIDZero(t *testing.T) {
 	// malformed trace collapses onto one all-zeros trace_dict row (wrong project).
 	traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).
 		SetTraceID(pcommon.NewTraceIDEmpty())
-	rows, ids, err := ConvertWithIdentities(traces)
+	rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +226,7 @@ func TestConvertWithIdentities_NoTraceWhenProjectInvalid(t *testing.T) {
 	// No fi.project_id → coalesceUUID stamps a RANDOM project; skip (trace would
 	// key on a meaningless project).
 	traces.ResourceSpans().At(0).Resource().Attributes().Remove("fi.project_id")
-	_, ids, err := ConvertWithIdentities(traces)
+	_, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,7 +241,7 @@ func TestConvertWithIdentities_NoTraceWhenStartTimeZero(t *testing.T) {
 	// 197001 and never merges with the app's real-month row (poisons trace_dict). Skip.
 	traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).
 		SetStartTimestamp(pcommon.Timestamp(0))
-	rows, ids, err := ConvertWithIdentities(traces)
+	rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +261,7 @@ func TestConvertWithIdentities_VersionIsIngestTimeNotFutureStart(t *testing.T) {
 	traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).
 		SetStartTimestamp(pcommon.NewTimestampFromTime(future))
 	before := uint64(time.Now().UTC().UnixNano())
-	rows, ids, err := ConvertWithIdentities(traces)
+	rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,7 +285,7 @@ func TestConvertWithIdentities_VersionAdvancesAcrossRePolls(t *testing.T) {
 	// Same deterministic id re-polled later must get a STRICTLY newer _version so
 	// the completed / recording-bearing row wins RMT dedup over the earlier poll.
 	convertOnce := func() uint64 {
-		rows, _, err := ConvertWithIdentities(buildOTLPSpan())
+		rows, _, err := ConvertWithIdentities(context.Background(), buildOTLPSpan(), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -309,7 +310,7 @@ func TestConvertWithIdentities_TraceProjectCanonicalized(t *testing.T) {
 		t.Fatal("test fixture bug: uppercase form must differ from canonical")
 	}
 	traces.ResourceSpans().At(0).Resource().Attributes().PutStr("fi.project_id", upper)
-	_, ids, err := ConvertWithIdentities(traces)
+	_, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +328,7 @@ func TestConvertWithIdentities_RootAndChild_OneTrace(t *testing.T) {
 	child.SetParentSpanID([8]byte{9, 8, 7, 6, 5, 4, 3, 2}) // == root's span id
 	child.SetName("child.tool.call")
 	child.SetStartTimestamp(pcommon.NewTimestampFromTime(time.Unix(1700000000, 200_000_000)))
-	_, ids, err := ConvertWithIdentities(traces)
+	_, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -571,7 +572,7 @@ func TestConvertWithIdentities_EndUserMatchesSpanColumn(t *testing.T) {
 	a.PutStr("user.id.hash", "hash-abc")
 	a.PutStr("user.metadata", `{"tier":"gold"}`)
 
-	rows, ids, err := ConvertWithIdentities(traces)
+	rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -626,7 +627,7 @@ func TestConvertWithIdentities_UntypedUser_EmptySentinelType(t *testing.T) {
 	// Absent user.id.type → the "" sentinel on the curated row (consolidates
 	// with NULL-typed history), and absent hash/metadata coerce to ""/"{}".
 	traces := buildObserveSpanWith("u1", true, "", false, "", false)
-	rows, ids, err := ConvertWithIdentities(traces)
+	rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -656,7 +657,7 @@ func TestConvertWithIdentities_NonObserve_NoEndUser_ButSession(t *testing.T) {
 	a := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes()
 	a.PutStr("user.id", "u1")
 	a.PutStr("session.id", "s1")
-	rows, ids, err := ConvertWithIdentities(traces)
+	rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -706,7 +707,7 @@ func TestConvertWithIdentities_DedupAcrossSpans(t *testing.T) {
 	addSpan(3, "userB", "sessY")
 	addSpan(4, "userB", "sessY") // dup identity
 
-	rows, ids, err := ConvertWithIdentities(traces)
+	rows, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -741,7 +742,7 @@ func TestConvertWithIdentities_NonStringMetadata_JSONEncoded(t *testing.T) {
 	a := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes()
 	md := a.PutEmptyMap("user.metadata")
 	md.PutStr("k", "v")
-	_, ids, err := ConvertWithIdentities(traces)
+	_, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -759,7 +760,7 @@ func TestConvertWithIdentities_MetadataHTMLNotEscaped(t *testing.T) {
 	a := traces.ResourceSpans().At(0).ScopeSpans().At(0).Spans().At(0).Attributes()
 	md := a.PutEmptyMap("user.metadata")
 	md.PutStr("html", "<a>&</a>")
-	_, ids, err := ConvertWithIdentities(traces)
+	_, ids, err := ConvertWithIdentities(context.Background(), traces, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -796,5 +797,131 @@ func TestResolveObservationType(t *testing.T) {
 		if got := resolveObservationType(c.attrs); got != c.want {
 			t.Errorf("%s: resolveObservationType=%q want %q", c.name, got, c.want)
 		}
+	}
+}
+
+type stubPricer struct {
+	cost      float64
+	ok        bool
+	calls     int
+	lastOrg   string
+	lastModel string
+}
+
+func (s *stubPricer) TokenCost(ctx context.Context, orgID, model string, p, c int32) (float64, bool) {
+	s.calls++
+	s.lastOrg = orgID
+	s.lastModel = model
+	return s.cost, s.ok
+}
+
+// makeLLMSpanOrgID is the org UUID stamped by makeLLMSpan's resource attrs —
+// exported here so tests asserting org-scoped pricer routing don't hardcode
+// the literal twice.
+const makeLLMSpanOrgID = "5a1b0000-0000-4000-8000-000000000002"
+
+func makeLLMSpan(attrs map[string]any) ptrace.Traces {
+	td := ptrace.NewTraces()
+	rs := td.ResourceSpans().AppendEmpty()
+	// Converter reads the UNDERSCORED resource keys (fi.project_id / fi.org_id —
+	// see ConvertWithIdentities), matching every other fixture in this file
+	// (see e.g. line 21-22 above). A dotted key here silently fails to
+	// populate projectID/orgID, defeating org-scoped pricer-routing assertions.
+	rs.Resource().Attributes().PutStr("fi.project_id", "3f2e0000-0000-4000-8000-000000000001")
+	rs.Resource().Attributes().PutStr("fi.org_id", makeLLMSpanOrgID)
+	span := rs.ScopeSpans().AppendEmpty().Spans().AppendEmpty()
+	span.SetName("llm-call")
+	span.SetTraceID([16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16})
+	span.SetSpanID([8]byte{1, 2, 3, 4, 5, 6, 7, 8})
+	for k, v := range attrs {
+		switch t := v.(type) {
+		case string:
+			span.Attributes().PutStr(k, t)
+		case float64:
+			span.Attributes().PutDouble(k, t)
+		case int:
+			span.Attributes().PutInt(k, int64(t))
+		}
+	}
+	return td
+}
+
+func TestSpanCost_UserProvidedSkipsPricer(t *testing.T) {
+	p := &stubPricer{cost: 99, ok: true}
+	rows, _, err := ConvertWithIdentities(context.Background(), makeLLMSpan(map[string]any{
+		"gen_ai.cost.total":          0.42,
+		"gen_ai.request.model":       "gpt-4o",
+		"gen_ai.usage.input_tokens":  100,
+		"gen_ai.usage.output_tokens": 50,
+	}), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rows[0]["cost"].(float64); got != 0.42 {
+		t.Fatalf("user cost must win, got %v", got)
+	}
+	if p.calls != 0 {
+		t.Fatal("pricer must not be called when user provided cost")
+	}
+}
+
+func TestSpanCost_TokenPricedWhenNoUserCost(t *testing.T) {
+	p := &stubPricer{cost: 0.0075, ok: true}
+	rows, _, err := ConvertWithIdentities(context.Background(), makeLLMSpan(map[string]any{
+		"gen_ai.request.model":       "gpt-4o",
+		"gen_ai.usage.input_tokens":  1000,
+		"gen_ai.usage.output_tokens": 500,
+	}), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rows[0]["cost"].(float64); got != 0.0075 {
+		t.Fatalf("want pricer cost 0.0075, got %v", got)
+	}
+	if rows[0]["prompt_tokens"].(int32) != 1000 || rows[0]["total_tokens"].(int32) != 1500 {
+		t.Fatalf("token columns wrong: %+v", rows[0])
+	}
+	// Org-scoped routing: the orgID the pricer receives must be the fixture's
+	// resource-stamped org, not empty/wrong — proves ConvertWithIdentities
+	// plumbs fi.org_id (not e.g. project_id) through to Pricer.TokenCost.
+	if p.lastOrg != makeLLMSpanOrgID {
+		t.Fatalf("pricer received orgID %q, want %q (fixture org)", p.lastOrg, makeLLMSpanOrgID)
+	}
+}
+
+// TestSpanCost_ExplicitZeroUserCostNotOverwritten pins a named coverage gap
+// (Task 8 review): a user who explicitly sets gen_ai.cost.total=0 means it —
+// the row cost must stay 0 even with a LIVE pricer that would return a
+// non-zero value, and the pricer must NOT be called (hot.CostUserSet gates
+// on presence, not truthiness/non-zero-ness of the attribute).
+func TestSpanCost_ExplicitZeroUserCostNotOverwritten(t *testing.T) {
+	p := &stubPricer{cost: 55.5, ok: true}
+	rows, _, err := ConvertWithIdentities(context.Background(), makeLLMSpan(map[string]any{
+		"gen_ai.cost.total":          0.0,
+		"gen_ai.request.model":       "gpt-4o",
+		"gen_ai.usage.input_tokens":  100,
+		"gen_ai.usage.output_tokens": 50,
+	}), p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rows[0]["cost"].(float64); got != 0 {
+		t.Fatalf("explicit-zero user cost must stay 0, got %v", got)
+	}
+	if p.calls != 0 {
+		t.Fatalf("pricer must not be called when user explicitly set cost=0, got %d calls", p.calls)
+	}
+}
+
+func TestSpanCost_NilPricerAndUnpriceable(t *testing.T) {
+	rows, _, err := ConvertWithIdentities(context.Background(), makeLLMSpan(map[string]any{
+		"gen_ai.request.model":      "mystery",
+		"gen_ai.usage.input_tokens": 10,
+	}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rows[0]["cost"].(float64); got != 0 {
+		t.Fatalf("nil pricer must leave cost 0, got %v", got)
 	}
 }

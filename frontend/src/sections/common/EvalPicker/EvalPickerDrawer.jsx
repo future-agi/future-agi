@@ -282,6 +282,10 @@ const EvalPickerDrawer = ({
   keepOpenAfterSave = false,
   sourceFilters = null,
   onFiltersChange = null,
+  // { startDate, endDate } the source's preview rows are scoped to. Without
+  // an explicit created_at filter the backend defaults to a 30-day lookback,
+  // so previews for older data come back empty.
+  sourceTimeWindow = null,
 }) => {
   const [currentStep, setCurrentStep] = useState("list");
 
@@ -334,6 +338,7 @@ const EvalPickerDrawer = ({
         keepOpenAfterSave={keepOpenAfterSave}
         sourceFilters={sourceFilters}
         onFiltersChange={onFiltersChange}
+        sourceTimeWindow={sourceTimeWindow}
       >
         <EvalPickerContent onStepChange={setCurrentStep} />
       </EvalPickerProvider>
@@ -361,6 +366,10 @@ EvalPickerDrawer.propTypes = {
   keepOpenAfterSave: PropTypes.bool,
   sourceFilters: PropTypes.array,
   onFiltersChange: PropTypes.func,
+  sourceTimeWindow: PropTypes.shape({
+    startDate: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
+    endDate: PropTypes.oneOfType([PropTypes.string, PropTypes.object]),
+  }),
 };
 
 export default EvalPickerDrawer;

@@ -36,7 +36,10 @@ import { useCompositeChildrenUnionKeys } from "../hooks/useCompositeChildrenKeys
 import CodeEvalEditor, { PYTHON_CODE_TEMPLATE } from "./CodeEvalEditor";
 import CompositeDetailPanel from "./CompositeDetailPanel";
 import UnsavedChangesDialog from "src/sections/projects/MonitorsView/UnsavedChangesDialog";
-import { extractVariables, extractVariablesFromMessages } from "src/utils/utils";
+import {
+  extractVariables,
+  extractVariablesFromMessages,
+} from "src/utils/utils";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
@@ -174,7 +177,6 @@ const EvalCreatePage = () => {
   const [fewShotExamples, setFewShotExamples] = useState([]);
   const [messages, setMessages] = useState([{ role: "system", content: "" }]);
   const [templateFormat, setTemplateFormat] = useState("mustache");
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [datasetColumns, setDatasetColumns] = useState([]);
   const [datasetJsonSchemas, setDatasetJsonSchemas] = useState({});
 
@@ -624,11 +626,8 @@ const EvalCreatePage = () => {
   // messages array in addition to instructions.
   const singleHasInstructionVariables =
     evalType === "llm"
-      ? extractVariablesFromMessages(
-          instructions,
-          messages,
-          templateFormat,
-        ).length > 0
+      ? extractVariablesFromMessages(instructions, messages, templateFormat)
+          .length > 0
       : !!instructions.trim() &&
         extractVariables(instructions, templateFormat).length > 0;
   const canSaveSingle =
@@ -1067,123 +1066,68 @@ const EvalCreatePage = () => {
                     </Box>
                   )}
 
-                  {/* Advanced — collapsible */}
+                  {/* Description */}
                   <Box>
-                    <Button
+                    <Typography
+                      variant="body2"
+                      fontWeight={600}
+                      sx={{ mb: 0.5 }}
+                    >
+                      Description
+                    </Typography>
+                    <TextField
+                      fullWidth
                       size="small"
-                      onClick={() => setShowAdvanced((p) => !p)}
-                      startIcon={
-                        <Iconify
-                          icon={
-                            showAdvanced ? "mdi:chevron-up" : "mdi:chevron-down"
-                          }
-                          width={16}
-                        />
-                      }
+                      multiline
+                      minRows={2}
+                      placeholder="What does this evaluation check?"
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                    />
+                  </Box>
+
+                  {/* Tags */}
+                  <Box>
+                    <Typography
+                      variant="body2"
+                      fontWeight={600}
+                      sx={{ mb: 0.5 }}
+                    >
+                      Tags
+                    </Typography>
+                    <Box
                       sx={{
-                        textTransform: "none",
-                        fontSize: "13px",
-                        color: "text.secondary",
-                        fontWeight: 500,
-                        px: 0,
-                        "&:hover": {
-                          bgcolor: "transparent",
-                          color: "text.primary",
-                        },
+                        display: "flex",
+                        flexWrap: "wrap",
+                        gap: 0.75,
                       }}
                     >
-                      Advanced
-                      {(description || tags.length > 0) && (
-                        <Chip
-                          label={[
-                            description && "description",
-                            tags.length > 0 && `${tags.length} tags`,
-                          ]
-                            .filter(Boolean)
-                            .join(", ")}
-                          size="small"
-                          sx={{ ml: 1, fontSize: "10px", height: 18 }}
-                        />
-                      )}
-                    </Button>
-
-                    {showAdvanced && (
-                      <Box
-                        sx={{
-                          display: "flex",
-                          flexDirection: "column",
-                          gap: 2,
-                          mt: 1.5,
-                          pl: 0.5,
-                        }}
-                      >
-                        {/* Description */}
-                        <Box>
-                          <Typography
-                            variant="caption"
-                            fontWeight={600}
-                            color="text.secondary"
-                            sx={{ mb: 0.5, display: "block" }}
-                          >
-                            Description
-                          </Typography>
-                          <TextField
-                            fullWidth
+                      {EVAL_TAGS.map((tag) => {
+                        const selected = tags.includes(tag.value);
+                        return (
+                          <Chip
+                            key={tag.value}
+                            icon={<Iconify icon={tag.icon} width={14} />}
+                            label={tag.label}
                             size="small"
-                            multiline
-                            minRows={2}
-                            placeholder="What does this evaluation check?"
-                            value={description}
-                            onChange={(e) => setDescription(e.target.value)}
-                          />
-                        </Box>
-
-                        {/* Tags */}
-                        <Box>
-                          <Typography
-                            variant="caption"
-                            fontWeight={600}
-                            color="text.secondary"
-                            sx={{ mb: 0.75, display: "block" }}
-                          >
-                            Tags
-                          </Typography>
-                          <Box
+                            variant={selected ? "filled" : "outlined"}
+                            color={selected ? "primary" : "default"}
+                            onClick={() =>
+                              setTags((prev) =>
+                                selected
+                                  ? prev.filter((t) => t !== tag.value)
+                                  : [...prev, tag.value],
+                              )
+                            }
                             sx={{
-                              display: "flex",
-                              flexWrap: "wrap",
-                              gap: 0.75,
+                              fontSize: "12px",
+                              cursor: "pointer",
+                              "& .MuiChip-icon": { fontSize: "14px" },
                             }}
-                          >
-                            {EVAL_TAGS.map((tag) => {
-                              const selected = tags.includes(tag.value);
-                              return (
-                                <Chip
-                                  key={tag.value}
-                                  icon={<Iconify icon={tag.icon} width={14} />}
-                                  label={tag.label}
-                                  size="small"
-                                  variant={selected ? "filled" : "outlined"}
-                                  color={selected ? "primary" : "default"}
-                                  onClick={() =>
-                                    setTags((prev) =>
-                                      selected
-                                        ? prev.filter((t) => t !== tag.value)
-                                        : [...prev, tag.value],
-                                    )
-                                  }
-                                  sx={{
-                                    fontSize: "12px",
-                                    cursor: "pointer",
-                                    "& .MuiChip-icon": { fontSize: "14px" },
-                                  }}
-                                />
-                              );
-                            })}
-                          </Box>
-                        </Box>
-                      </Box>
-                    )}
+                          />
+                        );
+                      })}
+                    </Box>
                   </Box>
                 </>
               ) : (

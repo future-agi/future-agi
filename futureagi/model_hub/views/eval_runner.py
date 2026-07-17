@@ -82,6 +82,7 @@ from tfc.utils.error_codes import (
     get_error_for_api_status,
     get_error_message,
     get_specific_error_message,
+    get_usage_error_code,
 )
 from tfc.utils.functions import get_eval_stats
 from tfc.utils.general_methods import GeneralMethods
@@ -872,16 +873,15 @@ class EvaluationRunner:
                 # print(f"[FEEDBACK RAG] Skipped — no organization_id", flush=True)
                 return all_examples
 
-            # print(f"[FEEDBACK RAG] Querying eval_id={self.eval_template.id} org={self.organization_id} input_cols={required_field} inputs_preview={[str(v)[:60] for v in mapping]}", flush=True)
             start_time = datetime.now()
             examples = embedding_manager.retrieve_avg_rag_based_examples(
                 eval_id=self.eval_template.id,
                 inputs=mapping,
                 input_cols=required_field,
                 organization_id=self.organization_id,
-                workspace_id=None,  # feedback is stored without workspace_id in all write paths
+                # Feedback retrieval is org-scoped; writes still tag workspace_id.
+                workspace_id=None,
             )
-            # print(f"[FEEDBACK RAG] Retrieved {len(examples)} examples", flush=True)
             end_time = datetime.now()
             elapsed_time = (end_time - start_time).total_seconds()
             logger.info(
@@ -1334,6 +1334,10 @@ class EvaluationRunner:
             error_message = get_specific_error_message(e)
 
             response, status, value = self._handle_error(error_message)
+           
+            usage_error_code = get_usage_error_code(e)
+            if usage_error_code:
+                response["error_code"] = usage_error_code
             self._handle_api_call_status(api_call_log_row, CellStatus.ERROR.value)
 
             # Create reason column and cell with error status. Always-on for
@@ -1641,21 +1645,20 @@ class EvaluationRunner:
         ):
             from model_hub.models.choices import OwnerChoices
 
-            # Fetch few-shot feedback examples for these eval types
-            # (not covered by the futureagi_eval block above)
             if not self.futureagi_eval and "few_shots" not in required_field:
-                print(
-                    f"[FEEDBACK DEBUG] get_few_shot_examples called with mapping={[str(v)[:80] for v in mapping]} required_field={required_field} org_id={self.organization_id} eval_template={self.eval_template.id if self.eval_template else None}",
-                    flush=True,
+                # Match the write side's column-id keying so retrieval hits.
+                (
+                    resolved_required_field,
+                    resolved_mapping,
+                ) = self._get_required_fields_and_mappings(
+                    user_eval_metric=self.user_eval_metric,
+                    mapping=mapping,
+                    config=config,
+                    required_field=required_field,
                 )
-                few_shot_examples = self.get_few_shot_examples(mapping, required_field)
-                shot_count = (
-                    len(few_shot_examples)
-                    if isinstance(few_shot_examples, list)
-                    else (1 if few_shot_examples else 0)
+                few_shot_examples = self.get_few_shot_examples(
+                    resolved_mapping, resolved_required_field
                 )
-                # print(f"[FEEDBACK INJECT] map_fields injecting fewshots : {few_shot_examples} for AgentEvaluator/CustomPromptEvaluator eval",flush=True)
-                # print(f"[FEEDBACK INJECT] map_fields injecting {shot_count} few-shot examples for AgentEvaluator/CustomPromptEvaluator eval_template={self.eval_template.id if self.eval_template else None}", flush=True)
                 required_field.append("few_shots")
                 mapping.append(few_shot_examples)
 
@@ -3127,6 +3130,13 @@ class EvaluationRunner:
                 if not usage_check.allowed:
                     self.user_eval_metric.status = StatusType.FAILED.value
                     self.user_eval_metric.save(update_fields=["status"])
+                    from model_hub.tasks.user_evaluation import (
+                        _mark_cells_usage_limit_error,
+                    )
+
+                    _mark_cells_usage_limit_error(
+                        self.user_eval_metric, usage_check
+                    )
                     raise ValueError(usage_check.reason or "Usage limit exceeded")
 
             self.update_cell(row_ids=row_ids)

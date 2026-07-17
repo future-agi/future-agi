@@ -13,11 +13,13 @@ const {
   mockCreateObjectURL,
   mockRevokeObjectURL,
   mockUseQueueAnalytics,
+  mockEnqueueSnackbar,
 } = vi.hoisted(() => ({
   mockAxiosGet: vi.fn(),
   mockCreateObjectURL: vi.fn(),
   mockRevokeObjectURL: vi.fn(),
   mockUseQueueAnalytics: vi.fn(),
+  mockEnqueueSnackbar: vi.fn(),
 }));
 
 vi.mock("src/components/iconify", () => ({
@@ -40,7 +42,7 @@ vi.mock("src/utils/axios", () => ({
 }));
 
 vi.mock("notistack", () => ({
-  enqueueSnackbar: vi.fn(),
+  enqueueSnackbar: mockEnqueueSnackbar,
 }));
 
 describe("QueueAnalyticsTab", () => {
@@ -48,6 +50,7 @@ describe("QueueAnalyticsTab", () => {
     mockAxiosGet.mockReset();
     mockCreateObjectURL.mockReset();
     mockRevokeObjectURL.mockReset();
+    mockEnqueueSnackbar.mockReset();
     mockCreateObjectURL.mockReturnValue("blob:queue-export");
     Object.defineProperty(URL, "createObjectURL", {
       configurable: true,
@@ -158,5 +161,51 @@ describe("QueueAnalyticsTab", () => {
     });
     expect(mockCreateObjectURL).toHaveBeenCalled();
     expect(mockRevokeObjectURL).toHaveBeenCalledWith("blob:queue-export");
+  });
+
+  it("surfaces the backend 413 cap message instead of the generic failure", async () => {
+    const user = userEvent.setup();
+    mockUseQueueAnalytics.mockReturnValue({
+      isLoading: false,
+      data: {
+        total: 1,
+        status_breakdown: {
+          pending: 0,
+          in_review: 0,
+          needs_changes: 0,
+          resubmitted: 0,
+          completed: 1,
+          skipped: 0,
+        },
+        throughput: { avg_per_day: 1, total_completed: 1, daily: [] },
+        annotator_performance: [],
+        label_distribution: {},
+      },
+    });
+    // The export uses responseType:"blob", so the 413 body arrives as a Blob —
+    // the handler must read and parse it to surface the server's cap message.
+    const capMessage =
+      "This export has 5,000 rows, over the 2,000-row cap. Narrow the queue.";
+    const payload = JSON.stringify({ result: capMessage, code: "export_too_large" });
+    const errorBody = new Blob([payload], { type: "application/json" });
+    // jsdom's Blob has no `.text()` (real browsers do); stub it so the Blob
+    // still passes `instanceof Blob` and reads back the browser way.
+    errorBody.text = async () => payload;
+    mockAxiosGet.mockRejectedValue({
+      response: { status: 413, data: errorBody },
+    });
+
+    render(<QueueAnalyticsTab queueId="queue-1" />);
+
+    await user.click(screen.getByRole("button", { name: /export csv/i }));
+
+    // Reverting the Blob-parsing branch to a bare `enqueueSnackbar("Export
+    // failed")` would surface the generic string and fail this assertion.
+    await waitFor(() => {
+      expect(mockEnqueueSnackbar).toHaveBeenCalledWith(capMessage, {
+        variant: "error",
+      });
+    });
+    expect(mockCreateObjectURL).not.toHaveBeenCalled();
   });
 });

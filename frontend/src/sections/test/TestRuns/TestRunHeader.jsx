@@ -72,7 +72,7 @@ const TestRunHeader = () => {
       axios.post(
         endpoint,
         isPromptSimulation
-          ? undefined
+          ? {}
           : {
               select_all: false,
               scenario_ids: selectedScenarios,

@@ -250,6 +250,29 @@ describe("getTraceFilterFields (TH-4571)", () => {
     expect(fields.some((f) => f.value === "span_id")).toBe(false);
   });
 
+  it("offers every backend span kind for node_type and drops the dead 'generation'", () => {
+    const nodeType = getTraceFilterFields("trace").find(
+      (f) => f.value === "node_type",
+    );
+    expect(nodeType).toBeTruthy();
+    // Every span kind the backend can store must be filterable.
+    [
+      "chain",
+      "retriever",
+      "llm",
+      "tool",
+      "agent",
+      "embedding",
+      "reranker",
+      "guardrail",
+      "evaluator",
+      "conversation",
+      "unknown",
+    ].forEach((kind) => expect(nodeType.choices).toContain(kind));
+    // `generation` is not an FI span kind (Langfuse's maps to `llm` on ingest).
+    expect(nodeType.choices).not.toContain("generation");
+  });
+
   it("prepends Trace ID and Span ID when tab is 'spans'", () => {
     const fields = getTraceFilterFields("spans");
     expect(fields[0]).toMatchObject({ value: "trace_id", label: "Trace ID" });

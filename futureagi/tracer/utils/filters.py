@@ -182,6 +182,21 @@ class FilterEngine:
         "user_interruption_rate",
         "ai_interruption_count",
         "ai_interruption_rate",
+        # Aliases mirroring the CH VOICE_SYSTEM_METRIC_EXPRS so export honors them.
+        "talk_ratio",
+        "agent_latency",
+        "ai_interruptions",
+        "user_interruptions",
+        "stop_time_after_interruption",
+        "llm_cost",
+        "stt_cost",
+        "tts_cost",
+        "total_cost",
+        "customer_cost",
+        "llm_latency",
+        "stt_latency",
+        "tts_latency",
+        "response_time",
     }
 
     VOICE_METRIC_DEFINITIONS = {
@@ -236,6 +251,88 @@ class FilterEngine:
         "ai_interruption_rate": {
             "json_keys": ["ai_interruption_rate"],
             "annotation": "_voice_ai_interruption_rate",
+            "output_field": FloatField(),
+            "round": False,
+        },
+        # Aliases mirroring the CH VOICE_SYSTEM_METRIC_EXPRS.
+        "talk_ratio": {
+            "json_keys": ["call.talk_ratio"],
+            "annotation": "_voice_talk_ratio",
+            "output_field": FloatField(),
+            "is_computed_percentage": True,
+        },
+        "agent_latency": {
+            "json_keys": ["avg_agent_latency_ms"],
+            "annotation": "_voice_agent_latency",
+            "output_field": FloatField(),
+        },
+        "ai_interruptions": {
+            "json_keys": ["ai_interruption_count"],
+            "annotation": "_voice_ai_interruptions_alias",
+            "output_field": FloatField(),
+        },
+        "user_interruptions": {
+            "json_keys": ["user_interruption_count"],
+            "annotation": "_voice_user_interruptions_alias",
+            "output_field": FloatField(),
+        },
+        "stop_time_after_interruption": {
+            "json_keys": ["avg_stop_time_after_interruption_ms"],
+            "annotation": "_voice_stop_time_after_interruption",
+            "output_field": FloatField(),
+            "round": False,
+        },
+        "llm_cost": {
+            "json_keys": ["cost_breakdown.llm"],
+            "annotation": "_voice_llm_cost",
+            "output_field": FloatField(),
+            "round": False,
+        },
+        "stt_cost": {
+            "json_keys": ["cost_breakdown.stt"],
+            "annotation": "_voice_stt_cost",
+            "output_field": FloatField(),
+            "round": False,
+        },
+        "tts_cost": {
+            "json_keys": ["cost_breakdown.tts"],
+            "annotation": "_voice_tts_cost",
+            "output_field": FloatField(),
+            "round": False,
+        },
+        "total_cost": {
+            "json_keys": ["cost_breakdown.total"],
+            "annotation": "_voice_total_cost",
+            "output_field": FloatField(),
+            "round": False,
+        },
+        "customer_cost": {
+            "json_keys": ["cost_breakdown.total"],
+            "annotation": "_voice_customer_cost",
+            "output_field": FloatField(),
+            "round": False,
+        },
+        "llm_latency": {
+            "json_keys": ["modelLatencyAverage"],
+            "annotation": "_voice_llm_latency",
+            "output_field": FloatField(),
+            "round": False,
+        },
+        "stt_latency": {
+            "json_keys": ["transcriberLatencyAverage"],
+            "annotation": "_voice_stt_latency",
+            "output_field": FloatField(),
+            "round": False,
+        },
+        "tts_latency": {
+            "json_keys": ["voiceLatencyAverage"],
+            "annotation": "_voice_tts_latency",
+            "output_field": FloatField(),
+            "round": False,
+        },
+        "response_time": {
+            "json_keys": ["turnLatencyAverage"],
+            "annotation": "_voice_response_time",
             "output_field": FloatField(),
             "round": False,
         },

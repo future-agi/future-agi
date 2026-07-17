@@ -56,6 +56,7 @@ type Server struct {
 	usage    UsageEmitter
 	metering Metering
 	log      *slog.Logger
+	pricer   chexp.Pricer
 	grpc    *grpc.Server
 	httpd   *http.Server
 
@@ -80,10 +81,17 @@ type Server struct {
 }
 
 // Option configures optional Server dependencies.
-type Option struct{ log *slog.Logger }
+type Option struct {
+	log    *slog.Logger
+	pricer chexp.Pricer
+}
 
 // WithLogger sets the server's logger.
 func WithLogger(l *slog.Logger) Option { return Option{log: l} }
+
+// WithPricer sets the server's token-cost pricer. Nil (the zero value)
+// disables token-based cost (see chexp.Pricer).
+func WithPricer(p chexp.Pricer) Option { return Option{pricer: p} }
 
 // New wires up the server but does NOT start serving. Call Run().
 //
@@ -110,9 +118,13 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 	}
 
 	log := slog.Default()
+	var pricer chexp.Pricer
 	for _, o := range opts {
 		if o.log != nil {
 			log = o.log
+		}
+		if o.pricer != nil {
+			pricer = o.pricer
 		}
 	}
 
@@ -123,6 +135,7 @@ func New(cfg Config, writer *chwriter.Writer, authenticator *auth.Authenticator,
 		usage:    usage,
 		metering: metering,
 		log:      log,
+		pricer:   pricer,
 		// Share the span writer's HTTP client (keep-alive) for the curated RMTs,
 		// but the curated path writes BEST-EFFORT (chwriter.InsertBestEffort:
 		// single POST, no retry, no dead-letter) so it can't stall the span flush
@@ -248,7 +261,7 @@ func (h *otlpHandler) Export(ctx context.Context, req ptraceotlp.ExportRequest) 
 		}
 	}
 
-	rows, ids, err := chexp.ConvertWithIdentities(req.Traces())
+	rows, ids, err := chexp.ConvertWithIdentities(ctx, req.Traces(), h.s.pricer)
 	if err != nil {
 		return ptraceotlp.NewExportResponse(), err
 	}
@@ -339,7 +352,7 @@ func (s *Server) handleHTTPTraces(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rows, ids, err := chexp.ConvertWithIdentities(req.Traces())
+	rows, ids, err := chexp.ConvertWithIdentities(r.Context(), req.Traces(), s.pricer)
 	if err != nil {
 		// 4xx — the SDK shouldn't retry a malformed conversion.
 		http.Error(w, "convert: "+err.Error(), http.StatusBadRequest)

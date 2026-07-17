@@ -607,22 +607,18 @@ class TestAutomationRulesE2E:
         never saw truncation and every filter-mode rule fell to the sync
         path — even huge ones.
         """
-        from datetime import datetime as _dt
-
-        from unittest.mock import patch as _patch
+        from model_hub.models.annotation_queues import AutomationRule
+        from model_hub.services.bulk_selection import ResolveResult
+        from model_hub.utils import annotation_queue_helpers as _h
 
         project = _create_project(organization, workspace, name="Trunc Project")
-        # Two traces, but we'll cap to 1 to force truncation.
-        _create_trace(project, name="trunc-trace-1")
-        _create_trace(project, name="trunc-trace-2")
+        t1 = _create_trace(project, name="trunc-trace-1")
 
         queue_id = _create_queue(auth_client, name="Trunc Queue")
         AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
 
         # Filter-mode rule (`conditions.filter` payload) → resolver path
-        # → _add_source_ids_to_queue. Use an explicit time filter so the
-        # CH path engages if CH is available; the PG fallback also exercises
-        # the same dry-run early return.
+        # → _add_source_ids_to_queue's dry-run early return.
         resp = auth_client.post(
             _rules_url(queue_id),
             {
@@ -646,23 +642,17 @@ class TestAutomationRulesE2E:
         )
         rule_id = resp.data["id"]
 
-        # Force the peek to see truncation by patching the evaluator's cap.
-        from model_hub.utils import annotation_queue_helpers as _h
-
-        original_eval = _h.evaluate_rule
-
-        def _capped_eval(rule, dry_run=False, user=None, cap=None):
-            return original_eval(rule, dry_run=dry_run, user=user, cap=1)
-
-        with _patch.object(_h, "evaluate_rule", side_effect=_capped_eval):
-            from model_hub.models.annotation_queues import AutomationRule
-
-            rule = AutomationRule.objects.get(pk=rule_id)
+        rule = AutomationRule.objects.get(pk=rule_id)
+        # The CH resolver reports truncation (its cap+1 sentinel tripped); the
+        # dry-run early return must surface that flag, not swallow it.
+        with patch(
+            "model_hub.services.bulk_selection.resolve_filtered_trace_ids",
+            return_value=ResolveResult(ids=[t1.id], total_matching=2, truncated=True),
+        ):
             result = _h.evaluate_rule(rule, dry_run=True, cap=1)
 
         assert result.get("truncated") is True, (
-            f"dry_run with cap=1 against 2 matches must set truncated=True; "
-            f"got {result!r}"
+            f"dry_run must propagate truncated from the resolver; got {result!r}"
         )
 
     def test_preview_rule_requires_queue_manager(
@@ -1777,76 +1767,40 @@ class TestAutomationRulesE2E:
         )
 
     def test_evaluate_rule_trace_observe_filter_payload(
-        self, auth_client, organization, workspace, user
+        self, auth_client, organization, workspace
     ):
-        """Trace rules support Observe filters for span attrs, evals, annotations."""
+        """Trace filter-mode rules resolve via ClickHouse; verify the rule→queue
+        plumbing (an Observe payload mixing span-attr / eval / annotation filters
+        is accepted and the resolved id is added).
+
+        Trace resolution is ClickHouse-only, so the CH resolver is mocked here;
+        filter-translation correctness lives in the trace builder tests, the
+        ``test_bulk_selection_*_ch.py`` wiring suites (and, for eval-choice
+        filters, ``test_clickhouse_eval_choice_filter_accepts_config_id_and_multiselect``
+        below) plus the ``ch_rehearsal`` parity suite — a PG-seeded ``matched``
+        assertion here would only re-test the mock.
+        """
         from model_hub.models.evals_metric import EvalTemplate
-        from model_hub.models.score import Score
+        from model_hub.services.bulk_selection import ResolveResult
         from tracer.models.custom_eval_config import CustomEvalConfig
-        from tracer.models.observation_span import EvalLogger, ObservationSpan
 
         project = _create_project(organization, workspace, name="Trace Filter Rule")
-        label = _create_label(organization, workspace, name="trace_rule_quality", label_type="numeric")
-        template = EvalTemplate.objects.create(
-            name="trace_rule_eval",
-            organization=organization,
-            workspace=workspace,
+        label = _create_label(
+            organization, workspace, name="trace_rule_quality", label_type="numeric"
         )
         config = CustomEvalConfig.objects.create(
             name="Trace Rule Eval",
-            eval_template=template,
+            eval_template=EvalTemplate.objects.create(
+                name="trace_rule_eval",
+                organization=organization,
+                workspace=workspace,
+                config={"output": "choices"},
+                choices=["Fast", "Slow"],
+            ),
             project=project,
         )
+        # A real PG trace keeps the QueueItem FK valid; resolution is mocked.
         match = _create_trace(project, "match-trace")
-        skip = _create_trace(project, "skip-trace")
-        match_span = ObservationSpan.objects.create(
-            id=f"rule-root-{match.id.hex}",
-            project=project,
-            trace=match,
-            name="match-root",
-            observation_type="chain",
-            span_attributes={"customer_tier": "vip"},
-            parent_span_id=None,
-        )
-        skip_span = ObservationSpan.objects.create(
-            id=f"rule-root-{skip.id.hex}",
-            project=project,
-            trace=skip,
-            name="skip-root",
-            observation_type="chain",
-            span_attributes={"customer_tier": "free"},
-            parent_span_id=None,
-        )
-        EvalLogger.objects.create(
-            trace=match,
-            observation_span=match_span,
-            custom_eval_config=config,
-            output_float=0.93,
-        )
-        EvalLogger.objects.create(
-            trace=skip,
-            observation_span=skip_span,
-            custom_eval_config=config,
-            output_float=0.95,
-        )
-        Score.objects.create(
-            source_type="trace",
-            trace=match,
-            label=label,
-            value={"value": 91},
-            annotator=user,
-            organization=organization,
-            workspace=workspace,
-        )
-        Score.objects.create(
-            source_type="trace",
-            trace=skip,
-            label=label,
-            value={"value": 95},
-            annotator=user,
-            organization=organization,
-            workspace=workspace,
-        )
 
         queue_id = _create_queue(auth_client, name="Trace observe filter rule")
         AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
@@ -1871,9 +1825,9 @@ class TestAutomationRulesE2E:
                         {
                             "column_id": str(config.id),
                             "filter_config": {
-                                "filter_type": "number",
-                                "filter_op": "greater_than_or_equal",
-                                "filter_value": 80,
+                                "filter_type": "categorical",
+                                "filter_op": "in",
+                                "filter_value": ["Fast"],
                                 "col_type": "EVAL_METRIC",
                             },
                         },
@@ -1893,103 +1847,18 @@ class TestAutomationRulesE2E:
             },
             format="json",
         )
+        assert resp.status_code == status.HTTP_201_CREATED
         rule_id = resp.data["id"]
-        resp = auth_client.post(
-            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
-        )
 
-        result = resp.data.get("result", resp.data)
-        assert result["matched"] == 1
-        assert result["added"] == 1
-        assert QueueItem.objects.get(queue_id=queue_id).trace_id == match.id
-
-    def test_evaluate_rule_trace_eval_choice_multiselect_filter(
-        self, auth_client, organization, workspace
-    ):
-        """Trace rules must honor eval choice filters sent as multi-select `in`.
-
-        This is the payload produced when a user checks one or more choices in
-        the Observe-style filter picker. It must not collapse to zero matches.
-        """
-        from model_hub.models.evals_metric import EvalTemplate
-        from tracer.models.custom_eval_config import CustomEvalConfig
-        from tracer.models.observation_span import EvalLogger, ObservationSpan
-
-        project = _create_project(organization, workspace, name="Trace Choice Rule")
-        template = EvalTemplate.objects.create(
-            name="Trace Choice Eval",
-            organization=organization,
-            workspace=workspace,
-            config={"output": "choices"},
-            choices=["Fast", "Slow"],
-        )
-        config = CustomEvalConfig.objects.create(
-            name="Trace Choice Config",
-            eval_template=template,
-            project=project,
-        )
-        match = _create_trace(project, "choice-match")
-        skip = _create_trace(project, "choice-skip")
-        match_span = ObservationSpan.objects.create(
-            id=f"choice-root-{match.id.hex}",
-            project=project,
-            trace=match,
-            name="choice-match-root",
-            observation_type="chain",
-            parent_span_id=None,
-        )
-        skip_span = ObservationSpan.objects.create(
-            id=f"choice-root-{skip.id.hex}",
-            project=project,
-            trace=skip,
-            name="choice-skip-root",
-            observation_type="chain",
-            parent_span_id=None,
-        )
-        EvalLogger.objects.create(
-            trace=match,
-            observation_span=match_span,
-            custom_eval_config=config,
-            output_str_list=["Fast"],
-        )
-        EvalLogger.objects.create(
-            trace=skip,
-            observation_span=skip_span,
-            custom_eval_config=config,
-            output_str_list=["Slow"],
-        )
-
-        queue_id = _create_queue(auth_client, name="Trace choice filter rule")
-        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
-        resp = auth_client.post(
-            _rules_url(queue_id),
-            {
-                "name": "Fast traces",
-                "source_type": "trace",
-                "conditions": {
-                    "operator": "and",
-                    "rules": [],
-                    "filter": [
-                        {
-                            "column_id": str(config.id),
-                            "filter_config": {
-                                "filter_type": "categorical",
-                                "filter_op": "in",
-                                "filter_value": ["Fast"],
-                                "col_type": "EVAL_METRIC",
-                            },
-                        },
-                    ],
-                    "scope": {"project_id": str(project.id)},
-                },
-                "enabled": True,
-            },
-            format="json",
-        )
-        rule_id = resp.data["id"]
-        resp = auth_client.post(
-            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
-        )
+        with patch(
+            "model_hub.services.bulk_selection.resolve_filtered_trace_ids",
+            return_value=ResolveResult(
+                ids=[match.id], total_matching=1, truncated=False
+            ),
+        ):
+            resp = auth_client.post(
+                f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+            )
 
         result = resp.data.get("result", resp.data)
         assert result["matched"] == 1
@@ -2043,36 +1912,20 @@ class TestAutomationRulesE2E:
     def test_evaluate_rule_voice_trace_scope_has_no_implicit_time_window(
         self, auth_client, organization, workspace
     ):
-        """Voice rules should scan all matching calls unless date is explicit."""
-        from tracer.models.observation_span import ObservationSpan
-        from tracer.models.trace import Trace
+        """A voice rule with no explicit date must scan ALL history, not the CH
+        builders' default now-30d window.
+
+        Under the ClickHouse-only resolver this is enforced by injecting an
+        all-history ``start_time`` bound (``_all_history_time_filter``). Assert the
+        voice resolver is dispatched WITH that bound — the inverse of the old
+        pre-CH contract, which skipped CH and scanned Postgres for no-date rules.
+        """
+        from model_hub.services.bulk_selection import ResolveResult
 
         project = _create_project(organization, workspace, name="Voice All Time Rule")
-        old_time = timezone.now() - timedelta(days=4000)
+        # Real traces keep the QueueItem FK valid; resolution is mocked.
         old_trace = _create_trace(project, "old-voice-call")
         new_trace = _create_trace(project, "new-voice-call")
-        old_span = ObservationSpan.objects.create(
-            id=str(uuid.uuid4()),
-            project=project,
-            trace=old_trace,
-            name="old-root",
-            observation_type="conversation",
-            parent_span_id=None,
-            start_time=old_time,
-            end_time=old_time + timedelta(minutes=1),
-        )
-        ObservationSpan.objects.create(
-            id=str(uuid.uuid4()),
-            project=project,
-            trace=new_trace,
-            name="new-root",
-            observation_type="conversation",
-            parent_span_id=None,
-            start_time=timezone.now(),
-            end_time=timezone.now() + timedelta(minutes=1),
-        )
-        Trace.objects.filter(id=old_trace.id).update(created_at=old_time)
-        ObservationSpan.objects.filter(id=old_span.id).update(created_at=old_time)
 
         queue_id = _create_queue(auth_client, name="Voice all time rule")
         AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
@@ -2096,13 +1949,32 @@ class TestAutomationRulesE2E:
         )
         rule_id = resp.data["id"]
 
+        captured: dict = {}
+
+        def _capture(**kwargs):
+            captured.update(kwargs)
+            return ResolveResult(
+                ids=[old_trace.id, new_trace.id], total_matching=2, truncated=False
+            )
+
         with patch(
             "model_hub.services.bulk_selection._resolve_voice_call_ids_clickhouse",
-            side_effect=AssertionError("rules without date must not use CH time range"),
+            side_effect=_capture,
         ):
             resp = auth_client.post(
                 f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
             )
+
+        # The no-date rule must widen to all-history rather than inherit the
+        # builders' now-30d default: the voice resolver is dispatched with a
+        # 1971-lower-bound start_time filter.
+        injected = [
+            f
+            for f in captured.get("filters", [])
+            if f.get("column_id") == "start_time"
+        ]
+        assert len(injected) == 1, captured
+        assert injected[0]["filter_config"]["filter_value"][0].startswith("1971")
 
         result = resp.data.get("result", resp.data)
         assert result["matched"] == 2
@@ -2113,89 +1985,27 @@ class TestAutomationRulesE2E:
             )
         ) == {old_trace.id, new_trace.id}
 
-    def test_evaluate_rule_voice_trace_duration_filter(
-        self, auth_client, organization, workspace
-    ):
-        """Voice Trace rules must honor the Duration system metric."""
-        from tracer.models.observation_span import ObservationSpan
-
-        project = _create_project(organization, workspace, name="Voice Duration Rule")
-        short_trace = _create_trace(project, "short-call")
-        long_trace = _create_trace(project, "long-call")
-        now = timezone.now()
-        ObservationSpan.objects.create(
-            id=str(uuid.uuid4()),
-            project=project,
-            trace=short_trace,
-            name="short-root",
-            observation_type="conversation",
-            parent_span_id=None,
-            span_attributes={"call.duration": 12},
-            start_time=now,
-            end_time=now + timedelta(seconds=12),
-        )
-        ObservationSpan.objects.create(
-            id=str(uuid.uuid4()),
-            project=project,
-            trace=long_trace,
-            name="long-root",
-            observation_type="conversation",
-            parent_span_id=None,
-            span_attributes={"call.duration": 45},
-            start_time=now,
-            end_time=now + timedelta(seconds=45),
-        )
-
-        queue_id = _create_queue(auth_client, name="Voice duration rule")
-        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
-        resp = auth_client.post(
-            _rules_url(queue_id),
-            {
-                "name": "Short calls",
-                "source_type": "trace",
-                "conditions": {
-                    "operator": "and",
-                    "rules": [],
-                    "filter": [
-                        {
-                            "column_id": "duration",
-                            "filter_config": {
-                                "filter_type": "number",
-                                "filter_op": "less_than_or_equal",
-                                "filter_value": 20,
-                                "col_type": "SYSTEM_METRIC",
-                            },
-                        }
-                    ],
-                    "scope": {
-                        "project_id": str(project.id),
-                        "is_voice_call": True,
-                    },
-                },
-                "enabled": True,
-            },
-            format="json",
-        )
-        rule_id = resp.data["id"]
-        resp = auth_client.post(
-            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
-        )
-
-        result = resp.data.get("result", resp.data)
-        assert result["matched"] == 1
-        assert result["added"] == 1
-        assert QueueItem.objects.get(queue_id=queue_id).trace_id == short_trace.id
-
     def test_evaluate_rule_span_observe_filter_payload(
         self, auth_client, organization, workspace, user
     ):
-        """Span rules support the same Observe-style filter payloads."""
-        from model_hub.models.score import Score
+        """Span filter-mode rules resolve via ClickHouse; verify the rule→queue
+        plumbing (Observe-style payload accepted, resolved id added).
+
+        Span resolution is ClickHouse-only, so the CH resolver is mocked here and
+        the filter-translation semantics (span attributes, eval metrics,
+        annotation labels) are covered by ``test_bulk_selection_span_ch.py`` and
+        the ``ch_rehearsal`` parity suite — a PG-seeded ``matched`` assertion
+        would only re-test the mock.
+        """
+        from model_hub.services.bulk_selection import ResolveResult
         from tracer.models.observation_span import ObservationSpan
 
         project = _create_project(organization, workspace, name="Span Filter Rule")
         trace = _create_trace(project, "span-rule-trace")
-        label = _create_label(organization, workspace, name="span_rule_quality", label_type="numeric")
+        label = _create_label(
+            organization, workspace, name="span_rule_quality", label_type="numeric"
+        )
+        # A real PG span keeps the QueueItem FK valid; resolution is mocked.
         match = ObservationSpan.objects.create(
             id=str(uuid.uuid4()),
             project=project,
@@ -2204,33 +2014,6 @@ class TestAutomationRulesE2E:
             observation_type="llm",
             span_attributes={"customer_tier": "vip"},
             parent_span_id=None,
-        )
-        skip = ObservationSpan.objects.create(
-            id=str(uuid.uuid4()),
-            project=project,
-            trace=trace,
-            name="skip-span",
-            observation_type="tool",
-            span_attributes={"customer_tier": "free"},
-            parent_span_id=None,
-        )
-        Score.objects.create(
-            source_type="observation_span",
-            observation_span=match,
-            label=label,
-            value={"value": 92},
-            annotator=user,
-            organization=organization,
-            workspace=workspace,
-        )
-        Score.objects.create(
-            source_type="observation_span",
-            observation_span=skip,
-            label=label,
-            value={"value": 96},
-            annotator=user,
-            organization=organization,
-            workspace=workspace,
         )
 
         queue_id = _create_queue(auth_client, name="Span observe filter rule")
@@ -2269,98 +2052,18 @@ class TestAutomationRulesE2E:
             },
             format="json",
         )
+        assert resp.status_code == status.HTTP_201_CREATED
         rule_id = resp.data["id"]
-        resp = auth_client.post(
-            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
-        )
 
-        result = resp.data.get("result", resp.data)
-        assert result["matched"] == 1
-        assert result["added"] == 1
-        assert QueueItem.objects.get(queue_id=queue_id).observation_span_id == match.id
-
-    def test_evaluate_rule_span_eval_choice_multiselect_filter(
-        self, auth_client, organization, workspace
-    ):
-        """Span rules must honor eval choice filters sent as multi-select `in`."""
-        from model_hub.models.evals_metric import EvalTemplate
-        from tracer.models.custom_eval_config import CustomEvalConfig
-        from tracer.models.observation_span import EvalLogger, ObservationSpan
-
-        project = _create_project(organization, workspace, name="Span Choice Rule")
-        trace = _create_trace(project, "span-choice-trace")
-        template = EvalTemplate.objects.create(
-            name="Span Choice Eval",
-            organization=organization,
-            workspace=workspace,
-            config={"output": "choices"},
-            choices=["Fast", "Slow"],
-        )
-        config = CustomEvalConfig.objects.create(
-            name="Span Choice Config",
-            eval_template=template,
-            project=project,
-        )
-        match = ObservationSpan.objects.create(
-            id=str(uuid.uuid4()),
-            project=project,
-            trace=trace,
-            name="span-choice-match",
-            observation_type="llm",
-            parent_span_id=None,
-        )
-        skip = ObservationSpan.objects.create(
-            id=str(uuid.uuid4()),
-            project=project,
-            trace=trace,
-            name="span-choice-skip",
-            observation_type="tool",
-            parent_span_id=None,
-        )
-        EvalLogger.objects.create(
-            trace=trace,
-            observation_span=match,
-            custom_eval_config=config,
-            output_str_list=["Fast"],
-        )
-        EvalLogger.objects.create(
-            trace=trace,
-            observation_span=skip,
-            custom_eval_config=config,
-            output_str_list=["Slow"],
-        )
-
-        queue_id = _create_queue(auth_client, name="Span choice filter rule")
-        AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
-        resp = auth_client.post(
-            _rules_url(queue_id),
-            {
-                "name": "Fast spans",
-                "source_type": "observation_span",
-                "conditions": {
-                    "operator": "and",
-                    "rules": [],
-                    "filter": [
-                        {
-                            "column_id": str(config.id),
-                            "filter_config": {
-                                "filter_type": "categorical",
-                                "filter_op": "in",
-                                "filter_value": ["Fast"],
-                                "col_type": "EVAL_METRIC",
-                            },
-                        },
-                    ],
-                    "scope": {"project_id": str(project.id)},
-                },
-                "enabled": True,
-            },
-            format="json",
-        )
-        rule_id = resp.data["id"]
-        resp = auth_client.post(
-            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
-        )
+        with patch(
+            "model_hub.services.bulk_selection.resolve_filtered_span_ids",
+            return_value=ResolveResult(
+                ids=[match.id], total_matching=1, truncated=False
+            ),
+        ):
+            resp = auth_client.post(
+                f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+            )
 
         result = resp.data.get("result", resp.data)
         assert result["matched"] == 1
@@ -2373,12 +2076,18 @@ class TestAutomationRulesE2E:
     def test_evaluate_rule_trace_filter_scope_without_filter_rows(
         self, auth_client, organization, workspace
     ):
-        """Rules UI can save scope with an empty filter array; scope must apply."""
+        """Rules UI can save scope with an empty filter array; the scope's
+        project must route to the resolver and its rows land in the queue.
+
+        Trace resolution is ClickHouse-only, so the resolver is mocked and its
+        ``project_id`` kwarg asserted — the scope routing is the behavior under
+        test, not CH filtering."""
+        from model_hub.services.bulk_selection import ResolveResult
+
         project1 = _create_project(organization, workspace, name="Scope Only One")
-        project2 = _create_project(organization, workspace, name="Scope Only Two")
-        _create_trace(project1, "scope-only-1")
-        _create_trace(project1, "scope-only-2")
-        _create_trace(project2, "scope-only-other")
+        _create_project(organization, workspace, name="Scope Only Two")
+        t1 = _create_trace(project1, "scope-only-1")
+        t2 = _create_trace(project1, "scope-only-2")
 
         queue_id = _create_queue(auth_client, name="Trace scope-only Q")
 
@@ -2398,9 +2107,25 @@ class TestAutomationRulesE2E:
             format="json",
         )
         rule_id = resp.data["id"]
-        resp = auth_client.post(
-            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
-        )
+
+        captured: dict = {}
+
+        def _capture(**kwargs):
+            captured.update(kwargs)
+            return ResolveResult(ids=[t1.id, t2.id], total_matching=2, truncated=False)
+
+        with patch(
+            "model_hub.services.bulk_selection.resolve_filtered_trace_ids",
+            side_effect=_capture,
+        ):
+            resp = auth_client.post(
+                f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+            )
+
+        # The scope's project — not the queue's — is what reaches the resolver,
+        # even with an empty filter list.
+        assert str(captured.get("project_id")) == str(project1.id)
+
         result = resp.data.get("result", resp.data)
         assert result["matched"] == 2
         assert result["added"] == 2
@@ -2409,11 +2134,6 @@ class TestAutomationRulesE2E:
                 "workspace_id", flat=True
             )
         ) == {workspace.id}
-        assert QueueItem.objects.filter(
-            queue_id=queue_id,
-            trace__project=project2,
-            deleted=False,
-        ).count() == 0
 
     def test_evaluate_rule_dataset_filter_scope_without_filter_rows(
         self, auth_client, organization, workspace
@@ -2929,10 +2649,25 @@ class TestAutomationRulesE2E:
         )
         rule_id = resp.data["id"]
 
-        resp = auth_client.post(
-            f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
-        )
+        from model_hub.services.bulk_selection import ResolveResult
+
+        captured: dict = {}
+
+        def _capture(**kwargs):
+            captured.update(kwargs)
+            return ResolveResult(ids=[match.id], total_matching=1, truncated=False)
+
+        # Trace resolution is ClickHouse-only; mock it and assert the resolver
+        # got the rule's scoped project (not the queue's bound project).
+        with patch(
+            "model_hub.services.bulk_selection.resolve_filtered_trace_ids",
+            side_effect=_capture,
+        ):
+            resp = auth_client.post(
+                f"{_rule_detail_url(queue_id, rule_id)}evaluate/", format="json"
+            )
         assert resp.status_code == status.HTTP_200_OK
+        assert str(captured.get("project_id")) == str(project_b.id)
         result = resp.data.get("result", resp.data)
         assert result["matched"] == 1
         assert result["added"] == 1
@@ -3107,11 +2842,13 @@ class TestAutomationRulesE2E:
         from django.db import close_old_connections
 
         from model_hub.models.annotation_queues import AutomationRule, QueueItem
+        from model_hub.services.bulk_selection import ResolveResult
         from model_hub.utils.annotation_queue_helpers import evaluate_rule
 
         project = _create_project(organization, workspace, name="Race Project")
-        for i in range(5):
-            _create_trace(project, name=f"race-trace-{i}")
+        trace_ids = [
+            _create_trace(project, name=f"race-trace-{i}").id for i in range(5)
+        ]
 
         queue_id = _create_queue(auth_client, name="Race Q")
         AnnotationQueue.objects.filter(pk=queue_id).update(project=project)
@@ -3143,11 +2880,20 @@ class TestAutomationRulesE2E:
             finally:
                 close_old_connections()
 
-        threads = [Thread(target=fire) for _ in range(3)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+        # Trace resolution is ClickHouse-only; mock it so all racers resolve the
+        # same 5 ids and the select_for_update serialization is what's under test
+        # (dedup to exactly 5 queue items, no IntegrityError).
+        with patch(
+            "model_hub.services.bulk_selection.resolve_filtered_trace_ids",
+            return_value=ResolveResult(
+                ids=list(trace_ids), total_matching=5, truncated=False
+            ),
+        ):
+            threads = [Thread(target=fire) for _ in range(3)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
 
         assert not errors, f"concurrent evaluators raised: {errors}"
         # Exactly one of the racers should report 5 added; the others see 0

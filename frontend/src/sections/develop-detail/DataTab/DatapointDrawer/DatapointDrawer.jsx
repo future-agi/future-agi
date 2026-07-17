@@ -781,6 +781,11 @@ const DatapointDrawerChild = ({
                   sourceId: runEval?.evalMetricId
                     ? runEval?.evalMetricId
                     : datapoint?.sourceId,
+                  value:
+                    runEval?.cell_value ??
+                    runEval?.value ??
+                    datapoint?.cell_value ??
+                    datapoint?.value,
                   valueInfos: runEval?.valueInfos
                     ? runEval?.valueInfos
                     : datapoint?.valueInfos,

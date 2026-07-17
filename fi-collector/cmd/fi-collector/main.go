@@ -31,6 +31,7 @@ import (
 
 	"github.com/future-agi/future-agi/fi-collector/pkg/auth"
 	"github.com/future-agi/future-agi/fi-collector/pkg/chwriter"
+	"github.com/future-agi/future-agi/fi-collector/pkg/pricing"
 	"github.com/future-agi/future-agi/fi-collector/pkg/server"
 	"github.com/redis/go-redis/v9"
 	"gopkg.in/yaml.v3"
@@ -82,11 +83,25 @@ func main() {
 	var usageEmitter server.UsageEmitter = server.NoopUsageEmitter{}
 	var metering server.Metering = server.NoopMetering{}
 	if rdb != nil {
-		usageEmitter = auth.NewUsageEmitter(rdb, log)
+		usageEmitter = auth.NewUsageEmitter(rdb, authenticator.PGRead(), log)
 		metering = auth.NewMetering(rdb, authenticator.PGRead(), log)
 	}
 
-	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, server.WithLogger(log))
+	priceTable := loadPriceTable(log, os.Getenv("FI_PRICING_JSON"))
+	var pricer *pricing.Pricer
+	if priceTable != nil {
+		var custom *pricing.CustomPricing
+		if authenticator != nil && authenticator.PGRead() != nil {
+			custom = pricing.NewCustomPricing(authenticator.PGRead(), 24*time.Hour, log)
+		}
+		pricer = pricing.New(priceTable, custom)
+	}
+
+	opts := []server.Option{server.WithLogger(log)}
+	if pricer != nil {
+		opts = append(opts, server.WithPricer(pricer))
+	}
+	srv := server.New(cfg.Server, writer, authenticator, usageEmitter, metering, opts...)
 
 	// Admin HTTP server — internal only, health check endpoint.
 	go runAdmin(":9464", writer, log)
@@ -106,6 +121,32 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("shutdown complete", "stats", writer.Snapshot())
+}
+
+// loadPriceTable resolves the token-pricing table. FI_PRICING_JSON is
+// best-effort: a bad override file must not silently disable pricing for
+// every span, so a failed override load falls back to the embedded snapshot
+// (with a warn log — pricing still works — rather than an error log) rather
+// than returning nil. Only a failure of the embedded snapshot itself
+// (near-impossible — it's compiled in) leaves pricing disabled and logs at
+// Error.
+func loadPriceTable(log *slog.Logger, path string) *pricing.Table {
+	table, err := pricing.LoadTable(path)
+	if err != nil && path != "" {
+		// Pricing still works on this path — the embedded snapshot load
+		// below succeeds — so Warn, not Error; Error is reserved for the
+		// double-failure case below.
+		log.Warn("FI_PRICING_JSON override load failed; falling back to embedded pricing snapshot",
+			"env", "FI_PRICING_JSON", "path", path, "err", err)
+		table, err = pricing.LoadTable("")
+	}
+	if err != nil {
+		log.Error("pricing table load failed; token-based cost disabled", "err", err)
+	}
+	if table != nil && table.Skipped > 0 {
+		log.Warn("pricing table loaded with skipped entries", "skipped", table.Skipped)
+	}
+	return table
 }
 
 func loadConfig(log *slog.Logger, path string) rootConfig {

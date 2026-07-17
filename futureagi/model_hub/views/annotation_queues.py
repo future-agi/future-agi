@@ -119,6 +119,7 @@ from model_hub.utils.annotation_queue_helpers import (
     auto_assign_items,
     calculate_agreement,
     canonical_score_value,
+    dataset_cells_by_row,
     eval_metrics_from_call_execution,
     eval_output_value,
     evaluate_rule,
@@ -169,6 +170,13 @@ MAX_SELECTION_CAP = 10_000
 # list that becomes one giant CH IN(...) plus a long sequential INSERT run under
 # the gateway timeout. Filter-mode has its own MAX_SELECTION_CAP.
 ADD_ITEMS_SYNC_MAX = 1_000
+
+# Synchronous export materializes and resolves full content for every item in one
+# HTTP request. Past this size it can't reliably finish under the gateway timeout,
+# and the ClickHouse content reads over very wide (voice) rows risk OOM-ing the
+# shared cluster, so cap it and let the caller narrow the set (a background export
+# lifts the ceiling). Conservative default; override via settings to tune in prod.
+EXPORT_SYNC_MAX_ITEMS = 1_000
 
 
 def _queue_item_export_prefetches():
@@ -3298,7 +3306,11 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
 
     @validated_request(
         query_serializer=QueueExportQuerySerializer,
-        responses={200: QueueExportAnnotationsResponseSerializer, **ERROR_RESPONSES},
+        responses={
+            200: QueueExportAnnotationsResponseSerializer,
+            413: ApiTextErrorResponseSerializer,
+            **ERROR_RESPONSES,
+        },
     )
     @action(detail=True, methods=["get"], url_path="export")
     def export_annotations(self, request, pk=None):
@@ -3325,7 +3337,25 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         if status_filter:
             items_qs = items_qs.filter(status=status_filter)
 
-        items_list = list(items_qs.order_by("order", "created_at"))
+        # Fetch one past the cap so an oversize queue is caught before any of the
+        # expensive per-item batch reads below, and without materializing the whole
+        # queryset (the slice bounds the row count fetched).
+        export_max = getattr(
+            settings, "ANNOTATION_EXPORT_SYNC_MAX", EXPORT_SYNC_MAX_ITEMS
+        )
+        items_list = list(
+            items_qs.order_by("order", "created_at")[: export_max + 1]
+        )
+        if len(items_list) > export_max:
+            return self._gm.custom_error_response(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                result=(
+                    f"This queue has more than {export_max} items, which is too "
+                    "large to export in a single download. Filter to a smaller set "
+                    "of items and try again."
+                ),
+                code=ApiErrorCode.EXPORT_TOO_LARGE.value,
+            )
         queue_label_ids = list(
             queue.queue_labels.filter(deleted=False).values_list("label_id", flat=True)
         )
@@ -3333,10 +3363,13 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         item_notes_by_id = _latest_item_notes_for_queue_items(items_list)
         eval_metrics_by_item = _eval_metrics_for_queue_items(items_list)
         ch_source_cache = CollectorSourceCache.for_items(items_list)
+        cell_cache = dataset_cells_by_row(items_list)
 
         result = []
         for item in items_list:
-            content = resolve_source_content(item, ch_cache=ch_source_cache)
+            content = resolve_source_content(
+                item, ch_cache=ch_source_cache, cell_cache=cell_cache
+            )
             annotations = [
                 _serialize_score_for_export(score)
                 for score in scores_by_item.get(item.id, [])
@@ -3639,6 +3672,7 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             items_qs = items_qs.filter(status=status_filter)
         items_list = list(items_qs.order_by("order", "created_at"))
         ch_source_cache = CollectorSourceCache.for_items(items_list)
+        cell_cache = dataset_cells_by_row(items_list)
 
         export_field_defs = _build_annotation_queue_export_fields(
             queue, sample_items=items_list[:100]
@@ -3736,7 +3770,9 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         item_notes_by_id = _latest_item_notes_for_queue_items(items_list)
         eval_metrics_by_item = _eval_metrics_for_queue_items(items_list)
         for i, item in enumerate(items_list):
-            content = resolve_source_content(item, ch_cache=ch_source_cache)
+            content = resolve_source_content(
+                item, ch_cache=ch_source_cache, cell_cache=cell_cache
+            )
             scores = scores_by_item.get(item.id, [])
             annotations_metadata = {}
             for score in scores:
@@ -4762,6 +4798,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             403: ApiTextErrorResponseSerializer,
             404: ApiTextErrorResponseSerializer,
             413: ApiTooLargeErrorSerializer,
+            503: ApiTextErrorResponseSerializer,
         },
     )
     @action(detail=False, methods=["post"], url_path="add-items")
@@ -4951,6 +4988,28 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             return self._gm.not_found("Project not found in organization.")
         except ValueError as e:
             return self._gm.bad_request(str(e))
+        except Exception as exc:  # noqa: BLE001 — CH driver raises many subclasses
+            # The filter-mode resolvers are ClickHouse-only (no PG fallback), so a
+            # CH outage/timeout propagates here. Return a structured, retryable 503
+            # the FE can surface instead of a raw 500. logger.exception (ERROR →
+            # Sentry) keeps a genuine bug from hiding behind the 503 — the resolver
+            # only breadcrumbs the CH-query failure itself at WARNING.
+            logger.exception(
+                "queue_add_items_filter_mode_resolve_failed",
+                queue_id=str(queue.id),
+                source_type=source_type,
+                project_id=str(project_id),
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                result=(
+                    "Could not resolve the selection right now — the source store "
+                    "is temporarily unavailable. Please retry."
+                ),
+                code="source_resolve_unavailable",
+            )
 
         if result.truncated:
             message = (

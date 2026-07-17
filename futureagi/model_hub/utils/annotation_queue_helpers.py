@@ -921,6 +921,33 @@ class CollectorSourceCache:
         return self._sessions.get(str(session_id)) if session_id else None
 
 
+def dataset_cells_by_row(items):
+    """Batch the dataset-row cell read for a render/export page: ``{row_id(str): [Cell]}``.
+
+    The Postgres companion to :class:`CollectorSourceCache`. ``resolve_source_content``
+    builds a dataset row's field map from its cells; run once per item that is an
+    unbatched ``Cell.objects.filter(row=…)`` — an N+1 across a list/export page. Build
+    this map once and pass it as ``cell_cache=`` so the page does a single ``row_id__in``
+    read. Every requested row_id is pre-seeded with ``[]``: a row with no cells is a
+    cache HIT (no fallback query); a row_id absent from the map was never batched, so
+    the caller falls back to its own per-row read (keys are ``str`` throughout to dodge
+    the UUID-vs-str lookup mismatch)."""
+    row_ids = [
+        str(item.dataset_row_id)
+        for item in items or []
+        if getattr(item, "source_type", None) == QueueItemSourceType.DATASET_ROW.value
+        and getattr(item, "dataset_row_id", None)
+    ]
+    if not row_ids:
+        return {}
+    from model_hub.models.develop_dataset import Cell
+
+    cells_by_row = {row_id: [] for row_id in row_ids}
+    for cell in Cell.objects.filter(row_id__in=row_ids).select_related("column"):
+        cells_by_row[str(cell.row_id)].append(cell)
+    return cells_by_row
+
+
 class _CHTraceSessionSource:
     """Duck-typed stand-in for a PG ``TraceSession`` resolved from CH. Carries only
     the attributes the annotation scope/store/render path reads off a session
@@ -1304,13 +1331,15 @@ def resolve_source_preview(item, *, ch_cache=None):
     return {"type": item.source_type, "error": "Could not resolve preview"}
 
 
-def resolve_source_content(item, *, ch_cache=None):
+def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
     """Return full renderable content for a QueueItem's source (used in annotation view).
 
     Tracer sources (trace / observation_span / trace_session) are read CH-only.
     ``ch_cache`` (opt-in :class:`CollectorSourceCache`): when supplied, they read
-    from the page-batched map instead of a per-item CH point-read. Single-item
-    callers pass ``None`` and keep the per-item read."""
+    from the page-batched map instead of a per-item CH point-read. ``cell_cache``
+    (opt-in, from :func:`dataset_cells_by_row`): when supplied, a dataset row's cells
+    read from the page-batched map instead of a per-item ``Cell`` query. Single-item
+    callers pass ``None`` for both and keep the per-item reads."""
     try:
         if item.source_type == QueueItemSourceType.DATASET_ROW.value:
             row = item.dataset_row
@@ -1331,9 +1360,13 @@ def resolve_source_content(item, *, ch_cache=None):
             fields = {}
             field_types = {}
             try:
-                from model_hub.models.develop_dataset import Cell
+                row_key = str(row.id)
+                if cell_cache is not None and row_key in cell_cache:
+                    cells = cell_cache[row_key]
+                else:
+                    from model_hub.models.develop_dataset import Cell
 
-                cells = Cell.objects.filter(row=row).select_related("column")
+                    cells = Cell.objects.filter(row=row).select_related("column")
                 for cell in cells:
                     col_name = (
                         cell.column.name if cell.column else f"column_{cell.column_id}"
@@ -2307,6 +2340,43 @@ def _apply_scalar_filter(qs, field_name, op, value):
     return qs.filter(**{lookup: value})
 
 
+# The six case-insensitive substring/equality operators shared by the
+# dataset-table filter and the annotation-queue cell filter. Kept separate from
+# _op_to_lookup, whose ``equals``/``not_equals`` map to a case-SENSITIVE exact
+# match — do not merge the two maps.
+TEXT_FILTER_LOOKUPS = {
+    "contains": "__icontains",
+    "not_contains": "__icontains",
+    "equals": "__iexact",
+    "not_equals": "__iexact",
+    "starts_with": "__istartswith",
+    "ends_with": "__iendswith",
+}
+_NEGATED_TEXT_OPS = ("not_contains", "not_equals")
+
+
+def or_text_filter_q(field, op, value):
+    """Build a case-insensitive text filter for ``op``, OR-ed across the terms.
+
+    The UI sends a list value for array-typed columns (e.g. ``["C"]``);
+    stringifying the whole list yields a Python repr (``"['c']"``) that never
+    matches a ``json.dumps`` cell, so match each element instead. ``value`` may
+    be a scalar or a list. ``not_contains`` / ``not_equals`` return the De
+    Morgan complement (matches none of the terms). Returns ``None`` for an
+    unrecognized op so the caller can reject it in its own way.
+    """
+    lookup = TEXT_FILTER_LOOKUPS.get(op)
+    if lookup is None:
+        return None
+    terms = value if isinstance(value, list) else [value]
+    condition = Q()
+    for term in terms:
+        condition |= Q(**{f"{field}{lookup}": "" if term is None else str(term)})
+    if op in _NEGATED_TEXT_OPS:
+        return ~condition
+    return condition
+
+
 def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_type):
     """Apply one DevelopFilterRow-style filter to a Cell queryset."""
     if filter_type == "number":
@@ -2363,20 +2433,9 @@ def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_ty
             if filter_op == "not_in":
                 return cells.filter(~condition)
             return cells.filter(condition)
-        text_value = "" if filter_value is None else str(filter_value)
-        op_map = {
-            "contains": Q(value__icontains=text_value),
-            "not_contains": Q(value__icontains=text_value),
-            "equals": Q(value__iexact=text_value),
-            "not_equals": Q(value__iexact=text_value),
-            "starts_with": Q(value__istartswith=text_value),
-            "ends_with": Q(value__iendswith=text_value),
-        }
-        condition = op_map.get(filter_op)
+        condition = or_text_filter_q("value", filter_op, values)
         if condition is None:
             return cells.none()
-        if filter_op in ("not_contains", "not_equals"):
-            return cells.filter(~condition)
         return cells.filter(condition)
 
     if filter_type == "boolean":
