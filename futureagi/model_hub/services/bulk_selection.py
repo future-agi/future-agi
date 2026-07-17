@@ -644,8 +644,11 @@ def _resolve_voice_call_ids_clickhouse(
         ids_query, ids_params = builder.build()
     except FilterTranslationError as exc:
         # Untranslatable filter → PG fallback (full operator coverage), not an
-        # over-matched CH set. Expected, not an outage — log at info.
-        logger.info(
+        # over-matched CH set. Correct per-request, but a sustained rate means a
+        # translation gap is quietly demoting every rule to the slow PG path, so
+        # warn (alertable). ``error`` carries the column/op/type signature and is
+        # the dedup key alerting groups on.
+        logger.warning(
             "bulk_selection_resolve_voice_ch_untranslatable_filter",
             project_id=str(project_id),
             error=str(exc),
@@ -781,8 +784,11 @@ def _resolve_trace_ids_clickhouse(
     except FilterTranslationError as exc:
         # A supported-looking filter can't be translated to CH → return None so
         # the caller uses the PG FilterEngine (which covers it) rather than an
-        # over-matched CH set. Expected, not an outage — log at info.
-        logger.info(
+        # over-matched CH set. Correct per-request, but a sustained rate means a
+        # translation gap is quietly demoting every rule to the slow PG path, so
+        # warn (alertable). ``error`` carries the column/op/type signature and is
+        # the dedup key alerting groups on.
+        logger.warning(
             "bulk_selection_resolve_trace_ch_untranslatable_filter",
             project_id=str(project_id),
             error=str(exc),

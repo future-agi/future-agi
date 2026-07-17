@@ -562,6 +562,38 @@ class ClickHouseFilterBuilder:
         Datetime filters on ``created_at`` / ``start_time`` are skipped here
         because the base query builder handles date-range scoping separately.
 
+        Parity with the Postgres path (``_apply_trace_filters`` ->
+        ``FilterEngine``): with ``strict=True`` (the automation-rule resolve)
+        any filter that yields no WHERE fragment raises
+        ``FilterTranslationError``, so an untranslatable filter falls back to
+        the full-coverage PG engine instead of silently widening the set. The
+        residual risk is therefore only *semantic drift within a translatable
+        filter*:
+
+        Operators covered: equals, not_equals, greater_than(_or_equal),
+        less_than(_or_equal), between, not_between, in, not_in, contains,
+        not_contains, starts_with, ends_with, is_null, is_not_null.
+
+        Col-types covered: NORMAL, SYSTEM_METRIC, SPAN_ATTRIBUTE, EVAL_METRIC,
+        ANNOTATION (my_annotations / annotator / has_annotation), the has_eval
+        toggle, and the curated end-user string columns.
+
+        Known semantic diffs vs the PG engine (same payload, different rows):
+
+        * Case sensitivity: text equality / LIKE-family ops are
+          case-insensitive (``lower()`` / ``ILIKE``) only for the columns in
+          ``_CASE_INSENSITIVE_COLUMNS`` (status, observation_type, name,
+          trace_name, model, provider) and text-typed span attributes -- these
+          match PG's ``__iexact`` / ``__icontains``. Text ops on any other
+          column are case-*sensitive* here. The UI only exposes text
+          contains/starts/ends on the covered columns, so a reachable rule
+          filter stays at parity.
+        * is_null / is_not_null on a text column also folds empty string into
+          null (``col IS NULL OR col = ''``); PG ``__isnull`` matches SQL NULL
+          only, so the two disagree on empty-string rows.
+        * Case folding is ASCII-oriented (``lower()``); Postgres folding is
+          collation-dependent, so non-ASCII text may fold differently.
+
         Args:
             filters: The list of filter dicts from the frontend.
 

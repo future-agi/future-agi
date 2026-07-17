@@ -985,6 +985,46 @@ class TestAllHistoryCHDispatch:
         assert set(result.ids) == {t.id for t in seeded_traces}
 
     @pytest.mark.django_db
+    def test_untranslatable_filter_warns_and_falls_back_to_pg(
+        self, observe_project, seeded_traces, organization, monkeypatch
+    ):
+        """An untranslatable CH filter demotes to PG — and warns, not silently.
+
+        A sustained rate of this signals a CH translation gap quietly returning
+        every rule to the slow path, so the fallback must be alertable.
+        """
+        from structlog.testing import capture_logs
+
+        from tracer.services.clickhouse.query_builders.filters import (
+            FilterTranslationError,
+        )
+
+        class FakeBuilder:
+            def __init__(self, **_kwargs):
+                pass
+
+            def build(self):
+                raise FilterTranslationError(
+                    "filter not translatable to ClickHouse: column_id='x'"
+                )
+
+        monkeypatch.setattr(self._TRACE_BUILDER, FakeBuilder)
+
+        with capture_logs() as logs:
+            result = resolve_filtered_trace_ids(
+                project_id=observe_project.id,
+                filters=[],
+                organization=organization,
+            )
+
+        assert set(result.ids) == {t.id for t in seeded_traces}
+        assert any(
+            e["event"] == "bulk_selection_resolve_trace_ch_untranslatable_filter"
+            and e["log_level"] == "warning"
+            for e in logs
+        )
+
+    @pytest.mark.django_db
     def test_voice_no_time_filter_dispatches_to_ch_with_all_history_window(
         self, observe_project, organization, monkeypatch
     ):
