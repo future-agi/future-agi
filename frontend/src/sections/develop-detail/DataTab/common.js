@@ -465,15 +465,19 @@ const menuOrder = [
   "Reset Columns",
 ];
 
-const DynamicColumnOriginTypes = [
-  "vector_db",
-  "extracted_entities",
-  "extracted_json",
-  "python_code",
-  "classification",
-  "api_call",
-  "conditional",
-];
+export const DynamicColumnOriginTypeToOperationType = {
+  vector_db: "vector_db",
+  extracted_entities: "extract_entities",
+  extracted_json: "extract_json",
+  python_code: "execute_code",
+  classification: "classify",
+  api_call: "api_call",
+  conditional: "conditional",
+};
+
+export const DynamicColumnOriginTypes = Object.keys(
+  DynamicColumnOriginTypeToOperationType,
+);
 
 const getMainMenuItems =
   (currentDataset, isViewerRole = false) =>

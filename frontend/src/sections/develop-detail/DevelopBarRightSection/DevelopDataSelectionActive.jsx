@@ -20,6 +20,10 @@ import { useDevelopDetailContext } from "../Context/DevelopDetailContext";
 import { useDevelopSelectedRowsStoreShallow } from "../states";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  DynamicColumnOriginTypes,
+  DynamicColumnOriginTypeToOperationType,
+} from "../DataTab/common";
 
 const StyledBox = styled(Box)(({ theme }) => ({
   gap: "12px",
@@ -43,6 +47,8 @@ const StyledButton = styled(Button)(({ theme }) => ({
     backgroundColor: theme.palette.action.hover,
   },
 }));
+
+const getOriginType = (item) => item?.originType ?? item?.origin_type;
 
 const DevelopDataSelectionActive = () => {
   const { dataset } = useParams();
@@ -167,15 +173,19 @@ const DevelopDataSelectionActive = () => {
 
   const { mutate: onRunEvals, isPending: runEvalsLoading } = useMutation({
     mutationFn: () => {
-      const selectedEvalIds = gridRef.current?.api?.getSelectedRows();
+      const selectedEvalIds = gridRef.current?.api?.getSelectedRows() ?? [];
       const selectedIds = toggledNodes;
 
       const evalIds = selectedEvalIds
-        .filter((item) => item?.originType == "eval")
+        .filter((item) => getOriginType(item) === "eval")
         .map((row) => row.field);
       const runPromptIds = selectedEvalIds
-        .filter((item) => item?.originType == "run_prompt")
+        .filter((item) => getOriginType(item) === "run_prompt")
         .map((row) => row.field);
+      const dynamicColumns = selectedEvalIds.filter((item) => {
+        const originType = getOriginType(item);
+        return DynamicColumnOriginTypes.includes(originType);
+      });
 
       const requests = [];
       if (evalIds.length) {
@@ -196,10 +206,30 @@ const DevelopDataSelectionActive = () => {
           }),
         );
       }
+      const uniqueDynamicColumns = dynamicColumns.reduce((acc, column) => {
+        if (column?.field && !acc.some((item) => item.field === column.field)) {
+          acc.push(column);
+        }
+        return acc;
+      }, []);
+
+      uniqueDynamicColumns.forEach((column) => {
+        const originType = getOriginType(column);
+        const operationType = DynamicColumnOriginTypeToOperationType[originType];
+        if (!operationType || !column?.field) {
+          return;
+        }
+        requests.push(
+          axios.post(endpoints.develop.addColumns.updateDynamicColumn(column.field), {
+            operation_type: operationType,
+          }),
+        );
+      });
       trackEvent(Events.rowEvaluationsRunSuccessful, {
         [PropertyName.rowEval]: {
           user_eval_metric_ids: evalIds,
           run_prompt_ids: runPromptIds,
+          dynamic_column_ids: uniqueDynamicColumns.map((item) => item.field),
           row_ids: selectedIds,
         },
       });
