@@ -1,0 +1,72 @@
+eval_id: 202
+name: perspective_gap_role_assignment
+description: Scores PerspectiveGap role-fragment assignment outputs for multi-agent orchestration. Checks whether each sub-agent role receives exactly the information fragments it needs while avoiding omissions, leakage, and distractors.
+criteria: Measures strict role-fragment assignment accuracy using the PerspectiveGap benchmark scorer.
+eval_tags:
+- Agents
+- Output Validation
+- Context Engineering
+- Benchmark
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - output
+  - reference_need_sets
+  output: score
+  eval_type_id: CustomCodeEval
+  config: {}
+  config_params_desc:
+    output: 'Model prediction as a JSON object mapping role names to lists of fragment IDs, e.g. {"Planner": ["F1", "F3"]}'
+    reference_need_sets: 'Gold role-to-fragment mapping as JSON object, matching the PerspectiveGap reference_need_sets field'
+    distractor_id: Optional fragment ID for the distractor item; leaks are counted separately when present
+  param_modalities:
+    output:
+    - TEXT
+    - JSON
+    reference_need_sets:
+    - JSON
+    - TEXT
+    distractor_id:
+    - TEXT
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json
+        try:
+            from perspective_gap import scoring
+        except ImportError:
+            return {"score": 0.0, "reason": "Install perspective-gap: pip install 'perspective-gap @ git+https://github.com/WhymustIhaveaname/PerspectiveGap.git@9c6921b3337ff3e6a6a453f68d117a8c1663135e'"}
+        raw = kwargs.get("output", output) or ""
+        text = str(raw)
+        parts = text.rsplit("</think>", 1)
+        response = parts[1].strip() if len(parts) == 2 else text.strip()
+        ref = kwargs.get("reference_need_sets")
+        if ref is None:
+            return {"score": 0.0, "reason": "Missing required field: reference_need_sets"}
+        if isinstance(ref, str):
+            try:
+                ref = json.loads(ref)
+            except (json.JSONDecodeError, ValueError) as e:
+                return {"score": 0.0, "reason": f"Cannot parse reference_need_sets: {e}"}
+        distractor = kwargs.get("distractor_id")
+        result = scoring.score_role_assignment(response, ref, distractor)
+        score = float(result.get("metrics", {}).get("strict_pass", 0.0))
+        if result.get("error"):
+            return {"score": score, "reason": result["error"]}
+        m = result.get("metrics", {})
+        c = result.get("counts", {})
+        status = "passed" if result.get("pass") else "failed"
+        reason = (
+            f"PerspectiveGap role assignment {status}: "
+            f"strict_pass={m.get('strict_pass', 0.0):.1f}, "
+            f"net_match={m.get('net_match_score', 0.0):.3f}, "
+            f"coverage={m.get('required_coverage', 0.0):.3f}, "
+            f"precision={m.get('boundary_precision', 0.0):.3f}, "
+            f"leakage={m.get('distractor_leakage', 0.0):.1f}; "
+            f"counts={c}"
+        )
+        return {"score": score, "reason": reason}

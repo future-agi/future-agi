@@ -1,0 +1,99 @@
+eval_id: 203
+name: perspective_gap_prompt_writing
+description: Scores PerspectiveGap free-form prompt-writing outputs for multi-agent orchestration. Checks whether each role-specific prompt includes the required information fragments and excludes irrelevant or distractor fragments.
+criteria: Measures strict prompt-writing accuracy using the PerspectiveGap benchmark scorer over role sections and fragment fingerprints.
+eval_tags:
+- Agents
+- Output Validation
+- Context Engineering
+- Benchmark
+visible_ui: true
+permissions:
+  allow_edit: false
+  allow_copy: true
+output_type_normalized: percentage
+pass_threshold: 0.5
+config:
+  required_keys:
+  - output
+  - fragments
+  - reference_need_sets
+  output: score
+  eval_type_id: CustomCodeEval
+  config: {}
+  function_params_schema:
+    include_threshold:
+      type: number
+      default: 0.7
+      minimum: 0
+      maximum: 1
+    exclude_threshold:
+      type: number
+      default: 0.3
+      minimum: 0
+      maximum: 1
+  config_params_desc:
+    output: 'Model prediction with one Markdown section per role, using headings such as # Planner and role-specific prompt text'
+    fragments: 'PerspectiveGap fragments list as JSON, where each item contains an id and text'
+    reference_need_sets: 'Gold role-to-fragment mapping as JSON object, matching the PerspectiveGap reference_need_sets field'
+    distractor_id: Optional fragment ID for the distractor item; leaks are counted separately when present
+    include_threshold: Fraction of a required fragment fingerprint that must appear in the role section to count as included
+    exclude_threshold: Fraction of an irrelevant fragment fingerprint that triggers an extra/leak detection
+  param_modalities:
+    output:
+    - TEXT
+    fragments:
+    - JSON
+    - TEXT
+    reference_need_sets:
+    - JSON
+    - TEXT
+    distractor_id:
+    - TEXT
+  code: |
+    def evaluate(input, output, expected, context, **kwargs):
+        import json
+        try:
+            from perspective_gap import scoring
+        except ImportError:
+            return {"score": 0.0, "reason": "Install perspective-gap: pip install 'perspective-gap @ git+https://github.com/WhymustIhaveaname/PerspectiveGap.git@9c6921b3337ff3e6a6a453f68d117a8c1663135e'"}
+        raw = kwargs.get("output", output) or ""
+        text = str(raw)
+        parts = text.rsplit("</think>", 1)
+        response = parts[1].strip() if len(parts) == 2 else text.strip()
+        frags = kwargs.get("fragments")
+        ref = kwargs.get("reference_need_sets")
+        for name, val in [("fragments", frags), ("reference_need_sets", ref)]:
+            if val is None:
+                return {"score": 0.0, "reason": f"Missing required field: {name}"}
+        if isinstance(frags, str):
+            try:
+                frags = json.loads(frags)
+            except (json.JSONDecodeError, ValueError) as e:
+                return {"score": 0.0, "reason": f"Cannot parse fragments: {e}"}
+        if isinstance(ref, str):
+            try:
+                ref = json.loads(ref)
+            except (json.JSONDecodeError, ValueError) as e:
+                return {"score": 0.0, "reason": f"Cannot parse reference_need_sets: {e}"}
+        distractor = kwargs.get("distractor_id")
+        try:
+            inc = float(kwargs.get("include_threshold", 0.7))
+            exc = float(kwargs.get("exclude_threshold", 0.3))
+        except (TypeError, ValueError):
+            inc, exc = 0.7, 0.3
+        result = scoring.score_prompt_writing(response, frags, ref, distractor, include_threshold=inc, exclude_threshold=exc)
+        score = float(result.get("metrics", {}).get("strict_pass", 0.0))
+        m = result.get("metrics", {})
+        c = result.get("counts", {})
+        status = "passed" if result.get("pass") else "failed"
+        reason = (
+            f"PerspectiveGap prompt writing {status}: "
+            f"strict_pass={m.get('strict_pass', 0.0):.1f}, "
+            f"net_match={m.get('net_match_score', 0.0):.3f}, "
+            f"coverage={m.get('required_coverage', 0.0):.3f}, "
+            f"precision={m.get('boundary_precision', 0.0):.3f}, "
+            f"leakage={m.get('distractor_leakage', 0.0):.1f}; "
+            f"counts={c}"
+        )
+        return {"score": score, "reason": reason}
