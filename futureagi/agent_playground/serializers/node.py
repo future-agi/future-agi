@@ -21,6 +21,9 @@ class NodeReadSerializer(serializers.ModelSerializer):
     node_template_id = serializers.UUIDField(
         source="node_template.id", read_only=True, allow_null=True
     )
+    node_template_name = serializers.CharField(
+        source="node_template.name", read_only=True, allow_null=True, default=None
+    )
     ref_graph_version_id = serializers.UUIDField(
         source="ref_graph_version.id", read_only=True, allow_null=True
     )
@@ -49,6 +52,7 @@ class NodeReadSerializer(serializers.ModelSerializer):
             "config",
             "position",
             "node_template_id",
+            "node_template_name",
             "ref_graph_version_id",
             "ref_graph_name",
             "ref_graph_id",
@@ -348,7 +352,10 @@ class PromptTemplateDataSerializer(serializers.Serializer):
         required=False, allow_null=True, allow_blank=True, default=None
     )
     template_format = serializers.CharField(
-        required=False, allow_null=True, allow_blank=True, default=None,
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+        default=None,
         help_text="Template format: 'mustache' or 'jinja'",
     )
     save_prompt_version = serializers.BooleanField(required=False, default=False)
@@ -497,6 +504,7 @@ class CreateNodeSerializer(serializers.Serializer):
     source_node_id = serializers.UUIDField(
         required=False, allow_null=True, default=None
     )
+    config = serializers.JSONField(required=False, default=dict)
     prompt_template = PromptTemplateDataSerializer(
         required=False, allow_null=True, default=None
     )
@@ -539,6 +547,10 @@ class CreateNodeSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"input_mappings": "Only supported for subgraph nodes"}
             )
+        if attrs.get("config") and node_type == NodeType.SUBGRAPH:
+            raise serializers.ValidationError(
+                {"config": "Subgraph nodes derive config from ref_graph_version_id."}
+            )
 
         return attrs
 
@@ -548,6 +560,7 @@ class UpdateNodeSerializer(serializers.Serializer):
 
     name = serializers.CharField(required=False, max_length=255)
     position = serializers.JSONField(required=False)
+    config = serializers.JSONField(required=False)
     prompt_template = PromptTemplateDataSerializer(required=False, allow_null=True)
     ref_graph_version_id = serializers.UUIDField(required=False, allow_null=True)
     input_mappings = InputMappingSerializer(

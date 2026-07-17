@@ -48,7 +48,12 @@ export default function usePartialNodeUpdate() {
       const apiPayload =
         node?.type === NODE_TYPES.LLM_PROMPT
           ? buildPatchPayload(updateData, config)
-          : buildAgentPatchPayload(updateData);
+          : node?.type === NODE_TYPES.CODE_EXECUTION
+            ? {
+                ...(updateData.label && { name: updateData.label }),
+                config: updateData.config || {},
+              }
+            : buildAgentPatchPayload(updateData);
 
       return mutateAsync({ graphId, versionId, nodeId, data: apiPayload });
     },

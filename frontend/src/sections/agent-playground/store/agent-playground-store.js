@@ -5,6 +5,8 @@ import { useShallow } from "zustand/react/shallow";
 import { CURRENT_ENVIRONMENT } from "src/config-global";
 import { addEdge, applyNodeChanges, applyEdgeChanges } from "@xyflow/react";
 import {
+  CODE_EXECUTION_DEFAULT_CONFIG,
+  CODE_EXECUTION_PORTS,
   NODE_TYPES,
   NODE_X_OFFSET,
   PORT_KEYS,
@@ -341,25 +343,33 @@ export const useAgentPlaygroundStore = create(
                 prompt_template_id: config?.prompt_template_id ?? null,
                 prompt_version_id: null,
               }
-            : {};
+            : type === NODE_TYPES.CODE_EXECUTION
+              ? { ...CODE_EXECUTION_DEFAULT_CONFIG, ...config }
+              : {};
 
         // Caller-provided config is transient — only for form population, not persisted
         const initialConfig =
           config && Object.keys(config).length > 0 ? config : null;
 
         const isAgent = type === NODE_TYPES.AGENT;
+        const isCodeExecution = type === NODE_TYPES.CODE_EXECUTION;
         const ports = isAgent
           ? undefined
-          : [
-              {
+          : isCodeExecution
+            ? CODE_EXECUTION_PORTS.map((port) => ({
+                ...port,
                 id: crypto.randomUUID(),
-                key: PORT_KEYS.RESPONSE,
-                display_name: generateOutputLabel(nodes),
-                direction: PORT_DIRECTION.OUTPUT,
-                data_schema: { type: "string" },
-                required: true,
-              },
-            ];
+              }))
+            : [
+                {
+                  id: crypto.randomUUID(),
+                  key: PORT_KEYS.RESPONSE,
+                  display_name: generateOutputLabel(nodes),
+                  direction: PORT_DIRECTION.OUTPUT,
+                  data_schema: { type: "string" },
+                  required: true,
+                },
+              ];
 
         const newNode = {
           id: nodeId,

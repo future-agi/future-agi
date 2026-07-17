@@ -41,8 +41,18 @@ export default function useAddNodeOptimistic() {
 
       if (!result) return null;
 
-      const { nodeId, edgeId, position, ports, label } = result;
-      const config = payload.config;
+      const {
+        nodeId,
+        edgeId,
+        position,
+        ports,
+        label,
+        config: computedConfig,
+      } = result;
+      const config =
+        payload.type === NODE_TYPES.CODE_EXECUTION
+          ? computedConfig || payload.config
+          : payload.config;
 
       // Don't select the node yet — wait until ensureDraft completes
       // to avoid triggering the discard dialog if a drawer is open with dirty form.
@@ -82,6 +92,9 @@ export default function useAddNodeOptimistic() {
           source_node_id: payload.sourceNodeId,
           ...(payload.sourceNodeId && edgeId && { edge_id: edgeId }),
           ports,
+          ...(payload.type === NODE_TYPES.CODE_EXECUTION && {
+            config,
+          }),
           ...(payload.type === NODE_TYPES.LLM_PROMPT && {
             prompt_template: {
               prompt_template_id: config?.prompt_template_id ?? null,

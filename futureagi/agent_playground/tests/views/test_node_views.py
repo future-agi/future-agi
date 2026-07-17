@@ -7,10 +7,11 @@ import pytest
 from django.urls import reverse
 from rest_framework import status
 
-from agent_playground.models.choices import NodeType, PortDirection
+from agent_playground.models.choices import NodeType, PortDirection, PortMode
 from agent_playground.models.edge import Edge
 from agent_playground.models.node import Node
 from agent_playground.models.node_connection import NodeConnection
+from agent_playground.models.node_template import NodeTemplate
 from agent_playground.models.port import Port
 
 # ── helpers ────────────────────────────────────────────────────────────
@@ -26,6 +27,13 @@ def _node_create_url(graph, version):
 def _node_detail_url(graph, version, node_id):
     return reverse(
         "graph-version-node-detail",
+        kwargs={"pk": graph.id, "version_id": version.id, "node_id": node_id},
+    )
+
+
+def _node_test_execution_url(graph, version, node_id):
+    return reverse(
+        "node-test-execution",
         kwargs={"pk": graph.id, "version_id": version.id, "node_id": node_id},
     )
 
@@ -54,6 +62,39 @@ class TestCreateNodeAPI:
         assert response.data["status"] is True
         assert response.data["result"]["id"] == fe_id
         assert response.data["result"]["type"] == "atomic"
+
+    def test_create_atomic_node_preserves_config(
+        self, authenticated_client, graph, graph_version
+    ):
+        template = NodeTemplate.no_workspace_objects.create(
+            name="code_execution",
+            display_name="Code Execution",
+            input_mode=PortMode.STRICT,
+            output_mode=PortMode.STRICT,
+            config_schema={
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["language", "code"],
+                "properties": {
+                    "language": {"type": "string", "enum": ["python"]},
+                    "code": {"type": "string", "minLength": 1},
+                },
+            },
+        )
+        config = {"language": "python", "code": "result = inputs"}
+        url = _node_create_url(graph, graph_version)
+        payload = {
+            "id": str(uuid.uuid4()),
+            "type": "atomic",
+            "name": "Code Node",
+            "node_template_id": str(template.id),
+            "config": config,
+        }
+
+        response = authenticated_client.post(url, payload, format="json")
+
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.data["result"]["config"] == config
 
     def test_create_llm_node_auto_creates_pt_pv(
         self, authenticated_client, graph, graph_version, llm_node_template
@@ -948,6 +989,70 @@ class TestNodeSyncSideEffects:
         assert response.status_code == status.HTTP_201_CREATED
 
 
+@pytest.mark.unit
+class TestCodeExecutionNodeAPI:
+    def test_test_execution_allows_missing_workspace_context(
+        self, api_client, graph, graph_version, user, organization
+    ):
+        api_client.force_authenticate(user=user)
+        api_client.set_organization(organization)
+        template = NodeTemplate.no_workspace_objects.create(
+            name="code_execution",
+            display_name="Code Execution",
+            input_mode=PortMode.STRICT,
+            output_mode=PortMode.STRICT,
+            config_schema={
+                "type": "object",
+                "required": ["language", "code"],
+                "properties": {
+                    "language": {"type": "string", "enum": ["python"]},
+                    "code": {"type": "string", "minLength": 1},
+                },
+            },
+        )
+        node = Node(
+            graph_version=graph_version,
+            type=NodeType.ATOMIC,
+            name="Code Node",
+            node_template=template,
+            config={"language": "python", "code": "result = inputs"},
+            position={},
+        )
+        node.save(skip_validation=True)
+        captured_context = {}
+
+        class FakeRunner:
+            def run(self, config, inputs, execution_context):
+                captured_context.update(execution_context)
+                return {
+                    "result": {
+                        "ok": True,
+                        "value": inputs,
+                        "stdout": "",
+                        "stderr": "",
+                        "exit_code": 0,
+                        "duration_ms": 1,
+                        "error": None,
+                    }
+                }
+
+        url = _node_test_execution_url(graph, graph_version, node.id)
+        with patch("agent_playground.views.node.get_runner", return_value=FakeRunner()):
+            response = api_client.post(
+                url,
+                {
+                    "config": {"language": "python", "code": "result = inputs"},
+                    "inputs": {"x": 1},
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        assert captured_context["workspace_id"] is None
+        assert response.data["result"]["result"]["value"] == {"x": 1}
+        api_client.stop_workspace_injection()
+
+
 # =====================================================================
 # NEW BEHAVIOR TESTS — subgraph without ref, PATCH with ref,
 # LLM with new prompt fields, retrieve with full expansion
@@ -1292,13 +1397,13 @@ class TestNodePossibleEdgeMappings:
         )
 
         # Create output ports
-        port_a1 = Port.no_workspace_objects.create(
+        Port.no_workspace_objects.create(
             node=node_a,
             key="output1",
             display_name="result",
             direction=PortDirection.OUTPUT,
         )
-        port_b1 = Port.no_workspace_objects.create(
+        Port.no_workspace_objects.create(
             node=node_b,
             key="output1",
             display_name="data",

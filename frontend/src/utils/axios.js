@@ -1534,6 +1534,8 @@ export const endpoints = {
       `/agent-playground/graphs/${graphId}/versions/${versionId}/nodes/${nodeId}/`,
     possibleEdgeMappings: (graphId, versionId, nodeId) =>
       `/agent-playground/graphs/${graphId}/versions/${versionId}/nodes/${nodeId}/possible-edge-mappings/`,
+    testNodeExecution: (graphId, versionId, nodeId) =>
+      `/agent-playground/graphs/${graphId}/versions/${versionId}/nodes/${nodeId}/test-execution/`,
   },
   mcp: {
     config: "/mcp/config/",
