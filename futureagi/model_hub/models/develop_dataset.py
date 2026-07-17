@@ -132,6 +132,12 @@ class Dataset(BaseModel):
         choices=EvalExplanationSummaryStatus.choices,
         default=EvalExplanationSummaryStatus.PENDING,
     )
+    status = models.CharField(
+        max_length=50,
+        choices=StatusType.get_choices(),
+        default=StatusType.COMPLETED.value,
+    )
+    failure_reason = models.TextField(blank=True, null=True)
 
     user = models.ForeignKey(
         User,

@@ -2583,6 +2583,7 @@ class GetDatasetTableView(APIView):
                 "synthetic_regenerate": task_manager.operation_regenerate_key(
                     op="get", dataset_id=dataset.id
                 ),
+                "failure_reason": dataset.failure_reason or None,
                 "is_processing_data": is_processing_data,
             }
 
