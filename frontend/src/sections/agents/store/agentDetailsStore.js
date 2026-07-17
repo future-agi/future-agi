@@ -44,6 +44,7 @@ export const useAgentDetailsStore = create((set, get) => ({
       selectedVersion: null,
       agentName: "",
       agentDetails: {},
+      latestVersionNumber: 0,
     });
     // Clear URL params when resetting
     const url = new URL(window.location);
