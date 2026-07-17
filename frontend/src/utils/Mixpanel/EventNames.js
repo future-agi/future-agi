@@ -254,6 +254,7 @@ export const Events = {
   expRowDeleted: "Dataset_experiment_row_deleted",
   expRowReRunClick: "Dataset_experiment_row_re-run_clicked",
   expRowReRunSuccess: "Dataset_experiment_row_re-run_successful",
+  expDownloadClicked: "Experiment_download_clicked",
   expWinnerClick: "Dataset_experiment_winner_clicked",
   expWinnerSelect: "Dataset_experiment_winner_selected",
 
