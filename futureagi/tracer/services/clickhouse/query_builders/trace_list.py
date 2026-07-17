@@ -321,6 +321,8 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             output,
             attrs_string,
             attrs_number,
+            attrs_bool,
+            attributes_extra,
             toJSONString(metadata) AS metadata,
             dictGetOrDefault('trace_dict', 'tags', toUUID(trace_id), '[]') AS trace_tags
         FROM {self.TABLE}

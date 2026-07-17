@@ -73,7 +73,7 @@ const DevelopBarLeftSection = ({
   const { processingComplete } = useDatasetOriginStore();
 
   const isData = Boolean(tableData?.data?.result?.table?.length);
-  const isSyntheticDataset = Boolean(tableData?.data?.result?.syntheticDataset);
+  const isSyntheticDataset = Boolean(tableData?.data?.result?.synthetic_dataset);
   const theme = useTheme();
   const { search, setSearch } = useDevelopSearchStore();
   const setCellHeight = useDevelopCellHeight((s) => s.setCellHeight);

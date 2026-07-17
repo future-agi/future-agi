@@ -849,6 +849,122 @@ class TestClickHouseFilterBuilder:
         assert "sp.project_id = %(project_id)s" not in where
         assert params == {}
 
+    # ── eval-filter subqueries: eval_logger_source routing, no FINAL, window ──
+
+    @staticmethod
+    def _patched_eval_config_resolution(config_id):
+        """Patch the PG config/template lookup `_build_eval_condition` performs
+        so the SQL shape can be pinned without database fixtures. The template
+        resolves to None → output_type stays SCORE (output_float compare)."""
+        values = mock.MagicMock()
+        values.__iter__ = lambda self: iter([config_id])
+        values.first.return_value = None
+        fake_qs = mock.MagicMock()
+        fake_qs.exists.return_value = True
+        fake_qs.filter.return_value = fake_qs
+        fake_qs.values_list.return_value = values
+        objects = mock.MagicMock()
+        objects.filter.return_value = fake_qs
+        template_mgr = mock.MagicMock()
+        template_mgr.filter.return_value.values.return_value.first.return_value = None
+        return (
+            mock.patch(
+                "tracer.models.custom_eval_config.CustomEvalConfig.objects", objects
+            ),
+            mock.patch(
+                "model_hub.models.evals_metric.EvalTemplate.no_workspace_objects",
+                template_mgr,
+            ),
+        )
+
+    def _eval_metric_where(self, score_date_scope=True):
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        cfg_id = "22222222-2222-2222-2222-222222222222"
+        builder = ClickHouseFilterBuilder(
+            project_id="11111111-1111-1111-1111-111111111111",
+            query_mode=ClickHouseFilterBuilder.QUERY_MODE_SPAN,
+            score_date_scope=score_date_scope,
+        )
+        p1, p2 = self._patched_eval_config_resolution(cfg_id)
+        with p1, p2:
+            where, params = builder.translate(
+                [
+                    {
+                        "column_id": cfg_id,
+                        "filter_config": {
+                            "col_type": "EVAL_METRIC",
+                            "filter_type": "number",
+                            "filter_op": "greater_than",
+                            "filter_value": 80,
+                        },
+                    }
+                ]
+            )
+        return where, params
+
+    def test_eval_metric_filter_routes_via_eval_logger_source_v2(self):
+        """The eval FILTER must read the same table the displayed eval cells
+        read (eval_logger_source), with no table-level FINAL (whole-table
+        merge — the OOM class the span-list Phase-2 rewrite removed) and a
+        window-aligned created_at bound for monthly partition pruning."""
+        from django.test import override_settings
+
+        with override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2"):
+            where, _ = self._eval_metric_where()
+        assert "FROM tracer_eval_logger_v2 " in where
+        assert "FINAL" not in where
+        assert "is_deleted = 0" in where
+        assert "_peerdb_is_deleted" not in where
+        assert "created_at >= %(start_date)s - INTERVAL 7 DAY" in where
+
+    def test_eval_metric_filter_keeps_legacy_predicate(self):
+        from django.test import override_settings
+
+        with override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger"):
+            where, _ = self._eval_metric_where()
+        assert "FROM tracer_eval_logger " in where
+        assert "tracer_eval_logger_v2" not in where
+        assert "FINAL" not in where
+        assert "_peerdb_is_deleted = 0" in where
+
+    def test_eval_metric_filter_omits_date_bound_without_scope(self):
+        """Callers that don't bind %(start_date)s (score_date_scope=False)
+        must not receive the created_at bound — a missing-parameter error
+        otherwise (dependency-failure path)."""
+        where, _ = self._eval_metric_where(score_date_scope=False)
+        assert "created_at >=" not in where
+
+    def test_has_eval_no_final_and_window_bound(self):
+        from django.test import override_settings
+
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        builder = ClickHouseFilterBuilder(
+            project_id="11111111-1111-1111-1111-111111111111"
+        )
+        with override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2"):
+            where, _ = builder.translate(
+                [
+                    {
+                        "column_id": "has_eval",
+                        "filter_config": {
+                            "filter_type": "boolean",
+                            "filter_op": "equals",
+                            "filter_value": True,
+                        },
+                    }
+                ]
+            )
+        assert "tracer_eval_logger_v2 AS el" in where
+        assert "FINAL" not in where
+        assert "el.is_deleted = 0" in where
+        assert "el.created_at >= %(start_date)s - INTERVAL 7 DAY" in where
+
     def test_span_mode_my_annotations_filter_targets_span_id(self):
         """my_annotations uses span ids in span mode and trace ids elsewhere."""
         from tracer.services.clickhouse.query_builders.filters import (

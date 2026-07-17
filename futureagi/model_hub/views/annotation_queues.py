@@ -125,6 +125,7 @@ from model_hub.utils.annotation_queue_helpers import (
     filter_available_source_ids_for_annotation,
     get_fk_field_name,
     is_source_available_for_annotation,
+    resolve_ch_span_source,
     resolve_source_content,
     resolve_source_object,
 )
@@ -1292,7 +1293,7 @@ def _span_notes_target_for_queue_item(item):
     #       deleted=False).filter(Q(parent_span_id__isnull=True) |
     #       Q(parent_span_id=""))
     #   conversation root → start_time root → None
-    # CHSpanReader.list_by_trace already filters is_deleted=0 and orders by
+    # CHSpanReader.list_by_trace drops deleted rows (via FINAL) and orders by
     # (start_time, id). Root spans have empty parent_span_id (CH stores it
     # as a non-nullable String — see schema 001), so we filter in Python.
     from tracer.services.clickhouse.v2 import get_reader
@@ -4078,8 +4079,10 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
         queue = self.get_object()
         data = request.validated_data
         label_id = data.get("label_id")
-        required = _is_truthy(data.get("required", True))
+        required = _is_truthy(data.get("required", False))
 
+        # Only marking a label *required* is the gated feature; a plain add
+        # (required omitted/false) must never trip the entitlement gate.
         if required:
             from tfc.ee_gating import EEFeature, check_ee_feature
 
@@ -4181,8 +4184,14 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
             sid = src.get("source_id")
             span_notes_source_id = src.get("span_notes_source_id")
             if span_notes_source_id:
+                # A collector root span lives only in CH (no PG row), so the PG
+                # resolve misses; fall back to the CH resolver (matches scores.py)
+                # so the trace-detail annotate panel loads instead of 404ing.
                 span_notes_source = resolve_source_object(
                     "observation_span",
+                    span_notes_source_id,
+                    organization=request.organization,
+                ) or resolve_ch_span_source(
                     span_notes_source_id,
                     organization=request.organization,
                 )
@@ -4453,6 +4462,13 @@ class AnnotationQueueViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelVie
                         from tracer.models.trace import Trace
 
                         if st == "trace":
+                            # PG-only on purpose: a collector trace (no PG row)
+                            # returns False here, but the trace-detail panel always
+                            # co-sends its root observation_span (both gated on the
+                            # same spanId in buildTraceAnnotationSources), which
+                            # matches this same project-scoped queue via the
+                            # CH-aware branch below. Making this CH-aware would add
+                            # the N×M per-(queue,trace) round-trips codex P2 removed.
                             exists = Trace.objects.filter(
                                 id=sid, project_id=dq.project_id, deleted=False
                             ).exists()

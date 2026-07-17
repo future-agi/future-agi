@@ -52,7 +52,7 @@ def _synthetic_create_payload(name, num_rows=10, columns=None, regenerate=None):
             "name": name,
             "description": "Dataset",
             "objective": "Generate rows",
-            "patterns": [],
+            "patterns": "",
         },
     }
     if regenerate is not None:
@@ -77,7 +77,7 @@ def _synthetic_add_rows_payload(num_rows=10):
         "dataset": {
             "description": "Dataset",
             "objective": "Generate rows",
-            "patterns": [],
+            "patterns": "",
         },
     }
 
@@ -369,6 +369,63 @@ def test_add_rows_from_file_rejects_other_workspace_before_usage_charge(
     assert usage_calls == []
     assert Row.no_workspace_objects.filter(dataset=dataset, deleted=False).count() == 0
     assert Cell.no_workspace_objects.filter(dataset=dataset, deleted=False).count() == 0
+
+
+@pytest.mark.django_db
+def test_add_rows_from_file_rejects_ssrf_url_for_image_column(
+    auth_client, organization, workspace, user, monkeypatch
+):
+    """TH-5648 follow-up: adding rows to a dataset whose column is already
+    typed Image used to upload straight from the user-supplied URL with no
+    validation at all -- a wide open SSRF surface, separate from (and missed
+    by) the original "convert column type" fix. This pins that it's now
+    validated the same way.
+    """
+    dataset = Dataset.no_workspace_objects.create(
+        name="Image Row Import SSRF Dataset",
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        column_order=[],
+        column_config={},
+    )
+    Column.no_workspace_objects.create(
+        name="image_col",
+        dataset=dataset,
+        data_type=DataTypeChoices.IMAGE.value,
+        source=SourceChoices.OTHERS.value,
+    )
+    usage_calls = _patch_usage(monkeypatch, "model_hub.views.develop_dataset")
+    upload_calls = []
+    monkeypatch.setattr(
+        "model_hub.views.develop_dataset.upload_image_to_s3",
+        lambda *a, **kw: upload_calls.append((a, kw))
+        or "https://s3.bucket/should-not-be-reached.png",
+    )
+
+    response = auth_client.post(
+        "/model-hub/develops/add_rows_from_file/",
+        {
+            "dataset_id": str(dataset.id),
+            "file": _csv_file(
+                name="ssrf_rows.csv",
+                content=(
+                    b"image_col,other\n"
+                    b"http://169.254.169.254/latest/meta-data/,x\n"
+                ),
+            ),
+        },
+        format="multipart",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert len(usage_calls) == 1
+    # upload_image_to_s3 must never be reached -- validate_file_url should
+    # have rejected the SSRF target before any fetch/upload was attempted.
+    assert upload_calls == []
+    column = Column.no_workspace_objects.get(dataset=dataset, name="image_col")
+    cell = Cell.no_workspace_objects.get(dataset=dataset, column=column)
+    assert not cell.value
 
 
 def _create_experiment_dataset_fixture(
@@ -1067,3 +1124,62 @@ def test_update_synthetic_invalid_regenerate_does_not_mutate_dataset(
     assert Row.objects.filter(dataset=dataset, deleted=False).count() == 1
     assert Column.objects.filter(dataset=dataset, deleted=False).count() == 1
     assert Cell.objects.filter(dataset=dataset, deleted=False).count() == 1
+
+
+@pytest.mark.django_db
+def test_add_synthetic_data_accepts_columns_without_skip_or_is_new(
+    auth_client, organization, workspace, user, monkeypatch
+):
+    dataset = Dataset.objects.create(
+        name="Minimal Column Payload Dataset",
+        organization=organization,
+        workspace=workspace,
+        user=user,
+        column_order=[],
+        column_config={},
+    )
+    column = Column.objects.create(
+        name="answer",
+        dataset=dataset,
+        data_type=DataTypeChoices.TEXT.value,
+        source=SourceChoices.OTHERS.value,
+    )
+    dataset.column_order = [str(column.id)]
+    dataset.column_config = {str(column.id): {"is_visible": True, "is_frozen": None}}
+    dataset.save(update_fields=["column_order", "column_config"])
+    queued_tasks = []
+    monkeypatch.setattr(
+        "model_hub.views.datasets.add_rows.synthetic.generate_new_rows.delay",
+        lambda *args, **kwargs: queued_tasks.append(("add_rows", args, kwargs)),
+    )
+    monkeypatch.setattr(
+        "model_hub.views.datasets.add_rows.synthetic.generate_new_columns.delay",
+        lambda *args, **kwargs: queued_tasks.append(("gen_cols", args, kwargs)),
+    )
+
+    payload = {
+        "num_rows": 10,
+        "fill_existing_rows": False,
+        "columns": [
+            {
+                "name": "answer",
+                "data_type": "text",
+                "description": "Answer",
+                "property": "answer",
+            }
+        ],
+        "dataset": {
+            "description": "Dataset",
+            "objective": "Generate rows",
+            "patterns": "",
+        },
+    }
+
+    response = auth_client.post(
+        f"/model-hub/develops/{dataset.id}/add_synthetic_data/",
+        payload,
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK, response.json()
+    assert any(name == "add_rows" for name, _, _ in queued_tasks)

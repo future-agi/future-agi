@@ -2180,7 +2180,7 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "provider": "provider",
                     "observation_type": "observation_type",
                     "span_kind": "observation_type",  # span_kind maps to observation_type in CH
-                    "service_name": "name",  # service_name maps to span name
+                    "service_name": "service_name",  # OTel service.name; matches _STRING_FILTER_COL
                     "name": "name",
                     "span_name": "name",
                     "session": "toString(trace_session_id)",

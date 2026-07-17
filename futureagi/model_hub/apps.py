@@ -252,125 +252,18 @@ class ModelHubConfig(AppConfig):
         for vector_db in vector_dbs:
             db_client.create_table(vector_db)
 
+        from model_hub.services.legacy_ch_tables import (
+            ensure_events_table,
+            ensure_llm_logs_table,
+        )
         from tfc.utils.clickhouse import ClickHouseClientSingleton
 
         ch_instance = ClickHouseClientSingleton()
 
-        # Example: Check if table exists
-        result = ch_instance.execute("SHOW TABLES FROM default")
-        tables = [row[0] for row in result]
-
-        if "events" in tables:
-            # Check if original_uuid column exists
-            columns = ch_instance.execute("DESCRIBE TABLE events")
-            column_names = [col[0] for col in columns]
-
-            if "original_uuid" not in column_names:
-                # Add the original_uuid column
-                ch_instance.execute(
-                    """
-                    ALTER TABLE events
-                    ADD COLUMN IF NOT EXISTS original_uuid UUID DEFAULT UUID
-                    """
-                )
-
-        if "events" not in tables:
-            # Create the table with original_uuid included
-            ch_instance.execute(
-                """
-                CREATE TABLE IF NOT EXISTS events (
-                    UUID UUID,
-                    original_uuid UUID DEFAULT UUID,
-                    EventDate Date,
-                    EventDateTime DateTime,
-                    EventName String,
-                    EventType String,
-                    AIModel String DEFAULT '',
-                    OrgID String,
-                    PredictionID String DEFAULT '',
-                    ModelVersion String DEFAULT '',
-                    BatchID String DEFAULT '',
-                    Environment UInt8 DEFAULT 0,
-                    Properties Nested(
-                        Key String,
-                        Value String,
-                        DataType String
-                    ),
-                    Features Nested(
-                        Key String,
-                        Value String,
-                        DataType String
-                    ),
-                    ActualLabel Nested(
-                        Key String,
-                        Value String,
-                        DataType String
-                    ),
-                    PredictionLabel Nested(
-                        Key String,
-                        Value String,
-                        DataType String
-                    ),
-                    EvalResults Nested(
-                        Key String,
-                        Value String,
-                        DataType String
-                    ),
-                    ShapValues Nested(
-                        Key String,
-                        Value String,
-                        DataType String
-                    ),
-                    Tags Nested(
-                        Key String,
-                        Value String,
-                        DataType String
-                    ),
-                    Embedding Array(Float32) DEFAULT [],
-                    deleted UInt8 DEFAULT 0
-
-                ) ENGINE = MergeTree()
-                PARTITION BY toYYYYMM(EventDate)
-                ORDER BY (EventDate, EventName, OrgID, UUID);
-            """
-            )
-
-        if "llm_logs" not in tables:
-            ch_instance.execute(
-                """
-            CREATE TABLE IF NOT EXISTS llm_logs
-            (
-                `EventDateTime` DateTime64(9) CODEC(Delta(8), ZSTD(1)),
-                `EventDate` Date,
-                `TraceId` String CODEC(ZSTD(1)),
-                `SpanId` String CODEC(ZSTD(1)),
-                `SeverityText` LowCardinality(String) CODEC(ZSTD(1)),
-                `SeverityNumber` Int32 CODEC(ZSTD(1)),
-                `ServiceName` LowCardinality(String) CODEC(ZSTD(1)),
-                `LLMModelName` LowCardinality(String) CODEC(ZSTD(1)), -- Name of the LLM model used
-                `UserId` String CODEC(ZSTD(1)), -- User identifier
-                `SessionId` String CODEC(ZSTD(1)), -- Session identifier
-                `RequestBody` String CODEC(ZSTD(1)), -- Request sent to the LLM
-                `ResponseBody` String CODEC(ZSTD(1)), -- Response received from the LLM
-                `RequestTokens` Int32 CODEC(ZSTD(1)), -- Number of tokens in the request
-                `ResponseTokens` Int32 CODEC(ZSTD(1)), -- Number of tokens in the response
-                `ResponseTime` Float32 CODEC(ZSTD(1)), -- Time taken to get the response
-                `LogAttributes` Map(LowCardinality(String), String) CODEC(ZSTD(1)), -- Additional log attributes
-                `ResourceAttributes` Map(LowCardinality(String), String) CODEC(ZSTD(1)),
-                INDEX idx_trace_id TraceId TYPE bloom_filter(0.001) GRANULARITY 1,
-                INDEX idx_llm_model_name LLMModelName TYPE bloom_filter(0.001) GRANULARITY 1,
-                INDEX idx_user_id UserId TYPE bloom_filter(0.001) GRANULARITY 1,
-                INDEX idx_session_id SessionId TYPE bloom_filter(0.001) GRANULARITY 1,
-                INDEX idx_request_body RequestBody TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1,
-                INDEX idx_response_body ResponseBody TYPE tokenbf_v1(32768, 3, 0) GRANULARITY 1
-            )
-            ENGINE = MergeTree
-            PARTITION BY EventDate
-            ORDER BY (LLMModelName, EventDateTime)
-            SETTINGS index_granularity = 8192, ttl_only_drop_parts = 1;
-
-            """
-            )
+        # Idempotent CREATE TABLE IF NOT EXISTS, replicated on a multi-replica
+        # cluster. Targets the connection's current database (CH_DATABASE).
+        ensure_events_table(ch_instance)
+        ensure_llm_logs_table(ch_instance)
 
 
 ##################################################

@@ -37,6 +37,18 @@ from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.types import ClickhouseDatatypes
 
+# The HuggingFace Hub now emits the `List` feature type (datasets 4.0) in dataset
+# metadata, which pinned datasets 3.6.0 can't parse: load_dataset() raises
+# "Feature type 'List' not found" and streaming ingestion loads zero rows. Alias it
+# to the 3.6.0 equivalent (LargeList); setdefault leaves a future upgrade untouched.
+try:
+    from datasets.features import features as _hf_features
+
+    if hasattr(_hf_features, "_FEATURE_TYPES") and hasattr(_hf_features, "LargeList"):
+        _hf_features._FEATURE_TYPES.setdefault("List", _hf_features.LargeList)
+except Exception:  # defensive: datasets internals moved
+    logger.warning("hf List feature-type shim did not install", exc_info=True)
+
 
 class MyCustomLLM(CustomLLM):
     def __init__(self, **kwargs):

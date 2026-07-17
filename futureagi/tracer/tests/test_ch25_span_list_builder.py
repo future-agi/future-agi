@@ -10,7 +10,6 @@ production side-by-side.
 
 from __future__ import annotations
 
-import pytest
 from django.test import override_settings
 
 from tracer.services.clickhouse.v2.query_builders.span_list import (
@@ -152,3 +151,71 @@ def test_build_eval_query_keeps_legacy_table_and_predicate():
     assert "tracer_eval_logger_v2" not in sql
     assert "_peerdb_is_deleted = 0" in sql
     assert "deleted = 0 OR deleted IS NULL" in sql
+
+
+# ── perf-fix shapes: tiebreak, progressive slices, created_at bounds ─────────
+
+
+def test_default_sort_has_id_tiebreak():
+    """P0-1: ClickHouse's parallel sort is not stable — without an `id`
+    tiebreak, equal-start_time rows permute between requests and the
+    prefix-dedup pagination (page_dedup.py) can duplicate/skip rows across
+    pages. The default ORDER BY must carry the deterministic tiebreak."""
+    sql, _ = _make_builder().build()
+    assert "ORDER BY start_time DESC, id DESC" in sql
+
+
+def test_build_with_since_adds_slice_predicate_and_keeps_window():
+    """P1-1: `build(since=…)` narrows the scan to the newest slice via an
+    ADDITIONAL predicate; the regular start_date/end_date params stay bound to
+    the full requested window so the count query still counts everything."""
+    from datetime import datetime, timedelta
+
+    builder = _make_builder()
+    since = datetime.utcnow() - timedelta(days=7)
+    sql, params = builder.build(since=since)
+    assert "start_time >= %(slice_start)s" in sql
+    assert params["slice_start"] == since
+    # full-window params untouched by the slice
+    assert params["start_date"] < since
+    # the count query built afterwards must not inherit the slice narrowing
+    count_sql, _ = builder.build_count_query()
+    assert "slice_start" not in count_sql
+
+
+def test_build_without_since_has_no_slice_predicate():
+    sql, params = _make_builder().build()
+    assert "slice_start" not in sql
+    assert "slice_start" not in params
+
+
+def test_eval_query_created_after_prunes_partitions():
+    """P0-3: the eval table is PARTITION BY toYYYYMM(created_at); the page's
+    oldest created_at (minus a 7-day margin) bounds the probe so it stops
+    touching every monthly partition. Without the arg the shape is unchanged."""
+    from datetime import datetime
+
+    builder = _make_builder(eval_config_ids=[EVAL_CONFIG_ID])
+    bound = datetime(2026, 7, 1)
+    sql, params = builder.build_eval_query(["sp1"], created_after=bound)
+    assert "created_at >= %(evals_created_after)s - INTERVAL 7 DAY" in sql
+    assert params["evals_created_after"] == bound
+
+    sql_unbounded, params_unbounded = builder.build_eval_query(["sp1"])
+    assert "evals_created_after" not in sql_unbounded
+    assert "evals_created_after" not in params_unbounded
+
+
+def test_annotation_query_created_after_prunes_partitions():
+    from datetime import datetime
+
+    builder = _make_builder()
+    builder.annotation_label_ids = ["33333333-3333-3333-3333-333333333333"]
+    bound = datetime(2026, 7, 1)
+    sql, params = builder.build_annotation_query(["sp1"], created_after=bound)
+    assert "created_at >= %(anns_created_after)s - INTERVAL 7 DAY" in sql
+    assert params["anns_created_after"] == bound
+
+    sql_unbounded, params_unbounded = builder.build_annotation_query(["sp1"])
+    assert "anns_created_after" not in sql_unbounded
+    assert "anns_created_after" not in params_unbounded

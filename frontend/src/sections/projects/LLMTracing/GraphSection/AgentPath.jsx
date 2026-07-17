@@ -1,9 +1,4 @@
-/**
- * AgentPath — Sankey-like flow visualization showing span types with counts.
- * Each column is a "rank" in the execution flow (left → right).
- * Nodes have colored vertical bars proportional to span count.
- * Colored bands flow between connected nodes.
- */
+// AgentPath — Sankey-style flow view of an agent trace's span types.
 import React, { useMemo, useRef, useState, useEffect } from "react";
 import PropTypes from "prop-types";
 import {
@@ -16,242 +11,48 @@ import {
 } from "@mui/material";
 import { alpha } from "@mui/material/styles";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip";
 import FullscreenGraphDialog from "./FullscreenGraphDialog";
+import {
+  PAD,
+  COL_WIDTH,
+  BAR_WIDTH,
+  NODE_GAP,
+  LABEL_W,
+  MIN_ZOOM,
+  MAX_ZOOM,
+  VIEWPORT_H,
+  INITIAL_MIN_ZOOM,
+  nodeHeightFor,
+  computeSankeyLayout,
+  computeNaturalSize,
+} from "./agentPathUtils";
 
-// Node type → color mapping (matches AgentGraph)
-const TYPE_COLORS = {
-  agent: {
-    bar: "#c4b5fd",
-    band: "#c4b5fd",
-    text: "#7c3aed",
-    icon: "mdi:robot-outline",
-  },
-  llm: { bar: "#93c5fd", band: "#93c5fd", text: "#2563eb", icon: "mdi:brain" },
-  generation: {
-    bar: "#93c5fd",
-    band: "#93c5fd",
-    text: "#2563eb",
-    icon: "mdi:brain",
-  },
-  tool: {
-    bar: "#86efac",
-    band: "#86efac",
-    text: "#16a34a",
-    icon: "mdi:wrench-outline",
-  },
-  retriever: {
-    bar: "#5eead4",
-    band: "#5eead4",
-    text: "#0d9488",
-    icon: "mdi:magnify",
-  },
-  chain: {
-    bar: "#f0abfc",
-    band: "#f0abfc",
-    text: "#c026d3",
-    icon: "mdi:link-variant",
-  },
-  embedding: {
-    bar: "#fdba74",
-    band: "#fdba74",
-    text: "#ea580c",
-    icon: "mdi:vector-square",
-  },
-  guardrail: {
-    bar: "#fca5a5",
-    band: "#fca5a5",
-    text: "#dc2626",
-    icon: "mdi:shield-check-outline",
-  },
-  reranker: {
-    bar: "#fca5a5",
-    band: "#fca5a5",
-    text: "#dc2626",
-    icon: "mdi:sort-variant",
-  },
-  unknown: {
-    bar: "#d1d5db",
-    band: "#d1d5db",
-    text: "#6b7280",
-    icon: "mdi:help-circle-outline",
-  },
-};
+const SankeyChart = ({ layout, width, height, zoom, onNodeClick, theme }) => {
+  const { columns, flows, maxSpans } = layout;
 
-const getColor = (type) =>
-  TYPE_COLORS[type?.toLowerCase()] || TYPE_COLORS.unknown;
+  const padding = PAD;
+  const colGap = COL_WIDTH;
+  const barWidth = BAR_WIDTH;
+  const nodeGap = NODE_GAP;
+  const labelW = LABEL_W;
 
-// ---------------------------------------------------------------------------
-// Compute Sankey layout from graph data
-// ---------------------------------------------------------------------------
-const computeSankeyLayout = (graphData) => {
-  if (!graphData?.nodes?.length || !graphData?.edges?.length) return null;
-
-  const nodeMap = new Map();
-  graphData.nodes.forEach((n) => {
-    if (n.type !== "start" && n.type !== "end") {
-      nodeMap.set(n.id, { ...n });
-    }
-  });
-
-  // Build adjacency (excluding start/end sentinels)
-  const outEdges = new Map(); // source -> [{target, count}]
-  const inEdges = new Map(); // target -> [{source, count}]
-  const targetSet = new Set();
-
-  graphData.edges.forEach((e) => {
-    if (e.isSelfLoop) return;
-    if (!nodeMap.has(e.source) || !nodeMap.has(e.target)) return;
-
-    if (!outEdges.has(e.source)) outEdges.set(e.source, []);
-    outEdges
-      .get(e.source)
-      .push({ target: e.target, count: e.transitionCount || 1 });
-
-    if (!inEdges.has(e.target)) inEdges.set(e.target, []);
-    inEdges
-      .get(e.target)
-      .push({ source: e.source, count: e.transitionCount || 1 });
-
-    targetSet.add(e.target);
-  });
-
-  // Assign ranks using BFS from roots
-  const roots = [...nodeMap.keys()].filter((id) => !targetSet.has(id));
-  if (roots.length === 0) {
-    // Fallback: pick node with highest spanCount
-    const sorted = [...nodeMap.values()].sort(
-      (a, b) => (b.span_count || 0) - (a.span_count || 0),
-    );
-    if (sorted.length > 0) roots.push(sorted[0].id);
-  }
-
-  const rank = new Map();
-  const queue = roots.map((id) => ({ id, r: 0 }));
-  const visited = new Set();
-
-  while (queue.length > 0) {
-    const { id, r } = queue.shift();
-    if (visited.has(id)) continue;
-    visited.add(id);
-    rank.set(id, Math.max(rank.get(id) || 0, r));
-
-    const out = outEdges.get(id) || [];
-    for (const { target } of out) {
-      if (!visited.has(target)) {
-        queue.push({ id: target, r: r + 1 });
-      }
-    }
-  }
-
-  // Add any unvisited nodes
-  nodeMap.forEach((_, id) => {
-    if (!rank.has(id)) rank.set(id, 0);
-  });
-
-  // Group nodes by rank
-  const columns = new Map(); // rank -> [nodeId]
-  rank.forEach((r, id) => {
-    if (!columns.has(r)) columns.set(r, []);
-    columns.get(r).push(id);
-  });
-
-  // Sort columns by rank, nodes within column by spanCount desc
-  const sortedRanks = [...columns.keys()].sort((a, b) => a - b);
-  sortedRanks.forEach((r) => {
-    columns
-      .get(r)
-      .sort(
-        (a, b) =>
-          (nodeMap.get(b)?.spanCount || 0) - (nodeMap.get(a)?.spanCount || 0),
-      );
-  });
-
-  // Find max span count for scaling
-  let maxSpans = 0;
-  nodeMap.forEach((n) => {
-    maxSpans = Math.max(maxSpans, n.span_count || 0);
-  });
-
-  // Build layout data
-  const layoutColumns = sortedRanks.map((r) => ({
-    rank: r,
-    nodes: columns.get(r).map((id) => ({
-      ...nodeMap.get(id),
-      id,
-      color: getColor(nodeMap.get(id)?.type),
-    })),
-  }));
-
-  // Build flow bands (edges between ranks)
-  const flows = [];
-  graphData.edges.forEach((e) => {
-    if (e.isSelfLoop) return;
-    if (!nodeMap.has(e.source) || !nodeMap.has(e.target)) return;
-    const sourceNode = nodeMap.get(e.source);
-    const targetNode = nodeMap.get(e.target);
-    flows.push({
-      source: e.source,
-      target: e.target,
-      count: e.transitionCount || 1,
-      sourceColor: getColor(sourceNode?.type),
-      targetColor: getColor(targetNode?.type),
-    });
-  });
-
-  return { columns: layoutColumns, flows, maxSpans };
-};
-
-// ---------------------------------------------------------------------------
-// SVG Sankey rendering
-// ---------------------------------------------------------------------------
-const SankeyChart = ({ layout, width, height, onNodeClick, theme }) => {
-  const { columns, flows } = layout;
-
-  const padding = { top: 10, bottom: 10, left: 20, right: 20 };
-  const colGap = Math.max(
-    60,
-    (width - padding.left - padding.right) / (columns.length + 1),
-  );
-  const barWidth = 16;
-  const minBarHeight = 20;
-  const availableHeight = height - padding.top - padding.bottom;
-  const nodeGap = 8;
-
-  // Position nodes in each column
-  const nodePositions = new Map(); // nodeId -> {x, y, h, color}
-
+  const nodePositions = new Map();
   columns.forEach((col, colIdx) => {
     const x = padding.left + colIdx * colGap;
-    const totalSpans = col.nodes.reduce(
-      (sum, n) => sum + (n.span_count || 1),
-      0,
-    );
-    const totalGaps = Math.max(0, col.nodes.length - 1) * nodeGap;
-    const scaleHeight = availableHeight - totalGaps;
-
     let yOffset = padding.top;
     col.nodes.forEach((node) => {
-      const proportion = (node.span_count || 1) / totalSpans;
-      const h = Math.max(minBarHeight, proportion * scaleHeight);
-
-      nodePositions.set(node.id, {
-        x,
-        y: yOffset,
-        h,
-        color: node.color,
-        node,
-      });
+      const h = nodeHeightFor(node, maxSpans);
+      nodePositions.set(node.id, { x, y: yOffset, h, color: node.color, node });
       yOffset += h + nodeGap;
     });
   });
 
-  // Build flow paths — curved bands between source and target bars
   const flowPaths = flows.map((flow, idx) => {
     const src = nodePositions.get(flow.source);
     const tgt = nodePositions.get(flow.target);
     if (!src || !tgt) return null;
 
-    // Calculate band thickness proportional to flow count
     const srcTotal = flows
       .filter((f) => f.source === flow.source)
       .reduce((s, f) => s + f.count, 0);
@@ -262,7 +63,6 @@ const SankeyChart = ({ layout, width, height, onNodeClick, theme }) => {
     const srcBandH = Math.max(4, (flow.count / srcTotal) * src.h);
     const tgtBandH = Math.max(4, (flow.count / tgtTotal) * tgt.h);
 
-    // Calculate y offsets for stacking bands
     const srcFlowsBefore = flows
       .slice(0, idx)
       .filter((f) => f.source === flow.source);
@@ -309,26 +109,34 @@ const SankeyChart = ({ layout, width, height, onNodeClick, theme }) => {
     );
   });
 
-  // Render node bars and labels — with hover highlight + click
   const nodeElements = [];
   nodePositions.forEach(({ x, y, h, color, node }, id) => {
+    const tooltipContent = (
+      <div style={{ lineHeight: 1.3 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: color.text }}>
+          {node.name}
+        </div>
+        <div style={{ fontSize: 10, color: "var(--text-disabled)" }}>
+          {(node.span_count || 0).toLocaleString()} spans
+        </div>
+      </div>
+    );
     nodeElements.push(
       <g
         key={id}
+        className="agent-path-node"
         style={{ cursor: onNodeClick ? "pointer" : "default" }}
         onClick={() => onNodeClick?.(node)}
       >
-        {/* Hover target — invisible wider rect for easier hovering */}
         <rect
           x={x - 4}
           y={y - 2}
-          width={barWidth + 130}
+          width={barWidth + labelW + 14}
           height={h + 4}
           rx={4}
           fill="transparent"
           className="agent-path-hover-bg"
         />
-        {/* Colored vertical bar */}
         <rect
           x={x}
           y={y}
@@ -338,53 +146,70 @@ const SankeyChart = ({ layout, width, height, onNodeClick, theme }) => {
           fill={color.bar}
           className="agent-path-bar"
         />
-        {/* Node label */}
         <foreignObject
           x={x + barWidth + 6}
           y={y}
-          width={120}
+          width={labelW}
           height={h}
-          style={{ overflow: "visible", pointerEvents: "none" }}
+          style={{ overflow: "visible", pointerEvents: "auto" }}
         >
-          <div
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              justifyContent: "center",
-              height: h,
-              lineHeight: 1.2,
-            }}
+          <CustomTooltip
+            show
+            size="small"
+            title={tooltipContent}
+            placement="top"
+            arrow
           >
-            <span
+            <div
               style={{
-                fontSize: 12,
-                fontWeight: 600,
-                color: color.text,
-                whiteSpace: "nowrap",
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                height: h,
               }}
             >
-              {node.name}
-            </span>
-            <span
-              style={{
-                fontSize: 10,
-                color: "var(--text-disabled)",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {(node.span_count || 0).toLocaleString()} spans
-            </span>
-          </div>
+              <div style={{ maxWidth: labelW, lineHeight: 1.25 }}>
+                <div
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: color.text,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {node.name}
+                </div>
+                <div
+                  style={{
+                    fontSize: 10,
+                    color: "var(--text-disabled)",
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
+                  {(node.span_count || 0).toLocaleString()} spans
+                </div>
+              </div>
+            </div>
+          </CustomTooltip>
         </foreignObject>
       </g>,
     );
   });
 
   return (
-    <svg width={width} height={height} style={{ display: "block" }}>
+    <svg
+      width={Math.round(width * zoom)}
+      height={Math.round(height * zoom)}
+      viewBox={`0 0 ${width} ${height}`}
+      style={{ display: "block" }}
+    >
       <style>{`
-        g:hover .agent-path-hover-bg { fill: ${theme ? alpha(theme.palette.text.primary, 0.04) : "rgba(0,0,0,0.03)"}; }
-        g:hover .agent-path-bar { filter: brightness(0.9); transform-origin: center; }
+        .agent-path-node:hover .agent-path-hover-bg { fill: ${theme ? alpha(theme.palette.text.primary, 0.04) : "rgba(0,0,0,0.03)"}; }
+        .agent-path-node:hover .agent-path-bar { filter: brightness(0.9); transform-origin: center; }
       `}</style>
       <g>{flowPaths}</g>
       <g>{nodeElements}</g>
@@ -396,13 +221,11 @@ SankeyChart.propTypes = {
   layout: PropTypes.object.isRequired,
   width: PropTypes.number.isRequired,
   height: PropTypes.number.isRequired,
+  zoom: PropTypes.number,
   onNodeClick: PropTypes.func,
   theme: PropTypes.object,
 };
 
-// ---------------------------------------------------------------------------
-// AgentPath component
-// ---------------------------------------------------------------------------
 const AgentPathInner = ({
   data,
   isLoading,
@@ -418,6 +241,7 @@ const AgentPathInner = ({
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [zoom, setZoom] = useState(1);
   const layout = useMemo(() => computeSankeyLayout(data), [data]);
+  const natural = useMemo(() => computeNaturalSize(layout), [layout]);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -430,6 +254,41 @@ const AgentPathInner = ({
     observer.observe(containerRef.current);
     return () => observer.disconnect();
   }, []);
+
+  const viewportHeight = isFullscreen
+    ? Math.max(containerHeight, 320)
+    : VIEWPORT_H;
+
+  const fitZoom = useMemo(() => {
+    const availW = Math.max(1, containerWidth - 16);
+    const availH = Math.max(1, viewportHeight - 16);
+    const z = Math.min(availW / natural.width, availH / natural.height);
+    return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number.isFinite(z) ? z : 1));
+  }, [containerWidth, viewportHeight, natural.width, natural.height]);
+
+  const initialZoom = useMemo(
+    () => Math.min(1, Math.max(INITIAL_MIN_ZOOM, fitZoom)),
+    [fitZoom],
+  );
+
+  // Re-fit only on structural change, not on resize / 10s refresh — so a
+  // manual zoom sticks.
+  const structKey = useMemo(() => {
+    if (!layout?.columns) return "";
+    return `${layout.columns.length}:${layout.columns.reduce(
+      (s, c) => s + c.nodes.length,
+      0,
+    )}`;
+  }, [layout]);
+  const didAutoFitRef = useRef(false);
+  useEffect(() => {
+    didAutoFitRef.current = false;
+  }, [structKey]);
+  useEffect(() => {
+    if (didAutoFitRef.current || !layout || containerWidth <= 1) return;
+    setZoom(initialZoom);
+    didAutoFitRef.current = true;
+  }, [layout, containerWidth, initialZoom]);
 
   if (isLoading) {
     return (
@@ -463,9 +322,6 @@ const AgentPathInner = ({
     );
   }
 
-  const chartHeight = isFullscreen ? Math.max(containerHeight, 320) : 200;
-  const chartWidth = Math.max(320, Math.round(containerWidth * zoom));
-  const scaledChartHeight = Math.max(120, Math.round(chartHeight * zoom));
   const controlInset = isFullscreen ? 24 : 8;
   const collapsedToolbarHeight = controlInset * 2 + 28;
   const showToolbar = isHovering || isFullscreen || isCollapsed;
@@ -477,6 +333,17 @@ const AgentPathInner = ({
     "&:last-child": { borderRight: "none" },
     color: "text.secondary",
   };
+
+  const chartEl = (
+    <SankeyChart
+      layout={layout}
+      width={natural.width}
+      height={natural.height}
+      zoom={zoom}
+      onNodeClick={onNodeClick}
+      theme={theme}
+    />
+  );
 
   return (
     <Box
@@ -490,11 +357,17 @@ const AgentPathInner = ({
         bgcolor: "background.paper",
         overflow: isCollapsed ? "visible" : "hidden",
         ...(isFullscreen
-          ? { height: isCollapsed ? collapsedToolbarHeight : "100%", width: "100%" }
-          : { mx: 2, my: 1, minHeight: isCollapsed ? collapsedToolbarHeight : undefined }),
+          ? {
+              height: isCollapsed ? collapsedToolbarHeight : "100%",
+              width: "100%",
+            }
+          : {
+              mx: 2,
+              my: 1,
+              minHeight: isCollapsed ? collapsedToolbarHeight : undefined,
+            }),
       }}
     >
-      {/* Zoom controls, top right (matches AgentGraph) */}
       {showToolbar && (
         <Box
           sx={{
@@ -515,7 +388,7 @@ const AgentPathInner = ({
           <IconButton
             size="small"
             title="Zoom in"
-            onClick={() => setZoom((value) => Math.min(2, value + 0.2))}
+            onClick={() => setZoom((value) => Math.min(MAX_ZOOM, value + 0.2))}
             sx={btnSx}
           >
             <Iconify icon="mdi:plus" width={14} />
@@ -523,15 +396,15 @@ const AgentPathInner = ({
           <IconButton
             size="small"
             title="Zoom out"
-            onClick={() => setZoom((value) => Math.max(0.6, value - 0.2))}
+            onClick={() => setZoom((value) => Math.max(MIN_ZOOM, value - 0.2))}
             sx={btnSx}
           >
             <Iconify icon="mdi:minus" width={14} />
           </IconButton>
           <IconButton
             size="small"
-            title="Fit"
-            onClick={() => setZoom(1)}
+            title="Fit to view"
+            onClick={() => setZoom(fitZoom)}
             sx={btnSx}
           >
             <Iconify icon="mdi:crosshairs-gps" width={14} />
@@ -561,26 +434,17 @@ const AgentPathInner = ({
         </Box>
       )}
 
-      <Collapse
-        in={!isCollapsed}
-        timeout="auto"
-        sx={isFullscreen ? { flex: 1, minHeight: 0 } : { minHeight: 0 }}
-      >
-        <Box
-          sx={{
-            height: "100%",
-            overflow: "auto",
-          }}
-        >
-          <SankeyChart
-            layout={layout}
-            width={chartWidth}
-            height={scaledChartHeight}
-            onNodeClick={onNodeClick}
-            theme={theme}
-          />
-        </Box>
-      </Collapse>
+      {/* Fullscreen needs a bounded flex child to scroll; MUI Collapse sizes to
+          content, so only use it for the inline strip. */}
+      {isFullscreen ? (
+        !isCollapsed && (
+          <Box sx={{ flex: 1, minHeight: 0, overflow: "auto" }}>{chartEl}</Box>
+        )
+      ) : (
+        <Collapse in={!isCollapsed} timeout="auto" sx={{ minHeight: 0 }}>
+          <Box sx={{ height: VIEWPORT_H, overflow: "auto" }}>{chartEl}</Box>
+        </Collapse>
+      )}
     </Box>
   );
 };

@@ -27,11 +27,14 @@ from tracer.models.trace_error_analysis import (
     FeedIssueStatus,
     TraceErrorGroup,
 )
+from tracer.services.clickhouse.clustering_tables import (
+    CENTROIDS_TABLE,
+    ensure_centroid_table,
+)
 from tracer.types.eval_cluster_types import ClusterableEvalResult, EvalClusterMeta
 
 logger = structlog.get_logger(__name__)
 
-CENTROIDS_TABLE = "cluster_centroids"  # shared with scanner — different family values
 COSINE_THRESHOLD = 0.45
 
 # Only cluster recent eval failures — old results aren't actionable and
@@ -230,27 +233,6 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
 # ---------------------------------------------------------------------------
 
 
-def _ensure_centroid_table(db: ClickHouseVectorDB) -> None:
-    """Ensure the cluster_centroids table exists (shared with scanner)."""
-    # Array(...) can't sit inside Nullable; override server profiles that set
-    # data_type_default_nullable=1 so unmodified types aren't auto-wrapped.
-    db.client.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS {CENTROIDS_TABLE} (
-            cluster_id String,
-            project_id UUID,
-            centroid Array(Float32),
-            member_count UInt32,
-            family String,
-            last_updated DateTime DEFAULT now(),
-            PRIMARY KEY (cluster_id)
-        ) ENGINE = ReplacingMergeTree(last_updated)
-        ORDER BY (cluster_id)
-        """,
-        settings={"data_type_default_nullable": 0},
-    )
-
-
 def _eval_family(eval_name: str, target_type: str = "span") -> str:
     """Family key for eval centroids — keeps the three targets (and scanner)
     in separate centroid spaces.
@@ -288,7 +270,7 @@ def find_nearest_centroid(
     """
     db = ClickHouseVectorDB()
     try:
-        _ensure_centroid_table(db)
+        ensure_centroid_table(db)
         vector_str = "[" + ",".join(map(str, embedding)) + "]"
         family = _eval_family(eval_name, target_type)
         rows = db.client.execute(
@@ -468,7 +450,7 @@ def create_cluster(
     family = _eval_family(result.eval_name, result.target_type)
     db = ClickHouseVectorDB()
     try:
-        _ensure_centroid_table(db)
+        ensure_centroid_table(db)
         db.client.execute(
             f"""
             INSERT INTO {CENTROIDS_TABLE}

@@ -89,8 +89,20 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     # Phase 1: Paginated span list
     # ------------------------------------------------------------------
 
-    def build(self) -> tuple[str, dict[str, Any]]:
-        """Build the Phase-1 query for paginated span data."""
+    def build(self, since: Any = None) -> tuple[str, dict[str, Any]]:
+        """Build the Phase-1 query for paginated span data.
+
+        Args:
+            since: Optional narrowed window start (datetime) for progressive
+                time-slice pagination. When set, an additional
+                ``start_time >= %(slice_start)s`` predicate restricts the scan
+                to the newest slice — because the sort is ``start_time DESC``,
+                every row in a newer slice sorts before every older row, so a
+                slice that yields the full prefix IS the global prefix and the
+                caller can stop without scanning the whole window. The regular
+                ``start_date``/``end_date`` params are left untouched so
+                ``build_count_query()`` still counts the full window.
+        """
         start_date, end_date = self.parse_time_range(self.filters)
         self.params["start_date"] = start_date
         self.params["end_date"] = end_date
@@ -109,7 +121,18 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             self.sort_params, field_map=self.SORT_FIELD_MAP
         )
         if not order_clause:
-            order_clause = "ORDER BY start_time DESC"
+            # `id DESC` tiebreak: ClickHouse's parallel sort is not stable, so
+            # equal start_time rows can permute between requests. Prefix-dedup
+            # pagination (page_dedup.py) slices consecutive pages out of what
+            # must be ONE stable global order — without the tiebreak a row can
+            # appear on two pages or be skipped. Deterministic order also makes
+            # the progressive-slice prefix (see `since`) reproducible.
+            order_clause = "ORDER BY start_time DESC, id DESC"
+
+        slice_fragment = ""
+        if since is not None:
+            self.params["slice_start"] = since
+            slice_fragment = "AND start_time >= %(slice_start)s"
 
         # Prefix-fetch pagination: read the sorted prefix [0, offset +
         # 2*page_size) in ONE bounded top-K pass and let the view dedup by
@@ -177,6 +200,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
               AND created_at >= %(start_date)s - INTERVAL 1 DAY
               AND start_time >= %(start_date)s
               AND start_time < %(end_date)s
+              {slice_fragment}
               {pv_fragment}
               {filter_fragment}
             """
@@ -246,6 +270,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
           AND created_at >= %(start_date)s - INTERVAL 1 DAY
           AND start_time >= %(start_date)s
           AND start_time < %(end_date)s
+          {slice_fragment}
           {end_user_fragment}
           {pv_fragment}
           {filter_fragment}
@@ -292,12 +317,15 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         return query, self.params
 
     def build_content_query(self, span_ids: list) -> tuple[str, dict[str, Any]]:
-        """Fetch input/output for a page of span IDs."""
+        """Fetch input/output + typed attr maps for a page of span IDs."""
         if not span_ids:
             return "", {}
         params = {**self.params, "content_span_ids": tuple(span_ids)}
         query = f"""
-        SELECT id, input, output, attributes_extra
+        SELECT id, input, output, attributes_extra,
+               span_attr_str AS attrs_string,
+               span_attr_num AS attrs_number,
+               span_attr_bool AS attrs_bool
         FROM {self.TABLE}
         PREWHERE id IN %(content_span_ids)s
         WHERE {self.project_filter_sql()} AND is_deleted = 0
@@ -388,8 +416,19 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     def build_eval_query(
         self,
         span_ids: list[str],
+        created_after: Any = None,
     ) -> tuple[str, dict[str, Any]]:
-        """Build the Phase-2 eval-scores query for a page of span IDs."""
+        """Build the Phase-2 eval-scores query for a page of span IDs.
+
+        Args:
+            created_after: Optional datetime lower bound for partition pruning.
+                The eval table is ``PARTITION BY toYYYYMM(created_at)``; without
+                a ``created_at`` predicate the span-id probe touches EVERY
+                monthly partition. An eval row cannot be created before its span
+                row exists, so bounding by the page's oldest ``created_at``
+                (minus a 7-day safety margin) prunes to the relevant partitions
+                — measured 55x fewer rows read at 10M eval rows.
+        """
         if not span_ids or not self.eval_config_ids:
             return "", {}
 
@@ -397,6 +436,12 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             "span_ids": tuple(span_ids),
             "eval_config_ids": tuple(self.eval_config_ids),
         }
+        created_fragment = ""
+        if created_after is not None:
+            params["evals_created_after"] = created_after
+            created_fragment = (
+                "AND created_at >= %(evals_created_after)s - INTERVAL 7 DAY"
+            )
 
         eval_table, eval_not_deleted = eval_logger_source()
         # ReplacingMergeTree version column: v2 uses `_version`, the legacy CDC
@@ -481,6 +526,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             WHERE {eval_not_deleted}
               AND observation_span_id IN %(span_ids)s
               AND custom_eval_config_id IN %(eval_config_ids)s
+              {created_fragment}
             ORDER BY {eval_version_col} DESC
             LIMIT 1 BY id
         )
@@ -496,8 +542,16 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     def build_annotation_query(
         self,
         span_ids: list[str],
+        created_after: Any = None,
     ) -> tuple[str, dict[str, Any]]:
-        """Build the Phase-3 annotation query for a page of span IDs."""
+        """Build the Phase-3 annotation query for a page of span IDs.
+
+        Args:
+            created_after: Optional datetime lower bound — same partition-prune
+                rationale as ``build_eval_query`` (``model_hub_score`` is also
+                ``PARTITION BY toYYYYMM(created_at)``; a score row cannot
+                pre-date its span row).
+        """
         if not span_ids or not self.annotation_label_ids:
             return "", {}
 
@@ -505,6 +559,12 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             "span_ids": tuple(span_ids),
             "label_ids": tuple(self.annotation_label_ids),
         }
+        created_fragment = ""
+        if created_after is not None:
+            params["anns_created_after"] = created_after
+            created_fragment = (
+                "AND created_at >= %(anns_created_after)s - INTERVAL 7 DAY"
+            )
 
         # PERF: no table-level FINAL (same OOM risk as the eval phase — FINAL
         # merges the whole model_hub_score table before the page filter). De-dup
@@ -523,6 +583,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
               AND deleted = false
               AND observation_span_id IN %(span_ids)s
               AND label_id IN %(label_ids)s
+              {created_fragment}
             ORDER BY _peerdb_version DESC
             LIMIT 1 BY id
         )
