@@ -136,9 +136,9 @@ class AnalyticsQueryService:
         }
         if recent_days is not None:
             params["recent_days"] = int(recent_days)
-            recent_filter = "AND created_at >= now() - toIntervalDay(%(recent_days)s)"
+            recent_filter = "AND start_time >= now() - toIntervalDay(%(recent_days)s)"
 
-        inner_order = "ORDER BY created_at DESC"
+        inner_order = "ORDER BY start_time DESC" if recent_days is not None else ""
         outer_select = "SELECT key, argMax(type, cnt) AS type"
         if include_counts:
             outer_select += ", sum(cnt) AS count"
@@ -201,8 +201,8 @@ class AnalyticsQueryService:
         # This is a discovery query (populate a filter dropdown), not an
         # accounting one, so an approximate sample is semantically fine.
         # Two bounds keep it bounded even on very large projects:
-        #   * 7-day window on `created_at` (the sort/partition key) so CH
-        #     can skip partitions and granules.
+        #   * 7-day window on `start_time` (the partition key is
+        #     `toDate(start_time)`) so CH can skip partitions and granules.
         #   * `LIMIT 10000` inside each per-map subquery before the
         #     ARRAY JOIN — without this, projects with millions of spans
         #     and wide `attrs_*` maps hit Code: 307 (max_bytes_to_read)

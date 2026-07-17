@@ -13,11 +13,15 @@ import {
   getAutoDecimals,
   getSeriesAverage,
   getSuggestedUnitConfig,
+  getUnitRendering,
   getYAxisRangeWarning,
+  seriesHasDataPoints,
 } from "./widgetUtils";
 import { toTimeRangePayload } from "./dashboardDateRange";
 
 const CHART_HEIGHT_FALLBACK = 280;
+const NO_DATA_FOR_RANGE_MESSAGE =
+  "No data available for this time period. Try a broader range.";
 const COLORS = [
   "#7B56DB", // purple (primary)
   "#1ABCFE", // cyan
@@ -30,6 +34,38 @@ const COLORS = [
   "#00CEC9", // teal
   "#A29BFE", // lavender
 ];
+
+const hashSeriesName = (name) => {
+  const s = String(name || "");
+  let h = 0;
+  for (let i = 0; i < s.length; i += 1) {
+    h = (h * 31 + s.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h);
+};
+// Name-hash gives cross-reload stability, but a bare hash % palette collides ~50%
+// at 4 series. Walk each name once and, on a taken slot, advance to the next
+// free one — distinct up to palette size, stable for the common non-colliding case.
+const buildSeriesColorMap = (names) => {
+  const map = {};
+  const used = new Set();
+  (names || []).forEach((name) => {
+    const start = hashSeriesName(name) % COLORS.length;
+    let picked = start;
+    for (let i = 0; i < COLORS.length; i += 1) {
+      const candidate = (start + i) % COLORS.length;
+      if (!used.has(candidate)) {
+        picked = candidate;
+        break;
+      }
+    }
+    used.add(picked);
+    map[name] = COLORS[picked];
+  });
+  return map;
+};
+const getSeriesColorFromMap = (map, name) =>
+  (map && map[name]) || COLORS[hashSeriesName(name) % COLORS.length];
 
 function getApexType(chartType) {
   const map = {
@@ -68,6 +104,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const isPie = chartType === "pie";
   const isTable = chartType === "table";
   const isMetricCard = chartType === "metric";
+  const isLineChart = apexType === "line";
 
   // Measure container height so charts fill available space
   const containerRef = useRef(null);
@@ -118,6 +155,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
           }
           s.push({
             name: label,
+            unit: metric.unit ?? "",
             data: (ms.data || []).map((point) => ({
               x: new Date(point.timestamp).getTime(),
               y: point.value != null ? Number(point.value) : null,
@@ -155,16 +193,26 @@ export default function WidgetChart({ widget, globalDateRange }) {
     return series.filter((_, i) => visibleSeries.has(i));
   }, [series, visibleSeries]);
 
+  // Build from the full `series` list (not filtered chartSeries) so a
+  // hidden series keeps its slot and its color stays put when unhidden.
+  const seriesColorMap = useMemo(
+    () => buildSeriesColorMap(series.map((s) => s.name)),
+    [series],
+  );
+  const colorFor = (name) => getSeriesColorFromMap(seriesColorMap, name);
+
   const outOfRangeWarning = useMemo(
     () => getYAxisRangeWarning(chartSeries, axisConfig),
     [chartSeries, axisConfig],
   );
 
+  const hasNoDataForRange = useMemo(
+    () => !seriesHasDataPoints(chartSeries),
+    [chartSeries],
+  );
+
   const pieValues = useMemo(
-    () =>
-      isPie
-        ? chartSeries.map((s) => getSeriesAverage(s.data) ?? 0)
-        : [],
+    () => (isPie ? chartSeries.map((s) => getSeriesAverage(s.data) ?? 0) : []),
     [isPie, chartSeries],
   );
 
@@ -177,13 +225,18 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const leftAxisFormatConfig = useMemo(() => {
     const suggested = getSuggestedUnitConfig(result?.metrics || []);
     const leftAxis = axisConfig?.leftY || {};
+    const metricUnits = (result?.metrics || [])
+      .map((m) => m?.unit ?? "");
+    const isMixedUnits = new Set(metricUnits).size > 1;
+    const effectiveUnit = isMixedUnits
+      ? ""
+      : leftAxis.unit || suggested.unit;
     return {
       ...leftAxis,
-      unit: leftAxis.unit || suggested.unit,
-      prefixSuffix:
-        leftAxis.unit || !suggested.unit
-          ? leftAxis.prefixSuffix || "prefix"
-          : suggested.prefixSuffix,
+      unit: effectiveUnit,
+      prefixSuffix: effectiveUnit
+        ? leftAxis.prefixSuffix || suggested.prefixSuffix || "prefix"
+        : suggested.prefixSuffix,
     };
   }, [axisConfig?.leftY, result?.metrics]);
 
@@ -306,6 +359,27 @@ export default function WidgetChart({ widget, globalDateRange }) {
     );
   }
 
+  if (hasNoDataForRange) {
+    return (
+      <Box
+        ref={containerRef}
+        sx={{
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          width: "100%",
+          height: "100%",
+          minHeight: 0,
+          px: 2,
+        }}
+      >
+        <Typography variant="body2" color="text.disabled">
+          {NO_DATA_FOR_RANGE_MESSAGE}
+        </Typography>
+      </Box>
+    );
+  }
+
   // Metric card
   if (isMetricCard) {
     return (
@@ -323,7 +397,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
             <Box key={i} sx={{ textAlign: "center" }}>
               <Typography
                 variant="h3"
-                sx={{ color: COLORS[i % COLORS.length] }}
+                sx={{ color: colorFor(s.name) }}
               >
                 {avg == null ? "—" : formatVal(avg)}
               </Typography>
@@ -421,7 +495,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
                         width: 8,
                         height: 8,
                         borderRadius: "2px",
-                        bgcolor: COLORS[i % COLORS.length],
+                        bgcolor: colorFor(s.name),
                         display: "inline-block",
                         flexShrink: 0,
                       }}
@@ -433,7 +507,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
                             queryConfig?.metrics?.[0]?.name ||
                             "Total"
                           : s.name;
-                      const unit = leftAxisFormatConfig?.unit;
+                      const unit = s.unit || leftAxisFormatConfig?.unit;
                       return unit ? `${label} (${unit})` : label;
                     })()}
                   </span>
@@ -471,6 +545,9 @@ export default function WidgetChart({ widget, globalDateRange }) {
                   </td>
                   {series.map((s, si) => {
                     const val = s.data[ri]?.y;
+                    const cellConfig = s.unit
+                      ? { ...leftAxisFormatConfig, ...getUnitRendering(s.unit) }
+                      : leftAxisFormatConfig;
                     return (
                       <td
                         key={si}
@@ -486,7 +563,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
                         }}
                       >
                         {val != null
-                          ? formatValueWithConfig(val, leftAxisFormatConfig, {
+                          ? formatValueWithConfig(val, cellConfig, {
                               fallbackDecimals: autoDecimals,
                             })
                           : "-"}
@@ -516,7 +593,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
         animations: { enabled: true, easing: "easeinout", speed: 400 },
       },
       labels: chartSeries.map((s) => s.name),
-      colors: COLORS,
+      colors: chartSeries.map((s) => colorFor(s.name)),
       plotOptions: {
         pie: {
           expandOnClick: false,
@@ -684,7 +761,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
                   width: 10,
                   height: 10,
                   borderRadius: "2px",
-                  bgcolor: COLORS[i % COLORS.length],
+                  bgcolor: colorFor(s.name),
                   flexShrink: 0,
                 }}
               />
@@ -740,7 +817,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
         <Box sx={{ flex: 1, overflow: "auto", px: 2 }}>
           {barRows.map((row, i) => {
             const val = row.numericValue;
-            const color = COLORS[i % COLORS.length];
+            const color = colorFor(chartSeries[i]?.name);
             const pct = maxVal > 0 ? (Math.abs(val) / maxVal) * 100 : 0;
             const name = chartSeries[i]?.name || "";
             const shortName =
@@ -1071,10 +1148,12 @@ export default function WidgetChart({ widget, globalDateRange }) {
       };
     })(),
     markers: {
-      size: apexType === "line" || apexType === "area" ? 4 : 0,
+      size: isLineChart ? 5 : apexType === "area" ? 4 : 0,
       strokeWidth: 2,
       strokeColors: isDark ? theme.palette.background.paper : "#fff",
-      hover: { size: 6, sizeOffset: 3 },
+      hover: isLineChart
+        ? { size: 8, sizeOffset: 2 }
+        : { size: 6, sizeOffset: 3 },
     },
     states: {
       hover: {
@@ -1096,13 +1175,19 @@ export default function WidgetChart({ widget, globalDateRange }) {
             format: "MMM dd, yyyy",
           },
           y: {
-            formatter: formatVal,
+            formatter: (val, { seriesIndex } = {}) => {
+              const seriesUnit = chartSeries[seriesIndex]?.unit;
+              const cfg = seriesUnit
+                ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
+                : leftAxisFormatConfig;
+              return makeFormatter(cfg)(val);
+            },
           },
         }
       : {
           enabled: true,
           shared: false,
-          intersect: false,
+          intersect: isLineChart,
           custom: ({ series: s, seriesIndex, dataPointIndex, w }) => {
             const sName = w.globals.seriesNames[seriesIndex] || "";
             const color = w.globals.colors[seriesIndex] || "#6366F1";
@@ -1111,7 +1196,11 @@ export default function WidgetChart({ widget, globalDateRange }) {
               dataPointIndex > 0 ? s[seriesIndex]?.[dataPointIndex - 1] : null;
             const ts = w.globals.seriesX[seriesIndex]?.[dataPointIndex];
             const dateStr = ts ? format(new Date(ts), "MMM dd, yyyy") : "";
-            const fmtVal = formatVal(val);
+            const seriesUnit = chartSeries[seriesIndex]?.unit;
+            const perSeriesCfg = seriesUnit
+              ? { ...leftAxisFormatConfig, ...getUnitRendering(seriesUnit) }
+              : leftAxisFormatConfig;
+            const fmtVal = makeFormatter(perSeriesCfg)(val);
             const bg = isDark ? "#1e1e2e" : "#fff";
             const _border = isDark
               ? "rgba(255,255,255,0.08)"
@@ -1146,7 +1235,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
       xaxis: { lines: { show: false } },
       padding: { left: 8, right: 8 },
     },
-    colors: COLORS,
+    colors: chartSeries.map((s) => colorFor(s.name)),
     legend: { show: false, height: 0 },
   };
 

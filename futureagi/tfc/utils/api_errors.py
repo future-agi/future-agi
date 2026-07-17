@@ -30,6 +30,7 @@ class ApiErrorCode(StrEnum):
     CONFLICT = "conflict"
     GONE = "gone"
     REQUEST_TOO_LARGE = "request_too_large"
+    EXPORT_TOO_LARGE = "export_too_large"
     RATE_LIMITED = "rate_limited"
     SERVER_ERROR = "server_error"
     SERVICE_UNAVAILABLE = "service_unavailable"

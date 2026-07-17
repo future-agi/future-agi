@@ -23,6 +23,7 @@ import { LoadingButton } from "@mui/lab";
 import { usePromptWorkbenchContext } from "./createPrompt/WorkbenchContext";
 import { getRandomId } from "src/utils/utils";
 import { ConfirmDialog } from "src/components/custom-dialog";
+import { normalizeModelOption } from "src/components/custom-model-dropdown/common";
 
 export const SelectedPromptTemplateDrawer = ({
   open,
@@ -74,8 +75,16 @@ export const SelectedPromptTemplateDrawer = ({
         ...rest,
         id: getRandomId(),
       })) || [];
-    const newModelConfig =
+    const snapshotConfiguration =
       data?.promptConfig?.prompt_config_snapshot?.configuration || {};
+    const newModelConfig = snapshotConfiguration.model_detail
+      ? {
+          ...snapshotConfiguration,
+          model_detail: normalizeModelOption(
+            snapshotConfiguration.model_detail,
+          ),
+        }
+      : snapshotConfiguration;
 
     // Create a copy of the existing prompts
     const updatedPrompts = [...prompts];

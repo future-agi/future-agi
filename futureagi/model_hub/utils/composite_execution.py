@@ -130,6 +130,10 @@ def _execute_child(
             trace_context=trace_context,
             session_context=session_context,
             call_context=call_context,
+            # A pinned child ran the snapshot above, so its usage log must be
+            # stamped with the pinned version — not the template default that
+            # run_eval_func would otherwise resolve.
+            resolved_version=link.pinned_version if link.pinned_version else None,
         )
 
         # None: unscoreable children fall through to the exclusion branch below.
@@ -235,6 +239,23 @@ def _log_composite_usage(
             "failed_children": failed,
             "duration": duration,
         }
+
+        # Stamp the parent composite's own version (children stamp theirs
+        # inside run_eval_func).
+        try:
+            from model_hub.models.evals_metric import EvalTemplateVersion
+
+            parent_version = EvalTemplateVersion.objects.get_default(parent)
+            if parent_version:
+                config_payload["version_id"] = str(parent_version.id)
+                config_payload["version_number"] = parent_version.version_number
+        except Exception:
+            # stdlib logger here (not structlog) — no kwargs support.
+            logger.warning(
+                "version_tracking_failed path=composite_parent template_id=%s",
+                parent.id,
+                exc_info=True,
+            )
 
         status = (
             APICallStatusChoices.SUCCESS.value

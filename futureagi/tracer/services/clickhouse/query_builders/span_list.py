@@ -279,10 +279,15 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         """
         return query, self.params
 
-    def build_id_query(self) -> tuple[str, dict[str, Any]]:
-        """Filtered span ids only — same filter/time window as build(), no
-        pagination/order/pivots. Lets the eval resolver select the same rows
-        this list endpoint returns."""
+    def build_id_query(self, *, limit: int | None = None) -> tuple[str, dict[str, Any]]:
+        """Filtered span ids only — same filter/time window as build(), no pivots.
+
+        With ``limit=None`` (default) the full matching id set is returned
+        unordered, which is what the eval resolver wants. Pass ``limit`` for a
+        capped "select all matching" resolve: the ids are then ordered
+        newest-first (``start_time DESC, id DESC`` — same as the observe list and
+        the PG bulk-select) so the cap keeps the most recent rows deterministically.
+        """
         start_date, end_date = self.parse_time_range(self.filters)
         self.params["start_date"] = start_date
         self.params["end_date"] = end_date
@@ -303,6 +308,13 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             pv_fragment = "AND project_version_id = %(project_version_id)s"
             self.params["project_version_id"] = self.project_version_id
 
+        order_fragment = ""
+        limit_fragment = ""
+        if limit is not None:
+            order_fragment = "ORDER BY start_time DESC, id DESC"
+            limit_fragment = "LIMIT %(id_limit)s"
+            self.params["id_limit"] = int(limit)
+
         query = f"""
         SELECT id
         FROM {self.TABLE}
@@ -312,7 +324,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
           AND start_time < %(end_date)s
           {pv_fragment}
           {filter_fragment}
+        {order_fragment}
         LIMIT 1 BY id
+        {limit_fragment}
         """
         return query, self.params
 
@@ -443,7 +457,9 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 "AND created_at >= %(evals_created_after)s - INTERVAL 7 DAY"
             )
 
-        eval_table, eval_not_deleted = eval_logger_source()
+        eval_table, eval_not_deleted = eval_logger_source(
+            include_cdc_tombstone_guard=True
+        )
         # ReplacingMergeTree version column: v2 uses `_version`, the legacy CDC
         # mirror uses `_peerdb_version`. Used to keep the newest row per eval id
         # when de-duplicating without FINAL (see the FROM clause below).

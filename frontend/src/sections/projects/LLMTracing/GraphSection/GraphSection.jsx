@@ -30,6 +30,7 @@ import SVGColor from "src/components/svg-color";
 import { useLLMTracingStoreShallow } from "../states";
 import { logger } from "src/utils/logger";
 import { FILTER_FOR_HAS_EVAL, toBackendFilters } from "../common";
+import { buildDefaultDateEntry } from "./graphFilterUtils";
 
 const deltaObject = {
   hour: { hours: 1 },
@@ -119,36 +120,14 @@ const GraphSection = ({
     };
   }, [handleMouseMove, isDragging]);
 
-  const combinedFilters = useMemo(() => {
-    const createdAtExists = filters?.some?.(
-      (f) => f?.column_id === "created_at",
-    );
-    const startDate = dateFilter?.dateFilter?.[0];
-    const endDate = dateFilter?.dateFilter?.[1];
-
-    const defaultCreatedAtFilter =
-      !createdAtExists && startDate && endDate
-        ? [
-            {
-              column_id: "created_at",
-              filter_config: {
-                filter_type: "datetime",
-                filter_op: "between",
-                filter_value: [
-                  new Date(startDate).toISOString(),
-                  new Date(endDate).toISOString(),
-                ],
-              },
-            },
-          ]
-        : [];
-
-    return [
+  const combinedFilters = useMemo(
+    () => [
       ...(filters || []),
       ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-      ...defaultCreatedAtFilter,
-    ];
-  }, [filters, dateFilter, hasEvalFilter]);
+      ...buildDefaultDateEntry(filters, dateFilter),
+    ],
+    [filters, dateFilter, hasEvalFilter],
+  );
 
   const handleGraphConfigChange = (config) => {
     setSelectedGraphConfig(config ? { ...config } : null);

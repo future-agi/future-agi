@@ -63,6 +63,7 @@ from tracer.serializers.trace import (
     TraceObserveIndexQuerySerializer,
     TraceObserveListQuerySerializer,
     TraceDetailResponseSerializer,
+    TraceObserveListResponseSerializer,
     TraceSerializer,
     TraceVoiceCallListQuerySerializer,
     UserCodeExampleResponseSerializer,
@@ -94,8 +95,12 @@ from tracer.utils.annotations import (
 )
 from tracer.utils.filters import FilterEngine
 from tracer.utils.helper import (
+    eval_output_type_for_config,
+    flatten_eval_score_into_entry,
     get_annotation_labels_for_project,
     get_default_trace_config,
+    get_project_eval_configs,
+    select_eval_score,
     update_column_config_based_on_eval_config,
     update_span_column_config_based_on_annotations,
 )
@@ -1001,15 +1006,23 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 break
 
         agent_talk_percentage = None
+        bot_talk_pct = None
+        user_talk_pct = None
         if talk_ratio is not None:
             denominator = talk_ratio + 1
             if denominator > 0:
-                agent_talk_percentage = round((talk_ratio / denominator) * 100, 2)
+                raw_bot_pct = (talk_ratio / denominator) * 100
+                agent_talk_percentage = round(raw_bot_pct, 2)
+                # Integer split rendered by the FE (no client-side rounding).
+                bot_talk_pct = round(raw_bot_pct)
+                user_talk_pct = 100 - bot_talk_pct
 
         return {
             "turn_count": turn_count,
             "talk_ratio": talk_ratio,
             "agent_talk_percentage": agent_talk_percentage,
+            "bot_talk_pct": bot_talk_pct,
+            "user_talk_pct": user_talk_pct,
         }
 
     def get_queryset(self):
@@ -1218,11 +1231,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "turn_count": voice_metrics.get("turn_count"),
                 "talk_ratio": voice_metrics.get("talk_ratio"),
                 "agent_talk_percentage": voice_metrics.get("agent_talk_percentage"),
-                "avg_agent_latency_ms": attr("avg_agent_latency_ms"),
-                "user_wpm": attr(CallAttributes.USER_WPM),
-                "bot_wpm": attr(CallAttributes.BOT_WPM),
-                "user_interruption_count": attr("user_interruption_count"),
-                "ai_interruption_count": attr("ai_interruption_count"),
+                "bot_talk_pct": voice_metrics.get("bot_talk_pct"),
+                "user_talk_pct": voice_metrics.get("user_talk_pct"),
+                "avg_agent_latency_ms": self._round_metric(
+                    attr("avg_agent_latency_ms")
+                ),
+                "user_wpm": self._round_metric(attr(CallAttributes.USER_WPM)),
+                "bot_wpm": self._round_metric(attr(CallAttributes.BOT_WPM)),
+                "user_interruption_count": self._round_metric(
+                    attr("user_interruption_count")
+                ),
+                "ai_interruption_count": self._round_metric(
+                    attr("ai_interruption_count")
+                ),
             }
             if stored_duration is not None:
                 result["duration_seconds"] = stored_duration
@@ -2331,7 +2352,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 f"error fetching the trace id by index {str(e)}"
             )
 
-    @validated_request(query_serializer=TraceObserveListQuerySerializer)
+    @validated_request(
+        query_serializer=TraceObserveListQuerySerializer,
+        responses={200: TraceObserveListResponseSerializer, **ERROR_RESPONSES},
+    )
     @action(detail=False, methods=["get"])
     def list_traces_of_session(self, request, *args, **kwargs):
         """
@@ -2791,29 +2815,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 if not processed_log.get("message_count"):
                     processed_log["message_count"] = len(stored)
 
-        # Fetch ALL non-deleted eval configs for the project so the drawer
-        # renders the same set of evals as the list columns. Missing scores
-        # become placeholder entries with `output=None`.
-        # Eval configs with results for this project's traces. CH25-safe: resolve
-        # via the CH eval table + trace_dict (PG `tracer_trace` is dropped),
-        # mirroring the trace-list path so the drawer shows the same eval set.
-        eval_table, eval_nd = eval_logger_source()
-        cfg_result = analytics.execute_ch_query(
-            "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-            f"FROM {eval_table} FINAL "
-            f"WHERE {eval_nd} "
-            "AND dictGet('trace_dict', 'project_id', trace_id) = toUUID(%(pid)s)",
-            {"pid": str(project_id)},
-            timeout_ms=30000,
-        )
-        cfg_ids = [r.get("cid", "") for r in cfg_result.data if r.get("cid")]
-        if cfg_ids:
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=cfg_ids, deleted=False
-            ).select_related("eval_template")
-        else:
-            eval_configs = []
-        eval_config_ids = [str(c.id) for c in eval_configs]
+        # All non-deleted eval configs for the project so the drawer renders
+        # the same set of evals as the list columns; missing scores become
+        # placeholder entries with `output=None`. Read from PG (indexed) —
+        # replaces the unbounded CH dictGet discovery scan.
+        eval_configs, eval_config_ids = get_project_eval_configs(project_id)
 
         eval_outputs = {}
         trace_evals: dict[str, Any] = {}
@@ -2925,16 +2931,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             "turn_count": voice_metrics.get("turn_count"),
             "talk_ratio": voice_metrics.get("talk_ratio"),
             "agent_talk_percentage": voice_metrics.get("agent_talk_percentage"),
-            "avg_agent_latency_ms": span_attrs.get("avg_agent_latency_ms")
-            or attrs_num.get("avg_agent_latency_ms"),
-            "user_wpm": span_attrs.get(CallAttributes.USER_WPM)
-            or attrs_num.get(CallAttributes.USER_WPM),
-            "bot_wpm": span_attrs.get(CallAttributes.BOT_WPM)
-            or attrs_num.get(CallAttributes.BOT_WPM),
-            "user_interruption_count": span_attrs.get("user_interruption_count")
-            or attrs_num.get("user_interruption_count"),
-            "ai_interruption_count": span_attrs.get("ai_interruption_count")
-            or attrs_num.get("ai_interruption_count"),
+            "bot_talk_pct": voice_metrics.get("bot_talk_pct"),
+            "user_talk_pct": voice_metrics.get("user_talk_pct"),
+            "avg_agent_latency_ms": self._round_metric(
+                span_attrs.get("avg_agent_latency_ms")
+            ),
+            "user_wpm": self._round_metric(span_attrs.get(CallAttributes.USER_WPM)),
+            "bot_wpm": self._round_metric(span_attrs.get(CallAttributes.BOT_WPM)),
+            "user_interruption_count": self._round_metric(
+                span_attrs.get("user_interruption_count")
+            ),
+            "ai_interruption_count": self._round_metric(
+                span_attrs.get("ai_interruption_count")
+            ),
         }
         if stored_duration is not None:
             result["duration_seconds"] = int(stored_duration)
@@ -3645,24 +3654,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 config_id = str(config.id)
                 if config_id not in trace_evals:
                     continue
-                scores = trace_evals[config_id]
-                # CHOICES eval: spread per-choice percentages into
-                # separate columns keyed ``{config_id}**{choice}``.
-                if isinstance(scores, dict) and scores.get("per_choice"):
-                    for choice, pct in scores["per_choice"].items():
-                        entry[f"{config_id}**{choice}"] = pct
-                elif isinstance(scores, dict) and "avg_score" in scores:
-                    # Prefer ``avg_score`` when it's present. A plain
-                    # ``avg_score or pass_rate`` drops a legitimate 0.0
-                    # (Fail) because ``0.0`` is falsy — use an explicit
-                    # ``None`` check so Fail doesn't silently fall
-                    # through to ``pass_rate``.
-                    avg_val = scores.get("avg_score")
-                    entry[config_id] = (
-                        avg_val if avg_val is not None else scores.get("pass_rate")
-                    )
-                else:
-                    entry[config_id] = scores
+                flatten_eval_score_into_entry(
+                    entry,
+                    config_id,
+                    trace_evals[config_id],
+                    eval_output_type_for_config(config),
+                )
 
             # Add annotations
             trace_annotations = annotation_map.get(trace_id, {})
@@ -3725,26 +3722,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         page_size = validated_data.get("page_size", 30)
         page_number = page - 1  # Convert 1-based to 0-based
 
-        # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
-        eval_config_ids = []
-        eval_table, eval_nd = eval_logger_source()
-        ch_result = analytics.execute_ch_query(
-            "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-            f"FROM {eval_table} FINAL "
-            f"WHERE {eval_nd} "
-            "AND dictGet('trace_dict', 'project_id', "
-            "trace_id) = toUUID(%(pid)s)",
-            {"pid": str(project_id)},
-            timeout_ms=30000,
-        )
-        ch_ids = [r.get("cid", "") for r in ch_result.data if r.get("cid")]
-        if ch_ids:
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=ch_ids, deleted=False
-            ).select_related("eval_template")
-            eval_config_ids = [str(c.id) for c in eval_configs]
-        else:
-            eval_configs = []
+        # Eval configs for the project, from PG (indexed) — replaces the
+        # unbounded CH dictGet discovery scan.
+        eval_configs, eval_config_ids = get_project_eval_configs(project_id)
 
         # Get annotation labels that have actual annotations/scores for this project
         annotation_labels = get_annotation_labels_for_project(project_id)
@@ -3909,11 +3889,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 "turn_count": voice_metrics.get("turn_count"),
                 "talk_ratio": voice_metrics.get("talk_ratio"),
                 "agent_talk_percentage": voice_metrics.get("agent_talk_percentage"),
-                "avg_agent_latency_ms": span_attrs.get("avg_agent_latency_ms"),
-                "user_wpm": span_attrs.get("call.user_wpm"),
-                "bot_wpm": span_attrs.get("call.bot_wpm"),
-                "user_interruption_count": span_attrs.get("user_interruption_count"),
-                "ai_interruption_count": span_attrs.get("ai_interruption_count"),
+                "bot_talk_pct": voice_metrics.get("bot_talk_pct"),
+                "user_talk_pct": voice_metrics.get("user_talk_pct"),
+                "avg_agent_latency_ms": self._round_metric(
+                    span_attrs.get("avg_agent_latency_ms")
+                ),
+                "user_wpm": self._round_metric(span_attrs.get("call.user_wpm")),
+                "bot_wpm": self._round_metric(span_attrs.get("call.bot_wpm")),
+                "user_interruption_count": self._round_metric(
+                    span_attrs.get("user_interruption_count")
+                ),
+                "ai_interruption_count": self._round_metric(
+                    span_attrs.get("ai_interruption_count")
+                ),
             }
             # Only override with voice_metrics if they have values —
             # otherwise keep the ones computed by process_raw_logs.
@@ -3923,6 +3911,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 entry["talk_ratio"] = voice_metrics["talk_ratio"]
             if voice_metrics.get("agent_talk_percentage") is not None:
                 entry["agent_talk_percentage"] = voice_metrics["agent_talk_percentage"]
+            if voice_metrics.get("bot_talk_pct") is not None:
+                entry["bot_talk_pct"] = voice_metrics["bot_talk_pct"]
+                entry["user_talk_pct"] = voice_metrics["user_talk_pct"]
             # Backfill response_time_ms from avg_agent_latency if VAPI didn't set it
             if not entry.get("response_time_ms") and entry.get("avg_agent_latency_ms"):
                 entry["response_time_ms"] = entry["avg_agent_latency_ms"]
@@ -3999,27 +3990,36 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             elif "str_list" in scores and scores["str_list"]:
                                 metric_entry["output"] = scores["str_list"]
                                 metric_entry["output_type"] = "str_list"
-                            elif "avg_score" in scores:
-                                score_val = scores.get("avg_score") or scores.get(
-                                    "pass_rate"
+                            elif "avg_score" in scores or "pass_rate" in scores:
+                                # PASS_FAIL → pass_rate, else → avg_score. Both
+                                # come pre-scaled (×100) from pivot_eval_results;
+                                # keep 0.0 (check is-not-None, not truthiness).
+                                score_val = select_eval_score(scores, output_type)
+                                metric_entry["output"] = (
+                                    round(score_val, 2)
+                                    if isinstance(score_val, (int, float))
+                                    else score_val
                                 )
-                                if output_type == "Pass/Fail":
-                                    metric_entry["output"] = (
-                                        "Pass"
-                                        if score_val and score_val > 0
-                                        else "Fail"
-                                    )
-                                else:
-                                    metric_entry["output"] = (
-                                        round(score_val, 2)
-                                        if isinstance(score_val, (int, float))
-                                        else score_val
-                                    )
                         else:
                             metric_entry["output"] = scores
                         metrics[config_id] = metric_entry
                 if metrics:
                     entry["eval_outputs"] = metrics
+
+                # Flatten eval values onto the row too. CHOICES columns read the
+                # flat key params.data["{config_id}**{choice}"] directly; score /
+                # pass-fail columns read params.data.eval_outputs[dataKey]. Without
+                # this flatten the per-choice columns stay blank in the UI.
+                for eval_config in eval_configs:
+                    cid = str(eval_config.id)
+                    if cid not in trace_evals:
+                        continue
+                    flatten_eval_score_into_entry(
+                        entry,
+                        cid,
+                        trace_evals[cid],
+                        eval_output_type_for_config(eval_config),
+                    )
 
             # Add annotation outputs — flatten onto the row for frontend grid compatibility
             # Frontend valueGetter reads params.data[labelId] directly
@@ -4218,14 +4218,14 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             trace_evals = eval_map.get(trace_id, {})
             for config in eval_configs:
                 config_id = str(config.id)
-                if config_id in trace_evals:
-                    scores = trace_evals[config_id]
-                    if isinstance(scores, dict) and "avg_score" in scores:
-                        entry[config_id] = scores.get("avg_score") or scores.get(
-                            "pass_rate"
-                        )
-                    else:
-                        entry[config_id] = scores
+                if config_id not in trace_evals:
+                    continue
+                flatten_eval_score_into_entry(
+                    entry,
+                    config_id,
+                    trace_evals[config_id],
+                    eval_output_type_for_config(config),
+                )
 
             # Add annotations
             trace_annotations = annotation_map.get(trace_id, {})

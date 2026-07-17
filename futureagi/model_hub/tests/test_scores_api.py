@@ -59,6 +59,9 @@ def observe_project(db, organization, workspace):
 def trace(db, observe_project):
     from tracer.models.trace import Trace
 
+    # CH-native note: a trace resolves from its CH root span, so tests that annotate
+    # a *bare* trace seed one (via ``observation_span`` or ``seed_ch_span``); this
+    # fixture stays PG-only so it never adds a competing root to another test's span.
     return Trace.objects.create(
         project=observe_project,
         name="Test Trace",
@@ -70,11 +73,15 @@ def trace(db, observe_project):
 @pytest.fixture
 def trace_session(db, observe_project):
     from tracer.models.trace_session import TraceSession
+    from tracer.tests._ch_seed import seed_ch_trace_sessions
 
-    return TraceSession.objects.create(
+    session = TraceSession.objects.create(
         project=observe_project,
         name="Test Session",
     )
+    # CH-native: session resolution reads the CH ``trace_sessions`` table.
+    seed_ch_trace_sessions([session])
+    return session
 
 
 @pytest.fixture
@@ -84,9 +91,10 @@ def observation_span(db, observe_project, trace):
     from django.utils import timezone
 
     from tracer.models.observation_span import ObservationSpan
+    from tracer.tests._ch_seed import seed_ch_span
 
     span_id = f"span_{uuid.uuid4().hex[:16]}"
-    return ObservationSpan.objects.create(
+    span = ObservationSpan.objects.create(
         id=span_id,
         project=observe_project,
         trace=trace,
@@ -104,6 +112,32 @@ def observation_span(db, observe_project, trace):
         latency_ms=500,
         status="OK",
     )
+    # CH-native: annotation resolves the span from ClickHouse — seed it there.
+    seed_ch_span(span)
+    return span
+
+
+def _seed_ch_trace_root(trace):
+    """Seed a CH root span so a *bare* trace resolves under CH-native annotation
+    (trace resolution reads the trace's root span from CH, not the PG row)."""
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from tracer.models.observation_span import ObservationSpan
+    from tracer.tests._ch_seed import seed_ch_span
+
+    span = ObservationSpan.objects.create(
+        id=f"chroot_{uuid.uuid4().hex[:16]}",
+        project=trace.project,
+        trace=trace,
+        name="trace root",
+        observation_type="agent",
+        start_time=timezone.now() - timedelta(seconds=1),
+        end_time=timezone.now(),
+        status="OK",
+    )
+    seed_ch_span(span)
 
 
 @pytest.fixture
@@ -232,6 +266,7 @@ class TestCreateScore:
 
     def test_create_score_on_trace(self, auth_client, trace, thumbs_label):
         """Create a score on a trace."""
+        _seed_ch_trace_root(trace)
         payload = {
             "source_type": "trace",
             "source_id": str(trace.id),
@@ -1437,6 +1472,12 @@ class TestScoreOnCollectorOnlySpan:
         )
 
         class _R:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
             def get(self, sid):
                 return fake if str(sid) == ch_span_id else None
 
@@ -1458,6 +1499,12 @@ class TestScoreOnCollectorOnlySpan:
         )
 
         class _R:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
             def get(self, sid):
                 return fake if str(sid) == ch_span_id else None
 
@@ -1466,21 +1513,31 @@ class TestScoreOnCollectorOnlySpan:
 
         monkeypatch.setattr("tracer.services.clickhouse.v2.get_reader", lambda: _R())
 
-    @pytest.mark.parametrize("foreign_org", ["", str(uuid.uuid4())])
     def test_ch_only_span_denied_cross_org(
         self,
         auth_client,
-        observe_project,
         trace,
         organization,
         star_label,
         monkeypatch,
-        foreign_org,
     ):
-        """CH span with empty/foreign org_id must 404 (the org-scope guard failed OPEN on empty org)."""
+        """A CH span whose PROJECT belongs to another org must 404. The project is
+        the tenant boundary (``_tenant_scoped_project``) — a span is cross-org iff
+        its project is, so seed the span under a foreign-org project."""
+        from accounts.models.organization import Organization
+        from model_hub.models.ai_model import AIModel
+        from tracer.models.project import Project
+
+        foreign_org = Organization.objects.create(name=f"Foreign {uuid.uuid4().hex[:8]}")
+        foreign_project = Project.objects.create(
+            name="Foreign project",
+            organization=foreign_org,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
         ch_span_id = "ch_" + uuid.uuid4().hex[:16]
         self._fake_reader_with_org(
-            monkeypatch, ch_span_id, observe_project, foreign_org, trace
+            monkeypatch, ch_span_id, foreign_project, str(foreign_org.id), trace
         )
         payload = {
             "source_type": "observation_span",
@@ -1549,6 +1606,7 @@ class TestScoreOnCollectorOnlyTrace:
             trace_id=str(trace_id),
             parent_span_id="",  # root span
             observation_type="agent",
+            status="OK",  # terminal → not "in progress"
         )
 
         class _R:
@@ -1560,6 +1618,11 @@ class TestScoreOnCollectorOnlyTrace:
 
             def list_by_trace(self_inner, tid, *, project_id=None):
                 return [root_span] if str(tid) == str(trace_id) else []
+
+            def roots_by_trace_ids(
+                self_inner, tids, *, include_heavy=False, project_id=None, org_id=None
+            ):
+                return [root_span] if str(trace_id) in {str(t) for t in tids} else []
 
             def close(self_inner):
                 pass

@@ -19,7 +19,8 @@ def error_localizer_enabled(eval_config: Any) -> bool:
     if bool(getattr(eval_config, "error_localizer", False)):
         return True
     config = getattr(eval_config, "config", None) or {}
-    return bool(config.get("error_localizer_enabled"))
+    run_config = config.get("run_config") or {}
+    return bool(run_config.get("error_localizer_enabled"))
 
 
 def should_run_error_localizer(

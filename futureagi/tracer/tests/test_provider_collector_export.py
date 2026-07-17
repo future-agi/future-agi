@@ -1,5 +1,6 @@
 """Provider-pull -> fi-collector export: pulled calls reach CH `spans`/`traces` (collector-owned write)."""
 
+import uuid
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -10,12 +11,46 @@ from tracer.utils import observability_provider as op
 
 @pytest.mark.unit
 def test_provider_collector_span_id_is_deterministic_16hex():
-    a = op._provider_collector_span_id("vapi", "call_123")
-    b = op._provider_collector_span_id("vapi", "call_123")
-    c = op._provider_collector_span_id("retell", "call_123")
+    a = op._provider_collector_span_id("proj-1", "vapi", "call_123")
+    b = op._provider_collector_span_id("proj-1", "vapi", "call_123")
+    c = op._provider_collector_span_id("proj-1", "retell", "call_123")
     assert a == b  # stable across re-polls (ReplacingMergeTree upsert)
     assert a != c  # provider-scoped
     assert len(a) == 16 and int(a, 16) >= 0  # valid 64-bit OTLP span id
+
+
+@pytest.mark.unit
+def test_provider_collector_trace_id_is_project_scoped():
+    # A shared VAPI account fans one call across many projects; the trace id must
+    # be distinct per project (else the same trace_id maps to N projects and the
+    # detail endpoints' project lookup resolves to a foreign copy).
+    a = op._provider_collector_trace_id("proj-A", "vapi", "call_123")
+    a_again = op._provider_collector_trace_id("proj-A", "vapi", "call_123")
+    b = op._provider_collector_trace_id("proj-B", "vapi", "call_123")
+    assert a == a_again  # deterministic within a project (re-poll idempotency preserved)
+    assert a != b  # distinct per project
+
+
+@pytest.mark.unit
+def test_provider_collector_span_id_is_project_scoped():
+    a = op._provider_collector_span_id("proj-A", "vapi", "call_123")
+    a_again = op._provider_collector_span_id("proj-A", "vapi", "call_123")
+    b = op._provider_collector_span_id("proj-B", "vapi", "call_123")
+    assert a == a_again  # deterministic within a project
+    assert a != b  # distinct per project
+    assert len(a) == 16 and int(a, 16) >= 0  # still a valid 64-bit OTLP span id
+
+
+@pytest.mark.unit
+def test_provider_collector_ids_match_frozen_golden():
+    # Pins the exact bytes so a change to the separator, field order, `trace:`
+    # prefix, or `_PROVIDER_SPAN_NS` fails loudly instead of silently re-keying
+    # every CH row. Uses a real uuid.UUID to exercise the str-coercion path.
+    pid = uuid.UUID("11111111-1111-1111-1111-111111111111")
+    assert op._provider_collector_span_id(pid, "vapi", "log1") == "d3c32aa30f055dc6"
+    assert op._provider_collector_trace_id(pid, "vapi", "log1") == uuid.UUID(
+        "fad7cd61-5094-5d22-be97-a1c264c7365c"
+    )
 
 
 @pytest.mark.unit
@@ -83,15 +118,16 @@ def test_export_builds_conversation_span_and_drops_raw_log(monkeypatch):
     # CONVERSATION root so it lands in the voice-call list.
     assert s["attributes"]["gen_ai.span.kind"] == "CONVERSATION"
     assert s["attributes"]["gen_ai.system"] == "vapi"
-    # raw_log dropped (OTLP can't carry it); scalar call.* attrs kept for empty-raw_log read path.
-    assert "raw_log" not in s["attributes"]
+    # raw_log re-attached as a JSON string (OTLP can't carry the nested dict); scalar call.* attrs kept for empty-raw_log read path.
+    assert isinstance(s["attributes"]["raw_log"], str)
+    assert "call_123" in s["attributes"]["raw_log"]
     assert s["attributes"]["call.status"] == "completed"
     assert s["attributes"]["call.duration"] == 30
     assert s["attributes"]["input.value"] == {"messages": []}
     assert s["attributes"]["output.value"] == "ok"
     assert s["parent_span_id"] is None
     assert s["trace_id"] == "ffffffffffffffffffffffffffffffff"
-    assert s["span_id"] == op._provider_collector_span_id("vapi", "call_123")
+    assert s["span_id"] == op._provider_collector_span_id(project.id, "vapi", "call_123")
     assert "start_time" in s and "end_time" in s
 
 

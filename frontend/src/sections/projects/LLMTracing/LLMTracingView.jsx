@@ -166,6 +166,7 @@ import {
 } from "./savedViewColumns";
 import TracingControls from "./TracingControls";
 import ObserveToolbar from "./ObserveToolbar";
+import { selectPanelGraphFilters } from "./GraphSection/graphFilterUtils";
 import { buildAddEvalsDraft } from "./buildAddEvalsDraft";
 import SelectAllBanner from "./SelectAllBanner";
 import useProjectFilterField from "../UsersView/useProjectFilterField";
@@ -1923,6 +1924,11 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
     }
     wasOnSavedViewRef.current = true;
 
+    // Invalidate graph cache so switching views always triggers a fresh fetch.
+    // Without this, a cached empty/error result from a previous queryKey can
+    // persist when the view's extraFilters produce the same key as a failed request.
+    queryClient.invalidateQueries({ queryKey: ["primary-graph"] });
+
     // Apply display settings
     const display = activeViewConfig.display || {};
     if (display.viewMode) setViewMode(display.viewMode);
@@ -3335,6 +3341,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     ? primaryTraceValidatedFilters
                     : primarySpanValidatedFilters
                 }
+                extraFilters={extraFilters}
                 dateFilter={
                   selectedTab === "trace"
                     ? primaryTraceDateFilter
@@ -3369,6 +3376,7 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       ? compareTraceValidatedFilters
                       : compareSpansValidatedFilters
                   }
+                  extraFilters={compareExtraFilters}
                   dateFilter={
                     selectedTab === "trace"
                       ? compareTraceDateFilter
@@ -3648,12 +3656,21 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
               onFilterToggle={() => {
                 // Clear any chip/+ anchor so the popover re-anchors to the
                 // toolbar Filter button (avoids opening on a stale anchor).
+                // The toolbar button always edits the PRIMARY filters, so
+                // reset the target too — otherwise a prior Compare Graph
+                // edit leaves filterTarget="compare" and applying from the
+                // toolbar would overwrite compare filters instead.
+                setFilterTarget("primary");
                 setExternalFilterAnchor(null);
                 setIsPrimaryFilterOpen(!isPrimaryFilterOpen);
               }}
               onApplyExtraFilters={setExtraFilters}
               onClearExtraFilters={clearPrimaryExtraFilters}
-              graphFilters={extraFilters}
+              graphFilters={selectPanelGraphFilters(
+                filterTarget,
+                extraFilters,
+                compareExtraFilters,
+              )}
               isFilterOpen={isPrimaryFilterOpen}
               externalFilterAnchor={externalFilterAnchor}
               filterTarget={filterTarget}
@@ -4608,10 +4625,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                       setSpecificColumns("compare-trace", columns)
                     }
                     filters={compareTraceValidatedFilters}
-                    extraFilters={extraFilters}
+                    extraFilters={compareExtraFilters}
                     ref={compareTraceGridRef}
                     setFilters={setCompareTraceFilters}
-                    setExtraFilters={setExtraFilters}
+                    setExtraFilters={setCompareExtraFilters}
                     setFilterOpen={setIsPrimaryFilterOpen}
                     setLoading={setLoadingEnhanced}
                     compareType="compare"
@@ -4716,10 +4733,10 @@ const LLMTracingView = ({ mode = "project", userIdForUserMode = null }) => {
                     pendingCustomColumnsRef={compareSpansPendingRef}
                     canonicalOrderRef={canonicalSpanOrderRef}
                     filters={compareSpansValidatedFilters}
-                    extraFilters={extraFilters}
+                    extraFilters={compareExtraFilters}
                     ref={compareSpanGridRef}
                     setFilters={setCompareSpansFilters}
-                    setExtraFilters={setExtraFilters}
+                    setExtraFilters={setCompareExtraFilters}
                     setFilterOpen={setIsPrimaryFilterOpen}
                     setLoading={setLoadingEnhanced}
                     compareType="compare"

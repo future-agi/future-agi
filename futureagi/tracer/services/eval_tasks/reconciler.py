@@ -8,7 +8,9 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import timedelta
+from itertools import chain
 
+from django.db.models import Case, CharField, Value, When
 from django.utils import timezone
 
 from tracer.models.eval_task import EvalTask, RowType, RunType
@@ -23,6 +25,9 @@ from tracer.services.eval_tasks.entries import materialize_pending
 # needs to exceed normal ingestion lag (pause/downtime gaps are covered by the
 # persisted cursor, not this overlap).
 _CONTINUOUS_CURSOR_OVERLAP = timedelta(minutes=5)
+
+# Max entry ids per requeue UPDATE — bounds the WHERE id IN (...) list size.
+_REQUEUE_CHUNK = 10_000
 
 
 @dataclass
@@ -109,13 +114,24 @@ def _requeue_and_drop(task: EvalTask) -> tuple[int, int]:
             drop_ids.append(entry.id)  # out of scope, no result yet
 
     requeued = 0
-    for cfg_id, ids in requeue_by_cfg.items():
-        requeued += EvalLogger.objects.filter(id__in=ids).update(
-            status=EvalEntryStatus.PENDING,
-            config_hash=hashes[cfg_id],
-            error=False,
-            skipped_reason=None,
+    # Flatten {cfg_id: [entry_id, ...]} into one flat [entry_id, ...] list.
+    all_ids = list(chain.from_iterable(requeue_by_cfg.values()))
+    if all_ids:
+        hash_case = Case(
+            *[
+                When(custom_eval_config_id=cfg_id, then=Value(hashes[cfg_id]))
+                for cfg_id in requeue_by_cfg
+            ],
+            output_field=CharField(),
         )
+        for chunk_start in range(0, len(all_ids), _REQUEUE_CHUNK):
+            chunk = all_ids[chunk_start : chunk_start + _REQUEUE_CHUNK]
+            requeued += EvalLogger.objects.filter(id__in=chunk).update(
+                status=EvalEntryStatus.PENDING,
+                config_hash=hash_case,
+                error=False,
+                skipped_reason=None,
+            )
     dropped = 0
     if drop_ids:
         dropped = EvalLogger.objects.filter(id__in=drop_ids).update(

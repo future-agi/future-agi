@@ -119,11 +119,9 @@ export default function LabelInput({
           sx={{ flex: 1, lineHeight: 1.3, transition: "color 0.15s" }}
         >
           {label.name}
-          {label.required && (
-            <Typography component="span" color="error.main" sx={{ ml: 0.25 }}>
-              *
-            </Typography>
-          )}
+          <Typography component="span" color="error.main" sx={{ ml: 0.25 }}>
+            *
+          </Typography>
           {hasError && (
             <Typography
               component="span"

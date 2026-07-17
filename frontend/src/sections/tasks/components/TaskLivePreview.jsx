@@ -21,12 +21,13 @@ import { alpha } from "@mui/material/styles";
 import { useWatch } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
-import { canonicalEntries, stripAttributePathPrefix } from "src/utils/utils";
+import { canonicalEntries } from "src/utils/utils";
 import { ROW_TYPE_LABELS } from "src/utils/constants";
+import { executeEvalForRow } from "src/sections/evals/utils/evalExecution";
 import {
-  buildFlatValueMap,
-  executeEvalForRow,
-} from "src/sections/evals/utils/evalExecution";
+  resolvePath,
+  sortSpansForMapping,
+} from "src/sections/evals/utils/rowPathWalker";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
@@ -352,15 +353,15 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           }
         } else {
           const traceInfo = traceResult?.trace || {};
-          const allSpans = flattenSpanTree(spans);
+          const allSpans = sortSpansForMapping(flattenSpanTree(spans));
           detailData = { ...traceInfo, spans: allSpans };
         }
       } else if (rowType === "sessions" && currentRow?.session_id) {
         // Sessions need a layered fetch: list_sessions returns flat
         // session-summary rows (id, total_cost, traces_count, etc.) but
-        // no nested traces/spans. The walker that powers fieldNames /
-        // the "(not in row)" check needs the actual session shape so
-        // mapping paths like `traces.<i>.input` and
+        // no nested traces/spans. resolvePath (the "(not in row)" check)
+        // needs the actual session shape so mapping paths like
+        // `traces.<i>.input` and
         // `traces.0.spans.<j>.<key>` resolve. Two-step fetch:
         //   1) GET /tracer/trace-session/<id>/ → paginated trace list
         //      (no spans nested per the BE contract)
@@ -394,8 +395,8 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
                 endpoints.project.getTrace(firstTraceId),
               );
               const tResult = tResp.data?.result || {};
-              firstTraceSpans = flattenSpanTree(
-                tResult.observation_spans || [],
+              firstTraceSpans = sortSpansForMapping(
+                flattenSpanTree(tResult.observation_spans || []),
               );
             } catch {
               // Trace fetch failed — leave empty; the rest of the
@@ -407,6 +408,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
             traces: traces.map((t, i) => ({
               ...t,
               spans: i === 0 ? firstTraceSpans : [],
+              ...(i === 0 ? {} : { _spansLoaded: false }),
             })),
           };
         }
@@ -421,57 +423,6 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
     staleTime: 10000,
   });
 
-  // ── Available field paths for variable mapping (dot notation for nested) ──
-  // Soft-flatten: attributes inside `span_attributes.*` are surfaced as
-  // bare names (e.g. `input` instead of `span_attributes.input`) so users
-  // can map variables to short field names. Top-level
-  // fields with the same name win the deduplication. Stored mapping values
-  // keep the stripped name; the resolver below transparently falls back
-  // to `span_attributes.<name>` if the top-level lookup misses — existing
-  // tasks stored with the full `span_attributes.` prefix continue to work.
-  const fieldNames = useMemo(() => {
-    if (!spanDetail) return [];
-    const keys = [];
-    // Limits match the resolver walker below so every path this component
-    // claims is in the row is actually resolvable at test time — otherwise
-    // the "(not in row)" chip lies for deep paths that do resolve.
-    const ARRAY_PEEK = 500;
-    const DICT_LIMIT = 5000;
-    const walk = (node, prefix) => {
-      if (Array.isArray(node)) {
-        node.slice(0, ARRAY_PEEK).forEach((item, idx) => {
-          const path = prefix ? `${prefix}.${idx}` : String(idx);
-          keys.push(path);
-          if (item && typeof item === "object") {
-            walk(item, path);
-          }
-        });
-        return;
-      }
-      for (const [k, v] of canonicalEntries(node)) {
-        if (k.startsWith("_")) continue;
-        const path = prefix ? `${prefix}.${k}` : k;
-        keys.push(path);
-        if (v && typeof v === "object") {
-          if (Array.isArray(v) || Object.keys(v).length < DICT_LIMIT) {
-            walk(v, path);
-          }
-        }
-      }
-    };
-    walk(spanDetail, "");
-    // Strip wrapper/span_attributes prefix and dedupe against top-level keys.
-    const seen = new Set();
-    const flattened = [];
-    keys.forEach((k) => {
-      const short = stripAttributePathPrefix(k);
-      if (seen.has(short)) return;
-      seen.add(short);
-      flattened.push(short);
-    });
-    return flattened;
-  }, [spanDetail]);
-
   // Reset test results whenever the row or eval set changes
   useEffect(() => {
     setTestResults({});
@@ -480,73 +431,6 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
   // ── Test all configured evals on the current row ──
   const handleRunTest = useCallback(async () => {
     if (!currentRow || !evalsDetails?.length || !spanDetail) return;
-
-    // Sessions delegate mapping resolution to the BE via `mapping_paths`,
-    // so the local walk is skipped. Other row types walk once and reuse
-    // the same lookup across every eval on this row.
-    const isSession = rowType === "sessions";
-
-    // Build a flat fieldName→value lookup by walking spanDetail,
-    // soft-flattening span_attributes keys (same logic as the
-    // fieldNames dropdown in TracingTestMode). This ensures mapped
-    // fields like "input.value" (stripped from "span_attributes.input.value")
-    // resolve correctly even when a top-level "input" shadows the path.
-    // Limits match the dropdown walker in TracingTestMode so every path
-    // offered to the user during mapping also resolves at test time.
-    const ARRAY_PEEK = 500;
-    const DICT_LIMIT = 5000;
-    const valueMap = {};
-    const walkValues = (node, prefix) => {
-      if (Array.isArray(node)) {
-        node.slice(0, ARRAY_PEEK).forEach((item, idx) => {
-          const path = prefix ? `${prefix}.${idx}` : String(idx);
-          valueMap[path] = item;
-          if (item && typeof item === "object") {
-            walkValues(item, path);
-          }
-        });
-        return;
-      }
-      // canonicalEntries drops legacy camelCase aliases that may exist on cached or pre-normalized objects — otherwise `span_attributes.*` and `spanAttributes.*`
-      // both end up in valueMap and only the snake side gets stripped.
-      for (const [k, v] of canonicalEntries(node)) {
-        if (k.startsWith("_")) continue;
-        const path = prefix ? `${prefix}.${k}` : k;
-        valueMap[path] = v;
-        if (v && typeof v === "object") {
-          if (Array.isArray(v) || Object.keys(v).length < DICT_LIMIT) {
-            walkValues(v, path);
-          }
-        }
-      }
-    };
-    if (!isSession) walkValues(spanDetail, "");
-
-    // Soft-flatten: route through `stripAttributePathPrefix` so any
-    // `span_attributes.` segment — anchored *or* nested inside `spans.<n>.`
-    // or `traces.<i>.spans.<j>.` — collapses to the same form the BE
-    // dropdown emits and that saved mappings store. Top-level keys (i.e.
-    // paths that did NOT need stripping) win the dedupe.
-    const flatValueMap = {};
-    for (const [path, val] of Object.entries(valueMap)) {
-      const short = stripAttributePathPrefix(path);
-      if (!(short in flatValueMap) || short === path) {
-        flatValueMap[short] = val;
-      }
-    }
-
-    const resolveMapping = (mapping) => {
-      const resolved = {};
-      for (const [variable, field] of Object.entries(mapping || {})) {
-        if (!field) continue;
-        const val = flatValueMap[field];
-        if (val !== undefined && val !== null) {
-          resolved[variable] =
-            typeof val === "object" ? JSON.stringify(val) : String(val);
-        }
-      }
-      return resolved;
-    };
 
     setIsTesting(true);
     setTestResults(
@@ -586,7 +470,6 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
           currentRow,
           spanDetail,
           mapping: evalItem?.mapping || {},
-          flatValueMap,
           singleEvalConfigExtras: configExtras,
           compositeConfigExtras: configExtras,
         });
@@ -806,8 +689,7 @@ const TaskLivePreview = forwardRef(function TaskLivePreview(
             {spanDetail && (
               <VariableMappingView
                 evalsDetails={evalsDetails || []}
-                fieldNames={fieldNames}
-                rowType={rowType}
+                spanDetail={spanDetail}
                 testResults={testResults}
               />
             )}
@@ -837,7 +719,7 @@ const RowDetailTable = ({
 }) => {
   // Flatten span_attributes children into the top-level entries so users
   // see e.g. "llm.system" as its own row instead of a collapsed object.
-  // Top-level keys win deduplication (same logic as the fieldNames flatten).
+  // Top-level keys win deduplication (same soft-flatten rowPathWalker uses).
   // The `spans` key is filtered out here because it gets a dedicated
   // collapsible-row renderer below — same pattern as TracingTestMode so
   // the two preview surfaces look identical for trace + session row types.
@@ -1080,18 +962,10 @@ RowDetailTable.propTypes = {
 // ───────────────────────────────────────────────────────────────
 const VariableMappingView = ({
   evalsDetails,
-  fieldNames,
-  rowType,
+  spanDetail,
   testResults = {},
 }) => {
-  const fieldSet = useMemo(() => new Set(fieldNames), [fieldNames]);
   const hasEvals = evalsDetails.length > 0;
-  // For sessions the lazy fetch only covers `traces[0].spans`, so the
-  // walker over the preview detail can't witness paths into other traces
-  // or beyond the first trace's loaded spans. The `(not in row)` chip
-  // becomes misinformation in that regime — the BE is the authoritative
-  // resolver at test time. Suppress the check entirely for sessions.
-  const skipRowCheck = rowType === "sessions";
 
   if (!hasEvals) return null;
 
@@ -1212,17 +1086,13 @@ const VariableMappingView = ({
                 >
                   {variables.map((variable) => {
                     const field = mapping[variable];
-                    // Legacy mappings may still have the `span_attributes.` prefix;
-                    // fieldSet is now soft-flattened, so check the stripped form too.
-                    const strippedField =
-                      typeof field === "string" &&
-                      field.startsWith("span_attributes.")
-                        ? field.slice("span_attributes.".length)
-                        : field;
-                    const resolved =
-                      skipRowCheck ||
-                      fieldSet.has(field) ||
-                      (strippedField && fieldSet.has(strippedField));
+                    // Tri-state: `missing` warns, `unknown` (session traces
+                    // whose spans weren't fetched) stays silent — the BE is
+                    // the authoritative resolver at test time.
+                    const hit = spanDetail
+                      ? resolvePath(spanDetail, field)
+                      : { status: "unknown" };
+                    const showWarn = hit.status === "missing" && !!field;
                     return (
                       <Box
                         key={variable}
@@ -1263,7 +1133,7 @@ const VariableMappingView = ({
                             sx={{
                               fontSize: "11px",
                               fontFamily: "monospace",
-                              color: resolved ? "primary.main" : "warning.main",
+                              color: showWarn ? "warning.main" : "primary.main",
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               whiteSpace: "nowrap",
@@ -1272,7 +1142,7 @@ const VariableMappingView = ({
                             {field || "—"}
                           </Typography>
                         </CustomTooltip>
-                        {!resolved && field && (
+                        {showWarn && (
                           <Typography
                             variant="caption"
                             color="warning.main"
@@ -1362,8 +1232,7 @@ const VariableMappingView = ({
 
 VariableMappingView.propTypes = {
   evalsDetails: PropTypes.array.isRequired,
-  fieldNames: PropTypes.array.isRequired,
-  rowType: PropTypes.string,
+  spanDetail: PropTypes.object,
   testResults: PropTypes.object,
 };
 

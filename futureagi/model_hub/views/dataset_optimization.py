@@ -303,7 +303,7 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
             # holding a DB connection and row lock during the external network call.
             with transaction.atomic():
                 instance = self.get_object()
-                instance = OptimizeDataset.objects.select_for_update().get(
+                instance = OptimizeDataset.objects.select_for_update(of=("self",)).get(
                     pk=instance.pk,
                     deleted=False,
                 )

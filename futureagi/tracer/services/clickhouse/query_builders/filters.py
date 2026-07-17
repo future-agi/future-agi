@@ -11,6 +11,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.utils.constants import (
     LIST_OPS,
     NO_VALUE_OPS,
@@ -174,9 +175,11 @@ class ClickHouseFilterBuilder:
     # Voice system metrics — use typed Map columns (span_attr_num) instead of
     # simpleJSONExtractFloat which fails on JSON with spaces after colons.
     VOICE_SYSTEM_METRIC_EXPRS: dict[str, str] = {
+        # Duration: truncate to integer seconds to match the API's int()
+        # (trace.py duration_seconds), so equals matches the displayed value.
         "duration": (
             "if(mapContains(span_attr_num, 'call.duration'), "
-            "span_attr_num['call.duration'], null)"
+            "toInt64(span_attr_num['call.duration']), null)"
         ),
         "turn_count": (
             "if(mapContains(span_attr_num, 'call.total_turns'), "
@@ -189,7 +192,7 @@ class ClickHouseFilterBuilder:
             "if(mapContains(span_attr_num, 'call.talk_ratio') "
             "AND span_attr_num['call.talk_ratio'] > 0, "
             "round(span_attr_num['call.talk_ratio'] / "
-            "(span_attr_num['call.talk_ratio'] + 1) * 100), null)"
+            "(span_attr_num['call.talk_ratio'] + 1) * 100, 2), null)"
         ),
         "avg_agent_latency_ms": (
             "if(mapContains(span_attr_num, 'avg_agent_latency_ms'), "
@@ -218,6 +221,67 @@ class ClickHouseFilterBuilder:
         "ai_interruption_rate": (
             "if(mapContains(span_attr_num, 'ai_interruption_rate'), "
             "span_attr_num['ai_interruption_rate'], null)"
+        ),
+        # Talk ratio: the API returns the raw ratio; the FE (TalkRatioCell)
+        # derives an integer bot percentage via Math.round. Match that integer
+        # percentage so equals filters the value the user sees.
+        "talk_ratio": (
+            "if(mapContains(span_attr_num, 'call.talk_ratio') "
+            "AND span_attr_num['call.talk_ratio'] > 0, "
+            "round(span_attr_num['call.talk_ratio'] / "
+            "(span_attr_num['call.talk_ratio'] + 1) * 100), null)"
+        ),
+        "agent_latency": (
+            "if(mapContains(span_attr_num, 'avg_agent_latency_ms'), "
+            "round(span_attr_num['avg_agent_latency_ms']), null)"
+        ),
+        "ai_interruptions": (
+            "if(mapContains(span_attr_num, 'ai_interruption_count'), "
+            "round(span_attr_num['ai_interruption_count']), null)"
+        ),
+        "user_interruptions": (
+            "if(mapContains(span_attr_num, 'user_interruption_count'), "
+            "round(span_attr_num['user_interruption_count']), null)"
+        ),
+        "stop_time_after_interruption": (
+            "if(mapContains(span_attr_num, 'avg_stop_time_after_interruption_ms'), "
+            "span_attr_num['avg_stop_time_after_interruption_ms'], null)"
+        ),
+        "llm_cost": (
+            "if(mapContains(span_attr_num, 'cost_breakdown.llm'), "
+            "span_attr_num['cost_breakdown.llm'], null)"
+        ),
+        "stt_cost": (
+            "if(mapContains(span_attr_num, 'cost_breakdown.stt'), "
+            "span_attr_num['cost_breakdown.stt'], null)"
+        ),
+        "tts_cost": (
+            "if(mapContains(span_attr_num, 'cost_breakdown.tts'), "
+            "span_attr_num['cost_breakdown.tts'], null)"
+        ),
+        "total_cost": (
+            "if(mapContains(span_attr_num, 'cost_breakdown.total'), "
+            "span_attr_num['cost_breakdown.total'], null)"
+        ),
+        "customer_cost": (
+            "if(mapContains(span_attr_num, 'cost_breakdown.total'), "
+            "span_attr_num['cost_breakdown.total'], null)"
+        ),
+        "llm_latency": (
+            "if(mapContains(span_attr_num, 'modelLatencyAverage'), "
+            "span_attr_num['modelLatencyAverage'], null)"
+        ),
+        "stt_latency": (
+            "if(mapContains(span_attr_num, 'transcriberLatencyAverage'), "
+            "span_attr_num['transcriberLatencyAverage'], null)"
+        ),
+        "tts_latency": (
+            "if(mapContains(span_attr_num, 'voiceLatencyAverage'), "
+            "span_attr_num['voiceLatencyAverage'], null)"
+        ),
+        "response_time": (
+            "if(mapContains(span_attr_num, 'turnLatencyAverage'), "
+            "span_attr_num['turnLatencyAverage'], null)"
         ),
     }
 
@@ -1484,9 +1548,12 @@ class ClickHouseFilterBuilder:
                         f"(has({choice_array}, %({param})s) "
                         f"OR output_str = %({param})s)"
                     )
-            combined = " OR ".join(choice_conditions)
+            # Wrap the OR-join so it binds as one unit — otherwise the subquery's
+            # `AND config/deleted/error` guards only scope the first value and
+            # the rest escape via SQL AND/OR precedence.
+            combined = "(" + " OR ".join(choice_conditions) + ")"
             if filter_op in negative_ops:
-                combined = f"{choice_exists} AND NOT ({combined})"
+                combined = f"{choice_exists} AND NOT {combined}"
             return eval_value_subquery(combined)
 
         # SCORE (default) — numeric on output_float. UI displays scores as

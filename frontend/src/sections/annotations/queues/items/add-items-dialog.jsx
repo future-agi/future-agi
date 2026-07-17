@@ -54,7 +54,9 @@ import {
   generateObserveTraceFilterDefinition,
   generateSpanObserveFilterDefinition,
   SPAN_DEFAULT_COLUMNS,
+  applyQuickFilters,
 } from "src/sections/projects/LLMTracing/common";
+import NumberQuickFilterPopover from "src/components/ComplexFilter/QuickFilterComponents/NumberQuickFilterPopover/NumberQuickFilterPopover";
 import DateRangePill, {
   dateFilterForOption,
 } from "src/sections/projects/LLMTracing/DateRangePill";
@@ -510,6 +512,8 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
   // obs page's "Add to queue") instead of being converted to root spans.
   const [isVoiceTraceSelection, setIsVoiceTraceSelection] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
+  // Trace project (from TraceSelector) — passed to fetchRootSpans to prune CH.
+  const [selectedProjectId, setSelectedProjectId] = useState(null);
   const { mutate: addItems, isPending } = useAddQueueItems();
   const queryClient = useQueryClient();
   const isDefaultQueue = !!queue?.is_default;
@@ -619,7 +623,10 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
               selectAllInfo.filters,
               selectAllInfo.projectVersionId,
             );
-            const rootSpanMap = await fetchRootSpans(traceIds);
+            const rootSpanMap = await fetchRootSpans(
+              traceIds,
+              selectAllInfo.projectId ? [selectAllInfo.projectId] : [],
+            );
             const mappedIds = traceIds
               .map((traceId) => rootSpanMap[traceId])
               .filter(Boolean);
@@ -650,16 +657,24 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
         // annotator workspace's span-oriented UI (consistent with the
         // ``mappedIds`` branch above at lines 540-548).
         if (sourceType === "trace" && !isVoiceTraceSelection) {
-          const rootSpanMap = await fetchRootSpans(ids);
-          const originalCount = ids.length;
-          ids = ids.map((traceId) => rootSpanMap[traceId]).filter(Boolean);
-          effectiveSourceType = "observation_span";
-          const droppedCount = originalCount - ids.length;
-          if (droppedCount > 0) {
-            enqueueSnackbar(
-              `${droppedCount} trace${droppedCount !== 1 ? "s" : ""} skipped — no root span found yet`,
-              { variant: "warning" },
+          setIsResolving(true);
+          try {
+            const rootSpanMap = await fetchRootSpans(
+              ids,
+              selectedProjectId ? [selectedProjectId] : [],
             );
+            const originalCount = ids.length;
+            ids = ids.map((traceId) => rootSpanMap[traceId]).filter(Boolean);
+            effectiveSourceType = "observation_span";
+            const droppedCount = originalCount - ids.length;
+            if (droppedCount > 0) {
+              enqueueSnackbar(
+                `${droppedCount} trace${droppedCount !== 1 ? "s" : ""} skipped — no root span found yet`,
+                { variant: "warning" },
+              );
+            }
+          } finally {
+            setIsResolving(false);
           }
         }
 
@@ -848,6 +863,7 @@ export default function AddItemsDialog({ open, onClose, queueId, queue }) {
                 onSetSelection={handleSetSelection}
                 onSelectAll={handleSelectAll}
                 onVoiceProjectChange={setIsVoiceTraceSelection}
+                onProjectChange={setSelectedProjectId}
               />
             )}
             {sourceType === "observation_span" && (
@@ -1095,9 +1111,9 @@ export function buildReadOnlyColumnDefs(columnConfig) {
   return columnConfig
     .filter((col) => col.is_visible !== false)
     .map((col) => {
-      const colDataType = col.data_type
-      const colIsFrozen = col.is_frozen
-      const colOriginType = col.origin_type
+      const colDataType = col.data_type;
+      const colIsFrozen = col.is_frozen;
+      const colOriginType = col.origin_type;
       const enrichedCol = {
         ...col,
         dataType: colDataType,
@@ -1767,7 +1783,12 @@ const traceDefaultFilterBase = {
   },
 };
 
-function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
+function TraceSelector({
+  onSetSelection,
+  onSelectAll,
+  onVoiceProjectChange,
+  onProjectChange,
+}) {
   const [projectId, setProjectId] = useState("");
   const [versionId, setVersionId] = useState("");
   const [columns, setColumns] = useState([]);
@@ -1781,6 +1802,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   const [, setFilterDefinition] = useState([]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
+  const [openQuickFilter, setOpenQuickFilter] = useState(null);
   const [gridApi, setGridApi] = useState(null);
   const gridRef = useRef(null);
   const filterButtonRef = useRef(null);
@@ -1827,6 +1849,12 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
   useEffect(() => {
     onVoiceProjectChange?.(isVoiceProject);
   }, [isVoiceProject, onVoiceProjectChange]);
+
+  // Surface the selected project so handleSubmit can pass it to fetchRootSpans
+  // (prunes the CH scan).
+  useEffect(() => {
+    onProjectChange?.(projectId || null);
+  }, [projectId, onProjectChange]);
 
   // Fetch versions for prototype projects
   const {
@@ -1910,7 +1938,9 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: TRACE_ROWS_LIMIT,
-            filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
+            filters: JSON.stringify(
+              stripUiFilterKeys(filtersRef.current || []),
+            ),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
@@ -1974,6 +2004,13 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
       },
       suppressSizeToFit: false,
       sortable: false,
+      cellRendererParams: {
+        applyQuickFilters: applyQuickFilters(
+          setFilters,
+          setOpenQuickFilter,
+          setFilterOpen,
+        ),
+      },
     }),
     [],
   );
@@ -2237,6 +2274,8 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           open={filterOpen}
           onClose={() => setFilterOpen(false)}
           projectId={projectId}
+          source="traces"
+          tab="trace"
           isSimulator={isVoiceProject}
           currentFilters={validatedMainFilters
             .filter((f) => f?.column_id)
@@ -2354,7 +2393,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
                 excludedIds: new Set(),
                 projectId,
                 projectVersionId: versionId || undefined,
-                filters: validatedFilters,
+                filters: stripUiFilterKeys(validatedFilters || []),
               });
             }}
           />
@@ -2365,7 +2404,9 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
             cellHeight="Short"
             params={{
               project_id: projectId,
-              filters: JSON.stringify(validatedFilters || []),
+              filters: JSON.stringify(
+                stripUiFilterKeys(validatedFilters || []),
+              ),
             }}
             onSelectionChanged={(traceIds) => {
               onSetSelection(traceIds);
@@ -2421,6 +2462,7 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
               rowModelType="serverSide"
               onGridReady={onGridReady}
               onSelectionChanged={onSelectionChanged}
+              context={{ disableCellNavigation: true }}
               getRowId={(d) => d?.data?.trace_id ?? d?.data?.traceId}
               animateRows={false}
               blockLoadDebounceMillis={300}
@@ -2429,6 +2471,14 @@ function TraceSelector({ onSetSelection, onSelectAll, onVoiceProjectChange }) {
           <StatusBar api={gridApi} />
         </Box>
       )}
+
+      <NumberQuickFilterPopover
+        open={Boolean(openQuickFilter)}
+        filterData={openQuickFilter}
+        onClose={() => setOpenQuickFilter(null)}
+        setFilters={setFilters}
+        setFilterOpen={setFilterOpen}
+      />
     </Box>
   );
 }
@@ -2437,6 +2487,7 @@ TraceSelector.propTypes = {
   onSetSelection: PropTypes.func.isRequired,
   onSelectAll: PropTypes.func.isRequired,
   onVoiceProjectChange: PropTypes.func,
+  onProjectChange: PropTypes.func,
 };
 
 // ---------------------------------------------------------------------------
@@ -2456,6 +2507,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
   const [, setFilterDefinition] = useState([]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filterAnchorEl, setFilterAnchorEl] = useState(null);
+  const [openQuickFilter, setOpenQuickFilter] = useState(null);
   const [gridApi, setGridApi] = useState(null);
   const gridRef = useRef(null);
   const filterButtonRef = useRef(null);
@@ -2557,7 +2609,9 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
             project_id: projectId,
             page_number: pageNumber,
             page_size: SPAN_ROWS_LIMIT,
-            filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
+            filters: JSON.stringify(
+              stripUiFilterKeys(filtersRef.current || []),
+            ),
           };
           if (versionId) {
             apiParams.project_version_id = versionId;
@@ -2622,6 +2676,13 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
       },
       suppressSizeToFit: false,
       sortable: false,
+      cellRendererParams: {
+        applyQuickFilters: applyQuickFilters(
+          setFilters,
+          setOpenQuickFilter,
+          setFilterOpen,
+        ),
+      },
     }),
     [],
   );
@@ -2989,6 +3050,7 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
               rowModelType="serverSide"
               onGridReady={onGridReady}
               onSelectionChanged={onSelectionChanged}
+              context={{ disableCellNavigation: true }}
               getRowId={(d) => d?.data?.span_id ?? d?.data?.spanId}
               animateRows={false}
               blockLoadDebounceMillis={300}
@@ -2997,6 +3059,14 @@ function SpanSelector({ onSetSelection, onSelectAll }) {
           <StatusBar api={gridApi} />
         </Box>
       )}
+
+      <NumberQuickFilterPopover
+        open={Boolean(openQuickFilter)}
+        filterData={openQuickFilter}
+        onClose={() => setOpenQuickFilter(null)}
+        setFilters={setFilters}
+        setFilterOpen={setFilterOpen}
+      />
     </Box>
   );
 }
@@ -3121,7 +3191,9 @@ function SessionSelector({ onSetSelection, onSelectAll }) {
                     direction: sort,
                   })),
                 ),
-                filters: JSON.stringify(stripUiFilterKeys(filtersRef.current || [])),
+                filters: JSON.stringify(
+                  stripUiFilterKeys(filtersRef.current || []),
+                ),
               },
             },
           );

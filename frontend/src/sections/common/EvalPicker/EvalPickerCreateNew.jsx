@@ -122,6 +122,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     setSelectedEval,
     setStep,
     onFiltersChange,
+    sourceTimeWindow,
     filterForm: localFilterForm,
   } = useEvalPickerContext();
   const { enqueueSnackbar } = useSnackbar();
@@ -164,8 +165,13 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     name: "filters",
   });
   const localApiFilters = useMemo(
-    () => buildApiFilterArray(localFormFilters),
-    [localFormFilters],
+    () =>
+      buildApiFilterArray(
+        localFormFilters,
+        sourceTimeWindow?.startDate,
+        sourceTimeWindow?.endDate,
+      ),
+    [localFormFilters, sourceTimeWindow?.startDate, sourceTimeWindow?.endDate],
   );
 
   // Composite eval state (only used when evalType === "composite")
@@ -280,8 +286,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
   const buildPayload = useCallback(
     () => ({
       eval_type: evalType,
-      instructions:
-        evalType === "code" ? undefined : instructions || undefined,
+      instructions: evalType === "code" ? undefined : instructions || undefined,
       code: evalType === "code" ? code : undefined,
       code_language: evalType === "code" ? codeLanguage : undefined,
       model,
@@ -599,6 +604,8 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
         evalType: result?.eval_type || "llm",
         outputType:
           compositeChildAxis === "percentage" ? "percentage" : "pass_fail",
+        // EvalPickerConfigFull seeds its mapping panel from this.
+        mapping: sourceMapping,
       });
       setStep("config");
     } catch (error) {
@@ -623,6 +630,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     setSelectedEval,
     setStep,
     enqueueSnackbar,
+    sourceMapping,
   ]);
 
   const isComposite = mode === "composite";

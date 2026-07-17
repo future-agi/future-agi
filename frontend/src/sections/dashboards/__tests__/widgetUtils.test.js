@@ -1,6 +1,47 @@
 import { describe, it, expect } from "vitest";
-import { getAggColumnLabel, getYAxisRangeWarning } from "../widgetUtils";
+import {
+  getAggColumnLabel,
+  getYAxisRangeWarning,
+  seriesHasDataPoints,
+} from "../widgetUtils";
 import { ALL_AGGREGATIONS } from "../constants";
+
+describe("seriesHasDataPoints", () => {
+  it("returns false when series is empty", () => {
+    expect(seriesHasDataPoints([])).toBe(false);
+  });
+
+  it("returns false when every series entry has an empty data array", () => {
+    expect(
+      seriesHasDataPoints([
+        { name: "a", data: [] },
+        { name: "b", data: [] },
+      ]),
+    ).toBe(false);
+  });
+
+  it("returns true when at least one series entry has data points", () => {
+    expect(
+      seriesHasDataPoints([
+        { name: "a", data: [] },
+        { name: "b", data: [{ x: 0, y: 1 }] },
+      ]),
+    ).toBe(true);
+  });
+
+  it("does not crash on a null/undefined series entry", () => {
+    // red if the ?. guard on `s` is reverted: series.some((s) => (s.data || [])...) throws
+    // TypeError: Cannot read properties of undefined (reading 'data')
+    expect(
+      seriesHasDataPoints([
+        null,
+        undefined,
+        { name: "a", data: [{ x: 0, y: 1 }] },
+      ]),
+    ).toBe(true);
+    expect(seriesHasDataPoints([null, undefined])).toBe(false);
+  });
+});
 
 describe("getAggColumnLabel", () => {
   it("returns 'Average' when metrics list is empty", () => {
@@ -26,12 +67,16 @@ describe("getAggColumnLabel", () => {
     // red if source drifts from this mock again: WidgetEditorView renders
     // "95th Percentile" for p95, not the raw value "p95".
     const metrics = [{ aggregation: "p95" }];
-    expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe("95th Percentile");
+    expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe(
+      "95th Percentile",
+    );
   });
 
   it("returns the real percentile label (25th Percentile)", () => {
     const metrics = [{ aggregation: "p25" }];
-    expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe("25th Percentile");
+    expect(getAggColumnLabel(metrics, ALL_AGGREGATIONS)).toBe(
+      "25th Percentile",
+    );
   });
 
   it("returns 'Agg.' when multiple metrics have different aggregations", () => {

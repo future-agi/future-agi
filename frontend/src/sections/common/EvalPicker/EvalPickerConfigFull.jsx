@@ -56,6 +56,7 @@ import TestPlayground from "src/sections/evals/components/TestPlayground";
 import VersionBadge from "src/sections/evals/components/VersionBadge";
 import EvalTypeBadge from "src/sections/evals/components/EvalTypeBadge";
 import { useEvalPickerContext } from "./context/EvalPickerContext";
+import CompositeChildParams from "./CompositeChildParams";
 import {
   getEvalCode,
   getEvalCodeLanguage,
@@ -65,7 +66,10 @@ import {
   normalizeEvalPickerEval,
 } from "./evalPickerValue";
 import { getEvalBaseName } from "src/sections/common/EvaluationDrawer/common";
-import { canonicalEntries, extractVariablesFromMessages } from "src/utils/utils";
+import {
+  canonicalEntries,
+  extractVariablesFromMessages,
+} from "src/utils/utils";
 import { format } from "date-fns";
 import {
   buildEvalTemplateConfig,
@@ -123,6 +127,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     isEditMode,
     requiredColumnId,
     onFiltersChange,
+    sourceTimeWindow,
     filterForm: localFilterForm,
   } = useEvalPickerContext();
   const normalizedEvalData = useMemo(
@@ -172,11 +177,17 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
   const [dataReady, setDataReady] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   useEffect(() => {
-    const pinned = evalData?.pinned_version_id ?? evalData?.pinnedVersionId ?? null;
+    const pinned =
+      evalData?.pinned_version_id ?? evalData?.pinnedVersionId ?? null;
     if (pinned && !selectedVersionId && !isDirty) {
       setSelectedVersionId(pinned);
     }
-  }, [evalData?.pinned_version_id, evalData?.pinnedVersionId, selectedVersionId, isDirty]);
+  }, [
+    evalData?.pinned_version_id,
+    evalData?.pinnedVersionId,
+    selectedVersionId,
+    isDirty,
+  ]);
   const [isTesting, setIsTesting] = useState(false);
   const [testPassed, setTestPassed] = useState(false);
   const [testError, setTestError] = useState(null);
@@ -190,8 +201,13 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     name: "filters",
   });
   const localApiFilters = useMemo(
-    () => buildApiFilterArray(localFormFilters),
-    [localFormFilters],
+    () =>
+      buildApiFilterArray(
+        localFormFilters,
+        sourceTimeWindow?.startDate,
+        sourceTimeWindow?.endDate,
+      ),
+    [localFormFilters, sourceTimeWindow?.startDate, sourceTimeWindow?.endDate],
   );
 
   const handleSourceReadyChange = useCallback((ready, mapping) => {
@@ -329,9 +345,9 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     const templateVars =
       evalType === "llm"
         ? extractVariablesFromMessages(instructions, messages, "mustache")
-        : (
-            (instructions || "").match(/\{\{\s*([^{}]+?)\s*\}\}/g) || []
-          ).map((m) => m.replace(/\{\{|\}\}/g, "").trim());
+        : ((instructions || "").match(/\{\{\s*([^{}]+?)\s*\}\}/g) || []).map(
+            (m) => m.replace(/\{\{|\}\}/g, "").trim(),
+          );
     if (templateVars.length > 0) return [...new Set(templateVars)];
     // Fallback: stored required_keys (before instructions hydrate)
     if (requiredKeys.length > 0) return [...new Set(requiredKeys)];
@@ -450,7 +466,16 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
     setIsDirty(false);
     setDataReady(true);
     initialLoadDone.current = true;
-  }, [selectedVersionId, versions, isDirty, fullEval, normalizedFullEval, normalizedEvalData, isEditMode, evalData]);
+  }, [
+    selectedVersionId,
+    versions,
+    isDirty,
+    fullEval,
+    normalizedFullEval,
+    normalizedEvalData,
+    isEditMode,
+    evalData,
+  ]);
 
   // ── Populate from eval detail (same logic as EvalDetailPage) ──
   const initialLoadDone = useRef(false);
@@ -1344,76 +1369,82 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                         <Box
                           key={child.child_id}
                           sx={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
                             p: 1,
                             borderRadius: 1,
                             border: "1px solid",
                             borderColor: "divider",
                           }}
                         >
-                          <Box sx={{ flex: 1, minWidth: 0 }}>
-                            <Typography
-                              variant="body2"
-                              fontWeight={600}
-                              noWrap
-                              sx={{ fontSize: "12px" }}
-                            >
-                              #{i + 1} {child.child_name}
-                            </Typography>
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                            >
-                              {child.eval_type || "llm"}
-                            </Typography>
-                          </Box>
                           <Box
                             sx={{
                               display: "flex",
                               alignItems: "center",
-                              gap: 0.5,
-                              flexShrink: 0,
+                              justifyContent: "space-between",
                             }}
                           >
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{ fontSize: "11px" }}
+                            <Box sx={{ flex: 1, minWidth: 0 }}>
+                              <Typography
+                                variant="body2"
+                                fontWeight={600}
+                                noWrap
+                                sx={{ fontSize: "12px" }}
+                              >
+                                #{i + 1} {child.child_name}
+                              </Typography>
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                              >
+                                {child.eval_type || "llm"}
+                              </Typography>
+                            </Box>
+                            <Box
+                              sx={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 0.5,
+                                flexShrink: 0,
+                              }}
                             >
-                              Weight
-                            </Typography>
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.1"
-                              value={
-                                compositeChildWeights[child.child_id] ??
-                                child.weight ??
-                                1
-                              }
-                              onChange={(e) => {
-                                const v = parseFloat(e.target.value) || 0;
-                                setCompositeChildWeights((prev) => ({
-                                  ...prev,
-                                  [child.child_id]: v,
-                                }));
-                                setIsDirty(true);
-                              }}
-                              style={{
-                                width: 50,
-                                padding: "2px 6px",
-                                fontSize: "12px",
-                                borderRadius: 4,
-                                border:
-                                  "1px solid var(--mui-palette-divider, #444)",
-                                background: "transparent",
-                                color: "inherit",
-                                textAlign: "center",
-                              }}
-                            />
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                sx={{ fontSize: "11px" }}
+                              >
+                                Weight
+                              </Typography>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                value={
+                                  compositeChildWeights[child.child_id] ??
+                                  child.weight ??
+                                  1
+                                }
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value) || 0;
+                                  setCompositeChildWeights((prev) => ({
+                                    ...prev,
+                                    [child.child_id]: v,
+                                  }));
+                                  setIsDirty(true);
+                                }}
+                                style={{
+                                  width: 50,
+                                  padding: "2px 6px",
+                                  fontSize: "12px",
+                                  borderRadius: 4,
+                                  border:
+                                    "1px solid var(--mui-palette-divider, #444)",
+                                  background: "transparent",
+                                  color: "inherit",
+                                  textAlign: "center",
+                                }}
+                              />
+                            </Box>
                           </Box>
+                          <CompositeChildParams params={child.config?.params} />
                         </Box>
                       ))}
                     </Box>
@@ -1783,6 +1814,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TracingTestMode
                     ref={sourceRef}
                     templateId={templateId}
+                    model={model}
                     variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
@@ -1799,6 +1831,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <SimulationTestMode
                     ref={sourceRef}
                     templateId={templateId}
+                    model={model}
                     variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
@@ -1827,6 +1860,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                   <TracingTestMode
                     ref={sourceRef}
                     templateId={templateId}
+                    model={model}
                     variables={sourceModeVariables}
                     codeParams={codeParams}
                     onTestResult={handleTestResult}
@@ -1839,7 +1873,6 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     initialMapping={evalData?.mapping}
                     errorLocalizerEnabled={errorLocalizerEnabled}
                     localFilters={localApiFilters}
-                    pickerSourceColumns={sourceColumns}
                     allowCustomFieldPath
                     {...compositeSourceModeProps}
                   />

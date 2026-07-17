@@ -2,15 +2,10 @@ import PropTypes from "prop-types";
 
 const collapsedHeight = "150px";
 const expandedHeight = "300px";
-const lineClamp = 6;
 
 export const collapsedStyles = {
   maxHeight: collapsedHeight,
-  display: "-webkit-box",
-  WebkitLineClamp: lineClamp,
-  WebkitBoxOrient: "vertical",
-  overflowY: "hidden",
-  textOverflow: "ellipsis",
+  overflow: "hidden",
 };
 
 export const expandedStyles = {

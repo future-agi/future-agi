@@ -14,7 +14,7 @@ from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from evaluations.constants import FUTUREAGI_EVAL_TYPES
 from model_hub.models.choices import ModelChoices
 from model_hub.models.develop_dataset import Column
-from model_hub.models.evals_metric import EvalTemplate
+from model_hub.models.evals_metric import EvalTemplate, EvalTemplateVersion
 from model_hub.services.ground_truth_service import GroundTruthService
 from model_hub.views.eval_runner import (
     EvaluationRunner,
@@ -31,6 +31,28 @@ try:
     from ee.usage.utils.usage_entries import log_and_deduct_cost_for_api_request
 except ImportError:
     log_and_deduct_cost_for_api_request = None
+
+
+def _canonical_playground_output(value, response, template, api_call_log_row):
+    from model_hub.types import PlaygroundEvalResponse
+
+    payload = PlaygroundEvalResponse(
+        output=value,
+        reason=response.get("reason"),
+        model=response.get("model"),
+        metadata=response.get("metadata"),
+        output_type=template.config.get("output"),
+        log_id=(
+            str(api_call_log_row.log_id) if api_call_log_row is not None else None
+        ),
+        ground_truth_examples=response.get("ground_truth_examples"),
+        warnings=response.get("warnings") or None,
+    ).model_dump()
+    if payload.get("warnings") is None:
+        payload.pop("warnings", None)
+    if payload.get("ground_truth_examples") is None:
+        payload.pop("ground_truth_examples", None)
+    return payload
 
 
 def run_eval_func(
@@ -217,6 +239,23 @@ def run_eval_func(
         if input_data_types:
             source_config.update({"input_data_types": input_data_types})
 
+        # Stamp which eval version produced this result so the Usage tab can
+        # show it per row. Callers that already resolved a version (e.g. a
+        # pinned composite child) pass it in; otherwise the template default.
+        tracked_version = kwargs.get("resolved_version")
+        if not tracked_version:
+            try:
+                tracked_version = EvalTemplateVersion.objects.get_default(template)
+            except Exception:
+                logger.warning(
+                    "version_tracking_failed",
+                    template_id=str(template.id),
+                    exc_info=True,
+                )
+        if tracked_version:
+            source_config["version_id"] = str(tracked_version.id)
+            source_config["version_number"] = tracked_version.version_number
+
         try:
             from ee.usage.schemas.event_types import BillingEventType
         except ImportError:
@@ -356,7 +395,7 @@ def run_eval_func(
                 metadata = {}
 
         if api_call_log_row is None:
-            return response
+            return _canonical_playground_output(value, response, template, None)
         config_dict = json.loads(api_call_log_row.config)
         output_payload = {"output": value, "reason": response["reason"]}
         # Mirror the dataset path: propagate partial-input warnings into
@@ -485,18 +524,9 @@ def run_eval_func(
         except Exception:
             pass  # Metering failure must not break the action
 
-        output = {}
-        output["output"] = value
-        output["reason"] = response.get("reason")
-        output["model"] = response.get("model")
-        output["metadata"] = response.get("metadata")
-        output["output_type"] = template.config.get("output")
-        output["log_id"] = str(api_call_log_row.log_id)
-        output["ground_truth_examples"] = response.get("ground_truth_examples")
-        # Pass partial-input warning through to the playground UI so the
-        # yellow ⚠ badge can render alongside the result.
-        if response.get("warnings"):
-            output["warnings"] = response["warnings"]
+        output = _canonical_playground_output(
+            value, response, template, api_call_log_row
+        )
 
         if error_localizer:
             from model_hub.tasks.user_evaluation import (

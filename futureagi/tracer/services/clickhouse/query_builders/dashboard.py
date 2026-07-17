@@ -60,9 +60,21 @@ SYSTEM_METRICS: dict[str, tuple[str, str]] = {
         "span_attr_num['gen_ai.server.time_to_first_token']",
     ),
     "cost": ("spans", "cost"),
-    # Count metrics
-    "session_count": ("spans", "trace_session_id"),
-    "user_count": ("spans", "end_user_id"),
+    "session_count": (
+        "spans",
+        "nullIf(trace_session_id, toUUID('00000000-0000-0000-0000-000000000000'))",
+    ),
+    "user_count": (
+        "spans",
+        # dictGetOrDefault cannot take NULL keys; keep both branches as String.
+        "if(end_user_id IS NULL "
+        "OR end_user_id = toUUID('00000000-0000-0000-0000-000000000000'), "
+        "NULL, "
+        "dictGetOrDefault("
+        "'end_users_dict', 'user_id', "
+        "assumeNotNull(end_user_id), "
+        "toString(assumeNotNull(end_user_id))))",
+    ),
     "trace_count": ("spans", "trace_id"),
     "span_count": ("spans", "id"),
     # String dimensions (for breakdown/filter)
@@ -153,6 +165,44 @@ AVERAGING_AGGREGATIONS = frozenset(
 )
 
 
+def _eval_source_bucket_expr(exclude: str) -> str:
+    """Map eval source values to fallback labels for project/dataset breakdowns."""
+    buckets: list[tuple[str, str]] = [
+        ("tracer", "(trace)"),
+        ("feedback", "(feedback)"),
+        ("tracer_composite", "(composite)"),
+        ("dataset_evaluation", "(dataset)"),
+        ("experiment", "(experiment)"),
+        ("prompt_template", "(prompt)"),
+        ("eval_playground", "(playground)"),
+        ("eval_playground_test", "(playground)"),
+        ("standalone_v2", "(sdk)"),
+        ("simulate", "(simulation)"),
+        ("simulate_tool_evaluation", "(simulation)"),
+        ("voice_call", "(simulation)"),
+        ("text_call", "(simulation)"),
+        ("fix_your_agent", "(fix-your-agent)"),
+        ("trace_error_analysis", "(error-analysis)"),
+        ("error_localizer", "(error-analysis)"),
+        ("run_prompt_improve", "(prompt-improve)"),
+        ("composite_eval", "(composite)"),
+        ("composite_eval_adhoc", "(composite)"),
+        ("composite_eval_dataset", "(composite)"),
+    ]
+    excluded_self = {
+        "project": {"tracer"},
+        "dataset": {"dataset_evaluation"},
+    }.get(exclude, set())
+    parts = ["multiIf("]
+    for source, label in buckets:
+        if source in excluded_self:
+            continue
+        parts.append(f"e.source = '{source}', '{label}', ")
+    parts.append("e.source = '', '(unknown)', ")
+    parts.append(f"'(no {exclude})')")
+    return "".join(parts)
+
+
 def rescale_rate_to_percent(agg_expr: str, aggregation: str) -> str:
     """Wrap *agg_expr* in ``(... ) * 100`` for averaging aggregations.
 
@@ -200,6 +250,7 @@ class InvalidMetricCombinationError(ValueError):
     surface it per-widget so one nonsensical metric does not fail the whole
     dashboard query.
     """
+
 
 FILTER_OPERATORS: dict[str, str] = {
     "less_than": "< %({prefix}{idx}_val)s",
@@ -257,62 +308,6 @@ def _prefix_spans_columns(clause: str) -> str:
     return clause
 
 
-# ---------------------------------------------------------------------------
-# P3b step1.5 — id-remap resolution of the spans source (DESIGN §3 / §10.1,
-# id_remap_sql, schema 019_id_remap.sql)
-# ---------------------------------------------------------------------------
-#
-# The dashboard counts `end_user_id` / `trace_session_id` over RAW span rows:
-#   • `user_count` / `session_count` → `uniq(end_user_id)` / `uniq(trace_session_id)`
-#   • the `user` / `session` / `user_id_type` breakdowns → GROUP BY a column
-#     expression derived from those ids (`toString(trace_session_id)`,
-#     `dictGetOrDefault('enduser_dict','user_id', end_user_id, …)`).
-# A cross-cutover STRADDLER (an identity with both old random-uuid4 spans AND
-# new deterministic-UUIDv5 spans) therefore OVER-counts (two distinct ids in a
-# `uniq`) and SPLITS into two breakdown buckets (the new id misses the curated
-# `enduser_dict`, falling back to its raw UUID string — a different label than
-# the old id's `user_id`). To fix this we resolve each span's id through the
-# id-remap SURVIVOR MAP BEFORE it is counted / grouped / dict-looked-up.
-#
-# The map is many-to-one (NULL-type enduser dupes / rename-bug sessions collapse
-# several old ids onto one new id), so resolution maps EVERY id — each old AND
-# the shared new — to ONE canonical survivor old per new_id group (the
-# argMin-string old; see id_remap_sql). A straddler AND a many-old→one-new
-# consolidation group thus both collapse to ONE id with NO fan-out (the gate-C2
-# bug a naive `= new_id` join hit). We LEFT JOIN the derived survivor map on
-# `spans.<id> = <alias>.any_id` and resolve to `<alias>.survivor_id` via the
-# zero-uuid-guarded `resolved_id_expr` (see id_remap_sql for why a bare COALESCE
-# breaks — CH fills the unmatched LEFT-JOIN side with the column DEFAULT, the
-# zero-uuid, NOT NULL).
-#
-# Rather than restructure every flat dashboard query into CTEs, we swap the bare
-# `spans` table reference for a DERIVED TABLE that re-projects the two ids as
-# their resolved values under the SAME column names (`SELECT * EXCEPT(end_user_id,
-# trace_session_id), <resolved_eu> AS end_user_id, <resolved_ts> AS
-# trace_session_id FROM spans LEFT JOIN … LEFT JOIN …`). Aliasing the subquery
-# back to the original name (`spans` or `s`) means every downstream column
-# reference, WHERE predicate, GROUP BY and `uniq()` is byte-identical — only the
-# two id columns now carry resolved values. This is the "thin outer layer"
-# id_remap_sql is designed for.
-#
-# GATE B (byte-identical result-set pre/post on the all-old-id 1:1 baseline):
-# pre-flip EVERY span carries an old id, and a non-consolidated old is its OWN
-# survivor (argMin of a singleton group), so the survivor map resolves it to
-# itself, the LEFT JOINs add nothing, and `resolved_id_expr` returns each span's
-# own id unchanged (the gate-B island has no consolidation groups). The
-# derived table is then a transparent pass-through — same rows, same id values,
-# same result set. `SELECT * EXCEPT(...)` only reorders the two id columns to the
-# end of the row tuple; the dashboard queries SELECT explicit output columns
-# (`time_bucket`, `breakdown_value`, `value`), so the OUTPUT result set is
-# unaffected by underlying column order.
-#
-# Applied ONLY when the query actually references an id (the metric is a
-# user/session count or dimension, or a breakdown/filter is by user/session) —
-# id-free metrics (latency, tokens, cost, …) keep the bare `spans` source, so
-# the change is scoped to exactly the queries that can split a straddler.
-
-# Metric / breakdown / filter names whose SQL touches `end_user_id` or
-# `trace_session_id` (and therefore need the resolved spans source).
 _ID_RESOLVED_NAMES = frozenset(
     {
         "user_count",
@@ -324,34 +319,13 @@ _ID_RESOLVED_NAMES = frozenset(
 )
 
 
-# Spans columns that are MATERIALIZED/ALIAS in the CH25 schema AND referenced by
-# the dashboard's column maps — these are DROPPED by `SELECT sp.*` (ClickHouse
-# omits MATERIALIZED/ALIAS columns from `*`), so the derived table must re-project
-# them explicitly or an outer reference errors ("Unknown identifier"). Currently
-# empty: every dashboard dimension resolves to a real (non-materialized) column
-# that `sp.*` keeps. (`_peerdb_is_deleted` is an ALIAS, but the dashboard only
-# uses it in WHERE where the v2 rewrite maps it to the real `is_deleted` column,
-# which `sp.*` keeps — so it needs no re-projection.) Add a column here if a
-# future dimension reads a MATERIALIZED/ALIAS column.
+# ClickHouse omits materialized columns from sp.*. The current dashboard
+# dimensions only use stored columns, so no re-projection is needed.
 _MATERIALIZED_DASHBOARD_COLS: tuple[str, ...] = ()
 
 
 def _resolved_spans_source(alias: str | None = None) -> str:
-    """Return a `spans` source SQL fragment with `end_user_id` / `trace_session_id`
-    resolved new→old through the id-remap (P3b step1.5, see id_remap_sql).
-
-    ``alias`` is the table alias the surrounding query uses for spans (``"s"``
-    for the JOINed/annotation-breakdown shapes, ``None`` for the flat
-    ``FROM spans`` shapes which reference columns bare). The returned fragment is
-    a parenthesised derived table aliased to ``alias or "spans"`` so every
-    downstream reference is unchanged.
-
-    The inner subquery joins the remap under DISTINCT aliases (``eu_remap`` /
-    ``ts_remap``) hanging off the SAME inner span row ``sp`` — the default
-    ``id_remap`` alias would collide across the two joins. Any MATERIALIZED
-    columns the dashboard reads are re-projected explicitly because ``sp.*``
-    drops them (see ``_MATERIALIZED_DASHBOARD_COLS`` — currently empty).
-    """
+    """Return a spans source with user/session ids resolved through id_remap."""
     out_alias = alias or "spans"
     eu_join = remap_left_join("sp.end_user_id", "end_user_id_remap", "eu_remap")
     ts_join = remap_left_join(
@@ -469,15 +443,7 @@ class DashboardQueryBuilder:
         else:
             raise ValueError(f"Unknown metric type: {metric_type}")
 
-    # ------------------------------------------------------------------
-    # P3b step1.5 — does this query touch an id that needs remap resolution?
-    # ------------------------------------------------------------------
-
     def _names_reference_id(self, *names: str | None) -> bool:
-        """True if any of ``names`` (a metric/breakdown/filter id or name) is one
-        of the user/session metrics whose SQL references `end_user_id` /
-        `trace_session_id` (see ``_ID_RESOLVED_NAMES`` / ``_resolved_spans_source``).
-        """
         return any(
             (n or "").lower() in _ID_RESOLVED_NAMES for n in names if n is not None
         )
@@ -485,11 +451,6 @@ class DashboardQueryBuilder:
     def _query_references_id(
         self, metric_name: str | None, per_metric_filters: list[dict]
     ) -> bool:
-        """True if THIS metric's query references `end_user_id` /
-        `trace_session_id` — via the metric itself, any breakdown, or any
-        (global or per-metric) filter — and therefore needs the id-remap-resolved
-        spans source so a cross-cutover straddler does not split (P3b step1.5).
-        """
         if self._names_reference_id(metric_name):
             return True
         for bd in self.breakdowns:
@@ -580,7 +541,11 @@ class DashboardQueryBuilder:
         # else falls through to the spans scan (fail-closed, see _should_use_rollup).
         single_bd = self.breakdowns[0] if len(self.breakdowns) == 1 else None
         if self._should_use_rollup(
-            metric_name, aggregation, single_bd, per_metric_filters, params["start_date"]
+            metric_name,
+            aggregation,
+            single_bd,
+            per_metric_filters,
+            params["start_date"],
         ):
             params = dict(params)
             params["attr_key"] = _sanitize_attr_key(single_bd["name"])
@@ -616,14 +581,8 @@ class DashboardQueryBuilder:
                 params,
             )
         _, col_expr = SYSTEM_METRICS[metric_name]
-        # Project count should count distinct projects, not raw span rows.
-        if metric_name == "project" and aggregation == "count":
-            aggregation = "count_distinct"
-        # Force count-based aggregation for non-numeric / identity metrics.
-        if metric_name in _COUNT_DISTINCT_METRICS and aggregation not in (
-            "count",
-            "count_distinct",
-        ):
+        # Identifier metrics should count unique identities, not raw span rows.
+        if metric_name in _COUNT_DISTINCT_METRICS and aggregation != "count_distinct":
             aggregation = "count_distinct"
         agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
 
@@ -653,21 +612,13 @@ class DashboardQueryBuilder:
         if subquery_clauses[0]:
             all_where += subquery_clauses[0]
 
-        # P3b step1.5 — resolve the spans source new→old (id_remap) when this
-        # query references `end_user_id` / `trace_session_id` (the metric is a
-        # user/session count or dimension, or a breakdown/filter is by
-        # user/session); else keep the bare table (byte-identical no-op). The
-        # derived table is aliased back to `spans` / `s`, so every column ref,
-        # WHERE, GROUP BY and `uniq()` below is unchanged.
         spans_flat = self._spans_source(metric_name, per_metric_filters, "spans")
         spans_joined = self._spans_source(metric_name, per_metric_filters, "s")
 
-        # Resolve all breakdowns (supports multiple, including annotation JOINs)
         bd_infos = self._resolve_all_breakdowns(params)
         has_annotation_bd = any(b["type"] == "annotation" for b in bd_infos)
 
         if bd_infos:
-            # Build composite breakdown_value from all breakdowns
             bd_exprs = []
             join_clauses = []
             for b in bd_infos:
@@ -678,11 +629,9 @@ class DashboardQueryBuilder:
             if len(bd_exprs) == 1:
                 bd_select = f"{bd_exprs[0]} AS breakdown_value"
             else:
-                # Concatenate multiple breakdowns with " / " separator
                 parts = ", ' / ', ".join(f"toString({e})" for e in bd_exprs)
                 bd_select = f"concat({parts}) AS breakdown_value"
 
-            # Use table alias 's' when JOINs are present
             if has_annotation_bd:
                 agg_with_alias = (
                     agg_expr.replace("(", "(s.") if "(" in agg_expr else agg_expr
@@ -759,28 +708,15 @@ class DashboardQueryBuilder:
         params["organization_id"] = self.organization_id
         params["workspace_id"] = self.workspace_id
 
-        # --- Score extraction & aggregation ---
-        # eval_score (Float64 MATERIALIZED): JSONExtractFloat on output.output.
-        #   SCORE evals:     0.0 – 1.0 (reliable)
-        #   PASS_FAIL evals: 1.0 when output is numeric, BUT 0.0 when output
-        #                    is the string "Passed"/"Failed" (JSONExtractFloat
-        #                    can't parse strings → returns 0).
-        #
-        # eval_output_str (String MATERIALIZED): raw string from output.output.
-        #   SCORE:     "0.4", "1", "0.8"
-        #   PASS_FAIL: "1", "Passed", "Failed", "0"  (both formats exist)
-        #
-        # Unified pass detection must check BOTH: numeric score >= 1.0 OR
-        # string matches "Passed"/"Pass"/"True"/"true".
+        _output_str_lower = "lower(e.eval_output_str)"
         _is_pass = (
-            "(e.eval_score >= 1.0 OR e.eval_output_str IN "
-            "('Passed', 'Pass', 'True', 'true'))"
+            f"(e.eval_score >= 1.0 OR {_output_str_lower} IN "
+            "('passed', 'pass', 'true', '1'))"
         )
         _is_fail = (
-            "(e.eval_score < 1.0 AND e.eval_output_str NOT IN "
-            "('Passed', 'Pass', 'True', 'true'))"
+            f"(e.eval_score < 1.0 AND {_output_str_lower} NOT IN "
+            "('passed', 'pass', 'true', '1'))"
         )
-        # Unified score: 1.0 for pass (string or numeric), else eval_score
         _unified_score = f"if({_is_pass}, 1.0, e.eval_score)"
 
         _EVAL_AGGREGATIONS: dict[str, str] = {
@@ -793,15 +729,20 @@ class DashboardQueryBuilder:
 
         if aggregation in _EVAL_AGGREGATIONS:
             agg_expr = _EVAL_AGGREGATIONS[aggregation]
+        elif output_type in ("CHOICE", "CHOICES"):
+            agg_expr = "count()"
         else:
-            # Standard numeric aggregations.
-            if output_type in ("CHOICE", "CHOICES"):
-                col_expr = "1.0"
-            elif output_type == "PASS_FAIL":
-                # Use unified score so string "Passed" → 1.0
+            if output_type == "PASS_FAIL":
                 col_expr = _unified_score
             else:
-                col_expr = "e.eval_score"
+                # Some templates with missing output_type still emit pass/fail strings.
+                col_expr = (
+                    "if(e.eval_output_str = '', NULL, "
+                    f"if({_output_str_lower} IN ('passed', 'pass', 'true', '1'), 1.0, "
+                    f"if({_output_str_lower} IN ('failed', 'fail', 'false', '0'), 0.0, "
+                    "if(match(e.eval_output_str, '^-?[0-9]+\\.?[0-9]*$'), "
+                    "e.eval_score, NULL))))"
+                )
             agg_expr = AGGREGATIONS.get(aggregation, "avg({col})").format(col=col_expr)
 
         select_parts = [f"{bucket_fn}(e.created_at) AS time_bucket"]
@@ -824,39 +765,50 @@ class DashboardQueryBuilder:
             "e.created_at < %(end_date)s",
         ]
 
-        # --- Dynamic JOINs ---
-        # The eval hub can connect to spans (traces), datasets, simulations,
-        # and other evals. We track which JOINs are needed and add them once.
-        joins = []
-        need_spans_join = False  # JOIN spans via trace_id
-        need_eval_join = {}  # alias -> eval_template_id for cross-eval JOINs
+        # Keep one latest trace-eval attempt; dataset/playground rows pass through.
+        _dedup_scope_d = (
+            "d.workspace_id = toUUID(%(workspace_id)s)"
+            if self.workspace_id
+            else "d.organization_id = toUUID(%(organization_id)s)"
+        )
+        # `d._peerdb_is_deleted = 0` already filters CDC tombstones; the outer
+        # `e … FINAL` still collapses duplicate parts for the join. argMax(id)
+        # picks the latest attempt deterministically even across unmerged parts,
+        # so we can skip the extra FINAL scan on this subquery.
+        where_parts.append(
+            "(e.eval_trace_id = '' OR (e.eval_trace_id, e.id) IN ("
+            "SELECT d.eval_trace_id, argMax(d.id, tuple(d.created_at, d.id)) "
+            "FROM usage_apicalllog AS d "
+            f"WHERE {_dedup_scope_d} "
+            "AND d._peerdb_is_deleted = 0 AND d.status = 'success' "
+            "AND d.source_id = %(eval_template_id)s "
+            "AND d.created_at >= %(start_date)s AND d.created_at < %(end_date)s "
+            "AND d.eval_trace_id != '' "
+            "GROUP BY d.eval_trace_id))"
+        )
 
-        # Helper: use materialized column for trace_id
+        joins = []
+        need_spans_join = False
+        need_eval_join = {}
+
         _trace_id_expr = "e.eval_trace_id"
 
-        # --- Resolve breakdowns ---
-        if self.breakdowns:
-            bd = self.breakdowns[0]
+        bd_exprs = []
+        for bd_idx, bd in enumerate(self.breakdowns):
             bd_name = (bd.get("name") or bd.get("id") or "").lower()
             bd_type = bd.get("type", "system_metric")
 
-            # Eval-native breakdowns (no JOIN needed)
             if bd_name in ("source", "eval_source"):
                 bd_expr = "if(e.source = '', '(not set)', e.source)"
 
             elif bd_name == "dataset":
-                # Use materialized column eval_dataset_id (pre-extracted at
-                # insert time — avoids runtime JSON parsing on every row).
-                # Name resolution happens in the view layer via PG lookup,
-                # so we just return the UUID here.
                 bd_expr = (
-                    "if(e.eval_dataset_id = '', '(no dataset)', e.eval_dataset_id)"
+                    "if(e.eval_dataset_id != '', e.eval_dataset_id, "
+                    + _eval_source_bucket_expr(exclude="dataset")
+                    + ")"
                 )
 
-            # Trace dimension breakdowns → JOIN spans
             elif bd_name == "project":
-                # Resolve trace_id → project_id via trace_dict.
-                # Non-trace evals show "(no project)".
                 _proj_uuid = (
                     f"dictGet('trace_dict', 'project_id', "
                     f"toUUIDOrZero({_trace_id_expr}))"
@@ -864,10 +816,11 @@ class DashboardQueryBuilder:
                 bd_expr = (
                     f"if({_trace_id_expr} != '' "
                     f"AND {_proj_uuid} != toUUID('00000000-0000-0000-0000-000000000000'), "
-                    f"toString({_proj_uuid}), '(no project)')"
+                    f"toString({_proj_uuid}), "
+                    + _eval_source_bucket_expr(exclude="project")
+                    + ")"
                 )
             elif bd_name in SYSTEM_METRICS:
-                # Known span column — JOIN spans to get the dimension
                 need_spans_join = True
                 _, span_col = SYSTEM_METRICS[bd_name]
                 bd_expr = f"if(s.trace_id = '', '(not set)', toString(s.{span_col}))"
@@ -903,7 +856,6 @@ class DashboardQueryBuilder:
                 scol = _span_col_map.get(bd_name, bd_name)
                 bd_expr = f"if(s.trace_id = '', '(not set)', toString(s.{scol}))"
 
-            # Breakdown by eval metric
             elif bd_type == "eval_metric":
                 ev_tid = bd.get("config_id") or bd.get("label_id") or bd_name
                 ev_tid = resolve_eval_template_id(
@@ -913,7 +865,6 @@ class DashboardQueryBuilder:
                     bd.get("output_type") or bd.get("outputType") or ""
                 ).upper()
 
-                # Same eval as the metric → use main table columns directly
                 if ev_tid == eval_template_id:
                     if bd_output_type in ("PASS_FAIL", "CHOICE", "CHOICES"):
                         bd_expr = (
@@ -925,10 +876,10 @@ class DashboardQueryBuilder:
                             "toString(round(e.eval_score * 100)))"
                         )
                 else:
-                    # Different eval → cross-eval JOIN
-                    ev_alias = "ev_bd"
-                    params["_ev_bd_tid"] = ev_tid
-                    need_eval_join[ev_alias] = "_ev_bd_tid"
+                    ev_alias = f"ev_bd{bd_idx}"
+                    param_key = f"_ev_bd{bd_idx}_tid"
+                    params[param_key] = ev_tid
+                    need_eval_join[ev_alias] = param_key
                     if bd_output_type in ("PASS_FAIL", "CHOICE", "CHOICES"):
                         bd_expr = (
                             f"if({ev_alias}.id IS NULL OR "
@@ -941,7 +892,6 @@ class DashboardQueryBuilder:
                             f"toString(round({ev_alias}.eval_score * 100)))"
                         )
 
-            # Custom attribute
             elif bd_type == "custom_attribute":
                 need_spans_join = True
                 attr_key = _sanitize_attr_key(bd_name)
@@ -950,7 +900,15 @@ class DashboardQueryBuilder:
             else:
                 bd_expr = "'(not set)'"
 
-            select_parts.append(f"{bd_expr} AS breakdown_value")
+            bd_exprs.append(bd_expr)
+
+        if bd_exprs:
+            if len(bd_exprs) == 1:
+                bd_select = f"{bd_exprs[0]} AS breakdown_value"
+            else:
+                parts = ", ' / ', ".join(f"toString({expr})" for expr in bd_exprs)
+                bd_select = f"concat({parts}) AS breakdown_value"
+            select_parts.append(bd_select)
             group_parts.append("breakdown_value")
             order_parts.append("breakdown_value")
 
@@ -980,7 +938,6 @@ class DashboardQueryBuilder:
                 )
                 f_out_type = (f.get("output_type") or "SCORE").upper()
 
-                # Same eval as the metric → filter on main table directly
                 if ev_tid == eval_template_id:
                     if f_out_type in ("PASS_FAIL", "CHOICE", "CHOICES"):
                         where_parts.append(
@@ -991,7 +948,6 @@ class DashboardQueryBuilder:
                         where_parts.append(f"e.eval_score {op_symbol} %({val_key})s")
                         params[val_key] = _coerce_filter_value(val, op)
                 else:
-                    # Different eval → cross-eval JOIN
                     ev_alias = f"ev_f{i}"
                     fkey = f"_evf_{i}_tid"
                     params[fkey] = ev_tid
@@ -1013,13 +969,7 @@ class DashboardQueryBuilder:
                 )
                 params[val_key] = _coerce_filter_value(val, op)
 
-        # --- Build JOINs ---
         if need_spans_join:
-            # P3b step1.5 — when the spans JOIN is driven by a user / session
-            # breakdown or filter, resolve the joined spans' ids new→old
-            # (id_remap) so a straddler buckets/filters under its OLD id. Other
-            # span dimensions (model, status, …) keep the bare table — same
-            # byte-identical no-op guarantee, just no added remap joins.
             spans_joined = self._spans_source(None, per_metric_filters, "s")
             joins.append(
                 f"LEFT JOIN {spans_joined} ON s.trace_id = {_trace_id_expr} "
@@ -1205,9 +1155,6 @@ class DashboardQueryBuilder:
         if subquery_clauses[0]:
             all_where += subquery_clauses[0]
 
-        # P3b step1.5 — a custom-attribute metric is never an id, but its
-        # breakdown / filter can be by user / session; resolve the spans source
-        # new→old in that case so the breakdown does not split a straddler.
         spans_flat = self._spans_source(None, per_metric_filters, "spans")
 
         query = (
@@ -1283,7 +1230,8 @@ class DashboardQueryBuilder:
 
         for metric_info, rows in metric_results:
             metric_name = metric_info.get("name", "")
-            unit = METRIC_UNITS.get(metric_name, "")
+            metric_id = metric_info.get("id", "")
+            unit = METRIC_UNITS.get(metric_name) or METRIC_UNITS.get(metric_id, "")
 
             # Group rows by breakdown value if present
             # Use a dict of {iso_timestamp: value} for easy merging
@@ -1320,22 +1268,22 @@ class DashboardQueryBuilder:
             if not series_data:
                 series_data["total"] = {}
 
-            # Limit breakdown series (frontend shows top 10 in chart,
-            # rest available via legend toggle)
+            # Keep the highest-volume series first; the frontend still limits
+            # the initially visible chart series.
             MAX_SERIES = 100
-            if len(series_data) > MAX_SERIES and "total" not in series_data:
+            if "total" not in series_data:
                 ranked = sorted(
                     series_data.items(),
                     key=lambda kv: sum(v for v in kv[1].values() if v is not None),
                     reverse=True,
-                )[:MAX_SERIES]
+                )
+                if len(ranked) > MAX_SERIES:
+                    ranked = ranked[:MAX_SERIES]
                 series_data = dict(ranked)
 
-            # Fill in missing time buckets with null so consumers can
-            # distinguish missing values from real zeros.
+            # Preserve volume order from ``series_data``.
             series = []
-            for name in sorted(series_data.keys()):
-                data_map = series_data[name]
+            for name, data_map in series_data.items():
                 filled = []
                 for bucket_ts in all_buckets:
                     filled.append(
@@ -1381,15 +1329,6 @@ class DashboardQueryBuilder:
         "span_kind": "observation_type",
         "provider": "provider",
         "session": "toString(trace_session_id)",
-        # P3b step2 precondition — LABEL source cut legacy `enduser_dict` → v2
-        # `end_users_dict` (017). The committed step1.5 slice resolves the span's
-        # `end_user_id` new→old BEFORE this lookup (so the count/group is correct
-        # for straddlers) but left the label dict as the legacy CDC dict; that
-        # dict stops getting new users once step2 drops the PG get_or_create →
-        # PG→CDC chain. `end_users_dict` is kept fresh by the P3a-ii ingest dual-
-        # write, so a post-step2 new user resolves here where the legacy dict
-        # would fall back to the raw UUID. Same key (`end_user_id`) + attrs
-        # (`user_id`/`user_id_type`) → byte-identical pre-flip (gate B).
         "user": "dictGetOrDefault('end_users_dict', 'user_id', end_user_id, toString(end_user_id))",
         "user_id_type": "dictGetOrDefault('end_users_dict', 'user_id_type', end_user_id, '')",
         "prompt_name": "dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
@@ -1414,7 +1353,8 @@ class DashboardQueryBuilder:
             bd_name = bd.get("name", "")
             bd_source = bd.get("source", "traces")
 
-            if bd_source not in ("traces", "both", ""):
+            # source="all" can still be a trace-side dimension.
+            if bd_source in ("datasets", "simulation"):
                 continue
 
             if bd_type == "system_metric":
@@ -1610,8 +1550,6 @@ class DashboardQueryBuilder:
             "span_kind": "observation_type",
             "provider": "provider",
             "session": "toString(trace_session_id)",
-            # P3b step2 precondition — LABEL source cut legacy `enduser_dict` →
-            # v2 `end_users_dict` (017), same rationale as `_BREAKDOWN_COL_MAP`.
             "user": "dictGetOrDefault('end_users_dict', 'user_id', end_user_id, toString(end_user_id))",
             "user_id_type": "dictGetOrDefault('end_users_dict', 'user_id_type', end_user_id, '')",
             "prompt_name": "dictGetOrDefault('prompt_dict', 'prompt_name', ifNull(prompt_version_id, toUUID('00000000-0000-0000-0000-000000000000')), '')",
