@@ -19,6 +19,7 @@ on:
         options:
           - main
           - dev
+          - perf/trace-list-observe-ch-performance
 
 permissions:
   contents: read
