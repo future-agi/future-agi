@@ -30,8 +30,18 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
-// Sortable Image Item Component
-const SortableImageItem = ({ url, index, onDelete }) => {
+// ---------------------------------------------------------------------------
+// Helper: wrap a plain URL string into a stable { id, url } object.
+// crypto.randomUUID() is available in all modern browsers with no extra deps.
+// ---------------------------------------------------------------------------
+const toItem = (url) => ({ id: crypto.randomUUID(), url });
+
+// ---------------------------------------------------------------------------
+// SortableImageItem
+// Receives the whole `item` object ({ id, url }) so the sortable id is the
+// stable UUID — never the array index.
+// ---------------------------------------------------------------------------
+const SortableImageItem = ({ item, onDelete }) => {
   const {
     attributes,
     listeners,
@@ -39,7 +49,7 @@ const SortableImageItem = ({ url, index, onDelete }) => {
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: `image-${index}` });
+  } = useSortable({ id: item.id }); // ← stable UUID, not "image-N"
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -55,14 +65,11 @@ const SortableImageItem = ({ url, index, onDelete }) => {
       sx={{
         position: "relative",
         aspectRatio: "1",
-        "&:hover .delete-btn": {
-          opacity: 1,
-        },
-        "&:hover .drag-handle": {
-          opacity: 1,
-        },
+        "&:hover .delete-btn": { opacity: 1 },
+        "&:hover .drag-handle": { opacity: 1 },
       }}
     >
+      {/* Drag handle */}
       <Box
         {...attributes}
         {...listeners}
@@ -88,9 +95,10 @@ const SortableImageItem = ({ url, index, onDelete }) => {
           sx={{ width: 16, height: 16, color: "common.white" }}
         />
       </Box>
+
       <GridIcon
-        src={url}
-        alt={`Image ${index + 1}`}
+        src={item.url}
+        alt={`Image`}
         sx={{
           width: "100%",
           height: "100%",
@@ -99,12 +107,14 @@ const SortableImageItem = ({ url, index, onDelete }) => {
           cursor: "grab",
         }}
       />
+
+      {/* Delete button — fires with stable id, not index */}
       <IconButton
         className="delete-btn"
         size="small"
         onClick={(e) => {
           e.stopPropagation();
-          onDelete(index);
+          onDelete(item.id); // ← delete by id, not by array position
         }}
         sx={{
           position: "absolute",
@@ -114,9 +124,7 @@ const SortableImageItem = ({ url, index, onDelete }) => {
           backgroundColor: "rgba(0,0,0,0.6)",
           transition: "opacity 0.2s",
           zIndex: 2,
-          "&:hover": {
-            backgroundColor: "rgba(0,0,0,0.8)",
-          },
+          "&:hover": { backgroundColor: "rgba(0,0,0,0.8)" },
         }}
       >
         <SvgColor
@@ -129,29 +137,42 @@ const SortableImageItem = ({ url, index, onDelete }) => {
 };
 
 SortableImageItem.propTypes = {
-  url: PropTypes.string.isRequired,
-  index: PropTypes.number.isRequired,
+  item: PropTypes.shape({
+    id: PropTypes.string.isRequired,
+    url: PropTypes.string.isRequired,
+  }).isRequired,
   onDelete: PropTypes.func.isRequired,
 };
 
+// ---------------------------------------------------------------------------
+// EditImages
+// ---------------------------------------------------------------------------
 const EditImages = ({ params, onClose, onCellValueChanged }) => {
   const fileInputRef = useRef(null);
-  const [imageUrls, setImageUrls] = useState([]);
+
+  // State is now { id: string, url: string }[] instead of string[].
+  // The persisted value (params.value) is still a plain JSON string[],
+  // so we wrap on load and unwrap on save.
+  const [imageItems, setImageItems] = useState([]);
+
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [deleteIndex, setDeleteIndex] = useState(null);
 
-  // DnD sensors
+  // Tracks which item id is pending deletion (null = "delete all" mode).
+  const [deleteId, setDeleteId] = useState(null);
+
+  // DnD sensors — require 5px movement before a drag starts so that
+  // click events (delete button) still fire normally.
   const sensors = useSensors(
     useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 5,
-      },
+      activationConstraint: { distance: 5 },
     }),
   );
 
-  // Parse initial value
+  // ---------------------------------------------------------------------------
+  // Parse initial value — wrap each URL with a stable UUID on mount.
+  // ---------------------------------------------------------------------------
   useEffect(() => {
     if (params?.value) {
       try {
@@ -159,34 +180,41 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
           typeof params.value === "string"
             ? JSON.parse(params.value)
             : params.value;
-        setImageUrls(Array.isArray(parsed) ? parsed : [parsed]);
+        const urls = Array.isArray(parsed) ? parsed : [parsed];
+        setImageItems(urls.map(toItem));
       } catch {
-        setImageUrls([params.value]);
+        setImageItems([toItem(params.value)]);
       }
     }
   }, [params?.value]);
 
+  // ---------------------------------------------------------------------------
+  // Drag end — locate positions by stable id (mirrors ColumnConfigureDropDown).
+  // ---------------------------------------------------------------------------
   const handleDragEnd = (event) => {
     const { active, over } = event;
-    if (active.id !== over?.id) {
-      const oldIndex = parseInt(active.id.replace("image-", ""), 10);
-      const newIndex = parseInt(over.id.replace("image-", ""), 10);
-      setImageUrls((items) => arrayMove(items, oldIndex, newIndex));
-    }
+    if (!over || active.id === over.id) return;
+
+    setImageItems((items) => {
+      const oldIndex = items.findIndex((it) => it.id === active.id);
+      const newIndex = items.findIndex((it) => it.id === over.id);
+      if (oldIndex === -1 || newIndex === -1) return items;
+      return arrayMove(items, oldIndex, newIndex);
+    });
   };
 
-  const handleClose = () => {
-    onClose();
-  };
+  const handleClose = () => onClose();
 
-  const handleButtonClick = () => {
-    fileInputRef?.current?.click();
-  };
+  const handleButtonClick = () => fileInputRef?.current?.click();
 
+  // ---------------------------------------------------------------------------
+  // Save — strip the id wrappers; persisted value stays a plain url string[].
+  // ---------------------------------------------------------------------------
   const onSubmit = (e) => {
     e.preventDefault();
     try {
-      const newValue = imageUrls.length > 0 ? JSON.stringify(imageUrls) : null;
+      const plainUrls = imageItems.map((it) => it.url);
+      const newValue = plainUrls.length > 0 ? JSON.stringify(plainUrls) : null;
       onCellValueChanged({
         ...params,
         newValue,
@@ -203,20 +231,26 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // Delete single — filter by stable id, never by array index.
+  // ---------------------------------------------------------------------------
   const handleConfirmDelete = () => {
-    if (deleteIndex !== null) {
-      setImageUrls((prev) => prev.filter((_, i) => i !== deleteIndex));
+    if (deleteId !== null) {
+      setImageItems((prev) => prev.filter((it) => it.id !== deleteId));
     }
     setIsDeleteDialogOpen(false);
-    setDeleteIndex(null);
+    setDeleteId(null);
   };
 
   const handleDeleteAll = () => {
-    setImageUrls([]);
+    setImageItems([]);
     setIsDeleteDialogOpen(false);
-    setDeleteIndex(null);
+    setDeleteId(null);
   };
 
+  // ---------------------------------------------------------------------------
+  // File processing — new uploads also get stable UUIDs.
+  // ---------------------------------------------------------------------------
   const processFiles = (files) => {
     setIsLoading(true);
     const validFiles = files.filter((file) => {
@@ -234,36 +268,37 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
     }
 
     let processed = 0;
-    const newUrls = [];
+    const newItems = [];
 
     validFiles.forEach((file) => {
       const reader = new FileReader();
+
       reader.onloadend = () => {
-        newUrls.push(reader.result);
+        newItems.push(toItem(reader.result)); // ← wrap with UUID immediately
         processed++;
         if (processed === validFiles.length) {
-          setImageUrls((prev) => [...prev, ...newUrls]);
+          setImageItems((prev) => [...prev, ...newItems]);
           setIsLoading(false);
         }
       };
+
       reader.onerror = () => {
         enqueueSnackbar(`Failed to read file: ${file.name}`, {
           variant: "error",
         });
         processed++;
         if (processed === validFiles.length) {
-          setImageUrls((prev) => [...prev, ...newUrls]);
+          setImageItems((prev) => [...prev, ...newItems]);
           setIsLoading(false);
         }
       };
+
       reader.readAsDataURL(file);
     });
   };
 
   const onDrop = (acceptedFiles) => {
-    if (acceptedFiles.length > 0) {
-      processFiles(acceptedFiles);
-    }
+    if (acceptedFiles.length > 0) processFiles(acceptedFiles);
   };
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -288,13 +323,12 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
 
   const handleImageChange = (event) => {
     const files = Array.from(event?.target?.files || []);
-    if (files.length > 0) {
-      processFiles(files);
-    }
+    if (files.length > 0) processFiles(files);
   };
 
-  const handleDeleteClick = (index) => {
-    setDeleteIndex(index);
+  // Opens delete-single dialog — stores id (not index).
+  const handleDeleteClick = (id) => {
+    setDeleteId(id);
     setIsDeleteDialogOpen(true);
   };
 
@@ -313,7 +347,12 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
     transition: "all 0.2s ease",
   };
 
-  const sortableItems = imageUrls.map((_, index) => `image-${index}`);
+  // Derive the label shown in the delete dialog from deleteId.
+  const deleteLabel = (() => {
+    if (deleteId === null) return "all images";
+    const idx = imageItems.findIndex((it) => it.id === deleteId);
+    return idx !== -1 ? `Image ${idx + 1}` : "image";
+  })();
 
   return (
     <>
@@ -337,6 +376,7 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
             backgroundColor: "background.paper",
           }}
         >
+          {/* Loading state */}
           <ShowComponent condition={isLoading}>
             <Box
               sx={{
@@ -350,7 +390,8 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
             </Box>
           </ShowComponent>
 
-          <ShowComponent condition={!isLoading && imageUrls.length === 0}>
+          {/* Empty state with drag-and-drop zone */}
+          <ShowComponent condition={!isLoading && imageItems.length === 0}>
             <Box {...getRootProps()} sx={containerStyles}>
               <input {...getInputProps()} />
               <Box
@@ -367,11 +408,7 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
                 <img
                   src="/assets/placeholder.svg"
                   alt="No images placeholder"
-                  style={{
-                    width: "80px",
-                    height: "80px",
-                    opacity: 0.6,
-                  }}
+                  style={{ width: "80px", height: "80px", opacity: 0.6 }}
                 />
                 <Box sx={{ textAlign: "center" }}>
                   <Typography
@@ -390,22 +427,26 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
             </Box>
           </ShowComponent>
 
-          <ShowComponent condition={!isLoading && imageUrls.length > 0}>
+          {/* Image grid with drag-to-reorder */}
+          <ShowComponent condition={!isLoading && imageItems.length > 0}>
             <DndContext
               sensors={sensors}
               collisionDetection={closestCenter}
               onDragEnd={handleDragEnd}
             >
+              {/*
+                items={} receives stable UUIDs — dnd-kit can now track
+                each image across renders even after a reorder.
+              */}
               <SortableContext
-                items={sortableItems}
+                items={imageItems.map((it) => it.id)}
                 strategy={rectSortingStrategy}
               >
                 <Box sx={containerStyles}>
-                  {imageUrls.map((url, index) => (
+                  {imageItems.map((item) => (
                     <SortableImageItem
-                      key={`image-${index}`}
-                      url={url}
-                      index={index}
+                      key={item.id}       // ← stable key travels with the image
+                      item={item}
                       onDelete={handleDeleteClick}
                     />
                   ))}
@@ -429,9 +470,9 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
           >
             <Box>
               <Typography variant="body2" color="text.secondary">
-                {imageUrls.length} image{imageUrls.length !== 1 ? "s" : ""}
+                {imageItems.length} image{imageItems.length !== 1 ? "s" : ""}
               </Typography>
-              {imageUrls.length > 1 && (
+              {imageItems.length > 1 && (
                 <Typography variant="caption" color="text.secondary">
                   Drag to reorder
                 </Typography>
@@ -464,7 +505,8 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
                   onChange={handleImageChange}
                 />
               </LoadingButton>
-              {imageUrls.length > 0 && (
+
+              {imageItems.length > 0 && (
                 <LoadingButton
                   size="small"
                   startIcon={
@@ -474,7 +516,7 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
                     />
                   }
                   onClick={() => {
-                    setDeleteIndex(null);
+                    setDeleteId(null); // null = "delete all" mode
                     setIsDeleteDialogOpen(true);
                   }}
                   sx={{
@@ -506,12 +548,7 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
           >
             <SvgColor
               src="/assets/icons/components/ic_save.svg"
-              sx={{
-                width: 20,
-                height: 20,
-                mr: 1,
-                color: "divider",
-              }}
+              sx={{ width: 20, height: 20, mr: 1, color: "divider" }}
             />
             Save
           </LoadingButton>
@@ -522,13 +559,11 @@ const EditImages = ({ params, onClose, onCellValueChanged }) => {
         open={isDeleteDialogOpen}
         onClose={() => {
           setIsDeleteDialogOpen(false);
-          setDeleteIndex(null);
+          setDeleteId(null);
         }}
-        onDelete={deleteIndex !== null ? handleConfirmDelete : handleDeleteAll}
+        onDelete={deleteId !== null ? handleConfirmDelete : handleDeleteAll}
         isPending={false}
-        fileName={
-          deleteIndex !== null ? `Image ${deleteIndex + 1}` : "all images"
-        }
+        fileName={deleteLabel}
         fileType="image"
       />
     </>
