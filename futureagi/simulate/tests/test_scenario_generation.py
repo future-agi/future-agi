@@ -1001,3 +1001,45 @@ class TestGenerateScenarioRowsPrefetch:
         conv_cell = Cell.objects.get(row_id=row_ids[0], column=conv_col)
         assert conv_cell.value == "greeting-then-verify"
         assert conv_cell.status == CellStatus.PASS.value
+
+    def test_cell_resolution_is_one_query_not_per_cell(
+        self,
+        db,
+        scenario_dataset,
+        agent_definition,
+        organization,
+        workspace,
+        django_assert_max_num_queries,
+    ):
+        from simulate.tasks.scenario_tasks import generate_scenario_rows
+
+        columns = list(Column.objects.filter(dataset=scenario_dataset))
+        num_rows = 5
+        row_ids = self._seed_rows(scenario_dataset, num_rows=num_rows)
+        self._seed_cells(scenario_dataset, columns, row_ids)
+        scenario = self._make_scenario_and_graph(
+            scenario_dataset, agent_definition, organization, workspace
+        )
+        cases = self._build_cases(num_rows, columns)
+
+        with patch(
+            "simulate.tasks.scenario_tasks.EnhancedScenariosAgent"
+        ) as mock_agent_cls, patch(
+            "simulate.tasks.scenario_tasks.close_old_connections"
+        ):
+            agent = mock_agent_cls.return_value
+            agent.graph_generator.get_branches.return_value = []
+            agent._generate_cases_for_branches.return_value = cases
+
+            # Cap well under O(num_rows * len(columns)) = 5 * len(columns).
+            # Pre-fix code fires one SELECT per (row, column) inside the loop;
+            # the prefetch collapses those into a single filter(). Reverting
+            # to the per-cell `.get()` blows this budget immediately.
+            with django_assert_max_num_queries(20):
+                generate_scenario_rows(
+                    dataset_id=scenario_dataset.id,
+                    scenario_id=scenario.id,
+                    num_rows=num_rows,
+                    description="test",
+                    new_rows_id=row_ids,
+                )
