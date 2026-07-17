@@ -1031,10 +1031,6 @@ class TestGenerateScenarioRowsPrefetch:
             agent.graph_generator.get_branches.return_value = []
             agent._generate_cases_for_branches.return_value = cases
 
-            # Cap well under O(num_rows * len(columns)) = 5 * len(columns).
-            # Pre-fix code fires one SELECT per (row, column) inside the loop;
-            # the prefetch collapses those into a single filter(). Reverting
-            # to the per-cell `.get()` blows this budget immediately.
             with django_assert_max_num_queries(20):
                 generate_scenario_rows(
                     dataset_id=scenario_dataset.id,
