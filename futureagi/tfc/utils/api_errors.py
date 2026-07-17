@@ -36,6 +36,9 @@ class ApiErrorCode(StrEnum):
     TIMEOUT = "timeout"
     ERROR = "error"
     REQUIRED = "required"
+    # Domain-specific 413 variants: a specific cap was exceeded, so the FE can
+    # distinguish "narrow your selection" from a generic request-too-large.
+    ITEMS_TOO_LARGE = "items_too_large"
 
 
 API_ERROR_TYPE_CHOICES = [(item.value, item.value) for item in ApiErrorType]

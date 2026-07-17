@@ -293,11 +293,13 @@ class TestAddItemsEnumeratedRegression:
         assert resp.status_code == 200, resp.data
         assert resp.data["result"]["added"] == 0
         assert resp.data["result"]["errors"]
-        # The CH failure must be attributed to the add path (caller="add_items"),
-        # not the default "render", so an add-time outage doesn't get bucketed
-        # under render errors and misdirect oncall.
+        # A CH fail-open emits one canonical, alertable event carrying the
+        # source_type and the caller — so an add-time outage is queryable as
+        # ch_bulk_resolve_failed{caller="add_items"} without a bespoke per-name
+        # query, and isn't bucketed under render errors that misdirect oncall.
         assert any(
-            e["event"] == "ch_span_batch_render_error"
+            e["event"] == "ch_bulk_resolve_failed"
+            and e.get("source_type") == "span"
             and e.get("caller") == "add_items"
             for e in logs
         )

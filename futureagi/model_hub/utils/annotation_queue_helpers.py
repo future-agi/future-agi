@@ -758,7 +758,8 @@ def _batch_ch_spans(span_ids, *, project_id=None, include_heavy=True, caller="re
             )
     except Exception as exc:
         logger.warning(
-            "ch_span_batch_render_error",
+            "ch_bulk_resolve_failed",
+            source_type="span",
             count=len(span_ids),
             error=str(exc),
             caller=caller,
@@ -806,7 +807,8 @@ def _batch_ch_trace_roots(trace_ids, *, project_id=None, caller="render"):
                     roots_by_trace.setdefault(str(span.trace_id), []).append(span)
     except Exception as exc:
         logger.warning(
-            "ch_trace_roots_batch_error",
+            "ch_bulk_resolve_failed",
+            source_type="trace",
             count=len(ids),
             error=str(exc),
             caller=caller,
@@ -835,7 +837,8 @@ def _batch_ch_session_fields(session_ids, *, project_id=None, caller="render"):
         )
     except Exception as exc:
         logger.warning(
-            "ch_session_batch_render_error",
+            "ch_bulk_resolve_failed",
+            source_type="session",
             count=len(session_ids),
             error=str(exc),
             caller=caller,
@@ -939,6 +942,9 @@ class _CHTraceSessionSource:
 
 # Above this many CH-native ids resolved without a project to scope by, the add path
 # takes the per-item CH fallback (bounded, but slow enough to be worth a log line).
+# 25 keeps that fallback's sequential point-reads well under the gateway timeout while
+# still flagging an unusually large no-project add: a project-scoped UI add takes the
+# batched path and never reaches here, so crossing this is an SDK/API caller.
 _CH_BULK_FALLBACK_WARN = 25
 
 # select_related paths that let the PG tenant gate traverse org/workspace off a batched

@@ -6060,6 +6060,8 @@ export type ApiSelectionTooLargeErrorApiType = typeof ApiSelectionTooLargeErrorA
 
 export const ApiSelectionTooLargeErrorApiType = {
   selection_too_large: 'selection_too_large',
+  export_too_large: 'export_too_large',
+  items_too_large: 'items_too_large',
 } as const;
 
 export type ApiSelectionTooLargeDetailApiType = typeof ApiSelectionTooLargeDetailApiType[keyof typeof ApiSelectionTooLargeDetailApiType];
@@ -6067,6 +6069,8 @@ export type ApiSelectionTooLargeDetailApiType = typeof ApiSelectionTooLargeDetai
 
 export const ApiSelectionTooLargeDetailApiType = {
   selection_too_large: 'selection_too_large',
+  export_too_large: 'export_too_large',
+  items_too_large: 'items_too_large',
 } as const;
 
 export interface ApiSelectionTooLargeDetailApi {

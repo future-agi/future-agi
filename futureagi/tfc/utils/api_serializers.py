@@ -155,8 +155,14 @@ class ApiDetailErrorResponseSerializer(ApiTextErrorResponseSerializer):
     detail = serializers.CharField(required=True, allow_blank=True)
 
 
+# The contracted "a cap was exceeded" codes, so the FE typed client pattern-
+# matches on a value in the schema instead of a bare string literal. Kept as one
+# tuple both cap serializers share so the two ChoiceFields can't drift.
+TOO_LARGE_ERROR_CODES = ("selection_too_large", "export_too_large", "items_too_large")
+
+
 class ApiSelectionTooLargeDetailSerializer(serializers.Serializer):
-    type = serializers.ChoiceField(choices=("selection_too_large",))
+    type = serializers.ChoiceField(choices=TOO_LARGE_ERROR_CODES)
     message = serializers.CharField()
     total_matching = serializers.IntegerField()
     cap = serializers.IntegerField()
@@ -168,7 +174,7 @@ class ApiSelectionTooLargeErrorSerializer(serializers.Serializer):
     status = serializers.BooleanField(default=False)
     result = serializers.CharField(required=False, allow_null=True)
     type = serializers.ChoiceField(
-        choices=("selection_too_large",), required=False, allow_blank=True
+        choices=TOO_LARGE_ERROR_CODES, required=False, allow_blank=True
     )
     code = serializers.CharField(required=False, default="selection_too_large")
     detail = serializers.CharField(required=False)

@@ -46598,7 +46598,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Type",
           "type": "string",
           "enum": [
-            "selection_too_large"
+            "selection_too_large",
+            "export_too_large",
+            "items_too_large"
           ]
         },
         "code": {
@@ -76266,7 +76268,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Type",
           "type": "string",
           "enum": [
-            "selection_too_large"
+            "selection_too_large",
+            "export_too_large",
+            "items_too_large"
           ]
         },
         "message": {
