@@ -4739,6 +4739,7 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             400: ApiSelectionTooLargeErrorSerializer,
             403: ApiTextErrorResponseSerializer,
             404: ApiTextErrorResponseSerializer,
+            503: ApiTextErrorResponseSerializer,
         },
     )
     @action(detail=False, methods=["post"], url_path="add-items")
@@ -4883,6 +4884,28 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
             return self._gm.not_found("Project not found in organization.")
         except ValueError as e:
             return self._gm.bad_request(str(e))
+        except Exception as exc:  # noqa: BLE001 — CH driver raises many subclasses
+            # The filter-mode resolvers are ClickHouse-only (no PG fallback), so a
+            # CH outage/timeout propagates here. Return a structured, retryable 503
+            # the FE can surface instead of a raw 500. logger.exception (ERROR →
+            # Sentry) keeps a genuine bug from hiding behind the 503 — the resolver
+            # only breadcrumbs the CH-query failure itself at WARNING.
+            logger.exception(
+                "queue_add_items_filter_mode_resolve_failed",
+                queue_id=str(queue.id),
+                source_type=source_type,
+                project_id=str(project_id),
+                error=str(exc),
+                error_type=type(exc).__name__,
+            )
+            return self._gm.custom_error_response(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                result=(
+                    "Could not resolve the selection right now — the source store "
+                    "is temporarily unavailable. Please retry."
+                ),
+                code="source_resolve_unavailable",
+            )
 
         if result.truncated:
             message = (

@@ -18,7 +18,7 @@ from model_hub.models.ai_model import AIModel
 from model_hub.services.bulk_selection import (
     ResolveResult,
     _resolve_span_ids_clickhouse,
-    _span_all_history_filter,
+    _all_history_time_filter,
     resolve_filtered_span_ids,
 )
 from tracer.models.project import Project
@@ -58,10 +58,10 @@ def _install_fake_builder(monkeypatch, *, rows, capture):
 
 
 # ---------------------------------------------------------------------------
-# _span_all_history_filter
+# _all_history_time_filter
 # ---------------------------------------------------------------------------
 def test_all_history_filter_uses_1971_not_1970():
-    f = _span_all_history_filter()
+    f = _all_history_time_filter()
     assert f["column_id"] == "start_time"
     assert f["filter_config"]["filter_op"] == "between"
     lo, hi = f["filter_config"]["filter_value"]

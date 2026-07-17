@@ -24,19 +24,17 @@ ClickHouse migration status:
   ``SessionListQueryBuilder``) through the ``ClickHouseFilterBuilder`` translator,
   so filter semantics match the grid exactly.
 
-  - span, session: ClickHouse ONLY. No PG tracer-table read (rows come only from
-    CH; session score-label filters intersect the annotation ``Score`` table,
-    which is NOT a tracer table). Drop-safe — a CH failure propagates rather than
-    falling back.
-  - trace (+voice): ClickHouse for the explicit-time case; the no-explicit-time
-    case (see ``_has_explicit_time_filter``) and a CH-outage fallback still read
-    the PG tracer tables (``Trace`` / ``ObservationSpan``) via
-    ``_build_trace_base_queryset`` + ``_apply_trace_filters``. These are the last
-    PG tracer references in this module — removed once the all-history CH dispatch
-    lands and the tracer tables are dropped.
+  - trace, voice, span, session: ClickHouse ONLY. No PG tracer-table read — rows
+    come only from CH. When the payload sends no time bound, an all-history
+    window is injected (``_all_history_time_filter``) so "select all matching"
+    spans everything instead of the builders' now-30d default. Drop-safe: a CH
+    failure propagates rather than falling back, and an empty CH result is
+    authoritative. Session score-label filters intersect the annotation ``Score``
+    table, which is NOT a tracer table.
 
   Project / annotation-label / ``Score`` PG lookups stay — those tables are not
-  being dropped.
+  being dropped. ``call_execution`` resolves from the ``simulate`` PG tables,
+  which are also not tracer tables.
 """
 
 from __future__ import annotations
@@ -46,24 +44,7 @@ from dataclasses import dataclass
 from uuid import UUID
 
 import structlog
-from django.db.models import (
-    Avg,
-    Case,
-    CharField,
-    Count,
-    Exists,
-    F,
-    FloatField,
-    IntegerField,
-    JSONField,
-    OuterRef,
-    Q,
-    Subquery,
-    Sum,
-    Value,
-    When,
-)
-from django.db.models.functions import Coalesce, JSONObject, Round
+from django.db.models import Q
 
 from model_hub.models.develop_annotations import AnnotationsLabels
 from model_hub.models.score import Score
@@ -73,13 +54,8 @@ from simulate.utils.persona_filtering import (
     apply_persona_filter,
     is_persona_filter_column,
 )
-from tracer.models.custom_eval_config import CustomEvalConfig
-from tracer.models.observation_span import EvalLogger, ObservationSpan
 from tracer.models.project import Project, ProjectSourceChoices
-from tracer.models.trace import Trace
-from tracer.utils.annotations import build_annotation_subqueries
 from tracer.utils.filters import (
-    FilterEngine,
     apply_created_at_filters,
     normalize_filter_item,
 )
@@ -131,126 +107,6 @@ def _has_explicit_time_filter(filters: list[dict] | None) -> bool:
     return False
 
 
-def _filter_col_type(filter_item: dict) -> str:
-    return _filter_config(filter_item).get("col_type") or ""
-
-
-def _needs_eval_metric_annotations(filters) -> bool:
-    return any(_filter_col_type(f) == "EVAL_METRIC" for f in filters or [])
-
-
-def _needs_annotation_field_annotations(filters) -> bool:
-    return any(_filter_col_type(f) == "ANNOTATION" for f in filters or [])
-
-
-def _annotate_eval_metrics(qs, *, project_id, organization, source_type: str):
-    """Mirror Observe PG list views' dynamic ``metric_<eval_id>`` annotations.
-
-    FilterEngine evaluates eval metric filters against JSON annotations named
-    ``metric_<custom_eval_config_id>`` with a nested ``score`` key. The grid
-    builds those annotations before filtering; queue filter-mode needs the
-    same shape so "select all matching filters" resolves the same rows.
-    """
-    if source_type == "observation_span":
-        eval_log_scope = EvalLogger.objects.filter(
-            observation_span__project_id=project_id,
-            observation_span__project__organization=organization,
-        )
-        outer_filter = {
-            "observation_span_id": OuterRef("id"),
-        }
-    else:
-        eval_log_scope = EvalLogger.objects.filter(
-            trace__project_id=project_id,
-            trace__project__organization=organization,
-        )
-        outer_filter = {
-            "trace_id": OuterRef("id"),
-        }
-
-    eval_configs = CustomEvalConfig.objects.filter(
-        id__in=eval_log_scope.values("custom_eval_config_id").distinct(),
-        deleted=False,
-    ).select_related("eval_template")
-
-    for config in eval_configs:
-        choices = (
-            config.eval_template.choices
-            if getattr(config, "eval_template", None) and config.eval_template.choices
-            else None
-        )
-        metric_qs = (
-            EvalLogger.objects.filter(
-                **outer_filter,
-                custom_eval_config_id=config.id,
-            )
-            .exclude(Q(output_str="ERROR") | Q(error=True))
-            .values("custom_eval_config_id")
-            .annotate(
-                float_score=Round(Avg("output_float") * 100, 2),
-                bool_score=Round(
-                    Avg(
-                        Case(
-                            When(output_bool=True, then=100),
-                            When(output_bool=False, then=0),
-                            default=None,
-                            output_field=FloatField(),
-                        )
-                    ),
-                    2,
-                ),
-                str_list_score=JSONObject(
-                    **{
-                        f"{value}": JSONObject(
-                            score=Round(
-                                100.0
-                                * Count(
-                                    Case(
-                                        When(output_str_list__contains=[value], then=1),
-                                        default=None,
-                                        output_field=IntegerField(),
-                                    )
-                                )
-                                / Count("output_str_list"),
-                                2,
-                            )
-                        )
-                        for value in choices or []
-                    }
-                ),
-            )
-            .values("float_score", "bool_score", "str_list_score")[:1]
-        )
-
-        exists_qs = EvalLogger.objects.filter(
-            **outer_filter,
-            custom_eval_config_id=config.id,
-        )
-        qs = qs.annotate(
-            **{
-                f"metric_{config.id}": Case(
-                    When(
-                        Exists(exists_qs.filter(output_float__isnull=False)),
-                        then=JSONObject(
-                            score=Subquery(metric_qs.values("float_score"))
-                        ),
-                    ),
-                    When(
-                        Exists(exists_qs.filter(output_bool__isnull=False)),
-                        then=JSONObject(score=Subquery(metric_qs.values("bool_score"))),
-                    ),
-                    When(
-                        Exists(exists_qs.filter(output_str_list__isnull=False)),
-                        then=Subquery(metric_qs.values("str_list_score")),
-                    ),
-                    default=None,
-                    output_field=JSONField(),
-                ),
-            }
-        )
-    return qs
-
-
 def _validate_user_scoped_filters(filters, user):
     """Raise ValueError when filters reference user-scoped columns but no user is provided."""
     if user is not None:
@@ -272,265 +128,6 @@ def _project_matches_workspace(project, workspace):
     return project_workspace_id is None and getattr(workspace, "is_default", False)
 
 
-def _trace_project_workspace_filter(workspace):
-    if getattr(workspace, "is_default", False):
-        return Q(project__workspace=workspace) | Q(project__workspace__isnull=True)
-    return Q(project__workspace=workspace)
-
-
-def _build_trace_base_queryset(project_id, organization, workspace=None):
-    """Return org/workspace/project-scoped base Trace queryset.
-
-    Annotates ``span_attributes`` from the root ObservationSpan because the
-    frontend sends SPAN_ATTRIBUTE-typed filters that expect that attribute
-    path to exist on the Trace row. ``list_traces_of_session`` and
-    ``list_voice_calls`` both add this annotation before applying filters;
-    without it, ``span_attributes__contains`` silently matches the entire
-    project and the queue receives ALL traces.
-
-    Raises ``Project.DoesNotExist`` if the project does not belong to the
-    organization.
-    """
-    project = Project.objects.get(id=project_id, organization=organization)
-
-    # CH25-TODO(wave-3): ``list_root_spans_by_trace_ids`` now exists
-    # (commit 93c5c415f) and could supply the per-trace root span
-    # data, but it cannot replace the Subquery+OuterRef pattern here:
-    # ``root_span_qs`` is FUSED into the outer Trace queryset's
-    # ``.annotate(node_type=Case(When(Exists(root_span_qs)...)))``
-    # — Django's SQL generator inlines the subquery into the SELECT.
-    # A ``dict[tid, CHSpan]`` from the reader can't be spliced into
-    # that SQL graph; replacing this requires lifting the entire outer
-    # Trace queryset out of Django (i.e. migrating FilterEngine to a
-    # CH-aware filter builder, which the v2 ``query_builders`` package
-    # already does for the hot path — see ``_resolve_trace_ids_clickhouse``).
-    # PG fallback only; production traffic uses the CH path.
-    root_span_qs = ObservationSpan.objects.filter(
-        trace_id=OuterRef("id"), parent_span_id__isnull=True
-    )
-    all_span_qs = ObservationSpan.objects.filter(trace_id=OuterRef("id"))
-    qs = Trace.objects.filter(project_id=project.id).annotate(
-        node_type=Case(
-            When(
-                Exists(root_span_qs),
-                then=Subquery(root_span_qs.values("observation_type")[:1]),
-            ),
-            default=Value("unknown"),
-            output_field=CharField(),
-        ),
-        trace_name=Case(
-            When(
-                Exists(root_span_qs),
-                then=Subquery(root_span_qs.values("name")[:1]),
-            ),
-            default=Value("[ Incomplete Trace ]"),
-            output_field=CharField(),
-        ),
-        latency=Subquery(root_span_qs.values("latency_ms")[:1]),
-        total_tokens=Coalesce(
-            Subquery(
-                all_span_qs.values("trace_id")
-                .annotate(total=Sum("total_tokens"))
-                .values("total")[:1]
-            ),
-            0,
-            output_field=IntegerField(),
-        ),
-        total_cost=Coalesce(
-            Subquery(
-                all_span_qs.values("trace_id")
-                .annotate(total=Sum("cost"))
-                .values("total")[:1]
-            ),
-            0.0,
-            output_field=FloatField(),
-        ),
-        trace_id=F("id"),
-        # Pull span_attributes off the root span. Old rows only have
-        # eval_attributes populated — Coalesce falls back to keep parity
-        # with the list views.
-        span_attributes=Subquery(
-            root_span_qs.annotate(
-                _attrs=Coalesce("span_attributes", "eval_attributes")
-            ).values("_attrs")[:1]
-        ),
-        # CH25-TODO: end-user lookup via Subquery+order_by — would need
-        # a reader method like
-        #   first_end_user_id_by_trace_ids(trace_ids) -> dict[tid, uid]
-        # to push the per-trace MIN(start_time) selection into CH. Tied
-        # to the broader FilterEngine migration; PG fallback only.
-        user_id=Subquery(
-            ObservationSpan.objects.filter(
-                trace_id=OuterRef("id"), end_user__isnull=False
-            )
-            .order_by("start_time")
-            .values("end_user__user_id")[:1]
-        ),
-        start_time=Coalesce(
-            Subquery(root_span_qs.order_by("start_time").values("start_time")[:1]),
-            "created_at",
-        ),
-        status=Case(
-            When(Exists(root_span_qs.filter(status="ERROR")), then=Value("ERROR")),
-            When(Exists(root_span_qs.filter(status="OK")), then=Value("OK")),
-            default=Value("UNSET"),
-            output_field=CharField(),
-        ),
-    )
-
-    if workspace is not None:
-        qs = qs.filter(_trace_project_workspace_filter(workspace))
-
-    return qs
-
-
-def _apply_voice_call_constraints(
-    qs, filters: list[dict], *, remove_simulation_calls: bool = False
-):
-    """Narrow a Trace queryset to match ``list_voice_calls``'s result set.
-
-    Simulator/voice projects render the grid via ``list_voice_calls`` which
-    constrains to traces whose root span is a conversation, applies voice
-    system metrics (agent latency, turn count, etc.), and optionally hides
-    the VAPI simulator calls. The filter-mode resolver mirrored only
-    ``list_traces_of_session``, so for voice projects it returned a
-    superset — grid shows N, queue receives N + non-conversation traces.
-    This helper brings parity with the voice list view.
-    """
-    # CH25-TODO(wave-3): ``list_root_spans_by_trace_ids(trace_ids,
-    # observation_type='conversation')`` now exists (commit 93c5c415f)
-    # and returns the per-trace conversation root. Still blocked by
-    # the same FilterEngine-fusion gap as _build_trace_base_queryset:
-    # ``has_conversation_root`` is annotated onto the outer Trace
-    # queryset via ``Exists(root_span_qs.filter(...))`` so the
-    # ``.filter(has_conversation_root=True)`` line consumes it as a
-    # Django expression. Replacing requires lifting the queryset out
-    # of Django. Production traffic uses the CH dispatch path
-    # ``_resolve_voice_call_ids_clickhouse`` via
-    # ``VoiceCallListQueryBuilder``; this is the PG fallback.
-    root_span_qs = ObservationSpan.objects.filter(
-        trace_id=OuterRef("id"),
-        parent_span_id__isnull=True,
-    )
-    qs = qs.annotate(
-        has_conversation_root=Exists(
-            root_span_qs.filter(observation_type="conversation")
-        )
-    ).filter(has_conversation_root=True)
-
-    # Voice-specific system metrics (agent_latency / turn_count / etc.) are
-    # stored as span aggregates and are NOT in the standard system-metric
-    # branch applied by ``_apply_trace_filters``.
-    voice_metric_conds, voice_annotations = (
-        FilterEngine.get_filter_conditions_for_voice_system_metrics(filters or [])
-    )
-    if voice_annotations:
-        qs = qs.annotate(**voice_annotations)
-    if voice_metric_conds:
-        qs = qs.filter(voice_metric_conds)
-
-    if remove_simulation_calls:
-        sim_q = FilterEngine.get_filter_conditions_for_simulation_calls(
-            remove_simulation_calls=True
-        )
-        if sim_q:
-            qs = qs.exclude(sim_q)
-
-    return qs
-
-
-def _apply_trace_filters(
-    base_qs,
-    filters: list[dict],
-    *,
-    user,
-    organization,
-    annotation_label_ids: list[str] | None = None,
-):
-    """Apply the same FilterEngine branches as ``list_traces_of_session``.
-
-    Mirrors ``tracer.views.trace.ObservationTraceViewSet.list_traces_of_session``
-    lines 1668-1742. Any drift here is a bug — see parity tests.
-
-    CH25-TODO: FilterEngine is the Q-object filter compiler this function
-    wraps. Routing the entire branch through CH would require a CH-aware
-    FilterEngine variant — the v2 ``ClickHouseFilterBuilder`` already
-    handles this for SPAN_ATTRIBUTE filters in the CH dispatch path above,
-    but a full migration of FilterEngine is out of scope. PG fallback only.
-    """
-    if not filters:
-        return base_qs
-
-    if annotation_label_ids is None:
-        annotation_label_ids = list(
-            AnnotationsLabels.objects.filter(
-                organization=organization, deleted=False
-            ).values_list("id", flat=True)
-        )
-
-    combined = Q()
-    qs = base_qs
-
-    # 1. System metrics
-    system_conds = FilterEngine.get_filter_conditions_for_system_metrics(filters)
-    if system_conds:
-        combined &= system_conds
-
-    # 2. Separate annotation filters from eval filters (must precede #3 and #4)
-    annotation_col_types = {"ANNOTATION"}
-    annotation_column_ids = {"my_annotations", "annotator"}
-    non_annotation = [
-        f
-        for f in filters
-        if _filter_col_type(f) not in annotation_col_types
-        and _filter_column_id(f) not in annotation_column_ids
-    ]
-
-    # 3. Non-system (eval) metrics, excluding annotation columns
-    eval_conds = FilterEngine.get_filter_conditions_for_non_system_metrics(
-        non_annotation
-    )
-    if eval_conds:
-        combined &= eval_conds
-
-    # 4. Voice-call annotations (score / annotator / my_annotations)
-    ann_conds, extra_annotations = (
-        FilterEngine.get_filter_conditions_for_voice_call_annotations(
-            filters, user_id=getattr(user, "id", None)
-        )
-    )
-    if extra_annotations:
-        qs = qs.annotate(**extra_annotations)
-    if ann_conds:
-        combined &= ann_conds
-
-    # 5. Span attributes
-    span_attr_conds = FilterEngine.get_filter_conditions_for_span_attributes(filters)
-    if span_attr_conds:
-        combined &= span_attr_conds
-
-    # 6. has_eval toggle
-    has_eval = FilterEngine.get_filter_conditions_for_has_eval(
-        filters, observe_type="trace"
-    )
-    if has_eval:
-        combined &= has_eval
-
-    # 7. has_annotation toggle
-    has_ann = FilterEngine.get_filter_conditions_for_has_annotation(
-        filters,
-        observe_type="trace",
-        annotation_label_ids=[str(label_id) for label_id in annotation_label_ids],
-    )
-    if has_ann:
-        combined &= has_ann
-
-    if combined:
-        qs = qs.filter(combined)
-
-    return qs
-
-
 def _resolve_voice_call_ids_clickhouse(
     *,
     project_id,
@@ -539,26 +136,19 @@ def _resolve_voice_call_ids_clickhouse(
     cap: int,
     remove_simulation_calls: bool,
     annotation_label_ids: list[str],
-) -> ResolveResult | None:
-    """Resolve voice-call trace IDs via ClickHouse.
+) -> ResolveResult:
+    """Resolve voice-call trace IDs via ClickHouse, mirroring ``list_voice_calls``.
 
-    Mirrors ``_list_voice_calls_clickhouse`` — uses
-    ``VoiceCallListQueryBuilder`` so filter semantics (especially
-    SPAN_ATTRIBUTE filters translated through ``ClickHouseFilterBuilder``)
-    match the grid exactly.
+    Uses ``VoiceCallListQueryBuilder`` so filter semantics — SPAN_ATTRIBUTE
+    filters translated through ``ClickHouseFilterBuilder``, voice system
+    metrics, simulator exclusion — match the voice grid exactly.
 
-    Returns ``None`` if ClickHouse is unavailable so the caller can fall
-    back to the PG path.
+    ClickHouse is the sole backend for voice-call rows (the PG tracer tables
+    are being dropped), so a ClickHouse failure propagates rather than silently
+    resolving to a partial/empty set.
     """
-    try:
-        from tracer.services.clickhouse.query_builders import (
-            VoiceCallListQueryBuilder,
-        )
-        from tracer.services.clickhouse.query_service import (
-            AnalyticsQueryService,
-        )
-    except ImportError:
-        return None
+    from tracer.services.clickhouse.query_builders import VoiceCallListQueryBuilder
+    from tracer.services.clickhouse.query_service import AnalyticsQueryService
 
     analytics = AnalyticsQueryService()
     builder = VoiceCallListQueryBuilder(
@@ -573,8 +163,22 @@ def _resolve_voice_call_ids_clickhouse(
     # results it was the dominant /preview timeout. ``build()`` already adds
     # ``LIMIT cap + 1`` (voice_call_list.py:97), so the cap+1 sentinel gives
     # us "≥ cap" without a second scan.
-    ids_query, ids_params = builder.build()
-    ids_result = analytics.execute_ch_query(ids_query, ids_params, timeout_ms=15_000)
+    try:
+        ids_query, ids_params = builder.build()
+        ids_result = analytics.execute_ch_query(
+            ids_query, ids_params, timeout_ms=15_000
+        )
+    except Exception as exc:
+        # CH is the sole voice backend (PG tracer tables dropped); fail closed.
+        # Breadcrumb for log-based alerting; the re-raise carries the Sentry
+        # error, so this stays WARNING to avoid a duplicate event.
+        logger.warning(
+            "bulk_selection_resolve_voice_ch_query_failed",
+            project_id=str(project_id),
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        raise
     ids = [str(r.get("trace_id", "")) for r in ids_result.data if r.get("trace_id")]
     raw_truncated = len(ids) > cap
 
@@ -658,26 +262,21 @@ def _resolve_trace_ids_clickhouse(
     exclude_ids: set,
     cap: int,
     annotation_label_ids: list[str],
-) -> ResolveResult | None:
-    """Resolve regular trace IDs via ClickHouse.
+) -> ResolveResult:
+    """Resolve regular trace IDs via ClickHouse, mirroring ``list_traces_of_session``.
 
-    Mirrors ``_list_traces_of_session_clickhouse`` — uses
-    ``TraceListQueryBuilder`` so filter semantics (especially
+    Uses ``TraceListQueryBuilder`` so filter semantics (especially
     SPAN_ATTRIBUTE filters translated through ``ClickHouseFilterBuilder``)
     match the non-voice grid exactly.
 
-    Returns ``None`` if ClickHouse is unavailable so the caller can fall
-    back to the PG path.
+    ClickHouse is the sole backend for trace rows (the PG tracer tables are
+    being dropped), so a ClickHouse failure propagates rather than silently
+    resolving to a partial/empty set.
     """
-    try:
-        from tracer.services.clickhouse.query_builders.trace_list import (
-            TraceListQueryBuilder,
-        )
-        from tracer.services.clickhouse.query_service import (
-            AnalyticsQueryService,
-        )
-    except ImportError:
-        return None
+    from tracer.services.clickhouse.query_builders.trace_list import (
+        TraceListQueryBuilder,
+    )
+    from tracer.services.clickhouse.query_service import AnalyticsQueryService
 
     analytics = AnalyticsQueryService()
     builder = TraceListQueryBuilder(
@@ -696,8 +295,22 @@ def _resolve_trace_ids_clickhouse(
     # without a second uniqExact scan (the dominant /preview timeout source).
     # ``build()`` dedups per trace (``LIMIT 1 BY trace_id``) so ``len > cap`` is
     # an honest distinct-trace count.
-    ids_query, ids_params = builder.build()
-    ids_result = analytics.execute_ch_query(ids_query, ids_params, timeout_ms=15_000)
+    try:
+        ids_query, ids_params = builder.build()
+        ids_result = analytics.execute_ch_query(
+            ids_query, ids_params, timeout_ms=15_000
+        )
+    except Exception as exc:
+        # CH is the sole trace backend (PG tracer tables dropped); fail closed.
+        # Breadcrumb for log-based alerting; the re-raise carries the Sentry
+        # error, so this stays WARNING to avoid a duplicate event.
+        logger.warning(
+            "bulk_selection_resolve_trace_ch_query_failed",
+            project_id=str(project_id),
+            error=str(exc),
+            error_type=type(exc).__name__,
+        )
+        raise
     ids = [str(r.get("trace_id", "")) for r in ids_result.data if r.get("trace_id")]
     raw_truncated = len(ids) > cap
 
@@ -772,117 +385,48 @@ def resolve_filtered_trace_ids(
     """
     _validate_user_scoped_filters(filters or [], user)
 
-    # Verify project exists + is in org before we try either backend. Keeps
-    # the 404 contract consistent with the enumerated path.
+    # Project + workspace scope are resolved in PG — the project / annotation-
+    # label tables are NOT tracer tables and are not being dropped. Trace/voice
+    # rows themselves are read only from ClickHouse (no PG tracer-table access),
+    # so filter-mode add stays working once the PG tracer tables are dropped.
+    # Verifying the project up front keeps the 404 contract consistent with the
+    # enumerated path.
     project = Project.objects.get(id=project_id, organization=organization)
     if not _project_matches_workspace(project, workspace):
         return ResolveResult(ids=[], total_matching=0, truncated=False)
 
-    # Dispatch to ClickHouse when available so filter semantics
-    # (especially SPAN_ATTRIBUTE filters translated through
-    # ClickHouseFilterBuilder) match the grid exactly. Both grid paths
-    # (regular traces + voice calls) are CH-first in production, and
-    # PG/CH diverge on JSON span_attribute semantics — the PG fallback
-    # was matching the full project instead of the filtered subset.
     annotation_labels = get_annotation_labels_for_project(project.id, organization)
     annotation_label_ids = [str(lbl.id) for lbl in annotation_labels]
-    ch_result = None
-    if _has_explicit_time_filter(filters):
-        if is_voice_call:
-            ch_result = _resolve_voice_call_ids_clickhouse(
-                project_id=project_id,
-                filters=filters or [],
-                exclude_ids=set(exclude_ids or ()),
-                cap=cap,
-                remove_simulation_calls=remove_simulation_calls,
-                annotation_label_ids=annotation_label_ids,
-            )
-        else:
-            ch_result = _resolve_trace_ids_clickhouse(
-                project_id=project_id,
-                filters=filters or [],
-                exclude_ids=set(exclude_ids or ()),
-                cap=cap,
-                annotation_label_ids=annotation_label_ids,
-            )
-    if ch_result is not None and ch_result.total_matching > 0:
-        return ch_result
-    if ch_result is not None:
-        logger.info(
-            "bulk_selection_resolve_trace_ch_empty_pg_fallback",
-            project_id=str(project_id),
-        )
 
-    base = _build_trace_base_queryset(project_id, organization, workspace)
-    if _needs_eval_metric_annotations(filters or []):
-        base = _annotate_eval_metrics(
-            base,
-            project_id=project.id,
-            organization=organization,
-            source_type="trace",
-        )
-    if _needs_annotation_field_annotations(filters or []):
-        base = build_annotation_subqueries(base, annotation_labels, organization)
-    qs = _apply_trace_filters(
-        base,
-        filters or [],
-        user=user,
-        organization=organization,
-        annotation_label_ids=annotation_label_ids,
-    )
+    # The CH list builders default to a now-30d window when the payload sends no
+    # time bound (a dashboard-perf default in parse_time_range), which would
+    # silently drop older rows a "select all matching this filter" must include.
+    # Widen to all-history so the resolve spans everything, matching the
+    # enumerated path; an explicit user time filter prunes normally.
+    #
+    # Injected here at the caller (not inside the resolvers) so one site covers
+    # both the trace and voice branches; span/session self-inject inside their
+    # single resolver.
+    ch_filters = list(filters or [])
+    if not _has_explicit_time_filter(filters):
+        ch_filters.append(_all_history_time_filter())
 
     if is_voice_call:
-        qs = _apply_voice_call_constraints(
-            qs,
-            filters or [],
+        return _resolve_voice_call_ids_clickhouse(
+            project_id=project_id,
+            filters=ch_filters,
+            exclude_ids=set(exclude_ids or ()),
+            cap=cap,
             remove_simulation_calls=remove_simulation_calls,
+            annotation_label_ids=annotation_label_ids,
         )
-
-    if exclude_ids:
-        qs = qs.exclude(id__in=list(exclude_ids))
-
-    # Mirror the list view's `start_time` annotation so ordering is identical:
-    # prefer the root span's start_time, fall back to Trace.created_at.
-    #
-    # CH25-TODO: equivalent to `per_trace_root_span_start_times(trace_ids)`
-    # which DOES exist in CHSpanReader, but only after the candidate trace
-    # ids are known — at this point the Trace queryset hasn't been
-    # materialised yet so a CH lookup would be N+1 unless we reorder the
-    # whole pipeline. Defer until we restructure resolve_filtered_trace_ids
-    # to materialise trace_ids first, then sort via the CH reader.
-    qs = qs.annotate(
-        start_time=Coalesce(
-            Subquery(
-                ObservationSpan.objects.filter(
-                    trace_id=OuterRef("id"), parent_span_id__isnull=True
-                )
-                .order_by("start_time")
-                .values("start_time")[:1]
-            ),
-            F("created_at"),
-        )
-    ).order_by("-start_time", "-id")
-
-    # Capped fetch — one LIMIT cap+1 SELECT instead of COUNT(*) + SELECT.
-    # The exact total_matching on huge results was the primary /preview timeout
-    # source (full-table scan on 10M+ row trace tables); the caller only needs
-    # "≥ cap" to decide truncation.
-    capped = list(qs.values_list("id", flat=True)[: cap + 1])
-    truncated = len(capped) > cap
-    ids = capped[:cap]
-    total_matching = len(ids) + (1 if truncated else 0)
-
-    logger.info(
-        "bulk_selection_resolve_trace",
-        project_id=str(project_id),
-        filter_count=len(filters or []),
-        exclude_count=len(list(exclude_ids or [])),
-        total_matching=total_matching,
-        returned=len(ids),
-        truncated=truncated,
+    return _resolve_trace_ids_clickhouse(
+        project_id=project_id,
+        filters=ch_filters,
+        exclude_ids=set(exclude_ids or ()),
+        cap=cap,
+        annotation_label_ids=annotation_label_ids,
     )
-
-    return ResolveResult(ids=ids, total_matching=total_matching, truncated=truncated)
 
 
 # --------------------------------------------------------------------------
@@ -890,18 +434,18 @@ def resolve_filtered_trace_ids(
 # --------------------------------------------------------------------------
 
 
-def _span_all_history_filter() -> dict:
-    """A wide-open ``start_time`` window that cancels the CH builder's now-30d default.
+def _all_history_time_filter() -> dict:
+    """A wide-open ``start_time`` window that cancels the CH builders' now-30d default.
 
-    The span-list builder's ``parse_time_range`` defaults to now-30d when the
+    The v2 list builders' ``parse_time_range`` defaults to now-30d when the
     payload sends no time bound (a dashboard-perf default), which would silently
-    drop older spans a "select all matching this filter" must include. Injecting
-    this makes the CH resolve all-history, matching the PG path.
+    drop older rows a "select all matching this filter" must include. Injecting
+    this makes the CH resolve all-history for trace, voice and span alike.
 
-    Lower bound is ``1971`` (not ``1970``): the builder subtracts ``INTERVAL 1
-    DAY`` from the window start (and so do the score subqueries), and a
-    ClickHouse ``DateTime`` is a 32-bit epoch, so ``1970-01-01 - 1 DAY``
-    underflows and matches nothing.
+    Lower bound is ``1971`` (not ``1970``): the trace/voice builders subtract
+    ``INTERVAL 1 DAY`` from the window start for partition pruning (and so do the
+    span score subqueries), and a ClickHouse ``DateTime`` is a 32-bit epoch, so
+    ``1970-01-01 - 1 DAY`` underflows and matches nothing.
     """
     return {
         "column_id": "start_time",
@@ -937,7 +481,7 @@ def _resolve_span_ids_clickhouse(
 
     ch_filters = list(filters or [])
     if not _has_explicit_time_filter(ch_filters):
-        ch_filters.append(_span_all_history_filter())
+        ch_filters.append(_all_history_time_filter())
 
     BuilderCls = get_query_builder_class("SPAN_LIST")  # noqa: N806
     builder = BuilderCls(

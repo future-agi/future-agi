@@ -145,7 +145,9 @@ class TestAddItemsFilterMode:
         self, auth_client, active_queue, observe_project
     ):
         for i in range(3):
-            Trace.objects.create(project=observe_project, name=f"t-{i}")
+            _seed_ch_trace_root(
+                Trace.objects.create(project=observe_project, name=f"t-{i}")
+            )
 
         resp = auth_client.post(
             _add_items_url(active_queue.id),
@@ -170,7 +172,9 @@ class TestAddItemsFilterMode:
     ):
         """Filter-mode add stamps project_id from the selection too (TH-6864), so
         every path that fills a queue leaves items scope-able by the render read."""
-        Trace.objects.create(project=observe_project, name="t-fp")
+        _seed_ch_trace_root(
+            Trace.objects.create(project=observe_project, name="t-fp")
+        )
         resp = auth_client.post(
             _add_items_url(active_queue.id),
             {
@@ -194,6 +198,8 @@ class TestAddItemsFilterMode:
             Trace.objects.create(project=observe_project, name=f"t-{i}")
             for i in range(5)
         ]
+        for _t in traces:
+            _seed_ch_trace_root(_t)
         exclude = [str(traces[0].id), str(traces[1].id)]
 
         resp = auth_client.post(
@@ -218,6 +224,8 @@ class TestAddItemsFilterMode:
     ):
         target = Trace.objects.create(project=observe_project, name="target-trace")
         other = Trace.objects.create(project=observe_project, name="other-trace")
+        _seed_ch_trace_root(target)
+        _seed_ch_trace_root(other)
 
         resp = auth_client.post(
             _add_items_url(active_queue.id),
@@ -285,7 +293,9 @@ class TestAddItemsFilterMode:
         views_mod.MAX_SELECTION_CAP = 2
         try:
             for i in range(3):
-                Trace.objects.create(project=observe_project, name=f"t-{i}")
+                _seed_ch_trace_root(
+                    Trace.objects.create(project=observe_project, name=f"t-{i}")
+                )
             resp = auth_client.post(
                 _add_items_url(active_queue.id),
                 {
@@ -309,11 +319,39 @@ class TestAddItemsFilterMode:
         assert err.get("total_matching") == 3
         assert err.get("cap") == 2
 
+    def test_filter_mode_ch_failure_returns_503_not_500(
+        self, auth_client, active_queue, observe_project, monkeypatch
+    ):
+        # The filter-mode resolvers are ClickHouse-only (no PG fallback). A CH
+        # outage must surface as a structured, retryable 503 the FE can show —
+        # not a raw 500 from Django's default handler.
+        import model_hub.views.annotation_queues as views_mod
+
+        def _boom(**kwargs):
+            raise RuntimeError("CH down")
+
+        monkeypatch.setitem(views_mod.FILTER_MODE_RESOLVERS, "trace", _boom)
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "trace",
+                    "project_id": str(observe_project.id),
+                }
+            },
+            format="json",
+        )
+        assert resp.status_code == 503, resp.data
+        assert resp.data.get("code") == "source_resolve_unavailable"
+
     def test_filter_mode_queue_item_count_matches_added(
         self, auth_client, active_queue, observe_project
     ):
         for i in range(4):
-            Trace.objects.create(project=observe_project, name=f"t-{i}")
+            _seed_ch_trace_root(
+                Trace.objects.create(project=observe_project, name=f"t-{i}")
+            )
 
         resp = auth_client.post(
             _add_items_url(active_queue.id),
