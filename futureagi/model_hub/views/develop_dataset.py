@@ -9837,6 +9837,23 @@ class AddVectorDBColumnView(APIView):
     def _query_vector_db(self, text_input, config, organization_id, workspace_id=None):
         """Query vector database using text input"""
         try:
+            # Normalize config keys from camelCase to snake_case
+            normalized_config = {
+                "collection_name": config.get("collection_name") or config.get("collectionName"),
+                "url": config.get("url"),
+                "search_type": config.get("search_type") or config.get("searchType"),
+                "key": config.get("key"),
+                "limit": config.get("limit", 1),
+                "index_name": config.get("index_name") or config.get("indexName"),
+                "top_k": config.get("top_k") or config.get("topK") or 1,
+                "namespace": config.get("namespace"),
+                "api_key": config.get("api_key") or config.get("apiKey"),
+                "embedding_config": config.get("embedding_config") or config.get("embeddingConfig", {}),
+                "query_key": config.get("query_key") or config.get("queryKey"),
+                "vector_length": config.get("vector_length") or config.get("vectorLength"),
+                "sub_type": config.get("sub_type") or config.get("subType"),
+            }
+            config = normalized_config
             # 1. Set up the embedding model based on config
             embedding_config = config.get("embedding_config", {})
             embedding_type = embedding_config.get("type", "")
@@ -9873,6 +9890,58 @@ class AddVectorDBColumnView(APIView):
                         )
                     },
                 )
+            elif embedding_type == "cohere":
+                embedding_vector = model_manager.get_embeddings(
+                    text_input,
+                    "cohere",
+                    embedding_config.get("model", "embed-english-v3.0"),
+                    model_params={
+                        "api_key": self._get_api_key_for_provider(
+                            organization_id, workspace_id, "cohere"
+                        )
+                    },
+                )
+            elif embedding_type in ["gemini", "vertex_ai"]:
+                embedding_vector = model_manager.get_embeddings(
+                    text_input,
+                    embedding_type,
+                    embedding_config.get("model", "text-embedding-004"),
+                    model_params={
+                        "api_key": self._get_api_key_for_provider(
+                            organization_id, workspace_id, embedding_type
+                        )
+                    },
+                )
+            elif embedding_type == "voyage":
+                embedding_vector = model_manager.get_embeddings(
+                    text_input,
+                    "voyage",
+                    embedding_config.get("model", "voyage-2"),
+                    model_params={
+                        "api_key": self._get_api_key_for_provider(
+                            organization_id, workspace_id, "voyage"
+                        )
+                    },
+                )
+            elif embedding_type == "mistral":
+                api_key = self._get_api_key_for_provider(
+                    organization_id, workspace_id, "mistral"
+                )
+                try:
+                    import litellm
+                    litellm.drop_params = True
+                    model_name = embedding_config.get("model", "mistral/mistral-embed")
+                    if "/" not in model_name:
+                        model_name = f"mistral/{model_name}"
+                    response = litellm.embedding(
+                        model=model_name,
+                        input=[text_input] if isinstance(text_input, str) else text_input,
+                        api_key=api_key
+                    )
+                    embedding_vector = response.data[0]["embedding"]
+                except Exception as e:
+                    logger.error(f"Error fetching embeddings via litellm: {str(e)}")
+                    raise ValueError(f"Failed to fetch embeddings: {str(e)}")
             else:
                 raise ValueError(f"Unsupported embedding type: {embedding_type}")
 
@@ -9912,6 +9981,15 @@ class AddVectorDBColumnView(APIView):
                 return self._query_weaviate(
                     embedding_vector, text_input, config, organization_id, workspace_id
                 )
+
+            elif sub_type == "chroma":
+                return self._query_chroma(embedding_vector, config)
+
+            elif sub_type == "milvus":
+                return self._query_milvus(embedding_vector, config)
+
+            elif sub_type == "pgvector":
+                return self._query_pgvector(embedding_vector, config)
 
             else:
                 raise ValueError(f"Unsupported vector database type: {sub_type}")
@@ -10129,10 +10207,107 @@ class AddVectorDBColumnView(APIView):
             logger.error("Error in _query_weaviate", exc_info=True)
             raise ValueError(f"Failed to query Weaviate: {e}")  # noqa: B904
 
+    def _query_chroma(self, query, config):
+        try:
+            import chromadb
+            from urllib.parse import urlparse
+            
+            parsed = urlparse(config.get("url", ""))
+            client = chromadb.HttpClient(
+                host=parsed.hostname or "localhost",
+                port=parsed.port or 8000,
+            )
+            collection = client.get_collection(name=config["collection_name"])
+            results = collection.query(
+                query_embeddings=[query],
+                n_results=config.get("top_k", 5)
+            )
+            if not results or not results.get("metadatas") or not results["metadatas"][0]:
+                return "No matches found"
+            
+            metadata_list = []
+            for metadata in results["metadatas"][0]:
+                if config.get("key") and config.get("key") in metadata:
+                    metadata = metadata[config.get("key")]
+                metadata_list.append(metadata)
+            return metadata_list
+        except Exception as e:
+            logger.error(f"Error querying Chroma: {str(e)}")
+            raise ValueError(f"Failed to query Chroma: {str(e)}")
+
+    def _query_milvus(self, query, config):
+        try:
+            from pymilvus import MilvusClient
+            
+            api_key_obj = SecretModel.objects.filter(id=config.get("api_key")).first() if config.get("api_key") else None
+            token = api_key_obj.actual_key if api_key_obj else ""
+            
+            client = MilvusClient(
+                uri=config["url"],
+                token=token
+            )
+            
+            results = client.search(
+                collection_name=config["collection_name"],
+                data=[query],
+                limit=config.get("top_k", 5),
+                output_fields=[config.get("key")] if config.get("key") else ["*"]
+            )
+            
+            if not results or not results[0]:
+                return "No matches found"
+                
+            metadata_list = []
+            for match in results[0]:
+                metadata = match.get("entity", {})
+                if config.get("key") and config.get("key") in metadata:
+                    metadata = metadata.get(config.get("key"))
+                metadata_list.append(metadata)
+                
+            return metadata_list
+        except Exception as e:
+            logger.error(f"Error querying Milvus: {str(e)}")
+            raise ValueError(f"Failed to query Milvus: {str(e)}")
+
+    def _query_pgvector(self, query, config):
+        try:
+            import psycopg
+            
+            conn_string = config["url"]
+            table_name = config["collection_name"]
+            limit = config.get("top_k", 5)
+            vector_str = "[" + ",".join(map(str, query)) + "]"
+            
+            with psycopg.connect(conn_string) as conn:
+                with conn.cursor() as cur:
+                    vector_col = config.get("query_key", "embedding")
+                    return_col = config.get("key", "*")
+                    
+                    sql = f"SELECT {return_col} FROM {table_name} ORDER BY {vector_col} <-> %s::vector LIMIT %s"
+                    cur.execute(sql, (vector_str, limit))
+                    
+                    rows = cur.fetchall()
+                    if not rows:
+                        return "No matches found"
+                        
+                    metadata_list = []
+                    for row in rows:
+                        if return_col != "*":
+                            metadata_list.append(row[0])
+                        else:
+                            metadata_list.append(row)
+                    return metadata_list
+        except Exception as e:
+            logger.error(f"Error querying pgvector: {str(e)}")
+            raise ValueError(f"Failed to query pgvector: {str(e)}")
+
     def _process_row(self, row, column, config, organization_id, workspace_id=None):
         try:
-            input_cell = Cell.objects.get(row=row, column=column)
-            query = input_cell.value
+            if hasattr(column, "id"):
+                input_cell = Cell.objects.get(row=row, column=column)
+                query = input_cell.value
+            else:
+                query = row.metadata.get(column) if hasattr(row, 'metadata') and row.metadata else None
             result_info = self._query_vector_db(
                 query, config, organization_id, workspace_id
             )
@@ -10145,21 +10320,29 @@ class AddVectorDBColumnView(APIView):
     def post(self, request, dataset_id, *args, **kwargs):
         try:
             config = request.data
-            self.organization_id = (
-                getattr(request, "organization", None) or request.user.organization.id
-            )
+            org = getattr(request, "organization", None)
+            self.organization_id = str(org.id) if org and hasattr(org, "id") else (str(org) if org else str(request.user.organization.id))
             column_id = config.get("column_id")
             new_column_name = config.get("new_column_name", "Vector DB Result")
             concurrency = config.get("concurrency", 5)
 
-            if not all([column_id, config.get("sub_type"), config.get("api_key")]):
+            if not column_id or not config.get("sub_type"):
+                return self._gm.bad_request(
+                    get_error_message("MISSING_COLUMN_ID_SUB_TYPE_AND_API_KEY")
+                )
+            if config.get("sub_type") in ["pinecone", "qdrant", "weaviate"] and not config.get("api_key"):
                 return self._gm.bad_request(
                     get_error_message("MISSING_COLUMN_ID_SUB_TYPE_AND_API_KEY")
                 )
 
-            input_column = get_object_or_404(
-                Column, id=column_id, dataset_id=dataset_id
-            )
+            try:
+                import uuid
+                uuid.UUID(str(column_id))
+                input_column = get_object_or_404(
+                    Column, id=column_id, dataset_id=dataset_id
+                )
+            except ValueError:
+                input_column = column_id
 
             if Column.objects.filter(
                 name=new_column_name, dataset=dataset_id, deleted=False
@@ -10173,17 +10356,18 @@ class AddVectorDBColumnView(APIView):
                 dataset_id=dataset_id,
                 metadata={
                     "vector_db_config": {
-                        "sub_type": config["sub_type"],
-                        "collection_name": config.get("collection_name"),
+                        "sub_type": config.get("sub_type") or config.get("subType"),
+                        "collection_name": config.get("collection_name") or config.get("collectionName"),
                         "url": config.get("url"),
-                        "search_type": config.get("search_type"),
+                        "search_type": config.get("search_type") or config.get("searchType"),
                         "key": config.get("key"),
                         "limit": config.get("limit", 1),
-                        "index_name": config.get("index_name"),
-                        "top_k": config.get("top_k", 1),
+                        "index_name": config.get("index_name") or config.get("indexName"),
+                        "top_k": config.get("top_k") or config.get("topK") or 1,
                         "namespace": config.get("namespace"),
-                        "api_key": config.get("api_key"),
-                        "embedding_config": config.get("embedding_config"),
+                        "api_key": config.get("api_key") or config.get("apiKey"),
+                        "embedding_config": config.get("embedding_config") or config.get("embeddingConfig"),
+                        "query_key": config.get("query_key") or config.get("queryKey"),
                     },
                     "source_column_id": str(column_id),
                     "concurrency": concurrency,
@@ -10211,8 +10395,8 @@ class AddVectorDBColumnView(APIView):
                 serializable_config,
                 dataset_id,
                 concurrency,
-                str(input_column.id),
-                getattr(request, "organization", None) or request.user.organization.id,
+                str(input_column.id) if hasattr(input_column, "id") else str(input_column),
+                self.organization_id,
                 new_column.id,
                 str(request.workspace.id) if request.workspace else None,
             )
@@ -10251,7 +10435,12 @@ def add_vector_db_column_async(
     if isinstance(config, str):
         config = json.loads(config)
     view = AddVectorDBColumnView()
-    input_column = Column.objects.get(id=input_column_id)
+    try:
+        import uuid
+        uuid.UUID(str(input_column_id))
+        input_column = Column.objects.get(id=input_column_id)
+    except ValueError:
+        input_column = input_column_id
     rows = Row.objects.filter(dataset_id=dataset_id, deleted=False)
     new_cells = []
     total_processed = 0
