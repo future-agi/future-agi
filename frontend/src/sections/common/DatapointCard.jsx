@@ -197,6 +197,26 @@ const DatapointCard = ({
     return value?.cellDiffValue;
   }, [value?.cellDiffValue, dataType]);
 
+  // get the same copy affordance as tabbed cards.
+  const copyIcon = (
+    <SvgColor
+      src="/assets/icons/ic_copy.svg"
+      alt="Copy"
+      sx={{
+        width: 20,
+        height: 20,
+        color: "text.disabled",
+        cursor: "pointer",
+      }}
+      onClick={() => {
+        copyToClipboard(value?.cellValue);
+        enqueueSnackbar("Copied to clipboard", {
+          variant: "success",
+        });
+      }}
+    />
+  );
+
   return (
     <Accordion
       sx={{
@@ -372,24 +392,7 @@ const DatapointCard = ({
                     <Tab value="raw" label="Raw" />
                     {showDiff && <Tab value="difference" label="Difference" />}
                   </Tabs>
-                  {allowCopy && (
-                    <SvgColor
-                      src="/assets/icons/ic_copy.svg"
-                      alt="Copy"
-                      sx={{
-                        width: 20,
-                        height: 20,
-                        color: "text.disabled",
-                        cursor: "pointer",
-                      }}
-                      onClick={() => {
-                        copyToClipboard(value?.cellValue);
-                        enqueueSnackbar("Copied to clipboard", {
-                          variant: "success",
-                        });
-                      }}
-                    />
-                  )}
+                   {allowCopy && copyIcon}
                 </Box>
               ) : null}
               {showTabs ? (
@@ -497,6 +500,19 @@ const DatapointCard = ({
                   </ShowComponent>
                 </>
               ) : (
+                <>
+                  {allowCopy && (
+                    <Box
+                      sx={{
+                        display: "flex",
+                        justifyContent: "flex-end",
+                        alignItems: "center",
+                        padding: "8px 12px",
+                      }}
+                    >
+                      {copyIcon}
+                    </Box>
+                  )}
                 <Box
                   sx={{
                     paddingX: "16px",
@@ -526,6 +542,7 @@ const DatapointCard = ({
                     )}
                   </Typography>
                 </Box>
+                </>
               )}
             </Box>
           </Box>
