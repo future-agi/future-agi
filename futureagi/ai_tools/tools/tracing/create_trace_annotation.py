@@ -196,6 +196,12 @@ class CreateTraceAnnotationTool(BaseTool):
                 "score_source": "human",
                 "notes": "",
                 "organization": context.organization,
+                # Denormalized tracer project id for cheap label discovery.
+                **(
+                    {"tracer_project_id": span.project_id}
+                    if span.project_id
+                    else {}
+                ),
             },
         )
 

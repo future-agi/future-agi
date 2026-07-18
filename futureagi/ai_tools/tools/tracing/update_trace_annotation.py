@@ -208,6 +208,12 @@ class UpdateTraceAnnotationTool(BaseTool):
                             "value": score_value,
                             "score_source": "human",
                             "organization": context.organization,
+                            # Denormalized tracer project id for cheap label discovery.
+                            **(
+                                {"tracer_project_id": span_obj.project_id}
+                                if getattr(span_obj, "project_id", None)
+                                else {}
+                            ),
                         },
                     )
 

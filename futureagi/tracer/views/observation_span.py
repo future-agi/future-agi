@@ -2652,6 +2652,7 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                     # (rare, e.g. orphaned span).
                     from model_hub.utils.annotation_queue_helpers import (
                         resolve_default_queue_item_for_source,
+                        tracer_project_id_for_source,
                     )
 
                     default_item = resolve_default_queue_item_for_source(
@@ -2674,6 +2675,9 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                             label_id=str(annotation_label.pk),
                         )
                         continue
+                    tracer_project_id = tracer_project_id_for_source(
+                        "observation_span", observation_span
+                    )
                     score, _ = Score.no_workspace_objects.update_or_create(
                         observation_span_id=observation_span.pk,
                         label_id=annotation_label.pk,
@@ -2686,6 +2690,11 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                             "score_source": "human",
                             "notes": notes or "",
                             "organization": request.user.organization,
+                            **(
+                                {"tracer_project_id": tracer_project_id}
+                                if tracer_project_id
+                                else {}
+                            ),
                         },
                     )
                     if notes is not None:

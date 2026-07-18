@@ -5310,6 +5310,13 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                         "score_source": "human",
                         "notes": per_label_notes,
                         "organization": request.organization,
+                        # Denormalized tracer project id (QueueItem.project is the
+                        # tracer.Project; null for non-tracer sources).
+                        **(
+                            {"tracer_project_id": item.project_id}
+                            if item.project_id
+                            else {}
+                        ),
                     },
                 )
                 submitted += 1
@@ -7251,6 +7258,13 @@ class QueueItemViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
                         "organization": request.organization,
                         "workspace": getattr(request, "workspace", None)
                         or item.workspace,
+                        # Denormalized tracer project id (QueueItem.project is the
+                        # tracer.Project; null for non-tracer sources).
+                        **(
+                            {"tracer_project_id": item.project_id}
+                            if item.project_id
+                            else {}
+                        ),
                     },
                 )
                 imported += 1
