@@ -38,6 +38,17 @@ const errorMessagesFor = (payload) => {
 };
 
 describe("PersonCreateValidationSchema", () => {
+  it("accepts valid voice persona behavioural selections", () => {
+    const result = PersonCreateValidationSchema.safeParse(validVoicePersona);
+
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({
+      personality: ["Friendly and cooperative"],
+      communicationStyle: ["Direct and concise"],
+      accent: ["american"],
+    });
+  });
+
   it("requires behavioural selections for voice personas", () => {
     const messages = errorMessagesFor({
       ...validVoicePersona,
