@@ -5,9 +5,6 @@ from django.utils import timezone
 
 from accounts.models import Organization
 
-# Import the new resource manager
-from common.resource_manager import get_resource_manager, ResourceType, ResourceExhaustedException
-
 logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from model_hub.services.derived_variable_service import (
