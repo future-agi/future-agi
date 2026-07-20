@@ -74,7 +74,8 @@ x-backend-env: &backend-env
   CH_HTTP_PORT: 8123
   CH_USER: default
   CH_PASSWORD: ""
-  CH_DATABASE: default
+
+  CH_DATABASE: ${CH_DATABASE:-default}
   # CH25 schema/read path. Keep this aligned with FI_CH_DATABASE so the
   # backend and fi-collector read/write the same ClickHouse database.
   CH25_DATABASE: ${CH25_DATABASE:-${CH_DATABASE:-default}}
@@ -87,6 +88,8 @@ x-backend-env: &backend-env
   # this False until the cutover playbook in docs/CH25_MIGRATION.md is
   # complete.
   CH25_DROP_LEGACY_CDC_CHAIN: ${CH25_DROP_LEGACY_CDC_CHAIN:-true}
+
+  CH25_QUERY_TYPES_V2_ONLY: ${CH25_QUERY_TYPES_V2_ONLY:-span_list,trace_list,session_list,voice_call_list,dashboard,monitor_metrics,eval_metrics,filter_builder,trace_detail,annotation_labels}
 
   # Redis
   REDIS_HOST: redis
