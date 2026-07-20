@@ -21,6 +21,8 @@ import {
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import { useSessionDetail, useSessionRequests } from "./hooks/useSessions";
+import { GatewayMetadataJson } from "../components/GatewayMetadata";
+import { hasGatewayMetadata } from "../utils/metadataDisplay";
 import {
   formatDateTime as formatDate,
   formatCost,
@@ -136,7 +138,7 @@ const SessionDetailDrawer = ({ sessionId, open, onClose }) => {
               </Card>
             </Stack>
 
-            {session.metadata && Object.keys(session.metadata).length > 0 && (
+            {hasGatewayMetadata(session.metadata) && (
               <Box mb={3}>
                 <Typography variant="subtitle2" mb={1}>
                   Metadata
@@ -151,7 +153,7 @@ const SessionDetailDrawer = ({ sessionId, open, onClose }) => {
                       whiteSpace: "pre-wrap",
                     }}
                   >
-                    {JSON.stringify(session.metadata, null, 2)}
+                    <GatewayMetadataJson metadata={session.metadata} />
                   </Typography>
                 </Card>
               </Box>

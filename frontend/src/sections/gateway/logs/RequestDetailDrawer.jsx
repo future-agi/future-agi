@@ -28,6 +28,7 @@ import {
 import Iconify from "src/components/iconify";
 import useRequestDetail from "./hooks/useRequestDetail";
 import FeedbackWidget from "../guardrails/FeedbackWidget";
+import { GatewayMetadataTable } from "../components/GatewayMetadata";
 import { formatCost } from "../utils/formatters";
 
 // ---------------------------------------------------------------------------
@@ -325,42 +326,7 @@ function ResponseTab({ log }) {
 MetadataTab.propTypes = { log: PropTypes.object.isRequired };
 
 function MetadataTab({ log }) {
-  const entries = Object.entries(log.metadata || {});
-
-  if (entries.length === 0) {
-    return (
-      <Stack alignItems="center" py={4}>
-        <Typography variant="body2" color="text.secondary">
-          No metadata
-        </Typography>
-      </Stack>
-    );
-  }
-
-  return (
-    <Box p={2}>
-      <Table size="small">
-        <TableHead>
-          <TableRow>
-            <TableCell sx={{ fontWeight: 600 }}>Key</TableCell>
-            <TableCell sx={{ fontWeight: 600 }}>Value</TableCell>
-          </TableRow>
-        </TableHead>
-        <TableBody>
-          {entries.map(([key, value]) => (
-            <TableRow key={key}>
-              <TableCell>{key}</TableCell>
-              <TableCell sx={{ wordBreak: "break-all" }}>
-                {typeof value === "object"
-                  ? JSON.stringify(value)
-                  : String(value)}
-              </TableCell>
-            </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </Box>
-  );
+  return <GatewayMetadataTable metadata={log.metadata} />;
 }
 
 GuardrailsTab.propTypes = { log: PropTypes.object.isRequired };

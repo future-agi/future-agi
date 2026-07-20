@@ -5,6 +5,7 @@ import {
   keepPreviousData,
 } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { normalizeGatewayMetadataField } from "../../utils/metadataDisplay";
 
 const QUERY_KEY = "agentcc-api-keys";
 
@@ -29,7 +30,7 @@ export function useApiKeyDetail(keyId) {
     queryKey: [QUERY_KEY, "detail", keyId],
     queryFn: async () => {
       const { data } = await axios.get(endpoints.gateway.apiKeyDetail(keyId));
-      return data.result;
+      return normalizeGatewayMetadataField(data.result);
     },
     enabled: Boolean(keyId),
     staleTime: 15000,
