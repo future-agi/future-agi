@@ -117,19 +117,51 @@ def _authenticate_via_oauth(token: str) -> ToolContext | None:
             User.objects.all().select_related("organization").get(id=payload["user_id"])
         )
     except User.DoesNotExist:
+        logger.warning("mcp_oauth_user_not_found", user_id=payload.get("user_id"))
+        return None
+
+    # SECURITY FIX: validate token's org_id claim against the user's current
+    # organization. Reject instead of rebinding to current user.organization.
+    token_org_id = payload.get("org_id")
+    if not token_org_id:
+        logger.warning("mcp_oauth_missing_org_claim", user_id=str(user.id))
+        return None
+
+    if str(user.organization_id) != str(token_org_id):
+        logger.warning(
+            "mcp_oauth_org_mismatch",
+            user_id=str(user.id),
+            token_org_id=token_org_id,
+            current_org_id=str(user.organization_id),
+        )
         return None
 
     organization = user.organization
 
+    # SECURITY FIX: workspace must belong to the token's org, no cross-org fallback.
     workspace = None
     if payload.get("workspace_id"):
         workspace = (
             Workspace.objects.all()
             .filter(
-                id=payload["workspace_id"], organization=organization, is_active=True
+                id=payload["workspace_id"],
+                organization=organization,
+                is_active=True,
             )
             .first()
         )
+        if not workspace:
+            # Token workspace is gone or inactive — fail closed, no silent fallback
+            # to a different workspace that may belong to a different org context.
+            logger.warning(
+                "mcp_oauth_workspace_invalid",
+                user_id=str(user.id),
+                org_id=str(organization.id),
+                workspace_id=payload["workspace_id"],
+            )
+            return None
+
+    # Only fall back to default workspace when the token had NO workspace claim.
     if not workspace:
         workspace = (
             Workspace.objects.all()
@@ -140,7 +172,6 @@ def _authenticate_via_oauth(token: str) -> ToolContext | None:
     set_workspace_context(workspace=workspace, organization=organization, user=user)
 
     return ToolContext(user=user, organization=organization, workspace=workspace)
-
 
 def _register_ai_tools():
     """Register all ai_tools as MCP tools on the FastMCP server.
