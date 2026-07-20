@@ -13,7 +13,7 @@ import ExecuteCodeValidation from "./validation";
 import { LoadingButton } from "@mui/lab";
 import PreviewAddColumn from "../PreviewAddColumn";
 import FormTextFieldV2 from "src/components/FormTextField/FormTextFieldV2";
-import { useExecuteCodeStore } from "../../states";
+import { useExecuteCodeStore , useRerunDependentColumnsStore } from "../../states";
 import { useDevelopDetailContext } from "../../Context/DevelopDetailContext";
 import DynamicColumnSkeleton from "../DynamicColumnSkeleton";
 import { ShowComponent } from "../../../../components/show";
@@ -48,6 +48,7 @@ export const ExecuteCodeChild = ({
   editId,
 }) => {
   const { refreshGrid } = useDevelopDetailContext();
+  const { setRerunDependentColumns } = useRerunDependentColumnsStore();
 
   const { control, handleSubmit, reset } = useForm({
     defaultValues: {
@@ -113,7 +114,19 @@ def main(**kwargs):
       });
       refreshGrid();
       onClose();
-    },
+    
+      try {
+        axios.get(endpoints.develop.addColumns.getDependentColumns(editId)).then((res) => {
+          if (res.data?.result?.dependents?.length > 0) {
+            setRerunDependentColumns({
+              sourceColumnId: editId,
+              dependents: res.data.result.dependents,
+            });
+          }
+        });
+      } catch (err) {
+        console.error("Failed to check dependent columns", err);
+      }},
   });
 
   const transformFormToApi = (formValues) => {

@@ -1624,6 +1624,52 @@ class GetOperationConfigView(APIView):
             )
 
 
+class GetDependentColumnsView(APIView):
+    _gm = GeneralMethods()
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, column_id, *args, **kwargs):
+        """Get all columns that depend on this column"""
+        try:
+            source_column = get_object_or_404(
+                Column,
+                id=column_id,
+                deleted=False,
+                dataset__organization_id=getattr(request, "organization", None)
+                or request.user.organization.id,
+            )
+
+            dependents = []
+            source_id_str = str(source_column.id)
+            source_name_ref = f"{{{{{source_column.name}}}}}"
+
+            sibling_columns = Column.objects.filter(
+                dataset=source_column.dataset, deleted=False
+            ).exclude(id=source_column.id)
+
+            for col in sibling_columns:
+                if not col.metadata:
+                    continue
+
+                metadata_str = json.dumps(col.metadata)
+                if source_id_str in metadata_str or source_name_ref in metadata_str:
+                    dependents.append(
+                        {
+                            "id": str(col.id),
+                            "name": col.name,
+                            "operation_type": col.source,
+                        }
+                    )
+
+            return self._gm.success_response({"dependents": dependents})
+
+        except Exception as e:
+            logger.exception(f"Error getting dependent columns: {str(e)}")
+            return self._gm.internal_server_error_response(
+                get_error_message("FAILED_TO_GET_DEPENDENT_COLUMNS")
+            )
+
+
 class RerunOperationView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]

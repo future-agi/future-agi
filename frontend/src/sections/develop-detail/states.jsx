@@ -204,6 +204,12 @@ export const useDeleteColumnStore = create((set) => ({
   setDeleteColumn: (value) => set(() => ({ deleteColumn: value })),
 }));
 
+export const useRerunDependentColumnsStore = create((set) => ({
+  rerunDependentColumns: null,
+  setRerunDependentColumns: (value) => set(() => ({ rerunDependentColumns: value })),
+}));
+
+
 export const useAddEvaluationFeebackStore = create((set) => ({
   addEvaluationFeeback: null,
   setAddEvaluationFeeback: (value) =>
@@ -339,6 +345,7 @@ export const resetAllStates = () => {
   useEditColumnNameStore.getState().setEditColumnName(null);
   useEditColumnTypeStore.getState().setEditColumnType(null);
   useDeleteColumnStore.getState().setDeleteColumn(null);
+  useRerunDependentColumnsStore.getState().setRerunDependentColumns(null);
   useAddEvaluationFeebackStore.getState().setAddEvaluationFeeback(null);
   useImprovePromptStore.getState().setImprovePrompt(null);
   useEditCellStore.getState().setEditCell(null);
