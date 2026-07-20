@@ -233,6 +233,13 @@ providers:
   #     - openai/gpt-4o
   #     - anthropic/claude-3.5-sonnet
 
+  # atlascloud:
+  #   api_key: "${ATLASCLOUD_API_KEY}"
+  #   type: "atlascloud"             # auto-sets base_url + api_format
+  #   models:
+  #     - qwen/qwen3.5-flash
+  #     - deepseek-ai/deepseek-v4-pro
+
 # Explicit model-to-provider mapping (overrides provider-level models).
 # model_map:
 #   gpt-4o: openai

@@ -68,7 +68,28 @@ func TestPreset_Groq(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. applyProviderPreset — "azure" fills only APIFormat (no BaseURL in preset)
+// 4. applyProviderPreset — known type "atlascloud" fills BaseURL and APIFormat
+// ---------------------------------------------------------------------------
+
+func TestPreset_AtlasCloud(t *testing.T) {
+	cfg := &config.ProviderConfig{
+		Type: "atlascloud",
+	}
+	applyProviderPreset(cfg)
+
+	wantURL := "https://api.atlascloud.ai/v1"
+	wantFmt := "openai"
+
+	if cfg.BaseURL != wantURL {
+		t.Errorf("BaseURL = %q, want %q", cfg.BaseURL, wantURL)
+	}
+	if cfg.APIFormat != wantFmt {
+		t.Errorf("APIFormat = %q, want %q", cfg.APIFormat, wantFmt)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 5. applyProviderPreset — "azure" fills only APIFormat (no BaseURL in preset)
 // ---------------------------------------------------------------------------
 
 func TestPreset_Azure(t *testing.T) {
@@ -87,7 +108,7 @@ func TestPreset_Azure(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 5. applyProviderPreset — explicit BaseURL is NOT overridden by preset
+// 6. applyProviderPreset — explicit BaseURL is NOT overridden by preset
 // ---------------------------------------------------------------------------
 
 func TestPreset_ExplicitBaseURLPreserved(t *testing.T) {
@@ -108,7 +129,7 @@ func TestPreset_ExplicitBaseURLPreserved(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. applyProviderPreset — explicit APIFormat is NOT overridden by preset
+// 7. applyProviderPreset — explicit APIFormat is NOT overridden by preset
 // ---------------------------------------------------------------------------
 
 func TestPreset_ExplicitAPIFormatPreserved(t *testing.T) {
@@ -129,7 +150,7 @@ func TestPreset_ExplicitAPIFormatPreserved(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 7. KnownProviders — verify all expected providers exist with correct values
+// 8. KnownProviders — verify all expected providers exist with correct values
 // ---------------------------------------------------------------------------
 
 func TestPreset_KnownProvidersComplete(t *testing.T) {
@@ -146,6 +167,7 @@ func TestPreset_KnownProvidersComplete(t *testing.T) {
 		"anyscale":    {BaseURL: "https://api.endpoints.anyscale.com", APIFormat: "openai"},
 		"replicate":   {BaseURL: "https://api.replicate.com", APIFormat: "openai"},
 		"openrouter":  {BaseURL: "https://openrouter.ai/api", APIFormat: "openai"},
+		"atlascloud":  {BaseURL: "https://api.atlascloud.ai/v1", APIFormat: "openai"},
 		"azure":       {BaseURL: "", APIFormat: "azure"},
 	}
 
@@ -179,7 +201,7 @@ func TestPreset_KnownProvidersComplete(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 8. Table-driven test for all known providers — BaseURL and APIFormat
+// 9. Table-driven test for all known providers — BaseURL and APIFormat
 //    are non-empty where expected
 // ---------------------------------------------------------------------------
 
@@ -213,7 +235,7 @@ func TestPreset_AllKnownProviders_ApplyDefaults(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// 9. Both explicit BaseURL and APIFormat preserved simultaneously
+// 10. Both explicit BaseURL and APIFormat preserved simultaneously
 // ---------------------------------------------------------------------------
 
 func TestPreset_BothExplicitFieldsPreserved(t *testing.T) {
