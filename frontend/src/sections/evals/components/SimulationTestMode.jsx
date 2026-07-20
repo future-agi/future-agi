@@ -1348,11 +1348,10 @@ const SimulationTestMode = React.forwardRef(
             </Box>
           )}
 
-        {/* Variable mapping — skeleton rows stay visible until callDetail
-            resolves, so we don't flicker between two loading states. The
-            shell (search bar, header, rows area with maxHeight 320) mirrors
-            the real table structure so the swap-in is layout-stable. */}
-        {isMappingPending && (
+        {/* Skeleton hides once callDetail lands so the real table doesn't
+            double-render during peripheral-fetch gaps (isPendingCallsFetch
+            can lag past callDetail). */}
+        {isMappingPending && !callDetail && (
           <Box
             sx={{
               border: "1px solid",
