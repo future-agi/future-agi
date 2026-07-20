@@ -15,6 +15,7 @@ import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "notistack";
 import SharedVoiceView from "./SharedVoiceView";
 import { isVoiceCall } from "./sharedViewHelpers";
+import DashboardReadOnlyView from "src/sections/dashboards/DashboardReadOnlyView";
 
 function getSpan(entry) {
   return entry?.observation_span || entry?.observationSpan || {};
@@ -25,7 +26,6 @@ export default function SharedView() {
   const [selectedSpanId, setSelectedSpanId] = useState(null);
   const [leftPanelWidth, setLeftPanelWidth] = useState(35);
 
-  // Resolve token → resource metadata
   const {
     data: shared,
     isLoading: resolving,
@@ -38,15 +38,12 @@ export default function SharedView() {
   const resourceData = shared?.data;
 
   const isTrace = resourceType === "trace";
-  // Voice calls are stored server-side as traces, so the resource_type is
-  // still "trace" — we dispatch on the actual payload shape (presence of a
-  // conversation-type span or top-level voice fields).
   const isVoice = useMemo(
     () => isTrace && isVoiceCall(resourceData),
     [isTrace, resourceData],
   );
+  const isDashboard = resourceType === "dashboard";
 
-  // For traces, the resolve endpoint returns full span tree in data
   const spans =
     resourceData?.observationSpans || resourceData?.observation_spans;
   const summary = resourceData?.summary;
@@ -100,7 +97,6 @@ export default function SharedView() {
 
   const isLoading = resolving;
 
-  // Error states
   if (isError) {
     const status = error?.response?.status;
     const msg = error?.response?.data?.error;
@@ -166,11 +162,13 @@ export default function SharedView() {
     <>
       <Helmet>
         <title>
-          {isVoice
-            ? `Shared Voice Call — ${resourceId?.substring(0, 8) || "..."}`
-            : isTrace
-              ? `Shared Trace — ${resourceId?.substring(0, 8) || "..."}`
-              : "Shared Resource"}
+          {isDashboard
+            ? `Shared Dashboard — ${resourceData?.name || resourceId?.substring(0, 8) || "..."}`
+            : isVoice
+              ? `Shared Voice Call — ${resourceId?.substring(0, 8) || "..."}`
+              : isTrace
+                ? `Shared Trace — ${resourceId?.substring(0, 8) || "..."}`
+                : "Shared Resource"}
         </title>
       </Helmet>
 
@@ -198,18 +196,26 @@ export default function SharedView() {
         >
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
             <Iconify
-              icon={isVoice ? "mdi:phone-outline" : "mdi:share-variant-outline"}
+              icon={
+                isDashboard
+                  ? "mdi:view-dashboard-outline"
+                  : isVoice
+                    ? "mdi:phone-outline"
+                    : "mdi:share-variant-outline"
+              }
               width={20}
               sx={{ color: "primary.main" }}
             />
             <Typography
               sx={{ fontSize: 14, fontWeight: 600, color: "text.primary" }}
             >
-              {isVoice
-                ? "Shared voice call"
-                : `Shared ${resourceType || "resource"}`}
+              {isDashboard
+                ? "Shared dashboard"
+                : isVoice
+                  ? "Shared voice call"
+                  : `Shared ${resourceType || "resource"}`}
             </Typography>
-            {resourceId && (
+            {resourceId && !isDashboard && (
               <Typography
                 sx={{
                   fontSize: 12,
@@ -238,8 +244,14 @@ export default function SharedView() {
           >
             <CircularProgress size={32} />
           </Box>
+        ) : isDashboard ? (
+          /* Dashboard read-only view — no edit/delete/add controls */
+          <DashboardReadOnlyView
+            dashboard={resourceData}
+            shareToken={token}
+          />
         ) : isVoice ? (
-          /* Voice call view — transcript + audio player, read-only */
+          /* Voice call view */
           <SharedVoiceView resourceData={resourceData} />
         ) : isTrace ? (
           /* Trace view */
@@ -247,7 +259,6 @@ export default function SharedView() {
             data-shared-content
             sx={{ flex: 1, display: "flex", overflow: "hidden" }}
           >
-            {/* Left: Tree */}
             <Box
               sx={{
                 width: `${leftPanelWidth}%`,
@@ -268,7 +279,6 @@ export default function SharedView() {
               </Box>
             </Box>
 
-            {/* Divider */}
             <Box
               onMouseDown={handleDragStart}
               sx={{
@@ -305,7 +315,6 @@ export default function SharedView() {
               </Box>
             </Box>
 
-            {/* Right: Span detail */}
             <Box
               sx={{
                 flex: 1,
@@ -369,7 +378,7 @@ export default function SharedView() {
             </Box>
           </Box>
         ) : (
-          /* Non-trace resource — just show the raw data */
+          /* Non-trace resource — raw data fallback */
           <Box sx={{ flex: 1, p: 3, overflow: "auto" }}>
             <Alert severity="info" sx={{ mb: 2 }}>
               Viewing shared {resourceType}

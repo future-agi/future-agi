@@ -114,3 +114,31 @@ export const formatValueWithConfig = (
     ? `${str}${separator}${unit}`
     : `${unit}${separator}${str}`;
 };
+
+// ---------------------------------------------------------------------------
+// Shared grid layout helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Groups a flat widget list into rows respecting a 12-column grid.
+ * Widgets are sorted by position before grouping.
+ */
+export function computeRows(widgets) {
+  const sorted = [...widgets].sort((a, b) => a.position - b.position);
+  const rows = [];
+  let currentRow = [];
+  let rowWidth = 0;
+  for (const w of sorted) {
+    const width = w.width || 12;
+    if (rowWidth + width > 12 && currentRow.length > 0) {
+      rows.push(currentRow);
+      currentRow = [{ ...w, width }];
+      rowWidth = width;
+    } else {
+      currentRow.push({ ...w, width });
+      rowWidth += width;
+    }
+  }
+  if (currentRow.length > 0) rows.push(currentRow);
+  return rows;
+}
