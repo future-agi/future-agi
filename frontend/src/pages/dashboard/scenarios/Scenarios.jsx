@@ -1,5 +1,5 @@
 /* eslint-disable react/prop-types */
-import { Box, Button, Stack, Typography } from "@mui/material";
+import { Box, Button, Stack, Tooltip, Typography } from "@mui/material";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import React, { useCallback, useMemo, useState } from "react";
@@ -162,6 +162,25 @@ function Scenarios() {
           >
             {getValue()}
           </Typography>
+        ),
+      },
+      {
+        id: "description",
+        accessorKey: "description",
+        header: "Description",
+        meta: { flex: 2 },
+        minSize: 240,
+        enableSorting: false,
+        cell: ({ getValue }) => (
+          <Tooltip title={getValue() || ""} placement="top" arrow>
+            <Typography
+              variant="body2"
+              noWrap
+              sx={{ fontSize: 13, color: "text.secondary" }}
+            >
+              {getValue() || "—"}
+            </Typography>
+          </Tooltip>
         ),
       },
       {
