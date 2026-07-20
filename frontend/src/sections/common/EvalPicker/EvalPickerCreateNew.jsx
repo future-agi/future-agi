@@ -122,6 +122,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     setSelectedEval,
     setStep,
     onFiltersChange,
+    sourceTimeWindow,
     filterForm: localFilterForm,
   } = useEvalPickerContext();
   const { enqueueSnackbar } = useSnackbar();
@@ -164,8 +165,13 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
     name: "filters",
   });
   const localApiFilters = useMemo(
-    () => buildApiFilterArray(localFormFilters),
-    [localFormFilters],
+    () =>
+      buildApiFilterArray(
+        localFormFilters,
+        sourceTimeWindow?.startDate,
+        sourceTimeWindow?.endDate,
+      ),
+    [localFormFilters, sourceTimeWindow?.startDate, sourceTimeWindow?.endDate],
   );
 
   // Composite eval state (only used when evalType === "composite")

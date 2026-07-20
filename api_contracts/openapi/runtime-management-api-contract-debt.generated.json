@@ -20,13 +20,13 @@
   ],
   "summary": {
     "runtime_backed_validated_request_decorators": 356,
-    "direct_swagger_auto_schema_decorators": 133,
+    "direct_swagger_auto_schema_decorators": 134,
     "doc_only_input_contract_decorators": 0,
     "broad_request_contract_decorators": 0
   },
   "app_wide_summary": {
     "runtime_backed_validated_request_decorators": 462,
-    "direct_swagger_auto_schema_decorators": 241,
+    "direct_swagger_auto_schema_decorators": 242,
     "doc_only_input_contract_decorators": 0,
     "broad_request_contract_decorators": 0
   },

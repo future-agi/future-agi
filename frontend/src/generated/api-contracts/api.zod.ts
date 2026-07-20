@@ -13143,7 +13143,8 @@ export const ModelHubAnnotationQueuesItemsAddItemsBody = zod.object({
   "exclude_ids": zod.array(zod.string().min(1)).default(modelHubAnnotationQueuesItemsAddItemsBodySelectionExcludeIdsDefault),
   "remove_simulation_calls": zod.boolean().default(modelHubAnnotationQueuesItemsAddItemsBodySelectionRemoveSimulationCallsDefault),
   "is_voice_call": zod.boolean().default(modelHubAnnotationQueuesItemsAddItemsBodySelectionIsVoiceCallDefault)
-}).optional()
+}).optional(),
+  "project_id": zod.string().uuid().optional()
 })
 
 export const modelHubAnnotationQueuesItemsAddItemsResponseStatusDefault = true;
@@ -20987,7 +20988,8 @@ export const ModelHubExperimentsV2FeedbackGetTemplateListResponse = zod.object({
   "eval_name": zod.string().min(1),
   "user_eval_name": zod.string().min(1),
   "choices": zod.array(zod.string()).optional(),
-  "multi_choice": zod.boolean().optional()
+  "multi_choice": zod.boolean().optional(),
+  "choice_scores": zod.record(zod.string(), zod.number()).optional()
 })
 })
 
@@ -21677,31 +21679,22 @@ export const ModelHubFeedbackGetTemplateQueryParams = zod.object({
   "limit": zod.number().optional().describe('Number of results to return per page.')
 })
 
-export const modelHubFeedbackGetTemplateResponseResultsItemSourceIdMax = 255;
 
 
-export const modelHubFeedbackGetTemplateResponseResultsItemRowIdMax = 255;
-
-export const modelHubFeedbackGetTemplateResponseResultsItemActionTypeMax = 255;
 
 
 
 export const ModelHubFeedbackGetTemplateResponse = zod.object({
-  "count": zod.number(),
-  "next": zod.string().url().optional(),
-  "previous": zod.string().url().optional(),
-  "results": zod.array(zod.object({
-  "id": zod.string().uuid().optional(),
-  "source_id": zod.string().min(1).max(modelHubFeedbackGetTemplateResponseResultsItemSourceIdMax),
-  "source": zod.enum(['dataset', 'prompt', 'sdk', 'trace', 'experiment', 'observe', 'eval_playground']),
-  "user_eval_metric": zod.string().uuid().optional(),
-  "value": zod.string().min(1),
-  "explanation": zod.string().optional(),
-  "row_id": zod.string().max(modelHubFeedbackGetTemplateResponseResultsItemRowIdMax).optional(),
-  "custom_eval_config_id": zod.string().uuid().optional(),
-  "feedback_improvement": zod.string().optional(),
-  "action_type": zod.string().max(modelHubFeedbackGetTemplateResponseResultsItemActionTypeMax).optional()
-}))
+  "status": zod.boolean(),
+  "result": zod.object({
+  "output_type": zod.string().min(1).optional(),
+  "eval_description": zod.string().optional(),
+  "eval_name": zod.string().min(1),
+  "user_eval_name": zod.string().min(1),
+  "choices": zod.array(zod.string()).optional(),
+  "multi_choice": zod.boolean().optional(),
+  "choice_scores": zod.record(zod.string(), zod.number()).optional()
+})
 })
 
 
@@ -21952,6 +21945,7 @@ export const ModelHubGetEvalConfigListResponse = zod.object({
   "choices": zod.object({
 
 }).passthrough().optional(),
+  "multi_choice": zod.boolean().optional(),
   "check_internet": zod.boolean().optional(),
   "kb_id": zod.object({
 

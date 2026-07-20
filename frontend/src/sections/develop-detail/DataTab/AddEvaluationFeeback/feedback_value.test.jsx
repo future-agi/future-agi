@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 
 import {
   FEEDBACK_OUTPUT_TYPES,
+  getCurrentValue,
   getReason,
   serializeFeedbackValue,
   toArray,
@@ -65,6 +66,82 @@ describe("feedback_value helpers", () => {
     it("passes scalar values through unchanged", () => {
       expect(serializeFeedbackValue("Passed")).toBe("Passed");
       expect(serializeFeedbackValue(59)).toBe(59);
+    });
+  });
+
+  describe("getCurrentValue: display of the eval's current output", () => {
+    it("returns empty string when the cell has no value", () => {
+      expect(getCurrentValue({}, null)).toBe("");
+      expect(getCurrentValue({ value: null }, null)).toBe("");
+      expect(getCurrentValue({ value: undefined }, null)).toBe("");
+      expect(getCurrentValue({ value: "" }, null)).toBe("");
+    });
+
+    it("returns the raw value as a string when choice_scores is absent", () => {
+      expect(getCurrentValue({ value: 0.5 }, null)).toBe("0.5");
+      expect(getCurrentValue({ value: "Resolved" }, undefined)).toBe("Resolved");
+      // Score of 0 must still render as "0", not be treated as absent.
+      expect(getCurrentValue({ value: 0 }, null)).toBe("0");
+    });
+
+    it("annotates the choice with its derived score when choice_scores maps", () => {
+      const map = { Yes: 1.0, No: 0.0 };
+      expect(getCurrentValue({ value: "Yes" }, map)).toBe("Yes (score 1)");
+      expect(getCurrentValue({ value: "No" }, map)).toBe("No (score 0)");
+    });
+
+    it("falls back to the raw value when the label is not in choice_scores", () => {
+      expect(
+        getCurrentValue({ value: "Unmapped" }, { Yes: 1.0, No: 0.0 }),
+      ).toBe("Unmapped");
+    });
+
+    it("extracts choices out of {score, choices: [...]} object values", () => {
+      expect(
+        getCurrentValue(
+          { value: { score: 0.3, choices: ["Toxic", "Abrupt"] } },
+          null,
+        ),
+      ).toBe("Toxic, Abrupt");
+    });
+
+    it("parses Python-repr with choices via the shared normalizer", () => {
+      expect(
+        getCurrentValue(
+          { value: "{'score': 0.3, 'choices': ['Toxic', 'Abrupt']}" },
+          null,
+        ),
+      ).toBe("Toxic, Abrupt");
+    });
+
+    it("parses JSON-encoded arrays into a comma-separated list", () => {
+      expect(getCurrentValue({ value: '["A","B","C"]' }, null)).toBe("A, B, C");
+    });
+
+    it("returns a bare array as a comma-separated list", () => {
+      expect(getCurrentValue({ value: ["A", "B"] }, null)).toBe("A, B");
+    });
+
+    it("unwraps single-choice {score, choice: 'Bad'} objects instead of stringifying to [object Object]", () => {
+      // score-with-choices evals emit a single label + derived score; the
+      // stored value round-trips through Python-repr so both raw dict and
+      // repr string are exercised.
+      expect(
+        getCurrentValue({ value: { score: 0.0, choice: "Bad" } }, null),
+      ).toBe("Bad");
+      expect(
+        getCurrentValue({ value: "{'score': 0.0, 'choice': 'Bad'}" }, null),
+      ).toBe("Bad");
+    });
+
+    it("annotates unwrapped single-choice objects with choice_scores when mapped", () => {
+      const map = { Bad: 0, Good: 1, Normal: 0.3, Average: 0.7 };
+      expect(
+        getCurrentValue({ value: { score: 0.0, choice: "Bad" } }, map),
+      ).toBe("Bad (score 0)");
+      expect(
+        getCurrentValue({ value: "{'score': 0.7, 'choice': 'Average'}" }, map),
+      ).toBe("Average (score 0.7)");
     });
   });
 

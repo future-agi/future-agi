@@ -836,7 +836,7 @@ class _CountingReaderCM:
     def __exit__(self, *exc):
         return False
 
-    def list_by_ids(self, span_ids, *, project_id=None):
+    def list_by_ids(self, span_ids, *, project_id=None, include_heavy=True):
         ids = [str(s) for s in span_ids]
         self.list_by_ids_calls.append(ids)
         return [self._by_id[i] for i in ids if i in self._by_id]
@@ -1133,7 +1133,11 @@ def test_for_items_mixed_project_resolves_every_root():
         _make_chspan(project_id=proj_a, trace_id=t_a2, parent_span_id=""),
         _make_chspan(project_id=proj_b, trace_id=t_b1, parent_span_id=""),
     ]
-    items = [_trace_item(t_a1, proj_a), _trace_item(t_a2, proj_a), _trace_item(t_b1, proj_b)]
+    items = [
+        _trace_item(t_a1, proj_a),
+        _trace_item(t_a2, proj_a),
+        _trace_item(t_b1, proj_b),
+    ]
     reader = _MultiSpanReaderCM(spans)
     with mock.patch(CH_READER_PATH, return_value=reader):
         cache = helpers.CollectorSourceCache.for_items(items)
@@ -1148,7 +1152,9 @@ def test_for_items_scopes_read_to_item_project():
     """for_items forwards each item's project_id to the reader (PK-prefix prune),
     not None. Fails if the scoping is dropped (regressing to the wide scan)."""
     proj, tid = str(uuid.uuid4()), str(uuid.uuid4())
-    reader = _MultiSpanReaderCM([_make_chspan(project_id=proj, trace_id=tid, parent_span_id="")])
+    reader = _MultiSpanReaderCM(
+        [_make_chspan(project_id=proj, trace_id=tid, parent_span_id="")]
+    )
     with mock.patch(CH_READER_PATH, return_value=reader):
         cache = helpers.CollectorSourceCache.for_items([_trace_item(tid, proj)])
     assert cache.trace_root(tid) is not None

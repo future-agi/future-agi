@@ -142,6 +142,34 @@ def eval_template_choices(db, organization):
         owner=OwnerChoices.USER.value,
         config={"output": "choices", "eval_type_id": "test_eval_type"},
         choices=["Good", "Bad", "Neutral"],
+        multi_choice=True,
+    )
+
+
+@pytest.fixture
+def eval_template_choice_scores(db, organization):
+    return EvalTemplate.objects.create(
+        name="test-eval-template-choice-scores",
+        description="A scoring template with a choice→score map",
+        organization=organization,
+        owner=OwnerChoices.USER.value,
+        config={"output": "score", "eval_type_id": "test_eval_type"},
+        choice_scores={"Yes": 1.0, "Maybe": 0.5, "No": 0.0},
+    )
+
+
+@pytest.fixture
+def user_eval_metric_choice_scores(
+    db, organization, workspace, dataset, eval_template_choice_scores
+):
+    return UserEvalMetric.objects.create(
+        name="Test Eval Metric Choice Scores",
+        organization=organization,
+        workspace=workspace,
+        template=eval_template_choice_scores,
+        dataset=dataset,
+        config={"mapping": {}},
+        status=StatusType.COMPLETED.value,
     )
 
 
@@ -335,6 +363,60 @@ class TestExperimentFeedbackGetTemplateV2:
         assert data["output_type"] == "choices"
         assert data["choices"] == ["A", "B", "C"]
         assert data["multi_choice"] is True
+
+    def test_get_template_multi_choice_ignores_metric_side_override(
+        self,
+        auth_client,
+        experiment,
+        eval_template_choices,
+        dataset,
+        organization,
+        workspace,
+    ):
+        # Metric-side multi_choice override is ignored; the template's
+        # canonical direct field is the single source of truth.
+        metric = UserEvalMetric.objects.create(
+            name="Tone-like Metric",
+            organization=organization,
+            workspace=workspace,
+            template=eval_template_choices,
+            dataset=dataset,
+            config={"config": {"multi_choice": False}},
+            status=StatusType.COMPLETED.value,
+        )
+        experiment.user_eval_template_ids.add(metric)
+
+        response = auth_client.get(
+            url(experiment.id, "get-template/"),
+            {"user_eval_metric_id": str(metric.id)},
+        )
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        data = response.json()["result"]
+        assert data["multi_choice"] is True
+        assert data["choices"] == eval_template_choices.choices
+
+    def test_get_template_returns_choice_scores_when_defined(
+        self, auth_client, experiment, user_eval_metric_choice_scores
+    ):
+        experiment.user_eval_template_ids.add(user_eval_metric_choice_scores)
+        response = auth_client.get(
+            url(experiment.id, "get-template/"),
+            {"user_eval_metric_id": str(user_eval_metric_choice_scores.id)},
+        )
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        data = response.json()["result"]
+        assert data["choice_scores"] == {"Yes": 1.0, "Maybe": 0.5, "No": 0.0}
+
+    def test_get_template_returns_null_choice_scores_when_absent(
+        self, auth_client, experiment_with_evals, user_eval_metric
+    ):
+        response = auth_client.get(
+            url(experiment_with_evals.id, "get-template/"),
+            {"user_eval_metric_id": str(user_eval_metric.id)},
+        )
+        assert response.status_code == status.HTTP_200_OK, response.json()
+        data = response.json()["result"]
+        assert data["choice_scores"] is None
 
     def test_get_template_missing_metric_id(self, auth_client, experiment):
         response = auth_client.get(url(experiment.id, "get-template/"))

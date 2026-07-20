@@ -99,6 +99,7 @@ from tracer.utils.helper import (
     flatten_eval_score_into_entry,
     get_annotation_labels_for_project,
     get_default_trace_config,
+    get_project_eval_configs,
     select_eval_score,
     update_column_config_based_on_eval_config,
     update_span_column_config_based_on_annotations,
@@ -2814,29 +2815,11 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 if not processed_log.get("message_count"):
                     processed_log["message_count"] = len(stored)
 
-        # Fetch ALL non-deleted eval configs for the project so the drawer
-        # renders the same set of evals as the list columns. Missing scores
-        # become placeholder entries with `output=None`.
-        # Eval configs with results for this project's traces. CH25-safe: resolve
-        # via the CH eval table + trace_dict (PG `tracer_trace` is dropped),
-        # mirroring the trace-list path so the drawer shows the same eval set.
-        eval_table, eval_nd = eval_logger_source()
-        cfg_result = analytics.execute_ch_query(
-            "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-            f"FROM {eval_table} FINAL "
-            f"WHERE {eval_nd} "
-            "AND dictGet('trace_dict', 'project_id', trace_id) = toUUID(%(pid)s)",
-            {"pid": str(project_id)},
-            timeout_ms=30000,
-        )
-        cfg_ids = [r.get("cid", "") for r in cfg_result.data if r.get("cid")]
-        if cfg_ids:
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=cfg_ids, deleted=False
-            ).select_related("eval_template")
-        else:
-            eval_configs = []
-        eval_config_ids = [str(c.id) for c in eval_configs]
+        # All non-deleted eval configs for the project so the drawer renders
+        # the same set of evals as the list columns; missing scores become
+        # placeholder entries with `output=None`. Read from PG (indexed) —
+        # replaces the unbounded CH dictGet discovery scan.
+        eval_configs, eval_config_ids = get_project_eval_configs(project_id)
 
         eval_outputs = {}
         trace_evals: dict[str, Any] = {}
@@ -3739,26 +3722,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         page_size = validated_data.get("page_size", 30)
         page_number = page - 1  # Convert 1-based to 0-based
 
-        # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
-        eval_config_ids = []
-        eval_table, eval_nd = eval_logger_source()
-        ch_result = analytics.execute_ch_query(
-            "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-            f"FROM {eval_table} FINAL "
-            f"WHERE {eval_nd} "
-            "AND dictGet('trace_dict', 'project_id', "
-            "trace_id) = toUUID(%(pid)s)",
-            {"pid": str(project_id)},
-            timeout_ms=30000,
-        )
-        ch_ids = [r.get("cid", "") for r in ch_result.data if r.get("cid")]
-        if ch_ids:
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=ch_ids, deleted=False
-            ).select_related("eval_template")
-            eval_config_ids = [str(c.id) for c in eval_configs]
-        else:
-            eval_configs = []
+        # Eval configs for the project, from PG (indexed) — replaces the
+        # unbounded CH dictGet discovery scan.
+        eval_configs, eval_config_ids = get_project_eval_configs(project_id)
 
         # Get annotation labels that have actual annotations/scores for this project
         annotation_labels = get_annotation_labels_for_project(project_id)

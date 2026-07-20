@@ -263,9 +263,15 @@ def _fetch_users_affected_batch(cluster_ids: list[str]) -> dict:
     # resolution is multi-tenant-pinned, so group sessions by their project
     # (read off the junction's cluster, never a PG TraceSession row).
     sessions_by_project: dict[str, set[str]] = {}
+    # Collect the tenant set so the CH user-count read can prune by primary-key
+    # prefix (trace_id sits below project_id in the PK — an unscoped FINAL read
+    # can't prune parts). Every trace_id below belongs to one of these projects.
+    project_ids: set[str] = set()
     for tid, sid, cid, pid in ect_rows:
         if not cid:
             continue
+        if pid:
+            project_ids.add(str(pid))
         if tid:
             trace_to_clusters.setdefault(str(tid), set()).add(cid)
         elif sid:
@@ -286,7 +292,7 @@ def _fetch_users_affected_batch(cluster_ids: list[str]) -> dict:
     # DISTINCT pushed into CH — only user-ids come back, never span payloads.
     with get_reader() as reader:
         users_by_trace = reader.distinct_end_users_by_trace_ids(
-            list(trace_to_clusters.keys())
+            list(trace_to_clusters.keys()), list(project_ids) or None
         )
 
     # Distinct end_user_id per cluster_id — a trace contributes its users to
@@ -313,18 +319,25 @@ def _fetch_sessions_batch(cluster_ids: list[str]) -> dict:
     rows = list(
         ErrorClusterTraces.objects.filter(
             cluster__cluster_id__in=cluster_ids
-        ).values_list("cluster__cluster_id", "trace_id", "trace_session_id")
+        ).values_list(
+            "cluster__cluster_id", "trace_id", "trace_session_id", "cluster__project_id"
+        )
     )
 
-    # Trace members (no junction session) get their session from CH; batch once.
-    trace_ids = {str(tid) for _cid, tid, sid in rows if tid and not sid}
+    # Trace members (no junction session) get their session from CH; batch once,
+    # scoped to the members' tenants so the FINAL read prunes by PK prefix
+    # (trace_id is below project_id in the primary key).
+    trace_ids = {str(tid) for _cid, tid, sid, _pid in rows if tid and not sid}
+    project_ids = {str(pid) for _cid, _tid, _sid, pid in rows if pid}
     ch_sessions: dict[str, str | None] = {}
     if trace_ids:
         with get_reader() as reader:
-            ch_sessions = reader.trace_session_ids_by_trace_ids(list(trace_ids))
+            ch_sessions = reader.trace_session_ids_by_trace_ids(
+                list(trace_ids), list(project_ids) or None
+            )
 
     sessions_by_cluster: dict[str, set] = {}
-    for cid, tid, sid in rows:
+    for cid, tid, sid, _pid in rows:
         session_id = str(sid) if sid else (ch_sessions.get(str(tid)) if tid else None)
         if session_id:
             sessions_by_cluster.setdefault(cid, set()).add(session_id)
@@ -782,17 +795,20 @@ class _CHTraceShim:
         self.output = getattr(root, "output", None)
 
 
-def _resolve_member_traces(trace_ids: list[str]) -> dict:
+def _resolve_member_traces(trace_ids: list[str], project_id: str | None = None) -> dict:
     """``{trace_id: trace-like}`` for cluster members, hydrated from the CH
     root span. Post-cutover traces are CH-only (no PG ``Trace`` row), so the
     root span is the sole source for the attrs the row/rep builders read
     (``id``, ``created_at``, ``input``, ``output``). Members with no root span
     in CH are omitted (same as an unresolvable trace before the cutover).
+
+    ``project_id`` (optional) is forwarded so the underlying root read prunes
+    by primary-key prefix — see ``_get_root_spans_batch``.
     """
     ids = [str(t) for t in trace_ids if t]
     if not ids:
         return {}
-    roots = _get_root_spans_batch(ids)
+    roots = _get_root_spans_batch(ids, project_id)
     out: dict = {}
     for tid in ids:
         root = roots.get(tid)
@@ -857,7 +873,10 @@ def _session_traces_map(
         # Order newest-first by the CH root-span start_time (session_trace_ids
         # returns an unordered DISTINCT set; callers require the latest turn
         # first). Cross-store PG ``Trace.created_at`` is gone post-cutover.
-        start_times = reader.per_trace_root_span_start_times(list(all_trace_ids))
+        # Single-project (see docstring) — pin the tenant so FINAL prunes by PK.
+        start_times = reader.per_trace_root_span_start_times(
+            list(all_trace_ids), [project_id]
+        )
 
     def _rank(tid: str) -> datetime:
         st = start_times.get(tid)
@@ -1225,10 +1244,13 @@ def _readable_phrase(
     return max(near, key=lambda r: r[0].count(" "))
 
 
-def _root_input_texts(trace_ids: list[str]) -> dict[str, str]:
+def _root_input_texts(trace_ids: list[str], project_id: str) -> dict[str, str]:
     """{trace_id: root-span ``input.value``} for the given traces. Powers the
-    failing-vs-passing input corpora for the distinctive-topic builder."""
-    roots = _get_root_spans_batch(trace_ids)
+    failing-vs-passing input corpora for the distinctive-topic builder.
+
+    ``project_id`` (single tenant — both corpora belong to the cluster's
+    project) pins the root read so its FINAL scan prunes by primary-key prefix."""
+    roots = _get_root_spans_batch(trace_ids, project_id)
     out: dict[str, str] = {}
     for tid, root in roots.items():
         text = (root.attrs_string or {}).get("input.value") or root.input or ""
@@ -1307,8 +1329,8 @@ def _insight_distinctive_topic(
     of failing root-inputs vs the KNN-passing baseline."""
     if not baseline_ids:
         return None
-    fail_texts = list(_root_input_texts(trace_ids).values())
-    base_texts = list(_root_input_texts(baseline_ids).values())
+    fail_texts = list(_root_input_texts(trace_ids, project_id).values())
+    base_texts = list(_root_input_texts(baseline_ids, project_id).values())
     if len(fail_texts) < 2 or len(base_texts) < 2:
         return None
     picked = _readable_phrase(_log_odds_distinctive(fail_texts, base_texts, (2, 3)))
@@ -1385,15 +1407,18 @@ def _insight_brief_phrase(cluster_id: str, project_id: str) -> PatternInsight | 
 
 
 def _insight_distribution_shift(
-    trace_ids: list[str], baseline_ids: list[str], metric: str
+    trace_ids: list[str], baseline_ids: list[str], metric: str, project_id: str
 ) -> PatternInsight | None:
     """KS two-sample on a per-trace numeric (``latency`` or ``tokens``) vs the
     passing baseline. Fires when the distributions differ (p < 0.05) AND the
-    failing side is materially larger (median ratio >= 1.5)."""
+    failing side is materially larger (median ratio >= 1.5).
+
+    ``project_id`` (single tenant — both corpora belong to the cluster's
+    project) pins the totals reads so they prune by primary-key prefix."""
     if not baseline_ids:
         return None
-    fail_tot = _get_trace_totals_batch(trace_ids)
-    base_tot = _get_trace_totals_batch(baseline_ids)
+    fail_tot = _get_trace_totals_batch(trace_ids, project_id)
+    base_tot = _get_trace_totals_batch(baseline_ids, project_id)
 
     def _pick(totals: dict) -> list[float]:
         vals = []
@@ -1595,8 +1620,8 @@ def _fetch_pattern_summary(cluster_id: str) -> PatternSummary:
     # Shared builders (both sources) compare vs the KNN-passing baseline.
     candidates: list[PatternInsight | None] = [
         _insight_distinctive_topic(cluster_id, project_id, trace_ids, baseline_ids),
-        _insight_distribution_shift(trace_ids, baseline_ids, "latency"),
-        _insight_distribution_shift(trace_ids, baseline_ids, "tokens"),
+        _insight_distribution_shift(trace_ids, baseline_ids, "latency", project_id),
+        _insight_distribution_shift(trace_ids, baseline_ids, "tokens", project_id),
     ]
     # Scanner-only builders (no passing counterpart for briefs / scan meta).
     if is_scanner:
@@ -1624,12 +1649,20 @@ def _get_root_span(trace_id: str) -> CHSpan | None:
     return roots.get(str(trace_id))
 
 
-def _get_root_spans_batch(trace_ids: list[str]) -> dict:
-    """Return {trace_id_str: CHSpan} -- latest root span per trace."""
+def _get_root_spans_batch(trace_ids: list[str], project_id: str | None = None) -> dict:
+    """Return {trace_id_str: CHSpan} -- latest root span per trace.
+
+    ``project_id`` (optional, single tenant) pins the CH read so the root-span
+    FINAL scan prunes by primary-key prefix instead of relying on the trace_id
+    bloom alone — on a large tenant an unscoped batch reads hundreds of granules
+    across every part. Pass it wherever the caller knows the traces' project.
+    """
     if not trace_ids:
         return {}
     with get_reader() as reader:
-        spans = reader.roots_by_trace_ids([str(t) for t in trace_ids])
+        spans = reader.roots_by_trace_ids(
+            [str(t) for t in trace_ids], project_id=project_id
+        )
     out: dict = {}
     # CH orders by (trace_id, start_time, id) ASC; we want the latest root
     # per trace_id, so a pass that always overwrites keeps the newest.
@@ -1650,15 +1683,18 @@ def _get_trace_totals(
     return totals.get(str(trace_id), (None, None, None))
 
 
-def _get_trace_totals_batch(trace_ids: list[str]) -> dict:
+def _get_trace_totals_batch(trace_ids: list[str], project_id: str | None = None) -> dict:
     """Return {trace_id_str: (latency, prompt, completion)} aggregated from spans.
 
     Summed CH-side — three ints per trace come back, not the span payloads.
+    ``project_id`` (optional) prunes the scan by primary-key prefix.
     """
     if not trace_ids:
         return {}
     with get_reader() as reader:
-        return reader.totals_by_trace_ids([str(t) for t in trace_ids])
+        return reader.totals_by_trace_ids(
+            [str(t) for t in trace_ids], [project_id] if project_id else None
+        )
 
 
 def _get_trace_score(trace_id: str) -> float | None:
@@ -2148,14 +2184,14 @@ def _fetch_representative_traces(
             break
 
     # PG Trace where it exists, else CH-backed shim (post-cutover CH-only traces).
-    traces_by_id = _resolve_member_traces(ordered_ids)
+    traces_by_id = _resolve_member_traces(ordered_ids, project_id)
     deduped = [traces_by_id[t] for t in ordered_ids if t in traces_by_id]
     if not deduped:
         return []
 
     trace_ids = [str(t.id) for t in deduped]
-    roots = _get_root_spans_batch(trace_ids)
-    totals = _get_trace_totals_batch(trace_ids)
+    roots = _get_root_spans_batch(trace_ids, project_id)
+    totals = _get_trace_totals_batch(trace_ids, project_id)
     scores = _get_trace_scores_batch(trace_ids)
     scans = _get_scan_results_batch(trace_ids)
     judges = _trace_judges_batch(trace_ids)
@@ -2289,7 +2325,7 @@ def _fetch_traces_aggregates(cluster_id: str, project_id: str) -> TracesAggregat
     avg_score = avg_score or 0.0
 
     # Latency percentiles: sum(latency_ms) per trace via CH batch helper.
-    totals_by_trace = _get_trace_totals_batch(trace_ids)
+    totals_by_trace = _get_trace_totals_batch(trace_ids, project_id)
     per_trace_latency: list[int] = [
         t[0] for t in totals_by_trace.values() if t[0] is not None
     ]
@@ -2371,7 +2407,7 @@ def _fetch_trace_rows(
             break
 
     # PG Trace where it exists, else CH-backed shim (post-cutover CH-only traces).
-    traces_by_id = _resolve_member_traces(page_trace_ids)
+    traces_by_id = _resolve_member_traces(page_trace_ids, project_id)
     page_traces = [traces_by_id[t] for t in page_trace_ids if t in traces_by_id]
     if not page_traces:
         return [], total
@@ -2380,9 +2416,9 @@ def _fetch_trace_rows(
     session_judges = _session_judges_batch(list(session_by_trace.values()))
 
     # Pre-batch CH/PG lookups: one round-trip each.
-    totals_by_trace = _get_trace_totals_batch(page_trace_ids)
+    totals_by_trace = _get_trace_totals_batch(page_trace_ids, project_id)
     scores_by_trace = _get_trace_scores_batch(page_trace_ids)
-    roots_by_trace = _get_root_spans_batch(page_trace_ids)
+    roots_by_trace = _get_root_spans_batch(page_trace_ids, project_id)
     scans_by_trace = {
         str(sr.trace_id): sr
         for sr in TraceScanResult.objects.filter(trace_id__in=page_trace_ids).only(
@@ -2469,13 +2505,16 @@ def _member_ids_in_window(
     return trace_ids, session_ids
 
 
-def _users_affected_in_window(trace_ids: list[str]) -> int:
-    """Distinct end_user_id across the given traces."""
+def _users_affected_in_window(
+    trace_ids: list[str], project_id: str | None = None
+) -> int:
+    """Distinct end_user_id across the given traces. ``project_id`` (single
+    tenant) pins the CH read so its FINAL scan prunes by primary-key prefix."""
     if not trace_ids:
         return 0
     with get_reader() as reader:
         users_by_trace = reader.distinct_end_users_by_trace_ids(
-            [str(t) for t in trace_ids]
+            [str(t) for t in trace_ids], [project_id] if project_id else None
         )
     all_users: set = set()
     for users in users_by_trace.values():
@@ -2564,8 +2603,8 @@ def _fetch_trend_metrics(
         _avg_eval_score(prev_traces) or _avg_session_eval_score(prev_sessions) or 0.0
     )
 
-    cur_users = _users_affected_in_window(cur_traces)
-    prev_users = _users_affected_in_window(prev_traces)
+    cur_users = _users_affected_in_window(cur_traces, project_id)
+    prev_users = _users_affected_in_window(prev_traces, project_id)
 
     return [
         TrendMetric(
@@ -2649,7 +2688,7 @@ def _fetch_events_over_time_with_passing(
 
         with get_reader() as reader:
             users_by_trace = reader.distinct_end_users_by_trace_ids(
-                list(buckets_by_trace.keys())
+                list(buckets_by_trace.keys()), [project_id] if project_id else None
             )
 
         for tid, user_ids in users_by_trace.items():

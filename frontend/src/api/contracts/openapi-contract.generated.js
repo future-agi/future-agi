@@ -10809,6 +10809,9 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "409": {
             "$ref": "#/definitions/ApiTextErrorResponse"
           },
+          "413": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
           "500": {
             "$ref": "#/definitions/ApiTextErrorResponse"
           },
@@ -11324,6 +11327,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "404": {
+            "$ref": "#/definitions/ApiTextErrorResponse"
+          },
+          "413": {
+            "$ref": "#/definitions/ApiTooLargeError"
+          },
+          "503": {
             "$ref": "#/definitions/ApiTextErrorResponse"
           },
           "default": {
@@ -19734,32 +19743,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "responses": {
           "200": {
-            "required": [
-              "count",
-              "results"
-            ],
-            "type": "object",
-            "properties": {
-              "count": {
-                "type": "integer"
-              },
-              "next": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "previous": {
-                "type": "string",
-                "format": "uri",
-                "x-nullable": true
-              },
-              "results": {
-                "type": "array",
-                "items": {
-                  "$ref": "#/definitions/Feedback"
-                }
-              }
-            }
+            "$ref": "#/definitions/FeedbackTemplateResponse"
           },
           "default": {
             "$ref": "#/definitions/ManagementAPIErrorResponse"
@@ -41924,6 +41908,11 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "selection": {
           "$ref": "#/definitions/Selection"
+        },
+        "project_id": {
+          "title": "Project id",
+          "type": "string",
+          "format": "uuid"
         }
       }
     },
@@ -46643,6 +46632,82 @@ export const OPENAPI_CONTRACT = Object.freeze({
           "title": "Code",
           "type": "string",
           "x-nullable": true
+        },
+        "detail": {
+          "title": "Detail",
+          "type": "string",
+          "x-nullable": true
+        },
+        "result": {
+          "title": "Result",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "message": {
+          "title": "Message",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "error": {
+          "title": "Error",
+          "type": "string",
+          "x-nullable": true
+        },
+        "attr": {
+          "title": "Attr",
+          "type": "string",
+          "x-nullable": true
+        },
+        "details": {
+          "title": "Details",
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    },
+    "ApiTooLargeError": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean",
+          "default": false
+        },
+        "type": {
+          "title": "Type",
+          "type": "string",
+          "enum": [
+            "validation_error",
+            "authentication_error",
+            "payment_required",
+            "entitlement_error",
+            "permission_error",
+            "not_found",
+            "conflict",
+            "client_error",
+            "rate_limit",
+            "server_error",
+            "service_unavailable",
+            "timeout",
+            "api_error"
+          ],
+          "x-nullable": true
+        },
+        "code": {
+          "title": "Code",
+          "type": "string",
+          "enum": [
+            "export_too_large",
+            "items_too_large"
+          ]
         },
         "detail": {
           "title": "Detail",
@@ -55828,6 +55893,22 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "result": {
           "$ref": "#/definitions/FeedbackDetailsResult"
+        }
+      }
+    },
+    "FeedbackTemplateResponse": {
+      "required": [
+        "status",
+        "result"
+      ],
+      "type": "object",
+      "properties": {
+        "status": {
+          "title": "Status",
+          "type": "boolean"
+        },
+        "result": {
+          "$ref": "#/definitions/FeedbackTemplateResult"
         }
       }
     },
@@ -80887,6 +80968,14 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "multi_choice": {
           "title": "Multi choice",
           "type": "boolean"
+        },
+        "choice_scores": {
+          "title": "Choice scores",
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "x-nullable": true
         }
       }
     },
@@ -81358,6 +81447,54 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "total_count": {
           "title": "Total count",
           "type": "integer"
+        }
+      }
+    },
+    "FeedbackTemplateResult": {
+      "required": [
+        "eval_name",
+        "user_eval_name"
+      ],
+      "type": "object",
+      "properties": {
+        "output_type": {
+          "title": "Output type",
+          "type": "string",
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "eval_description": {
+          "title": "Eval description",
+          "type": "string",
+          "x-nullable": true
+        },
+        "eval_name": {
+          "title": "Eval name",
+          "type": "string",
+          "minLength": 1
+        },
+        "user_eval_name": {
+          "title": "User eval name",
+          "type": "string",
+          "minLength": 1
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "multi_choice": {
+          "title": "Multi choice",
+          "type": "boolean"
+        },
+        "choice_scores": {
+          "title": "Choice scores",
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "x-nullable": true
         }
       }
     },
@@ -95933,6 +96070,10 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "choices": {
           "title": "Choices",
           "type": "object"
+        },
+        "multi_choice": {
+          "title": "Multi choice",
+          "type": "boolean"
         },
         "check_internet": {
           "title": "Check internet",

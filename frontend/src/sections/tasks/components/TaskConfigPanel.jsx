@@ -304,6 +304,8 @@ const TaskConfigPanel = ({
   const project = useWatch({ control, name: "project" });
   const rowType = useWatch({ control, name: "rowType" }) || "spans";
   const taskFilters = useWatch({ control, name: "filters" });
+  const startDate = useWatch({ control, name: "startDate" });
+  const endDate = useWatch({ control, name: "endDate" });
   const isProjectSelected = !!project;
   // row_type is immutable after task creation — the dispatcher, the
   // target_type on every EvalLogger row, and the dedup index are all
@@ -799,6 +801,7 @@ const TaskConfigPanel = ({
         onFiltersChange={(f) =>
           setValue("filters", f || [], { shouldDirty: true })
         }
+        sourceTimeWindow={{ startDate, endDate }}
       />
 
       <ModalWrapper

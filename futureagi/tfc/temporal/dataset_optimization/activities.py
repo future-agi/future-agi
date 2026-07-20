@@ -661,6 +661,11 @@ def _prepare_dataset_execution_data(column, dataset, user_eval_metrics, initial_
                 "eval_type_id": template_config.get("eval_type_id"),
                 "output_type": template_config.get("output"),
                 "required_keys": template_config.get("required_keys"),
+                "output_type_normalized": eval_template.output_type_normalized,
+                "choice_scores": eval_template.choice_scores,
+                "pass_threshold": eval_template.pass_threshold,
+                "eval_config_id": str(user_eval_metric.id),
+                "eval_name": user_eval_metric.name or eval_template.name,
             }
         )
 

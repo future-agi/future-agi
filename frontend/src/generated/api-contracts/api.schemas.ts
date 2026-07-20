@@ -6038,6 +6038,7 @@ export interface SelectionApi {
 export interface AddItemsApi {
   items?: AddQueueItemApi[];
   selection?: SelectionApi;
+  project_id?: string;
 }
 
 export interface QueueAddItemsResultApi {
@@ -6088,6 +6089,49 @@ export interface ApiSelectionTooLargeErrorApi {
   /** @minLength 1 */
   message: string;
   error: ApiSelectionTooLargeDetailApi;
+}
+
+export type ApiTooLargeErrorApiType = typeof ApiTooLargeErrorApiType[keyof typeof ApiTooLargeErrorApiType];
+
+
+export const ApiTooLargeErrorApiType = {
+  validation_error: 'validation_error',
+  authentication_error: 'authentication_error',
+  payment_required: 'payment_required',
+  entitlement_error: 'entitlement_error',
+  permission_error: 'permission_error',
+  not_found: 'not_found',
+  conflict: 'conflict',
+  client_error: 'client_error',
+  rate_limit: 'rate_limit',
+  server_error: 'server_error',
+  service_unavailable: 'service_unavailable',
+  timeout: 'timeout',
+  api_error: 'api_error',
+} as const;
+
+export type ApiTooLargeErrorApiCode = typeof ApiTooLargeErrorApiCode[keyof typeof ApiTooLargeErrorApiCode];
+
+
+export const ApiTooLargeErrorApiCode = {
+  export_too_large: 'export_too_large',
+  items_too_large: 'items_too_large',
+} as const;
+
+export type ApiTooLargeErrorApiDetails = {[key: string]: string[]};
+
+export interface ApiTooLargeErrorApi {
+  status?: boolean;
+  type?: ApiTooLargeErrorApiType;
+  code?: ApiTooLargeErrorApiCode;
+  detail?: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: ApiTooLargeErrorApiDetails;
 }
 
 export type AssignItemsApiAction = typeof AssignItemsApiAction[keyof typeof AssignItemsApiAction];
@@ -11050,6 +11094,8 @@ export interface ExperimentFeedbackDetailsResponseApi {
   result: ExperimentFeedbackDetailsResultApi;
 }
 
+export type ExperimentFeedbackTemplateResultApiChoiceScores = {[key: string]: number};
+
 export interface ExperimentFeedbackTemplateResultApi {
   /** @minLength 1 */
   output_type?: string;
@@ -11060,6 +11106,7 @@ export interface ExperimentFeedbackTemplateResultApi {
   user_eval_name: string;
   choices?: string[];
   multi_choice?: boolean;
+  choice_scores?: ExperimentFeedbackTemplateResultApiChoiceScores;
 }
 
 export interface ExperimentFeedbackTemplateResponseApi {
@@ -11273,6 +11320,26 @@ export interface FeedbackDetailsResponseApi {
   result: FeedbackDetailsResultApi;
 }
 
+export type FeedbackTemplateResultApiChoiceScores = {[key: string]: number};
+
+export interface FeedbackTemplateResultApi {
+  /** @minLength 1 */
+  output_type?: string;
+  eval_description?: string;
+  /** @minLength 1 */
+  eval_name: string;
+  /** @minLength 1 */
+  user_eval_name: string;
+  choices?: string[];
+  multi_choice?: boolean;
+  choice_scores?: FeedbackTemplateResultApiChoiceScores;
+}
+
+export interface FeedbackTemplateResponseApi {
+  status: boolean;
+  result: FeedbackTemplateResultApi;
+}
+
 export type ColumnValuesRequestApiColumnPlaceholders = { [key: string]: unknown };
 
 export interface ColumnValuesRequestApi {
@@ -11359,6 +11426,7 @@ export interface EvalConfigApi {
   config_params_option?: EvalConfigApiConfigParamsOption;
   param_modalities?: EvalConfigApiParamModalities;
   choices?: EvalConfigApiChoices;
+  multi_choice?: boolean;
   check_internet?: boolean;
   kb_id?: EvalConfigApiKbId;
   error_localizer?: boolean;
@@ -24389,13 +24457,6 @@ page?: number;
  * Number of results to return per page.
  */
 limit?: number;
-};
-
-export type ModelHubFeedbackGetTemplate200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: FeedbackApi[];
 };
 
 export type ModelHubGetEvalConfigListParams = {

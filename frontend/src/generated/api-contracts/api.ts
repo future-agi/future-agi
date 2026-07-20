@@ -194,6 +194,7 @@ import type {
   ApiKeySuccessResponseApi,
   ApiSelectionTooLargeErrorApi,
   ApiTextErrorResponseApi,
+  ApiTooLargeErrorApi,
   ApiTracesSpanAttributeDetailListParams,
   ApiTracesSpanAttributeKeysListParams,
   ApiTracesSpanAttributeValuesListParams,
@@ -483,6 +484,7 @@ import type {
   FeedUpdateBodyApi,
   FeedbackApi,
   FeedbackDetailsResponseApi,
+  FeedbackTemplateResponseApi,
   FetchAssistantRequestApi,
   FetchAssistantResponseApi,
   FileUploadResponseApi,
@@ -673,7 +675,6 @@ import type {
   ModelHubFeedbackGetFeedbackDetailsParams,
   ModelHubFeedbackGetFeedbackSummary200,
   ModelHubFeedbackGetFeedbackSummaryParams,
-  ModelHubFeedbackGetTemplate200,
   ModelHubFeedbackGetTemplateParams,
   ModelHubFeedbackList200,
   ModelHubFeedbackListParams,
@@ -21696,6 +21697,11 @@ export type modelHubAnnotationQueuesExportAnnotationsResponse409 = {
   status: 409
 }
 
+export type modelHubAnnotationQueuesExportAnnotationsResponse413 = {
+  data: ApiTextErrorResponseApi
+  status: 413
+}
+
 export type modelHubAnnotationQueuesExportAnnotationsResponse500 = {
   data: ApiTextErrorResponseApi
   status: 500
@@ -21703,13 +21709,13 @@ export type modelHubAnnotationQueuesExportAnnotationsResponse500 = {
 
 export type modelHubAnnotationQueuesExportAnnotationsResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 500>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 409 | 413 | 500>
 }
 
 export type modelHubAnnotationQueuesExportAnnotationsResponseSuccess = (modelHubAnnotationQueuesExportAnnotationsResponse200) & {
   headers: Headers;
 };
-export type modelHubAnnotationQueuesExportAnnotationsResponseError = (modelHubAnnotationQueuesExportAnnotationsResponse400 | modelHubAnnotationQueuesExportAnnotationsResponse403 | modelHubAnnotationQueuesExportAnnotationsResponse404 | modelHubAnnotationQueuesExportAnnotationsResponse409 | modelHubAnnotationQueuesExportAnnotationsResponse500 | modelHubAnnotationQueuesExportAnnotationsResponseDefault) & {
+export type modelHubAnnotationQueuesExportAnnotationsResponseError = (modelHubAnnotationQueuesExportAnnotationsResponse400 | modelHubAnnotationQueuesExportAnnotationsResponse403 | modelHubAnnotationQueuesExportAnnotationsResponse404 | modelHubAnnotationQueuesExportAnnotationsResponse409 | modelHubAnnotationQueuesExportAnnotationsResponse413 | modelHubAnnotationQueuesExportAnnotationsResponse500 | modelHubAnnotationQueuesExportAnnotationsResponseDefault) & {
   headers: Headers;
 };
 
@@ -22635,15 +22641,25 @@ export type modelHubAnnotationQueuesItemsAddItemsResponse404 = {
   status: 404
 }
 
+export type modelHubAnnotationQueuesItemsAddItemsResponse413 = {
+  data: ApiTooLargeErrorApi
+  status: 413
+}
+
+export type modelHubAnnotationQueuesItemsAddItemsResponse503 = {
+  data: ApiTextErrorResponseApi
+  status: 503
+}
+
 export type modelHubAnnotationQueuesItemsAddItemsResponseDefault = {
   data: ManagementAPIErrorResponseApi
-  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404>
+  status: Exclude<HTTPStatusCodes, 200 | 400 | 403 | 404 | 413 | 503>
 }
 
 export type modelHubAnnotationQueuesItemsAddItemsResponseSuccess = (modelHubAnnotationQueuesItemsAddItemsResponse200) & {
   headers: Headers;
 };
-export type modelHubAnnotationQueuesItemsAddItemsResponseError = (modelHubAnnotationQueuesItemsAddItemsResponse400 | modelHubAnnotationQueuesItemsAddItemsResponse403 | modelHubAnnotationQueuesItemsAddItemsResponse404 | modelHubAnnotationQueuesItemsAddItemsResponseDefault) & {
+export type modelHubAnnotationQueuesItemsAddItemsResponseError = (modelHubAnnotationQueuesItemsAddItemsResponse400 | modelHubAnnotationQueuesItemsAddItemsResponse403 | modelHubAnnotationQueuesItemsAddItemsResponse404 | modelHubAnnotationQueuesItemsAddItemsResponse413 | modelHubAnnotationQueuesItemsAddItemsResponse503 | modelHubAnnotationQueuesItemsAddItemsResponseDefault) & {
   headers: Headers;
 };
 
@@ -39004,7 +39020,7 @@ export const modelHubFeedbackGetFeedbackSummary = async (params?: ModelHubFeedba
 
 
 export type modelHubFeedbackGetTemplateResponse200 = {
-  data: ModelHubFeedbackGetTemplate200
+  data: FeedbackTemplateResponseApi
   status: 200
 }
 
