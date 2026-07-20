@@ -38,6 +38,7 @@ import {
 } from "date-fns";
 import _ from "lodash";
 import GraphSkeleton from "./GraphSkeleton";
+import { parseTimestampToMs } from "./timestampUtils";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
 import { FILTER_FOR_HAS_EVAL } from "../common";
@@ -375,10 +376,10 @@ const PrimaryGraph = ({
     const tData = [];
 
     for (const item of items) {
-      if (item.timestamp == null) continue;
-      const ts = item.timestamp.replace(/\+00:00$/, "");
-      mData.push({ x: new Date(ts).getTime(), y: item.value ?? 0 });
-      tData.push({ x: new Date(ts).getTime(), y: item.primary_traffic ?? 0 });
+      const ts = parseTimestampToMs(item.timestamp);
+      if (ts == null) continue;
+      mData.push({ x: ts, y: item.value ?? 0 });
+      tData.push({ x: ts, y: item.primary_traffic ?? 0 });
     }
 
     return { metricData: mData, trafficData: tData };
