@@ -5,6 +5,7 @@ import { Box, Button, Divider, Popover } from "@mui/material";
 import { useForm } from "react-hook-form";
 import FormTextFieldV2 from "../FormTextField/FormTextFieldV2.jsx";
 import PropType from "prop-types";
+import { getMaxSelectableDate, isDateSelectable } from "./dateRangeLimits";
 
 export default function CustomDateRangePicker({
   open,
@@ -17,8 +18,11 @@ export default function CustomDateRangePicker({
   const [range, setRange] = useState({ start: null, end: null });
   const [currentDate1, setCurrentDate1] = useState(new Date());
   const [currentDate2, setCurrentDate2] = useState(addMonths(new Date(), 1));
+  const maxSelectableDate = getMaxSelectableDate();
 
   const handleSelectDate = (date) => {
+    if (!isDateSelectable(date, maxSelectableDate)) return;
+
     if (!range.start || (range.start && range.end)) {
       setRange({ start: date, end: null });
     } else if (range.start && !range.end) {
@@ -33,6 +37,7 @@ export default function CustomDateRangePicker({
   const handleInputChange = (value, type) => {
     const parsedDate = parseISO(value);
     if (!isValid(parsedDate)) return;
+    if (!isDateSelectable(parsedDate, maxSelectableDate)) return;
 
     setRange((prev) => {
       if (type === "start") {
@@ -123,6 +128,7 @@ export default function CustomDateRangePicker({
               }}
               range={range}
               onSelect={handleSelectDate}
+              maxDate={maxSelectableDate}
             />
           </Box>
 
@@ -161,6 +167,7 @@ export default function CustomDateRangePicker({
               }}
               range={range}
               onSelect={handleSelectDate}
+              maxDate={maxSelectableDate}
             />
           </Box>
         </Box>
