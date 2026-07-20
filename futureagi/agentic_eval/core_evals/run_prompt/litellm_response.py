@@ -321,7 +321,13 @@ class RunPrompt:
         # Token usage: prompt (text) via tiktoken helper, completion (audio) via 32 tokens/sec
         try:
             prompt_tokens = (count_tiktoken_tokens(input_text) if count_tiktoken_tokens else 0)
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                "Failed to count prompt tokens for audio TTS",
+                model=self.model,
+                error=str(e),
+                input_length=len(input_text),
+            )
             prompt_tokens = None
         completion_tokens = int(duration_seconds * 32) if duration_seconds else None
         total_tokens = (
@@ -342,7 +348,13 @@ class RunPrompt:
                 if (prompt_tokens is not None and completion_tokens is not None)
                 else {"total_cost": 0.0, "prompt_cost": 0.0, "completion_cost": 0.0}
             )
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                "Failed to calculate cost for audio TTS",
+                model=self.model,
+                error=str(e),
+                usage_payload=usage_payload,
+            )
             cost_payload = {
                 "total_cost": 0.0,
                 "prompt_cost": 0.0,
@@ -725,21 +737,26 @@ class RunPrompt:
                 logger.info(
                     f"[STT] Raw input: type={type(audio_input).__name__}, preview={str(audio_input)[:200]}"
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to log STT raw input details", error=str(e))
 
         # Normalize audio input using shared utility
         audio_bytes = audio_bytes_from_url_or_base64(audio_input)
 
         try:
             logger.info(f"[STT] Normalized bytes length={len(audio_bytes)}")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to log normalized audio bytes length", error=str(e))
 
         # Ensure OpenAI Whisper gets a recognized file extension; convert if needed
         try:
             detected = (detect_audio_format(audio_bytes) or "").lower()
-        except Exception:
+        except Exception as e:
+            logger.warning(
+                "Failed to detect audio format for STT",
+                error=str(e),
+                audio_length=len(audio_bytes),
+            )
             detected = ""
         allowed = {
             "flac",
@@ -760,7 +777,12 @@ class RunPrompt:
             try:
                 audio_bytes, _ = convert_to_mp3(audio_bytes)
                 file_ext = "mp3"
-            except Exception:
+            except Exception as e:
+                logger.warning(
+                    "Failed to convert audio to mp3 for STT, falling back to wav",
+                    error=str(e),
+                    detected_format=detected,
+                )
                 # Fallback: still try with wav name
                 file_ext = "wav"
 
@@ -1704,9 +1726,13 @@ class RunPrompt:
                         f"({model_max}) for {self.model}, clamping to {model_max}"
                     )
                     payload["max_tokens"] = model_max
-            except Exception:
+            except Exception as e:
                 # Unknown model (e.g. custom) — skip validation, pass through
-                pass
+                logger.debug(
+                    "Could not validate max_tokens for model (likely custom model)",
+                    model=self.model,
+                    error=str(e),
+                )
 
         # Handle models that require max_completion_tokens instead of max_tokens
         # OpenAI reasoning models have special parameter requirements:
