@@ -284,7 +284,8 @@ from ai_tools.tools.users import revoke_api_key  # noqa: F401
 from ai_tools.tools.users import update_user_role  # noqa: F401
 from ai_tools.tools.users import update_workspace  # noqa: F401
 
-# Web tools (4)
+# Web tools (5)
+from ai_tools.tools.web import adanos_market_sentiment  # noqa: F401
 from ai_tools.tools.web import brave_search  # noqa: F401
 from ai_tools.tools.web import ground_truth_search  # noqa: F401
 from ai_tools.tools.web import kb_search  # noqa: F401
