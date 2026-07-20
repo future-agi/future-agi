@@ -315,6 +315,10 @@ const RequestBody = ({
 
   const inputPadding = multiline ? "8px" : "8.5px 12px";
 
+  // The textarea must stay transparent so the highlight backdrop shows through —
+  // a caller-supplied background belongs on the wrapper instead.
+  const { backgroundColor: sxBackgroundColor, ...textareaSx } = sx || {};
+
   return (
     <Box
       sx={{
@@ -338,7 +342,7 @@ const RequestBody = ({
       <div
         style={{
           position: "relative",
-          backgroundColor: theme.palette.background.default,
+          backgroundColor: sxBackgroundColor || theme.palette.background.default,
           borderRadius: "8px",
         }}
       >
@@ -393,7 +397,7 @@ const RequestBody = ({
             backgroundColor: "transparent",
             position: "relative",
             verticalAlign: "top",
-            ...sx,
+            ...textareaSx,
           }}
           onKeyDown={onKeyDown}
         />
