@@ -24,6 +24,8 @@ export default function useKeyboardShortcuts({
   onPrev,
   onNext,
   onEscape,
+  canPrev = true,
+  canNext = true,
 }) {
   useEffect(() => {
     const handler = (e) => {
@@ -46,12 +48,18 @@ export default function useKeyboardShortcuts({
           onSkip?.();
           break;
         case "ArrowLeft":
-          e.preventDefault();
-          onPrev?.();
+          // Guard at the first item so the key can't trigger a pointless
+          // fetch that "loads and comes back" — matches the disabled button.
+          if (canPrev) {
+            e.preventDefault();
+            onPrev?.();
+          }
           break;
         case "ArrowRight":
-          e.preventDefault();
-          onNext?.();
+          if (canNext) {
+            e.preventDefault();
+            onNext?.();
+          }
           break;
         case "Escape":
           e.preventDefault();
@@ -64,5 +72,5 @@ export default function useKeyboardShortcuts({
 
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [onSubmit, onSkip, onPrev, onNext, onEscape]);
+  }, [onSubmit, onSkip, onPrev, onNext, onEscape, canPrev, canNext]);
 }
