@@ -41,6 +41,11 @@ _URL_TYPE_TO_ARTIFACT: dict[str, str] = {
     "mono_customer": VapiArtifactType.CUSTOMER,
     "mono_assistant": VapiArtifactType.ASSISTANT,
     "stereo": VapiArtifactType.STEREO,
+    # Legacy EE persist_audio_to_s3() names.
+    "recording": VapiArtifactType.MONO,
+    "stereo_recording": VapiArtifactType.STEREO,
+    "customer_recording": VapiArtifactType.CUSTOMER,
+    "assistant_recording": VapiArtifactType.ASSISTANT,
 }
 
 

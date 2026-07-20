@@ -39,6 +39,10 @@ class TestArtifactForUrlType:
             ("mono_customer", VapiArtifactType.CUSTOMER),
             ("mono_assistant", VapiArtifactType.ASSISTANT),
             ("stereo", VapiArtifactType.STEREO),
+            ("recording", VapiArtifactType.MONO),
+            ("stereo_recording", VapiArtifactType.STEREO),
+            ("customer_recording", VapiArtifactType.CUSTOMER),
+            ("assistant_recording", VapiArtifactType.ASSISTANT),
         ],
     )
     def test_maps_known_types(self, url_type, expected):
@@ -48,12 +52,16 @@ class TestArtifactForUrlType:
         assert VapiRecordingService.artifact_for_url_type("nonsense") is None
         assert VapiRecordingService.artifact_for_url_type("") is None
 
-    def test_map_covers_all_rehost_url_types(self):
+    def test_map_covers_rehost_and_legacy_url_types(self):
         assert set(_URL_TYPE_TO_ARTIFACT.keys()) == {
             "mono_combined",
             "mono_customer",
             "mono_assistant",
             "stereo",
+            "recording",
+            "stereo_recording",
+            "customer_recording",
+            "assistant_recording",
         }
 
 
