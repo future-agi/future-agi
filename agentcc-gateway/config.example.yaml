@@ -364,6 +364,17 @@ logging:
 #       timeout: 3s                     # Per-rule timeout override
 #       config:                         # Rule-specific config passed to the guardrail
 #         entities: ["email", "phone", "ssn"]
+#     - name: "indirect-prompt-injection"  # Detects injections hidden in tool results,
+#       stage: "pre"                        # RAG documents, and other untrusted context
+#       mode: "sync"
+#       action: "block"
+#       threshold: 0.7
+#       config:
+#         sensitivity: "medium"             # high, medium, low
+#         # scan_roles: ["tool", "system", "assistant"]
+#         # categories: ["instruction_override", "role_hijack", "delimiter_injection",
+#         #              "exfiltration", "tool_invocation", "system_prompt_extraction",
+#         #              "encoding_smuggling", "context_manipulation", "structured_payload"]
 #     - name: "content-moderation"
 #       stage: "post"
 #       mode: "sync"
