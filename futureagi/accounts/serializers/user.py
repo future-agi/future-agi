@@ -44,6 +44,7 @@ class UserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
+        ref_name = "UserDetailSerializer"
         fields = [
             "id",
             "email",
