@@ -63,58 +63,54 @@ _CH_TIMEOUT_MS = 30000
 MAX_EXPORT_ROWS = 10_000
 
 
-def _users_attr_enrichment_query(project_id=None):
-    """Build the Observe-Users span-attribute enrichment query (DESIGN §3).
-
-    P3b step1.5 DUAL id-remap so a cross-cutover straddler's attributes unify
-    under the OLD curated id: resolve each span's ``end_user_id`` new→old via
-    ``end_user_id_remap``, then both filter AND re-project on the resolved id so
-    the caller buckets new-id spans under the old id. Resolve+filter lives in a
-    wrapped ``WHERE`` (not ``PREWHERE``, which can't see the joined column).
-
-    Returns ``(sql, params)``; the caller binds ``%(eu_ids)s``.
-    """
-    from tracer.services.clickhouse.v2.id_remap_sql import (
-        remap_left_join,
-        resolved_id_expr,
-    )
-
-    params: dict = {}
-    project_clause = ""
-    if project_id:
-        params["attr_pid"] = str(project_id)
-        project_clause = "AND project_id = toUUID(%(attr_pid)s)"
-
-    remap_join = remap_left_join("end_user_id", "end_user_id_remap")
-    resolved = resolved_id_expr("end_user_id")
-    sql = f"""
-    SELECT
-        resolved_end_user_id AS end_user_id,
-        attributes_extra,
-        attrs_string,
-        attrs_number
-    FROM (
-        SELECT
-            {resolved} AS resolved_end_user_id,
-            attributes_extra,
-            attrs_string,
-            attrs_number
-        FROM spans
-        {remap_join}
-        WHERE is_deleted = 0
-          {project_clause}
-          AND (
-            (attributes_extra != '{{}}' AND attributes_extra != '')
-            OR length(mapKeys(attrs_string)) > 0
-            OR length(mapKeys(attrs_number)) > 0
-          )
-    )
-    WHERE resolved_end_user_id IN %(eu_ids)s
-    """
+def _users_attr_id_map_query():
+    """Map stored span end-user IDs to the page's canonical user IDs."""
     from tracer.services.clickhouse.v2.query_builders.filters import (
         _append_v2_settings,
     )
 
+    sql = """
+    WITH relevant_new_ids AS (
+        SELECT DISTINCT new_id
+        FROM end_user_id_remap FINAL
+        WHERE old_id IN %(page_eu_ids)s OR new_id IN %(page_eu_ids)s
+    )
+    SELECT any_id, min(survivor_id) AS survivor_id
+    FROM (
+        SELECT
+            arrayJoin([old_id, new_id]) AS any_id,
+            argMin(old_id, toString(old_id)) OVER (
+                PARTITION BY new_id
+            ) AS survivor_id
+        FROM end_user_id_remap FINAL
+        WHERE new_id IN (SELECT new_id FROM relevant_new_ids)
+    )
+    GROUP BY any_id
+    """
+    return _append_v2_settings(sql), {}
+
+
+def _users_attr_enrichment_query(project_ids: list[str]):
+    """Fetch attributes through project and raw end-user index predicates."""
+    from tracer.services.clickhouse.v2.query_builders.filters import (
+        _append_v2_settings,
+    )
+
+    sql = """
+    SELECT
+        end_user_id,
+        attributes_extra,
+        attrs_string,
+        attrs_number
+    FROM spans
+    PREWHERE project_id IN %(attr_project_ids)s
+      AND is_deleted = 0
+      AND end_user_id IN %(attr_span_eu_ids)s
+    WHERE (attributes_extra != '{}' AND attributes_extra != '')
+       OR length(mapKeys(attrs_string)) > 0
+       OR length(mapKeys(attrs_number)) > 0
+    """
+    params = {"attr_project_ids": tuple(str(p) for p in project_ids)}
     return _append_v2_settings(sql), params
 
 
@@ -188,16 +184,42 @@ class UsersListManager:
             return
         try:
             analytics = AnalyticsQueryService()
-            attr_query, attr_params = _users_attr_enrichment_query(
-                project_id=self.project_id
+            canonical_ids = tuple(str(e) for e in end_user_ids)
+
+            map_query, map_params = _users_attr_id_map_query()
+            map_params["page_eu_ids"] = canonical_ids
+            map_result = analytics.execute_ch_query(
+                map_query, map_params, timeout_ms=5000
             )
-            attr_params["eu_ids"] = tuple(str(e) for e in end_user_ids)
+            page_id_set = set(canonical_ids)
+            mapped_page_ids: set[str] = set()
+            raw_to_canonical: dict[str, str] = {}
+            for row in map_result.data:
+                any_id = str(row.get("any_id", ""))
+                survivor_id = str(row.get("survivor_id", ""))
+                if not any_id or not survivor_id:
+                    continue
+                if any_id in page_id_set:
+                    mapped_page_ids.add(any_id)
+                if survivor_id in page_id_set:
+                    raw_to_canonical[any_id] = survivor_id
+            for canonical_id in canonical_ids:
+                if canonical_id not in mapped_page_ids:
+                    raw_to_canonical[canonical_id] = canonical_id
+            if not raw_to_canonical:
+                return
+
+            attr_query, attr_params = _users_attr_enrichment_query(
+                self.scoped_project_ids
+            )
+            attr_params["attr_span_eu_ids"] = tuple(raw_to_canonical)
             attr_result = analytics.execute_ch_query(
                 attr_query, attr_params, timeout_ms=_CH_TIMEOUT_MS
             )
             user_attrs: dict = {}
             for attr_row in attr_result.data:
-                uid = str(attr_row.get("end_user_id", ""))
+                raw_uid = str(attr_row.get("end_user_id", ""))
+                uid = raw_to_canonical.get(raw_uid, raw_uid)
                 raw = attr_row.get("attributes_extra", "{}")
                 try:
                     attrs = json.loads(raw) if isinstance(raw, str) else (raw or {})
