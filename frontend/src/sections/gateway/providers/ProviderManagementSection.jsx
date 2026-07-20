@@ -11,6 +11,7 @@ import {
 } from "./hooks/useGatewayConfig";
 import { useOrgConfig } from "./hooks/useOrgConfig";
 import { useGatewayContext } from "../context/useGatewayContext";
+import { useProviderCredentials } from "./hooks/useProviderCredentials";
 
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
@@ -56,10 +57,12 @@ const ProviderManagementSection = () => {
   const { data: orgConfig, isLoading: orgConfigLoading } = useOrgConfig();
   const { data: providerHealth, isLoading: healthLoading } =
     useProviderHealth(gatewayId);
+  const { data: providerCredentials, isLoading: credentialsLoading } =
+    useProviderCredentials();
   const reloadMutation = useReloadConfig();
 
   const isLoading =
-    gwLoading || configLoading || healthLoading || orgConfigLoading;
+    gwLoading || configLoading || healthLoading || orgConfigLoading || credentialsLoading;
 
   const handleReload = () => {
     if (!gatewayId) return;
@@ -153,6 +156,7 @@ const ProviderManagementSection = () => {
         <ProviderHealthTable
           providerHealth={providerHealth}
           orgConfig={orgConfig}
+          providerCredentials={providerCredentials}
         />
       )}
       {tab === 1 && (
@@ -160,6 +164,7 @@ const ProviderManagementSection = () => {
           config={config}
           orgConfig={orgConfig}
           gatewayId={gatewayId}
+          providerCredentials={providerCredentials}
         />
       )}
       {tab === 2 && <RoutingConfigView config={config} gatewayId={gatewayId} />}

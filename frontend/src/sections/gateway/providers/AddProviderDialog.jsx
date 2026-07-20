@@ -19,10 +19,29 @@ import {
 } from "@mui/material";
 import { enqueueSnackbar } from "notistack";
 import {
-  useUpdateProvider,
   useFetchProviderModels,
+  useUpdateProvider,
 } from "./hooks/useGatewayConfig";
+import {
+  useCreateProviderCredential,
+  useUpdateProviderCredential,
+} from "./hooks/useProviderCredentials";
 
+/** Default timeout in seconds for new provider credential connections. */
+const DEFAULT_TIMEOUT_SECONDS = 60;
+
+/** Default maximum concurrent requests per provider. */
+const DEFAULT_MAX_CONCURRENT = 100;
+
+/**
+ * Provider presets define the default configuration for each supported provider
+ * type.  When a user selects a provider from the dropdown, the base URL and API
+ * format auto-fill from this map.  Key placeholders give the user a hint about
+ * the expected format (e.g. "sk-..." for OpenAI).
+ *
+ * Keep in sync with `KnownProviders` in agentcc-gateway/internal/providers/presets.go
+ * and `KNOWN_DISPLAY_NAMES` in utils/formatProviderName.js.
+ */
 const PROVIDER_PRESETS = {
   openai: {
     label: "OpenAI",
@@ -41,9 +60,9 @@ const PROVIDER_PRESETS = {
   google: {
     label: "Google (Gemini)",
     baseUrl: "https://generativelanguage.googleapis.com",
-    apiFormat: "google",
+    apiFormat: "gemini",
     keyPlaceholder: "AIza...",
-    supportedFormats: ["openai", "google"],
+    supportedFormats: ["openai", "gemini"],
   },
   azure: {
     label: "Azure OpenAI",
@@ -51,13 +70,6 @@ const PROVIDER_PRESETS = {
     apiFormat: "azure",
     keyPlaceholder: "Enter your Azure API key",
     supportedFormats: ["openai", "anthropic"],
-  },
-  cohere: {
-    label: "Cohere",
-    baseUrl: "https://api.cohere.ai/compatibility/v1",
-    apiFormat: "openai",
-    keyPlaceholder: "Enter your Cohere API key",
-    supportedFormats: ["openai"],
   },
   bedrock: {
     label: "AWS Bedrock",
@@ -73,18 +85,11 @@ const PROVIDER_PRESETS = {
     keyPlaceholder: "gsk_...",
     supportedFormats: ["openai"],
   },
-  together: {
-    label: "Together AI",
-    baseUrl: "https://api.together.xyz/v1",
+  cohere: {
+    label: "Cohere",
+    baseUrl: "https://api.cohere.ai/compatibility/v1",
     apiFormat: "openai",
-    keyPlaceholder: "Enter your Together API key",
-    supportedFormats: ["openai"],
-  },
-  fireworks: {
-    label: "Fireworks AI",
-    baseUrl: "https://api.fireworks.ai/inference/v1",
-    apiFormat: "openai",
-    keyPlaceholder: "Enter your Fireworks API key",
+    keyPlaceholder: "Enter your Cohere API key",
     supportedFormats: ["openai"],
   },
   mistral: {
@@ -94,12 +99,82 @@ const PROVIDER_PRESETS = {
     keyPlaceholder: "Enter your Mistral API key",
     supportedFormats: ["openai"],
   },
+  together: {
+    label: "Together AI",
+    baseUrl: "https://api.together.xyz/v1",
+    apiFormat: "openai",
+    keyPlaceholder: "Enter your Together API key",
+    supportedFormats: ["openai"],
+  },
+  perplexity: {
+    label: "Perplexity",
+    baseUrl: "https://api.perplexity.ai",
+    apiFormat: "openai",
+    keyPlaceholder: "pplx-...",
+    supportedFormats: ["openai"],
+  },
+  deepseek: {
+    label: "DeepSeek",
+    baseUrl: "https://api.deepseek.com",
+    apiFormat: "openai",
+    keyPlaceholder: "sk-...",
+    supportedFormats: ["openai"],
+  },
+  fireworks: {
+    label: "Fireworks AI",
+    baseUrl: "https://api.fireworks.ai/inference/v1",
+    apiFormat: "openai",
+    keyPlaceholder: "Enter your Fireworks API key",
+    supportedFormats: ["openai"],
+  },
+  cerebras: {
+    label: "Cerebras",
+    baseUrl: "https://api.cerebras.ai",
+    apiFormat: "openai",
+    keyPlaceholder: "csk-...",
+    supportedFormats: ["openai"],
+  },
+  deepinfra: {
+    label: "DeepInfra",
+    baseUrl: "https://api.deepinfra.com",
+    apiFormat: "openai",
+    keyPlaceholder: "Enter your DeepInfra API key",
+    supportedFormats: ["openai"],
+  },
+  huggingface: {
+    label: "Hugging Face",
+    baseUrl: "https://api-inference.huggingface.co",
+    apiFormat: "openai",
+    keyPlaceholder: "hf_...",
+    supportedFormats: ["openai"],
+  },
+  anyscale: {
+    label: "Anyscale",
+    baseUrl: "https://api.endpoints.anyscale.com",
+    apiFormat: "openai",
+    keyPlaceholder: "Enter your Anyscale API key",
+    supportedFormats: ["openai"],
+  },
+  replicate: {
+    label: "Replicate",
+    baseUrl: "https://api.replicate.com",
+    apiFormat: "openai",
+    keyPlaceholder: "r8_...",
+    supportedFormats: ["openai"],
+  },
+  openrouter: {
+    label: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api",
+    apiFormat: "openai",
+    keyPlaceholder: "sk-or-...",
+    supportedFormats: ["openai"],
+  },
   custom: {
     label: "Custom / Self-hosted",
     baseUrl: "",
     apiFormat: "openai",
     keyPlaceholder: "Enter API key",
-    supportedFormats: ["openai", "anthropic", "google"],
+    supportedFormats: ["openai", "anthropic", "gemini"],
   },
 };
 
@@ -126,7 +201,7 @@ const API_FORMATS = [
   "openai",
   "anthropic",
   "cohere",
-  "google",
+  "gemini",
   "azure",
   "bedrock",
 ];
@@ -138,6 +213,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   const [baseUrl, setBaseUrl] = useState(PROVIDER_PRESETS.openai.baseUrl);
   const [apiKey, setApiKey] = useState("");
   const [apiFormat, setApiFormat] = useState("openai");
+  const [displayName, setDisplayName] = useState("");
   const [models, setModels] = useState([]);
   const [timeoutVal, setTimeoutVal] = useState("");
   const [maxConcurrent, setMaxConcurrent] = useState("");
@@ -151,7 +227,9 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   // Validation state
   const [errors, setErrors] = useState({});
 
-  const updateProvider = useUpdateProvider();
+  const createCredential = useCreateProviderCredential();
+  const updateCredential = useUpdateProviderCredential();
+  const gatewayUpdateProvider = useUpdateProvider();
   const fetchModels = useFetchProviderModels();
   const [modelOptions, setModelOptions] = useState([]);
   const [fetchError, setFetchError] = useState("");
@@ -188,20 +266,30 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   // Edit mode: populate form from existing provider
   useEffect(() => {
     if (open && isEditMode && provider) {
-      const c = provider.config || {};
-      setName(provider.name || "");
-      setBaseUrl(c.base_url ?? c.baseUrl ?? "");
+      const c = provider.config || provider.credentials || {};
+      setName(provider.name || provider.provider_name || "");
+      setBaseUrl(c.base_url ?? c.baseUrl ?? provider.base_url ?? "");
       setApiKey("");
-      setApiFormat(c.api_format ?? c.apiFormat ?? "openai");
-      setModels(Array.isArray(c.models) ? c.models : []);
-      setTimeoutVal(c.default_timeout ?? c.defaultTimeout ?? "");
+      setApiFormat(c.api_format ?? c.apiFormat ?? provider.api_format ?? "openai");
+      setDisplayName(provider.display_name || PROVIDER_PRESETS[provider.name || provider.provider_name]?.label || "");
+      setModels(
+        Array.isArray(c.models ?? c.models_list ?? provider.models_list)
+          ? c.models ?? c.models_list ?? provider.models_list
+          : [],
+      );
+      setTimeoutVal(
+        c.default_timeout ?? c.defaultTimeout ?? provider.default_timeout_seconds ?? "",
+      );
       setMaxConcurrent(
         c.max_concurrent != null
-          ? String(c.max_concurrent ?? c.maxConcurrent ?? "")
+          ? String(c.max_concurrent ?? c.maxConcurrent ?? provider.max_concurrent ?? "")
           : "",
       );
       setErrors({});
-      doFetchModels({ providerName: provider.name });
+      const pName = provider.name || provider.provider_name;
+      if (pName) {
+        doFetchModels({ providerName: pName });
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, isEditMode, provider]);
@@ -243,6 +331,7 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
     setBaseUrl(defaultPreset.baseUrl);
     setApiKey("");
     setApiFormat(defaultPreset.apiFormat);
+    setDisplayName("");
     setModels([]);
     setModelOptions([]);
     setFetchError("");
@@ -270,6 +359,8 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       } else {
         setBaseUrl(preset.baseUrl);
       }
+      // Auto-fill display name from preset label
+      setDisplayName(preset.label || newName);
       // Reset apiFormat to preset default if the current value isn't supported
       setApiFormat((prev) =>
         preset.supportedFormats && !preset.supportedFormats.includes(prev)
@@ -353,39 +444,96 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
   const handleSave = () => {
     if (!validate()) return;
 
-    const config = { base_url: baseUrl, api_format: apiFormat };
-    if (isAwsAuth) {
-      if (awsAccessKeyId) config.aws_access_key_id = awsAccessKeyId;
-      if (awsSecretAccessKey) config.aws_secret_access_key = awsSecretAccessKey;
-      if (awsRegion) config.aws_region = awsRegion;
-      if (awsSessionToken) config.aws_session_token = awsSessionToken;
-    } else if (apiKey) {
-      config.api_key = apiKey;
+    const preset = PROVIDER_PRESETS[name] || PROVIDER_PRESETS.custom;
+
+    if (isEditMode) {
+      if (isAwsAuth) {
+        // AWS Bedrock: route through gateway config API (no api_key required)
+        const config = buildGatewayConfig();
+        gatewayUpdateProvider.mutate(
+          { gatewayId, name, config },
+          {
+            onSuccess: () => handleSaveSuccess("updated"),
+            onError: () => handleSaveError("update"),
+          },
+        );
+      } else {
+        const payload = {
+          display_name: displayName || preset.label || name,
+          base_url: baseUrl,
+          api_format: apiFormat,
+          models_list: models,
+        };
+        if (timeoutVal) payload.default_timeout_seconds = parseInt(timeoutVal, 10);
+        if (maxConcurrent) payload.max_concurrent = parseInt(maxConcurrent, 10);
+
+        const providerId = provider?.id;
+        updateCredential.mutate(
+          { id: providerId, payload },
+          {
+            onSuccess: (resp) => handleSaveSuccess("updated", resp),
+            onError: () => handleSaveError("update"),
+          },
+        );
+      }
+    } else if (isAwsAuth) {
+      // AWS Bedrock create: route through gateway config API
+      const config = buildGatewayConfig();
+      gatewayUpdateProvider.mutate(
+        { gatewayId, name, config },
+        {
+          onSuccess: () => handleSaveSuccess("added"),
+          onError: () => handleSaveError("add"),
+        },
+      );
+    } else {
+      // Create new provider credential via provider-credentials API
+      const payload = {
+        provider_name: name,
+        display_name: displayName || preset.label || name,
+        credentials: { api_key: apiKey },
+        base_url: baseUrl,
+        api_format: apiFormat,
+        models_list: models,
+        default_timeout_seconds: timeoutVal ? parseInt(timeoutVal, 10) : DEFAULT_TIMEOUT_SECONDS,
+        max_concurrent: maxConcurrent ? parseInt(maxConcurrent, 10) : DEFAULT_MAX_CONCURRENT,
+      };
+
+      createCredential.mutate(payload, {
+        onSuccess: (resp) => handleSaveSuccess("added", resp),
+        onError: handleSaveError("add"),
+      });
     }
+  };
+
+  /** Build config object for the gateway config API (used for AWS Bedrock). */
+  const buildGatewayConfig = () => {
+    const config = { base_url: baseUrl, api_format: apiFormat };
+    if (awsAccessKeyId) config.aws_access_key_id = awsAccessKeyId;
+    if (awsSecretAccessKey) config.aws_secret_access_key = awsSecretAccessKey;
+    if (awsRegion) config.aws_region = awsRegion;
+    if (awsSessionToken) config.aws_session_token = awsSessionToken;
     if (models.length > 0) config.models = models;
     if (timeoutVal) config.default_timeout = timeoutVal;
     if (maxConcurrent) config.max_concurrent = Number(maxConcurrent);
+    return config;
+  };
 
-    updateProvider.mutate(
-      { gatewayId, name, config },
-      {
-        onSuccess: () => {
-          enqueueSnackbar(
-            isEditMode
-              ? `Provider "${name}" updated`
-              : `Provider "${name}" added`,
-            { variant: "success" },
-          );
-          handleClose();
-        },
-        onError: () => {
-          enqueueSnackbar(
-            isEditMode ? "Failed to update provider" : "Failed to add provider",
-            { variant: "error" },
-          );
-        },
-      },
-    );
+  const handleSaveSuccess = (action, resp) => {
+    // Provider-credentials API wraps with gateway_synced flag
+    if (resp?.result?.gateway_synced === false || resp?.gateway_synced === false) {
+      enqueueSnackbar(
+        `Provider "${name}" ${action} but gateway sync failed. Changes will apply on next gateway restart.`,
+        { variant: "warning" },
+      );
+    } else {
+      enqueueSnackbar(`Provider "${name}" ${action}`, { variant: "success" });
+    }
+    handleClose();
+  };
+
+  const handleSaveError = (action) => {
+    enqueueSnackbar(`Failed to ${action} provider`, { variant: "error" });
   };
 
   const allSelected =
@@ -426,6 +574,15 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
               ))}
             </TextField>
           )}
+
+          <TextField
+            label="Display Name"
+            fullWidth
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder={preset.label || "e.g., My OpenAI Key"}
+            helperText="Optional friendly name for this provider"
+          />
 
           {isAwsAuth ? (
             <>
@@ -688,9 +845,13 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
             />
           </Stack>
 
-          {updateProvider.isError && (
+          {(createCredential.isError ||
+            updateCredential.isError ||
+            gatewayUpdateProvider.isError) && (
             <Alert severity="error">
-              {updateProvider.error?.message ||
+              {createCredential.error?.message ||
+                updateCredential.error?.message ||
+                gatewayUpdateProvider.error?.message ||
                 (isEditMode
                   ? "Failed to update provider"
                   : "Failed to add provider")}
@@ -703,9 +864,16 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
         <Button
           variant="contained"
           onClick={handleSave}
-          disabled={!name.trim() || updateProvider.isPending}
+          disabled={
+            !name.trim() ||
+            createCredential.isPending ||
+            updateCredential.isPending ||
+            gatewayUpdateProvider.isPending
+          }
         >
-          {updateProvider.isPending
+          {createCredential.isPending ||
+          updateCredential.isPending ||
+          gatewayUpdateProvider.isPending
             ? isEditMode
               ? "Saving..."
               : "Adding..."
@@ -723,8 +891,17 @@ AddProviderDialog.propTypes = {
   onClose: PropTypes.func.isRequired,
   gatewayId: PropTypes.string,
   provider: PropTypes.shape({
-    name: PropTypes.string.isRequired,
+    id: PropTypes.string,
+    name: PropTypes.string,
+    provider_name: PropTypes.string,
+    display_name: PropTypes.string,
     config: PropTypes.object,
+    credentials: PropTypes.object,
+    base_url: PropTypes.string,
+    api_format: PropTypes.string,
+    models_list: PropTypes.array,
+    default_timeout_seconds: PropTypes.number,
+    max_concurrent: PropTypes.number,
   }),
 };
 
