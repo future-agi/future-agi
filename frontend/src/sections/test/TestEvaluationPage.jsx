@@ -36,6 +36,7 @@ import { useSelectedAgentDefinitionStore } from "./TestRuns/states";
 import { ComponentApiMapping } from "./TestRuns/common";
 import { AGENT_TYPES } from "../agents/constants";
 import useTestRunDetails from "src/hooks/useTestRunDetails";
+import { invalidateEvalDeletionQueries } from "./eval_cache";
 
 const TestEvaluationPage = ({
   onClose,
@@ -122,9 +123,7 @@ const TestEvaluationPage = ({
     mutationFn: (evalId) =>
       axios.delete(endpoints.runTests.deleteEvals(testId, evalId)),
     onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["test-runs-detail", testId],
-      });
+      invalidateEvalDeletionQueries(queryClient, testId, executionIds);
       enqueueSnackbar("Eval deleted successfully", {
         variant: "success",
       });
