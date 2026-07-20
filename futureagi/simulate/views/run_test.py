@@ -3483,12 +3483,37 @@ class CallExecutionLogsView(APIView):
                             call_execution_id=str(call_execution.id),
                         )
                     else:
+                        # Resolve the customer api_key so the ingest task can
+                        # hit the authenticated call-log endpoint. Absent, the
+                        # task falls back to the legacy unauthenticated URL.
+                        provider_call_id = None
+                        provider_api_key = None
+                        try:
+                            test_exec = getattr(
+                                call_execution, "test_execution", None
+                            )
+                            version = (
+                                getattr(test_exec, "agent_version", None) if test_exec else None
+                            )
+                            if version is not None:
+                                from simulate.services.agent_definition import resolve_api_key_for_version
+
+                                provider_api_key = resolve_api_key_for_version(version)
+                            provider_call_id = (
+                                vapi.get("id") if isinstance(vapi, dict) else None
+                            )
+                        except Exception:
+                            provider_api_key = None
+                            provider_call_id = None
+
                         try:
                             ingest_call_logs_task.apply_async(
                                 args=(str(call_execution.id), log_url),
                                 kwargs={
                                     "verify_ssl": False,
                                     "source": CallLogEntry.LogSource.CUSTOMER,
+                                    "call_id": provider_call_id,
+                                    "api_key": provider_api_key,
                                 },
                             )
                         except Exception:

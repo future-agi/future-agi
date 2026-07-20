@@ -53,7 +53,6 @@ TEMPORAL_ACTIVITY_MODULES = [
     # tracer tasks
     "tracer.tasks",
     "tracer.tasks.trace_scanner",
-    "tracer.tasks.recordings_rehost",
     "tracer.utils.span",
     "tracer.utils.eval",
     "tracer.utils.observability_provider",

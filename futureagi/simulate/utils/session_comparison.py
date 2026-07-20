@@ -558,7 +558,7 @@ def fetch_voice_trace_comparison_transcripts(
 
 
 def fetch_baseline_trace_recordings(trace_id: str, _span: dict | None = None) -> dict:
-    """Fetch recording URLs from the baseline voice trace's conversation span."""
+    """Return recording URLs from a baseline voice trace's span attributes."""
     try:
         span = _span or fetch_voice_conversation_span(trace_id)
     except ValueError:
@@ -567,54 +567,52 @@ def fetch_baseline_trace_recordings(trace_id: str, _span: dict | None = None) ->
     sa = span["span_attributes"] or {}
     recordings = {}
     for label, attr_key in RECORDING_ATTR_KEYS.items():
-        url = sa.get(attr_key)
-        if url:
+        if url := sa.get(attr_key):
             recordings[label] = url
     return recordings
 
 
 def fetch_simulated_call_recordings(call_execution: CallExecution) -> dict:
-    """Fetch recording URLs from a simulated CallExecution's provider_call_data."""
+    """Recording URLs for a simulated call: model fields first, provider_call_data fallback."""
+    model_recordings = _fallback_model_recordings(call_execution)
+
     provider_data = call_execution.provider_call_data
-    if not provider_data or not isinstance(provider_data, dict):
-        return _fallback_model_recordings(call_execution)
-
-    # Get provider payload
-    if len(provider_data) == 1:
-        payload = next(iter(provider_data.values()))
-    else:
-        payload = provider_data.get("vapi", {})
-
+    payload = None
+    if isinstance(provider_data, dict):
+        if len(provider_data) == 1:
+            payload = next(iter(provider_data.values()))
+        else:
+            payload = provider_data.get("vapi", {})
     if not isinstance(payload, dict):
-        return _fallback_model_recordings(call_execution)
+        payload = {}
 
     recording = (
-        payload.get("artifact", {}).get("recording") or payload.get("recording") or {}
+        (payload.get("artifact") or {}).get("recording") or payload.get("recording") or {}
     )
     if not isinstance(recording, dict):
-        return _fallback_model_recordings(call_execution)
+        recording = {}
 
-    recordings = {}
     mono = recording.get("mono") or {}
-    if combined_url := mono.get("combinedUrl"):
-        recordings["mono_combined"] = combined_url
+    recordings: dict[str, str] = {}
+    if combined := model_recordings.get("mono_combined") or mono.get("combinedUrl"):
+        recordings["mono_combined"] = combined
+    if stereo := model_recordings.get("stereo") or recording.get("stereoUrl"):
+        recordings["stereo"] = stereo
     if customer_url := mono.get("customerUrl"):
         recordings["mono_customer"] = customer_url
     if assistant_url := mono.get("assistantUrl"):
         recordings["mono_assistant"] = assistant_url
-    if stereo_url := recording.get("stereoUrl"):
-        recordings["stereo"] = stereo_url
 
-    return recordings or _fallback_model_recordings(call_execution)
+    return recordings
 
 
 def _fallback_model_recordings(call_execution: CallExecution) -> dict:
-    """Fallback to model-level recording URL fields."""
+    """Read the durable S3-mirrored recording URLs off the model."""
     recordings = {}
-    if call_execution.stereo_recording_url:
-        recordings["stereo"] = call_execution.stereo_recording_url
-    if call_execution.recording_url:
-        recordings["mono_combined"] = call_execution.recording_url
+    if stereo := call_execution.stereo_recording_url:
+        recordings["stereo"] = stereo
+    if mono := call_execution.recording_url:
+        recordings["mono_combined"] = mono
     return recordings
 
 
