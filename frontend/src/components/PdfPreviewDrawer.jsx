@@ -6,6 +6,7 @@ import {
   IconButton,
   Paper,
   Stack,
+  Button,
 } from "@mui/material";
 import React, { useState, useEffect, useRef } from "react";
 import { Viewer, Worker } from "@react-pdf-viewer/core";
@@ -19,6 +20,23 @@ import "@react-pdf-viewer/default-layout/lib/styles/index.css";
 import logger from "src/utils/logger";
 import { getFileIcon } from "src/sections/knowledge-base/sheet-view/icons";
 import { errorMessages } from "./common";
+
+const isLocalUrl = (url) => {
+  try {
+    if (!url) return false;
+    const parsed = new URL(url);
+    const hostname = parsed.hostname;
+    return (
+      hostname === "localhost" ||
+      hostname === "127.0.0.1" ||
+      hostname.startsWith("192.168.") ||
+      hostname.startsWith("10.") ||
+      hostname.endsWith(".local")
+    );
+  } catch (e) {
+    return false;
+  }
+};
 
 const PdfPreviewDrawer = () => {
   const [loading, setLoading] = useState(true);
@@ -75,6 +93,8 @@ const PdfPreviewDrawer = () => {
     if (type?.toLowerCase() === "txt" || type?.toLowerCase() === "text") {
       fetchedUrlsRef.current = fileUrl;
       fetchTextContent();
+    } else if (["png", "jpg", "jpeg", "webp", "gif", "svg", "bmp"].includes(type?.toLowerCase())) {
+      // wait for image component to load
     } else {
       setLoading(false);
     }
@@ -167,6 +187,73 @@ const PdfPreviewDrawer = () => {
           return null;
         }
 
+        if (isLocalUrl(fileUrl)) {
+          return (
+            <Box
+              sx={{
+                height: "100%",
+                display: "flex",
+                justifyContent: "center",
+                alignItems: "center",
+                backgroundColor: "background.neutral",
+                p: 3,
+              }}
+            >
+              <Paper
+                elevation={3}
+                sx={{
+                  p: 5,
+                  maxWidth: 500,
+                  width: "100%",
+                  textAlign: "center",
+                  borderRadius: 2,
+                  bgcolor: "background.paper",
+                }}
+              >
+                <Box sx={{ mb: 3, display: "flex", justifyContent: "center" }}>
+                  <Box
+                    component="img"
+                    src={getFileIcon("docx")}
+                    alt="Word Document"
+                    sx={{ width: 80, height: 80 }}
+                  />
+                </Box>
+                <Typography variant="h5" sx={{ mb: 1.5, fontWeight: "fontWeightBold" }}>
+                  Local Preview Unavailable
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 4 }}>
+                  Office document previews (.docx / .doc) rely on Microsoft&apos;s cloud viewer, which cannot access files hosted on your local system (localhost).
+                  <br />
+                  <br />
+                  Please download the file to view it on your computer.
+                </Typography>
+                <Button
+                  variant="contained"
+                  color="primary"
+                  size="large"
+                  onClick={handleCustomDownload}
+                  startIcon={
+                    <SvgColor
+                      src="/assets/icons/action_buttons/ic_download.svg"
+                      sx={{ width: 20, height: 20, color: "common.white" }}
+                    />
+                  }
+                  sx={{
+                    px: 4,
+                    py: 1.5,
+                    borderRadius: 1,
+                    textTransform: "none",
+                    fontWeight: "fontWeightBold",
+                    boxShadow: (theme) => theme.customShadows?.z8,
+                  }}
+                >
+                  Download Document
+                </Button>
+              </Paper>
+            </Box>
+          );
+        }
+
         return (
           <div style={{ position: "relative", height: "100%" }}>
             <iframe
@@ -186,6 +273,46 @@ const PdfPreviewDrawer = () => {
               }}
             />
           </div>
+        );
+
+      case "png":
+      case "jpg":
+      case "jpeg":
+      case "webp":
+      case "gif":
+      case "svg":
+      case "bmp":
+        return (
+          <Box
+            sx={{
+              height: "100%",
+              width: "100%",
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              backgroundColor: "background.neutral",
+              p: 2,
+              overflow: "auto",
+            }}
+          >
+            <Box
+              component="img"
+              src={fileUrl}
+              alt={name || "Image Preview"}
+              sx={{
+                maxWidth: "100%",
+                maxHeight: "100%",
+                objectFit: "contain",
+                borderRadius: "8px",
+                boxShadow: (theme) => theme.customShadows?.z24 || theme.shadows[24],
+              }}
+              onLoad={() => setLoading(false)}
+              onError={() => {
+                setLoading(false);
+                setError("Failed to load image");
+              }}
+            />
+          </Box>
         );
 
       default:

@@ -287,9 +287,25 @@ class KnowledgeBaseFileSerializer(serializers.ModelSerializer):
 
 
 class FileSerializer(serializers.ModelSerializer):
+    uploaded_url = serializers.SerializerMethodField()
+
     class Meta:
         model = Files
-        fields = ["id", "name", "status", "metadata", "updated_at", "updated_by"]
+        fields = ["id", "name", "status", "metadata", "updated_at", "updated_by", "uploaded_url"]
+
+    def get_uploaded_url(self, obj):
+        if obj.uploaded_url:
+            return obj.uploaded_url
+        kb = obj.knowledge_base_files.first()
+        if kb:
+            from tfc.settings.settings import UPLOAD_BUCKET_NAME
+            from tfc.utils.storage_client import get_object_url
+            
+            extension = obj.name.split(".")[-1].lower() if "." in obj.name else ""
+            s3_file_name = f"{obj.id}.{extension}"
+            object_key = f"knowledge-base/{kb.id}/{s3_file_name}"
+            return get_object_url(UPLOAD_BUCKET_NAME, object_key)
+        return ""
 
 
 class EvalPlayGroundFeedbackSerializer(serializers.Serializer):
