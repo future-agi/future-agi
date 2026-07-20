@@ -18,7 +18,20 @@ const CallChatSOPOption = ({ control }) => {
 
   const scriptUrl = field?.value;
 
-  const handleFileChange = (acceptedFiles) => {
+  const handleFileChange = (acceptedFiles, fileRejections = []) => {
+    if (fileRejections.length > 0) {
+      const hasTypeError = fileRejections.some((rejection) =>
+        rejection.errors?.some((err) => err.code === "file-invalid-type"),
+      );
+      enqueueSnackbar(
+        hasTypeError
+          ? "Unsupported file type. Please upload a TXT or PDF file."
+          : "File could not be uploaded",
+        { variant: "error" },
+      );
+      return;
+    }
+
     const files = Array.from(acceptedFiles);
     const maxSize = 5 * 1024 * 1024; // 5MB
 
