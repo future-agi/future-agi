@@ -3,7 +3,7 @@ import json
 import traceback
 from collections import defaultdict
 from dataclasses import asdict
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 try:
     import orjson
@@ -16,7 +16,7 @@ import pandas as pd
 import structlog
 
 logger = structlog.get_logger(__name__)
-from django.db import OperationalError, connection, models, transaction
+from django.db import OperationalError, models
 from django.db.models import (
     Avg,
     Case,
@@ -720,7 +720,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                     if ch_column == "first_message"
                     else "argMax(input, start_time)"
                 )
-                search_clause = f"AND val ILIKE %(search)s" if search else ""
+                search_clause = "AND val ILIKE %(search)s" if search else ""
                 query = f"""
                 SELECT DISTINCT val FROM (
                     SELECT {agg_expr} AS val
@@ -1479,8 +1479,8 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         # resolve it to a set of EndUser UUIDs and pass an end_user_id IN(...)
         # synthetic filter instead (the CH `spans` table keys users via the
         # UUID column `end_user_id`, not the string `user_id`).
-        user_id_raw: Optional[str] = user_id_qp or None
-        _remaining: List[Dict] = []
+        user_id_raw: str | None = user_id_qp or None
+        _remaining: list[dict] = []
         for _f in filters:
             _col, _cfg = FilterEngine._normalize_filter_params(_f)
             _col_type = _cfg.get("col_type", "NORMAL")
@@ -1498,7 +1498,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         # both the UUIDs (to inject as a synthetic end_user_id IN(...)
         # filter) and the display fields (to stitch onto the formatted
         # output later) — fetch them together to save a round-trip.
-        end_user_display: Optional[Dict[str, Any]] = None
+        end_user_display: dict[str, Any] | None = None
         if user_id_raw:
             _eu_qs = EndUser.objects.filter(
                 user_id=user_id_raw,
@@ -1634,7 +1634,7 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
                         attr_query, attr_params, timeout_ms=5000
                     )
                     # Aggregate per session: session_id -> {attr_key -> set(values)}
-                    aggregated_attrs: Dict[str, Dict] = {}
+                    aggregated_attrs: dict[str, dict] = {}
                     for attr_row in attr_result.data:
                         sid = str(attr_row.get("session_id", ""))
                         # Skip if this session already has max keys
