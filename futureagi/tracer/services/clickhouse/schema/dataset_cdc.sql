@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS model_hub_row (
     id UUID,
     dataset_id UUID,
     `order` UInt32,
+    source_trace_id Nullable(UUID),
+    source_span_id Nullable(String),
     metadata String DEFAULT '{}',
     created_at DateTime64(6),
     updated_at DateTime64(6),
