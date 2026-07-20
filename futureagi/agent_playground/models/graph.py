@@ -1,5 +1,6 @@
 import uuid
 
+from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError
 from django.db import models
 
@@ -12,8 +13,11 @@ class Graph(BaseModel):
     Identity container for agent graphs.
 
     Graphs can be referenced by other graphs via subgraph nodes.
-    Template graphs (is_template=True) are system-defined reusable blueprints
-    with no organization, workspace, or created_by.
+
+    Template graphs (is_template=True) come in two scopes:
+    - System templates: no organization, workspace, or created_by. Visible to all orgs.
+    - Org-scoped templates: has organization + created_by. Visible within that org only.
+      Created by users via "Publish as template" — enables sharing reusable sub-graphs.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -36,6 +40,12 @@ class Graph(BaseModel):
     name = models.CharField(max_length=255, help_text="Display name")
     description = models.TextField(null=True, blank=True)
     is_template = models.BooleanField(default=False)
+    tags = ArrayField(
+        models.CharField(max_length=50),
+        default=list,
+        blank=True,
+        help_text="Searchable labels for template discovery (e.g. 'rag', 'safety', 'classification')",
+    )
 
     created_by = models.ForeignKey(
         User,
@@ -56,6 +66,7 @@ class Graph(BaseModel):
             models.Index(fields=["workspace"]),
             models.Index(fields=["organization"]),
             models.Index(fields=["is_template"]),
+            models.Index(fields=["is_template", "organization"]),
         ]
 
     def __str__(self):
@@ -64,9 +75,16 @@ class Graph(BaseModel):
     def clean(self):
         super().clean()
         if self.is_template:
-            if self.organization_id or self.workspace_id or self.created_by_id:
+            if self.workspace_id:
+                raise ValidationError("Template graphs must not have a workspace.")
+            # System templates: no org/created_by (visible to all orgs).
+            # Org-scoped templates: must have both org and created_by.
+            has_org = bool(self.organization_id)
+            has_creator = bool(self.created_by_id)
+            if has_org != has_creator:
                 raise ValidationError(
-                    "Template graphs must not have organization, workspace, or created_by."
+                    "Org-scoped templates must have both organization and created_by, "
+                    "or neither (system template)."
                 )
         else:
             if not self.organization_id:
