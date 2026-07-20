@@ -110,6 +110,21 @@ providers:
   #     - command-r
   #     - command
 
+  # ── TwelveLabs (video understanding + multimodal embeddings) ──
+  # Opt-in video provider. Pegasus answers video questions through the
+  # standard /v1/chat/completions surface — pass the video as a public URL
+  # in an image_url/video_url content part (or a TwelveLabs asset id).
+  # Marengo serves 512-dim multimodal embeddings through /v1/embeddings,
+  # letting you embed text queries in the same space as your video embeddings.
+  # Get a free API key at https://twelvelabs.io.
+  # twelvelabs:
+  #   type: "twelvelabs"            # auto-fills base_url + api_format
+  #   api_key: "${TWELVELABS_API_KEY}"
+  #   default_timeout: 120s         # Pegasus analysis can take a while
+  #   models:
+  #     - pegasus1.5                # video understanding (chat completions)
+  #     - marengo3.0                # multimodal embeddings (embeddings)
+
   # ── Self-Hosted / Custom Endpoints ──────────────────────────
   # vLLM, Ollama, LMStudio, TGI, LocalAI — all use OpenAI-compat format.
   # Just set api_format: "openai" and point base_url to your server.

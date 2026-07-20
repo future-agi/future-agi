@@ -454,7 +454,7 @@ Corrections welcome — open an issue or send a PR.
 
 **One gateway, every modality your providers expose.** Text · chat · vision · embeddings · reranking · speech-to-text · text-to-speech (+ streaming) · realtime WebSocket · image generation · video generation · OCR · grounded search · tool calling · structured output · Assistants + threads · vector stores · batch jobs — all have dedicated gateway routes. The specific model you reach is whatever the configured upstream provider serves at that endpoint; we pass the full provider-native payload through.
 
-**Surface area at a glance:** 🔌 **109 routes** across 23 endpoint categories · 🛡️ **18 built-in guardrails + 15 external vendor adapters** · 🧠 **15 routing strategies** · 🔧 **16 pipeline plugins** · 🔄 **2 cross-provider translators** (OpenAI ↔ Anthropic · OpenAI ↔ Gemini) · 🌐 **7 native provider packages** · 🔒 **6 secret resolvers** (AWS SM · Azure KV · GCP SM · HashiCorp Vault · env · file) · 💾 **10 cache backends** (6 exact + 4 semantic) · 🧩 **39 internal subsystems**. Every count is grep-verifiable in the tree.
+**Surface area at a glance:** 🔌 **109 routes** across 23 endpoint categories · 🛡️ **18 built-in guardrails + 15 external vendor adapters** · 🧠 **15 routing strategies** · 🔧 **16 pipeline plugins** · 🔄 **2 cross-provider translators** (OpenAI ↔ Anthropic · OpenAI ↔ Gemini) · 🌐 **8 native provider packages** · 🔒 **6 secret resolvers** (AWS SM · Azure KV · GCP SM · HashiCorp Vault · env · file) · 💾 **10 cache backends** (6 exact + 4 semantic) · 🧩 **39 internal subsystems**. Every count is grep-verifiable in the tree.
 
 ### 🌈 Modalities
 
@@ -491,7 +491,7 @@ Every modality below has dedicated routes in the gateway. The **specific models*
 <tr>
 <td><b>Embeddings &amp; Rerank</b></td>
 <td><code>POST /v1/embeddings</code><br><code>POST /v1/rerank</code></td>
-<td>OpenAI, Cohere, Voyage, Jina; text + image embeddings; batch mode</td>
+<td>OpenAI, Cohere, Voyage, Jina, TwelveLabs Marengo (512-dim multimodal); text + image embeddings; batch mode</td>
 </tr>
 <tr>
 <td><b>Audio</b></td>
@@ -850,7 +850,9 @@ Call the gateway in one format, route to a different upstream. Translator packag
 | `translation/anthropic` | OpenAI ↔ Anthropic — `cache_control` blocks, tool_use / tool_result blocks, `finish_reason` mapping |
 | `translation/gemini` | OpenAI ↔ Gemini — multi-part content, `finish_reason` mapping |
 
-Azure OpenAI, Bedrock, Cohere, and Vertex AI are handled as **native provider packages** (not translators) — the gateway speaks each one directly via its package under [`internal/providers/`](./internal/providers/), preserving SigV4 signing, Azure deployment-name routing, and similar provider-specifics.
+Azure OpenAI, Bedrock, Cohere, TwelveLabs, and Vertex AI are handled as **native provider packages** (not translators) — the gateway speaks each one directly via its package under [`internal/providers/`](./internal/providers/), preserving SigV4 signing, Azure deployment-name routing, TwelveLabs video-understanding/embedding calls, and similar provider-specifics.
+
+The TwelveLabs package (`api_format: "twelvelabs"`) is opt-in and brings **video models** under the same OpenAI-compatible surfaces: **Pegasus** answers questions about a video (passed as a public URL or asset id) through `/v1/chat/completions`, and **Marengo** serves 512-dim multimodal embeddings through `/v1/embeddings`. See [`config.example.yaml`](./config.example.yaml) for setup; grab a free key at [twelvelabs.io](https://twelvelabs.io).
 
 ### 🔒 Secrets resolution
 
