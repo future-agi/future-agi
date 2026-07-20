@@ -324,7 +324,7 @@ export default function NodeDrawer({
     try {
       await deleteNodeApi({
         graphId: agent?.id,
-        versionId: agent?.versionId,
+        versionId: agent?.version_id,
         nodeId,
       });
     } catch {
