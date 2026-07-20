@@ -135,7 +135,11 @@ from model_hub.services.derived_variable_service import (
     rename_derived_variables_for_column,
     rename_derived_variables_in_run_prompter,
 )
-from model_hub.tasks.develop_dataset import ingest_files_to_s3, remove_kb_files
+from model_hub.tasks.develop_dataset import (
+    ingest_files_to_s3,
+    ingest_kb_from_dataset,
+    remove_kb_files,
+)
 from model_hub.types import ConversionResult
 from model_hub.utils.eval_reasons import (
     MIN_ROWS_FOR_CRITICAL_ISSUES,
@@ -14130,6 +14134,72 @@ class CreateKnowledgeBaseView(APIView):
             data = request.data
             created_by = User.objects.get(id=request.user.id).name
             uploaded_files = request.FILES.getlist("file")
+            dataset_id = data.get("dataset_id")
+            columns = data.get("columns") or data.getlist("columns")
+
+            # ── Mutually exclusive source check ──────────────────────────────
+            if uploaded_files and dataset_id:
+                return self._gm.bad_request(
+                    "Provide either files or a dataset_id, not both."
+                )
+            if not uploaded_files and not dataset_id:
+                return self._gm.bad_request(
+                    get_error_message("FAILED_TO_CREATE_KNOWLEDGE_BASE")
+                )
+
+            # ── Dataset-source path ──────────────────────────────────────────
+            if dataset_id:
+                if not columns:
+                    return self._gm.bad_request(
+                        "columns is required when using dataset_id."
+                    )
+                try:
+                    dataset = Dataset.objects.get(id=dataset_id)
+                except Dataset.DoesNotExist:
+                    return self._gm.bad_request(
+                        f"Dataset {dataset_id!r} not found."
+                    )
+
+                with transaction.atomic():
+                    if not data.get("name"):
+                        kb_name = self._generate_unique_name(org)
+                    final_kb_name = data.get("name") if not kb_name else kb_name
+
+                    if KnowledgeBaseFile.objects.filter(
+                        name=final_kb_name.strip() if final_kb_name else final_kb_name,
+                        organization=org,
+                    ).exists():
+                        return self._gm.bad_request(
+                            get_error_message("KNOWLEDGE_BASE_ALREADY_EXISTS")
+                        )
+
+                    kb = KnowledgeBaseFile.objects.create(
+                        organization=org,
+                        created_by=created_by,
+                        name=final_kb_name,
+                        size=0,
+                        source_dataset=dataset,
+                        source_dataset_columns=columns,
+                    )
+
+                ingest_kb_from_dataset.delay(
+                    kb_id=str(kb.id),
+                    dataset_id=str(dataset.id),
+                    columns=columns,
+                    org=str(org.id),
+                )
+
+                response_data = {
+                    "detail": "Creating Knowledge Base from Dataset",
+                    "kb_id": kb.id,
+                    "kb_name": kb.name,
+                    "dataset_id": str(dataset.id),
+                    "columns": columns,
+                    "source": "dataset",
+                }
+                return self._gm.success_response(response_data)
+
+            # ── File-upload path (unchanged) ─────────────────────────────────
             file_names = {file.name for file in uploaded_files}
             if len(file_names) != len(uploaded_files):
                 return self._gm.bad_request(get_error_message("DUPLICATE_FILES"))
@@ -14794,6 +14864,32 @@ class ExistingKnowledgeBaseView(APIView):
             logger.exception(f"Error in deleting the knowledge base files: {str(e)}")
             return self._gm.bad_request(
                 get_error_message("FAILED_TO_DELETE_KNOWLEDGE_BASE_FILES")
+            )
+
+
+class DatasetColumnsView(APIView):
+    _gm = GeneralMethods()
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, dataset_id):
+        try:
+            org = getattr(request, "organization", None) or request.user.organization
+            dataset = Dataset.objects.get(id=dataset_id, organization=org)
+            columns = list(
+                Column.objects.filter(dataset=dataset)
+                .order_by("id")
+                .values_list("name", flat=True)
+            )
+            return self._gm.success_response({
+                "dataset_id": dataset_id,
+                "columns": columns,
+            })
+        except Dataset.DoesNotExist:
+            return self._gm.bad_request(f"Dataset {dataset_id!r} not found.")
+        except Exception as e:
+            logger.exception(f"Error fetching dataset columns: {e}")
+            return self._gm.internal_server_error_response(
+                "Failed to fetch dataset columns"
             )
 
 

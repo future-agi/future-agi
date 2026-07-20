@@ -380,6 +380,19 @@ class KnowledgeBaseFile(BaseModel):
     files = models.ManyToManyField(Files, related_name="knowledge_base_files")
     created_by = models.CharField(max_length=5000, blank=True, null=True)
     size = models.BigIntegerField(blank=True, null=True)
+    source_dataset = models.ForeignKey(
+        Dataset,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="knowledge_bases",
+        help_text="If this KB was built from a dataset, the source dataset.",
+    )
+    source_dataset_columns = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="List of column names from the source dataset used as document content.",
+    )
 
     def __str__(self):
         return self.name
