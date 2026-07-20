@@ -13,6 +13,9 @@ on:
       - '.github/workflows/frontend-develop.yml'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   # Quality checks and unit tests
   quality-and-tests:
@@ -22,6 +25,8 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -37,7 +42,12 @@ jobs:
         run: yarn type-check
 
       - name: Run unit tests
-        run: yarn test:unit --coverage --reporter=verbose
+        run: yarn test:unit
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+
+      - name: Run full suite with coverage
+        run: yarn test:coverage --reporter=verbose
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
@@ -49,7 +59,7 @@ jobs:
           flags: develop-branch
           name: develop-coverage
 
-  # Integration and component tests
+  # Dedicated integration tests
   integration-tests:
     runs-on: ubuntu-latest
     needs: quality-and-tests
@@ -58,6 +68,8 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -74,10 +86,6 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
-      - name: Run all component tests
-        run: yarn test:run --reporter=verbose
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
 
   # Build validation
   build-check:
@@ -88,6 +96,8 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -121,6 +131,8 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

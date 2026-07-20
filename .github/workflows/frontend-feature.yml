@@ -7,6 +7,9 @@ on:
       - 'frontend/**'
       - '.github/workflows/frontend-feature.yml'
 
+permissions:
+  contents: read
+
 jobs:
   # Branch name validation
   validate-branch-name:
@@ -47,6 +50,8 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -61,8 +66,8 @@ jobs:
       - name: Type check
         run: yarn type-check
 
-      - name: Run unit tests
-        run: yarn test:unit
+      - name: Run full test suite
+        run: yarn test:run --reporter=verbose
         env:
           NODE_OPTIONS: --max-old-space-size=4096
 
@@ -105,7 +110,7 @@ jobs:
 
             ✅ Branch naming convention: PASSED
             ✅ Type checking: PASSED
-            ✅ Unit tests: PASSED
+            ✅ Full test suite: PASSED
             ✅ Build check: PASSED
 
             Ready for review! 🎉`;

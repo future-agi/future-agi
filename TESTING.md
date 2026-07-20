@@ -28,9 +28,14 @@ yarn test                # Interactive watch mode
 yarn test:run            # One-shot run
 yarn test:changed        # Only tests related to changed files
 yarn test:coverage       # Full run with coverage report
-yarn test:unit           # Unit tests only
-yarn test:integration    # Integration tests only
+yarn test:unit           # Dedicated src/__tests__/unit suite only
+yarn test:integration    # Dedicated src/__tests__/integration suite only
 ```
+
+`test:unit` and `test:integration` run the dedicated
+`frontend/src/__tests__/unit/` and `frontend/src/__tests__/integration/`
+directories. Component-local tests outside those directories are still covered
+by `test:run` and `test:coverage`.
 
 Coverage thresholds (global): **70%** for branches, functions, lines, and statements.
 
@@ -83,7 +88,7 @@ Today, CI covers the frontend; backend CI is on the roadmap. Workflows in [`.git
 
 | Workflow | Trigger | Purpose |
 |---|---|---|
-| `frontend-feature.yml` | push to `feat/*`, `fix/*`, `chore/*`, `docs/*`, `refactor/*`, `test/*`, `perf/*` | Branch-name validation, type check, unit tests, build verification |
+| `frontend-feature.yml` | push to `feat/*`, `fix/*`, `chore/*`, `docs/*`, `refactor/*`, `test/*`, `perf/*` | Branch-name validation, type check, full frontend suite, build verification |
 | `frontend-develop.yml` | push to `develop`/`dev` + PRs into `main`/`develop`/`dev` | Quality gates, integration tests, build check, Lighthouse (PRs only) |
 | `frontend-main.yml` | push to `main` | Full suite with coverage + production build |
 | `frontend-deploy-*.yaml` | manual or on main | Environment-specific deploys (EU, GCP, prod, dev CDN) |

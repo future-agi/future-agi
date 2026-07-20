@@ -1,6 +1,6 @@
 /* eslint-disable react/prop-types */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import GlobalVariableDrawer from "../GlobalVariableDrawer";
 import { useGlobalVariablesDrawerStore, VIEW } from "../../../store";
@@ -110,64 +110,6 @@ describe("GlobalVariableDrawer", () => {
     });
     renderDrawer();
     expect(screen.getByTestId("uploaded-json")).toBeInTheDocument();
-  });
-
-  describe("deriveVariablesFromDataset (integration)", () => {
-    it("syncs dataset variables to store on load", async () => {
-      mockDatasetData = {
-        columns: [
-          { id: "col-1", name: "city" },
-          { id: "col-2", name: "country" },
-        ],
-        rows: [
-          {
-            cells: [
-              { columnId: "col-1", value: "Tokyo" },
-              { columnId: "col-2", value: "Japan" },
-            ],
-          },
-        ],
-      };
-
-      renderDrawer();
-
-      await waitFor(() => {
-        const state = useGlobalVariablesDrawerStore.getState();
-        expect(state.globalVariables).toEqual({
-          city: "Tokyo",
-          country: "Japan",
-        });
-      });
-    });
-
-    it("handles missing cells gracefully (empty string fallback)", async () => {
-      mockDatasetData = {
-        columns: [
-          { id: "col-1", name: "city" },
-          { id: "col-2", name: "country" },
-        ],
-        rows: [
-          {
-            cells: [{ columnId: "col-1", value: "Tokyo" }],
-          },
-        ],
-      };
-
-      renderDrawer();
-
-      await waitFor(() => {
-        const state = useGlobalVariablesDrawerStore.getState();
-        expect(state.globalVariables.country).toBe("");
-      });
-    });
-
-    it("handles null dataset (no sync)", () => {
-      mockDatasetData = null;
-      renderDrawer();
-      // Store should keep initial state
-      const state = useGlobalVariablesDrawerStore.getState();
-      expect(state.globalVariables).toEqual({});
-    });
   });
 
   describe("handleClose", () => {

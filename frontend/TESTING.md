@@ -34,6 +34,12 @@ yarn test:watch
 
 # Run tests with coverage report
 yarn test:coverage
+
+# Run the dedicated unit test directory
+yarn test:unit
+
+# Run the dedicated integration test directory
+yarn test:integration
 ```
 
 ### Test File Structure
@@ -42,6 +48,14 @@ Tests should be placed in one of these locations:
 - `src/components/ComponentName/ComponentName.test.jsx` - Next to the component
 - `src/__tests__/ComponentName.test.jsx` - In a dedicated tests directory
 - `src/components/__tests__/ComponentName.test.jsx` - In component-specific test directories
+- `src/__tests__/unit/` - Included by `yarn test:unit`
+- `src/__tests__/integration/` - Included by `yarn test:integration`
+
+`test:unit` and `test:integration` are directory-scoped. Test titles no
+longer classify files for those commands; use `yarn test:run -t <pattern>` for
+ad hoc title filtering. Component-local and feature-local tests outside the
+dedicated directories remain covered by `yarn test:run`, `yarn test:coverage`,
+and the full-suite CI jobs.
 
 ## Configuration
 
