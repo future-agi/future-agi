@@ -96,6 +96,7 @@ export const AGENT_TYPES = {
 export const VOICE_CHAT_PROVIDERS = [
   { label: "Vapi", value: "vapi" },
   { label: "Retell", value: "retell" },
+  { label: "Bland.ai", value: "bland" },
   // Hidden until LiveKit server stability is restored.
   // { label: "LiveKit", value: "livekit_bridge" },
   // { label: "ElevenLabs", value: "elevenlabs" },
@@ -127,6 +128,7 @@ export const AUTH_METHODS_BY_PROVIDER = {
   vapi: AUTH_METHODS,
   retell: AUTH_METHODS,
   elevenlabs: AUTH_METHODS,
+  bland: AUTH_METHODS,
   others: OTHER_AUTH_METHODS,
 };
 
@@ -253,10 +255,36 @@ export const LIVEKIT_STEPS = [
   },
 ];
 
+// Bland uses a Conversational Pathway as the "assistant"; its pathway ID goes
+// in the Assistant ID field. Exact dashboard menu paths may need verification.
+export const BLAND_STEPS = [
+  {
+    label: "1. Log in to",
+    linkText: "Bland.ai",
+    link: "https://app.bland.ai",
+  },
+  {
+    label:
+      "2. Open Settings → 'API Keys' and copy your API key — it is used as the authorization header.",
+  },
+  {
+    label: "3. Go to 'Conversational Pathways' and open the pathway your agent runs.",
+  },
+  {
+    label:
+      "4. Click 'Copy ID' on the pathway and paste it into the Assistant ID field (Bland uses the pathway ID as the assistant).",
+  },
+  {
+    label:
+      "5. Set a Contact Number — Bland has no web connector, so a phone number is required to simulate a Bland agent. For inbound tests, use a Bland number attached to that pathway that can receive calls.",
+  },
+];
+
 export const PROVIDER_STEPS_MAPPER = {
   vapi: VAPI_STEPS,
   retell: RETELL_STEPS,
   elevenlabs: ELEVENLABS_STEPS,
+  bland: BLAND_STEPS,
   livekit: LIVEKIT_STEPS,
   livekit_bridge: LIVEKIT_STEPS,
 };

@@ -28225,7 +28225,7 @@ export const SimulateApiAgentDefinitionOperationsFetchAssistantFromProviderBody 
   "assistant_id": zod.string().min(1),
   "api_key": zod.string().min(1),
   "agent_id": zod.string().uuid().optional(),
-  "provider": zod.enum(['vapi', 'retell', 'eleven_labs', 'others']).default(simulateApiAgentDefinitionOperationsFetchAssistantFromProviderBodyProviderDefault).describe('Voice provider. One of: vapi, retell, eleven_labs, others.')
+  "provider": zod.enum(['vapi', 'retell', 'eleven_labs', 'bland', 'others']).default(simulateApiAgentDefinitionOperationsFetchAssistantFromProviderBodyProviderDefault).describe('Voice provider. One of: vapi, retell, eleven_labs, bland, others.')
 })
 
 
@@ -37240,7 +37240,7 @@ export const TracerObservabilityProviderCreateBody = zod.object({
  * API endpoints for managing Observability Providers.
  */
 export const TracerObservabilityProviderVerifyApiKeyBody = zod.object({
-  "provider": zod.enum(['vapi', 'retell']),
+  "provider": zod.enum(['vapi', 'retell', 'bland']),
   "api_key": zod.string().optional(),
   "agent_id": zod.string().optional()
 })
@@ -37258,7 +37258,7 @@ export const TracerObservabilityProviderVerifyApiKeyResponse = zod.object({
  * API endpoints for managing Observability Providers.
  */
 export const TracerObservabilityProviderVerifyAssistantIdBody = zod.object({
-  "provider": zod.enum(['vapi', 'retell']),
+  "provider": zod.enum(['vapi', 'retell', 'bland']),
   "assistant_id": zod.string().optional(),
   "api_key": zod.string().optional(),
   "agent_id": zod.string().optional()

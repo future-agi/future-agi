@@ -2,6 +2,7 @@ import json
 import re
 from datetime import datetime
 
+import requests
 import structlog
 from django.db import models, transaction
 from django.utils import timezone
@@ -56,8 +57,12 @@ from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.pagination import ExtendedPageNumberPagination
+from tracer.constants.external_endpoints import ObservabilityRoutes
 from tracer.models.observability_provider import ProviderChoices
 from tracer.models.replay_session import ReplaySession
+from tracer.services.observability_providers import (
+    OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+)
 from tracer.utils.observability_provider import create_observability_provider
 from tracer.utils.otel import ResourceLimitError
 from tracer.utils.replay_session import link_agent_to_replay_session
@@ -577,6 +582,30 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
                 response_engine_json = json.loads(response_engine_raw)
                 name = assistant_json.get("agent_name")
                 prompt = response_engine_json.get("general_prompt")
+
+            elif provider == ProviderChoices.BLAND:
+                # Bland's "assistant" is a Conversational Pathway, fetched by id.
+                resp = requests.get(
+                    f"{ObservabilityRoutes.BLAND_PATHWAY_URL.value}/{assistant_id}",
+                    headers={"authorization": api_key},
+                    timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+                )
+                resp.raise_for_status()
+                pathway = resp.json()
+                name = pathway.get("name") or ""
+                # Pathways are node graphs, not a single prompt — surface the
+                # description and each node's prompt so the synced agent carries
+                # the pathway's behaviour.
+                node_texts = [
+                    (node.get("data") or {}).get("prompt")
+                    or (node.get("data") or {}).get("text")
+                    for node in pathway.get("nodes", [])
+                ]
+                prompt = "\n\n".join(
+                    text
+                    for text in [pathway.get("description"), *node_texts]
+                    if text
+                )
 
             response_data = {
                 "assistant_id": assistant_id,

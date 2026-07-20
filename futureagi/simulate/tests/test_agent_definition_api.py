@@ -708,6 +708,47 @@ class TestFetchAssistantFromProvider:
         assert data["result"]["name"] == "Support Bot"
         assert data["result"]["prompt"] == "You are a helpful assistant."
 
+    def test_valid_bland_request(self, auth_client):
+        # Bland's "assistant" is a Conversational Pathway (a node graph); the
+        # synced prompt assembles the description and each node's prompt/text.
+        mock_pathway = {
+            "name": "Hours Pathway",
+            "description": "Store hours agent",
+            "nodes": [
+                {"data": {"prompt": "You are the front-desk agent. Opens 9 AM."}},
+                {"data": {"text": "Thank the caller and say goodbye."}},
+            ],
+        }
+        with patch("simulate.views.agent_definition.requests.get") as mock_get:
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = mock_pathway
+            mock_resp.raise_for_status.return_value = None
+            mock_get.return_value = mock_resp
+
+            response = auth_client.post(
+                self.URL,
+                {
+                    "assistant_id": "2fdd4db9-5e81-4422-b11c-168f0182d4fc",
+                    "api_key": "org_key",
+                    "provider": "bland",
+                },
+                format="json",
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["status"] is True
+        assert data["result"]["name"] == "Hours Pathway"
+        prompt = data["result"]["prompt"]
+        assert "Store hours agent" in prompt
+        assert "front-desk agent" in prompt
+        assert "say goodbye" in prompt
+        # Fetched the pathway by id with Bland's raw authorization header.
+        assert mock_get.call_args[0][0].endswith(
+            "/v1/pathway/2fdd4db9-5e81-4422-b11c-168f0182d4fc"
+        )
+        assert mock_get.call_args[1]["headers"]["authorization"] == "org_key"
+
     def test_invalid_credentials(self, auth_client):
         with (
             patch("tfc.ee_gating.check_ee_feature", return_value=None),

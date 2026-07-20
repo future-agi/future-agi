@@ -133,6 +133,14 @@ const EditAgentDetails = ({
      */
     mutationFn: (data) =>
       axios.post(endpoints.agentDefinitions.fetchAssistantFromProvider, data),
+    onError: (error) => {
+      enqueueSnackbar({
+        message:
+          error?.message ||
+          "Syncing with the provider failed. Recheck the API key and ID.",
+        variant: "error",
+      });
+    },
     onSuccess: (data) => {
       const providerData = data?.data?.result;
       if (!agentName?.includes(providerData?.name)) {
@@ -191,7 +199,7 @@ const EditAgentDetails = ({
     };
   }, []);
 
-  const handleSyncWithProvider = async () => {
+  const handleSyncWithProvider = () => {
     if (!apiKey || !assistantId) {
       enqueueSnackbar({
         message: "Please add a valid API key and assistant ID",
@@ -199,15 +207,15 @@ const EditAgentDetails = ({
       });
       return;
     }
-    const isValid = await trigger(["apiKey", "assistantId"]);
-    if (isValid) {
-      mutate({
-        api_key: apiKey,
-        assistant_id: assistantId,
-        provider: provider,
-        agent_id: agentDefinitionId,
-      });
-    }
+    // The sync fetches config straight from the provider, so it must not depend
+    // on whole-form validity (contact number, etc.). The backend validates the
+    // key + id and returns an error if either is wrong.
+    mutate({
+      api_key: apiKey,
+      assistant_id: assistantId,
+      provider: provider,
+      agent_id: agentDefinitionId,
+    });
   };
 
   const canEnableObservability = Boolean(apiKey && assistantId);

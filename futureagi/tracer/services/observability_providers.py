@@ -32,6 +32,15 @@ class ObservabilityService:
             api_endpoint = (
                 f"{ObservabilityRoutes.RETELL_LIST_ASSISTANTS_URL.value}?limit=1"
             )
+        elif provider == ProviderChoices.BLAND:
+            # Bland validates via its read-only account endpoint and takes the
+            # raw key in the authorization header (no Bearer prefix).
+            response = requests.get(
+                ObservabilityRoutes.BLAND_ME_URL.value,
+                headers={"authorization": api_key},
+                timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+            )
+            return response.status_code
         else:
             raise ValueError(f"Invalid choice for provider: {provider}")
         headers = {"Authorization": f"Bearer {api_key}"}
@@ -55,6 +64,14 @@ class ObservabilityService:
             endpoint = (
                 f"{ObservabilityRoutes.RETELL_GET_ASSISTANT_URL.value}/{assistant_id}"
             )
+        elif provider == ProviderChoices.BLAND:
+            # Bland's "assistant" is a pathway; the raw key goes in authorization.
+            response = requests.get(
+                f"{ObservabilityRoutes.BLAND_PATHWAY_URL.value}/{assistant_id}",
+                headers={"authorization": api_key},
+                timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+            )
+            return response.status_code
         else:
             raise ValueError(f"Invalid choice for provider: {provider}")
 
