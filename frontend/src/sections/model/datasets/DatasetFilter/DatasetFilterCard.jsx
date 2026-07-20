@@ -1,8 +1,9 @@
 import { Box, Button, Card } from "@mui/material";
 import React from "react";
+import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 
-const DatasetFilterCard = () => {
+const DatasetFilterCard = ({ addFilter }) => {
   return (
     <Card sx={{ padding: 2, border: "none", display: "flex" }}>
       <Box sx={{ flex: 1 }} />
@@ -10,7 +11,7 @@ const DatasetFilterCard = () => {
         <Button
           variant="contained"
           color="primary"
-          onClick={() => {}}
+          onClick={addFilter}
           startIcon={<Iconify icon="ic:round-plus" />}
           sx={{
             "& .MuiButton-startIcon": {
@@ -21,6 +22,10 @@ const DatasetFilterCard = () => {
       </Box>
     </Card>
   );
+};
+
+DatasetFilterCard.propTypes = {
+  addFilter: PropTypes.func.isRequired,
 };
 
 export default DatasetFilterCard;
