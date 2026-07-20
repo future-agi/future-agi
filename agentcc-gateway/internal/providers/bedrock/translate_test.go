@@ -1424,9 +1424,19 @@ func TestParseStreamPayload_ContentBlockDeltaNonTextDelta(t *testing.T) {
 	if done {
 		t.Error("should not be done")
 	}
-	// Non text_delta types should return nil chunk
-	if chunk != nil {
-		t.Error("chunk should be nil for non-text_delta")
+	// input_json_delta produces a tool-call streaming chunk (not nil).
+	if chunk == nil {
+		t.Fatal("expected non-nil chunk for input_json_delta")
+	}
+	if len(chunk.Choices) != 1 {
+		t.Fatalf("expected 1 choice, got %d", len(chunk.Choices))
+	}
+	tcs := chunk.Choices[0].Delta.ToolCalls
+	if len(tcs) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(tcs))
+	}
+	if tcs[0].Function == nil || tcs[0].Function.Arguments != "{" {
+		t.Errorf("unexpected tool call args: %+v", tcs[0].Function)
 	}
 }
 

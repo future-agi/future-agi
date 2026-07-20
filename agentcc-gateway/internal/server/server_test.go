@@ -161,21 +161,6 @@ func startMockOpenAI(t *testing.T) *httptest.Server {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(resp)
 
-		case r.URL.Path == "/v1/embeddings" && r.Method == "POST":
-			resp := models.EmbeddingResponse{
-				Object: "list",
-				Data: []models.EmbeddingData{{
-					Object:    "embedding",
-					Index:     0,
-					Embedding: json.RawMessage(`[0.1,0.2,0.3]`),
-				}},
-				Model: "gpt-4o",
-				Usage: &models.EmbeddingUsage{PromptTokens: 3, TotalTokens: 3},
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(resp)
-
 		case r.URL.Path == "/v1/responses" && r.Method == "POST":
 			var req models.ResponsesRequest
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -430,7 +415,7 @@ func createAnthropicAuthTestServer(t *testing.T, mockURL string) *Server {
 		Name:    "test-service",
 		Key:     "test-api-key",
 		Owner:   "test-org",
-		KeyType: "standard",
+		KeyType: "internal",
 	}}
 	cfg.Providers["anthropic"] = config.ProviderConfig{
 		BaseURL:   mockURL,
@@ -529,7 +514,7 @@ func createAuthRequiredTestServerWithPlugins(t *testing.T, mockURL string, plugi
 		Name:    "test-service",
 		Key:     "sk-test-key-001",
 		Owner:   "test-org",
-		KeyType: "standard",
+		KeyType: "internal",
 	}}
 	cfg.Providers["openai"] = config.ProviderConfig{
 		BaseURL:   mockURL,
@@ -557,7 +542,7 @@ func createAuthRequiredTestServer(t *testing.T, mockURL string) *Server {
 		Name:    "test-service",
 		Key:     "sk-test-key-001",
 		Owner:   "test-org",
-		KeyType: "standard",
+		KeyType: "internal",
 	}}
 	cfg.Providers["openai"] = config.ProviderConfig{
 		BaseURL:   mockURL,
@@ -587,7 +572,7 @@ func createAuthRequiredA2ATestServer(t *testing.T, mockURL string) *Server {
 		Name:    "test-service",
 		Key:     "sk-test-key-001",
 		Owner:   "test-org",
-		KeyType: "standard",
+		KeyType: "internal",
 	}}
 	cfg.A2A.Enabled = true
 	cfg.A2A.Card = config.A2ACardConfig{
@@ -659,7 +644,7 @@ func createOrgScopedModelsTestServer(t *testing.T, mockURL string) *Server {
 			Name:    "org-internal",
 			Key:     "sk-agentcc-org-internal-test",
 			Owner:   "test-org",
-			KeyType: "standard",
+			KeyType: "internal",
 			Metadata: map[string]string{
 				"org_id": "org-123",
 			},
@@ -1817,7 +1802,22 @@ func TestAnthropicCountTokens_AcceptsNativeRequest(t *testing.T) {
 }
 
 func TestCreateEmbedding_AcceptsXAPIKeyAuth(t *testing.T) {
-	mock := startMockOpenAI(t)
+	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/v1/models" && r.Method == "GET":
+			json.NewEncoder(w).Encode(models.ModelListResponse{Object: "list", Data: []models.ModelObject{{ID: "gpt-4o"}}})
+		case r.URL.Path == "/v1/embeddings" && r.Method == "POST":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(models.EmbeddingResponse{
+				Object: "list",
+				Data:   []models.EmbeddingData{{Object: "embedding", Index: 0, Embedding: json.RawMessage(`[0.1,0.2,0.3]`)}},
+				Model:  "gpt-4o",
+				Usage:  &models.EmbeddingUsage{PromptTokens: 3, TotalTokens: 3},
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
 	defer mock.Close()
 
 	srv := createAuthRequiredTestServer(t, mock.URL)

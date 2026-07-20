@@ -453,19 +453,12 @@ func convertImageToBedrock(imageURL string) *bedrockContentBlock {
 		}
 	}
 
-	// Bedrock Claude only supports base64-encoded images, not URL references.
-	// Download the image and convert to base64.
-	if strings.HasPrefix(imageURL, "http://") || strings.HasPrefix(imageURL, "https://") {
-		mediaType, data, err := downloadImageAsBase64(imageURL)
-		if err != nil {
-			return nil
-		}
+	if strings.HasPrefix(imageURL, "https://") || strings.HasPrefix(imageURL, "http://") {
 		return &bedrockContentBlock{
 			Type: "image",
 			Source: &imageSource{
-				Type:      "base64",
-				MediaType: mediaType,
-				Data:      data,
+				Type: "url",
+				URL:  imageURL,
 			},
 		}
 	}
