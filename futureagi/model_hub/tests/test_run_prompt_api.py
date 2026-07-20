@@ -17,8 +17,9 @@ import json
 import uuid
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
-from litellm.exceptions import AuthenticationError
+from litellm.exceptions import APIError, AuthenticationError, PermissionDeniedError
 from rest_framework import status
 from rest_framework.test import APIClient
 
@@ -1164,6 +1165,64 @@ class TestProviderKeyValidation:
             side_effect=RuntimeError("connection reset"),
         ):
             assert is_provider_key_valid("openai", "some-key") is True
+
+    def test_rejects_on_permission_denied_error(self):
+        # Some providers signal bad credentials as a 403 (PermissionDeniedError)
+        # rather than AuthenticationError's 401 — this used to fall through to
+        # the fail-open branch and silently accept a genuinely invalid key.
+        response = httpx.Response(403, request=httpx.Request("POST", "https://example.test"))
+        with patch(
+            "model_hub.utils.provider_key_validation.litellm.completion",
+            side_effect=PermissionDeniedError(
+                "forbidden",
+                llm_provider="anthropic",
+                model="anthropic/claude-haiku-4-5",
+                response=response,
+            ),
+        ):
+            assert is_provider_key_valid("anthropic", "wrong-key") is False
+
+    def test_rejects_on_generic_api_error_carrying_auth_status(self):
+        # Some litellm provider integrations wrap a 401/403 in the generic
+        # APIError (or a subclass) instead of AuthenticationError/
+        # PermissionDeniedError, but still carry the real status on
+        # `.status_code`. That must still be treated as a definitive rejection,
+        # not silently fail open.
+        exc = APIError(
+            status_code=401,
+            message="unauthorized",
+            llm_provider="openai",
+            model="openai/gpt-4o-mini",
+        )
+        with patch(
+            "model_hub.utils.provider_key_validation.litellm.completion",
+            side_effect=exc,
+        ):
+            assert is_provider_key_valid("openai", "wrong-key") is False
+
+    def test_new_probe_providers_are_actually_probed(self):
+        # Regression guard for the coverage gap Kartik flagged (#1370): the
+        # providers added to PROVIDER_PROBE_MODEL must actually route through
+        # the probe, not silently fail open because the map lookup misses.
+        for provider in ("deepseek", "openrouter", "fireworks_ai", "cerebras", "cohere_chat"):
+            with patch(
+                "model_hub.utils.provider_key_validation.litellm.completion",
+                return_value=MagicMock(),
+            ) as mock_completion:
+                assert is_provider_key_valid(provider, "some-key") is True
+            mock_completion.assert_called_once()
+
+    def test_inconclusive_probe_logs_at_warning(self):
+        # Kartik: a fail-open branch that logs at INFO is invisible if probing
+        # silently becomes a no-op (retired model, blocked egress). Must match
+        # the sibling validate_model_working's WARNING convention.
+        with patch(
+            "model_hub.utils.provider_key_validation.litellm.completion",
+            side_effect=RuntimeError("model retired"),
+        ), patch("model_hub.utils.provider_key_validation.logger") as mock_logger:
+            is_provider_key_valid("openai", "some-key")
+        mock_logger.warning.assert_called_once()
+        mock_logger.info.assert_not_called()
 
     def test_valid_key_passes_and_probes_provider(self):
         with patch(

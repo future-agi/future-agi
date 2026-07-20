@@ -15,6 +15,12 @@ import { ShowComponent } from "src/components/show";
 import APIKeyReadOnlyView from "src/components/custom-model-dropdown/APIKeyReadOnlyView";
 import Actions from "./Actions";
 import { LOGO_WITH_BLACK_BACKGROUND } from "src/components/custom-model-dropdown/common";
+import { RESPONSE_CODES } from "src/utils/constants";
+
+// Kept in sync with tfc.utils.error_codes.err_dict["INVALID_API_KEY"] on the
+// backend -- this is only a fallback for the rare case the server response
+// doesn't carry a message, so it must read identically to that string.
+const INVALID_API_KEY_MESSAGE = "Invalid API key, please type in the right one.";
 
 const KeyCardComponent = ({ data, onDeleteClick }) => {
   const theme = useTheme();
@@ -86,17 +92,31 @@ const KeyCardComponent = ({ data, onDeleteClick }) => {
     hasClearedOnceRef.current = false;
   }, [data, reset]);
 
-  // Surface a rejected key inline under the input (matches the AI Providers
-  // design). A 400 from the save endpoint means the provider rejected the key;
-  // anything else is an unexpected failure and gets a generic toast.
+  // Surface a rejected key. Text-key providers get an inline error under the
+  // input (matches the AI Providers design); JSON-config providers
+  // (Vertex/Azure/Bedrock) never mount a "key" field here -- they render
+  // APIKeyReadOnlyView + the CloudProviderModals dialog instead, which is
+  // already closed by the time this resolves, so setError('key', ...) would
+  // write into a sink nothing renders and the save would silently appear to
+  // do nothing. Only a definitive key rejection (INVALID_API_KEY) is a "key"
+  // problem on the text path -- every other 400 (e.g. UNABLE_TO_ADD_API_KEY
+  // from the save block) is an unrelated failure and always gets a toast.
   const handleSaveError = (error) => {
-    const message =
-      error?.message || "Invalid API key, please type in the right one";
-    if (error?.statusCode === 400) {
+    const message = error?.message || INVALID_API_KEY_MESSAGE;
+    const isKeyRejection = error?.code === "INVALID_API_KEY";
+
+    if (isKeyRejection && !isJsonKey) {
       setError("key", { type: "server", message });
-    } else {
-      enqueueSnackbar(message, { variant: "error" });
+      return;
     }
+
+    if (error?.statusCode === RESPONSE_CODES.PAYMENT_REQUIRED) {
+      // The axios response interceptor already enqueues an error snackbar for
+      // 402 upgrade_required; avoid stacking a second, identical toast here.
+      return;
+    }
+
+    enqueueSnackbar(message, { variant: "error" });
   };
 
   const { mutate: createApiKey, isPending } = useMutation({
