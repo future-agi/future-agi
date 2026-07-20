@@ -81,6 +81,8 @@ import {
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
+  makeSeriesKey,
+  resolveVisibleSeries,
 } from "./widgetUtils";
 import {
   AGGREGATION_OPTIONS,
@@ -343,7 +345,6 @@ const SERIES_COLORS = [
   "#00CEC9", // teal
   "#A29BFE", // lavender
 ];
-
 
 const hashSeriesName = (name) => {
   const s = String(name || "");
@@ -1111,9 +1112,7 @@ export default function WidgetEditorView() {
     );
   };
 
-  const [timePreset, setTimePreset] = useState(
-    incomingTimePreset || "30D",
-  );
+  const [timePreset, setTimePreset] = useState(incomingTimePreset || "30D");
   const [granularity, setGranularity] = useState("day");
   const [chartType, setChartType] = useState("line");
   const [metrics, setMetrics] = useState([]);
@@ -1143,6 +1142,8 @@ export default function WidgetEditorView() {
   const [isDragging, setIsDragging] = useState(false);
   const [tableSearch, setTableSearch] = useState("");
   const [visibleSeries, setVisibleSeries] = useState(null); // null = all visible, Set = selected indices
+  // Saved selection keys, applied once previewSeries loads.
+  const pendingVisibleSeriesRef = useRef(undefined);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [customDateRange, setCustomDateRange] = useState(null); // [startDate, endDate]
   const customDateAnchorRef = useRef(null);
@@ -1357,6 +1358,8 @@ export default function WidgetEditorView() {
         setChartDescription(widget.description || "");
         const qc = widget.queryConfig || widget.query_config || {};
         const cc = widget.chartConfig || widget.chart_config || {};
+        // undefined = nothing to restore; null = all visible; array = saved keys.
+        pendingVisibleSeriesRef.current = cc.visible_series;
         const { timePreset: initialPreset, customDateRange: initialRange } =
           resolveInitialTimeRange(
             qc.timeRange || qc.time_range,
@@ -2043,11 +2046,17 @@ export default function WidgetEditorView() {
       return;
     }
 
+    // visible_series lives in chart_config since query_config's serializer
+    // rejects unknown fields.
     const data = {
       name: chartName.trim() || "Untitled widget",
       description: chartDescription,
       query_config: buildQueryConfig(),
-      chart_config: { chart_type: chartType, axis_config: axisConfig },
+      chart_config: {
+        chart_type: chartType,
+        axis_config: axisConfig,
+        visible_series: currentVisibleSeriesKeys(),
+      },
     };
 
     setSaveStatus("saving");
@@ -2103,6 +2112,7 @@ export default function WidgetEditorView() {
         }
         allSeries.push({
           name: seriesLabel,
+          key: makeSeriesKey(metric, s.name),
           unit: metric.unit ?? "",
           data: (s.data || []).map((point) => ({
             x: new Date(point.timestamp).getTime(),
@@ -2114,9 +2124,29 @@ export default function WidgetEditorView() {
     return allSeries;
   }, [previewResult]);
 
+  // Current selection as stable keys for persistence; null = all visible.
+  const currentVisibleSeriesKeys = useCallback(
+    () =>
+      visibleSeries === null
+        ? null
+        : [...visibleSeries].map((i) => previewSeries[i]?.key).filter(Boolean),
+    [visibleSeries, previewSeries],
+  );
+
   // Auto-select top 10 series when there are more than 10 breakdown series
   const MAX_CHART_SERIES = 10;
   useEffect(() => {
+    if (previewSeries.length === 0) return;
+
+    // Restore a saved selection once, on the first non-empty previewSeries;
+    // consuming the ref lets later re-queries fall through to the default below.
+    if (pendingVisibleSeriesRef.current !== undefined) {
+      const saved = pendingVisibleSeriesRef.current;
+      pendingVisibleSeriesRef.current = undefined;
+      setVisibleSeries(resolveVisibleSeries(saved, previewSeries));
+      return;
+    }
+
     if (previewSeries.length <= MAX_CHART_SERIES) {
       // Show all if within limit
       if (visibleSeries !== null) setVisibleSeries(null);
@@ -2183,8 +2213,9 @@ export default function WidgetEditorView() {
   );
   const leftAxisFormatConfig = useMemo(() => {
     const leftAxis = axisConfig.leftY || {};
-    const metricUnits = (previewResult?.metrics || [])
-      .map((m) => m?.unit ?? "");
+    const metricUnits = (previewResult?.metrics || []).map(
+      (m) => m?.unit ?? "",
+    );
     const isMixedUnits = new Set(metricUnits).size > 1;
     const effectiveUnit = isMixedUnits
       ? ""
@@ -2193,7 +2224,9 @@ export default function WidgetEditorView() {
       ...leftAxis,
       unit: effectiveUnit,
       prefixSuffix: effectiveUnit
-        ? leftAxis.prefixSuffix || suggestedLeftAxisUnit.prefixSuffix || "prefix"
+        ? leftAxis.prefixSuffix ||
+          suggestedLeftAxisUnit.prefixSuffix ||
+          "prefix"
         : suggestedLeftAxisUnit.prefixSuffix,
     };
   }, [axisConfig.leftY, suggestedLeftAxisUnit, previewResult?.metrics]);
@@ -2882,9 +2915,7 @@ export default function WidgetEditorView() {
               whiteSpace: "nowrap",
               display: "block",
             }}
-            onClick={() =>
-              navigate(dashboardDetailUrl)
-            }
+            onClick={() => navigate(dashboardDetailUrl)}
           >
             {dashboard?.name || "Dashboard"}
           </Link>
@@ -3024,6 +3055,7 @@ export default function WidgetEditorView() {
                 chart_config: {
                   chart_type: chartType,
                   axis_config: axisConfig,
+                  visible_series: currentVisibleSeriesKeys(),
                 },
               };
               createMutation
@@ -3140,9 +3172,7 @@ export default function WidgetEditorView() {
         />
 
         <Button
-          onClick={() =>
-            navigate(dashboardDetailUrl)
-          }
+          onClick={() => navigate(dashboardDetailUrl)}
           sx={{ color: "text.primary", fontWeight: 500 }}
         >
           Close
@@ -3479,7 +3509,10 @@ export default function WidgetEditorView() {
                           <Box sx={{ flex: 1, overflow: "auto", px: 2 }}>
                             {barData.rows.map((row, i) => {
                               const val = row.numericValue;
-                              const color = getSeriesColor(row.name || row.label, seriesColorMap);
+                              const color = getSeriesColor(
+                                row.name || row.label,
+                                seriesColorMap,
+                              );
                               const pct =
                                 maxVal > 0 ? (Math.abs(val) / maxVal) * 100 : 0;
                               const fmtVal =
@@ -3656,7 +3689,10 @@ export default function WidgetEditorView() {
                               const checked =
                                 visibleSeries === null ||
                                 visibleSeries?.has(si);
-                              const color = getSeriesColor(s.name, seriesColorMap);
+                              const color = getSeriesColor(
+                                s.name,
+                                seriesColorMap,
+                              );
                               return (
                                 <Box
                                   key={si}
@@ -3834,7 +3870,10 @@ export default function WidgetEditorView() {
                                             width: 8,
                                             height: 8,
                                             borderRadius: "2px",
-                                            bgcolor: getSeriesColor(s.name, seriesColorMap),
+                                            bgcolor: getSeriesColor(
+                                              s.name,
+                                              seriesColorMap,
+                                            ),
                                             display: "inline-block",
                                           }}
                                         />
@@ -4426,7 +4465,10 @@ export default function WidgetEditorView() {
                             const checked =
                               visibleSeries === null || visibleSeries.has(si);
                             const avg = getSeriesAverage(s.data);
-                            const color = getSeriesColor(s.name, seriesColorMap);
+                            const color = getSeriesColor(
+                              s.name,
+                              seriesColorMap,
+                            );
                             return (
                               <tr
                                 key={si}
@@ -6017,63 +6059,66 @@ export default function WidgetEditorView() {
                       Axis Assignment
                     </Typography>
                     {previewSeries.map((s, si) => {
-                      const seriesColor = getSeriesColor(s.name, seriesColorMap);
+                      const seriesColor = getSeriesColor(
+                        s.name,
+                        seriesColorMap,
+                      );
                       return (
-                      <Stack
-                        key={si}
-                        direction="row"
-                        alignItems="center"
-                        justifyContent="space-between"
-                        sx={{ mb: 1 }}
-                      >
                         <Stack
+                          key={si}
                           direction="row"
                           alignItems="center"
-                          gap={1}
-                          sx={{ flex: 1, minWidth: 0 }}
+                          justifyContent="space-between"
+                          sx={{ mb: 1 }}
                         >
-                          <Box
-                            sx={{
-                              width: 22,
-                              height: 22,
-                              borderRadius: 0.5,
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              bgcolor: seriesColor + "22",
-                              color: seriesColor,
-                              fontSize: "11px",
-                              fontWeight: 700,
-                            }}
+                          <Stack
+                            direction="row"
+                            alignItems="center"
+                            gap={1}
+                            sx={{ flex: 1, minWidth: 0 }}
                           >
-                            {LETTER_LABELS[si] || si}
-                          </Box>
-                          <Iconify
-                            icon="mdi:chart-line"
-                            width={16}
-                            sx={{
-                              color: seriesColor,
-                              flexShrink: 0,
-                            }}
+                            <Box
+                              sx={{
+                                width: 22,
+                                height: 22,
+                                borderRadius: 0.5,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                bgcolor: seriesColor + "22",
+                                color: seriesColor,
+                                fontSize: "11px",
+                                fontWeight: 700,
+                              }}
+                            >
+                              {LETTER_LABELS[si] || si}
+                            </Box>
+                            <Iconify
+                              icon="mdi:chart-line"
+                              width={16}
+                              sx={{
+                                color: seriesColor,
+                                flexShrink: 0,
+                              }}
+                            />
+                            <Typography
+                              variant="body2"
+                              noWrap
+                              sx={{ fontWeight: 500 }}
+                            >
+                              {s.name?.split(" (")[0] || s.name}
+                            </Typography>
+                          </Stack>
+                          <ToggleButtons
+                            options={[
+                              { label: "L", value: "left" },
+                              { label: "R", value: "right" },
+                            ]}
+                            value={axisConfig.seriesAxis[si] || "left"}
+                            onChange={(v) => setSeriesAxis(si, v)}
+                            theme={theme}
                           />
-                          <Typography
-                            variant="body2"
-                            noWrap
-                            sx={{ fontWeight: 500 }}
-                          >
-                            {s.name?.split(" (")[0] || s.name}
-                          </Typography>
                         </Stack>
-                        <ToggleButtons
-                          options={[
-                            { label: "L", value: "left" },
-                            { label: "R", value: "right" },
-                          ]}
-                          value={axisConfig.seriesAxis[si] || "left"}
-                          onChange={(v) => setSeriesAxis(si, v)}
-                          theme={theme}
-                        />
-                      </Stack>
                       );
                     })}
                     {previewSeries.length === 0 && (

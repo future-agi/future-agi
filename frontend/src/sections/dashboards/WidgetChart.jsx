@@ -15,6 +15,8 @@ import {
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
+  makeSeriesKey,
+  resolveVisibleSeries,
   seriesHasDataPoints,
 } from "./widgetUtils";
 import { toTimeRangePayload } from "./dashboardDateRange";
@@ -155,6 +157,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
           }
           s.push({
             name: label,
+            key: makeSeriesKey(metric, ms.name),
             unit: metric.unit ?? "",
             data: (ms.data || []).map((point) => ({
               x: new Date(point.timestamp).getTime(),
@@ -171,7 +174,19 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const MAX_CHART_SERIES = 10;
   const [visibleSeries, setVisibleSeries] = useState(null); // null = all visible
 
+  // JSON-keyed so a re-created widget object doesn't needlessly re-run the effect.
+  const savedVisibleSeries = chartConfig.visible_series;
+  const savedVisibleKey = JSON.stringify(savedVisibleSeries ?? "__default__");
+
   useEffect(() => {
+    if (series.length === 0) return;
+
+    // Honor the editor's saved selection; undefined = none, fall through to default.
+    if (savedVisibleSeries !== undefined) {
+      setVisibleSeries(resolveVisibleSeries(savedVisibleSeries, series));
+      return;
+    }
+
     if (series.length <= MAX_CHART_SERIES) {
       if (visibleSeries !== null) setVisibleSeries(null);
       return;
@@ -186,7 +201,8 @@ export default function WidgetChart({ widget, globalDateRange }) {
       ranked.slice(0, MAX_CHART_SERIES).map((r) => r.i),
     );
     setVisibleSeries(topIndices);
-  }, [series]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [series, savedVisibleKey]);
 
   const chartSeries = useMemo(() => {
     if (visibleSeries === null) return series;
@@ -225,12 +241,9 @@ export default function WidgetChart({ widget, globalDateRange }) {
   const leftAxisFormatConfig = useMemo(() => {
     const suggested = getSuggestedUnitConfig(result?.metrics || []);
     const leftAxis = axisConfig?.leftY || {};
-    const metricUnits = (result?.metrics || [])
-      .map((m) => m?.unit ?? "");
+    const metricUnits = (result?.metrics || []).map((m) => m?.unit ?? "");
     const isMixedUnits = new Set(metricUnits).size > 1;
-    const effectiveUnit = isMixedUnits
-      ? ""
-      : leftAxis.unit || suggested.unit;
+    const effectiveUnit = isMixedUnits ? "" : leftAxis.unit || suggested.unit;
     return {
       ...leftAxis,
       unit: effectiveUnit,
@@ -395,10 +408,7 @@ export default function WidgetChart({ widget, globalDateRange }) {
           const avg = getSeriesAverage(s.data);
           return (
             <Box key={i} sx={{ textAlign: "center" }}>
-              <Typography
-                variant="h3"
-                sx={{ color: colorFor(s.name) }}
-              >
+              <Typography variant="h3" sx={{ color: colorFor(s.name) }}>
                 {avg == null ? "—" : formatVal(avg)}
               </Typography>
               <Typography variant="caption" color="text.secondary">
