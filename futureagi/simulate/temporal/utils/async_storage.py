@@ -157,8 +157,6 @@ async def download_audio_from_url_async(
     async with httpx.AsyncClient(timeout=timeout) as client:
         for attempt in range(max_retries):
             try:
-                logger.debug("recording_download_attempt", attempt=attempt + 1)
-
                 # Stream the response to handle large files
                 async with client.stream("GET", audio_url) as response:
                     response.raise_for_status()
@@ -177,7 +175,6 @@ async def download_audio_from_url_async(
                             )
 
                     audio_data = b"".join(chunks)
-                    logger.info("recording_download_complete", bytes=len(audio_data))
                     return audio_data
 
             except (httpx.HTTPError, httpx.StreamError) as e:
@@ -216,15 +213,6 @@ async def _convert_audio_url_to_s3_async_with_size(
     """
     from tracer.utils.vapi_recording import VapiRecordingService
 
-    logger.info(
-        "_convert_audio_url_to_s3: ENTRY",
-        call_id=call_id,
-        url_type=url_type,
-        provider=provider,
-        api_key_present=bool(api_key),
-        vapi_call_id=vapi_call_id,
-        artifact_type=artifact_type,
-    )
     # ``call_id`` positional is the S3-object-key ID. ``vapi_call_id`` kwarg
     # is the provider-side call ID used for the authenticated endpoint. In
     # the observability rehost path the two happen to be equal, so callers
@@ -233,20 +221,12 @@ async def _convert_audio_url_to_s3_async_with_size(
     vapi_authenticated = VapiRecordingService.is_authenticated_download(
         provider, api_key, auth_call_id, artifact_type
     )
-    logger.info(
-        "_convert_audio_url_to_s3: auth check",
-        vapi_authenticated=vapi_authenticated,
-        auth_call_id=auth_call_id,
-    )
-
     if not audio_url and not vapi_authenticated:
-        logger.info("recording_rehost_skipped_missing_source", artifact_type=url_type)
         return audio_url, 0
 
     # Only skip URLs verified as belonging to our configured storage. Provider
     # signed URLs can legitimately be hosted on S3 too.
     if _is_fagi_storage_url(audio_url):
-        logger.info("recording_rehost_skipped_own_storage", artifact_type=url_type)
         return audio_url, 0
 
     object_key_base = _rehost_object_key_base(
@@ -257,10 +237,6 @@ async def _convert_audio_url_to_s3_async_with_size(
         return existing
 
     try:
-        logger.info(
-            "_convert_audio_url_to_s3: starting download",
-            vapi_authenticated=vapi_authenticated,
-        )
         # Async download
         audio_bytes = await download_audio_from_url_async(
             audio_url,
@@ -269,11 +245,6 @@ async def _convert_audio_url_to_s3_async_with_size(
             call_id=auth_call_id,
             artifact_type=artifact_type,
         )
-        logger.info(
-            "_convert_audio_url_to_s3: download complete",
-            bytes=len(audio_bytes),
-        )
-
         object_key = _rehost_object_key(
             object_key_base, _detected_audio_extension(audio_bytes)
         )
@@ -298,9 +269,6 @@ async def _convert_audio_url_to_s3_async_with_size(
         # Run upload in thread pool (small operation compared to download)
         s3_url = await loop.run_in_executor(None, do_upload)
 
-        logger.info(
-            "recording_rehost_complete", artifact_type=url_type, bytes=len(audio_bytes)
-        )
         return s3_url, len(audio_bytes)
 
     except Exception as e:
@@ -403,15 +371,6 @@ def convert_audio_url_to_s3_sync(
     """
     from tracer.utils.vapi_recording import VapiRecordingService
 
-    logger.info(
-        "convert_audio_url_to_s3_sync: ENTRY",
-        call_id=call_id,
-        url_type=url_type,
-        provider=provider,
-        api_key_present=bool(api_key),
-        artifact_type=artifact_type,
-    )
-
     auth_call_id = vapi_call_id or call_id
     vapi_authenticated = VapiRecordingService.is_authenticated_download(
         provider, api_key, auth_call_id, artifact_type
@@ -466,9 +425,6 @@ def convert_audio_url_to_s3_sync(
 
         s3_url = upload_audio_to_s3({"bytes": audio_bytes}, object_key=object_key)
 
-        logger.info(
-            "recording_rehost_complete", artifact_type=url_type, bytes=len(audio_bytes)
-        )
         return s3_url, len(audio_bytes)
 
     except Exception as e:

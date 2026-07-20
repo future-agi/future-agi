@@ -444,24 +444,12 @@ class VapiRecordingService:
         verify_ssl: bool = True,
     ) -> Optional[list[dict[str, Any]]]:
         """Fetch and parse gzip-JSONL call logs (Tier 1 auth then Tier 2 legacy fallback)."""
-        logger.info(
-            "fetch_and_parse_call_logs: ENTRY",
-            call_id=call_id,
-            api_key_present=bool(api_key),
-            legacy_url_present=bool(legacy_url),
-            verify_ssl=verify_ssl,
-        )
         content = cls._fetch_call_logs_content(
             call_id=call_id,
             api_key=api_key,
             legacy_url=legacy_url,
             timeout_seconds=timeout_seconds,
             verify_ssl=verify_ssl,
-        )
-        logger.info(
-            "fetch_and_parse_call_logs: content fetched",
-            content_is_none=content is None,
-            content_len=len(content) if content else 0,
         )
         if content is None:
             return None
@@ -501,35 +489,18 @@ class VapiRecordingService:
         timeout_seconds: float,
         verify_ssl: bool,
     ) -> Optional[bytes]:
-        logger.info(
-            "fetch_call_logs_content: ENTRY",
-            call_id=call_id,
-            api_key_present=bool(api_key),
-            will_try_tier1=bool(call_id and api_key),
-            will_try_tier2=bool(legacy_url),
-        )
         if call_id and api_key:
             try:
                 url = cls.build_artifact_url(
                     call_id, VapiArtifactType.CALL_LOGS
                 )
                 headers = {"Authorization": f"Bearer {api_key}"}
-                logger.info(
-                    "fetch_call_logs_content: TIER1 request",
-                    call_id=call_id,
-                )
                 response = requests.get(
                     url,
                     headers=headers,
                     timeout=timeout_seconds,
                     verify=verify_ssl,
                     allow_redirects=True,
-                )
-                logger.info(
-                    "fetch_call_logs_content: TIER1 response",
-                    call_id=call_id,
-                    status=response.status_code,
-                    content_len=len(response.content),
                 )
                 if response.status_code in (401, 403):
                     logger.warning(
@@ -549,21 +520,11 @@ class VapiRecordingService:
 
         if legacy_url:
             try:
-                logger.info(
-                    "fetch_call_logs_content: TIER2 request",
-                    call_id=call_id,
-                )
                 response = requests.get(
                     legacy_url,
                     timeout=timeout_seconds,
                     verify=verify_ssl,
                     stream=True,
-                )
-                logger.info(
-                    "fetch_call_logs_content: TIER2 response",
-                    call_id=call_id,
-                    status=response.status_code,
-                    content_len=len(response.content),
                 )
                 response.raise_for_status()
                 return response.content
@@ -596,10 +557,6 @@ class VapiRecordingService:
                     )
                     payload = {"raw_line": line}
                 entries.append(cls._normalise_call_log_entry(payload))
-        logger.info(
-            "parse_call_log_content: DONE",
-            entries_count=len(entries),
-        )
         return entries
 
     @classmethod

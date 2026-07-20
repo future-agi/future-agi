@@ -137,14 +137,6 @@ def normalize_vapi_data(
     log: dict, *, api_key: str | None = None, project_id: str | None = None
 ) -> dict:
     """Normalize a Vapi log entry; api_key routes call-logs through the auth endpoint."""
-    logger.info(
-        "normalize_vapi_data: ENTRY",
-        log_type=type(log).__name__,
-        is_dict=isinstance(log, dict),
-        log_keys=list(log.keys())[:20] if isinstance(log, dict) else None,
-        api_key_present=bool(api_key),
-        api_key_len=len(api_key) if api_key else 0,
-    )
     if not isinstance(log, dict):
         logger.error(
             "normalize_vapi_data: LOG IS NOT A DICT — skipping",
@@ -186,12 +178,6 @@ def normalize_vapi_data(
         # Per-url-type byte counts for idempotent billing across re-polls.
         "rehost_uploads": bytes_by_url_type,
     }
-    logger.info(
-        "normalize_vapi_data: EXIT",
-        out_id=out.get("id"),
-        span_attr_keys=list(eval_attributes.keys())[:30],
-        has_call_logs="call_logs" in eval_attributes,
-    )
     return out
 
 
@@ -222,13 +208,6 @@ def _extract_eval_attributes(
     api_key: str | None = None,
 ) -> dict:
     """Extract and flatten eval attributes from a Vapi log; skip call-logs via include_call_logs=False."""
-    logger.info(
-        "extract_eval_attributes: ENTRY",
-        log_type=type(log).__name__,
-        is_dict=isinstance(log, dict),
-        include_call_logs=include_call_logs,
-        api_key_present=bool(api_key),
-    )
     if not isinstance(log, dict):
         logger.error(
             "extract_eval_attributes: LOG IS NOT A DICT",
@@ -240,7 +219,6 @@ def _extract_eval_attributes(
         "raw_log": log,
         "vapi.call_id": log.get("id"),
     }
-    logger.info("extract_eval_attributes: calling sub-extractors")
     _extract_llm_and_token_details(log, eval_attributes)
     _extract_conversation(log, eval_attributes)
     _extract_recording_urls(log, eval_attributes)
@@ -248,16 +226,7 @@ def _extract_eval_attributes(
     _extract_metadata(log, eval_attributes)
     _extract_common_call_fields(log, eval_attributes)
     if include_call_logs:
-        logger.info("extract_eval_attributes: -> _extract_call_logs")
         _extract_call_logs(log, eval_attributes, api_key=api_key)
-    else:
-        logger.info("extract_eval_attributes: call_logs SKIPPED (include_call_logs=False)")
-
-    logger.info(
-        "extract_eval_attributes: EXIT",
-        attr_count=len(eval_attributes),
-        has_call_logs="call_logs" in eval_attributes,
-    )
     return eval_attributes
 
 
@@ -519,12 +488,6 @@ def _extract_call_logs(log: dict, eval_attributes: dict, *, api_key: str | None 
     """Fetch call logs (Tier 1 auth then Tier 2 legacy) and store under call_logs in span_attributes."""
     from tracer.utils.vapi_recording import VapiRecordingService
 
-    logger.info(
-        "extract_call_logs: ENTRY",
-        log_type=type(log).__name__,
-        is_dict=isinstance(log, dict),
-        log_keys=list(log.keys())[:20] if isinstance(log, dict) else None,
-    )
     if not isinstance(log, dict):
         logger.error(
             "extract_call_logs: LOG IS NOT A DICT — cannot extract call_id/artifact",
@@ -535,15 +498,7 @@ def _extract_call_logs(log: dict, eval_attributes: dict, *, api_key: str | None 
     call_id = log.get("id")
     artifact = log.get("artifact", {})
     legacy_url = artifact.get("logUrl") if isinstance(artifact, dict) else None
-    logger.info(
-        "extract_call_logs: resolved ids",
-        call_id=call_id,
-        artifact_type=type(artifact).__name__,
-        artifact_is_dict=isinstance(artifact, dict),
-        legacy_url_present=bool(legacy_url),
-    )
     if not (call_id or legacy_url):
-        logger.info("extract_call_logs: no call_id or legacy_url, returning")
         return
 
     entries = VapiRecordingService.fetch_and_parse_call_logs(
@@ -556,8 +511,3 @@ def _extract_call_logs(log: dict, eval_attributes: dict, *, api_key: str | None 
         return
 
     eval_attributes["call_logs"] = entries
-    logger.info(
-        "Extracted call logs from VAPI",
-        log_count=len(entries),
-        call_id=call_id,
-    )

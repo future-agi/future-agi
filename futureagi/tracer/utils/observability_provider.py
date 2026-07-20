@@ -452,14 +452,6 @@ def process_and_store_logs(
 
     normalize_fn = normalization_functions[provider.provider]
 
-    logger.info(
-        "process_and_store_logs: LOOP START",
-        provider_id=str(provider.id),
-        provider_type=provider.provider,
-        logs_len=len(logs) if isinstance(logs, (list, tuple)) else "NOT_A_LIST",
-        logs_type=type(logs).__name__,
-        api_key_present=bool(api_key),
-    )
     if not isinstance(logs, (list, tuple)):
         logger.error(
             "process_and_store_logs: logs is NOT a list/tuple",
@@ -467,14 +459,7 @@ def process_and_store_logs(
         )
         return
 
-    for log_idx, log in enumerate(logs):
-        logger.info(
-            "process_and_store_logs: ITER",
-            idx=log_idx,
-            log_type=type(log).__name__,
-            is_dict=isinstance(log, dict),
-            log_keys=list(log.keys())[:15] if isinstance(log, dict) else None,
-        )
+    for log in logs:
         provider_log_id = None
         try:
             normalized_data = normalize_fn(log)
