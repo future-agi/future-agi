@@ -216,11 +216,8 @@ const LLMTracingView = lazyWithRetry(
 const UserList = lazyWithRetry(
   () => import("src/pages/dashboard/projects/UsersList"),
 );
-const CrossProjectUserDetailPage = lazyWithRetry(
-  () =>
-    import(
-      "src/sections/projects/UsersView/CrossProjectUserDetailPage/CrossProjectUserDetailPage"
-    ),
+const UserDetailPage = lazyWithRetry(
+  () => import("src/pages/dashboard/user/detail")
 );
 
 const GetStarted = lazyWithRetry(
@@ -862,7 +859,7 @@ export const dashboardRoutes = (
     // },
     {
       path: "users/:userId",
-      element: <CrossProjectUserDetailPage />,
+      element: <UserDetailPage />,
     },
     // {
     //   path: "prototype",
