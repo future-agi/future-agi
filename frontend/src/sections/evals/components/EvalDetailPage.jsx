@@ -58,6 +58,7 @@ import VersionBadge from "./VersionBadge";
 import BulkDeleteDialog from "./BulkDeleteDialog";
 import { EVAL_TAGS } from "../constant";
 import { FAGI_MODEL_VALUES } from "./ModelSelector";
+import { getEvalTags } from "./evalTags";
 import { buildDataInjection } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 
 const extract_selected_tools = (tools) => {
@@ -252,9 +253,7 @@ const EvalDetailPage = () => {
       viewingVersion.is_default ?? viewingVersion.isDefault ?? false;
     if (freshFlag !== localFlag) {
       setViewingVersion((prev) =>
-        prev
-          ? { ...prev, is_default: freshFlag, isDefault: freshFlag }
-          : prev,
+        prev ? { ...prev, is_default: freshFlag, isDefault: freshFlag } : prev,
       );
     }
   }, [versionsData, viewingVersion]);
@@ -360,7 +359,7 @@ const EvalDetailPage = () => {
               config.error_localizer_enabled ??
               false,
           );
-          setTags(evalData.tags || evalData.eval_tags || []);
+          setTags(getEvalTags(evalData));
           if (config.messages && config.messages.length > 0) {
             setMessages(config.messages);
           } else if (evalData.eval_type === "llm" && promptText) {
@@ -382,14 +381,13 @@ const EvalDetailPage = () => {
       // Load version config into the form
       isPopulatingRef.current = true;
       setViewingVersion(versionToLoad);
+      setTags(getEvalTags(evalData));
       setSearchParams(
         (prev) => {
           const next = new URLSearchParams(prev);
           next.set(
             "v",
-            String(
-              versionToLoad.version_number ?? versionToLoad.versionNumber,
-            ),
+            String(versionToLoad.version_number ?? versionToLoad.versionNumber),
           );
           return next;
         },
@@ -518,7 +516,6 @@ const EvalDetailPage = () => {
   const initialLoadDone = useRef(false);
   useEffect(() => {
     if (evalData && !viewingVersion) {
-
       const isCustom = evalData.owner !== "system";
       const urlVersion = searchParams.get("v");
       if (urlVersion && !initialLoadDone.current) {
@@ -625,7 +622,7 @@ const EvalDetailPage = () => {
             config.error_localizer_enabled ??
             false,
         );
-        setTags(evalData.tags || evalData.eval_tags || []);
+        setTags(getEvalTags(evalData));
         if (config.messages && config.messages.length > 0) {
           setMessages(config.messages);
         } else if (evalData.eval_type === "llm" && promptText) {
@@ -1661,7 +1658,7 @@ const EvalDetailPage = () => {
                   ))}
 
                 {/* Error Localization */}
-                {!isComposite && evalType !== "code"  && (
+                {!isComposite && evalType !== "code" && (
                   <Box>
                     <FormControlLabel
                       control={
@@ -1964,7 +1961,11 @@ const EvalDetailPage = () => {
                         variant={isComposite ? "contained" : "outlined"}
                         size="small"
                         onClick={handleTestEvaluation}
-                        disabled={isTesting || !isPlaygroundReady || needsTemplateVariable}
+                        disabled={
+                          isTesting ||
+                          !isPlaygroundReady ||
+                          needsTemplateVariable
+                        }
                         startIcon={
                           isTesting ? (
                             <CircularProgress size={14} />
@@ -1999,12 +2000,17 @@ const EvalDetailPage = () => {
                           variant="contained"
                           size="small"
                           onClick={handleSaveVersion}
-                          disabled={isSaving || !isDirty || needsTemplateVariable}
+                          disabled={
+                            isSaving || !isDirty || needsTemplateVariable
+                          }
                           startIcon={
                             isSaving ? (
                               <CircularProgress size={14} />
                             ) : (
-                              <Iconify icon="mdi:content-save-outline" width={16} />
+                              <Iconify
+                                icon="mdi:content-save-outline"
+                                width={16}
+                              />
                             )
                           }
                           sx={{ textTransform: "none" }}
@@ -2037,7 +2043,10 @@ const EvalDetailPage = () => {
                             isSaving ? (
                               <CircularProgress size={14} />
                             ) : (
-                              <Iconify icon="mdi:content-save-outline" width={16} />
+                              <Iconify
+                                icon="mdi:content-save-outline"
+                                width={16}
+                              />
                             )
                           }
                           sx={{ textTransform: "none" }}
