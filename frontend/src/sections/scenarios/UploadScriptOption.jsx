@@ -22,6 +22,15 @@ const UploadScriptOption = ({ control }) => {
     const files = Array.from(acceptedFiles);
     const maxSize = 5 * 1024 * 1024; // 5MB
 
+    const emptyFiles = files.filter((file) => file?.size === 0);
+
+    if (emptyFiles.length > 0) {
+      enqueueSnackbar("File cannot be empty", {
+        variant: "error",
+      });
+      return;
+    }
+
     const filesLargerThanMaxSize = files.filter((file) => file?.size > maxSize);
 
     if (filesLargerThanMaxSize.length > 0) {
