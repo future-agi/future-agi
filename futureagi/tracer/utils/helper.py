@@ -236,6 +236,10 @@ def is_image(value: str) -> bool:
     return value.startswith(("data:image", "iVBORw0KGgo"))
 
 
+def is_audio(value: str) -> bool:
+    return value.startswith("data:audio/")
+
+
 def determine_value_type(value):
     # Determine data type based on value
     if isinstance(value, bool):
@@ -257,6 +261,8 @@ def determine_value_type(value):
             return DataTypeChoices.DATETIME.value
         elif is_image(value):
             return DataTypeChoices.IMAGE.value
+        elif is_audio(value):
+            return DataTypeChoices.AUDIO.value
         return DataTypeChoices.TEXT.value
     else:
         return DataTypeChoices.OTHERS.value
