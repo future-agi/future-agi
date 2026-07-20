@@ -281,6 +281,7 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ["id", "email", "name", "organization_role", "is_active", "is_staff"]
+        ref_name = "ModelHubUserSerializer"
 
 
 class AnnotationProjectVersionMapperSerializer(serializers.ModelSerializer):

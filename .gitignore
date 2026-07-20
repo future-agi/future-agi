@@ -222,3 +222,6 @@ frontend/scripts/.artifacts/
 # bin/install timestamped logs
 install-*.log
 uninstall-*.log
+
+# Git worktrees
+.worktrees/
