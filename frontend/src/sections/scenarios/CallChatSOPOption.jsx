@@ -7,6 +7,7 @@ import PropTypes from "prop-types";
 import { useController } from "react-hook-form";
 import SvgColor from "src/components/svg-color";
 import { ShowComponent } from "src/components/show";
+import { createScenarioFileDropHandler } from "./common";
 
 const CallChatSOPOption = ({ control }) => {
   const fieldName = "config.sopUrl";
@@ -18,50 +19,10 @@ const CallChatSOPOption = ({ control }) => {
 
   const scriptUrl = field?.value;
 
-  const handleFileChange = (acceptedFiles, fileRejections = []) => {
-    if (fileRejections.length > 0) {
-      const hasTypeError = fileRejections.some((rejection) =>
-        rejection.errors?.some((err) => err.code === "file-invalid-type"),
-      );
-      enqueueSnackbar(
-        hasTypeError
-          ? "Unsupported file type. Please upload a TXT or PDF file."
-          : "File could not be uploaded",
-        { variant: "error" },
-      );
-      return;
-    }
-
-    const files = Array.from(acceptedFiles);
-    const maxSize = 5 * 1024 * 1024; // 5MB
-
-    const filesLargerThanMaxSize = files.filter((file) => file?.size > maxSize);
-
-    if (filesLargerThanMaxSize.length > 0) {
-      enqueueSnackbar("File size is too large", {
-        variant: "error",
-      });
-      return;
-    }
-
-    const validFiles = files.filter((file) => file.size <= maxSize);
-
-    // Process each file to create preview URLs and metadata
-    const processedFiles = validFiles.map((file) => {
-      //   const fileId = getRandomId();
-      //   const previewUrl = URL.createObjectURL(file);
-
-      return {
-        file: file,
-        name: file.name,
-        size: file.size,
-      };
-    });
-
-    if (field?.onChange) {
-      field.onChange(processedFiles?.[0]);
-    }
-  };
+  const handleFileChange = createScenarioFileDropHandler({
+    enqueueSnackbar,
+    onChange: field?.onChange,
+  });
   return (
     <Box>
       <ShowComponent condition={scriptUrl}>
