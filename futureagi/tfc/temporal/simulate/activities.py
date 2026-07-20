@@ -3294,7 +3294,8 @@ def _extract_intents_sync(
                     ensure_ascii=False,
                 )
                 cache_hash = hashlib.md5(
-                    (branches_json + agent_description).encode()
+                    (branches_json + agent_description).encode(),
+                    usedforsecurity=False,
                 ).hexdigest()
                 cache_key = f"intent_cache:{graph_id}:{cache_hash}"
 

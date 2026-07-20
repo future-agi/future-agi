@@ -1066,7 +1066,9 @@ class DatasetExperimentsView(APIView):
                     else:
                         messages = epc.get_messages() or []
                         msg_str = json.dumps(messages, sort_keys=True, default=str)
-                        grp_id = hashlib.md5(msg_str.encode()).hexdigest()
+                        grp_id = hashlib.md5(
+                            msg_str.encode(), usedforsecurity=False
+                        ).hexdigest()
                         if grp_id in seen_inline_groups:
                             grp_name = seen_inline_groups[grp_id]
                         else:
