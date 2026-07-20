@@ -20,8 +20,4 @@ class Migration(migrations.Migration):
             name='tracer_project_id',
             field=models.UUIDField(blank=True, null=True),
         ),
-        migrations.AddIndex(
-            model_name='score',
-            index=models.Index(fields=['tracer_project_id', 'label'], name='idx_score_tracer_project_label'),
-        ),
     ]

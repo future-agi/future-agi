@@ -585,8 +585,12 @@ def _build_annotation_map_from_scores(
     """
     if not trace_ids or not annotation_label_ids:
         return {}
+    if span_trace_map is None:
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
+
+        span_trace_map = AnalyticsQueryService().get_span_trace_map(trace_ids)
     return _build_annotation_map_from_scores_pg(
-        trace_ids, annotation_label_ids, label_types, span_trace_map or {}
+        trace_ids, annotation_label_ids, label_types, span_trace_map
     )
 
 

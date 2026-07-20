@@ -32,11 +32,11 @@ class AnnotationLabelScoresPG:
 
         return [
             str(lid)
-            for lid in Score.objects.filter(
+            for lid in Score.no_workspace_objects.filter(
                 Q(trace__project_id=project_id)
                 | Q(observation_span__project_id=project_id),
-                deleted=False,
             )
+            .order_by()
             .values_list("label_id", flat=True)
             .distinct()
             if lid
@@ -70,13 +70,18 @@ class AnnotationLabelScoresProjectPG:
 
         from model_hub.models.score import Score
 
+        # no_workspace_objects: project is the tenancy boundary (matching the CH
+        # source and every write-site); this manager already applies deleted=False.
+        # .order_by() defensively strips any default ordering so it can't leak into
+        # SELECT DISTINCT and break the per-label dedup. Score._meta.ordering is []
+        # today (it does not inherit BaseModel's "-created_at"), so this is a guard.
         return [
             str(lid)
-            for lid in Score.objects.filter(
+            for lid in Score.no_workspace_objects.filter(
                 Q(trace_id__isnull=False) | Q(observation_span_id__isnull=False),
                 tracer_project_id=project_id,
-                deleted=False,
             )
+            .order_by()
             .values_list("label_id", flat=True)
             .distinct()
             if lid
