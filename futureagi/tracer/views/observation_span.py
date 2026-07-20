@@ -1634,15 +1634,29 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             ).data
 
         def _fetch_count():
-            count_query, count_params = builder.build_count_query()
-            # Short-TTL cache keyed by the exact query + bindings: the count
-            # re-scans the full filtered window (measured 0.65-1.15s at 10M+
-            # rows) and is identical across pages of the same view. Value is
-            # exact; staleness is bounded by the TTL.
+            # Short-TTL cache keyed by the query + bindings: the count re-scans
+            # the full filtered window (measured 0.65-1.15s at 10M+ rows) and is
+            # identical across pages of the same view. Value is exact; staleness
+            # is bounded by the TTL.
+            #
+            # The time-window params are bucketed to the minute before hashing.
+            # On a default (unfiltered) view start_date/end_date default to
+            # `datetime.utcnow()`-based values that are microsecond-fresh per
+            # request (base.py parse_time_range), so hashing them raw mints a new
+            # key every request and the cache never hits on exactly the view it
+            # targets. Minute-bucketing makes the key stable across a view's
+            # pages; the count is a display value, so a sub-minute window drift
+            # against the cached value is immaterial and TTL-bounded.
+            cache_params = {
+                k: (
+                    v.replace(second=0, microsecond=0) if isinstance(v, datetime) else v
+                )
+                for k, v in count_params.items()
+            }
             count_key = (
                 "span_list_count:"
                 + hashlib.sha256(
-                    (count_query + repr(sorted(count_params.items(), key=str))).encode()
+                    (count_query + repr(sorted(cache_params.items(), key=str))).encode()
                 ).hexdigest()
             )
             cached_total = django_cache.get(count_key)
@@ -1683,6 +1697,17 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
                 ann_result.data, label_types
             )
 
+        # Build the count SQL on the request thread, NOT inside the pool worker.
+        # build_count_query() runs fb.translate(), which issues ORM queries
+        # (CustomEvalConfig/EvalTemplate) for eval/annotation filters. DB
+        # connections opened inside an ad-hoc ThreadPoolExecutor thread are
+        # thread-local and never closed by the request lifecycle
+        # (close_old_connections fires on the request thread only), so running
+        # translate() in a worker leaks a PG connection per filtered request.
+        # Only the CH execute below runs in the pool. This also keeps count
+        # SQL-building off the shared builder state that the pool reads.
+        count_query, count_params = builder.build_count_query()
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             content_f = pool.submit(_fetch_content)
             count_f = pool.submit(_fetch_count)
@@ -1693,13 +1718,26 @@ class ObservationSpanView(BaseModelViewSetMixin, ModelViewSet):
             eval_map = evals_f.result()
             annotation_map = anns_f.result()
 
-        # Phase 1b merge: input/output/attributes_extra onto the page rows
-        content_map = {str(r.get("id", "")): r for r in content_rows}
-        for row in result.data:
-            c = content_map.get(str(row.get("id", "")), {})
-            row["input"] = c.get("input", "")
-            row["output"] = c.get("output", "")
-            row["attributes_extra"] = c.get("attributes_extra", "{}")
+        # Phase 1b merge: input/output/attributes_extra AND the typed attr maps
+        # (attrs_string/attrs_number/attrs_bool) onto the page rows. The typed
+        # maps are read by flatten_span_attributes_into_entry() below to populate
+        # custom span-attribute columns — build_content_query fetches them, so
+        # dropping them here renders every typed-map custom column empty. Use the
+        # shared helper (null-safe factory defaults for the map keys), matching
+        # the trace-list read path.
+        merge_content_rows(
+            result.data,
+            content_rows,
+            id_key="id",
+            keys=(
+                "input",
+                "output",
+                "attributes_extra",
+                "attrs_string",
+                "attrs_number",
+                "attrs_bool",
+            ),
+        )
 
         # Build column config (from PG config tables)
         column_config = get_default_span_config()
