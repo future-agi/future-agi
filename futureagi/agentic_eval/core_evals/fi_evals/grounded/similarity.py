@@ -108,15 +108,21 @@ class JaccardSimilarity(Comparator):
         return self._jaccard_similarity(string1, string2)
 
     def _jaccard_similarity(self, str1, str2):
-        str1_tokens = set(str1.split())
-        str2_tokens = set(str2.split())
-        return len(str1_tokens.intersection(str2_tokens)) / len(str1_tokens.union(str2_tokens))
+        str1_tokens = set(str1.lower().split())
+        str2_tokens = set(str2.lower().split())
+        union_len = len(str1_tokens.union(str2_tokens))
+        if union_len == 0:
+            return 0.0
+        return len(str1_tokens.intersection(str2_tokens)) / union_len
 
 class SorensenDiceSimilarity(Comparator):
     def compare(self, string1, string2):
         return self._sorensen_dice_similarity(string1, string2)
 
     def _sorensen_dice_similarity(self, str1, str2):
-        str1_tokens = set(str1.split())
-        str2_tokens = set(str2.split())
-        return 2 * len(str1_tokens.intersection(str2_tokens)) / (len(str1_tokens) + len(str2_tokens))
+        str1_tokens = set(str1.lower().split())
+        str2_tokens = set(str2.lower().split())
+        total_len = len(str1_tokens) + len(str2_tokens)
+        if total_len == 0:
+            return 0.0
+        return 2 * len(str1_tokens.intersection(str2_tokens)) / total_len
