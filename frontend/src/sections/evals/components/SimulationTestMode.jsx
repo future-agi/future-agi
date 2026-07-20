@@ -185,6 +185,7 @@ const SimulationTestMode = React.forwardRef(
       isComposite = false,
       compositeAdhocConfig = null,
       initialExecutionId = null,
+      sourceColumns = [],
     },
     ref,
   ) => {
@@ -813,30 +814,51 @@ const SimulationTestMode = React.forwardRef(
       return leaves;
     }, [callDetail]);
 
-    // Notify parent of available fields for autocomplete
+    // Fallback field names from sourceColumns (static column list passed by the
+    // parent picker). Used when call execution detail hasn't loaded yet or the
+    // simulation has no runs — ensures the mapping dropdown is never empty.
+    const fallbackFieldNames = useMemo(() => {
+      if (!sourceColumns?.length) return [];
+      return sourceColumns.map((col) =>
+        typeof col === "string"
+          ? col
+          : col.field || col.headerName || col.name || "",
+      );
+    }, [sourceColumns]);
+
+    // Use call-detail fieldNames when available; fall back to sourceColumns.
+    const effectiveFieldNames =
+      fieldNames.length > 0 ? fieldNames : fallbackFieldNames;
+
+    // Notify parent of available fields for autocomplete.
+    // Fires for both call-detail fieldNames and sourceColumns fallback.
+    const effectiveFieldNamesKey = effectiveFieldNames.join(",");
     useEffect(() => {
-      if (fieldNames.length > 0 && onColumnsLoaded) {
-        const cols = fieldNames.map((k) => ({
+      if (effectiveFieldNames.length > 0 && onColumnsLoaded) {
+        const cols = effectiveFieldNames.map((k) => ({
           id: k,
           name: k,
           dataType: "text",
         }));
         onColumnsLoaded(cols, {});
       }
-    }, [fieldNames.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [effectiveFieldNamesKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // Auto-map variables to fields when names match
+    // Auto-map variables to fields when names match.
+    // Works against effectiveFieldNames (call-detail or sourceColumns fallback).
     useEffect(() => {
-      if (!fieldNames.length || !variables.length) return;
+      if (!effectiveFieldNames.length || !variables.length) return;
       setMapping((prev) => {
         const next = { ...prev };
         let changed = false;
         variables.forEach((v) => {
           if (next[v]) return;
-          const exact = fieldNames.find((f) => f === v);
+          const exact = effectiveFieldNames.find((f) => f === v);
           const ci =
             !exact &&
-            fieldNames.find((f) => f.toLowerCase() === v.toLowerCase());
+            effectiveFieldNames.find(
+              (f) => f.toLowerCase() === v.toLowerCase(),
+            );
           const match = exact || ci;
           if (match) {
             next[v] = match;
@@ -845,7 +867,7 @@ const SimulationTestMode = React.forwardRef(
         });
         return changed ? next : prev;
       });
-    }, [variables, fieldNames]);
+    }, [variables, effectiveFieldNames]);
 
     // Notify parent EvalPickerConfigFull when the mapping is complete so the
     // "Add Evaluation" button can enable. Without this bridge, sourceReady
@@ -1690,9 +1712,9 @@ const SimulationTestMode = React.forwardRef(
                     disabled={isMappingPending}
                     options={
                       mapping[variable] &&
-                      !fieldNames.includes(mapping[variable])
-                        ? [mapping[variable], ...fieldNames]
-                        : fieldNames
+                      !effectiveFieldNames.includes(mapping[variable])
+                        ? [mapping[variable], ...effectiveFieldNames]
+                        : effectiveFieldNames
                     }
                     value={mapping[variable] || null}
                     onChange={(_, val) =>
@@ -1881,6 +1903,7 @@ SimulationTestMode.propTypes = {
   isComposite: PropTypes.bool,
   compositeAdhocConfig: PropTypes.object,
   initialExecutionId: PropTypes.string,
+  sourceColumns: PropTypes.array,
 };
 
 export default SimulationTestMode;

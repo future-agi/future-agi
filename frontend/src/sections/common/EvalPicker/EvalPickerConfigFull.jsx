@@ -1841,6 +1841,7 @@ const EvalPickerConfigFull = ({ evalData, onBack, onSave, isSaving }) => {
                     errorLocalizerEnabled={errorLocalizerEnabled}
                     initialMapping={evalData?.mapping}
                     initialRunTestId={sourceId}
+                    sourceColumns={sourceColumns}
                     {...compositeSourceModeProps}
                   />
                 )}
