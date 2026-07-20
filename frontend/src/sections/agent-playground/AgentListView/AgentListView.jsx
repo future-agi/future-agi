@@ -18,6 +18,7 @@ import { DataTable, DataTablePagination } from "src/components/data-table";
 import { useDebounce } from "src/hooks/use-debounce";
 import axios, { endpoints } from "src/utils/axios";
 import { useAgentPlaygroundStoreShallow } from "../store";
+import useCanEditAgent from "../hooks/useCanEditAgent";
 import DeleteAgentsDialog from "../components/DeleteAgentsDialog";
 import {
   useCreateGraph,
@@ -109,6 +110,9 @@ export default function AgentListView() {
     navigate,
     setCurrentAgent,
   });
+
+  const { canCreate: canCreateAgent, canDelete: canDeleteAgent } =
+    useCanEditAgent();
 
   const handleRowClick = useCallback(
     (row) => {
@@ -366,25 +370,36 @@ export default function AgentListView() {
               flexItem
               sx={{ borderRightWidth: 0.25 }}
             />
-            <Button
+            <CustomTooltip
+              show={!canDeleteAgent}
+              type=""
               size="small"
-              startIcon={
-                <SvgColor
-                  src="/assets/icons/ic_delete.svg"
-                  sx={{ width: 20, height: 20, color: "text.disabled" }}
-                />
-              }
-              sx={{ color: "text.secondary" }}
-              onClick={() => setDeleteDialogOpen(true)}
+              title="You don't have permission to delete agents."
+              arrow
             >
-              <Typography
-                typography="s1"
-                fontWeight="fontWeightRegular"
-                color="text.primary"
-              >
-                Delete
-              </Typography>
-            </Button>
+              <span>
+                <Button
+                  size="small"
+                  disabled={!canDeleteAgent}
+                  startIcon={
+                    <SvgColor
+                      src="/assets/icons/ic_delete.svg"
+                      sx={{ width: 20, height: 20, color: "text.disabled" }}
+                    />
+                  }
+                  sx={{ color: "text.secondary" }}
+                  onClick={() => setDeleteDialogOpen(true)}
+                >
+                  <Typography
+                    typography="s1"
+                    fontWeight="fontWeightRegular"
+                    color="text.primary"
+                  >
+                    Delete
+                  </Typography>
+                </Button>
+              </span>
+            </CustomTooltip>
             <Button
               size="small"
               sx={{ color: "text.secondary" }}
@@ -417,21 +432,32 @@ export default function AgentListView() {
             >
               View Docs
             </Button>
-            <LoadingButton
-              variant="contained"
-              color="primary"
+            <CustomTooltip
+              show={!canCreateAgent}
+              type=""
               size="small"
-              loading={isCreatingAgent}
-              onClick={() => createAgent()}
-              startIcon={
-                <SvgColor
-                  src="/assets/icons/ic_add.svg"
-                  sx={{ height: 20, width: 20 }}
-                />
-              }
+              title="You don't have permission to create agents."
+              arrow
             >
-              Create Agent
-            </LoadingButton>
+              <span>
+                <LoadingButton
+                  variant="contained"
+                  color="primary"
+                  size="small"
+                  loading={isCreatingAgent}
+                  onClick={() => createAgent()}
+                  disabled={!canCreateAgent}
+                  startIcon={
+                    <SvgColor
+                      src="/assets/icons/ic_add.svg"
+                      sx={{ height: 20, width: 20 }}
+                    />
+                  }
+                >
+                  Create Agent
+                </LoadingButton>
+              </span>
+            </CustomTooltip>
           </Box>
         )}
       </Box>

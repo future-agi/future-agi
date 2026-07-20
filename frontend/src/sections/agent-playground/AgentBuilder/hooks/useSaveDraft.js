@@ -11,6 +11,7 @@ import {
 } from "../../store";
 import logger from "src/utils/logger";
 import { enqueueSnackbar } from "notistack";
+import useCanEditAgent from "../../hooks/useCanEditAgent";
 
 /**
  * Hook that returns `saveDraft`, `ensureDraft`, and `promoteDraft` functions.
@@ -30,6 +31,7 @@ import { enqueueSnackbar } from "notistack";
 export default function useSaveDraft({ onCreateDraft } = {}) {
   const { mutate: saveDraftMutation } = useSaveDraftVersion();
   const { mutate: createVersionMutation } = useCreateVersion();
+  const { isReadOnly } = useCanEditAgent();
 
   const isCreatingDraftRef = useRef(false);
   const pendingSaveRef = useRef(false);
@@ -48,6 +50,7 @@ export default function useSaveDraft({ onCreateDraft } = {}) {
    */
   const promoteDraft = useCallback(
     ({ commitMessage, onError: callerOnError } = {}) => {
+      if (isReadOnly) return;
       const { currentAgent } = useAgentPlaygroundStore.getState();
       const graphId = currentAgent?.id;
       const versionId = currentAgent?.version_id;
@@ -66,11 +69,12 @@ export default function useSaveDraft({ onCreateDraft } = {}) {
         { onError: callerOnError },
       );
     },
-    [saveDraftMutation],
+    [saveDraftMutation, isReadOnly],
   );
 
   const saveDraft = useCallback(
     ({ onError: callerOnError } = {}) => {
+      if (isReadOnly) return;
       const { currentAgent, nodes, edges } = useAgentPlaygroundStore.getState();
       const graphId = currentAgent?.id;
       const versionId = currentAgent?.version_id;
@@ -118,7 +122,7 @@ export default function useSaveDraft({ onCreateDraft } = {}) {
         },
       );
     },
-    [createVersionMutation, onCreateDraft],
+    [createVersionMutation, onCreateDraft, isReadOnly],
   );
 
   /**
@@ -236,6 +240,7 @@ export default function useSaveDraft({ onCreateDraft } = {}) {
    */
   const ensureDraft = useCallback(
     async ({ skipDirtyCheck = false } = {}) => {
+      if (isReadOnly) return false;
       // Debounce window still open — reset timer, return same promise.
       // The caller's optimistic edit is already in the store and will be
       // included when the debounce fires and snapshots the current state.
@@ -315,7 +320,7 @@ export default function useSaveDraft({ onCreateDraft } = {}) {
 
       return promise;
     },
-    [executeDraftCreation],
+    [executeDraftCreation, isReadOnly],
   );
 
   // Clean up debounce timer on unmount to prevent firing against unmounted component

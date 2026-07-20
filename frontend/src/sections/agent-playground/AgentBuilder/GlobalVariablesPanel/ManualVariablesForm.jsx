@@ -18,6 +18,8 @@ import { LoadingButton } from "@mui/lab";
 import { enqueueSnackbar } from "notistack";
 import { useUpdateDatasetCell } from "../../../../api/agent-playground/agent-playground";
 import useWorkflowExecution from "../../hooks/useWorkflowExecution";
+import useCanEditAgent from "../../hooks/useCanEditAgent";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
 function FormField({ label, value, onChange }) {
   return (
@@ -86,6 +88,7 @@ export default function ManualVariablesForm({
   const { control, reset } = useFormContext();
   const { mutateAsync: updateCell } = useUpdateDatasetCell();
   const { runWorkflow } = useWorkflowExecution();
+  const { canEditAgent } = useCanEditAgent();
   const [isSaving, setIsSaving] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [, startTransition] = useTransition();
@@ -96,7 +99,7 @@ export default function ManualVariablesForm({
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = async () => {
-    if (!cellMap || !graphId) return;
+    if (!canEditAgent || !cellMap || !graphId) return;
 
     setIsSaving(true);
     try {
@@ -189,16 +192,26 @@ export default function ManualVariablesForm({
             py: 1,
           }}
         >
-          <LoadingButton
+          <CustomTooltip
+            show={!canEditAgent}
+            type=""
             size="small"
-            variant="contained"
-            color="primary"
-            onClick={handleSave}
-            loading={isSaving}
-            disabled={!isDirty || isSaving}
+            title="You don't have permission to edit this agent."
+            arrow
           >
-            {pendingRun ? "Save & Run Workflow" : "Save"}
-          </LoadingButton>
+            <span>
+              <LoadingButton
+                size="small"
+                variant="contained"
+                color="primary"
+                onClick={handleSave}
+                loading={isSaving}
+                disabled={!canEditAgent || !isDirty || isSaving}
+              >
+                {pendingRun ? "Save & Run Workflow" : "Save"}
+              </LoadingButton>
+            </span>
+          </CustomTooltip>
         </Box>
       )}
     </Stack>
