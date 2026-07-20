@@ -94,13 +94,44 @@ class TestEvalConfigIdSelectors:
 
         assert ids == ["a", "b"]
         query = captured["query"]
-        assert "tracer_eval_logger_v2 FINAL" in query
+        assert "tracer_eval_logger_v2" in query
+        # PERF: FINAL dropped — it forced a full-table merge and was a prime
+        # OOM source; DISTINCT config_id needs no row-collapsing.
+        assert "FINAL" not in query
         assert "is_deleted = 0" in query
         assert "_peerdb_is_deleted" not in query
         # project scope is the spans subquery, not dictGet
         assert "project_id = %(project_id)s" in query
         assert "dictGet" not in query
-        assert captured["params"] == {"project_id": "proj-1"}
+        # Default 30-day window bound prunes span + eval partitions.
+        assert captured["params"] == {"project_id": "proj-1", "window_days": 30}
+
+    @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
+    def test_project_selector_candidate_config_ids_fast_path(self):
+        # The hot path: caller pre-resolves the project's configs from PG, so
+        # discovery scopes by custom_eval_config_id (the eval table's leading
+        # sort key) — no trace join, no spans scan.
+        svc, captured = _capturing_service([{"config_id": "a"}])
+        ids = svc.get_eval_config_ids_with_data_ch(
+            "proj-1", candidate_config_ids=["a", "b"]
+        )
+
+        assert ids == ["a"]
+        query = captured["query"]
+        assert "FINAL" not in query
+        assert "custom_eval_config_id IN %(config_ids)s" in query
+        assert "trace_id IN" not in query
+        assert "FROM spans" not in query
+        assert captured["params"]["config_ids"] == ("a", "b")
+
+    def test_project_selector_candidate_empty_short_circuits(self):
+        svc, captured = _capturing_service([{"config_id": "a"}])
+        # An empty candidate set means "this project has no configs" — no CH read.
+        assert (
+            svc.get_eval_config_ids_with_data_ch("proj-1", candidate_config_ids=[])
+            == []
+        )
+        assert captured == {}
 
     @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger")
     def test_project_selector_legacy_predicate(self):
@@ -108,9 +139,9 @@ class TestEvalConfigIdSelectors:
         svc.get_eval_config_ids_with_data_ch("proj-1")
 
         query = captured["query"]
-        assert "tracer_eval_logger FINAL" in query
-        assert "(deleted = 0 OR deleted IS NULL)" in query
-        assert "_peerdb_is_deleted" not in query
+        assert "tracer_eval_logger" in query
+        assert "FINAL" not in query
+        assert "_peerdb_is_deleted = 0" in query
 
     def test_project_selector_forwards_timeout(self):
         svc, captured = _capturing_service([])
@@ -124,7 +155,8 @@ class TestEvalConfigIdSelectors:
 
         assert ids == ["x"]
         query = captured["query"]
-        assert "tracer_eval_logger_v2 FINAL" in query
+        assert "tracer_eval_logger_v2" in query
+        assert "FINAL" not in query
         assert "is_deleted = 0" in query
         assert "_peerdb_is_deleted" not in query
         assert "trace_id IN %(trace_ids)s" in query
