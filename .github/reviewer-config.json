@@ -17,7 +17,7 @@
       ]
     },
     "heimdall": {
-      "display_name": "heimdall",
+      "display_name": "Heimdall",
       "ownership": "Observe + Tracing SDK + Dashboard",
       "lead": "atharva-bhange",
       "members": ["atharva-bhange", "JayaSurya-27", "commitPirate", "sarthakFuture"],
@@ -48,7 +48,7 @@
       ]
     },
     "n11n": {
-      "display_name": "n11n",
+      "display_name": "N11n",
       "ownership": "Agent + Prompt playground",
       "lead": "JayaSurya-27",
       "members": ["JayaSurya-27", "commitPirate", "Tanmaycode1"],
@@ -64,15 +64,15 @@
       ]
     },
     "quest": {
-      "display_name": "quest",
+      "display_name": "Quest",
       "ownership": "Experiments",
       "lead": "atharva-bhange",
       "members": ["atharva-bhange", "cdileep23", "Tanmaycode1"],
       "paths": [
         "futureagi/ee/experiments/**",
         "frontend/src/sections/experiment-detail/**",
-        "frontend/src/sections/test/**",
-        "frontend/src/sections/test-detail/**",
+        "frontend/src/sections/tests/**",
+        "frontend/src/sections/tests-detail/**",
         "frontend/src/sections/tasks/**"
       ]
     },
@@ -112,7 +112,7 @@
         "futureagi/saml2_auth/**",
         "futureagi/model_hub/**",
         "futureagi/ee/usage/**",
-        "futureagi/ee/billing*",
+        "futureagi/ee/billing/**",
         "futureagi/integrations/**",
         "frontend/src/sections/account/**",
         "frontend/src/sections/auth/**",
@@ -128,17 +128,17 @@
     }
   },
   "users": {
-    "khushalsonawat":      { "slack_id": "U087FCUQ77E", "display_name": "Khushal" },
-    "atharva-bhange":      { "slack_id": "U071K8LUQE5", "display_name": "Atharva" },
+    "khushalsonawat": { "slack_id": "U087FCUQ77E", "display_name": "Khushal" },
+    "atharva-bhange": { "slack_id": "U071K8LUQE5", "display_name": "Atharva" },
     "definitelynotchirag": { "slack_id": "U0ACG3CS7EY", "display_name": "Chirag" },
-    "cdileep23":           { "slack_id": "U099M4FQV97", "display_name": "Dileep" },
-    "KarthikAvinashFI":    { "slack_id": "U09808798MU", "display_name": "Karthik Avinash" },
-    "hadarishav":          { "slack_id": "U07UPK1NZGA", "display_name": "Rishav" },
-    "JayaSurya-27":        { "slack_id": "U083MBRARTL", "display_name": "Jaya" },
-    "commitPirate":        { "slack_id": "U09LC0C8NKE", "display_name": "Nosang" },
-    "sarthakFuture":       { "slack_id": "U07V82HJ17H", "display_name": "Sarthak" },
-    "azain-commits":       { "slack_id": "U09GEEBEATS", "display_name": "Azain" },
-    "NVJKKartik":          { "slack_id": "U0851KZFTV4", "display_name": "Kartik" },
-    "Tanmaycode1":         { "slack_id": "U0ARCAND0R1", "display_name": "Tanmay" }
+    "cdileep23": { "slack_id": "U099M4FQV97", "display_name": "Dileep" },
+    "KarthikAvinashFI": { "slack_id": "U09808798MU", "display_name": "Karthik Avinash" },
+    "hadarishav": { "slack_id": "U07UPK1NZGA", "display_name": "Rishav" },
+    "JayaSurya-27": { "slack_id": "U083MBRARTL", "display_name": "Jaya" },
+    "commitPirate": { "slack_id": "U09LC0C8NKE", "display_name": "Nosang" },
+    "sarthakFuture": { "slack_id": "U07V82HJ17H", "display_name": "Sarthak" },
+    "azain-commits": { "slack_id": "U09GEEBEATS", "display_name": "Azain" },
+    "NVJKKartik": { "slack_id": "U0851KZFTV4", "display_name": "Kartik" },
+    "Tanmaycode1": { "slack_id": "U0ARCAND0R1", "display_name": "Tanmay" }
   }
 }
