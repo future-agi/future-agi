@@ -1114,6 +1114,8 @@ export const endpoints = {
       `/tracer/eval-task/pause_eval_task/?eval_task_id=${id}`,
     resumeEvalTask: (id) =>
       `/tracer/eval-task/unpause_eval_task/?eval_task_id=${id}`,
+    duplicateEvalTask: (id) =>
+      `/tracer/eval-task/duplicate_eval_task/?eval_task_id=${id}`,
     getAnnotationsForSpanId: () =>
       `/tracer/trace-annotation/get_annotation_values/`,
     getObservationSpanField: `/tracer/observation-span/get_observation_span_fields/`,
