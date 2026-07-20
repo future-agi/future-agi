@@ -1,0 +1,23 @@
+name: pact
+
+on:
+  pull_request:
+    paths:
+      - "futureagi/**"
+      - ".github/workflows/pact.yml"
+
+jobs:
+  scan:
+    name: pact — structural analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for --incremental to diff against main
+
+      - name: pact
+        uses: qizwiz/pact/.github/actions/pact@main
+        with:
+          path: futureagi/
+          incremental: "main"
+          suggest: "true"

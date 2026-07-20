@@ -1,0 +1,214 @@
+name: Backend CI
+
+on:
+  pull_request:
+    paths:
+      - "futureagi/**"
+      - ".github/workflows/backend-ci.yml"
+      - ".github/actions/fi-simulate/**"
+  push:
+    branches: [main, dev, feat/*, fix/*, chore/*, refactor/*, test/*, perf/*, hotfix/*]
+    paths:
+      - "futureagi/**"
+      - ".github/workflows/backend-ci.yml"
+      - ".github/actions/fi-simulate/**"
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: futureagi
+
+    services:
+      test-db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_tfc
+        ports:
+          - 15432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d test_tfc"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+      test-redis:
+        image: redis:7-alpine
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+      test-clickhouse:
+        image: clickhouse/clickhouse-server:24.10.2.80
+        ports:
+          - 18123:8123
+          - 19000:9000
+        options: >-
+          --health-cmd "wget --quiet --tries=1 --spider http://localhost:8123/ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 15
+
+      test-minio:
+        image: minio/minio:latest
+        env:
+          MINIO_ROOT_USER: minioadmin
+          MINIO_ROOT_PASSWORD: minioadmin
+        ports:
+          - 19005:9000
+          - 19006:9001
+        options: >-
+          --health-cmd "curl -f http://localhost:9000/minio/health/live"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-test.txt -e . --quiet
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:15432/test_tfc
+          REDIS_URL: redis://localhost:16379/0
+          CLICKHOUSE_HOST: localhost
+          CLICKHOUSE_PORT: 18123
+          MINIO_ENDPOINT: localhost:19005
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin
+          DJANGO_SETTINGS_MODULE: tfc.settings.settings
+          SECRET_KEY: ci-secret-key-not-for-production
+        run: python manage.py migrate --no-input
+
+      - name: Run unit tests
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:15432/test_tfc
+          REDIS_URL: redis://localhost:16379/0
+          CLICKHOUSE_HOST: localhost
+          CLICKHOUSE_PORT: 18123
+          MINIO_ENDPOINT: localhost:19005
+          MINIO_ACCESS_KEY: minioadmin
+          MINIO_SECRET_KEY: minioadmin
+          DJANGO_SETTINGS_MODULE: tfc.settings.settings
+          SECRET_KEY: ci-secret-key-not-for-production
+        run: pytest -m unit --no-header -q
+
+  django-integration:
+    name: django integration probes
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: futureagi
+
+    services:
+      test-db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_password
+          POSTGRES_DB: test_tfc
+        ports:
+          - 15432:5432
+        options: >-
+          --health-cmd "pg_isready -U test_user -d test_tfc"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+      test-redis:
+        image: redis:7-alpine
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies (ORM subset — excludes av/xmlsec native builds)
+        run: |
+          grep -vE "^(av|xmlsec|pysaml2)==" requirements-test.txt > /tmp/req-django-integration.txt
+          pip install -r /tmp/req-django-integration.txt --quiet
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:15432/test_tfc
+          REDIS_URL: redis://localhost:16379/0
+          DJANGO_SETTINGS_MODULE: tfc.settings.settings
+          SECRET_KEY: ci-secret-key-not-for-production
+        run: python manage.py migrate --no-input
+
+      - name: Run Django integration probes
+        env:
+          DATABASE_URL: postgresql://test_user:test_password@localhost:15432/test_tfc
+          REDIS_URL: redis://localhost:16379/0
+          DJANGO_SETTINGS_MODULE: tfc.settings.settings
+          SECRET_KEY: ci-secret-key-not-for-production
+        run: |
+          pytest -m django_integration --no-header -q \
+            ai_tools/tools/simulation/django_tests/
+
+  smoke:
+    name: smoke (cli import + --help)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install CLI dependencies
+        run: pip install requests rich --quiet
+
+      - name: Verify fi-simulate CLI resolves and exits cleanly
+        run: |
+          cd futureagi
+          python -m sdk.cli.main --help
+
+  integration:
+    name: integration probes (no DB)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install probe dependencies
+        run: pip install requests rich pytest hypothesis --quiet
+
+      - name: Run integration probes
+        env:
+          PYTHONPATH: ${{ github.workspace }}/futureagi
+        run: |
+          set -o pipefail
+          cd futureagi/sdk/cli/formal_tests
+          pytest -m integration --no-header -q 2>&1 | tee /tmp/integration_result.txt
+          # Fail loudly if no tests actually ran (e.g. all skipped due to import errors)
+          grep -E "^[0-9]+ passed|[0-9]+ failed" /tmp/integration_result.txt || \
+            { echo "ERROR: no integration tests ran — check PYTHONPATH and imports"; exit 1; }
