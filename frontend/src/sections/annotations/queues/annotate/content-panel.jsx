@@ -7,6 +7,7 @@ import React, {
   useState,
 } from "react";
 import PropTypes from "prop-types";
+import { useNavigate } from "react-router-dom";
 import {
   Box,
   Button,
@@ -192,8 +193,17 @@ const READ_ONLY_TAB_TOOLTIP = "Open trace project to edit the view";
 
 function InlineTraceView({ traceId, spanId }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const { data, isLoading } = useGetTraceDetail(traceId);
   const projectId = data?.trace?.project;
+  const sessionId = data?.trace?.session;
+
+  const handleViewSession = useCallback(() => {
+    if (!projectId || !sessionId) return;
+    navigate(
+      `/dashboard/observe/${projectId}/sessions?session=${encodeURIComponent(sessionId)}`,
+    );
+  }, [navigate, projectId, sessionId]);
 
   // Saved views — includes both traces-type custom views and imagine tabs.
   const { data: savedViewsData } = useGetSavedViews(projectId);
@@ -370,6 +380,34 @@ function InlineTraceView({ traceId, spanId }) {
         bgcolor: "background.paper",
       }}
     >
+      {/* Trace meta row — surfaces a "View session" link when the trace
+          belongs to a session. The session id is already on the trace
+          detail payload, so no extra fetch is needed. Clicking navigates
+          to the observe project's sessions tab with the session id in the
+          query string so SessionsView can preselect it. */}
+      {sessionId && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          spacing={1}
+          sx={{
+            px: 1.5,
+            py: 0.5,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Chip
+            size="small"
+            variant="outlined"
+            clickable
+            icon={<Iconify icon="mdi:link-variant" width={14} />}
+            label="View session"
+            onClick={handleViewSession}
+          />
+        </Stack>
+      )}
+
       {/* Tabs toolbar — includes the "+ Imagine" button so users can pivot
           to an Imagine view from the annotate workspace. Saved views
           themselves stay read-only (no rename/edit here). */}

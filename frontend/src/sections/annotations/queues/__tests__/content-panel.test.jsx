@@ -1,8 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "src/utils/test-utils";
+import { render, screen, waitFor, fireEvent } from "src/utils/test-utils";
 import axios from "src/utils/axios";
 import ContentPanel from "../annotate/content-panel";
+
+// Per-test override for the trace-detail query. Default matches the
+// existing call sites (data: null, isLoading: false) so the original
+// tests stay green.
+const useGetTraceDetailMock = vi.hoisted(() =>
+  vi.fn(() => ({ data: null, isLoading: false })),
+);
+
+const navigateMock = vi.hoisted(() => vi.fn());
 
 vi.mock("src/components/iconify", () => ({
   default: ({ icon, ...props }) => (
@@ -96,8 +105,16 @@ vi.mock("src/components/traceDetail/TraceDisplayPanel", () => ({
 }));
 
 vi.mock("src/api/project/trace-detail", () => ({
-  useGetTraceDetail: () => ({ data: null, isLoading: false }),
+  useGetTraceDetail: (...args) => useGetTraceDetailMock(...args),
 }));
+
+vi.mock("react-router-dom", async () => {
+  const actual = await vi.importActual("react-router-dom");
+  return {
+    ...actual,
+    useNavigate: () => navigateMock,
+  };
+});
 
 vi.mock("src/api/project/saved-views", () => ({
   useGetSavedViews: () => ({ data: { custom_views: [] } }),
@@ -202,5 +219,87 @@ describe("Annotation queue ContentPanel", () => {
       );
     });
     expect(screen.queryByTestId("voice-drawer")).not.toBeInTheDocument();
+  });
+});
+
+describe("Annotation queue ContentPanel — trace session link (#1670)", () => {
+  beforeEach(() => {
+    useGetTraceDetailMock.mockReturnValue({ data: null, isLoading: false });
+    navigateMock.mockReset();
+  });
+
+  const traceItem = {
+    source_type: "trace",
+    source_content: { trace_id: "trace-1" },
+  };
+
+  const renderPanel = () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    return render(
+      <QueryClientProvider client={queryClient}>
+        <ContentPanel item={traceItem} />
+      </QueryClientProvider>,
+    );
+  };
+
+  it("does not render a View session chip when the trace has no session", async () => {
+    useGetTraceDetailMock.mockReturnValue({
+      data: { trace: { project: "proj-1" } },
+      isLoading: false,
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.queryByText("View session")).not.toBeInTheDocument();
+    });
+  });
+
+  it("renders a View session chip when the trace belongs to a session", async () => {
+    useGetTraceDetailMock.mockReturnValue({
+      data: { trace: { project: "proj-1", session: "sess-42" } },
+      isLoading: false,
+    });
+
+    renderPanel();
+
+    await waitFor(() => {
+      expect(screen.getByText("View session")).toBeInTheDocument();
+    });
+  });
+
+  it("navigates to the observe sessions tab with the session id in the query string on click", async () => {
+    useGetTraceDetailMock.mockReturnValue({
+      data: { trace: { project: "proj-1", session: "sess-42" } },
+      isLoading: false,
+    });
+
+    renderPanel();
+
+    const chip = await waitFor(() => screen.getByText("View session"));
+    fireEvent.click(chip);
+
+    expect(navigateMock).toHaveBeenCalledTimes(1);
+    expect(navigateMock).toHaveBeenCalledWith(
+      "/dashboard/observe/proj-1/sessions?session=sess-42",
+    );
+  });
+
+  it("URL-encodes the session id when navigating", async () => {
+    useGetTraceDetailMock.mockReturnValue({
+      data: { trace: { project: "proj-1", session: "sess with spaces" } },
+      isLoading: false,
+    });
+
+    renderPanel();
+
+    const chip = await waitFor(() => screen.getByText("View session"));
+    fireEvent.click(chip);
+
+    expect(navigateMock).toHaveBeenCalledWith(
+      "/dashboard/observe/proj-1/sessions?session=sess%20with%20spaces",
+    );
   });
 });
