@@ -318,6 +318,14 @@ const UsersView = ({
     useUsersStore.setState({ filters: finalFilters });
   }, [finalFilters]);
 
+  // Sync filterUsers into header config so CSV export uses active filters
+  useEffect(() => {
+    setHeaderConfig((prev) => ({
+      ...prev,
+      filterUsers: finalFilters,
+    }));
+  }, [finalFilters, setHeaderConfig]);
+
   // Saved-view api — populates a ref the parent UsersPageTabBar drives.
   const getConfig = useCallback(() => {
     const visibleColumns = (columns || []).reduce((acc, col) => {

@@ -1069,6 +1069,7 @@ export const endpoints = {
     getSpansForObserveProject: () =>
       `/tracer/observation-span/list_spans_observe/`,
     getSpansForObserveExport: `/tracer/observation-span/get_spans_export_data/`,
+    getUsersForObserveExport: `/tracer/users/export/`,
     getTraceProperties: `/tracer/trace/get_properties/`,
     getTraceEvals: () => `/tracer/trace/get_eval_names/`,
     getTraceErrorAnalysis: (id) => `/tracer/trace-error-analysis/${id}/`,
