@@ -233,6 +233,28 @@ providers:
   #     - openai/gpt-4o
   #     - anthropic/claude-3.5-sonnet
 
+  # astraflow:
+  #   # Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (global endpoint)
+  #   # Sign up: https://astraflow.ucloud-global.com
+  #   base_url: "https://api-us-ca.umodelverse.ai/v1"
+  #   api_key: "${ASTRAFLOW_API_KEY}"
+  #   api_format: "openai"
+  #   default_timeout: 60s
+  #   max_concurrent: 100
+  #   conn_pool_size: 100
+  #   models: []  # 200+ models available — list explicitly or use auto_discover: true
+
+  # astraflow-cn:
+  #   # Astraflow by UCloud — OpenAI-compatible platform supporting 200+ models (China endpoint)
+  #   # Sign up: https://astraflow.ucloud.cn
+  #   base_url: "https://api.modelverse.cn/v1"
+  #   api_key: "${ASTRAFLOW_CN_API_KEY}"
+  #   api_format: "openai"
+  #   default_timeout: 60s
+  #   max_concurrent: 100
+  #   conn_pool_size: 100
+  #   models: []  # 200+ models available — list explicitly or use auto_discover: true
+
 # Explicit model-to-provider mapping (overrides provider-level models).
 # model_map:
 #   gpt-4o: openai
