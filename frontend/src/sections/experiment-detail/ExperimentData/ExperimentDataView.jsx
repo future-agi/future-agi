@@ -378,14 +378,13 @@ function ExperimentDataView() {
           for (let i = 0; i < col.children.length; i++) {
             const child = col.children[i];
             const colOrigin = child?.col?.group?.origin;
+            const colOriginType = child?.col?.origin_type;
             const childName = child?.col?.name ?? child?.headerName ?? "";
             const isReasonColumn =
               childName.includes("-reason") ||
-              (child?.col?.data_type ?? child?.dataType) ===
-                "evaluation_reason";
+              colOriginType === "evaluation_reason";
             const isBaseEvalColumn =
-              colOrigin === "Evaluation" &&
-              !(child?.col?.source_id ?? child?.col?.sourceId);
+              colOrigin === "Evaluation" && !child?.col?.source_id;
 
             const skipLetter =
               colOrigin === "Dataset" ||
