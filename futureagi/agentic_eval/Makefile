@@ -28,40 +28,40 @@ help:
 # Test commands
 test:
 	@echo "🧪 Running all tests..."
-	python -m pytest tests/ -v
+	python3 -m pytest tests/ -v
 
 test-unit:
 	@echo "🔍 Running unit tests..."
-	python run_tests.py --unit --verbose
+	python3 run_tests.py --unit --verbose
 
 test-integration:
 	@echo "🔗 Running integration tests..."
-	python run_tests.py --integration --verbose
+	python3 run_tests.py --integration --verbose
 
 test-performance:
 	@echo "⚡ Running performance tests..."
-	python run_tests.py --performance --verbose
+	python3 run_tests.py --performance --verbose
 
 test-coverage:
 	@echo "📊 Running tests with coverage..."
-	python run_tests.py --coverage --verbose
+	python3 run_tests.py --coverage --verbose
 
 test-html:
 	@echo "📄 Generating HTML test report..."
-	python run_tests.py --html --verbose
+	python3 run_tests.py --html --verbose
 
 test-parallel:
 	@echo "🚀 Running tests in parallel..."
-	python run_tests.py --parallel --verbose
+	python3 run_tests.py --parallel --verbose
 
 test-fast:
 	@echo "⚡ Running fast tests..."
-	python run_tests.py --fast --verbose
+	python3 run_tests.py --fast --verbose
 
 # Specific test files
 test-serving:
 	@echo "🌐 Testing serving client..."
-	python -m pytest tests/test_serving_client.py -v
+	python3 -m pytest tests/test_serving_client.py -v
 
 # Setup commands
 install-test:
@@ -101,4 +101,4 @@ ci: lint test-coverage
 # Quick test for development
 quick:
 	@echo "⚡ Quick test run..."
-	python -m pytest tests/test_serving_client.py::TestModelServingClient::test_embed_text_string_input -v 
+	python3 -m pytest tests/test_serving_client.py::TestModelServingClient::test_embed_text_string_input -v 

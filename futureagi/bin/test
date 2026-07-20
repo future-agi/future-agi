@@ -104,7 +104,7 @@ stop_services() {
 # Run migrations
 run_migrations() {
     echo -e "${YELLOW}Running migrations...${NC}"
-    python manage.py migrate --run-syncdb > /dev/null 2>&1
+    python3 manage.py migrate --run-syncdb > /dev/null 2>&1
 }
 
 # Run pytest
