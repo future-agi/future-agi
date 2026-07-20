@@ -1,0 +1,33 @@
+name: Formal Verification Tests
+
+on:
+  push:
+    branches: [feat/*, fix/*, chore/*, docs/*, refactor/*, test/*, perf/*, hotfix/*]
+    paths:
+      - 'agentcc-gateway/formal_tests/**'
+      - '.github/workflows/formal-tests.yml'
+  pull_request:
+    paths:
+      - 'agentcc-gateway/formal_tests/**'
+      - '.github/workflows/formal-tests.yml'
+
+jobs:
+  formal-tests:
+    name: Z3 + Hypothesis formal tests (gateway / guardrail reflexion)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install formal verification dependencies
+        run: pip install z3-solver hypothesis pytest
+
+      - name: Run agentcc-gateway/ reflexion formal tests
+        working-directory: agentcc-gateway/formal_tests
+        run: pytest test_reflexion_z3.py test_reflexion_hypothesis.py -v
