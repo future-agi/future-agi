@@ -111,3 +111,12 @@ export const MODEL_PARAMS_TOOLTIPS = {
   "Frequency Penalty":
     "How much to penalize new tokens based on their existing frequency in the text so far.",
 };
+
+// Multimodal image support
+export const IMAGE_ACCEPTED_TYPES = {
+  "image/png": [".png"],
+  "image/jpeg": [".jpg", ".jpeg"],
+  "image/webp": [".webp"],
+  "image/gif": [".gif"],
+};
+export const MAX_IMAGE_SIZE_BYTES = 20 * 1024 * 1024; // 20 MB
