@@ -255,6 +255,13 @@ def process_spans_chunk_task(span_ids, dataset_id, column_span_mapping_data):
             # Bulk create all cells (DB operation)
             Cell.objects.bulk_create(cells_to_create, batch_size=1000)
 
+        # After the transaction commits, fire auto-eval for any enabled configs.
+        # Runs outside the atomic block so rows are visible to the Temporal workflow.
+        _schedule_auto_eval_after_commit(
+            dataset_id=dataset_id,
+            row_ids=[str(r.id) for r in created_rows],
+        )
+
         logger.info(
             f"dataset_chunk_processed: chunk_size={len(span_ids)}, "
             f"rows_created={len(created_rows)}, cells_created={len(cells_to_create)}, "
@@ -306,3 +313,42 @@ def process_spans_chunk_task(span_ids, dataset_id, column_span_mapping_data):
         raise  # Re-raise for Temporal to handle retry
     finally:
         close_old_connections()
+
+
+def _schedule_auto_eval_after_commit(dataset_id: str, row_ids: list):
+    """
+    Look up enabled DatasetEvalConfigs for this dataset and schedule the
+    auto-eval debounce task to fire after transaction commit.
+
+    Uses transaction.on_commit() so the Temporal workflow sees committed rows.
+    Failures here are logged and swallowed — they must never affect insert latency.
+    """
+    try:
+        from model_hub.models.dataset_eval_config import DatasetEvalConfig
+        from model_hub.tasks.auto_eval import schedule_auto_eval
+
+        configs = list(
+            DatasetEvalConfig.objects.filter(
+                dataset_id=dataset_id,
+                enabled=True,
+                deleted=False,
+            ).values("id", "debounce_seconds")
+        )
+        if not configs:
+            return
+
+        def _dispatch():
+            for cfg in configs:
+                schedule_auto_eval(
+                    config_id=str(cfg["id"]),
+                    row_ids=row_ids,
+                    debounce_seconds=cfg["debounce_seconds"],
+                )
+
+        transaction.on_commit(_dispatch)
+    except Exception:
+        logger.warning(
+            "auto_eval_schedule_failed",
+            dataset_id=str(dataset_id),
+            row_count=len(row_ids),
+        )

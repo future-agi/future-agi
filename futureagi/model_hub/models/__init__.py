@@ -1,4 +1,5 @@
 from .ai_model import AIModel
+from .dataset_eval_config import DatasetEvalConfig
 from .annotation import AnnotationTask, ClickHouseAnnotation
 from .annotation_queues import (
     AnnotationQueue,
