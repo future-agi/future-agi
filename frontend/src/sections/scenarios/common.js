@@ -64,7 +64,7 @@ const CreateScenarioDefaultSchema = {
     .default("agent_definition"),
   sourceId: z.string().min(1, "Source is required"),
   sourceLabel: z.string().optional(), // Used for auto-generating scenario name, not sent to API
-  name: z.string().min(1, "Name is required"),
+  name: z.string().trim().min(1, "Name is required"),
   description: z.string().optional(),
   agentDefinitionId: z.string().optional(),
   agentDefinitionVersionId: z.string().optional(),
@@ -73,7 +73,8 @@ const CreateScenarioDefaultSchema = {
   customInstructionDisabled: z.boolean().default(false),
   customInstruction: z.string().optional(),
   noOfRows: z
-    .number()
+    .number({ invalid_type_error: "Number of scenarios is required" })
+    .int("Number of scenarios must be a whole number")
     .min(10, "Minimum 10 Rows are required")
     .max(20000, "Maximum 20000 Rows are allowed"),
   addPersonaAutomatically: z.boolean(),
