@@ -23,6 +23,7 @@ def run_eval_summary_task(test_execution_id):
     Returns:
         dict: Summary result or error information
     """
+    test_execution = None
     try:
         logger.info(
             f"Starting eval explanation summary calculation for test_execution: {test_execution_id}"
@@ -60,15 +61,23 @@ def run_eval_summary_task(test_execution_id):
         logger.error(f"TestExecution {test_execution_id} not found")
         return
     except Exception as e:
-        test_execution.eval_explanation_summary_status = (
-            EvalExplanationSummaryStatus.FAILED
-        )
-        test_execution.eval_explanation_summary_last_updated = timezone.now()
-        test_execution.save(
-            update_fields=[
-                "eval_explanation_summary_status",
-                "eval_explanation_summary_last_updated",
-            ]
-        )
         logger.exception(f"Error calculating eval explanation summary: {e}")
-        return
+    finally:
+        # Ensure status is never left as RUNNING if something went wrong.
+        # Re-fetch to get current state; only update if still stuck in RUNNING.
+        if test_execution is not None:
+            test_execution.refresh_from_db(fields=["eval_explanation_summary_status"])
+            if (
+                test_execution.eval_explanation_summary_status
+                == EvalExplanationSummaryStatus.RUNNING
+            ):
+                test_execution.eval_explanation_summary_status = (
+                    EvalExplanationSummaryStatus.FAILED
+                )
+                test_execution.eval_explanation_summary_last_updated = timezone.now()
+                test_execution.save(
+                    update_fields=[
+                        "eval_explanation_summary_status",
+                        "eval_explanation_summary_last_updated",
+                    ]
+                )
