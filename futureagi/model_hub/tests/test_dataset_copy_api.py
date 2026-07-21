@@ -437,3 +437,139 @@ def test_add_as_new_rejects_columns_outside_source_before_usage_or_creation(
         organization=organization,
         deleted=False,
     ).exists()
+
+
+def _stub_existing_dataset_usage(monkeypatch):
+    """Make the add-rows-from-existing view's billing hook a no-op that succeeds.
+
+    Returns the list that records each usage call so tests can assert on the
+    `total_rows` that was charged.
+    """
+    usage_calls = []
+
+    def record_usage(*args, **kwargs):
+        usage_calls.append((args, kwargs))
+        return _SuccessfulResourceCallLog()
+
+    monkeypatch.setattr(
+        "model_hub.views.datasets.add_rows.existing_dataset."
+        "log_and_deduct_cost_for_resource_request",
+        record_usage,
+    )
+    return usage_calls
+
+
+@pytest.mark.django_db
+def test_add_rows_from_existing_imports_first_n_rows(
+    auth_client, dataset_factory, monkeypatch
+):
+    source_dataset, source_input, _source_output = dataset_factory("Row cap source")
+    target_dataset, target_input, _target_output = dataset_factory("Row cap target")
+    add_row(source_dataset, {source_input: "r0"}, order=0)
+    add_row(source_dataset, {source_input: "r1"}, order=1)
+    add_row(source_dataset, {source_input: "r2"}, order=2)
+    usage_calls = _stub_existing_dataset_usage(monkeypatch)
+
+    response = auth_client.post(
+        f"/model-hub/develops/{target_dataset.id}/add_rows_from_existing_dataset/",
+        {
+            "source_dataset_id": str(source_dataset.id),
+            "column_mapping": {str(source_input.id): str(target_input.id)},
+            "num_rows": 2,
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["result"]["rows_added"] == 2
+    imported = list(
+        Cell.objects.filter(
+            dataset=target_dataset, column=target_input, deleted=False
+        )
+        .order_by("row__order")
+        .values_list("value", flat=True)
+    )
+    # only the first two source rows (ordered by `order`) are copied
+    assert imported == ["r0", "r1"]
+    # the usage charge reflects the capped count, not the full source
+    assert usage_calls[0][1]["config"]["total_rows"] == 2
+
+
+@pytest.mark.django_db
+def test_add_rows_from_existing_blank_imports_all_rows(
+    auth_client, dataset_factory, monkeypatch
+):
+    source_dataset, source_input, _source_output = dataset_factory("Import all source")
+    target_dataset, target_input, _target_output = dataset_factory("Import all target")
+    add_row(source_dataset, {source_input: "a"}, order=0)
+    add_row(source_dataset, {source_input: "b"}, order=1)
+    add_row(source_dataset, {source_input: "c"}, order=2)
+    _stub_existing_dataset_usage(monkeypatch)
+
+    # no num_rows key -> backward-compatible "import everything" behaviour
+    response = auth_client.post(
+        f"/model-hub/develops/{target_dataset.id}/add_rows_from_existing_dataset/",
+        {
+            "source_dataset_id": str(source_dataset.id),
+            "column_mapping": {str(source_input.id): str(target_input.id)},
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    assert response.json()["result"]["rows_added"] == 3
+    assert (
+        Row.objects.filter(dataset=target_dataset, deleted=False).count() == 3
+    )
+
+
+@pytest.mark.django_db
+def test_add_rows_from_existing_num_rows_exceeding_source_imports_all(
+    auth_client, dataset_factory, monkeypatch
+):
+    source_dataset, source_input, _source_output = dataset_factory("Over cap source")
+    target_dataset, target_input, _target_output = dataset_factory("Over cap target")
+    add_row(source_dataset, {source_input: "only-a"}, order=0)
+    add_row(source_dataset, {source_input: "only-b"}, order=1)
+    usage_calls = _stub_existing_dataset_usage(monkeypatch)
+
+    response = auth_client.post(
+        f"/model-hub/develops/{target_dataset.id}/add_rows_from_existing_dataset/",
+        {
+            "source_dataset_id": str(source_dataset.id),
+            "column_mapping": {str(source_input.id): str(target_input.id)},
+            "num_rows": 50,
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_200_OK
+    # capped by the available rows, not the requested 50 -> no error, no crash
+    assert response.json()["result"]["rows_added"] == 2
+    assert (
+        Row.objects.filter(dataset=target_dataset, deleted=False).count() == 2
+    )
+    assert usage_calls[0][1]["config"]["total_rows"] == 2
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("bad_value", [0, -1])
+def test_add_rows_from_existing_rejects_non_positive_num_rows(
+    auth_client, dataset_factory, bad_value
+):
+    source_dataset, source_input, _source_output = dataset_factory("Bad num source")
+    target_dataset, target_input, _target_output = dataset_factory("Bad num target")
+    add_row(source_dataset, {source_input: "x"}, order=0)
+
+    response = auth_client.post(
+        f"/model-hub/develops/{target_dataset.id}/add_rows_from_existing_dataset/",
+        {
+            "source_dataset_id": str(source_dataset.id),
+            "column_mapping": {str(source_input.id): str(target_input.id)},
+            "num_rows": bad_value,
+        },
+        format="json",
+    )
+
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert Row.objects.filter(dataset=target_dataset, deleted=False).count() == 0

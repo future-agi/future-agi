@@ -81,6 +81,7 @@ class AddRowsFromExistingView(APIView):
             data = request.validated_data
             source_dataset_id = data.get("source_dataset_id")
             column_mapping = data.get("column_mapping")
+            num_rows = data.get("num_rows")
 
             if source_dataset_id == dataset_id:
                 return self._gm.bad_request(
@@ -169,6 +170,9 @@ class AddRowsFromExistingView(APIView):
             new_rows_count = Row.objects.filter(
                 dataset=source_dataset, deleted=False
             ).count()
+            if num_rows is not None:
+                # cap the accounting to what will actually be imported
+                new_rows_count = min(new_rows_count, num_rows)
             if log_and_deduct_cost_for_resource_request is not None:
                 call_log_row = log_and_deduct_cost_for_resource_request(
                     getattr(request, "organization", None) or request.user.organization,
@@ -204,10 +208,18 @@ class AddRowsFromExistingView(APIView):
             source_rows = Row.objects.filter(
                 dataset=source_dataset, deleted=False
             ).order_by("order")
+            if num_rows is not None:
+                # cap the import to the first `num_rows` rows (ordered by order)
+                source_rows = list(source_rows[:num_rows])
             batch_size = 1000
             current_order = max_order + 1
+            total_source_rows = (
+                len(source_rows)
+                if isinstance(source_rows, list)
+                else source_rows.count()
+            )
 
-            for i in range(0, source_rows.count(), batch_size):
+            for i in range(0, total_source_rows, batch_size):
                 batch_rows = source_rows[i : i + batch_size]
                 new_rows = []
                 new_cells = []
@@ -272,7 +284,7 @@ class AddRowsFromExistingView(APIView):
             return self._gm.success_response(
                 {
                     "message": "Rows Imported successfully",
-                    "rows_added": source_rows.count(),
+                    "rows_added": total_source_rows,
                 }
             )
 
