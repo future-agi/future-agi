@@ -408,9 +408,9 @@ class TestClickHouseSchema:
         assert names.index("span_metrics_hourly_mv") < names.index(
             "span_metrics_hourly"
         ), "MV must drop before its source table"
-        assert names.index("spans_mv") < names.index(
-            "tracer_observation_span"
-        ), "spans_mv must drop before tracer_observation_span"
+        assert names.index("spans_mv") < names.index("tracer_observation_span"), (
+            "spans_mv must drop before tracer_observation_span"
+        )
         # Idempotency: every drop wraps IF EXISTS so reruns are no-ops.
         for _, sql in drops:
             assert "IF EXISTS" in sql, f"drop must be idempotent: {sql}"
@@ -767,6 +767,69 @@ class TestClickHouseFilterBuilder:
         )
         assert "project_id = %(project_id)s" in where_pid
         assert "project_id IN %(project_ids)s" not in where_pid
+
+    def test_normal_col_type_is_handled_like_system_metric(self):
+        """Filters that omit ``col_type`` default to NORMAL in ``translate``
+        (a ``status`` / ``trace_name`` quick-filter chip). ``_build_condition``
+        used to raise ``ValueError: Unsupported col_type: 'NORMAL'`` because it
+        only branched on SYSTEM_METRIC/SPAN_ATTRIBUTE/EVAL_METRIC/ANNOTATION —
+        surfaced by ``list_traces_of_session`` as a generic 400. NORMAL columns
+        are denormalised spans columns, so they must resolve through the same
+        path as SYSTEM_METRIC. Regression guard.
+        """
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        pid = "11111111-1111-1111-1111-111111111111"
+        normal_filter = {
+            "column_id": "trace_name",
+            "filter_config": {
+                "filter_type": "text",
+                "filter_op": "equals",
+                "filter_value": "RunnableSequence",
+                # col_type intentionally omitted -> defaults to NORMAL
+            },
+        }
+        explicit_system_metric = {
+            "column_id": "trace_name",
+            "filter_config": {
+                "filter_type": "text",
+                "filter_op": "equals",
+                "filter_value": "RunnableSequence",
+                "col_type": "SYSTEM_METRIC",
+            },
+        }
+
+        where_normal, params_normal = ClickHouseFilterBuilder(
+            project_id=pid,
+            query_mode=ClickHouseFilterBuilder.QUERY_MODE_TRACE,
+        ).translate([normal_filter])
+        where_system, params_system = ClickHouseFilterBuilder(
+            project_id=pid,
+            query_mode=ClickHouseFilterBuilder.QUERY_MODE_TRACE,
+        ).translate([explicit_system_metric])
+
+        # No raise, a real predicate emitted, and NORMAL == SYSTEM_METRIC.
+        assert where_normal
+        assert "trace_name" in where_normal
+        assert where_normal == where_system
+        assert params_normal == params_system
+
+        # A bare ``status`` filter (the other common quick-filter) also works.
+        where_status, _ = ClickHouseFilterBuilder(project_id=pid).translate(
+            [
+                {
+                    "column_id": "status",
+                    "filter_config": {
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "ERROR",
+                    },
+                }
+            ]
+        )
+        assert "status" in where_status
 
     def test_score_date_scope_can_be_disabled_for_monitor_builders(self):
         """Monitor queries bind start_time/end_time, not start_date/end_date."""
@@ -6896,9 +6959,9 @@ class TestVoiceCallListPhase1bMigration:
         src = self._voice_list_source()
         # `FROM spans FINAL` collapses ReplacingMergeTree duplicates — the
         # v2 dedup contract. FINAL alone (without `spans`) is too permissive.
-        assert re.search(
-            r"FROM\s+spans\s+FINAL", src
-        ), "_list_voice_calls_clickhouse must hydrate from v2 `spans FINAL`."
+        assert re.search(r"FROM\s+spans\s+FINAL", src), (
+            "_list_voice_calls_clickhouse must hydrate from v2 `spans FINAL`."
+        )
         assert "is_deleted = 0" in src
 
     def test_phase_1b_selects_typed_map_columns_for_reconstruction(self):
@@ -7310,9 +7373,9 @@ class TestVoiceCallListQueryBuilderComprehensive:
         # Each phone number is still recognised as a simulator call in Python.
         for phone in VAPI_PHONE_NUMBERS:
             span_attrs = {"raw_log": {"customer": {"number": phone}}}
-            assert VoiceCallListQueryBuilder.is_simulator_call(
-                span_attrs, "vapi"
-            ), f"Missing phone number: {phone}"
+            assert VoiceCallListQueryBuilder.is_simulator_call(span_attrs, "vapi"), (
+                f"Missing phone number: {phone}"
+            )
 
     def test_simulation_filter_uses_json_extract(self):
         """Simulation filtering is now Python-side against parsed raw_log.

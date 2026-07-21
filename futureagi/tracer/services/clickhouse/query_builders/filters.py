@@ -766,7 +766,7 @@ class ClickHouseFilterBuilder:
             return self._build_span_attr_condition(
                 col_id, filter_type, filter_op, filter_value
             )
-        elif col_type == self.SYSTEM_METRIC:
+        elif col_type in (self.SYSTEM_METRIC, self.NORMAL):
             return self._build_system_metric_condition(
                 col_id, filter_type, filter_op, filter_value
             )
