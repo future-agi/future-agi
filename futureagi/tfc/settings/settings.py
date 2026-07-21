@@ -714,7 +714,7 @@ RECAPTCHA_ENABLED = os.getenv(
 
 # Integration encryption key (Fernet) for storing external platform credentials
 INTEGRATION_ENCRYPTION_KEY = os.getenv("INTEGRATION_ENCRYPTION_KEY", "")
-if not INTEGRATION_ENCRYPTION_KEY and env_type == "local":
+if not INTEGRATION_ENCRYPTION_KEY and _IS_LOCAL:
     # Generate a throwaway key for local dev so the app starts without config.
     # Data encrypted with this key is lost on restart — production MUST set
     # INTEGRATION_ENCRYPTION_KEY as an env var.
