@@ -27,6 +27,7 @@ import { useDebounce } from "src/hooks/use-debounce";
 import { useDeploymentMode } from "src/hooks/useDeploymentMode";
 import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
+import { useSnackbar } from "notistack";
 import { getProviderLogoFilterSx } from "./modelLogo";
 
 // ---------------------------------------------------------------------------
@@ -667,6 +668,7 @@ const ModelSelector = ({
   const [keysDrawerModel, setKeysDrawerModel] = useState(null);
   const navigate = useNavigate();
   const { isOSS } = useDeploymentMode();
+  const { enqueueSnackbar } = useSnackbar();
 
   const currentMode = MODES.find((m) => m.value === mode) || MODES[1];
 
@@ -715,6 +717,7 @@ const ModelSelector = ({
     },
     initialPageParam: 0,
     staleTime: 60000,
+    enabled: !isOSS,
   });
 
   // API returns {status, result: {table_data: [...], total_rows}} per page.
@@ -1441,42 +1444,52 @@ const ModelSelector = ({
               label: "Summary",
               desc: "Control how detailed or brief the evaluation output should be",
             },
-          ].map((item) => (
-            <MenuItem
-              key={item.key}
-              onClick={() =>
-                setPlusSubmenu(plusSubmenu === item.key ? null : item.key)
-              }
-              selected={plusSubmenu === item.key}
-              sx={{ borderRadius: "6px", py: 1 }}
-            >
-              <Iconify
-                icon={item.icon}
-                width={18}
-                sx={{ mr: 1.5, color: "text.secondary" }}
-              />
-              <Box sx={{ flex: 1 }}>
-                <Typography
-                  variant="body2"
-                  sx={{ fontSize: "13px", fontWeight: 500 }}
-                >
-                  {item.label}
-                </Typography>
-                <Typography
-                  variant="caption"
-                  color="text.secondary"
-                  sx={{ fontSize: "11px" }}
-                >
-                  {item.desc}
-                </Typography>
-              </Box>
-              <Iconify
-                icon="mdi:chevron-right"
-                width={16}
-                sx={{ color: "text.disabled" }}
-              />
-            </MenuItem>
-          ))}
+          ].map((item) => {
+            const kbLocked = isOSS && item.key === "knowledge";
+            return (
+              <MenuItem
+                key={item.key}
+                onClick={() => {
+                  if (kbLocked) {
+                    enqueueSnackbar(
+                      "Knowledge Base is not supported in self-hosted (OSS).",
+                      { variant: "info" },
+                    );
+                    return;
+                  }
+                  setPlusSubmenu(plusSubmenu === item.key ? null : item.key);
+                }}
+                selected={plusSubmenu === item.key}
+                sx={{ borderRadius: "6px", py: 1, opacity: kbLocked ? 0.5 : 1 }}
+              >
+                <Iconify
+                  icon={item.icon}
+                  width={18}
+                  sx={{ mr: 1.5, color: "text.secondary" }}
+                />
+                <Box sx={{ flex: 1 }}>
+                  <Typography
+                    variant="body2"
+                    sx={{ fontSize: "13px", fontWeight: 500 }}
+                  >
+                    {item.label}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    color="text.secondary"
+                    sx={{ fontSize: "11px" }}
+                  >
+                    {kbLocked ? "Not supported in self-host" : item.desc}
+                  </Typography>
+                </Box>
+                <Iconify
+                  icon={kbLocked ? "mdi:lock-outline" : "mdi:chevron-right"}
+                  width={16}
+                  sx={{ color: "text.disabled" }}
+                />
+              </MenuItem>
+            );
+          })}
         </Box>
 
         {/* Submenu */}
