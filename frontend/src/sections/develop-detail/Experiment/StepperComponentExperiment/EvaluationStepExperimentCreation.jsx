@@ -14,21 +14,26 @@ import PropTypes from "prop-types";
 import SvgColor from "src/components/svg-color";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { useFieldArray, useWatch } from "react-hook-form";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams } from "react-router";
 import { useSearchParams } from "react-router-dom";
 import axios, { endpoints } from "src/utils/axios";
+import { enqueueSnackbar } from "src/components/snackbar";
 import { EvalPickerDrawer } from "src/sections/common/EvalPicker";
+import { buildExperimentEvalRuntimePayload } from "src/sections/common/EvalPicker/evalPickerConfigUtils";
 import { getVersionedEvalName } from "src/components/run-tests/common";
 import { ShowComponent } from "src/components/show";
 import { isUUID } from "src/utils/utils";
+import { transformUserEvalMetricsForApi } from "../schema";
 
 const EvaluationStepExperimentCreation = ({
   control,
   allColumns,
   errors,
   isEditingExperiment = false,
+  experimentId = null,
 }) => {
+  const queryClient = useQueryClient();
   const selectedColumn = useWatch({ control, name: "columnId" });
   const { dataset: datasetParam } = useParams();
   const [searchParam] = useSearchParams();
@@ -65,6 +70,42 @@ const EvaluationStepExperimentCreation = ({
     remove,
     update,
   } = useFieldArray({ control, name: "userEvalMetrics" });
+
+  // In the Edit-Experiment wizard, every Update-Evaluation click should
+  // persist immediately — the batched save at "Run Experiment" isn't
+  // enough because the picker's version selection can't round-trip
+  // without a server PUT. Mirrors `ManageExperimentEvalsDrawer` semantics.
+  const canSaveInline = isEditingExperiment && Boolean(experimentId);
+  const { mutate: saveEvalsInline } = useMutation({
+    mutationFn: (nextEvals) =>
+      axios.put(endpoints.develop.experiment.update(experimentId), {
+        user_eval_metrics: transformUserEvalMetricsForApi(nextEvals, true),
+      }),
+    onSuccess: async (resp) => {
+      // Sync form state to the server-authoritative pin + any new
+      // version rows the BE just created. Falls back to a refetch when
+      // the response body doesn't carry the fresh eval list.
+      const fresh = resp?.data?.result?.user_eval_metrics;
+      if (Array.isArray(fresh)) {
+        replaceEvals(
+          fresh.map((item) => ({
+            ...item,
+            evalId: item.id,
+            actualEvalCreatedId: item.id,
+            templateId: item.template_id,
+          })),
+        );
+      }
+      await queryClient.refetchQueries({
+        queryKey: ["experiment", experimentId],
+      });
+    },
+    onError: (error) => {
+      enqueueSnackbar(error?.message || "Failed to save evaluation", {
+        variant: "error",
+      });
+    },
+  });
   useEffect(() => {
     if (
       userEvalList &&
@@ -98,14 +139,10 @@ const EvaluationStepExperimentCreation = ({
       translatedMapping[variable] = col?.field || colName;
     }
 
-    // Merge full template config with the mapping so the backend knows
-    // how to execute the eval (eval_type_id, rule_prompt, output, etc.)
-    const templateConfig =
-      evalConfig.config || evalConfig.evalTemplate?.config || {};
-    const fullConfig = {
-      ...templateConfig,
-      mapping: translatedMapping,
-    };
+    const fullConfig = buildExperimentEvalRuntimePayload(
+      evalConfig,
+      translatedMapping,
+    );
 
     const evalEntry = {
       evalId: evalConfig.templateId,
@@ -118,14 +155,19 @@ const EvaluationStepExperimentCreation = ({
       templateType: evalConfig.templateType,
       requiredKeys:
         evalConfig.evalTemplate?.requiredKeys ||
-        templateConfig.requiredKeys ||
+        evalConfig.config?.requiredKeys ||
         [],
+      // Carry the version dropdown pick through form state → schema
+      // transform → POST body so the backend can pin it as the dedup
+      // baseline (see `_create_eval_metrics_inline`).
+      pinned_version_id: evalConfig.versionId ?? null,
       ...(evalConfig.templateType === "composite" &&
       evalConfig.compositeWeightOverrides
         ? { compositeWeightOverrides: evalConfig.compositeWeightOverrides }
         : {}),
     };
 
+    let nextEvals;
     if (editingEval) {
       // Edit mode: replace the existing field in place, keep the same name.
       const idx = evalFields.findIndex((f) => {
@@ -133,11 +175,15 @@ const EvaluationStepExperimentCreation = ({
         return fid === editingEval.userEvalId;
       });
       if (idx !== -1) {
-        update(idx, {
+        const merged = {
           ...evalFields[idx],
           ...evalEntry,
           name: evalConfig.name,
-        });
+        };
+        update(idx, merged);
+        nextEvals = evalFields.map((f, i) => (i === idx ? merged : f));
+      } else {
+        nextEvals = evalFields;
       }
     } else {
       // Add mode: append with versioned name to avoid duplicates.
@@ -146,8 +192,14 @@ const EvaluationStepExperimentCreation = ({
         evalFields,
         evalConfig.templateId,
       );
-      append({ ...evalEntry, name: versionedName });
+      const created = { ...evalEntry, name: versionedName };
+      append(created);
+      nextEvals = [...evalFields, created];
     }
+    // Persist immediately when we're inside the Edit-Experiment wizard so
+    // the picker's version pick and config edits land in DB without
+    // waiting for Run Experiment.
+    if (canSaveInline) saveEvalsInline(nextEvals);
     setEditingEval(null);
     setOpenEvaluationDialog(false);
   };
@@ -176,6 +228,10 @@ const EvaluationStepExperimentCreation = ({
       mapping: evalItem.config?.mapping || evalItem.mapping,
       model: evalItem.model || evalItem.selected_model,
       run_config: evalItem.config,
+      // Seed the version dropdown from the last pinned pick so reopening
+      // preserves the user's choice instead of falling back to default.
+      pinned_version_id:
+        evalItem.pinned_version_id ?? evalItem.pinnedVersionId ?? null,
       compositeWeightOverrides:
         evalItem.compositeWeightOverrides ||
         evalItem.composite_weight_overrides,
@@ -479,4 +535,5 @@ EvaluationStepExperimentCreation.propTypes = {
   allColumns: PropTypes.array,
   errors: PropTypes.object,
   isEditingExperiment: PropTypes.bool,
+  experimentId: PropTypes.string,
 };

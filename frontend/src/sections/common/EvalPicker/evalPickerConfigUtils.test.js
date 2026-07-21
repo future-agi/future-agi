@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildCompositeSourceModeProps,
   buildDataInjection,
+  buildExperimentEvalRuntimePayload,
   contextOptionsForRowType,
   extractCodeEvaluateParams,
   getSourceModeVariables,
@@ -321,5 +322,78 @@ describe("getSourceModeVariables", () => {
         compositeUnionKeys: ["child_input", "child_output"],
       }),
     ).toEqual(["child_input", "child_output"]);
+  });
+});
+
+// TH-6979: guard the shared payload builder used by both experiment
+// drawers so runtime overrides + composite handling don't regress.
+describe("buildExperimentEvalRuntimePayload", () => {
+  it("wraps single-eval config with mapping + run_config + params", () => {
+    const mapping = { output: "col-uuid" };
+    const payload = buildExperimentEvalRuntimePayload(
+      {
+        templateType: "single",
+        config: { rule_prompt: "hi", output: "Pass/Fail" },
+        model: "turing_large",
+        agent_mode: "agent",
+        summary: { type: "concise" },
+        tools: [{ id: "t1" }],
+        knowledge_bases: ["kb-1"],
+        pass_threshold: 0.7,
+        multi_choice: false,
+        data_injection: { variables_only: true },
+        error_localizer_enabled: true,
+        params: { min_words: 3 },
+      },
+      mapping,
+    );
+
+    expect(payload.mapping).toEqual(mapping);
+    expect(payload.config).toEqual({
+      rule_prompt: "hi",
+      output: "Pass/Fail",
+    });
+    expect(payload.params).toEqual({ min_words: 3 });
+    expect(payload.run_config).toEqual({
+      model: "turing_large",
+      agent_mode: "agent",
+      summary: { type: "concise" },
+      knowledge_bases: ["kb-1"],
+      tools: [{ id: "t1" }],
+      pass_threshold: 0.7,
+      multi_choice: false,
+      data_injection: { variables_only: true },
+      error_localizer_enabled: true,
+    });
+  });
+
+  it("omits run_config / params when the picker didn't emit any override", () => {
+    const payload = buildExperimentEvalRuntimePayload(
+      { templateType: "single", config: { rule_prompt: "hi" } },
+      { output: "col-uuid" },
+    );
+    expect(payload).toEqual({
+      mapping: { output: "col-uuid" },
+      config: { rule_prompt: "hi" },
+    });
+  });
+
+  it("blanks the config for composite templates and skips per-child overrides", () => {
+    const payload = buildExperimentEvalRuntimePayload(
+      {
+        templateType: "composite",
+        config: { rule_prompt: "should-not-flow-through" },
+        model: "should-not-flow-through",
+        agent_mode: "should-not-flow-through",
+        data_injection: { variables_only: true },
+      },
+      { output: "col-uuid" },
+    );
+    expect(payload.config).toEqual({});
+    // Composite bindings only allow data_injection + error_localizer_enabled
+    // through, not the per-child single-eval knobs.
+    expect(payload.run_config).toEqual({
+      data_injection: { variables_only: true },
+    });
   });
 });

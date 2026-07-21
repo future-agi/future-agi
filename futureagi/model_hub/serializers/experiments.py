@@ -393,6 +393,13 @@ class EvalMetricEntrySerializer(serializers.Serializer):
     composite_weight_overrides = serializers.JSONField(
         required=False, allow_null=True, default=None
     )
+    # Version dropdown pick from the eval picker. Used as the dedup baseline
+    # when pinning — mirrors `EditAndRunUserEvalView.post`'s explicit
+    # `pinned_version_id` handling so a user's version choice survives the
+    # experiment batched-save path.
+    pinned_version_id = serializers.UUIDField(
+        required=False, allow_null=True, default=None
+    )
 
 
 class _ExtraFieldsMixin:
@@ -858,6 +865,13 @@ class ExperimentDetailV2Serializer(serializers.ModelSerializer):
                 "model": m.model,
                 "error_localizer": m.error_localizer,
                 "kb_id": str(m.kb_id) if m.kb_id else None,
+                # Surface the pin so the FE picker can preselect the correct
+                # version when the drawer reopens. Without this the picker
+                # falls back to the template default and the user's last
+                # pinned version is silently swapped.
+                "pinned_version_id": (
+                    str(m.pinned_version_id) if m.pinned_version_id else None
+                ),
             }
             for m in metrics
         ]

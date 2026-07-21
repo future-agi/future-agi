@@ -13,6 +13,31 @@ import axios, { endpoints } from "src/utils/axios";
 import { isUUID } from "src/utils/utils";
 import { promptConfigTransform } from "./utils";
 
+// Translate a `userEvalMetrics` field-array into the snake_case shape the
+// `user_eval_metrics` PUT/POST body expects. Extracted so the Edit-Experiment
+// wizard can fire an incremental PUT on every Update-Evaluation click
+// without re-running the full Zod schema.
+export const transformUserEvalMetricsForApi = (userEvalMetrics, isEditing) =>
+  (userEvalMetrics ?? []).map((evalItem) => ({
+    ...(isEditing &&
+      evalItem?.actualEvalCreatedId &&
+      isUUID(evalItem?.actualEvalCreatedId) && {
+        id: evalItem?.actualEvalCreatedId,
+      }),
+    template_id:
+      evalItem?.templateDetails?.id ||
+      evalItem.templateId ||
+      evalItem.template_id ||
+      evalItem.id,
+    name: evalItem.name || evalItem.evalTemplateName || "Unnamed Evaluation",
+    config: evalItem.config,
+    model: evalItem.model,
+    error_localizer: evalItem.errorLocalizer ?? evalItem.error_localizer,
+    kb_id: evalItem.kbId || evalItem.kb_id || null,
+    pinned_version_id:
+      evalItem.pinned_version_id ?? evalItem.pinnedVersionId ?? null,
+  }));
+
 const getMessageValidationSchema = () =>
   z
     .object({
@@ -445,24 +470,10 @@ export const getNewExperimentValidationSchema = (
         data.outputFormat,
         isEditing,
       ),
-      userEvalMetrics: (data.userEvalMetrics ?? []).map((evalItem) => ({
-        ...(isEditing &&
-          evalItem?.actualEvalCreatedId &&
-          isUUID(evalItem?.actualEvalCreatedId) && {
-            id: evalItem?.actualEvalCreatedId,
-          }),
-        template_id:
-          evalItem?.templateDetails?.id ||
-          evalItem.templateId ||
-          evalItem.template_id ||
-          evalItem.id,
-        name:
-          evalItem.name || evalItem.evalTemplateName || "Unnamed Evaluation",
-        config: evalItem.config,
-        model: evalItem.model,
-        error_localizer: evalItem.errorLocalizer ?? evalItem.error_localizer,
-        kb_id: evalItem.kbId || evalItem.kb_id || null,
-      })),
+      userEvalMetrics: transformUserEvalMetricsForApi(
+        data.userEvalMetrics,
+        isEditing,
+      ),
     }));
 
 export const getExperimentValidationSchema = (allColumns) =>
