@@ -231,10 +231,15 @@ class TestDashboardAPIFlow:
         assert resp.status_code in (400, 500)
 
     @pytest.mark.django_db
-    def test_query_with_unknown_metric_name_returns_400(
+    def test_query_with_unknown_metric_name_degrades_to_custom_attribute(
         self, auth_client, observe_project
     ):
-        """Sending an unrecognized system metric name should fail."""
+        """An unrecognized (but syntactically valid) system-metric name is
+        intentionally treated as a custom span attribute -- backward-compat for
+        widgets saved with the wrong type. It degrades to an empty series rather
+        than erroring, and never blanks other metrics.
+        (Malicious/invalid names are rejected up front; see the security tests.)
+        """
         resp = auth_client.post(
             "/tracer/dashboard/query/",
             {
@@ -252,7 +257,18 @@ class TestDashboardAPIFlow:
             },
             format="json",
         )
-        assert resp.status_code in (400, 500)
+        assert resp.status_code == 200
+        metrics = resp.json()["result"]["metrics"]
+        assert len(metrics) == 1
+        # The unknown metric must be present and degraded, not silently dropped.
+        assert metrics[0]["id"] == "totally_fake_metric"
+        # No such attribute exists, so every bucket is empty/null -- no real data.
+        values = [
+            point.get("value")
+            for series in metrics[0].get("series", [])
+            for point in series.get("data", [])
+        ]
+        assert all(v in (None, 0) for v in values)
 
     @pytest.mark.django_db
     def test_query_with_cross_workspace_project_ids_returns_400(
@@ -408,6 +424,8 @@ class TestDashboardQuerySecurity:
         )
         # Should fail with a validation error, not execute the injection
         assert resp.status_code in (400, 500)
+        # And the rejection must not echo the injection payload back.
+        assert "DROP TABLE" not in resp.content.decode("utf-8")
 
     @pytest.mark.django_db
     def test_sql_injection_in_filter_value_parameterized(
