@@ -1313,11 +1313,11 @@ export default function AnnotateWorkspaceView() {
     isChangingCompletedVisibility,
   ]);
 
-  // Once the navigated-to item's detail finishes loading, drop the direction
-  // so the arrow returns and background refetches don't keep the spinner up.
+  // Keyed on currentItemId too: navigating to a cached item never toggles
+  // detailFetching, so on that alone navDirection would stay stale.
   useEffect(() => {
     if (!detailFetching) setNavDirection(null);
-  }, [detailFetching]);
+  }, [detailFetching, currentItemId]);
 
   const canNavigatePrev =
     historyIndex > 0 || Boolean(detailNavigation.prevItemId);

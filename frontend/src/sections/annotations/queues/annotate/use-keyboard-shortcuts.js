@@ -48,18 +48,13 @@ export default function useKeyboardShortcuts({
           onSkip?.();
           break;
         case "ArrowLeft":
-          // Guard at the first item so the key can't trigger a pointless
-          // fetch that "loads and comes back" — matches the disabled button.
-          if (canPrev) {
-            e.preventDefault();
-            onPrev?.();
-          }
+          // Suppress native arrow scroll even at the boundary; only gate the nav.
+          e.preventDefault();
+          if (canPrev) onPrev?.();
           break;
         case "ArrowRight":
-          if (canNext) {
-            e.preventDefault();
-            onNext?.();
-          }
+          e.preventDefault();
+          if (canNext) onNext?.();
           break;
         case "Escape":
           e.preventDefault();
