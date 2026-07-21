@@ -202,6 +202,8 @@ services:
       ENABLE_HTTP: ${ENABLE_HTTP:-true}
       ENABLE_GRPC: ${ENABLE_GRPC:-true}
     depends_on:
+      minio:
+        condition: service_started
       postgres:
         condition: service_healthy
       clickhouse:
@@ -232,6 +234,8 @@ services:
       TEMPORAL_MAX_CONCURRENT_ACTIVITIES: ${TEMPORAL_MAX_CONCURRENT_ACTIVITIES:-50}
       TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS: ${TEMPORAL_MAX_CONCURRENT_WORKFLOW_TASKS:-50}
     depends_on:
+      minio:
+        condition: service_started
       temporal:
         condition: service_healthy
       postgres:
