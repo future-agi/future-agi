@@ -1613,3 +1613,71 @@ func TestMapStopReason(t *testing.T) {
 		})
 	}
 }
+
+func TestTranslateResponse_CacheTokens(t *testing.T) {
+	resp := &anthropicResponse{
+		ID:         "msg_cache",
+		Model:      "claude-3-5-sonnet",
+		Content:    []anthropicContentBlock{{Type: "text", Text: "hi"}},
+		StopReason: "end_turn",
+		Usage: anthropicUsage{
+			InputTokens:              10,
+			CacheCreationInputTokens: 100,
+			CacheReadInputTokens:     900,
+			OutputTokens:             5,
+		},
+	}
+
+	out := translateResponse(resp)
+
+	if out.Usage.PromptTokens != 1010 {
+		t.Errorf("prompt_tokens = %d, want 1010", out.Usage.PromptTokens)
+	}
+	if out.Usage.TotalTokens != 1015 {
+		t.Errorf("total_tokens = %d, want 1015", out.Usage.TotalTokens)
+	}
+	if out.Usage.CachedPromptTokens != 900 {
+		t.Errorf("cached_prompt_tokens = %d, want 900", out.Usage.CachedPromptTokens)
+	}
+	if out.Usage.PromptTokensDetails == nil {
+		t.Fatal("prompt_tokens_details should be set when there are cache reads")
+	}
+	var details struct {
+		CachedTokens int `json:"cached_tokens"`
+	}
+	if err := json.Unmarshal(*out.Usage.PromptTokensDetails, &details); err != nil {
+		t.Fatalf("unmarshal prompt_tokens_details: %v", err)
+	}
+	if details.CachedTokens != 900 {
+		t.Errorf("details.cached_tokens = %d, want 900", details.CachedTokens)
+	}
+}
+
+func TestStreamParse_CacheTokens(t *testing.T) {
+	state := &streamState{}
+	start := `{"type":"message_start","message":{"id":"msg_c","model":"claude-3","usage":{"input_tokens":10,"cache_creation_input_tokens":100,"cache_read_input_tokens":900}}}`
+	if _, _, err := state.parseSSELine("message_start", start); err != nil {
+		t.Fatalf("message_start: %v", err)
+	}
+	if state.cacheReadTokens != 900 || state.cacheCreationTokens != 100 {
+		t.Fatalf("captured cache tokens read=%d create=%d, want 900/100", state.cacheReadTokens, state.cacheCreationTokens)
+	}
+
+	delta := `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}`
+	chunk, _, err := state.parseSSELine("message_delta", delta)
+	if err != nil {
+		t.Fatalf("message_delta: %v", err)
+	}
+	if chunk.Usage == nil {
+		t.Fatal("usage should not be nil")
+	}
+	if chunk.Usage.PromptTokens != 1010 {
+		t.Errorf("prompt_tokens = %d, want 1010", chunk.Usage.PromptTokens)
+	}
+	if chunk.Usage.CachedPromptTokens != 900 {
+		t.Errorf("cached_prompt_tokens = %d, want 900", chunk.Usage.CachedPromptTokens)
+	}
+	if chunk.Usage.TotalTokens != 1015 {
+		t.Errorf("total_tokens = %d, want 1015", chunk.Usage.TotalTokens)
+	}
+}
