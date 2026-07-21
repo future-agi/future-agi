@@ -13,19 +13,22 @@ def test_string_artifact_does_not_crash():
     attrs = {}
     # Previously raised AttributeError: 'str' object has no attribute 'get'
     _extract_recording_urls({"artifact": "unexpected-string"}, attrs)
-    assert attrs == {}
+    # No recording URLs written; recording_available is materialized as False.
+    assert attrs == {"call.recording_available": False}
 
 
 def test_missing_artifact_does_not_crash():
     attrs = {}
     _extract_recording_urls({}, attrs)
-    assert attrs == {}
+    # No recording URLs written; recording_available is materialized as False.
+    assert attrs == {"call.recording_available": False}
 
 
 def test_none_artifact_does_not_crash():
     attrs = {}
     _extract_recording_urls({"artifact": None}, attrs)
-    assert attrs == {}
+    # No recording URLs written; recording_available is materialized as False.
+    assert attrs == {"call.recording_available": False}
 
 
 def test_well_formed_recording_still_extracted():

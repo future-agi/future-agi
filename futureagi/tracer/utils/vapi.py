@@ -256,17 +256,31 @@ def _extract_llm_and_token_details(log: dict, eval_attributes: dict):
 def _extract_conversation(log: dict, eval_attributes: dict):
     """Extracts and flattens the conversation from the Vapi log."""
     messages = log.get("messages")
-    if not (messages and isinstance(messages, list)):
+    msg_list = messages if isinstance(messages, list) else []
+    eval_attributes[CallAttributes.MESSAGE_COUNT] = len(msg_list)
+    eval_attributes[CallAttributes.TRANSCRIPT_AVAILABLE] = len(msg_list) > 0
+    if not msg_list:
         return
 
     conversation_index = 0
+    user_talk_s = bot_talk_s = 0.0
     eval_attributes["provider_transcript"] = []
     for msg in messages:
+        if not isinstance(msg, dict):
+            continue
         role = msg.get("role")
         start_time = (
             msg.get("secondsFromStart") if msg.get("secondsFromStart") else None
         )
-        duration = msg.get("duration") / 1000 if msg.get("duration") else None
+        raw_duration = msg.get("duration")
+        duration = raw_duration / 1000 if isinstance(raw_duration, (int, float)) else None
+        if isinstance(duration, (int, float)):
+            # Round per-message before summing to match _process_vapi_logs.
+            d2 = round(duration, 2)
+            if role == "user":
+                user_talk_s += d2
+            elif role in ("bot", "assistant"):
+                bot_talk_s += d2
         if role in ["user", "assistant", "bot"]:
             # Normalize "bot" to "assistant" for consistent storage
             normalized_role = "assistant" if role == "bot" else role
@@ -288,6 +302,18 @@ def _extract_conversation(log: dict, eval_attributes: dict):
             )
             conversation_index += 1
 
+    # Talk-ratio breakdown for the list (mirror _process_vapi_logs).
+    total_talk_s = user_talk_s + bot_talk_s
+    if total_talk_s > 0:
+        eval_attributes[CallAttributes.TALK_SECONDS_USER] = round(user_talk_s, 1)
+        eval_attributes[CallAttributes.TALK_SECONDS_BOT] = round(bot_talk_s, 1)
+        eval_attributes[CallAttributes.TALK_PCT_USER] = round(
+            (user_talk_s / total_talk_s) * 100
+        )
+        eval_attributes[CallAttributes.TALK_PCT_BOT] = round(
+            (bot_talk_s / total_talk_s) * 100
+        )
+
 
 def _extract_metadata(log: dict, eval_attributes: dict):
     """
@@ -301,6 +327,27 @@ def _extract_metadata(log: dict, eval_attributes: dict):
     # Fetching call ended reason
     ended_reason = log.get("endedReason") if log.get("endedReason") else None
     eval_attributes["ended_reason"] = ended_reason
+
+    # Display fields for the voice-call list (mirror _process_vapi_logs).
+    if summary := log.get("summary"):
+        eval_attributes[CallAttributes.SUMMARY] = summary
+    if (overall_score := log.get("overallScore")) is not None:
+        eval_attributes[CallAttributes.OVERALL_SCORE] = overall_score
+    if assistant_id := log.get("assistantId"):
+        eval_attributes[CallAttributes.ASSISTANT_ID] = assistant_id
+    # Assistant phone: top-level `phoneNumber` is usually "" — read it from
+    # variableValues.phoneNumber, but only when it's a string (it's sometimes a
+    # nested dict that holds an unrelated number).
+    variable_values = log.get("variableValues")
+    vv_phone = (
+        variable_values.get("phoneNumber")
+        if isinstance(variable_values, dict)
+        else None
+    )
+    if isinstance(vv_phone, str) and vv_phone:
+        eval_attributes[CallAttributes.ASSISTANT_PHONE_NUMBER] = vv_phone
+    if error_message := log.get("errorMessage"):
+        eval_attributes[CallAttributes.ERROR_MESSAGE] = error_message
 
     # Fetching ids for filters
     eval_attributes["squad.id"] = log.get("squadId")
@@ -345,7 +392,8 @@ def _extract_metadata(log: dict, eval_attributes: dict):
     eval_attributes.update(flattened_cost_breakdown)
 
     # Fetching performance metrics
-    artifacts = log.get("artifact") or {}
+    artifacts = log.get("artifact")
+    artifacts = artifacts if isinstance(artifacts, dict) else {}
     performance_metrics = artifacts.get("performanceMetrics", {}).copy()
     if performance_metrics.get("turnLatencies") is not None:
         turn_latencies = performance_metrics.get("turnLatencies")
@@ -381,6 +429,13 @@ def _extract_recording_urls(log: dict, eval_attributes: dict):
     """Extracts recording URLs and adds them to eval_attributes."""
     artifact = log.get("artifact")
     recording = artifact.get("recording") if isinstance(artifact, dict) else None
+    # recording_available for the list — mirror _process_vapi_logs (combined mono
+    # url, with legacy recordingUrl fallback). Defensive on nested types.
+    mono = recording.get("mono") if isinstance(recording, dict) else None
+    combined = (
+        mono.get("combinedUrl") if isinstance(mono, dict) else None
+    ) or log.get("recordingUrl")
+    eval_attributes[CallAttributes.RECORDING_AVAILABLE] = bool(combined)
     if not (recording and isinstance(recording, dict)):
         return
 
@@ -425,7 +480,9 @@ def _extract_common_call_fields(log: dict, eval_attributes: dict):
     messages = log.get("messages", [])
     if isinstance(messages, list):
         eval_attributes[CallAttributes.TOTAL_TURNS] = sum(
-            1 for msg in messages if msg.get("role") in ("user", "assistant", "bot")
+            1
+            for msg in messages
+            if isinstance(msg, dict) and msg.get("role") in ("user", "assistant", "bot")
         )
     else:
         eval_attributes[CallAttributes.TOTAL_TURNS] = 0
@@ -447,11 +504,37 @@ def _extract_common_call_fields(log: dict, eval_attributes: dict):
         eval_attributes[CallAttributes.DURATION] = None
 
     # participant_phone_number
-    customer = log.get("customer") or {}
-    eval_attributes[CallAttributes.PARTICIPANT_PHONE_NUMBER] = customer.get("number")
+    customer = log.get("customer")
+    eval_attributes[CallAttributes.PARTICIPANT_PHONE_NUMBER] = (
+        customer.get("number") if isinstance(customer, dict) else None
+    )
 
     # call_status (raw provider status)
     eval_attributes[CallAttributes.STATUS] = log.get("status")
+
+    # Display fields for the voice-call list (mirror _process_vapi_logs).
+    # Defensive: raw_log shapes vary — never assume a nested type.
+    customer = log.get("customer")
+    if isinstance(customer, dict) and customer.get("number"):
+        eval_attributes[CallAttributes.CUSTOMER_NAME] = customer["number"]
+    eval_attributes[CallAttributes.STATUS_DISPLAY] = (
+        "completed" if log.get("status") == "ended" else "in-progress"
+    )
+    eval_attributes[CallAttributes.CALL_TYPE] = (
+        "inbound" if log.get("type") == "inboundPhoneCall" else "outbound"
+    )
+    cost = log.get("cost")
+    if isinstance(cost, (int, float)) and cost:
+        eval_attributes[CallAttributes.COST_CENTS] = cost * 100
+    for key, src in (
+        (CallAttributes.STARTED_AT, "startedAt"),
+        (CallAttributes.ENDED_AT, "endedAt"),
+        (CallAttributes.CREATED_AT, "createdAt"),
+        (CallAttributes.RESPONSE_TIME_MS, "responseTimeMs"),
+        (CallAttributes.RESPONSE_TIME_SECONDS, "responseTimeSeconds"),
+    ):
+        if (val := log.get(src)) is not None:
+            eval_attributes[key] = val
 
 
 def _coerce_log_datetime(payload: dict) -> str | None:

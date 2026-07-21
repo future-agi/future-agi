@@ -8,6 +8,11 @@ from tracer.utils.otel import (
 )
 
 
+def _dict(value):
+    """Return value if it's a dict, else {} — defends against raw_log shape drift."""
+    return value if isinstance(value, dict) else {}
+
+
 def normalize_eleven_labs_data(log: dict) -> dict:
     """
     Normalizes a single log entry from ElevenLabs.
@@ -27,7 +32,7 @@ def normalize_eleven_labs_data(log: dict) -> dict:
         "id": log.get("conversation_id"),
         "start_time": start_time,
         "end_time": end_time,
-        "cost": log.get("metadata", {}).get("cost"),
+        "cost": _dict(log.get("metadata")).get("cost"),
         "status": status,
         "input": {"transcript": transcript} if transcript else {},
         "metadata": log.get("metadata"),
@@ -56,7 +61,7 @@ def _extract_llm_details(log: dict, eval_attributes: dict):
     """
     Extracts LLM details (model name, token counts) and adds them to eval_attributes.
     """
-    llm_usage = log.get("metadata", {}).get("charging", {}).get("llm_usage", {})
+    llm_usage = _dict(_dict(log.get("metadata")).get("charging")).get("llm_usage", {})
     if not llm_usage:
         return
 
@@ -99,12 +104,13 @@ def _extract_timestamps(log: dict) -> tuple:
     """
     Extracts start and end timestamps from an ElevenLabs log.
     """
+    metadata = _dict(log.get("metadata"))
     start_time = None
-    if start_time_unix := log.get("metadata", {}).get("start_time_unix_secs"):
+    if start_time_unix := metadata.get("start_time_unix_secs"):
         start_time = datetime.fromtimestamp(start_time_unix, tz=UTC)
 
     end_time = None
-    if start_time and (duration := log.get("metadata", {}).get("call_duration_secs")):
+    if start_time and (duration := metadata.get("call_duration_secs")):
         end_time = start_time + timedelta(seconds=duration)
 
     return start_time, end_time
@@ -116,13 +122,15 @@ def _extract_common_call_fields(log: dict, eval_attributes: dict):
     transcript = log.get("transcript", [])
     if isinstance(transcript, list):
         eval_attributes[CallAttributes.TOTAL_TURNS] = sum(
-            1 for msg in transcript if msg.get("role") in ("user", "agent")
+            1
+            for msg in transcript
+            if isinstance(msg, dict) and msg.get("role") in ("user", "agent")
         )
     else:
         eval_attributes[CallAttributes.TOTAL_TURNS] = 0
 
     # total_call_duration (seconds, int) — matches duration_seconds in API response
-    metadata = log.get("metadata", {}) or {}
+    metadata = _dict(log.get("metadata"))
     raw_duration = metadata.get("call_duration_secs")
     eval_attributes[CallAttributes.DURATION] = (
         int(raw_duration) if raw_duration is not None else None
@@ -138,3 +146,26 @@ def _extract_common_call_fields(log: dict, eval_attributes: dict):
     eval_attributes[CallAttributes.USER_WPM] = None
     eval_attributes[CallAttributes.BOT_WPM] = None
     eval_attributes[CallAttributes.TALK_RATIO] = None
+
+    # Display fields for the voice-call list (mirror _process_eleven_labs_raw).
+    status = log.get("status")
+    eval_attributes[CallAttributes.STATUS_DISPLAY] = (
+        "completed" if status in ("done", "ended") else status
+    )
+    start_unix = metadata.get("start_time_unix_secs")
+    if isinstance(start_unix, (int, float)):
+        started_at = datetime.fromtimestamp(start_unix, tz=UTC).isoformat()
+        eval_attributes[CallAttributes.STARTED_AT] = started_at
+        eval_attributes[CallAttributes.CREATED_AT] = started_at
+    if (cost := metadata.get("cost")) is not None:
+        eval_attributes[CallAttributes.COST_CENTS] = cost
+    if agent_id := log.get("agent_id"):
+        eval_attributes[CallAttributes.ASSISTANT_ID] = agent_id
+    msgs = [
+        m
+        for m in (transcript if isinstance(transcript, list) else [])
+        if isinstance(m, dict) and m.get("message")
+    ]
+    eval_attributes[CallAttributes.MESSAGE_COUNT] = len(msgs)
+    eval_attributes[CallAttributes.TRANSCRIPT_AVAILABLE] = len(msgs) > 0
+    eval_attributes[CallAttributes.RECORDING_AVAILABLE] = False
