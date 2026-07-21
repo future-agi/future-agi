@@ -32,6 +32,17 @@ type ScheduledJob struct {
 	WebhookURL  string            `json:"webhook_url,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
 	ExpiresAt   time.Time         `json:"expires_at,omitempty"`
+
+	// Authorization is the submitter's credential, replayed when the job runs so
+	// that it authenticates and bills as the caller rather than as nobody.
+	// Never serialized: the job itself is returned to clients.
+	Authorization string `json:"-"`
+
+	// ClientIP is the submitter's address, replayed at execution so IP ACLs are
+	// evaluated against the authenticated submitter rather than the worker's
+	// blank address (which the global and per-key IP checks reject). Never
+	// serialized alongside the job.
+	ClientIP string `json:"-"`
 }
 
 // IsTerminal returns true if the job is in a final state.

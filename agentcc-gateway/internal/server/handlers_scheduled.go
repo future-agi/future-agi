@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,68 @@ import (
 	"github.com/futureagi/agentcc-gateway/internal/models"
 	"github.com/futureagi/agentcc-gateway/internal/scheduled"
 )
+
+// executeScheduledJob runs a due job through the full request pipeline as its
+// original submitter. It is the scheduler's ExecuteFunc: the job carries the
+// submitter's credential and IP (neither ever serialized), replayed here so the
+// run authenticates, bills, and passes IP ACLs as the caller — and resolves its
+// provider under the same tenant rules a live request from that key would face.
+func (h *Handlers) executeScheduledJob(job *scheduled.ScheduledJob) (json.RawMessage, error) {
+	var req models.ChatCompletionRequest
+	if err := json.Unmarshal(job.Request, &req); err != nil {
+		return nil, fmt.Errorf("invalid scheduled request: %w", err)
+	}
+
+	rc := models.AcquireRequestContext()
+	rc.Model = req.Model
+	rc.Request = &req
+	rc.IsStream = false
+	rc.Metadata["authorization"] = job.Authorization
+	rc.Metadata["client_ip"] = job.ClientIP
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	// Resolve the provider the tenant-aware way the synchronous handlers do, so
+	// a user key cannot schedule a model onto a global, gateway-credentialed
+	// provider that a live request from that key would be refused. peekKeyOrgID
+	// must run first: the resolver blocks non-internal keys from global
+	// providers by key type, and without the peek the key type is unset — which
+	// would reject every job, internal ones included.
+	h.peekKeyOrgID(rc)
+	orgID, orgCfg := h.resolveOrgConfig(rc)
+	if orgID != "" {
+		rc.Metadata["org_id"] = orgID
+	}
+	h.applyOrgModelMapOverrides(orgCfg, rc)
+
+	provider, err := h.resolveProviderWithOrgFallback(ctx, rc, orgID, orgCfg, req.Model)
+	if err != nil {
+		rc.Release()
+		return nil, err
+	}
+
+	providerCall := func(callCtx context.Context, callRC *models.RequestContext) error {
+		resp, err := provider.ChatCompletion(callCtx, callRC.Request)
+		if err != nil {
+			return err
+		}
+		callRC.Response = resp
+		callRC.ResolvedModel = resp.Model
+		return nil
+	}
+
+	if err := h.engine.Process(ctx, rc, providerCall); err != nil {
+		rc.Release()
+		return nil, err
+	}
+	resp := rc.Response
+	rc.Release()
+	if resp == nil {
+		return nil, fmt.Errorf("no response from provider")
+	}
+	return json.Marshal(resp)
+}
 
 // scheduledSubmitRequest is the API request body for submitting a scheduled job.
 type scheduledSubmitRequest struct {
@@ -91,20 +154,21 @@ func (h *Handlers) SubmitScheduled(w http.ResponseWriter, r *http.Request) {
 	json.Unmarshal(req.Request, &partial)
 
 	requestID := models.GetRequestID(r.Context())
-	orgID := "" // extracted from auth middleware if available
 
 	job := &scheduled.ScheduledJob{
-		ID:          "sched-" + requestID,
-		OrgID:       orgID,
-		Status:      scheduled.StatusPending,
-		ScheduledAt: scheduledAt,
-		CreatedAt:   time.Now(),
-		UpdatedAt:   time.Now(),
-		Request:     req.Request,
-		Model:       partial.Model,
-		MaxAttempts: h.scheduledRetryAttempts,
-		WebhookURL:  req.WebhookURL,
-		Metadata:    req.Metadata,
+		ID:            "sched-" + requestID,
+		OrgID:         extractOrgID(r, h),
+		Authorization: authHeaderFromRequest(r),
+		ClientIP:      extractClientIP(r),
+		Status:        scheduled.StatusPending,
+		ScheduledAt:   scheduledAt,
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+		Request:       req.Request,
+		Model:         partial.Model,
+		MaxAttempts:   h.scheduledRetryAttempts,
+		WebhookURL:    req.WebhookURL,
+		Metadata:      req.Metadata,
 	}
 
 	if err := h.scheduledStore.Create(job); err != nil {
@@ -126,6 +190,17 @@ func (h *Handlers) SubmitScheduled(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(job)
 }
 
+// jobForCaller looks up a job and returns it only if the caller's org owns it.
+// Another org's job is reported as not-found rather than forbidden, so job ids
+// cannot be probed for existence.
+func (h *Handlers) jobForCaller(r *http.Request, jobID string) (*scheduled.ScheduledJob, bool) {
+	job, err := h.scheduledStore.Get(jobID)
+	if err != nil || job.OrgID != extractOrgID(r, h) {
+		return nil, false
+	}
+	return job, true
+}
+
 // GetScheduledJob handles GET /v1/scheduled/{job_id}.
 func (h *Handlers) GetScheduledJob(w http.ResponseWriter, r *http.Request) {
 	if h.scheduledStore == nil {
@@ -139,8 +214,8 @@ func (h *Handlers) GetScheduledJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.scheduledStore.Get(jobID)
-	if err != nil {
+	job, ok := h.jobForCaller(r, jobID)
+	if !ok {
 		models.WriteError(w, models.ErrNotFound("job_not_found", "Scheduled job not found"))
 		return
 	}
@@ -167,8 +242,7 @@ func (h *Handlers) ListScheduledJobs(w http.ResponseWriter, r *http.Request) {
 		limit = 100
 	}
 
-	orgID := "" // from auth
-	jobs, err := h.scheduledStore.ListByOrg(orgID, status, limit)
+	jobs, err := h.scheduledStore.ListByOrg(extractOrgID(r, h), status, limit)
 	if err != nil {
 		models.WriteError(w, models.ErrInternal("Failed to list jobs: "+err.Error()))
 		return
@@ -194,8 +268,8 @@ func (h *Handlers) CancelScheduledJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	job, err := h.scheduledStore.Get(jobID)
-	if err != nil {
+	job, ok := h.jobForCaller(r, jobID)
+	if !ok {
 		models.WriteError(w, models.ErrNotFound("job_not_found", "Scheduled job not found"))
 		return
 	}
