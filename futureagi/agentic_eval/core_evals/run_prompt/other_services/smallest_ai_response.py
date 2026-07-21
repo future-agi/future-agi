@@ -166,6 +166,7 @@ def smallest_ai_transcription_response(run_prompt_instance, start_time, api_key)
     language = cfg.get("language") or cfg.get("language_code") or "en"
     word_timestamps = cfg.get("word_timestamps", False)
     diarize = cfg.get("diarize", False)
+    sample_rate = int(cfg.get("sample_rate", 16000))
 
     params = {"model": model_id, "language": language}
     if word_timestamps:
@@ -179,7 +180,7 @@ def smallest_ai_transcription_response(run_prompt_instance, start_time, api_key)
         "X-Source": "future-agi",
     }
 
-    wav_bytes = _ensure_wav_container(audio_bytes)
+    wav_bytes = _ensure_wav_container(audio_bytes, sample_rate=sample_rate)
 
     logger.info(
         "smallest_ai_stt_request",

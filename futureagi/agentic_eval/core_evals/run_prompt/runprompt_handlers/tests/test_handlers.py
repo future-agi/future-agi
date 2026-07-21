@@ -2375,3 +2375,47 @@ class TestSmallestAIHandlerExecution:
 
         assert transcript == "Hello world"
         assert info["data"]["response"] == "Hello world"
+
+    def test_stt_handler_wraps_raw_pcm_with_configured_sample_rate(self, audio_messages):
+        import time
+        import wave
+        from io import BytesIO
+        from unittest.mock import patch, MagicMock
+        from agentic_eval.core_evals.run_prompt.other_services.smallest_ai_response import (
+            smallest_ai_transcription_response,
+        )
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            "status": "success",
+            "transcription": "Hello world",
+            "words": [],
+            "utterances": [],
+            "metadata": {"duration": 1.0, "fileSize": 1000},
+        }
+
+        raw_pcm = b"\x00\x01" * 100  # headerless PCM — not RIFF-prefixed
+
+        stub = MagicMock()
+        stub.model = "smallest_ai/pulse"
+        stub.run_prompt_config = {"language": "en", "sample_rate": 8000}
+        stub._get_input_audio_from_messages.return_value = base64.b64encode(raw_pcm).decode()
+
+        with (
+            patch("requests.post", return_value=mock_response) as mock_post,
+            patch(
+                "agentic_eval.core_evals.run_prompt.other_services.smallest_ai_response.audio_bytes_from_url_or_base64",
+                return_value=raw_pcm,
+            ),
+            patch(
+                "agentic_eval.core_evals.run_prompt.other_services.smallest_ai_response.get_audio_duration",
+                return_value=1.0,
+            ),
+        ):
+            smallest_ai_transcription_response(stub, time.time(), "test-api-key")
+
+        sent_bytes = mock_post.call_args.kwargs["data"]
+        with wave.open(BytesIO(sent_bytes), "rb") as w:
+            assert w.getframerate() == 8000
