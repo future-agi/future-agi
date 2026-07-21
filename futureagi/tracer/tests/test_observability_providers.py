@@ -356,7 +356,7 @@ class TestFetchRetellLogs:
         mock_get_agent.return_value = mock_agent
 
         mock_response = Mock()
-        mock_response.json.return_value = []
+        mock_response.json.return_value = {"items": []}
         mock_response.raise_for_status = Mock()
         mock_requests_post.return_value = mock_response
 
@@ -368,6 +368,13 @@ class TestFetchRetellLogs:
         mock_requests_post.assert_called_once()
         call_kwargs = mock_requests_post.call_args
         assert "Bearer valid-retell-key" in str(call_kwargs)
+        # Verify v3 request body shape
+        body = call_kwargs[1]["json"]
+        assert "agent" in body["filter_criteria"]
+        assert body["filter_criteria"]["agent"] == [{"agent_id": "agent-123"}]
+        assert body["filter_criteria"]["call_status"]["type"] == "enum"
+        assert body["filter_criteria"]["call_status"]["op"] == "in"
+        assert body["filter_criteria"]["call_status"]["value"] == ["ended", "error"]
 
 
 class TestFetchElevenLabsLogs:

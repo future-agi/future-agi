@@ -195,14 +195,22 @@ class ObservabilityService:
             "limit": 1000,
             "filter_criteria": {
                 # Using assistant_id as the agent identifier
-                "agent_id": [agent_assistant_id] if agent_assistant_id else [],
-                "call_status": ["ended", "error"],
+                "agent": [{"agent_id": agent_assistant_id}] if agent_assistant_id else [],
+                "call_status": {
+                    "type": "enum",
+                    "op": "in",
+                    "value": ["ended", "error"],
+                },
             },
         }
         if start_time and end_time:
             data["filter_criteria"]["start_timestamp"] = {
-                "lower_threshold": int(start_time.timestamp() * 1000),
-                "upper_threshold": int(end_time.timestamp() * 1000),
+                "type": "range",
+                "op": "bt",
+                "value": [
+                    int(start_time.timestamp() * 1000),
+                    int(end_time.timestamp() * 1000),
+                ],
             }
 
         response = requests.post(
@@ -212,7 +220,7 @@ class ObservabilityService:
             timeout=30,
         )
         response.raise_for_status()
-        return response.json()
+        return response.json().get("items", [])
 
     @staticmethod
     def _list_eleven_labs_conversations(
