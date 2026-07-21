@@ -961,7 +961,7 @@ class EmbeddingManager:
                     top_k,
                     syn_data_flag,
                 )
-            except:
+            except Exception:
                 traceback.print_exc()
             # print(f"[FEEDBACK QUERY] retrieve_rag_based_examples: returned {len(results)} results", flush=True)
 
