@@ -308,6 +308,7 @@ class RunTestListView(APIView):
             search_query = query_data.get("search", "").strip()
             simulation_type = query_data.get("simulation_type", "").strip()
             prompt_template_id = query_data.get("prompt_template_id")
+            agent_type = query_data.get("agent_type")
 
             # Filter run tests by organization (only non-deleted)
             # Prefetch simulate_eval_configs to avoid N+1 in serializer's to_representation
@@ -355,6 +356,14 @@ class RunTestListView(APIView):
                 run_tests = run_tests.filter(
                     source_type=RunTest.SourceTypes.AGENT_DEFINITION
                 )
+
+            # Apply agent_type (Voice/Chat) filter. Prompt-based sims have no
+            # linked agent_definition, so treat them as chat/text.
+            if agent_type:
+                subquery = Q(agent_definition__agent_type=agent_type)
+                if agent_type == AgentDefinition.AgentTypeChoices.TEXT:
+                    subquery |= Q(source_type=RunTest.SourceTypes.PROMPT)
+                run_tests = run_tests.filter(subquery)
 
             # Apply search filter if search query is provided
             if search_query:

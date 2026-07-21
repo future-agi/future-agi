@@ -1,5 +1,13 @@
 /* eslint-disable react/prop-types */
-import { Box, Button, Divider, Stack, Typography } from "@mui/material";
+import {
+  Box,
+  Button,
+  Divider,
+  MenuItem,
+  Stack,
+  TextField,
+  Typography,
+} from "@mui/material";
 import React, { useCallback, useMemo, useState } from "react";
 import { Helmet } from "react-helmet-async";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -100,6 +108,7 @@ function AgentDefinitions() {
   const queryClient = useQueryClient();
 
   const [searchQuery, setSearchQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState(""); // "" = All types
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(25);
   const [rowSelection, setRowSelection] = useState({});
@@ -108,13 +117,20 @@ function AgentDefinitions() {
   const debouncedSearchQuery = useDebounce(searchQuery.trim(), 500);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["agentDefinitions", page, pageSize, debouncedSearchQuery],
+    queryKey: [
+      "agentDefinitions",
+      page,
+      pageSize,
+      debouncedSearchQuery,
+      typeFilter,
+    ],
     queryFn: () =>
       axios.get(endpoints.agentDefinitions.list, {
         params: {
           page: page + 1,
           limit: pageSize,
           search: debouncedSearchQuery,
+          ...(typeFilter && { agent_type: typeFilter }),
         },
       }),
     select: (d) => d.data,
@@ -127,7 +143,11 @@ function AgentDefinitions() {
   // Show the empty screen only when there are truly zero agents (first page,
   // no search). `data` becomes defined after the first fetch.
   const showEmptyScreen =
-    !isLoading && data && total === 0 && debouncedSearchQuery === "";
+    !isLoading &&
+    data &&
+    total === 0 &&
+    debouncedSearchQuery === "" &&
+    !typeFilter;
 
   // Selected items — derived from rowSelection index map.
   const selectedItems = useMemo(
@@ -331,19 +351,39 @@ function AgentDefinitions() {
                 gap: 2,
               }}
             >
-              <FormSearchField
-                size="small"
-                placeholder="Search"
-                sx={{
-                  minWidth: "250px",
-                  "& .MuiOutlinedInput-root": { height: "30px" },
-                }}
-                searchQuery={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                  setPage(0);
-                }}
-              />
+              <Stack direction="row" spacing={1.5} alignItems="center">
+                <FormSearchField
+                  size="small"
+                  placeholder="Search"
+                  sx={{
+                    minWidth: "250px",
+                    "& .MuiOutlinedInput-root": { height: "30px" },
+                  }}
+                  searchQuery={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setPage(0);
+                  }}
+                />
+                <TextField
+                  select
+                  size="small"
+                  value={typeFilter}
+                  onChange={(e) => {
+                    setTypeFilter(e.target.value);
+                    setPage(0); // reset to first page when the filter changes
+                  }}
+                  SelectProps={{ displayEmpty: true }}
+                  sx={{
+                    minWidth: 140,
+                    "& .MuiOutlinedInput-root": { height: "30px" },
+                  }}
+                >
+                  <MenuItem value="">All types</MenuItem>
+                  <MenuItem value={AGENT_TYPES.VOICE}>Voice</MenuItem>
+                  <MenuItem value={AGENT_TYPES.CHAT}>Chat</MenuItem>
+                </TextField>
+              </Stack>
               {selectedItems.length > 0 ? (
                 <Box
                   sx={{
