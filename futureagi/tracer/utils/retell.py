@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime, timedelta
 
+from simulate.temporal.utils.async_storage import convert_audio_url_to_s3_sync
 from tracer.utils.helper import flatten_dict
 from tracer.utils.otel import (
     CallAttributes,
@@ -8,15 +9,31 @@ from tracer.utils.otel import (
     MessageAttributes,
     SpanAttributes,
 )
+from tracer.utils.vapi_recording import VapiRecordingService
 
 
-def normalize_retell_data(log: dict) -> dict:
+_RETELL_RECORDING_KEY_BY_ARTIFACT_TYPE = {
+    "mono_combined": (
+        f"{ConversationAttributes.CONVERSATION_RECORDING}."
+        f"{ConversationAttributes.MONO_COMBINED}"
+    ),
+    "stereo": (
+        f"{ConversationAttributes.CONVERSATION_RECORDING}."
+        f"{ConversationAttributes.STEREO}"
+    ),
+}
+
+
+def normalize_retell_data(log: dict, *, project_id: str | None = None) -> dict:
     """
     Normalizes a single log entry from Retell AI into a structured format.
     """
     status = _map_status(log.get("call_status", ""))
     start_time, end_time = _extract_timestamps(log)
     eval_attributes = _extract_eval_attributes(log)
+    rehost_uploads = _rehost_recording_urls_sync(
+        log, eval_attributes, project_id=project_id
+    )
 
     prompt_tokens = eval_attributes.get(SpanAttributes.USAGE_INPUT_TOKENS)
     completion_tokens = eval_attributes.get(SpanAttributes.USAGE_OUTPUT_TOKENS)
@@ -33,7 +50,53 @@ def normalize_retell_data(log: dict) -> dict:
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
+        "rehost_bytes_uploaded": sum(rehost_uploads.values()),
+        "rehost_uploads": rehost_uploads,
     }
+
+
+def _rehost_recording_urls_sync(
+    log: dict, eval_attributes: dict, *, project_id: str | None
+) -> dict[str, int]:
+    """Best-effort inline rehost of Retell recordings to configured storage.
+
+    Retell does not have an authenticated artifact-download endpoint, so its
+    provider URLs are passed directly to the shared converter. Each artifact
+    is isolated: a failure for one recording leaves that source URL in place
+    while the remaining recordings can still be rehosted.
+    """
+    if not project_id:
+        return {}
+
+    call_id = log.get("call_id") if isinstance(log, dict) else None
+    if not call_id:
+        return {}
+
+    bytes_by_artifact_type: dict[str, int] = {}
+    for artifact_type, key in _RETELL_RECORDING_KEY_BY_ARTIFACT_TYPE.items():
+        source_url = eval_attributes.get(key)
+        if not source_url or VapiRecordingService.is_fagi_s3_url(source_url):
+            continue
+
+        try:
+            durable_url, artifact_bytes = convert_audio_url_to_s3_sync(
+                call_id=call_id,
+                audio_url=source_url,
+                url_type=artifact_type,
+                provider="retell",
+                artifact_type=artifact_type,
+                project_id=project_id,
+            )
+        except Exception:
+            # Rehosting is best-effort; retaining Retell's URL makes a later
+            # poll eligible to retry this artifact.
+            continue
+
+        if durable_url and durable_url != source_url:
+            eval_attributes[key] = durable_url
+            bytes_by_artifact_type[artifact_type] = artifact_bytes
+
+    return bytes_by_artifact_type
 
 
 def _map_status(call_status: str) -> str:

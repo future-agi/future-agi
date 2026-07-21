@@ -7989,13 +7989,25 @@ class EditAndRunUserEvalView(APIView):
                     new_config = normalize_eval_runtime_config(
                         eval_metric.template.config, new_config
                     )
+                    from model_hub.utils.eval_prompt_variables import (
+                        sync_required_keys_from_prompt,
+                    )
+
+                    sync_required_keys_from_prompt(
+                        new_config.get("config"),
+                        mapping=new_config.get("mapping", {}),
+                    )
                     from model_hub.utils.eval_validators import (
                         get_required_mapping_keys_for_template,
                         validate_required_key_mapping,
                     )
+                    required_mapping_keys = (
+                        new_config.get("config", {}).get("required_keys")
+                        or get_required_mapping_keys_for_template(eval_metric.template)
+                    )
                     missing_keys = validate_required_key_mapping(
                         new_config.get("mapping", {}),
-                        get_required_mapping_keys_for_template(eval_metric.template),
+                        required_mapping_keys,
                     )
                     if missing_keys:
                         return self._gm.bad_request(

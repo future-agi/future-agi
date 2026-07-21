@@ -89,8 +89,20 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     # Phase 1: Paginated span list
     # ------------------------------------------------------------------
 
-    def build(self) -> tuple[str, dict[str, Any]]:
-        """Build the Phase-1 query for paginated span data."""
+    def build(self, since: Any = None) -> tuple[str, dict[str, Any]]:
+        """Build the Phase-1 query for paginated span data.
+
+        Args:
+            since: Optional narrowed window start (datetime) for progressive
+                time-slice pagination. When set, an additional
+                ``start_time >= %(slice_start)s`` predicate restricts the scan
+                to the newest slice — because the sort is ``start_time DESC``,
+                every row in a newer slice sorts before every older row, so a
+                slice that yields the full prefix IS the global prefix and the
+                caller can stop without scanning the whole window. The regular
+                ``start_date``/``end_date`` params are left untouched so
+                ``build_count_query()`` still counts the full window.
+        """
         start_date, end_date = self.parse_time_range(self.filters)
         self.params["start_date"] = start_date
         self.params["end_date"] = end_date
@@ -109,11 +121,29 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             self.sort_params, field_map=self.SORT_FIELD_MAP
         )
         if not order_clause:
-            order_clause = "ORDER BY start_time DESC"
+            # `id DESC` tiebreak: ClickHouse's parallel sort is not stable, so
+            # equal start_time rows can permute between requests. Prefix-dedup
+            # pagination (page_dedup.py) slices consecutive pages out of what
+            # must be ONE stable global order — without the tiebreak a row can
+            # appear on two pages or be skipped. Deterministic order also makes
+            # the progressive-slice prefix (see `since`) reproducible.
+            order_clause = "ORDER BY start_time DESC, id DESC"
 
+        slice_fragment = ""
+        if since is not None:
+            self.params["slice_start"] = since
+            slice_fragment = "AND start_time >= %(slice_start)s"
+
+        # Prefix-fetch pagination: read the sorted prefix [0, offset +
+        # 2*page_size) in ONE bounded top-K pass and let the view dedup by
+        # span id then slice [offset, offset + page_size) — see
+        # tracer/services/clickhouse/page_dedup.py. This preserves the
+        # global-dedup semantics `LIMIT 1 BY id` provided (a key can never
+        # appear on two pages) without its O(window) full sort; the 2x
+        # page_size margin keeps pages exact for up to page_size duplicate
+        # rows in the prefix. No SQL OFFSET — slicing happens in Python.
         offset = self.page_number * self.page_size
-        self.params["limit"] = self.page_size
-        self.params["offset"] = offset
+        self.params["limit"] = offset + 2 * self.page_size
 
         filter_fragment = f"AND {extra_where}" if extra_where else ""
 
@@ -170,6 +200,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
               AND created_at >= %(start_date)s - INTERVAL 1 DAY
               AND start_time >= %(start_date)s
               AND start_time < %(end_date)s
+              {slice_fragment}
               {pv_fragment}
               {filter_fragment}
             """
@@ -200,13 +231,22 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             )
             WHERE resolved_end_user_id = %(end_user_id)s
             {order_clause}
-            LIMIT 1 BY id
             LIMIT %(limit)s
-            OFFSET %(offset)s
             """
             return query, self.params
 
-        # Light columns only — input/output fetched via build_content_query()
+        # Light columns only — input/output fetched via build_content_query().
+        #
+        # PERF: no `LIMIT 1 BY id`. On a wide time window that clause forced CH
+        # to read + full-sort EVERY matching row (the whole window) to dedup by
+        # id before applying ORDER BY … LIMIT — O(rows-in-window) memory that
+        # OOM-crashed the server at ~10M+ rows. Dropping it lets `ORDER BY
+        # start_time DESC LIMIT n` run as a bounded top-N (a size-n priority
+        # queue, O(n) memory), so the page returns without materializing the
+        # window. ReplacingMergeTree duplicate span versions are rare + transient
+        # (collapsed on the next merge); the view dedups the returned page by
+        # span_id in Python to keep one row per span. `is_deleted = 0` (from
+        # project_where) still excludes soft-deleted rows.
         query = f"""
         SELECT
             id,
@@ -230,13 +270,12 @@ class SpanListQueryBuilder(BaseQueryBuilder):
           AND created_at >= %(start_date)s - INTERVAL 1 DAY
           AND start_time >= %(start_date)s
           AND start_time < %(end_date)s
+          {slice_fragment}
           {end_user_fragment}
           {pv_fragment}
           {filter_fragment}
         {order_clause}
-        LIMIT 1 BY id
         LIMIT %(limit)s
-        OFFSET %(offset)s
         """
         return query, self.params
 
@@ -308,7 +347,17 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         return query, params
 
     def build_count_query(self) -> tuple[str, dict[str, Any]]:
-        """Build a count query for total matching spans."""
+        """Build a count query for total matching spans.
+
+        PERF: uses ``count()`` rather than ``uniqExact(id)``. ``uniqExact`` built
+        an exact hash set of every matching span id (tens of millions of 16-char
+        strings) — hundreds of MB to GBs of unbounded memory that OOM-crashed the
+        server on large windows. ``count()`` reads only the filter columns and
+        needs O(1) memory. The pagination total is a display value; the only
+        difference is that a transient un-merged ReplacingMergeTree duplicate is
+        counted once extra, which is immaterial and self-heals on the next merge
+        (and matches the list, which no longer de-dups via ``LIMIT 1 BY id``).
+        """
         fb = self._FILTER_BUILDER_CLS(
             table=self.TABLE,
             query_mode=self._FILTER_BUILDER_CLS.QUERY_MODE_SPAN,
@@ -342,7 +391,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             remap_join = remap_left_join("rs.end_user_id", "end_user_id_remap")
             resolved_eu = resolved_id_expr("rs.end_user_id")
             query = f"""
-            SELECT uniqExact(id) AS total
+            SELECT count() AS total
             FROM (
                 SELECT rs.id AS id, {resolved_eu} AS resolved_end_user_id
                 FROM (
@@ -362,7 +411,7 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             return query, params
 
         query = f"""
-        SELECT uniqExact(id) AS total
+        SELECT count() AS total
         FROM {self.TABLE}
         {self.project_where()}
           AND created_at >= %(start_date)s - INTERVAL 1 DAY
@@ -381,8 +430,19 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     def build_eval_query(
         self,
         span_ids: list[str],
+        created_after: Any = None,
     ) -> tuple[str, dict[str, Any]]:
-        """Build the Phase-2 eval-scores query for a page of span IDs."""
+        """Build the Phase-2 eval-scores query for a page of span IDs.
+
+        Args:
+            created_after: Optional datetime lower bound for partition pruning.
+                The eval table is ``PARTITION BY toYYYYMM(created_at)``; without
+                a ``created_at`` predicate the span-id probe touches EVERY
+                monthly partition. An eval row cannot be created before its span
+                row exists, so bounding by the page's oldest ``created_at``
+                (minus a 7-day safety margin) prunes to the relevant partitions
+                — measured 55x fewer rows read at 10M eval rows.
+        """
         if not span_ids or not self.eval_config_ids:
             return "", {}
 
@@ -390,12 +450,21 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             "span_ids": tuple(span_ids),
             "eval_config_ids": tuple(self.eval_config_ids),
         }
+        created_fragment = ""
+        if created_after is not None:
+            params["evals_created_after"] = created_after
+            created_fragment = (
+                "AND created_at >= %(evals_created_after)s - INTERVAL 7 DAY"
+            )
 
-        # Rewrite-EXCLUDED in v2 subclasses, so keep both delete guards. Rewritten
-        # fragments retain only the `deleted` guard (the rewriter breaks
-        # `_peerdb_is_deleted`); residual tombstone visibility is accepted there.
         eval_table, eval_not_deleted = eval_logger_source(
             include_cdc_tombstone_guard=True
+        )
+        # ReplacingMergeTree version column: v2 uses `_version`, the legacy CDC
+        # mirror uses `_peerdb_version`. Used to keep the newest row per eval id
+        # when de-duplicating without FINAL (see the FROM clause below).
+        eval_version_col = (
+            "_version" if eval_table.endswith("_v2") else "_peerdb_version"
         )
 
         # Aggregates are computed only over *completed*, non-errored rows so a
@@ -445,10 +514,38 @@ class SpanListQueryBuilder(BaseQueryBuilder):
                 output_str_list,
                 error = 0 AND ifNull(output_str, '') != 'ERROR' AND status NOT IN ('pending', 'running', 'skipped', 'errored')
             ) AS str_lists
-        FROM {eval_table} FINAL
-        WHERE {eval_not_deleted}
-          AND observation_span_id IN %(span_ids)s
-          AND custom_eval_config_id IN %(eval_config_ids)s
+        -- PERF: no table-level FINAL. FINAL forces a merge across the WHOLE eval
+        -- table before the WHERE is applied, so a page of ~50 span ids dragged a
+        -- merge over tens of millions of rows — GBs of memory that OOM-crashed
+        -- the server. Instead we de-dup only the tiny page-scoped slice: the
+        -- inner scan is pruned to the page's span ids (idx_observation_span_id
+        -- bloom) + the config ids, then ORDER BY the version col DESC + LIMIT 1
+        -- BY id keeps the newest version of each eval row — verified identical
+        -- to FINAL for live rows (status transitions collapse to the newest
+        -- version), at O(rows-for-this-page) cost. One accepted divergence:
+        -- the not-deleted WHERE runs BEFORE dedup, so an eval whose newest
+        -- un-merged version is a soft-delete marker transiently surfaces its
+        -- previous version until the next merge collapses the parts (FINAL
+        -- merged first and hid it immediately).
+        FROM (
+            SELECT
+                observation_span_id,
+                custom_eval_config_id,
+                output_float,
+                output_bool,
+                output_str,
+                output_str_list,
+                error,
+                status,
+                skipped_reason
+            FROM {eval_table}
+            WHERE {eval_not_deleted}
+              AND observation_span_id IN %(span_ids)s
+              AND custom_eval_config_id IN %(eval_config_ids)s
+              {created_fragment}
+            ORDER BY {eval_version_col} DESC
+            LIMIT 1 BY id
+        )
         GROUP BY observation_span_id, custom_eval_config_id
         SETTINGS max_bytes_before_external_group_by = 1073741824, max_bytes_before_external_sort = 1073741824
         """
@@ -461,8 +558,16 @@ class SpanListQueryBuilder(BaseQueryBuilder):
     def build_annotation_query(
         self,
         span_ids: list[str],
+        created_after: Any = None,
     ) -> tuple[str, dict[str, Any]]:
-        """Build the Phase-3 annotation query for a page of span IDs."""
+        """Build the Phase-3 annotation query for a page of span IDs.
+
+        Args:
+            created_after: Optional datetime lower bound — same partition-prune
+                rationale as ``build_eval_query`` (``model_hub_score`` is also
+                ``PARTITION BY toYYYYMM(created_at)``; a score row cannot
+                pre-date its span row).
+        """
         if not span_ids or not self.annotation_label_ids:
             return "", {}
 
@@ -470,17 +575,34 @@ class SpanListQueryBuilder(BaseQueryBuilder):
             "span_ids": tuple(span_ids),
             "label_ids": tuple(self.annotation_label_ids),
         }
+        created_fragment = ""
+        if created_after is not None:
+            params["anns_created_after"] = created_after
+            created_fragment = (
+                "AND created_at >= %(anns_created_after)s - INTERVAL 7 DAY"
+            )
 
+        # PERF: no table-level FINAL (same OOM risk as the eval phase — FINAL
+        # merges the whole model_hub_score table before the page filter). De-dup
+        # only the page-scoped slice: prune to the page's span ids + labels, keep
+        # the newest version per score id via `ORDER BY _peerdb_version DESC
+        # LIMIT 1 BY id`, then `anyLast(value)` per (span, label).
         query = f"""
         SELECT
             observation_span_id,
             toString(label_id) AS label_id,
             anyLast(value) AS value
-        FROM {self.ANNOTATION_TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
-          AND deleted = false
-          AND observation_span_id IN %(span_ids)s
-          AND label_id IN %(label_ids)s
+        FROM (
+            SELECT observation_span_id, label_id, value
+            FROM {self.ANNOTATION_TABLE}
+            WHERE _peerdb_is_deleted = 0
+              AND deleted = false
+              AND observation_span_id IN %(span_ids)s
+              AND label_id IN %(label_ids)s
+              {created_fragment}
+            ORDER BY _peerdb_version DESC
+            LIMIT 1 BY id
+        )
         GROUP BY observation_span_id, label_id
         """
         return query, params

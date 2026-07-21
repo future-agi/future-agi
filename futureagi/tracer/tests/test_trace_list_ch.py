@@ -155,8 +155,10 @@ class TestExistingBehaviorPreserved:
             project_id=project_id, page_number=2, page_size=25
         )
         query, params = builder.build()
-        assert params["limit"] == 25  # page_size (no +1 for has_more)
-        assert params["offset"] == 50  # page_number * page_size
+        # Prefix-fetch pagination: LIMIT covers [0, offset + 2*page_size);
+        # the view dedups by trace_id and slices in Python (page_dedup.py).
+        assert "OFFSET" not in query
+        assert params["limit"] == 100  # offset 50 + 2 * page_size 25
 
     def test_root_span_filter(self, project_id):
         builder = TraceListQueryBuilder(project_id=project_id)
@@ -202,16 +204,31 @@ class TestEvalAveragingAcrossSpans:
         assert "GROUP BY trace_id, custom_eval_config_id" in query
 
     _COLS = [
-        "trace_id", "eval_config_id", "avg_score", "pass_rate", "success_count",
-        "error_count", "eval_count", "str_lists", "skipped_count", "running_count",
-        "pending_count", "skipped_reason",
+        "trace_id",
+        "eval_config_id",
+        "avg_score",
+        "pass_rate",
+        "success_count",
+        "error_count",
+        "eval_count",
+        "str_lists",
+        "skipped_count",
+        "running_count",
+        "pending_count",
+        "skipped_reason",
     ]
 
     def _row(self, **kw):
         base = {c: None for c in self._COLS}
         base.update(
-            trace_id="t1", eval_config_id="c1", success_count=0, error_count=0,
-            eval_count=0, str_lists=[], skipped_count=0, running_count=0,
+            trace_id="t1",
+            eval_config_id="c1",
+            success_count=0,
+            error_count=0,
+            eval_count=0,
+            str_lists=[],
+            skipped_count=0,
+            running_count=0,
             pending_count=0,
         )
         base.update(kw)
@@ -223,7 +240,8 @@ class TestEvalAveragingAcrossSpans:
     def test_choices_percentage_averaged_over_spans(self):
         # 3 spans: neutral, neutral, joy → neutral 66.67%, joy 33.33%.
         row = self._row(
-            success_count=3, eval_count=3,
+            success_count=3,
+            eval_count=3,
             str_lists=['["neutral"]', '["neutral"]', '["joy"]'],
         )
         pc = self._pivot([row])["t1"]["c1"]["per_choice"]
@@ -243,3 +261,84 @@ class TestEvalAveragingAcrossSpans:
     def test_all_errored_yields_error_marker(self):
         row = self._row(success_count=0, error_count=2, eval_count=2)
         assert self._pivot([row])["t1"]["c1"] == {"error": True}
+
+
+class TestPerfQueryShapes:
+    """Pin the OOM fixes: bounded top-N pagination, page-scoped eval dedup,
+    and time-bounded trace-membership filter subqueries.
+
+    Each shape below was measured against a 10M-span / 2M-trace / 10M-eval
+    stress dataset; the pinned form is the one that stays within tens-to-
+    hundreds of MiB instead of OOM-crashing the ClickHouse server.
+    """
+
+    def test_build_has_no_limit_by_trace_id(self, project_id):
+        """Phase-1 pagination must be a bounded top-N: `LIMIT 1 BY trace_id`
+        forced a full sort of every root span in the window (O(window) memory).
+        The page is deduped by trace_id in Python instead."""
+        builder = TraceListQueryBuilder(project_id=project_id)
+        query, _ = builder.build()
+        assert "LIMIT 1 BY trace_id" not in query
+        assert "LIMIT %(limit)s" in query
+
+    def test_eval_query_dedups_page_slice_without_table_final(self, project_id):
+        """Phase-2 must not run table-level FINAL (it merged the WHOLE eval
+        table for a ~50-trace page). Dedup happens on the page-scoped slice via
+        `ORDER BY _peerdb_version DESC LIMIT 1 BY id` — verified identical
+        output to FINAL on live data and on multi-version fixtures."""
+        builder = TraceListQueryBuilder(project_id=project_id, eval_config_ids=["ec1"])
+        builder.build()  # binds start_date so the created_at prune is emitted
+        query, params = builder.build_eval_query(["t1"])
+        assert "tracer_eval_logger FINAL" not in query
+        assert "ORDER BY _peerdb_version DESC" in query
+        assert "LIMIT 1 BY id" in query
+        # The partition-pruning lower bound must survive inside the subquery.
+        assert "created_at >= %(start_date)s - INTERVAL 1 DAY" in query
+        assert "start_date" in params
+
+    def test_membership_filter_subqueries_are_time_bounded(self, project_id):
+        """Trace-membership wraps (`trace_id IN (SELECT … FROM spans …)`) for
+        system-metric/attr filters must carry the window's created_at lower
+        bound — without it every filtered request scanned the project's entire
+        span history."""
+        builder = TraceListQueryBuilder(
+            project_id=project_id,
+            filters=[
+                {
+                    "column_id": "model",
+                    "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "gpt-4o",
+                    },
+                }
+            ],
+        )
+        query, _ = builder.build()
+        sub = query.split("trace_id IN (")[1]
+        assert "created_at >= %(start_date)s - INTERVAL 1 DAY" in sub
+
+    def test_span_date_scope_defaults_off_for_other_builders(self, project_id):
+        """The membership time bound is opt-in: a compiler constructed without
+        `span_date_scope` (every non-trace-list builder) emits byte-identical
+        SQL to before, so callers that never bind %(start_date)s don't break."""
+        from tracer.services.clickhouse.query_builders.filters import (
+            ClickHouseFilterBuilder,
+        )
+
+        fb = ClickHouseFilterBuilder(table="spans", project_id=project_id)
+        where, _ = fb.translate(
+            [
+                {
+                    "column_id": "model",
+                    "filter_config": {
+                        "col_type": "SYSTEM_METRIC",
+                        "filter_type": "text",
+                        "filter_op": "equals",
+                        "filter_value": "gpt-4o",
+                    },
+                }
+            ]
+        )
+        assert "created_at >= %(start_date)s" not in where

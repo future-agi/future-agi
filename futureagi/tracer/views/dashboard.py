@@ -988,38 +988,20 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
 
         try:
             if metric_type == "annotation_metric" and metric_name == "annotator":
-                from django.db.models import Q
+                from accounts.models.user import User
+                from tracer.services.annotation_label_source import AnnotationLabelScoresCH
 
-                from model_hub.models.score import Score
-
-                rows = (
-                    Score.objects.filter(
-                        deleted=False,
-                        annotator_id__isnull=False,
-                    )
-                    .filter(
-                        Q(project_id__in=project_ids)
-                        | Q(trace__project_id__in=project_ids)
-                        | Q(observation_span__project_id__in=project_ids)
-                        | Q(trace_session__project_id__in=project_ids)
-                    )
-                    .values(
-                        "annotator_id",
-                        "annotator__name",
-                        "annotator__email",
-                    )
-                    .distinct()
-                    .order_by("annotator__name", "annotator__email")
+                annotator_ids = AnnotationLabelScoresCH().annotator_ids_for_projects(project_ids)
+                users = (
+                    User.objects.filter(id__in=annotator_ids)
+                    .values("id", "name", "email")
+                    .order_by("name", "email")
                 )
                 values = []
-                seen = set()
-                for row in rows:
-                    user_id = str(row["annotator_id"])
-                    if user_id in seen:
-                        continue
-                    seen.add(user_id)
-                    name = (row.get("annotator__name") or "").strip()
-                    email = (row.get("annotator__email") or "").strip()
+                for u in users:
+                    user_id = str(u["id"])
+                    name = (u.get("name") or "").strip()
+                    email = (u.get("email") or "").strip()
                     label = name or email or user_id
                     option = {"value": user_id, "label": label}
                     if name:
@@ -1251,27 +1233,18 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                         else:
                             add_value_option(values, seen_values, opt)
 
-                    # Include actual stored categorical choices as a fallback
-                    # and as protection against stale label settings.
-                    from django.db.models import Q
+                    # CH-backed stored categorical choices (Score.value), scoped via spans.
+                    import json
 
-                    from model_hub.models.score import Score
+                    from tracer.services.annotation_label_source import AnnotationLabelScoresCH
 
-                    score_qs = Score.objects.filter(
-                        label_id=label.id,
-                        deleted=False,
-                    )
-                    if project_ids:
-                        score_qs = score_qs.filter(
-                            Q(project_id__in=project_ids)
-                            | Q(trace__project_id__in=project_ids)
-                            | Q(observation_span__project_id__in=project_ids)
-                            | Q(trace_session__project_id__in=project_ids)
-                        )
-
-                    for payload in score_qs.values_list("value", flat=True).order_by(
-                        "-updated_at"
-                    )[:5000]:
+                    for payload_str in AnnotationLabelScoresCH().categorical_values_for_label(
+                        label.id, project_ids
+                    ):
+                        try:
+                            payload = json.loads(payload_str)
+                        except (TypeError, ValueError):
+                            payload = payload_str
                         raw_values = []
                         if isinstance(payload, dict):
                             selected = payload.get("selected")
@@ -1287,7 +1260,6 @@ class DashboardViewSet(BaseModelViewSetMixin, ModelViewSet):
                             raw_values.extend(payload)
                         elif payload not in (None, ""):
                             raw_values.append(payload)
-
                         for raw_value in raw_values:
                             add_value_option(values, seen_values, raw_value)
                 elif label_type == "star":

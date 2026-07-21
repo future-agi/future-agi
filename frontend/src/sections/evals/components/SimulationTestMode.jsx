@@ -36,6 +36,13 @@ import {
   useExecuteCompositeEval,
   useExecuteCompositeEvalAdhoc,
 } from "../hooks/useCompositeEval";
+import {
+  NEVER_PICKABLE_TOPLEVEL,
+  VOICE_ONLY_METRICS,
+  isHiddenPickerPath,
+  isTextCallDetail,
+  translateDeepScenarioColumn,
+} from "../utils/simulationTestModeUtils";
 
 // Hover-tooltip content for the Columns / Value table. Stringifies
 // primitives and JSON-encodes objects, then caps length so a 50k-char
@@ -75,7 +82,6 @@ const PRIORITY_PREFIXES = [
   "call.stereo_recording_url",
   "call.agent_prompt",
   "call.", // remaining call-level leaves
-  "eval_", // resolved eval results (still flat)
   "scenario.columns.",
   "scenario.info.",
   "scenario.",
@@ -459,6 +465,8 @@ const SimulationTestMode = React.forwardRef(
           const SKIP = new Set([
             "id",
             "scenario_id",
+            "scenario_graph_id",
+            "test_execution_id",
             "agent_definition_used_id",
             "simulator_agent_id",
             "service_provider_call_id",
@@ -585,18 +593,47 @@ const SimulationTestMode = React.forwardRef(
               flat.scenario.info.source = scenarioRow.source;
           }
 
-          // -- Call-level runtime vocabulary — nested under `call.*`. --
-          const callType = callData.call_type || callData.simulation_call_type;
+          // simulation_call_type (modality) wins over call_type (Inbound/Outbound).
+          const callType =
+            callData.simulation_call_type || callData.call_type;
           const isTextCall =
             typeof callType === "string" &&
             ["text", "chat", "prompt"].includes(callType.toLowerCase());
 
           if (isTextCall) {
-            const rawTranscript =
-              typeof callData.transcript === "string"
-                ? callData.transcript
-                : "";
-            const { user, assistant } = splitChatTranscript(rawTranscript);
+            let rawTranscript, user, assistant;
+            if (typeof callData.transcript === "string") {
+              rawTranscript = callData.transcript;
+              ({ user, assistant } = splitChatTranscript(rawTranscript));
+            } else {
+              // Mirror getContentMessage: chat_messages → messages[0]; voice → content.
+              const turns = (
+                Array.isArray(callData.transcript) ? callData.transcript : []
+              )
+                .map((r) => {
+                  const role = r?.speaker_role || r?.role;
+                  const content =
+                    (Array.isArray(r?.messages) && r.messages[0]) ||
+                    (typeof r?.content === "string" ? r.content : "");
+                  return { role, content };
+                })
+                .filter(
+                  (r) =>
+                    r.content?.trim() &&
+                    (r.role === "user" || r.role === "assistant"),
+                );
+              rawTranscript = turns
+                .map((r) => `${r.role}: ${r.content}`)
+                .join("\n");
+              user = turns
+                .filter((r) => r.role === "user")
+                .map((r) => r.content)
+                .join("\n");
+              assistant = turns
+                .filter((r) => r.role === "assistant")
+                .map((r) => r.content)
+                .join("\n");
+            }
             flat.call.transcript = rawTranscript;
             flat.call.user_chat_transcript = user;
             flat.call.assistant_chat_transcript = assistant;
@@ -698,18 +735,6 @@ const SimulationTestMode = React.forwardRef(
           if (stereoUrl) flat.call.stereo_recording_url = stereoUrl;
           if (callType) flat.simulation.call_type = callType;
 
-          // -- Eval results: resolve UUID keys → {eval_name: score + reason} --
-          const em = callData.eval_metrics || {};
-          const eo = callData.eval_outputs || {};
-          const evalEntries = Object.keys(em).length ? em : eo;
-          for (const [, ev] of Object.entries(evalEntries)) {
-            const name = ev.name || ev.eval_name || "eval";
-            flat[`eval_${name}`] = {
-              score: ev.value || ev.score,
-              reason: ev.reason || ev.explanation,
-            };
-          }
-
           // -- Raw callData pass-through (after SKIP). These are top-
           // level fields that don't belong in a nested group (like
           // timing, tokens, latency metrics) — displayed as-is.
@@ -738,23 +763,9 @@ const SimulationTestMode = React.forwardRef(
     }, [currentCall, runTestContext]);
 
     // Field names for variable mapping. Expand nested object keys into
-    // dot-notation paths, then filter out non-leaf intermediate keys so
-    // `agent` / `call` don't appear as pickable options — only
-    // leaves like `agent.name` or `call.transcript`.
-    //
-    // Memoised by `callDetail` reference identity and backed by
-    // `detailCacheRef`, so toggling to a previously-viewed call reuses
-    // the walked output without re-enumerating the tree.
+    // dot-notation paths; drop non-leaf intermediates so groups aren't picked.
     const fieldNames = useMemo(() => {
       if (!callDetail) return [];
-
-      // Cache hit: same detail reference was walked on a prior toggle.
-      for (const entry of detailCacheRef.current.values()) {
-        if (entry.detail === callDetail && entry.fieldNames) {
-          return entry.fieldNames;
-        }
-      }
-
       const keys = [];
       // Don't recurse into known-heavy Vapi dumps — the key stays
       // selectable but the walker finishes in tens of ms instead of
@@ -771,10 +782,15 @@ const SimulationTestMode = React.forwardRef(
         "provider_call_data",
         "providerCallData",
       ]);
+      const isTextCall = isTextCallDetail(callDetail);
       const walk = (obj, prefix) => {
         // canonicalEntries filters out the camelCase aliases that may exist in legacy objects alongside snake_case keys.
         const entries = canonicalEntries(obj);
         for (const [k, v] of entries) {
+          if (prefix === "") {
+            if (NEVER_PICKABLE_TOPLEVEL.includes(k)) continue;
+            if (isTextCall && VOICE_ONLY_METRICS.includes(k)) continue;
+          }
           const path = prefix ? `${prefix}.${k}` : k;
           keys.push(path);
           if (NO_RECURSE_KEYS.has(k)) continue;
@@ -800,15 +816,6 @@ const SimulationTestMode = React.forwardRef(
           Array.isArray(val)
         );
       });
-
-      // Persist the walked output into the cache so repeat toggles skip
-      // the recursion entirely.
-      for (const [key, entry] of detailCacheRef.current.entries()) {
-        if (entry.detail === callDetail) {
-          detailCacheRef.current.set(key, { ...entry, fieldNames: leaves });
-          break;
-        }
-      }
 
       return leaves;
     }, [callDetail]);
@@ -858,14 +865,15 @@ const SimulationTestMode = React.forwardRef(
       [selectedRunTestId, variables, mapping],
     );
 
-    // Translate scenario display keys → UUIDs before handing mapping to
-    // the parent. The backend resolver matches on column UUID, so without
-    // this, saved evals that reference scenario columns fail at run time
-    // with "Column mapping mismatch".
+    // Translate scenario column keys: top-level -> UUID; deep path -> walker form.
     const persistedMapping = useMemo(() => {
       const out = {};
       for (const [variable, field] of Object.entries(mapping)) {
-        out[variable] = scenarioKeyMap.current[field] || field;
+        if (scenarioKeyMap.current[field]) {
+          out[variable] = scenarioKeyMap.current[field];
+          continue;
+        }
+        out[variable] = translateDeepScenarioColumn(field) ?? field;
       }
       return out;
     }, [mapping, callDetail]);
@@ -1293,11 +1301,10 @@ const SimulationTestMode = React.forwardRef(
             </Box>
           )}
 
-        {/* Variable mapping — skeleton rows stay visible until callDetail
-            resolves, so we don't flicker between two loading states. The
-            shell (search bar, header, rows area with maxHeight 320) mirrors
-            the real table structure so the swap-in is layout-stable. */}
-        {isMappingPending && (
+        {/* Skeleton hides once callDetail lands so the real table doesn't
+            double-render during peripheral-fetch gaps (isPendingCallsFetch
+            can lag past callDetail). */}
+        {isMappingPending && !callDetail && (
           <Box
             sx={{
               border: "1px solid",
@@ -1390,15 +1397,7 @@ const SimulationTestMode = React.forwardRef(
           !loadingDetail &&
           !loadingCalls &&
           (() => {
-            const previewCallType =
-              callDetail.simulation?.call_type ||
-              callDetail.call_type ||
-              callDetail.simulation_call_type;
-            const previewIsText =
-              typeof previewCallType === "string" &&
-              ["text", "chat", "prompt"].includes(
-                previewCallType.toLowerCase(),
-              );
+            const previewIsText = isTextCallDetail(callDetail);
             const applicableResolverKeys = new Set(
               previewIsText
                 ? [...COMMON_RESOLVER_KEYS, ...TEXT_RESOLVER_KEYS]
@@ -1473,6 +1472,7 @@ const SimulationTestMode = React.forwardRef(
 
                 <Box sx={{ maxHeight: 320, overflowY: "auto" }}>
                   {sortEntries(flattenLeaves(callDetail))
+                    .filter(([key]) => !isHiddenPickerPath(key, previewIsText))
                     .filter(([key, val]) => {
                       // Always show applicable resolver-vocabulary keys —
                       // users need to see the full binding surface for this
@@ -1684,14 +1684,22 @@ const SimulationTestMode = React.forwardRef(
             </Typography>
             <Box sx={{ display: "flex", flexDirection: "column", gap: 0.75 }}>
               {variables.map((variable) => {
+                const currentValue = mapping[variable];
+                // Fail-closed on null callDetail (loading): treat as text-call.
+                const isTextCallSafe = callDetail
+                  ? isTextCallDetail(callDetail)
+                  : true;
+                const showCurrent =
+                  currentValue &&
+                  !fieldNames.includes(currentValue) &&
+                  !isHiddenPickerPath(currentValue, isTextCallSafe);
                 const autocomplete = (
                   <Autocomplete
                     size="small"
                     disabled={isMappingPending}
                     options={
-                      mapping[variable] &&
-                      !fieldNames.includes(mapping[variable])
-                        ? [mapping[variable], ...fieldNames]
+                      showCurrent
+                        ? [currentValue, ...fieldNames]
                         : fieldNames
                     }
                     value={mapping[variable] || null}

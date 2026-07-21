@@ -129,6 +129,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
             project_ids=self.project_ids,
+            # PERF: bound the trace-membership span subqueries the compiler
+            # emits (model/status/attr/user filters) to the query's time
+            # window — without this each filter scans the project's entire
+            # span history. Safe here: this builder always binds
+            # %(start_date)s before translate(). See filters.py.
+            span_date_scope=True,
         )
         extra_where, extra_params = fb.translate(self.filters)
         self.params.update(extra_params)
@@ -140,10 +146,15 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         if not order_clause:
             order_clause = "ORDER BY start_time DESC"
 
-        # Pagination
+        # Prefix-fetch pagination: read the sorted prefix [0, offset +
+        # 2*page_size) in ONE bounded top-K pass and let the view dedup by
+        # trace id then slice [offset, offset + page_size) — see
+        # tracer/services/clickhouse/page_dedup.py. Preserves the global
+        # dedup `LIMIT 1 BY trace_id` provided (a trace — even a multi-root
+        # one whose roots sort pages apart — can never appear on two pages)
+        # without its O(window) full sort. No SQL OFFSET; slicing in Python.
         offset = self.page_number * self.page_size
-        self.params["limit"] = self.page_size
-        self.params["offset"] = offset
+        self.params["limit"] = offset + 2 * self.page_size
 
         # Build optional filter fragment
         filter_fragment = f"AND {extra_where}" if extra_where else ""
@@ -213,6 +224,16 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         #
         # On a 3.5M-span project, 7d page-1 drops from 663ms/3.5M rows
         # to 256ms/306K rows (~2.5x faster, 91% less I/O).
+        #
+        # PERF: no `LIMIT 1 BY trace_id`. That clause deduped multi-root /
+        # duplicate-version traces, but forced CH to read + full-sort EVERY
+        # root span in the window before applying ORDER BY … LIMIT —
+        # O(roots-in-window) memory that OOM-crashed the server at millions
+        # of traces. Without it, `ORDER BY … LIMIT n` runs as a bounded
+        # top-N (size-n heap, O(n) memory). Duplicate trace_ids on a page
+        # (multi-root traces, un-merged ReplacingMergeTree versions) are
+        # rare; the view dedups the returned page by trace_id in Python,
+        # keeping the first occurrence — the same row `LIMIT 1 BY` kept.
         query = f"""
         SELECT
             {select_clause}
@@ -226,9 +247,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
           {search_fragment}
           {filter_fragment}
         {order_clause}
-        LIMIT 1 BY trace_id
         LIMIT %(limit)s
-        OFFSET %(offset)s
         """
         return query, self.params
 
@@ -245,6 +264,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
             project_ids=self.project_ids,
+            # PERF: bound the trace-membership span subqueries the compiler
+            # emits (model/status/attr/user filters) to the query's time
+            # window — without this each filter scans the project's entire
+            # span history. Safe here: this builder always binds
+            # %(start_date)s before translate(). See filters.py.
+            span_date_scope=True,
         )
         extra_where, extra_params = fb.translate(self.filters)
         self.params.update(extra_params)
@@ -345,6 +370,12 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             annotation_label_ids=self.annotation_label_ids,
             project_id=self.project_id,
             project_ids=self.project_ids,
+            # PERF: bound the trace-membership span subqueries the compiler
+            # emits (model/status/attr/user filters) to the query's time
+            # window — without this each filter scans the project's entire
+            # span history. Safe here: this builder always binds
+            # %(start_date)s before translate(). See filters.py.
+            span_date_scope=True,
         )
         extra_where, extra_params = fb.translate(self.filters)
         # Merge params -- reuse the same start/end dates
@@ -517,12 +548,38 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             countIf(status = 'running') AS running_count,
             countIf(status = 'pending') AS pending_count,
             anyIf(skipped_reason, status = 'skipped') AS skipped_reason
-        FROM {self.EVAL_TABLE} FINAL
-        WHERE _peerdb_is_deleted = 0
-          AND (deleted = 0 OR deleted IS NULL)
-          AND trace_id IN %(trace_ids)s
-          AND custom_eval_config_id IN %(eval_config_ids)s
-          {created_at_fragment}
+        -- PERF: no table-level FINAL. FINAL forced a merge across the WHOLE
+        -- eval table before the WHERE was applied, so a page of ~50 trace ids
+        -- dragged a merge over tens of millions of rows — GBs of memory that
+        -- OOM-crashed the server. Instead de-dup only the page-scoped slice:
+        -- the inner scan is pruned to the page's trace ids (idx_trace_id
+        -- bloom) + config ids + the created_at partition bound, then ORDER BY
+        -- _peerdb_version DESC + LIMIT 1 BY id keeps the newest version of
+        -- each eval row — verified identical to FINAL for live rows (status
+        -- transitions collapse to the newest version). One accepted
+        -- divergence: the not-deleted WHERE runs BEFORE dedup, so an eval
+        -- whose newest un-merged version is a soft-delete marker transiently
+        -- surfaces its previous version until the next merge.
+        FROM (
+            SELECT
+                trace_id,
+                custom_eval_config_id,
+                output_float,
+                output_bool,
+                output_str,
+                output_str_list,
+                error,
+                status,
+                skipped_reason
+            FROM {self.EVAL_TABLE}
+            WHERE _peerdb_is_deleted = 0
+              AND (deleted = 0 OR deleted IS NULL)
+              AND trace_id IN %(trace_ids)s
+              AND custom_eval_config_id IN %(eval_config_ids)s
+              {created_at_fragment}
+            ORDER BY _peerdb_version DESC
+            LIMIT 1 BY id
+        )
         GROUP BY trace_id, custom_eval_config_id
         """
         return query, params

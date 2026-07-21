@@ -62,8 +62,10 @@ import FilterValueLabel, {
 } from "src/components/filter-value-label";
 import { useSnackbar } from "src/components/snackbar";
 import { ConfirmDialog } from "src/components/custom-dialog";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { format } from "date-fns";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
+import useCanEditDashboard from "./hooks/useCanEditDashboard";
 import {
   coerceFilterValue,
   isAllowedFilterOperator,
@@ -1060,6 +1062,8 @@ export default function WidgetEditorView() {
   const [createdWidgetId, setCreatedWidgetId] = useState(null);
   const effectiveWidgetId = createdWidgetId || widgetId;
   const isEditing = effectiveWidgetId && effectiveWidgetId !== "new";
+
+  const { canDelete, isReadOnly } = useCanEditDashboard();
 
   const { data: dashboard } = useDashboardDetail(dashboardId);
   const createMutation = useCreateWidget();
@@ -2826,6 +2830,16 @@ export default function WidgetEditorView() {
   const showChart = viewMode !== "table" && chartHeight > 0;
   const _showTable = true;
 
+  // A preview query only fires when there's at least one metric AND (if a custom
+  // range is chosen) a range is actually set — mirrors the auto-preview effect.
+  const canPreview =
+    metrics.length > 0 && !(timePreset === "custom" && !customDateRange);
+
+  const previewLoading =
+    queryMutation.isPending ||
+    (isEditing && !initialized) ||
+    (canPreview && queryMutation.isIdle);
+
   const cleanupDragRef = useRef(null);
   const handleDragStart = useCallback(
     (e) => {
@@ -2951,16 +2965,16 @@ export default function WidgetEditorView() {
           />
         ) : (
           <Typography
-            onClick={() => setEditingName(true)}
+            onClick={() => !isReadOnly && setEditingName(true)}
             sx={{
               fontSize: "14px",
               fontWeight: 500,
-              cursor: "pointer",
+              cursor: isReadOnly ? "default" : "pointer",
               maxWidth: 300,
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
-              "&:hover": { color: "primary.main" },
+              "&:hover": isReadOnly ? undefined : { color: "primary.main" },
             }}
           >
             {chartName || "Untitled widget"}
@@ -2971,12 +2985,12 @@ export default function WidgetEditorView() {
         <InputBase
           value={chartDescription}
           onChange={(e) => setChartDescription(e.target.value)}
-          onClick={() => !editingDesc && setEditingDesc(true)}
+          onClick={() => !isReadOnly && !editingDesc && setEditingDesc(true)}
           onBlur={() => setEditingDesc(false)}
           onKeyDown={(e) => {
             if (e.key === "Enter") setEditingDesc(false);
           }}
-          readOnly={!editingDesc}
+          readOnly={isReadOnly || !editingDesc}
           autoFocus={editingDesc}
           placeholder="+ Add desc..."
           sx={{
@@ -2984,7 +2998,7 @@ export default function WidgetEditorView() {
             maxWidth: 200,
             fontSize: "13px",
             color: chartDescription ? "text.secondary" : "text.disabled",
-            cursor: editingDesc ? "text" : "pointer",
+            cursor: isReadOnly ? "default" : editingDesc ? "text" : "pointer",
             "&:hover": { color: "text.secondary" },
             "& .MuiInputBase-input": {
               padding: 0,
@@ -3013,7 +3027,7 @@ export default function WidgetEditorView() {
           transformOrigin={{ vertical: "top", horizontal: "right" }}
           slotProps={{ paper: { sx: { minWidth: 180 } } }}
         >
-          {isEditing && (
+          {isEditing && canDelete && (
             <MenuItem
               onClick={() => {
                 setMoreMenuAnchor(null);
@@ -3031,45 +3045,51 @@ export default function WidgetEditorView() {
               <ListItemText>Delete</ListItemText>
             </MenuItem>
           )}
-          <MenuItem
-            onClick={() => {
-              setMoreMenuAnchor(null);
-              // Delay to let MUI Menu close and release focus trap
-              setTimeout(() => setEditingName(true), 150);
-            }}
-          >
-            <ListItemIcon>
-              <Iconify icon="mdi:pencil-outline" width={18} />
-            </ListItemIcon>
-            <ListItemText>Rename</ListItemText>
-          </MenuItem>
-          <MenuItem
-            onClick={() => {
-              setMoreMenuAnchor(null);
-              const dupData = {
-                name: `${chartName || "Untitled widget"} (copy)`,
-                width: 12,
-                height: 1,
-                position: 0,
-                query_config: buildQueryConfig(),
-                chart_config: {
-                  chart_type: chartType,
-                  axis_config: axisConfig,
-                  visible_series: currentVisibleSeriesKeys(),
-                },
-              };
-              createMutation
-                .mutateAsync({ dashboardId, data: dupData })
-                .then(() => {
-                  enqueueSnackbar("Widget duplicated", { variant: "success" });
-                });
-            }}
-          >
-            <ListItemIcon>
-              <Iconify icon="mdi:content-copy" width={18} />
-            </ListItemIcon>
-            <ListItemText>Duplicate</ListItemText>
-          </MenuItem>
+          {!isReadOnly && (
+            <MenuItem
+              onClick={() => {
+                setMoreMenuAnchor(null);
+                // Delay to let MUI Menu close and release focus trap
+                setTimeout(() => setEditingName(true), 150);
+              }}
+            >
+              <ListItemIcon>
+                <Iconify icon="mdi:pencil-outline" width={18} />
+              </ListItemIcon>
+              <ListItemText>Rename</ListItemText>
+            </MenuItem>
+          )}
+          {!isReadOnly && (
+            <MenuItem
+              onClick={() => {
+                setMoreMenuAnchor(null);
+                const dupData = {
+                  name: `${chartName || "Untitled widget"} (copy)`,
+                  width: 12,
+                  height: 1,
+                  position: 0,
+                  query_config: buildQueryConfig(),
+                  chart_config: {
+                    chart_type: chartType,
+                    axis_config: axisConfig,
+                    visible_series: currentVisibleSeriesKeys(),
+                  },
+                };
+                createMutation
+                  .mutateAsync({ dashboardId, data: dupData })
+                  .then(() => {
+                    enqueueSnackbar("Widget duplicated", {
+                      variant: "success",
+                    });
+                  });
+              }}
+            >
+              <ListItemIcon>
+                <Iconify icon="mdi:content-copy" width={18} />
+              </ListItemIcon>
+              <ListItemText>Duplicate</ListItemText>
+            </MenuItem>
+          )}
           <Divider />
           <MenuItem
             onClick={() => {
@@ -3177,23 +3197,33 @@ export default function WidgetEditorView() {
         >
           Close
         </Button>
-        <Button
-          variant="contained"
-          onClick={handleSave}
-          disabled={saveStatus !== "idle"}
-          color={saveStatus === "saved" ? "success" : "primary"}
-          startIcon={
-            saveStatus === "saved" ? (
-              <Iconify icon="mdi:check" width={18} />
-            ) : undefined
-          }
+        <CustomTooltip
+          show={isReadOnly}
+          type=""
+          title="You don't have permission to edit widgets."
+          size="small"
+          arrow
         >
-          {saveStatus === "saving"
-            ? "Saving..."
-            : saveStatus === "saved"
-              ? "Saved"
-              : "Save"}
-        </Button>
+          <span>
+            <Button
+              variant="contained"
+              onClick={handleSave}
+              disabled={isReadOnly || saveStatus !== "idle"}
+              color={saveStatus === "saved" ? "success" : "primary"}
+              startIcon={
+                saveStatus === "saved" ? (
+                  <Iconify icon="mdi:check" width={18} />
+                ) : undefined
+              }
+            >
+              {saveStatus === "saving"
+                ? "Saving..."
+                : saveStatus === "saved"
+                  ? "Saved"
+                  : "Save"}
+            </Button>
+          </span>
+        </CustomTooltip>
       </Stack>
 
       {/* Main content area */}
@@ -3355,7 +3385,7 @@ export default function WidgetEditorView() {
             }}
           >
             {/* Bar chart — horizontal bars (left) + search/checkboxes (right) */}
-            {isHorizontal && queryMutation.isPending && (
+            {isHorizontal && previewLoading && (
               <Box
                 sx={{
                   flex: 1,
@@ -3367,25 +3397,21 @@ export default function WidgetEditorView() {
                 <CircularProgress size={24} />
               </Box>
             )}
-            {isHorizontal &&
-              !queryMutation.isPending &&
-              previewSeries.length === 0 && (
-                <Box
-                  sx={{
-                    flex: 1,
-                    display: "flex",
-                    justifyContent: "center",
-                    alignItems: "center",
-                  }}
-                >
-                  <Typography variant="body2" color="text.secondary">
-                    Fill in the required fields to see preview
-                  </Typography>
-                </Box>
-              )}
-            {isHorizontal &&
-            previewSeries.length > 0 &&
-            !queryMutation.isPending
+            {isHorizontal && !previewLoading && previewSeries.length === 0 && (
+              <Box
+                sx={{
+                  flex: 1,
+                  display: "flex",
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <Typography variant="body2" color="text.secondary">
+                  Fill in the required fields to see preview
+                </Typography>
+              </Box>
+            )}
+            {isHorizontal && previewSeries.length > 0 && !previewLoading
               ? (() => {
                   const maxVal = Math.max(
                     ...barData.series[0].data.map(Math.abs),
@@ -3756,7 +3782,7 @@ export default function WidgetEditorView() {
                   overflow: "hidden",
                 }}
               >
-                {queryMutation.isPending ? (
+                {previewLoading ? (
                   <CircularProgress size={24} />
                 ) : previewSeries.length > 0 ? (
                   <Box sx={{ width: "100%", height: "100%" }}>
@@ -4574,1568 +4600,1590 @@ export default function WidgetEditorView() {
           </Box>
         </Box>
 
-        {/* Right panel */}
-        <Box
-          sx={{
-            width: 320,
-            minWidth: 320,
-            borderLeft: `1px solid ${theme.palette.divider}`,
-            display: "flex",
-            flexDirection: "column",
-            overflow: "auto",
-          }}
-        >
-          {/* Tabs */}
-          <Tabs
-            value={rightTab}
-            onChange={(_, v) => setRightTab(v)}
-            sx={{ px: 2, minHeight: 40 }}
+        {/* Right panel — config surface, hidden for read-only (viewer) users */}
+        {!isReadOnly && (
+          <Box
+            sx={{
+              width: 320,
+              minWidth: 320,
+              borderLeft: `1px solid ${theme.palette.divider}`,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "auto",
+            }}
           >
-            <Tab label="Query" sx={{ minHeight: 40, textTransform: "none" }} />
-            <Tab label="Chart" sx={{ minHeight: 40, textTransform: "none" }} />
-          </Tabs>
-          <Divider />
-
-          {rightTab === 0 && (
-            <Box
-              sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}
+            {/* Tabs */}
+            <Tabs
+              value={rightTab}
+              onChange={(_, v) => setRightTab(v)}
+              sx={{ px: 2, minHeight: 40 }}
             >
-              {/* Metric section */}
-              <Box>
-                <Tooltip
-                  placement="left"
-                  arrow
-                  componentsProps={{
-                    tooltip: {
-                      sx: {
-                        bgcolor: isDark ? "#1a1a2e" : "#fff",
-                        borderRadius: 2,
-                        p: 2,
-                        maxWidth: 180,
-                        boxShadow: isDark
-                          ? "0 4px 20px rgba(0,0,0,0.5)"
-                          : "0 4px 20px rgba(0,0,0,0.12)",
-                        border: isDark ? "none" : "1px solid",
-                        borderColor: isDark ? "transparent" : "divider",
-                      },
-                    },
-                    arrow: {
-                      sx: {
-                        color: isDark ? "#1a1a2e" : "#fff",
-                        "&::before": {
+              <Tab
+                label="Query"
+                sx={{ minHeight: 40, textTransform: "none" }}
+              />
+              <Tab
+                label="Chart"
+                sx={{ minHeight: 40, textTransform: "none" }}
+              />
+            </Tabs>
+            <Divider />
+
+            {rightTab === 0 && (
+              <Box
+                sx={{ p: 2, display: "flex", flexDirection: "column", gap: 2 }}
+              >
+                {/* Metric section */}
+                <Box>
+                  <Tooltip
+                    placement="left"
+                    arrow
+                    componentsProps={{
+                      tooltip: {
+                        sx: {
+                          bgcolor: isDark ? "#1a1a2e" : "#fff",
+                          borderRadius: 2,
+                          p: 2,
+                          maxWidth: 180,
+                          boxShadow: isDark
+                            ? "0 4px 20px rgba(0,0,0,0.5)"
+                            : "0 4px 20px rgba(0,0,0,0.12)",
                           border: isDark ? "none" : "1px solid",
                           borderColor: isDark ? "transparent" : "divider",
                         },
                       },
-                    },
-                  }}
-                  title={
-                    <Box sx={{ textAlign: "center" }}>
-                      <svg
-                        width="120"
-                        height="90"
-                        viewBox="0 0 120 90"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                      >
-                        {/* Line chart */}
-                        <line
-                          x1="15"
-                          y1="75"
-                          x2="15"
-                          y2="10"
-                          stroke={
-                            isDark
-                              ? "rgba(255,255,255,0.15)"
-                              : "rgba(0,0,0,0.1)"
-                          }
-                          strokeWidth="1"
-                        />
-                        <line
-                          x1="15"
-                          y1="75"
-                          x2="110"
-                          y2="75"
-                          stroke={
-                            isDark
-                              ? "rgba(255,255,255,0.15)"
-                              : "rgba(0,0,0,0.1)"
-                          }
-                          strokeWidth="1"
-                        />
-                        {/* Grid lines */}
-                        <line
-                          x1="15"
-                          y1="55"
-                          x2="110"
-                          y2="55"
-                          stroke={
-                            isDark
-                              ? "rgba(255,255,255,0.06)"
-                              : "rgba(0,0,0,0.04)"
-                          }
-                          strokeWidth="1"
-                          strokeDasharray="3 3"
-                        />
-                        <line
-                          x1="15"
-                          y1="35"
-                          x2="110"
-                          y2="35"
-                          stroke={
-                            isDark
-                              ? "rgba(255,255,255,0.06)"
-                              : "rgba(0,0,0,0.04)"
-                          }
-                          strokeWidth="1"
-                          strokeDasharray="3 3"
-                        />
-                        {/* Line 1 - purple */}
-                        <polyline
-                          points="20,60 35,45 50,50 65,28 80,32 95,18 105,22"
-                          fill="none"
-                          stroke={isDark ? "#916BFF" : "#7C4DFF"}
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        {/* Line 2 - teal */}
-                        <polyline
-                          points="20,68 35,62 50,58 65,48 80,52 95,42 105,45"
-                          fill="none"
-                          stroke={isDark ? "#5BE49B" : "#22C55E"}
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                        {/* Data points - purple */}
-                        <circle
-                          cx="20"
-                          cy="60"
-                          r="2.5"
-                          fill={isDark ? "#916BFF" : "#7C4DFF"}
-                        />
-                        <circle
-                          cx="50"
-                          cy="50"
-                          r="2.5"
-                          fill={isDark ? "#916BFF" : "#7C4DFF"}
-                        />
-                        <circle
-                          cx="65"
-                          cy="28"
-                          r="2.5"
-                          fill={isDark ? "#916BFF" : "#7C4DFF"}
-                        />
-                        <circle
-                          cx="95"
-                          cy="18"
-                          r="2.5"
-                          fill={isDark ? "#916BFF" : "#7C4DFF"}
-                        />
-                        {/* Data points - teal */}
-                        <circle
-                          cx="20"
-                          cy="68"
-                          r="2.5"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="50"
-                          cy="58"
-                          r="2.5"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="65"
-                          cy="48"
-                          r="2.5"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="95"
-                          cy="42"
-                          r="2.5"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                      </svg>
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: isDark
-                            ? "rgba(255,255,255,0.7)"
-                            : "text.secondary",
-                          mt: 0.5,
-                          display: "block",
-                          lineHeight: 1.3,
-                        }}
-                      >
-                        Choose what to measure and track.
-                      </Typography>
-                    </Box>
-                  }
-                >
-                  <Stack
-                    direction="row"
-                    justifyContent="space-between"
-                    alignItems="center"
-                    onClick={(e) => {
-                      if (metrics.length < 5) openPicker(e, "metric");
-                    }}
-                    sx={{
-                      cursor: metrics.length >= 5 ? "default" : "pointer",
-                      borderRadius: 1,
-                      px: 1,
-                      py: 0.5,
-                      mx: -1,
-                      transition: "background-color 0.15s",
-                      "&:hover":
-                        metrics.length < 5
-                          ? {
-                              bgcolor: (t) =>
-                                t.palette.mode === "dark"
-                                  ? "rgba(145, 107, 255, 0.12)"
-                                  : "rgba(105, 65, 198, 0.08)",
-                              "& .metric-section-title": {
-                                color: "primary.main",
-                              },
-                            }
-                          : {},
-                    }}
-                  >
-                    <Typography
-                      className="metric-section-title"
-                      variant="body2"
-                      fontWeight="fontWeightSemiBold"
-                      sx={{ transition: "color 0.15s" }}
-                    >
-                      Metric
-                      <Typography component="span" color="error.main">
-                        *
-                      </Typography>
-                    </Typography>
-                    <Iconify
-                      icon="mdi:plus"
-                      width={18}
-                      sx={{
-                        color:
-                          metrics.length >= 5
-                            ? "text.disabled"
-                            : "text.secondary",
-                      }}
-                    />
-                  </Stack>
-                </Tooltip>
-
-                {/* Added metrics */}
-                {metrics.map((m, i) => (
-                  <Box
-                    key={i}
-                    sx={{
-                      mt: 1,
-                      p: 1.5,
-                      border: `1px solid ${theme.palette.divider}`,
-                      borderRadius: 1,
-                      "&:hover .metric-hover-action": {
-                        opacity: 1,
+                      arrow: {
+                        sx: {
+                          color: isDark ? "#1a1a2e" : "#fff",
+                          "&::before": {
+                            border: isDark ? "none" : "1px solid",
+                            borderColor: isDark ? "transparent" : "divider",
+                          },
+                        },
                       },
                     }}
-                  >
-                    <Stack direction="row" alignItems="center" gap={1}>
-                      <Chip
-                        label={LETTER_LABELS[i]}
-                        size="small"
-                        variant="outlined"
-                        sx={{
-                          minWidth: 24,
-                          height: 24,
-                          fontSize: "12px",
-                          fontWeight: 600,
-                          "& .MuiChip-label": {
-                            paddingLeft: "0px !important",
-                            paddingRight: "0px !important",
-                            overflow: "visible !important",
-                            textOverflow: "clip !important",
-                          },
-                        }}
-                      />
-                      <Iconify
-                        icon={METRIC_TYPE_ICONS[m.type] || "mdi:cog-outline"}
-                        width={16}
-                        sx={{ color: "text.secondary" }}
-                      />
-                      <Typography
-                        variant="body2"
-                        noWrap
-                        title={m.name}
-                        sx={{
-                          flex: 1,
-                          cursor: "pointer",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          maxWidth: 160,
-                          "&:hover": { color: "primary.main" },
-                        }}
-                        onClick={(e) => openPicker(e, "metric", i)}
-                      >
-                        {m.name}
-                      </Typography>
-                      {m._linkedAgents && (
-                        <Tooltip
-                          title={`Linked to observability: ${m._linkedAgents}`}
+                    title={
+                      <Box sx={{ textAlign: "center" }}>
+                        <svg
+                          width="120"
+                          height="90"
+                          viewBox="0 0 120 90"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
                         >
-                          <Chip
-                            label="Linked"
-                            size="small"
-                            color="info"
-                            variant="outlined"
-                            sx={{
-                              height: 20,
-                              fontSize: "10px",
-                              "& .MuiChip-label": { px: 0.75 },
-                            }}
+                          {/* Line chart */}
+                          <line
+                            x1="15"
+                            y1="75"
+                            x2="15"
+                            y2="10"
+                            stroke={
+                              isDark
+                                ? "rgba(255,255,255,0.15)"
+                                : "rgba(0,0,0,0.1)"
+                            }
+                            strokeWidth="1"
                           />
+                          <line
+                            x1="15"
+                            y1="75"
+                            x2="110"
+                            y2="75"
+                            stroke={
+                              isDark
+                                ? "rgba(255,255,255,0.15)"
+                                : "rgba(0,0,0,0.1)"
+                            }
+                            strokeWidth="1"
+                          />
+                          {/* Grid lines */}
+                          <line
+                            x1="15"
+                            y1="55"
+                            x2="110"
+                            y2="55"
+                            stroke={
+                              isDark
+                                ? "rgba(255,255,255,0.06)"
+                                : "rgba(0,0,0,0.04)"
+                            }
+                            strokeWidth="1"
+                            strokeDasharray="3 3"
+                          />
+                          <line
+                            x1="15"
+                            y1="35"
+                            x2="110"
+                            y2="35"
+                            stroke={
+                              isDark
+                                ? "rgba(255,255,255,0.06)"
+                                : "rgba(0,0,0,0.04)"
+                            }
+                            strokeWidth="1"
+                            strokeDasharray="3 3"
+                          />
+                          {/* Line 1 - purple */}
+                          <polyline
+                            points="20,60 35,45 50,50 65,28 80,32 95,18 105,22"
+                            fill="none"
+                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          {/* Line 2 - teal */}
+                          <polyline
+                            points="20,68 35,62 50,58 65,48 80,52 95,42 105,45"
+                            fill="none"
+                            stroke={isDark ? "#5BE49B" : "#22C55E"}
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                          {/* Data points - purple */}
+                          <circle
+                            cx="20"
+                            cy="60"
+                            r="2.5"
+                            fill={isDark ? "#916BFF" : "#7C4DFF"}
+                          />
+                          <circle
+                            cx="50"
+                            cy="50"
+                            r="2.5"
+                            fill={isDark ? "#916BFF" : "#7C4DFF"}
+                          />
+                          <circle
+                            cx="65"
+                            cy="28"
+                            r="2.5"
+                            fill={isDark ? "#916BFF" : "#7C4DFF"}
+                          />
+                          <circle
+                            cx="95"
+                            cy="18"
+                            r="2.5"
+                            fill={isDark ? "#916BFF" : "#7C4DFF"}
+                          />
+                          {/* Data points - teal */}
+                          <circle
+                            cx="20"
+                            cy="68"
+                            r="2.5"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="50"
+                            cy="58"
+                            r="2.5"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="65"
+                            cy="48"
+                            r="2.5"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="95"
+                            cy="42"
+                            r="2.5"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                        </svg>
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            color: isDark
+                              ? "rgba(255,255,255,0.7)"
+                              : "text.secondary",
+                            mt: 0.5,
+                            display: "block",
+                            lineHeight: 1.3,
+                          }}
+                        >
+                          Choose what to measure and track.
+                        </Typography>
+                      </Box>
+                    }
+                  >
+                    <Stack
+                      direction="row"
+                      justifyContent="space-between"
+                      alignItems="center"
+                      onClick={(e) => {
+                        if (metrics.length < 5) openPicker(e, "metric");
+                      }}
+                      sx={{
+                        cursor: metrics.length >= 5 ? "default" : "pointer",
+                        borderRadius: 1,
+                        px: 1,
+                        py: 0.5,
+                        mx: -1,
+                        transition: "background-color 0.15s",
+                        "&:hover":
+                          metrics.length < 5
+                            ? {
+                                bgcolor: (t) =>
+                                  t.palette.mode === "dark"
+                                    ? "rgba(145, 107, 255, 0.12)"
+                                    : "rgba(105, 65, 198, 0.08)",
+                                "& .metric-section-title": {
+                                  color: "primary.main",
+                                },
+                              }
+                            : {},
+                      }}
+                    >
+                      <Typography
+                        className="metric-section-title"
+                        variant="body2"
+                        fontWeight="fontWeightSemiBold"
+                        sx={{ transition: "color 0.15s" }}
+                      >
+                        Metric
+                        <Typography component="span" color="error.main">
+                          *
+                        </Typography>
+                      </Typography>
+                      <Iconify
+                        icon="mdi:plus"
+                        width={18}
+                        sx={{
+                          color:
+                            metrics.length >= 5
+                              ? "text.disabled"
+                              : "text.secondary",
+                        }}
+                      />
+                    </Stack>
+                  </Tooltip>
+
+                  {/* Added metrics */}
+                  {metrics.map((m, i) => (
+                    <Box
+                      key={i}
+                      sx={{
+                        mt: 1,
+                        p: 1.5,
+                        border: `1px solid ${theme.palette.divider}`,
+                        borderRadius: 1,
+                        "&:hover .metric-hover-action": {
+                          opacity: 1,
+                        },
+                      }}
+                    >
+                      <Stack direction="row" alignItems="center" gap={1}>
+                        <Chip
+                          label={LETTER_LABELS[i]}
+                          size="small"
+                          variant="outlined"
+                          sx={{
+                            minWidth: 24,
+                            height: 24,
+                            fontSize: "12px",
+                            fontWeight: 600,
+                            "& .MuiChip-label": {
+                              paddingLeft: "0px !important",
+                              paddingRight: "0px !important",
+                              overflow: "visible !important",
+                              textOverflow: "clip !important",
+                            },
+                          }}
+                        />
+                        <Iconify
+                          icon={METRIC_TYPE_ICONS[m.type] || "mdi:cog-outline"}
+                          width={16}
+                          sx={{ color: "text.secondary" }}
+                        />
+                        <Typography
+                          variant="body2"
+                          noWrap
+                          title={m.name}
+                          sx={{
+                            flex: 1,
+                            cursor: "pointer",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            maxWidth: 160,
+                            "&:hover": { color: "primary.main" },
+                          }}
+                          onClick={(e) => openPicker(e, "metric", i)}
+                        >
+                          {m.name}
+                        </Typography>
+                        {m._linkedAgents && (
+                          <Tooltip
+                            title={`Linked to observability: ${m._linkedAgents}`}
+                          >
+                            <Chip
+                              label="Linked"
+                              size="small"
+                              color="info"
+                              variant="outlined"
+                              sx={{
+                                height: 20,
+                                fontSize: "10px",
+                                "& .MuiChip-label": { px: 0.75 },
+                              }}
+                            />
+                          </Tooltip>
+                        )}
+                        <Tooltip title="Add filter to this metric">
+                          <IconButton
+                            className="metric-hover-action"
+                            size="small"
+                            onClick={(e) =>
+                              openPicker(e, "metric_filter", null, i)
+                            }
+                            sx={{
+                              opacity: m.filters?.length > 0 ? 1 : 0,
+                              transition: "opacity 0.15s",
+                              color:
+                                m.filters?.length > 0
+                                  ? "primary.main"
+                                  : "text.secondary",
+                            }}
+                          >
+                            <Iconify icon="mdi:filter-outline" width={16} />
+                          </IconButton>
                         </Tooltip>
-                      )}
-                      <Tooltip title="Add filter to this metric">
                         <IconButton
                           className="metric-hover-action"
                           size="small"
-                          onClick={(e) =>
-                            openPicker(e, "metric_filter", null, i)
-                          }
+                          onClick={() => handleRemoveMetric(i)}
                           sx={{
-                            opacity: m.filters?.length > 0 ? 1 : 0,
+                            opacity: 0,
                             transition: "opacity 0.15s",
-                            color:
-                              m.filters?.length > 0
-                                ? "primary.main"
-                                : "text.secondary",
                           }}
                         >
-                          <Iconify icon="mdi:filter-outline" width={16} />
+                          <Iconify icon="mdi:close" width={14} />
                         </IconButton>
-                      </Tooltip>
-                      <IconButton
-                        className="metric-hover-action"
-                        size="small"
-                        onClick={() => handleRemoveMetric(i)}
-                        sx={{
-                          opacity: 0,
-                          transition: "opacity 0.15s",
-                        }}
+                      </Stack>
+                      <AggregationPicker
+                        value={
+                          m.allowedAggregations?.length &&
+                          !m.allowedAggregations.includes(m.aggregation)
+                            ? m.allowedAggregations[0]
+                            : m.aggregation
+                        }
+                        onChange={(val) =>
+                          handleUpdateMetricAggregation(i, val)
+                        }
+                        theme={theme}
+                        allowedAggregations={m.allowedAggregations}
+                        extraOptions={
+                          m.source === "datasets" ||
+                          m.source === "simulation" ||
+                          m.source === "all"
+                            ? DATASET_EXTRA_AGGREGATIONS
+                            : undefined
+                        }
+                      />
+
+                      {/* Per-metric inline filters */}
+                      {(m.filters || []).map((mf, fi) => {
+                        const mfOps = getFilterOperators(mf.dataType);
+                        const curMfOp = mfOps.find(
+                          (o) => o.value === mf.operator,
+                        );
+                        return (
+                          <Box
+                            key={fi}
+                            sx={{
+                              mt: 1,
+                              pl: 1,
+                              borderLeft: `2px solid ${theme.palette.primary.main}`,
+                            }}
+                          >
+                            <Stack
+                              direction="row"
+                              alignItems="center"
+                              gap={0.5}
+                            >
+                              <Iconify
+                                icon={
+                                  METRIC_TYPE_ICONS[mf.type] ||
+                                  "mdi:filter-outline"
+                                }
+                                width={14}
+                                sx={{ color: "primary.main" }}
+                              />
+                              <Typography
+                                variant="caption"
+                                sx={{
+                                  flex: 1,
+                                  fontWeight: 500,
+                                  cursor: "pointer",
+                                  "&:hover": { color: "primary.main" },
+                                }}
+                                onClick={(e) =>
+                                  openPicker(e, "metric_filter", fi, i)
+                                }
+                              >
+                                {mf.name}
+                              </Typography>
+                              <IconButton
+                                size="small"
+                                onClick={() => handleRemoveMetricFilter(i, fi)}
+                                sx={{ p: 0.25 }}
+                              >
+                                <Iconify icon="mdi:close" width={12} />
+                              </IconButton>
+                            </Stack>
+                            <Stack
+                              direction="row"
+                              alignItems="center"
+                              gap={0.5}
+                              sx={{ mt: 0.5 }}
+                            >
+                              <FormControl size="small" sx={{ minWidth: 70 }}>
+                                <Select
+                                  value={mf.operator}
+                                  onChange={(e) => {
+                                    const newOp = e.target.value;
+                                    const newDef = mfOps.find(
+                                      (o) => o.value === newOp,
+                                    );
+                                    let newVal = mf.value;
+                                    if (newDef?.noValue) newVal = "";
+                                    else if (newDef?.multi && !curMfOp?.multi)
+                                      newVal = [];
+                                    else if (newDef?.range && !curMfOp?.range)
+                                      newVal = ["", ""];
+                                    else if (!newDef?.multi && curMfOp?.multi)
+                                      newVal = "";
+                                    else if (!newDef?.range && curMfOp?.range)
+                                      newVal = "";
+                                    handleUpdateMetricFilter(i, fi, {
+                                      operator: newOp,
+                                      value: newVal,
+                                    });
+                                  }}
+                                  variant="standard"
+                                  sx={{ fontSize: "12px" }}
+                                >
+                                  {mfOps.map((op) => (
+                                    <MenuItem key={op.value} value={op.value}>
+                                      {op.label}
+                                    </MenuItem>
+                                  ))}
+                                </Select>
+                              </FormControl>
+                              {curMfOp?.noValue ? null : curMfOp?.multi ? (
+                                <FilterValueLabel
+                                  filter={mf}
+                                  source={mf.source || "traces"}
+                                  variant="caption"
+                                  innerRef={(el) => {
+                                    mfValueRefs.current[`${i}_${fi}`] = el;
+                                  }}
+                                  onClick={(e) => {
+                                    setMfValueAnchor(e.currentTarget);
+                                    setMfValueTarget({
+                                      metricIdx: i,
+                                      filterIdx: fi,
+                                    });
+                                  }}
+                                />
+                              ) : curMfOp?.range ? (
+                                <Stack
+                                  direction="row"
+                                  alignItems="center"
+                                  gap={0.5}
+                                  sx={{ flex: 1 }}
+                                >
+                                  <TextField
+                                    size="small"
+                                    variant="standard"
+                                    placeholder="Min"
+                                    type="number"
+                                    value={
+                                      Array.isArray(mf.value)
+                                        ? mf.value[0] ?? ""
+                                        : ""
+                                    }
+                                    onChange={(e) => {
+                                      const cur = Array.isArray(mf.value)
+                                        ? [...mf.value]
+                                        : ["", ""];
+                                      cur[0] = e.target.value;
+                                      handleUpdateMetricFilter(i, fi, {
+                                        value: cur,
+                                      });
+                                    }}
+                                    sx={{ flex: 1, fontSize: "12px" }}
+                                  />
+                                  <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                  >
+                                    –
+                                  </Typography>
+                                  <TextField
+                                    size="small"
+                                    variant="standard"
+                                    placeholder="Max"
+                                    type="number"
+                                    value={
+                                      Array.isArray(mf.value)
+                                        ? mf.value[1] ?? ""
+                                        : ""
+                                    }
+                                    onChange={(e) => {
+                                      const cur = Array.isArray(mf.value)
+                                        ? [...mf.value]
+                                        : ["", ""];
+                                      cur[1] = e.target.value;
+                                      handleUpdateMetricFilter(i, fi, {
+                                        value: cur,
+                                      });
+                                    }}
+                                    sx={{ flex: 1, fontSize: "12px" }}
+                                  />
+                                </Stack>
+                              ) : (
+                                <TextField
+                                  size="small"
+                                  variant="standard"
+                                  placeholder="Value"
+                                  type={
+                                    mf.dataType === "number" ? "number" : "text"
+                                  }
+                                  value={mf.value || ""}
+                                  onChange={(e) =>
+                                    handleUpdateMetricFilter(i, fi, {
+                                      value: e.target.value,
+                                    })
+                                  }
+                                  sx={{ flex: 1, fontSize: "12px" }}
+                                />
+                              )}
+                            </Stack>
+                            {fi < (m.filters || []).length - 1 && (
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                sx={{
+                                  display: "inline-block",
+                                  mt: 0.5,
+                                  px: 1,
+                                  py: 0.25,
+                                  borderRadius: 0.5,
+                                  bgcolor: "action.hover",
+                                  fontSize: "11px",
+                                }}
+                              >
+                                And
+                              </Typography>
+                            )}
+                          </Box>
+                        );
+                      })}
+                    </Box>
+                  ))}
+
+                  {/* Empty metric slot */}
+                  {metrics.length === 0 && (
+                    <Box
+                      sx={{
+                        mt: 1,
+                        p: 1.5,
+                        border: `1px solid ${theme.palette.divider}`,
+                        borderRadius: 1,
+                        cursor: "pointer",
+                        "&:hover": { borderColor: "primary.main" },
+                      }}
+                      onClick={(e) => openPicker(e, "metric")}
+                    >
+                      <Stack direction="row" alignItems="center" gap={0.75}>
+                        <Iconify
+                          icon="mdi:plus-circle-outline"
+                          width={18}
+                          sx={{ color: "primary.main" }}
+                        />
+                        <Typography variant="body2" color="primary.main">
+                          Select Metric
+                        </Typography>
+                      </Stack>
+                    </Box>
+                  )}
+                </Box>
+
+                <Divider />
+
+                {/* Filter section */}
+                <Box>
+                  <Tooltip
+                    placement="left"
+                    arrow
+                    componentsProps={{
+                      tooltip: {
+                        sx: {
+                          bgcolor: isDark ? "#1a1a2e" : "#fff",
+                          borderRadius: 2,
+                          p: 2,
+                          maxWidth: 180,
+                          boxShadow: isDark
+                            ? "0 4px 20px rgba(0,0,0,0.5)"
+                            : "0 4px 20px rgba(0,0,0,0.12)",
+                          border: isDark ? "none" : "1px solid",
+                          borderColor: isDark ? "transparent" : "divider",
+                        },
+                      },
+                      arrow: {
+                        sx: {
+                          color: isDark ? "#1a1a2e" : "#fff",
+                          "&::before": {
+                            border: isDark ? "none" : "1px solid",
+                            borderColor: isDark ? "transparent" : "divider",
+                          },
+                        },
+                      },
+                    }}
+                    title={
+                      <Box sx={{ textAlign: "center" }}>
+                        <svg
+                          width="120"
+                          height="90"
+                          viewBox="0 0 120 90"
+                          fill="none"
+                          xmlns="http://www.w3.org/2000/svg"
+                        >
+                          {/* Funnel shape */}
+                          <rect
+                            x="10"
+                            y="10"
+                            width="100"
+                            height="16"
+                            rx="3"
+                            fill={
+                              isDark
+                                ? "rgba(145,107,255,0.25)"
+                                : "rgba(105,65,198,0.1)"
+                            }
+                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            strokeWidth="1.5"
+                          />
+                          <rect
+                            x="25"
+                            y="34"
+                            width="70"
+                            height="16"
+                            rx="3"
+                            fill={
+                              isDark
+                                ? "rgba(145,107,255,0.4)"
+                                : "rgba(105,65,198,0.18)"
+                            }
+                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            strokeWidth="1.5"
+                          />
+                          <rect
+                            x="40"
+                            y="58"
+                            width="40"
+                            height="16"
+                            rx="3"
+                            fill={
+                              isDark
+                                ? "rgba(145,107,255,0.6)"
+                                : "rgba(105,65,198,0.28)"
+                            }
+                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            strokeWidth="1.5"
+                          />
+                          {/* Connecting lines */}
+                          <line
+                            x1="25"
+                            y1="26"
+                            x2="25"
+                            y2="34"
+                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            strokeWidth="1"
+                            strokeDasharray="2 2"
+                          />
+                          <line
+                            x1="95"
+                            y1="26"
+                            x2="95"
+                            y2="34"
+                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            strokeWidth="1"
+                            strokeDasharray="2 2"
+                          />
+                          <line
+                            x1="40"
+                            y1="50"
+                            x2="40"
+                            y2="58"
+                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            strokeWidth="1"
+                            strokeDasharray="2 2"
+                          />
+                          <line
+                            x1="80"
+                            y1="50"
+                            x2="80"
+                            y2="58"
+                            stroke={isDark ? "#916BFF" : "#7C4DFF"}
+                            strokeWidth="1"
+                            strokeDasharray="2 2"
+                          />
+                          {/* Data dots */}
+                          <circle
+                            cx="30"
+                            cy="18"
+                            r="2"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="50"
+                            cy="18"
+                            r="2"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="70"
+                            cy="18"
+                            r="2"
+                            fill={isDark ? "#FF6B6B" : "#EF4444"}
+                          />
+                          <circle
+                            cx="90"
+                            cy="18"
+                            r="2"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="40"
+                            cy="42"
+                            r="2"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="60"
+                            cy="42"
+                            r="2"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="80"
+                            cy="42"
+                            r="2"
+                            fill={isDark ? "#FF6B6B" : "#EF4444"}
+                          />
+                          <circle
+                            cx="52"
+                            cy="66"
+                            r="2"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                          <circle
+                            cx="68"
+                            cy="66"
+                            r="2"
+                            fill={isDark ? "#5BE49B" : "#22C55E"}
+                          />
+                        </svg>
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            color: isDark
+                              ? "rgba(255,255,255,0.7)"
+                              : "text.secondary",
+                            mt: 0.5,
+                            display: "block",
+                            lineHeight: 1.3,
+                          }}
+                        >
+                          Filter to include or exclude specific data.
+                        </Typography>
+                      </Box>
+                    }
+                  >
+                    <Stack
+                      direction="row"
+                      justifyContent="space-between"
+                      alignItems="center"
+                      onClick={(e) => openPicker(e, "filter")}
+                      sx={{
+                        cursor: "pointer",
+                        borderRadius: 1,
+                        px: 1,
+                        py: 0.5,
+                        mx: -1,
+                        transition: "background-color 0.15s",
+                        "&:hover": {
+                          bgcolor: (t) =>
+                            t.palette.mode === "dark"
+                              ? "rgba(145, 107, 255, 0.12)"
+                              : "rgba(105, 65, 198, 0.08)",
+                          "& .filter-section-title": {
+                            color: "primary.main",
+                          },
+                        },
+                      }}
+                    >
+                      <Typography
+                        className="filter-section-title"
+                        variant="body2"
+                        fontWeight="fontWeightSemiBold"
+                        sx={{ transition: "color 0.15s" }}
                       >
-                        <Iconify icon="mdi:close" width={14} />
-                      </IconButton>
+                        Filter
+                      </Typography>
+                      <Iconify
+                        icon="mdi:plus"
+                        width={18}
+                        sx={{ color: "text.secondary" }}
+                      />
                     </Stack>
-                    <AggregationPicker
-                      value={
-                        m.allowedAggregations?.length &&
-                        !m.allowedAggregations.includes(m.aggregation)
-                          ? m.allowedAggregations[0]
-                          : m.aggregation
-                      }
-                      onChange={(val) => handleUpdateMetricAggregation(i, val)}
+                  </Tooltip>
+                  {filters.map((f, i) => (
+                    <Box
+                      key={i}
+                      sx={{
+                        mt: 1,
+                        p: 1.5,
+                        border: `1px solid ${theme.palette.divider}`,
+                        borderRadius: 1,
+                        "&:hover .filter-hover-action": {
+                          opacity: 1,
+                        },
+                      }}
+                    >
+                      <Stack direction="row" alignItems="center" gap={1}>
+                        <Iconify
+                          icon={
+                            METRIC_TYPE_ICONS[f.type] || "mdi:filter-outline"
+                          }
+                          width={16}
+                          sx={{ color: "text.secondary" }}
+                        />
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            flex: 1,
+                            cursor: "pointer",
+                            "&:hover": { color: "primary.main" },
+                          }}
+                          onClick={(e) => openPicker(e, "filter", i)}
+                        >
+                          {f.name || "Select attribute"}
+                        </Typography>
+                        <IconButton
+                          className="filter-hover-action"
+                          size="small"
+                          onClick={() => handleRemoveFilter(i)}
+                          sx={{
+                            opacity: 0,
+                            transition: "opacity 0.15s",
+                          }}
+                        >
+                          <Iconify icon="mdi:close" width={14} />
+                        </IconButton>
+                      </Stack>
+                      {f.name &&
+                        (() => {
+                          const ops = getFilterOperators(f.dataType);
+                          const currentOp = ops.find(
+                            (o) => o.value === f.operator,
+                          );
+                          return (
+                            <Stack
+                              direction="row"
+                              alignItems="center"
+                              gap={1}
+                              sx={{ mt: 1 }}
+                            >
+                              <FormControl size="small" sx={{ minWidth: 80 }}>
+                                <Select
+                                  value={f.operator}
+                                  onChange={(e) => {
+                                    const updated = [...filters];
+                                    const newOp = e.target.value;
+                                    const newDef = ops.find(
+                                      (o) => o.value === newOp,
+                                    );
+                                    let newVal = f.value;
+                                    if (newDef?.noValue) newVal = "";
+                                    else if (newDef?.multi && !currentOp?.multi)
+                                      newVal = [];
+                                    else if (newDef?.range && !currentOp?.range)
+                                      newVal = ["", ""];
+                                    else if (!newDef?.multi && currentOp?.multi)
+                                      newVal = "";
+                                    else if (!newDef?.range && currentOp?.range)
+                                      newVal = "";
+                                    updated[i] = {
+                                      ...updated[i],
+                                      operator: newOp,
+                                      value: newVal,
+                                    };
+                                    setFilters(updated);
+                                  }}
+                                  variant="standard"
+                                  sx={{ fontSize: "13px" }}
+                                >
+                                  {ops.map((op) => (
+                                    <MenuItem key={op.value} value={op.value}>
+                                      {op.label}
+                                    </MenuItem>
+                                  ))}
+                                </Select>
+                              </FormControl>
+                              {currentOp?.noValue ? null : currentOp?.multi ? (
+                                <FilterValueLabel
+                                  filter={f}
+                                  source={f.source || "traces"}
+                                  variant="body2"
+                                  innerRef={(el) => {
+                                    filterValueRefs.current[i] = el;
+                                  }}
+                                  onClick={(e) => {
+                                    setFilterValueAnchor(e.currentTarget);
+                                    setFilterValueIndex(i);
+                                    setFilterValueSearch("");
+                                  }}
+                                />
+                              ) : currentOp?.range ? (
+                                <Stack
+                                  direction="row"
+                                  alignItems="center"
+                                  gap={0.5}
+                                  sx={{ flex: 1 }}
+                                >
+                                  <TextField
+                                    size="small"
+                                    variant="standard"
+                                    placeholder="Min"
+                                    type="number"
+                                    value={
+                                      Array.isArray(f.value)
+                                        ? f.value[0] ?? ""
+                                        : ""
+                                    }
+                                    onChange={(e) => {
+                                      const updated = [...filters];
+                                      const cur = Array.isArray(f.value)
+                                        ? [...f.value]
+                                        : ["", ""];
+                                      cur[0] = e.target.value;
+                                      updated[i] = {
+                                        ...updated[i],
+                                        value: cur,
+                                      };
+                                      setFilters(updated);
+                                    }}
+                                    sx={{ flex: 1, fontSize: "13px" }}
+                                  />
+                                  <Typography
+                                    variant="caption"
+                                    color="text.secondary"
+                                  >
+                                    and
+                                  </Typography>
+                                  <TextField
+                                    size="small"
+                                    variant="standard"
+                                    placeholder="Max"
+                                    type="number"
+                                    value={
+                                      Array.isArray(f.value)
+                                        ? f.value[1] ?? ""
+                                        : ""
+                                    }
+                                    onChange={(e) => {
+                                      const updated = [...filters];
+                                      const cur = Array.isArray(f.value)
+                                        ? [...f.value]
+                                        : ["", ""];
+                                      cur[1] = e.target.value;
+                                      updated[i] = {
+                                        ...updated[i],
+                                        value: cur,
+                                      };
+                                      setFilters(updated);
+                                    }}
+                                    sx={{ flex: 1, fontSize: "13px" }}
+                                  />
+                                </Stack>
+                              ) : (
+                                <TextField
+                                  size="small"
+                                  variant="standard"
+                                  placeholder="Value"
+                                  type={
+                                    f.dataType === "number" ? "number" : "text"
+                                  }
+                                  value={f.value || ""}
+                                  onChange={(e) => {
+                                    const updated = [...filters];
+                                    updated[i] = {
+                                      ...updated[i],
+                                      value: e.target.value,
+                                    };
+                                    setFilters(updated);
+                                  }}
+                                  sx={{ flex: 1, fontSize: "13px" }}
+                                />
+                              )}
+                            </Stack>
+                          );
+                        })()}
+                    </Box>
+                  ))}
+                </Box>
+
+                <Divider />
+
+                {/* Breakdown section */}
+                <Box>
+                  <Tooltip
+                    placement="left"
+                    arrow
+                    componentsProps={{
+                      tooltip: {
+                        sx: {
+                          bgcolor: isDark ? "#1a1a2e" : "#fff",
+                          borderRadius: 2,
+                          p: 2,
+                          maxWidth: 180,
+                          boxShadow: isDark
+                            ? "0 4px 20px rgba(0,0,0,0.5)"
+                            : "0 4px 20px rgba(0,0,0,0.12)",
+                          border: isDark ? "none" : "1px solid",
+                          borderColor: isDark ? "transparent" : "divider",
+                        },
+                      },
+                      arrow: {
+                        sx: {
+                          color: isDark ? "#1a1a2e" : "#fff",
+                          "&::before": {
+                            border: isDark ? "none" : "1px solid",
+                            borderColor: isDark ? "transparent" : "divider",
+                          },
+                        },
+                      },
+                    }}
+                    title={
+                      <Box sx={{ textAlign: "center" }}>
+                        {(() => {
+                          const teal = isDark ? "#5BE49B" : "#16A34A";
+                          const tealFill1 = isDark
+                            ? "rgba(91,228,155,0.2)"
+                            : "rgba(22,163,74,0.12)";
+                          const tealFill2 = isDark
+                            ? "rgba(91,228,155,0.3)"
+                            : "rgba(22,163,74,0.2)";
+                          const tealFill3 = isDark
+                            ? "rgba(91,228,155,0.15)"
+                            : "rgba(22,163,74,0.08)";
+                          const tealFill4 = isDark
+                            ? "rgba(91,228,155,0.25)"
+                            : "rgba(22,163,74,0.15)";
+                          const purple = isDark ? "#916BFF" : "#7C4DFF";
+                          const purpleFill1 = isDark
+                            ? "rgba(145,107,255,0.2)"
+                            : "rgba(105,65,198,0.12)";
+                          const purpleFill2 = isDark
+                            ? "rgba(145,107,255,0.3)"
+                            : "rgba(105,65,198,0.2)";
+                          const purpleFill3 = isDark
+                            ? "rgba(145,107,255,0.15)"
+                            : "rgba(105,65,198,0.08)";
+                          const purpleFill4 = isDark
+                            ? "rgba(145,107,255,0.25)"
+                            : "rgba(105,65,198,0.15)";
+                          const coral = isDark ? "#FF6B6B" : "#EF4444";
+                          const coralFill1 = isDark
+                            ? "rgba(255,107,107,0.2)"
+                            : "rgba(239,68,68,0.12)";
+                          const coralFill2 = isDark
+                            ? "rgba(255,107,107,0.3)"
+                            : "rgba(239,68,68,0.2)";
+                          const coralFill3 = isDark
+                            ? "rgba(255,107,107,0.15)"
+                            : "rgba(239,68,68,0.08)";
+                          const coralFill4 = isDark
+                            ? "rgba(255,107,107,0.25)"
+                            : "rgba(239,68,68,0.15)";
+                          return (
+                            <svg
+                              width="120"
+                              height="90"
+                              viewBox="0 0 120 90"
+                              fill="none"
+                              xmlns="http://www.w3.org/2000/svg"
+                            >
+                              {/* Cube group 1 - teal */}
+                              <g transform="translate(8, 40)">
+                                <path
+                                  d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
+                                  fill={tealFill1}
+                                  stroke={teal}
+                                  strokeWidth="1.2"
+                                />
+                                <path
+                                  d="M15 0 L30 8 L15 16 L0 8 Z"
+                                  fill={tealFill2}
+                                  stroke={teal}
+                                  strokeWidth="1.2"
+                                />
+                                <line
+                                  x1="15"
+                                  y1="16"
+                                  x2="15"
+                                  y2="32"
+                                  stroke={teal}
+                                  strokeWidth="1.2"
+                                />
+                              </g>
+                              <g transform="translate(8, 22)">
+                                <path
+                                  d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
+                                  fill={tealFill3}
+                                  stroke={teal}
+                                  strokeWidth="1.2"
+                                />
+                                <path
+                                  d="M15 0 L30 8 L15 16 L0 8 Z"
+                                  fill={tealFill4}
+                                  stroke={teal}
+                                  strokeWidth="1.2"
+                                />
+                                <line
+                                  x1="15"
+                                  y1="16"
+                                  x2="15"
+                                  y2="32"
+                                  stroke={teal}
+                                  strokeWidth="1.2"
+                                />
+                              </g>
+                              {/* Cube group 2 - purple */}
+                              <g transform="translate(44, 30)">
+                                <path
+                                  d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
+                                  fill={purpleFill1}
+                                  stroke={purple}
+                                  strokeWidth="1.2"
+                                />
+                                <path
+                                  d="M15 0 L30 8 L15 16 L0 8 Z"
+                                  fill={purpleFill2}
+                                  stroke={purple}
+                                  strokeWidth="1.2"
+                                />
+                                <line
+                                  x1="15"
+                                  y1="16"
+                                  x2="15"
+                                  y2="32"
+                                  stroke={purple}
+                                  strokeWidth="1.2"
+                                />
+                              </g>
+                              <g transform="translate(44, 12)">
+                                <path
+                                  d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
+                                  fill={purpleFill3}
+                                  stroke={purple}
+                                  strokeWidth="1.2"
+                                />
+                                <path
+                                  d="M15 0 L30 8 L15 16 L0 8 Z"
+                                  fill={purpleFill4}
+                                  stroke={purple}
+                                  strokeWidth="1.2"
+                                />
+                                <line
+                                  x1="15"
+                                  y1="16"
+                                  x2="15"
+                                  y2="32"
+                                  stroke={purple}
+                                  strokeWidth="1.2"
+                                />
+                              </g>
+                              {/* Cube group 3 - coral */}
+                              <g transform="translate(80, 38)">
+                                <path
+                                  d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
+                                  fill={coralFill1}
+                                  stroke={coral}
+                                  strokeWidth="1.2"
+                                />
+                                <path
+                                  d="M15 0 L30 8 L15 16 L0 8 Z"
+                                  fill={coralFill2}
+                                  stroke={coral}
+                                  strokeWidth="1.2"
+                                />
+                                <line
+                                  x1="15"
+                                  y1="16"
+                                  x2="15"
+                                  y2="32"
+                                  stroke={coral}
+                                  strokeWidth="1.2"
+                                />
+                              </g>
+                              <g transform="translate(80, 20)">
+                                <path
+                                  d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
+                                  fill={coralFill3}
+                                  stroke={coral}
+                                  strokeWidth="1.2"
+                                />
+                                <path
+                                  d="M15 0 L30 8 L15 16 L0 8 Z"
+                                  fill={coralFill4}
+                                  stroke={coral}
+                                  strokeWidth="1.2"
+                                />
+                                <line
+                                  x1="15"
+                                  y1="16"
+                                  x2="15"
+                                  y2="32"
+                                  stroke={coral}
+                                  strokeWidth="1.2"
+                                />
+                              </g>
+                            </svg>
+                          );
+                        })()}
+                        <Typography
+                          variant="caption"
+                          sx={{
+                            color: isDark
+                              ? "rgba(255,255,255,0.7)"
+                              : "text.secondary",
+                            mt: 0.5,
+                            display: "block",
+                            lineHeight: 1.3,
+                          }}
+                        >
+                          Segment your data into different categories.
+                        </Typography>
+                      </Box>
+                    }
+                  >
+                    <Stack
+                      direction="row"
+                      justifyContent="space-between"
+                      alignItems="center"
+                      onClick={(e) => openPicker(e, "breakdown")}
+                      sx={{
+                        cursor: "pointer",
+                        borderRadius: 1,
+                        px: 1,
+                        py: 0.5,
+                        mx: -1,
+                        transition: "background-color 0.15s",
+                        "&:hover": {
+                          bgcolor: (t) =>
+                            t.palette.mode === "dark"
+                              ? "rgba(145, 107, 255, 0.12)"
+                              : "rgba(105, 65, 198, 0.08)",
+                          "& .breakdown-section-title": {
+                            color: "primary.main",
+                          },
+                        },
+                      }}
+                    >
+                      <Typography
+                        className="breakdown-section-title"
+                        variant="body2"
+                        fontWeight="fontWeightSemiBold"
+                        sx={{ transition: "color 0.15s" }}
+                      >
+                        Breakdown
+                      </Typography>
+                      <Iconify
+                        icon="mdi:plus"
+                        width={18}
+                        sx={{ color: "text.secondary" }}
+                      />
+                    </Stack>
+                  </Tooltip>
+                  {breakdowns.map((b, i) => (
+                    <Box
+                      key={i}
+                      sx={{
+                        mt: 1,
+                        p: 1.5,
+                        border: `1px solid ${theme.palette.divider}`,
+                        borderRadius: 1,
+                        "&:hover .breakdown-hover-action": {
+                          opacity: 1,
+                        },
+                      }}
+                    >
+                      <Stack direction="row" alignItems="center" gap={1}>
+                        <Iconify
+                          icon={
+                            METRIC_TYPE_ICONS[b.type] ||
+                            "mdi:chart-timeline-variant"
+                          }
+                          width={16}
+                          sx={{ color: "text.secondary" }}
+                        />
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            flex: 1,
+                            cursor: "pointer",
+                            "&:hover": { color: "primary.main" },
+                          }}
+                          onClick={(e) => openPicker(e, "breakdown", i)}
+                        >
+                          {b.name || "Select attribute"}
+                        </Typography>
+                        <IconButton
+                          className="breakdown-hover-action"
+                          size="small"
+                          onClick={() => handleRemoveBreakdown(i)}
+                          sx={{
+                            opacity: 0,
+                            transition: "opacity 0.15s",
+                          }}
+                        >
+                          <Iconify icon="mdi:close" width={14} />
+                        </IconButton>
+                      </Stack>
+                    </Box>
+                  ))}
+                </Box>
+              </Box>
+            )}
+
+            {rightTab === 1 && (
+              <Box sx={{ p: 2, overflow: "auto" }}>
+                {isPie || isTable || isMetricCard ? (
+                  <Typography
+                    variant="body2"
+                    color="text.secondary"
+                    sx={{ fontStyle: "italic", textAlign: "center", mt: 4 }}
+                  >
+                    {isPie
+                      ? "Pie charts do not have axis settings"
+                      : isTable
+                        ? "Table view does not have axis settings"
+                        : "Metric cards do not have axis settings"}
+                  </Typography>
+                ) : (
+                  <>
+                    {/* AXIS collapsible section */}
+                    <Typography
+                      variant="overline"
+                      fontWeight={700}
+                      sx={{ mb: 2, display: "block", letterSpacing: 1.5 }}
+                    >
+                      AXIS
+                    </Typography>
+
+                    {/* Left Y-Axis */}
+                    <AxisSection
+                      title="Left Y-Axis"
+                      config={axisConfig.leftY}
+                      onChange={(key, val) => updateAxis("leftY", key, val)}
                       theme={theme}
-                      allowedAggregations={m.allowedAggregations}
-                      extraOptions={
-                        m.source === "datasets" ||
-                        m.source === "simulation" ||
-                        m.source === "all"
-                          ? DATASET_EXTRA_AGGREGATIONS
-                          : undefined
+                      showReset
+                      onReset={() =>
+                        setAxisConfig((prev) => ({
+                          ...prev,
+                          leftY: {
+                            visible: true,
+                            label: "",
+                            unit: "",
+                            prefixSuffix: "prefix",
+                            abbreviation: true,
+                            decimals: DEFAULT_DECIMALS,
+                            min: "",
+                            max: "",
+                            outOfBounds: "visible",
+                            scale: "linear",
+                          },
+                        }))
                       }
                     />
 
-                    {/* Per-metric inline filters */}
-                    {(m.filters || []).map((mf, fi) => {
-                      const mfOps = getFilterOperators(mf.dataType);
-                      const curMfOp = mfOps.find(
-                        (o) => o.value === mf.operator,
-                      );
-                      return (
-                        <Box
-                          key={fi}
+                    <Divider sx={{ my: 2 }} />
+
+                    {/* Right Y-Axis */}
+                    <AxisSection
+                      title="Right Y-Axis"
+                      config={axisConfig.rightY}
+                      onChange={(key, val) => updateAxis("rightY", key, val)}
+                      theme={theme}
+                      showReset
+                      onReset={() =>
+                        setAxisConfig((prev) => ({
+                          ...prev,
+                          rightY: {
+                            visible: false,
+                            label: "",
+                            unit: "",
+                            prefixSuffix: "prefix",
+                            abbreviation: true,
+                            decimals: DEFAULT_DECIMALS,
+                            min: "",
+                            max: "",
+                            outOfBounds: "hidden",
+                            scale: "linear",
+                          },
+                        }))
+                      }
+                    />
+
+                    <Divider sx={{ my: 2 }} />
+
+                    {/* X-Axis */}
+                    <Box sx={{ mb: 3 }}>
+                      <Typography
+                        variant="subtitle2"
+                        fontWeight={700}
+                        sx={{ mb: 1.5 }}
+                      >
+                        X-Axis
+                      </Typography>
+                      <Stack
+                        direction="row"
+                        justifyContent="space-between"
+                        alignItems="center"
+                        sx={{ mb: 1.5 }}
+                      >
+                        <Typography variant="body2" color="text.secondary">
+                          Axis
+                        </Typography>
+                        <ToggleButtons
+                          options={[
+                            { label: "Visible", value: true },
+                            { label: "Hidden", value: false },
+                          ]}
+                          value={axisConfig.xAxis.visible}
+                          onChange={(v) => updateAxis("xAxis", "visible", v)}
+                          theme={theme}
+                        />
+                      </Stack>
+                      <Stack
+                        direction="row"
+                        justifyContent="space-between"
+                        alignItems="center"
+                      >
+                        <Typography variant="body2" color="text.secondary">
+                          Label
+                        </Typography>
+                        <TextField
+                          size="small"
+                          value={axisConfig.xAxis.label}
+                          onChange={(e) =>
+                            updateAxis("xAxis", "label", e.target.value)
+                          }
+                          placeholder="e.g. Time (s)"
+                          inputProps={{ maxLength: AXIS_LABEL_MAX_LENGTH }}
                           sx={{
-                            mt: 1,
-                            pl: 1,
-                            borderLeft: `2px solid ${theme.palette.primary.main}`,
+                            width: 180,
+                            "& .MuiOutlinedInput-root": { fontSize: "13px" },
                           }}
-                        >
-                          <Stack direction="row" alignItems="center" gap={0.5}>
-                            <Iconify
-                              icon={
-                                METRIC_TYPE_ICONS[mf.type] ||
-                                "mdi:filter-outline"
-                              }
-                              width={14}
-                              sx={{ color: "primary.main" }}
-                            />
-                            <Typography
-                              variant="caption"
-                              sx={{
-                                flex: 1,
-                                fontWeight: 500,
-                                cursor: "pointer",
-                                "&:hover": { color: "primary.main" },
-                              }}
-                              onClick={(e) =>
-                                openPicker(e, "metric_filter", fi, i)
-                              }
-                            >
-                              {mf.name}
-                            </Typography>
-                            <IconButton
-                              size="small"
-                              onClick={() => handleRemoveMetricFilter(i, fi)}
-                              sx={{ p: 0.25 }}
-                            >
-                              <Iconify icon="mdi:close" width={12} />
-                            </IconButton>
-                          </Stack>
+                        />
+                      </Stack>
+                    </Box>
+
+                    <Divider sx={{ my: 2 }} />
+
+                    {/* Axis Assignment */}
+                    <Box>
+                      <Typography
+                        variant="subtitle2"
+                        fontWeight={700}
+                        sx={{ mb: 1.5 }}
+                      >
+                        Axis Assignment
+                      </Typography>
+                      {previewSeries.map((s, si) => {
+                        const seriesColor = getSeriesColor(
+                          s.name,
+                          seriesColorMap,
+                        );
+                        return (
                           <Stack
+                            key={si}
                             direction="row"
                             alignItems="center"
-                            gap={0.5}
-                            sx={{ mt: 0.5 }}
+                            justifyContent="space-between"
+                            sx={{ mb: 1 }}
                           >
-                            <FormControl size="small" sx={{ minWidth: 70 }}>
-                              <Select
-                                value={mf.operator}
-                                onChange={(e) => {
-                                  const newOp = e.target.value;
-                                  const newDef = mfOps.find(
-                                    (o) => o.value === newOp,
-                                  );
-                                  let newVal = mf.value;
-                                  if (newDef?.noValue) newVal = "";
-                                  else if (newDef?.multi && !curMfOp?.multi)
-                                    newVal = [];
-                                  else if (newDef?.range && !curMfOp?.range)
-                                    newVal = ["", ""];
-                                  else if (!newDef?.multi && curMfOp?.multi)
-                                    newVal = "";
-                                  else if (!newDef?.range && curMfOp?.range)
-                                    newVal = "";
-                                  handleUpdateMetricFilter(i, fi, {
-                                    operator: newOp,
-                                    value: newVal,
-                                  });
-                                }}
-                                variant="standard"
-                                sx={{ fontSize: "12px" }}
-                              >
-                                {mfOps.map((op) => (
-                                  <MenuItem key={op.value} value={op.value}>
-                                    {op.label}
-                                  </MenuItem>
-                                ))}
-                              </Select>
-                            </FormControl>
-                            {curMfOp?.noValue ? null : curMfOp?.multi ? (
-                              <FilterValueLabel
-                                filter={mf}
-                                source={mf.source || "traces"}
-                                variant="caption"
-                                innerRef={(el) => {
-                                  mfValueRefs.current[`${i}_${fi}`] = el;
-                                }}
-                                onClick={(e) => {
-                                  setMfValueAnchor(e.currentTarget);
-                                  setMfValueTarget({
-                                    metricIdx: i,
-                                    filterIdx: fi,
-                                  });
-                                }}
-                              />
-                            ) : curMfOp?.range ? (
-                              <Stack
-                                direction="row"
-                                alignItems="center"
-                                gap={0.5}
-                                sx={{ flex: 1 }}
-                              >
-                                <TextField
-                                  size="small"
-                                  variant="standard"
-                                  placeholder="Min"
-                                  type="number"
-                                  value={
-                                    Array.isArray(mf.value)
-                                      ? mf.value[0] ?? ""
-                                      : ""
-                                  }
-                                  onChange={(e) => {
-                                    const cur = Array.isArray(mf.value)
-                                      ? [...mf.value]
-                                      : ["", ""];
-                                    cur[0] = e.target.value;
-                                    handleUpdateMetricFilter(i, fi, {
-                                      value: cur,
-                                    });
-                                  }}
-                                  sx={{ flex: 1, fontSize: "12px" }}
-                                />
-                                <Typography
-                                  variant="caption"
-                                  color="text.secondary"
-                                >
-                                  –
-                                </Typography>
-                                <TextField
-                                  size="small"
-                                  variant="standard"
-                                  placeholder="Max"
-                                  type="number"
-                                  value={
-                                    Array.isArray(mf.value)
-                                      ? mf.value[1] ?? ""
-                                      : ""
-                                  }
-                                  onChange={(e) => {
-                                    const cur = Array.isArray(mf.value)
-                                      ? [...mf.value]
-                                      : ["", ""];
-                                    cur[1] = e.target.value;
-                                    handleUpdateMetricFilter(i, fi, {
-                                      value: cur,
-                                    });
-                                  }}
-                                  sx={{ flex: 1, fontSize: "12px" }}
-                                />
-                              </Stack>
-                            ) : (
-                              <TextField
-                                size="small"
-                                variant="standard"
-                                placeholder="Value"
-                                type={
-                                  mf.dataType === "number" ? "number" : "text"
-                                }
-                                value={mf.value || ""}
-                                onChange={(e) =>
-                                  handleUpdateMetricFilter(i, fi, {
-                                    value: e.target.value,
-                                  })
-                                }
-                                sx={{ flex: 1, fontSize: "12px" }}
-                              />
-                            )}
-                          </Stack>
-                          {fi < (m.filters || []).length - 1 && (
-                            <Typography
-                              variant="caption"
-                              color="text.secondary"
-                              sx={{
-                                display: "inline-block",
-                                mt: 0.5,
-                                px: 1,
-                                py: 0.25,
-                                borderRadius: 0.5,
-                                bgcolor: "action.hover",
-                                fontSize: "11px",
-                              }}
+                            <Stack
+                              direction="row"
+                              alignItems="center"
+                              gap={1}
+                              sx={{ flex: 1, minWidth: 0 }}
                             >
-                              And
-                            </Typography>
-                          )}
-                        </Box>
-                      );
-                    })}
-                  </Box>
-                ))}
-
-                {/* Empty metric slot */}
-                {metrics.length === 0 && (
-                  <Box
-                    sx={{
-                      mt: 1,
-                      p: 1.5,
-                      border: `1px solid ${theme.palette.divider}`,
-                      borderRadius: 1,
-                      cursor: "pointer",
-                      "&:hover": { borderColor: "primary.main" },
-                    }}
-                    onClick={(e) => openPicker(e, "metric")}
-                  >
-                    <Stack direction="row" alignItems="center" gap={0.75}>
-                      <Iconify
-                        icon="mdi:plus-circle-outline"
-                        width={18}
-                        sx={{ color: "primary.main" }}
-                      />
-                      <Typography variant="body2" color="primary.main">
-                        Select Metric
-                      </Typography>
-                    </Stack>
-                  </Box>
+                              <Box
+                                sx={{
+                                  width: 22,
+                                  height: 22,
+                                  borderRadius: 0.5,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  bgcolor: seriesColor + "22",
+                                  color: seriesColor,
+                                  fontSize: "11px",
+                                  fontWeight: 700,
+                                }}
+                              >
+                                {LETTER_LABELS[si] || si}
+                              </Box>
+                              <Iconify
+                                icon="mdi:chart-line"
+                                width={16}
+                                sx={{
+                                  color: seriesColor,
+                                  flexShrink: 0,
+                                }}
+                              />
+                              <Typography
+                                variant="body2"
+                                noWrap
+                                sx={{ fontWeight: 500 }}
+                              >
+                                {s.name?.split(" (")[0] || s.name}
+                              </Typography>
+                            </Stack>
+                            <ToggleButtons
+                              options={[
+                                { label: "L", value: "left" },
+                                { label: "R", value: "right" },
+                              ]}
+                              value={axisConfig.seriesAxis[si] || "left"}
+                              onChange={(v) => setSeriesAxis(si, v)}
+                              theme={theme}
+                            />
+                          </Stack>
+                        );
+                      })}
+                      {previewSeries.length === 0 && (
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          sx={{ fontStyle: "italic" }}
+                        >
+                          Add metrics to see axis assignments
+                        </Typography>
+                      )}
+                    </Box>
+                  </>
                 )}
               </Box>
-
-              <Divider />
-
-              {/* Filter section */}
-              <Box>
-                <Tooltip
-                  placement="left"
-                  arrow
-                  componentsProps={{
-                    tooltip: {
-                      sx: {
-                        bgcolor: isDark ? "#1a1a2e" : "#fff",
-                        borderRadius: 2,
-                        p: 2,
-                        maxWidth: 180,
-                        boxShadow: isDark
-                          ? "0 4px 20px rgba(0,0,0,0.5)"
-                          : "0 4px 20px rgba(0,0,0,0.12)",
-                        border: isDark ? "none" : "1px solid",
-                        borderColor: isDark ? "transparent" : "divider",
-                      },
-                    },
-                    arrow: {
-                      sx: {
-                        color: isDark ? "#1a1a2e" : "#fff",
-                        "&::before": {
-                          border: isDark ? "none" : "1px solid",
-                          borderColor: isDark ? "transparent" : "divider",
-                        },
-                      },
-                    },
-                  }}
-                  title={
-                    <Box sx={{ textAlign: "center" }}>
-                      <svg
-                        width="120"
-                        height="90"
-                        viewBox="0 0 120 90"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                      >
-                        {/* Funnel shape */}
-                        <rect
-                          x="10"
-                          y="10"
-                          width="100"
-                          height="16"
-                          rx="3"
-                          fill={
-                            isDark
-                              ? "rgba(145,107,255,0.25)"
-                              : "rgba(105,65,198,0.1)"
-                          }
-                          stroke={isDark ? "#916BFF" : "#7C4DFF"}
-                          strokeWidth="1.5"
-                        />
-                        <rect
-                          x="25"
-                          y="34"
-                          width="70"
-                          height="16"
-                          rx="3"
-                          fill={
-                            isDark
-                              ? "rgba(145,107,255,0.4)"
-                              : "rgba(105,65,198,0.18)"
-                          }
-                          stroke={isDark ? "#916BFF" : "#7C4DFF"}
-                          strokeWidth="1.5"
-                        />
-                        <rect
-                          x="40"
-                          y="58"
-                          width="40"
-                          height="16"
-                          rx="3"
-                          fill={
-                            isDark
-                              ? "rgba(145,107,255,0.6)"
-                              : "rgba(105,65,198,0.28)"
-                          }
-                          stroke={isDark ? "#916BFF" : "#7C4DFF"}
-                          strokeWidth="1.5"
-                        />
-                        {/* Connecting lines */}
-                        <line
-                          x1="25"
-                          y1="26"
-                          x2="25"
-                          y2="34"
-                          stroke={isDark ? "#916BFF" : "#7C4DFF"}
-                          strokeWidth="1"
-                          strokeDasharray="2 2"
-                        />
-                        <line
-                          x1="95"
-                          y1="26"
-                          x2="95"
-                          y2="34"
-                          stroke={isDark ? "#916BFF" : "#7C4DFF"}
-                          strokeWidth="1"
-                          strokeDasharray="2 2"
-                        />
-                        <line
-                          x1="40"
-                          y1="50"
-                          x2="40"
-                          y2="58"
-                          stroke={isDark ? "#916BFF" : "#7C4DFF"}
-                          strokeWidth="1"
-                          strokeDasharray="2 2"
-                        />
-                        <line
-                          x1="80"
-                          y1="50"
-                          x2="80"
-                          y2="58"
-                          stroke={isDark ? "#916BFF" : "#7C4DFF"}
-                          strokeWidth="1"
-                          strokeDasharray="2 2"
-                        />
-                        {/* Data dots */}
-                        <circle
-                          cx="30"
-                          cy="18"
-                          r="2"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="50"
-                          cy="18"
-                          r="2"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="70"
-                          cy="18"
-                          r="2"
-                          fill={isDark ? "#FF6B6B" : "#EF4444"}
-                        />
-                        <circle
-                          cx="90"
-                          cy="18"
-                          r="2"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="40"
-                          cy="42"
-                          r="2"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="60"
-                          cy="42"
-                          r="2"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="80"
-                          cy="42"
-                          r="2"
-                          fill={isDark ? "#FF6B6B" : "#EF4444"}
-                        />
-                        <circle
-                          cx="52"
-                          cy="66"
-                          r="2"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                        <circle
-                          cx="68"
-                          cy="66"
-                          r="2"
-                          fill={isDark ? "#5BE49B" : "#22C55E"}
-                        />
-                      </svg>
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: isDark
-                            ? "rgba(255,255,255,0.7)"
-                            : "text.secondary",
-                          mt: 0.5,
-                          display: "block",
-                          lineHeight: 1.3,
-                        }}
-                      >
-                        Filter to include or exclude specific data.
-                      </Typography>
-                    </Box>
-                  }
-                >
-                  <Stack
-                    direction="row"
-                    justifyContent="space-between"
-                    alignItems="center"
-                    onClick={(e) => openPicker(e, "filter")}
-                    sx={{
-                      cursor: "pointer",
-                      borderRadius: 1,
-                      px: 1,
-                      py: 0.5,
-                      mx: -1,
-                      transition: "background-color 0.15s",
-                      "&:hover": {
-                        bgcolor: (t) =>
-                          t.palette.mode === "dark"
-                            ? "rgba(145, 107, 255, 0.12)"
-                            : "rgba(105, 65, 198, 0.08)",
-                        "& .filter-section-title": {
-                          color: "primary.main",
-                        },
-                      },
-                    }}
-                  >
-                    <Typography
-                      className="filter-section-title"
-                      variant="body2"
-                      fontWeight="fontWeightSemiBold"
-                      sx={{ transition: "color 0.15s" }}
-                    >
-                      Filter
-                    </Typography>
-                    <Iconify
-                      icon="mdi:plus"
-                      width={18}
-                      sx={{ color: "text.secondary" }}
-                    />
-                  </Stack>
-                </Tooltip>
-                {filters.map((f, i) => (
-                  <Box
-                    key={i}
-                    sx={{
-                      mt: 1,
-                      p: 1.5,
-                      border: `1px solid ${theme.palette.divider}`,
-                      borderRadius: 1,
-                      "&:hover .filter-hover-action": {
-                        opacity: 1,
-                      },
-                    }}
-                  >
-                    <Stack direction="row" alignItems="center" gap={1}>
-                      <Iconify
-                        icon={METRIC_TYPE_ICONS[f.type] || "mdi:filter-outline"}
-                        width={16}
-                        sx={{ color: "text.secondary" }}
-                      />
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          flex: 1,
-                          cursor: "pointer",
-                          "&:hover": { color: "primary.main" },
-                        }}
-                        onClick={(e) => openPicker(e, "filter", i)}
-                      >
-                        {f.name || "Select attribute"}
-                      </Typography>
-                      <IconButton
-                        className="filter-hover-action"
-                        size="small"
-                        onClick={() => handleRemoveFilter(i)}
-                        sx={{
-                          opacity: 0,
-                          transition: "opacity 0.15s",
-                        }}
-                      >
-                        <Iconify icon="mdi:close" width={14} />
-                      </IconButton>
-                    </Stack>
-                    {f.name &&
-                      (() => {
-                        const ops = getFilterOperators(f.dataType);
-                        const currentOp = ops.find(
-                          (o) => o.value === f.operator,
-                        );
-                        return (
-                          <Stack
-                            direction="row"
-                            alignItems="center"
-                            gap={1}
-                            sx={{ mt: 1 }}
-                          >
-                            <FormControl size="small" sx={{ minWidth: 80 }}>
-                              <Select
-                                value={f.operator}
-                                onChange={(e) => {
-                                  const updated = [...filters];
-                                  const newOp = e.target.value;
-                                  const newDef = ops.find(
-                                    (o) => o.value === newOp,
-                                  );
-                                  let newVal = f.value;
-                                  if (newDef?.noValue) newVal = "";
-                                  else if (newDef?.multi && !currentOp?.multi)
-                                    newVal = [];
-                                  else if (newDef?.range && !currentOp?.range)
-                                    newVal = ["", ""];
-                                  else if (!newDef?.multi && currentOp?.multi)
-                                    newVal = "";
-                                  else if (!newDef?.range && currentOp?.range)
-                                    newVal = "";
-                                  updated[i] = {
-                                    ...updated[i],
-                                    operator: newOp,
-                                    value: newVal,
-                                  };
-                                  setFilters(updated);
-                                }}
-                                variant="standard"
-                                sx={{ fontSize: "13px" }}
-                              >
-                                {ops.map((op) => (
-                                  <MenuItem key={op.value} value={op.value}>
-                                    {op.label}
-                                  </MenuItem>
-                                ))}
-                              </Select>
-                            </FormControl>
-                            {currentOp?.noValue ? null : currentOp?.multi ? (
-                              <FilterValueLabel
-                                filter={f}
-                                source={f.source || "traces"}
-                                variant="body2"
-                                innerRef={(el) => {
-                                  filterValueRefs.current[i] = el;
-                                }}
-                                onClick={(e) => {
-                                  setFilterValueAnchor(e.currentTarget);
-                                  setFilterValueIndex(i);
-                                  setFilterValueSearch("");
-                                }}
-                              />
-                            ) : currentOp?.range ? (
-                              <Stack
-                                direction="row"
-                                alignItems="center"
-                                gap={0.5}
-                                sx={{ flex: 1 }}
-                              >
-                                <TextField
-                                  size="small"
-                                  variant="standard"
-                                  placeholder="Min"
-                                  type="number"
-                                  value={
-                                    Array.isArray(f.value)
-                                      ? f.value[0] ?? ""
-                                      : ""
-                                  }
-                                  onChange={(e) => {
-                                    const updated = [...filters];
-                                    const cur = Array.isArray(f.value)
-                                      ? [...f.value]
-                                      : ["", ""];
-                                    cur[0] = e.target.value;
-                                    updated[i] = { ...updated[i], value: cur };
-                                    setFilters(updated);
-                                  }}
-                                  sx={{ flex: 1, fontSize: "13px" }}
-                                />
-                                <Typography
-                                  variant="caption"
-                                  color="text.secondary"
-                                >
-                                  and
-                                </Typography>
-                                <TextField
-                                  size="small"
-                                  variant="standard"
-                                  placeholder="Max"
-                                  type="number"
-                                  value={
-                                    Array.isArray(f.value)
-                                      ? f.value[1] ?? ""
-                                      : ""
-                                  }
-                                  onChange={(e) => {
-                                    const updated = [...filters];
-                                    const cur = Array.isArray(f.value)
-                                      ? [...f.value]
-                                      : ["", ""];
-                                    cur[1] = e.target.value;
-                                    updated[i] = { ...updated[i], value: cur };
-                                    setFilters(updated);
-                                  }}
-                                  sx={{ flex: 1, fontSize: "13px" }}
-                                />
-                              </Stack>
-                            ) : (
-                              <TextField
-                                size="small"
-                                variant="standard"
-                                placeholder="Value"
-                                type={
-                                  f.dataType === "number" ? "number" : "text"
-                                }
-                                value={f.value || ""}
-                                onChange={(e) => {
-                                  const updated = [...filters];
-                                  updated[i] = {
-                                    ...updated[i],
-                                    value: e.target.value,
-                                  };
-                                  setFilters(updated);
-                                }}
-                                sx={{ flex: 1, fontSize: "13px" }}
-                              />
-                            )}
-                          </Stack>
-                        );
-                      })()}
-                  </Box>
-                ))}
-              </Box>
-
-              <Divider />
-
-              {/* Breakdown section */}
-              <Box>
-                <Tooltip
-                  placement="left"
-                  arrow
-                  componentsProps={{
-                    tooltip: {
-                      sx: {
-                        bgcolor: isDark ? "#1a1a2e" : "#fff",
-                        borderRadius: 2,
-                        p: 2,
-                        maxWidth: 180,
-                        boxShadow: isDark
-                          ? "0 4px 20px rgba(0,0,0,0.5)"
-                          : "0 4px 20px rgba(0,0,0,0.12)",
-                        border: isDark ? "none" : "1px solid",
-                        borderColor: isDark ? "transparent" : "divider",
-                      },
-                    },
-                    arrow: {
-                      sx: {
-                        color: isDark ? "#1a1a2e" : "#fff",
-                        "&::before": {
-                          border: isDark ? "none" : "1px solid",
-                          borderColor: isDark ? "transparent" : "divider",
-                        },
-                      },
-                    },
-                  }}
-                  title={
-                    <Box sx={{ textAlign: "center" }}>
-                      {(() => {
-                        const teal = isDark ? "#5BE49B" : "#16A34A";
-                        const tealFill1 = isDark
-                          ? "rgba(91,228,155,0.2)"
-                          : "rgba(22,163,74,0.12)";
-                        const tealFill2 = isDark
-                          ? "rgba(91,228,155,0.3)"
-                          : "rgba(22,163,74,0.2)";
-                        const tealFill3 = isDark
-                          ? "rgba(91,228,155,0.15)"
-                          : "rgba(22,163,74,0.08)";
-                        const tealFill4 = isDark
-                          ? "rgba(91,228,155,0.25)"
-                          : "rgba(22,163,74,0.15)";
-                        const purple = isDark ? "#916BFF" : "#7C4DFF";
-                        const purpleFill1 = isDark
-                          ? "rgba(145,107,255,0.2)"
-                          : "rgba(105,65,198,0.12)";
-                        const purpleFill2 = isDark
-                          ? "rgba(145,107,255,0.3)"
-                          : "rgba(105,65,198,0.2)";
-                        const purpleFill3 = isDark
-                          ? "rgba(145,107,255,0.15)"
-                          : "rgba(105,65,198,0.08)";
-                        const purpleFill4 = isDark
-                          ? "rgba(145,107,255,0.25)"
-                          : "rgba(105,65,198,0.15)";
-                        const coral = isDark ? "#FF6B6B" : "#EF4444";
-                        const coralFill1 = isDark
-                          ? "rgba(255,107,107,0.2)"
-                          : "rgba(239,68,68,0.12)";
-                        const coralFill2 = isDark
-                          ? "rgba(255,107,107,0.3)"
-                          : "rgba(239,68,68,0.2)";
-                        const coralFill3 = isDark
-                          ? "rgba(255,107,107,0.15)"
-                          : "rgba(239,68,68,0.08)";
-                        const coralFill4 = isDark
-                          ? "rgba(255,107,107,0.25)"
-                          : "rgba(239,68,68,0.15)";
-                        return (
-                          <svg
-                            width="120"
-                            height="90"
-                            viewBox="0 0 120 90"
-                            fill="none"
-                            xmlns="http://www.w3.org/2000/svg"
-                          >
-                            {/* Cube group 1 - teal */}
-                            <g transform="translate(8, 40)">
-                              <path
-                                d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
-                                fill={tealFill1}
-                                stroke={teal}
-                                strokeWidth="1.2"
-                              />
-                              <path
-                                d="M15 0 L30 8 L15 16 L0 8 Z"
-                                fill={tealFill2}
-                                stroke={teal}
-                                strokeWidth="1.2"
-                              />
-                              <line
-                                x1="15"
-                                y1="16"
-                                x2="15"
-                                y2="32"
-                                stroke={teal}
-                                strokeWidth="1.2"
-                              />
-                            </g>
-                            <g transform="translate(8, 22)">
-                              <path
-                                d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
-                                fill={tealFill3}
-                                stroke={teal}
-                                strokeWidth="1.2"
-                              />
-                              <path
-                                d="M15 0 L30 8 L15 16 L0 8 Z"
-                                fill={tealFill4}
-                                stroke={teal}
-                                strokeWidth="1.2"
-                              />
-                              <line
-                                x1="15"
-                                y1="16"
-                                x2="15"
-                                y2="32"
-                                stroke={teal}
-                                strokeWidth="1.2"
-                              />
-                            </g>
-                            {/* Cube group 2 - purple */}
-                            <g transform="translate(44, 30)">
-                              <path
-                                d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
-                                fill={purpleFill1}
-                                stroke={purple}
-                                strokeWidth="1.2"
-                              />
-                              <path
-                                d="M15 0 L30 8 L15 16 L0 8 Z"
-                                fill={purpleFill2}
-                                stroke={purple}
-                                strokeWidth="1.2"
-                              />
-                              <line
-                                x1="15"
-                                y1="16"
-                                x2="15"
-                                y2="32"
-                                stroke={purple}
-                                strokeWidth="1.2"
-                              />
-                            </g>
-                            <g transform="translate(44, 12)">
-                              <path
-                                d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
-                                fill={purpleFill3}
-                                stroke={purple}
-                                strokeWidth="1.2"
-                              />
-                              <path
-                                d="M15 0 L30 8 L15 16 L0 8 Z"
-                                fill={purpleFill4}
-                                stroke={purple}
-                                strokeWidth="1.2"
-                              />
-                              <line
-                                x1="15"
-                                y1="16"
-                                x2="15"
-                                y2="32"
-                                stroke={purple}
-                                strokeWidth="1.2"
-                              />
-                            </g>
-                            {/* Cube group 3 - coral */}
-                            <g transform="translate(80, 38)">
-                              <path
-                                d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
-                                fill={coralFill1}
-                                stroke={coral}
-                                strokeWidth="1.2"
-                              />
-                              <path
-                                d="M15 0 L30 8 L15 16 L0 8 Z"
-                                fill={coralFill2}
-                                stroke={coral}
-                                strokeWidth="1.2"
-                              />
-                              <line
-                                x1="15"
-                                y1="16"
-                                x2="15"
-                                y2="32"
-                                stroke={coral}
-                                strokeWidth="1.2"
-                              />
-                            </g>
-                            <g transform="translate(80, 20)">
-                              <path
-                                d="M15 0 L30 8 L30 24 L15 32 L0 24 L0 8 Z"
-                                fill={coralFill3}
-                                stroke={coral}
-                                strokeWidth="1.2"
-                              />
-                              <path
-                                d="M15 0 L30 8 L15 16 L0 8 Z"
-                                fill={coralFill4}
-                                stroke={coral}
-                                strokeWidth="1.2"
-                              />
-                              <line
-                                x1="15"
-                                y1="16"
-                                x2="15"
-                                y2="32"
-                                stroke={coral}
-                                strokeWidth="1.2"
-                              />
-                            </g>
-                          </svg>
-                        );
-                      })()}
-                      <Typography
-                        variant="caption"
-                        sx={{
-                          color: isDark
-                            ? "rgba(255,255,255,0.7)"
-                            : "text.secondary",
-                          mt: 0.5,
-                          display: "block",
-                          lineHeight: 1.3,
-                        }}
-                      >
-                        Segment your data into different categories.
-                      </Typography>
-                    </Box>
-                  }
-                >
-                  <Stack
-                    direction="row"
-                    justifyContent="space-between"
-                    alignItems="center"
-                    onClick={(e) => openPicker(e, "breakdown")}
-                    sx={{
-                      cursor: "pointer",
-                      borderRadius: 1,
-                      px: 1,
-                      py: 0.5,
-                      mx: -1,
-                      transition: "background-color 0.15s",
-                      "&:hover": {
-                        bgcolor: (t) =>
-                          t.palette.mode === "dark"
-                            ? "rgba(145, 107, 255, 0.12)"
-                            : "rgba(105, 65, 198, 0.08)",
-                        "& .breakdown-section-title": {
-                          color: "primary.main",
-                        },
-                      },
-                    }}
-                  >
-                    <Typography
-                      className="breakdown-section-title"
-                      variant="body2"
-                      fontWeight="fontWeightSemiBold"
-                      sx={{ transition: "color 0.15s" }}
-                    >
-                      Breakdown
-                    </Typography>
-                    <Iconify
-                      icon="mdi:plus"
-                      width={18}
-                      sx={{ color: "text.secondary" }}
-                    />
-                  </Stack>
-                </Tooltip>
-                {breakdowns.map((b, i) => (
-                  <Box
-                    key={i}
-                    sx={{
-                      mt: 1,
-                      p: 1.5,
-                      border: `1px solid ${theme.palette.divider}`,
-                      borderRadius: 1,
-                      "&:hover .breakdown-hover-action": {
-                        opacity: 1,
-                      },
-                    }}
-                  >
-                    <Stack direction="row" alignItems="center" gap={1}>
-                      <Iconify
-                        icon={
-                          METRIC_TYPE_ICONS[b.type] ||
-                          "mdi:chart-timeline-variant"
-                        }
-                        width={16}
-                        sx={{ color: "text.secondary" }}
-                      />
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          flex: 1,
-                          cursor: "pointer",
-                          "&:hover": { color: "primary.main" },
-                        }}
-                        onClick={(e) => openPicker(e, "breakdown", i)}
-                      >
-                        {b.name || "Select attribute"}
-                      </Typography>
-                      <IconButton
-                        className="breakdown-hover-action"
-                        size="small"
-                        onClick={() => handleRemoveBreakdown(i)}
-                        sx={{
-                          opacity: 0,
-                          transition: "opacity 0.15s",
-                        }}
-                      >
-                        <Iconify icon="mdi:close" width={14} />
-                      </IconButton>
-                    </Stack>
-                  </Box>
-                ))}
-              </Box>
-            </Box>
-          )}
-
-          {rightTab === 1 && (
-            <Box sx={{ p: 2, overflow: "auto" }}>
-              {isPie || isTable || isMetricCard ? (
-                <Typography
-                  variant="body2"
-                  color="text.secondary"
-                  sx={{ fontStyle: "italic", textAlign: "center", mt: 4 }}
-                >
-                  {isPie
-                    ? "Pie charts do not have axis settings"
-                    : isTable
-                      ? "Table view does not have axis settings"
-                      : "Metric cards do not have axis settings"}
-                </Typography>
-              ) : (
-                <>
-                  {/* AXIS collapsible section */}
-                  <Typography
-                    variant="overline"
-                    fontWeight={700}
-                    sx={{ mb: 2, display: "block", letterSpacing: 1.5 }}
-                  >
-                    AXIS
-                  </Typography>
-
-                  {/* Left Y-Axis */}
-                  <AxisSection
-                    title="Left Y-Axis"
-                    config={axisConfig.leftY}
-                    onChange={(key, val) => updateAxis("leftY", key, val)}
-                    theme={theme}
-                    showReset
-                    onReset={() =>
-                      setAxisConfig((prev) => ({
-                        ...prev,
-                        leftY: {
-                          visible: true,
-                          label: "",
-                          unit: "",
-                          prefixSuffix: "prefix",
-                          abbreviation: true,
-                          decimals: DEFAULT_DECIMALS,
-                          min: "",
-                          max: "",
-                          outOfBounds: "visible",
-                          scale: "linear",
-                        },
-                      }))
-                    }
-                  />
-
-                  <Divider sx={{ my: 2 }} />
-
-                  {/* Right Y-Axis */}
-                  <AxisSection
-                    title="Right Y-Axis"
-                    config={axisConfig.rightY}
-                    onChange={(key, val) => updateAxis("rightY", key, val)}
-                    theme={theme}
-                    showReset
-                    onReset={() =>
-                      setAxisConfig((prev) => ({
-                        ...prev,
-                        rightY: {
-                          visible: false,
-                          label: "",
-                          unit: "",
-                          prefixSuffix: "prefix",
-                          abbreviation: true,
-                          decimals: DEFAULT_DECIMALS,
-                          min: "",
-                          max: "",
-                          outOfBounds: "hidden",
-                          scale: "linear",
-                        },
-                      }))
-                    }
-                  />
-
-                  <Divider sx={{ my: 2 }} />
-
-                  {/* X-Axis */}
-                  <Box sx={{ mb: 3 }}>
-                    <Typography
-                      variant="subtitle2"
-                      fontWeight={700}
-                      sx={{ mb: 1.5 }}
-                    >
-                      X-Axis
-                    </Typography>
-                    <Stack
-                      direction="row"
-                      justifyContent="space-between"
-                      alignItems="center"
-                      sx={{ mb: 1.5 }}
-                    >
-                      <Typography variant="body2" color="text.secondary">
-                        Axis
-                      </Typography>
-                      <ToggleButtons
-                        options={[
-                          { label: "Visible", value: true },
-                          { label: "Hidden", value: false },
-                        ]}
-                        value={axisConfig.xAxis.visible}
-                        onChange={(v) => updateAxis("xAxis", "visible", v)}
-                        theme={theme}
-                      />
-                    </Stack>
-                    <Stack
-                      direction="row"
-                      justifyContent="space-between"
-                      alignItems="center"
-                    >
-                      <Typography variant="body2" color="text.secondary">
-                        Label
-                      </Typography>
-                      <TextField
-                        size="small"
-                        value={axisConfig.xAxis.label}
-                        onChange={(e) =>
-                          updateAxis("xAxis", "label", e.target.value)
-                        }
-                        placeholder="e.g. Time (s)"
-                        inputProps={{ maxLength: AXIS_LABEL_MAX_LENGTH }}
-                        sx={{
-                          width: 180,
-                          "& .MuiOutlinedInput-root": { fontSize: "13px" },
-                        }}
-                      />
-                    </Stack>
-                  </Box>
-
-                  <Divider sx={{ my: 2 }} />
-
-                  {/* Axis Assignment */}
-                  <Box>
-                    <Typography
-                      variant="subtitle2"
-                      fontWeight={700}
-                      sx={{ mb: 1.5 }}
-                    >
-                      Axis Assignment
-                    </Typography>
-                    {previewSeries.map((s, si) => {
-                      const seriesColor = getSeriesColor(
-                        s.name,
-                        seriesColorMap,
-                      );
-                      return (
-                        <Stack
-                          key={si}
-                          direction="row"
-                          alignItems="center"
-                          justifyContent="space-between"
-                          sx={{ mb: 1 }}
-                        >
-                          <Stack
-                            direction="row"
-                            alignItems="center"
-                            gap={1}
-                            sx={{ flex: 1, minWidth: 0 }}
-                          >
-                            <Box
-                              sx={{
-                                width: 22,
-                                height: 22,
-                                borderRadius: 0.5,
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                bgcolor: seriesColor + "22",
-                                color: seriesColor,
-                                fontSize: "11px",
-                                fontWeight: 700,
-                              }}
-                            >
-                              {LETTER_LABELS[si] || si}
-                            </Box>
-                            <Iconify
-                              icon="mdi:chart-line"
-                              width={16}
-                              sx={{
-                                color: seriesColor,
-                                flexShrink: 0,
-                              }}
-                            />
-                            <Typography
-                              variant="body2"
-                              noWrap
-                              sx={{ fontWeight: 500 }}
-                            >
-                              {s.name?.split(" (")[0] || s.name}
-                            </Typography>
-                          </Stack>
-                          <ToggleButtons
-                            options={[
-                              { label: "L", value: "left" },
-                              { label: "R", value: "right" },
-                            ]}
-                            value={axisConfig.seriesAxis[si] || "left"}
-                            onChange={(v) => setSeriesAxis(si, v)}
-                            theme={theme}
-                          />
-                        </Stack>
-                      );
-                    })}
-                    {previewSeries.length === 0 && (
-                      <Typography
-                        variant="body2"
-                        color="text.secondary"
-                        sx={{ fontStyle: "italic" }}
-                      >
-                        Add metrics to see axis assignments
-                      </Typography>
-                    )}
-                  </Box>
-                </>
-              )}
-            </Box>
-          )}
-        </Box>
+            )}
+          </Box>
+        )}
       </Box>
 
       {/* Shared Picker Popper — used for metric, filter, and breakdown */}

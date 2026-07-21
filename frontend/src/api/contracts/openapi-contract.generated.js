@@ -28886,10 +28886,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "queryParameters": {},
         "responses": {
           "200": {
-            "type": "array",
-            "items": {
-              "$ref": "#/definitions/TestExecutionItemResponse"
-            }
+            "$ref": "#/definitions/RunTestExecutionsResponse"
           },
           "404": {
             "$ref": "#/definitions/RunTestErrorResponse"
@@ -64431,13 +64428,15 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "prompt_config_snapshot": {
           "title": "Prompt config snapshot",
-          "type": "string",
+          "description": "\nGet prompt_config_snapshot with backward compatibility for modelDetail.\nIf modelDetail is missing from configuration, generate it from the model name.\n",
+          "type": "object",
           "readOnly": true
         },
         "template_name": {
           "title": "Template name",
           "type": "string",
-          "readOnly": true
+          "readOnly": true,
+          "minLength": 1
         },
         "original_template": {
           "title": "Original template",
@@ -64448,11 +64447,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "metadata": {
           "title": "Metadata",
           "type": "object",
+          "readOnly": true,
           "x-nullable": true
         },
         "variable_names": {
           "title": "Variable names",
-          "type": "string",
+          "type": "object",
           "readOnly": true
         },
         "evaluation_results": {
@@ -64463,6 +64463,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "evaluation_configs": {
           "title": "Evaluation configs",
           "type": "object",
+          "readOnly": true,
           "x-nullable": true
         },
         "created_at": {
@@ -64492,7 +64493,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "labels": {
           "title": "Labels",
-          "type": "string",
+          "type": "object",
           "readOnly": true
         },
         "placeholders": {
@@ -66387,6 +66388,37 @@ export const OPENAPI_CONTRACT = Object.freeze({
         }
       }
     },
+    "RunTestExecutionsResponse": {
+      "type": "object",
+      "properties": {
+        "count": {
+          "title": "Count",
+          "type": "integer",
+          "readOnly": true
+        },
+        "next": {
+          "title": "Next",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "previous": {
+          "title": "Previous",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/TestExecutionItemResponse"
+          },
+          "readOnly": true
+        }
+      }
+    },
     "RunTestKPIsResponse": {
       "type": "object",
       "properties": {
@@ -66585,10 +66617,8 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "description": {
           "title": "Description",
-          "description": "Description of the test run",
           "type": "string",
           "readOnly": true,
-          "minLength": 1,
           "x-nullable": true
         },
         "agent_definition": {
@@ -66602,20 +66632,12 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "agent_version": {
           "title": "Agent version",
           "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
-          },
           "readOnly": true,
           "x-nullable": true
         },
         "agent_definition_detail": {
           "title": "Agent definition detail",
           "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
-          },
           "readOnly": true,
           "x-nullable": true
         },
@@ -66647,10 +66669,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "prompt_template_detail": {
           "title": "Prompt template detail",
           "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
-          },
           "readOnly": true,
           "x-nullable": true
         },
@@ -66665,10 +66683,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "prompt_version_detail": {
           "title": "Prompt version detail",
           "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
-          },
           "readOnly": true,
           "x-nullable": true
         },
@@ -66686,11 +66700,7 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "scenarios_detail": {
           "type": "array",
           "items": {
-            "type": "object",
-            "additionalProperties": {
-              "type": "string",
-              "x-nullable": true
-            }
+            "type": "object"
           },
           "readOnly": true
         },
@@ -66716,10 +66726,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         "simulator_agent_detail": {
           "title": "Simulator agent detail",
           "type": "object",
-          "additionalProperties": {
-            "type": "string",
-            "x-nullable": true
-          },
           "readOnly": true,
           "x-nullable": true
         },
@@ -70423,112 +70429,6 @@ export const OPENAPI_CONTRACT = Object.freeze({
         },
         "agent_type": {
           "title": "Agent type",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1
-        }
-      }
-    },
-    "TestExecutionItemResponse": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "title": "Id",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1
-        },
-        "status": {
-          "title": "Status",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1
-        },
-        "scenarios": {
-          "title": "Scenarios",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1
-        },
-        "start_time": {
-          "title": "Start time",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "duration": {
-          "title": "Duration",
-          "type": "integer",
-          "readOnly": true
-        },
-        "error_reason": {
-          "title": "Error reason",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1,
-          "x-nullable": true
-        },
-        "success_rate": {
-          "title": "Success rate",
-          "type": "number",
-          "readOnly": true
-        },
-        "avg_response_time": {
-          "title": "Avg response time",
-          "type": "number",
-          "readOnly": true
-        },
-        "calls": {
-          "title": "Calls",
-          "type": "integer",
-          "readOnly": true
-        },
-        "calls_attempted": {
-          "title": "Calls attempted",
-          "type": "integer",
-          "readOnly": true
-        },
-        "connected_calls": {
-          "title": "Connected calls",
-          "type": "integer",
-          "readOnly": true
-        },
-        "agent_version": {
-          "title": "Agent version",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1
-        },
-        "agent_definition": {
-          "title": "Agent definition",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1
-        },
-        "calls_connected_percentage": {
-          "title": "Calls connected percentage",
-          "type": "number",
-          "readOnly": true
-        },
-        "total_chats": {
-          "title": "Total chats",
-          "type": "integer",
-          "readOnly": true
-        },
-        "agent_type": {
-          "title": "Agent type",
-          "type": "string",
-          "readOnly": true,
-          "minLength": 1
-        },
-        "total_number_of_fagi_agent_turns": {
-          "title": "Total number of fagi agent turns",
-          "type": "integer",
-          "readOnly": true
-        },
-        "source_type": {
-          "title": "Source type",
           "type": "string",
           "readOnly": true,
           "minLength": 1
@@ -87200,6 +87100,112 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "type": "string",
             "format": "uuid"
           }
+        }
+      }
+    },
+    "TestExecutionItemResponse": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "status": {
+          "title": "Status",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "scenarios": {
+          "title": "Scenarios",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "start_time": {
+          "title": "Start time",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "duration": {
+          "title": "Duration",
+          "type": "integer",
+          "readOnly": true
+        },
+        "error_reason": {
+          "title": "Error reason",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1,
+          "x-nullable": true
+        },
+        "success_rate": {
+          "title": "Success rate",
+          "type": "number",
+          "readOnly": true
+        },
+        "avg_response_time": {
+          "title": "Avg response time",
+          "type": "number",
+          "readOnly": true
+        },
+        "calls": {
+          "title": "Calls",
+          "type": "integer",
+          "readOnly": true
+        },
+        "calls_attempted": {
+          "title": "Calls attempted",
+          "type": "integer",
+          "readOnly": true
+        },
+        "connected_calls": {
+          "title": "Connected calls",
+          "type": "integer",
+          "readOnly": true
+        },
+        "agent_version": {
+          "title": "Agent version",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "agent_definition": {
+          "title": "Agent definition",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "calls_connected_percentage": {
+          "title": "Calls connected percentage",
+          "type": "number",
+          "readOnly": true
+        },
+        "total_chats": {
+          "title": "Total chats",
+          "type": "integer",
+          "readOnly": true
+        },
+        "agent_type": {
+          "title": "Agent type",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
+        },
+        "total_number_of_fagi_agent_turns": {
+          "title": "Total number of fagi agent turns",
+          "type": "integer",
+          "readOnly": true
+        },
+        "source_type": {
+          "title": "Source type",
+          "type": "string",
+          "readOnly": true,
+          "minLength": 1
         }
       }
     },

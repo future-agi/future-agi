@@ -232,6 +232,31 @@ def source_project(source_obj, organization=None):
     return qs.first()
 
 
+_TRACER_SOURCE_TYPES = frozenset(
+    {
+        QueueItemSourceType.TRACE.value,
+        QueueItemSourceType.OBSERVATION_SPAN.value,
+        QueueItemSourceType.TRACE_SESSION.value,
+    }
+)
+
+
+def tracer_project_id_for_source(source_type, source_obj):
+    """Denormalized ``tracer.Project`` id for a Score on *source_obj*, or ``None``.
+
+    Only tracer sources (trace/observation_span/trace_session) carry a tracer
+    project; other source types return ``None``. Reads ``project_id`` straight
+    off the source object (no DB hit) so it's safe on the hot write path.
+    """
+    if source_type not in _TRACER_SOURCE_TYPES:
+        return None
+    project_id = getattr(source_obj, "project_id", None)
+    if project_id is not None:
+        return project_id
+    project = getattr(source_obj, "project", None)
+    return getattr(project, "id", None) if project is not None else None
+
+
 def _resolve_default_queue_scope(source_type, source_obj, organization=None):
     """Return ``(lookup_kwargs, scope_name)`` identifying the default-queue
     scope for *source_obj*, or ``(None, None)`` if the source has no

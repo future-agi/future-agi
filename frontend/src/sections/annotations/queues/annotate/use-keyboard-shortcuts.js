@@ -24,6 +24,8 @@ export default function useKeyboardShortcuts({
   onPrev,
   onNext,
   onEscape,
+  canPrev = true,
+  canNext = true,
 }) {
   useEffect(() => {
     const handler = (e) => {
@@ -46,12 +48,13 @@ export default function useKeyboardShortcuts({
           onSkip?.();
           break;
         case "ArrowLeft":
+          // Suppress native arrow scroll even at the boundary; only gate the nav.
           e.preventDefault();
-          onPrev?.();
+          if (canPrev) onPrev?.();
           break;
         case "ArrowRight":
           e.preventDefault();
-          onNext?.();
+          if (canNext) onNext?.();
           break;
         case "Escape":
           e.preventDefault();
@@ -64,5 +67,5 @@ export default function useKeyboardShortcuts({
 
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [onSubmit, onSkip, onPrev, onNext, onEscape]);
+  }, [onSubmit, onSkip, onPrev, onNext, onEscape, canPrev, canNext]);
 }

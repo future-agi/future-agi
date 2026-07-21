@@ -12703,11 +12703,23 @@ export interface PromptFolderApi {
 
 export type PromptHistoryExecutionApiOutput = { [key: string]: unknown };
 
+/**
+ *
+Get prompt_config_snapshot with backward compatibility for modelDetail.
+If modelDetail is missing from configuration, generate it from the model name.
+
+ */
+export type PromptHistoryExecutionApiPromptConfigSnapshot = { [key: string]: unknown };
+
 export type PromptHistoryExecutionApiMetadata = { [key: string]: unknown };
+
+export type PromptHistoryExecutionApiVariableNames = { [key: string]: unknown };
 
 export type PromptHistoryExecutionApiEvaluationResults = { [key: string]: unknown };
 
 export type PromptHistoryExecutionApiEvaluationConfigs = { [key: string]: unknown };
+
+export type PromptHistoryExecutionApiLabels = { [key: string]: unknown };
 
 export type PromptHistoryExecutionApiPlaceholders = { [key: string]: unknown };
 
@@ -12719,19 +12731,24 @@ export interface PromptHistoryExecutionApi {
      */
   template_version: string;
   readonly output?: PromptHistoryExecutionApiOutput;
-  readonly prompt_config_snapshot?: string;
+  /**
+  Get prompt_config_snapshot with backward compatibility for modelDetail.
+  If modelDetail is missing from configuration, generate it from the model name.
+   */
+  readonly prompt_config_snapshot?: PromptHistoryExecutionApiPromptConfigSnapshot;
+  /** @minLength 1 */
   readonly template_name?: string;
   original_template?: string;
-  metadata?: PromptHistoryExecutionApiMetadata;
-  readonly variable_names?: string;
+  readonly metadata?: PromptHistoryExecutionApiMetadata;
+  readonly variable_names?: PromptHistoryExecutionApiVariableNames;
   evaluation_results?: PromptHistoryExecutionApiEvaluationResults;
-  evaluation_configs?: PromptHistoryExecutionApiEvaluationConfigs;
+  readonly evaluation_configs?: PromptHistoryExecutionApiEvaluationConfigs;
   readonly created_at?: string;
   is_default?: boolean;
   commit_message?: string;
   readonly updated_at?: string;
   is_draft?: boolean;
-  readonly labels?: string;
+  readonly labels?: PromptHistoryExecutionApiLabels;
   placeholders?: PromptHistoryExecutionApiPlaceholders;
   prompt_base_template?: string;
 }
@@ -16102,9 +16119,9 @@ export interface PersonaFieldOptionsApi {
   readonly regional_mix_choices?: string;
 }
 
-export type RunTestResponseApiAgentVersion = {[key: string]: string};
+export type RunTestResponseApiAgentVersion = { [key: string]: unknown };
 
-export type RunTestResponseApiAgentDefinitionDetail = {[key: string]: string};
+export type RunTestResponseApiAgentDefinitionDetail = { [key: string]: unknown };
 
 /**
  * Source type for the test run: agent_definition or prompt
@@ -16117,13 +16134,13 @@ export const RunTestResponseApiSourceType = {
   prompt: 'prompt',
 } as const;
 
-export type RunTestResponseApiPromptTemplateDetail = {[key: string]: string};
+export type RunTestResponseApiPromptTemplateDetail = { [key: string]: unknown };
 
-export type RunTestResponseApiPromptVersionDetail = {[key: string]: string};
+export type RunTestResponseApiPromptVersionDetail = { [key: string]: unknown };
 
-export type RunTestResponseApiScenariosDetailItem = {[key: string]: string};
+export type RunTestResponseApiScenariosDetailItem = { [key: string]: unknown };
 
-export type RunTestResponseApiSimulatorAgentDetail = {[key: string]: string};
+export type RunTestResponseApiSimulatorAgentDetail = { [key: string]: unknown };
 
 export type SimulateEvalConfigResponseApiConfig = { [key: string]: unknown };
 
@@ -16176,10 +16193,6 @@ export interface RunTestResponseApi {
      * @minLength 1
      */
   readonly name?: string;
-  /**
-     * Description of the test run
-     * @minLength 1
-     */
   readonly description?: string;
   /** Agent definition for this test run */
   readonly agent_definition?: string;
@@ -17366,6 +17379,15 @@ export interface TestExecutionItemResponseApi {
   readonly total_number_of_fagi_agent_turns?: number;
   /** @minLength 1 */
   readonly source_type?: string;
+}
+
+export interface RunTestExecutionsResponseApi {
+  readonly count?: number;
+  /** @minLength 1 */
+  readonly next?: string;
+  /** @minLength 1 */
+  readonly previous?: string;
+  readonly results?: readonly TestExecutionItemResponseApi[];
 }
 
 /**

@@ -57,12 +57,12 @@ from tracer.serializers.filters import (
 )
 from tracer.serializers.trace import (
     TraceAgentGraphQuerySerializer,
+    TraceDetailResponseSerializer,
     TraceExportQuerySerializer,
     TraceIndexQuerySerializer,
     TraceListQuerySerializer,
     TraceObserveIndexQuerySerializer,
     TraceObserveListQuerySerializer,
-    TraceDetailResponseSerializer,
     TraceObserveListResponseSerializer,
     TraceSerializer,
     TraceVoiceCallListQuerySerializer,
@@ -76,6 +76,7 @@ from tracer.services.clickhouse.graph_dispatch import (
     fetch_eval_graph_ch,
     fetch_system_metric_graph_ch,
 )
+from tracer.services.clickhouse.page_dedup import paginate_deduped
 from tracer.services.clickhouse.query_builders import (
     AgentGraphQueryBuilder,
 )
@@ -113,7 +114,6 @@ ERROR_RESPONSES = {
     400: ApiErrorResponseSerializer,
     500: ApiErrorResponseSerializer,
 }
-
 
 
 class TraceTagsUpdateSerializer(serializers.Serializer):
@@ -570,7 +570,9 @@ def _simulation_context_for_voice_call(
     }
 
 
-def _build_annotation_map_from_scores(trace_ids, annotation_label_ids, label_types):
+def _build_annotation_map_from_scores(
+    trace_ids, annotation_label_ids, label_types, span_trace_map=None
+):
     """Fetch annotation values from PG Score table and build annotation_map.
 
     Always reads from PG to guarantee read-after-write consistency —
@@ -583,9 +585,12 @@ def _build_annotation_map_from_scores(trace_ids, annotation_label_ids, label_typ
     """
     if not trace_ids or not annotation_label_ids:
         return {}
+    if span_trace_map is None:
+        from tracer.services.clickhouse.query_service import AnalyticsQueryService
 
+        span_trace_map = AnalyticsQueryService().get_span_trace_map(trace_ids)
     return _build_annotation_map_from_scores_pg(
-        trace_ids, annotation_label_ids, label_types
+        trace_ids, annotation_label_ids, label_types, span_trace_map
     )
 
 
@@ -761,7 +766,9 @@ def _build_annotation_map_from_scores_ch(trace_ids, annotation_label_ids, label_
     return annotation_map
 
 
-def _build_annotation_map_from_scores_pg(trace_ids, annotation_label_ids, label_types):
+def _build_annotation_map_from_scores_pg(
+    trace_ids, annotation_label_ids, label_types, span_trace_map=None
+):
     """PG fallback implementation of annotation map builder.
 
     Per-queue scoring means a single (trace, label, annotator) can now
@@ -774,24 +781,21 @@ def _build_annotation_map_from_scores_pg(trace_ids, annotation_label_ids, label_
     """
     from django.db.models import Q
 
+    span_trace_map = span_trace_map or {}
+    span_ids = list(span_trace_map.keys())
     annotation_map = {}
-    # Query scores linked directly to trace OR via observation_span → trace
+    # Trace- or span-linked scores by column id (no dropped-table JOIN).
     scores = Score.objects.filter(
-        Q(trace_id__in=trace_ids) | Q(observation_span__trace_id__in=trace_ids),
+        Q(trace_id__in=trace_ids) | Q(observation_span_id__in=span_ids),
         label_id__in=annotation_label_ids,
         deleted=False,
-    ).select_related("annotator", "observation_span")
+    ).select_related("annotator")
 
     for s in scores:
-        # Resolve trace_id — either directly set or via observation_span FK
         tid = (
             str(s.trace_id)
             if s.trace_id
-            else (
-                str(s.observation_span.trace_id)
-                if s.observation_span and s.observation_span.trace_id
-                else None
-            )
+            else span_trace_map.get(str(s.observation_span_id))
         )
         if not tid or tid == "None":
             continue
@@ -1592,8 +1596,28 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             # CH-only path. Legacy PG fallback removed: EvalLogger lives in
             # CH now and the PG `tracer_evallogger` table is destined for
             # deletion. If CH errors, propagate so the operator sees it.
-            eval_config_ids = analytics.get_eval_config_ids_with_data_ch(
-                str(project_id)
+            #
+            # Resolve this project's configs from PG (project FK), then ask CH
+            # which have EVER produced eval data via the candidate-id fast path.
+            # window_days=None on purpose: the eval-name/metric picker must not
+            # depend on 30-day recency — a historically-run eval must stay
+            # listable. The custom_eval_config_id IN (…) scope hits the eval
+            # table's leading sort key, so unbounded-in-time stays memory-safe
+            # (no OOM) unlike the old trace-join discovery.
+            project_config_ids = [
+                str(cid)
+                for cid in CustomEvalConfig.objects.filter(
+                    project_id=project_id, deleted=False
+                ).values_list("id", flat=True)
+            ]
+            eval_config_ids = (
+                analytics.get_eval_config_ids_with_data_ch(
+                    str(project_id),
+                    candidate_config_ids=project_config_ids,
+                    window_days=None,
+                )
+                if project_config_ids
+                else []
             )
 
             # Config lookup always from PG (small config table)
@@ -1988,7 +2012,9 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                             ):
                                 total_eval_configs[
                                     str(metric["custom_eval_config_id"]) + "**" + choice
-                                ] = metric["custom_eval_config__name"] + " - " + choice
+                                ] = (
+                                    metric["custom_eval_config__name"] + " - " + choice
+                                )
                 else:
                     score = (
                         metric["avg_float_score"]
@@ -3435,24 +3461,39 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
             ).select_related("eval_template")
             eval_config_ids = [str(c.id) for c in eval_configs]
         else:
-            eval_table, eval_nd = eval_logger_source()
-            ch_result = analytics.execute_ch_query(
-                "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-                f"FROM {eval_table} FINAL "
-                f"WHERE {eval_nd} "
-                "AND dictGet('trace_dict', 'project_id', "
-                "trace_id) = toUUID(%(pid)s)",
-                {"pid": str(project_id)},
-                timeout_ms=30000,
-            )
-            ch_ids = [r.get("cid", "") for r in ch_result.data if r.get("cid")]
-            if ch_ids:
-                eval_configs = CustomEvalConfig.objects.filter(
-                    id__in=ch_ids, deleted=False
+            # PERF: resolve this project's configs from PG first (indexed by
+            # the project FK), then ask CH which of them have recent data via
+            # a ``custom_eval_config_id IN (…)`` scope — the eval table's
+            # leading sort key, so CH prunes to just those configs. The old
+            # inline query ran ``FINAL`` over the ENTIRE eval table plus a
+            # per-row ``dictGet('trace_dict', 'project_id', …)`` call — a
+            # full-table merge + dictionary lookup per eval row that
+            # OOM-crashed the server at tens of millions of eval rows. See
+            # AnalyticsQueryService.get_eval_config_ids_with_data_ch.
+            project_configs = list(
+                CustomEvalConfig.objects.filter(
+                    project_id=project_id, deleted=False
                 ).select_related("eval_template")
-                eval_config_ids = [str(c.id) for c in eval_configs]
-            else:
-                eval_configs = []
+            )
+            candidate_ids = [str(c.id) for c in project_configs]
+            # Discover eval columns over the requested window (cover
+            # [start, now]), not a fixed 30 days — so configs with data anywhere
+            # in the viewed range keep their columns. Bounded by candidate ids.
+            window_days = BuilderCls.window_days_covering(filters)
+            ids_with_data = (
+                set(
+                    analytics.get_eval_config_ids_with_data_ch(
+                        str(project_id),
+                        timeout_ms=30000,
+                        candidate_config_ids=candidate_ids,
+                        window_days=window_days,
+                    )
+                )
+                if candidate_ids
+                else set()
+            )
+            eval_configs = [c for c in project_configs if str(c.id) in ids_with_data]
+            eval_config_ids = [str(c.id) for c in eval_configs]
 
         # Annotation labels — skip in org-scoped mode (deferred enhancement)
         if org_scope:
@@ -3475,7 +3516,18 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Phase 1: Paginated traces (light columns only — no input/output)
         query, params = builder.build()
         result = analytics.execute_ch_query(query, params, timeout_ms=10000)
-        result.data = result.data[:page_size]
+
+        # Prefix-dedup pagination: Phase 1 dropped `LIMIT 1 BY trace_id` (its
+        # O(roots-in-window) full sort OOM-crashed CH — see
+        # TraceListQueryBuilder.build) and instead fetched the sorted prefix
+        # [0, offset + 2*page_size). De-dup the prefix by trace id and slice
+        # the page — every page is a disjoint slice of the same globally
+        # de-duplicated stream, so a trace (even a multi-root one whose roots
+        # sort pages apart) can never appear on two pages and none is
+        # skipped. See page_dedup.py.
+        result.data, _has_more = paginate_deduped(
+            result.data, "trace_id", page_number, page_size
+        )
 
         # Count
         count_query, count_params = builder.build_count_query()
@@ -3536,9 +3588,10 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     list(eval_result.data[0].keys()) if eval_result.data else [],
                 )
 
-        # Phase 3: Annotations — fetch from PG Score (unified annotation system)
+        # Phase 3: Annotations — PG values, span->trace resolved via CH.
+        span_trace_map = analytics.get_span_trace_map(trace_ids) if trace_ids else {}
         annotation_map = _build_annotation_map_from_scores(
-            trace_ids, annotation_label_ids, label_types
+            trace_ids, annotation_label_ids, label_types, span_trace_map
         )
 
         # Phase 4: Aggregated span attributes for custom columns
@@ -4082,26 +4135,37 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         )
         project_id = str(project_version.project_id)
 
-        # Get eval config IDs from CH (fast) instead of PG EvalLogger scan
-        eval_config_ids = []
-        eval_table, eval_nd = eval_logger_source()
-        ch_result = analytics.execute_ch_query(
-            "SELECT DISTINCT toString(custom_eval_config_id) AS cid "
-            f"FROM {eval_table} FINAL "
-            f"WHERE {eval_nd} "
-            "AND dictGet('trace_dict', 'project_id', "
-            "trace_id) = toUUID(%(pid)s)",
-            {"pid": project_id},
-            timeout_ms=30000,
-        )
-        ch_ids = [r.get("cid", "") for r in ch_result.data if r.get("cid")]
-        if ch_ids:
-            eval_configs = CustomEvalConfig.objects.filter(
-                id__in=ch_ids, deleted=False
+        # PERF: resolve this project's configs from PG first (indexed by the
+        # project FK), then ask CH which of them have recent data via a
+        # ``custom_eval_config_id IN (…)`` scope — the eval table's leading
+        # sort key. The old inline query ran ``FINAL`` over the ENTIRE eval
+        # table plus a per-row ``dictGet('trace_dict', …)`` — a full-table
+        # merge that OOM-crashed the server at tens of millions of eval rows.
+        # See AnalyticsQueryService.get_eval_config_ids_with_data_ch.
+        project_configs = list(
+            CustomEvalConfig.objects.filter(
+                project_id=project_id, deleted=False
             ).select_related("eval_template")
-            eval_config_ids = [str(c.id) for c in eval_configs]
-        else:
-            eval_configs = []
+        )
+        candidate_ids = [str(c.id) for c in project_configs]
+        # Discover eval columns over the requested window (cover [start, now]),
+        # not a fixed 30 days — so configs with data anywhere in the viewed range
+        # keep their columns. Bounded by candidate ids.
+        window_days = BuilderCls.window_days_covering(filters)
+        ids_with_data = (
+            set(
+                analytics.get_eval_config_ids_with_data_ch(
+                    str(project_id),
+                    timeout_ms=30000,
+                    candidate_config_ids=candidate_ids,
+                    window_days=window_days,
+                )
+            )
+            if candidate_ids
+            else set()
+        )
+        eval_configs = [c for c in project_configs if str(c.id) in ids_with_data]
+        eval_config_ids = [str(c.id) for c in eval_configs]
 
         # Get annotation labels that have actual annotations for this project
         annotation_labels = get_annotation_labels_for_project(
@@ -4123,7 +4187,13 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
         # Phase 1: Get paginated traces
         query, params = builder.build()
         result = analytics.execute_ch_query(query, params, timeout_ms=10000)
-        result.data = result.data[:page_size]
+
+        # Prefix-dedup pagination (Phase 1 fetches the sorted prefix
+        # [0, offset + 2*page_size); dedup by trace id + slice — see
+        # TraceListQueryBuilder.build and page_dedup.py).
+        result.data, _has_more = paginate_deduped(
+            result.data, "trace_id", page_number, page_size
+        )
 
         # Phase 1b: heavy columns (input/output + root-span attrs) for the page.
         # Root-span attrs feed custom columns; without this merge they render "-".
