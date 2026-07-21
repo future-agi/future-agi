@@ -287,13 +287,6 @@ def get_smallest_ai_tts_parameters(model_name: str) -> dict:
                 "description": "Speaking speed multiplier (1.0 = normal)",
             },
         ],
-        "boolean": [
-            {
-                "label": "add_wav_header",
-                "default": True,
-                "description": "Prepend WAV header to response audio bytes",
-            },
-        ],
     }
 
 
