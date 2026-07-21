@@ -208,6 +208,7 @@ class OrgApiKeyAdmin(admin.ModelAdmin):
         "organization",
         "type",
         "enabled",
+        "expires_at",
         "user",
         "workspace",
         "created_at",
@@ -220,7 +221,7 @@ class OrgApiKeyAdmin(admin.ModelAdmin):
     fieldsets = (
         (None, {"fields": ("name", "organization", "type")}),
         ("Access Control", {"fields": ("user", "workspace")}),
-        ("Status", {"fields": ("enabled",)}),
+        ("Status", {"fields": ("enabled", "expires_at")}),
         ("Keys", {"fields": ("api_key", "secret_key")}),
         ("Metadata", {"fields": ("id", "created_at")}),
     )
