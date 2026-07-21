@@ -21,7 +21,7 @@ import useWorkflowExecution from "../../hooks/useWorkflowExecution";
 import useCanEditAgent from "../../hooks/useCanEditAgent";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
-function FormField({ label, value, onChange }) {
+function FormField({ label, value, onChange, readOnly }) {
   return (
     <Stack
       direction={"column"}
@@ -30,6 +30,8 @@ function FormField({ label, value, onChange }) {
         border: "1px solid",
         borderColor: "whiteScale.500",
         borderRadius: (theme) => theme.spacing(0.5, 0.5, 0, 0),
+        overflow: "hidden",
+        ...(readOnly && { opacity: 0.6 }),
       }}
     >
       <Box
@@ -56,9 +58,15 @@ function FormField({ label, value, onChange }) {
           "& .MuiOutlinedInput-notchedOutline": {
             border: "none",
           },
+          ...(readOnly && {
+            "& .MuiInputBase-input": {
+              cursor: "default",
+            },
+          }),
         }}
         value={value}
         onChange={onChange}
+        InputProps={{ readOnly }}
       />
     </Stack>
   );
@@ -68,6 +76,7 @@ FormField.propTypes = {
   label: PropTypes.string.isRequired,
   value: PropTypes.string.isRequired,
   onChange: PropTypes.func.isRequired,
+  readOnly: PropTypes.bool,
 };
 
 export default function ManualVariablesForm({
@@ -170,6 +179,7 @@ export default function ManualVariablesForm({
                     label={key}
                     value={field.value}
                     onChange={field.onChange}
+                    readOnly={!canEditAgent}
                   />
                 )}
               />
