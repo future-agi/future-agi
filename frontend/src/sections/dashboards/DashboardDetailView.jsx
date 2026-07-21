@@ -53,8 +53,10 @@ import {
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { ConfirmDialog } from "src/components/custom-dialog";
 import { useSnackbar } from "src/components/snackbar";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import WidgetChart from "./WidgetChart";
 import { resolveGlobalDateRange } from "./dashboardDateRange";
+import useCanEditDashboard from "./hooks/useCanEditDashboard";
 import {
   DndContext,
   DragOverlay,
@@ -93,7 +95,7 @@ function computeRows(widgets) {
 // InlineEdit — click-to-edit text field
 // ---------------------------------------------------------------------------
 const InlineEdit = forwardRef(function InlineEdit(
-  { value, onSave, placeholder, typographyProps, multiline },
+  { value, onSave, placeholder, typographyProps, multiline, readOnly = false },
   ref,
 ) {
   const [editing, setEditing] = useState(false);
@@ -101,6 +103,7 @@ const InlineEdit = forwardRef(function InlineEdit(
   const inputRef = useRef(null);
 
   const startEdit = () => {
+    if (readOnly) return;
     setDraft(value || "");
     setEditing(true);
     setTimeout(() => inputRef.current?.focus(), 0);
@@ -158,15 +161,17 @@ const InlineEdit = forwardRef(function InlineEdit(
       {...typographyProps}
       onClick={startEdit}
       sx={{
-        cursor: "pointer",
+        cursor: readOnly ? "default" : "pointer",
         borderRadius: 1,
         px: 1,
         py: 0.5,
         border: "2px solid transparent",
-        "&:hover": {
-          border: "2px solid",
-          borderColor: "divider",
-        },
+        "&:hover": readOnly
+          ? undefined
+          : {
+              border: "2px solid",
+              borderColor: "divider",
+            },
         transition: "border-color 0.15s",
         ...typographyProps?.sx,
       }}
@@ -437,11 +442,13 @@ function DraggableWidgetCard({
   _isDragActive,
   rowHeight,
   datePreset,
+  isReadOnly,
 }) {
   const theme = useTheme();
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: widget.id,
     data: { widget },
+    disabled: isReadOnly,
   });
 
   const widgetHeight =
@@ -492,22 +499,23 @@ function DraggableWidgetCard({
         >
           {/* Header row — entire bar is the drag activator */}
           <div
-            {...attributes}
-            {...listeners}
+            {...(isReadOnly ? {} : { ...attributes, ...listeners })}
             style={{
               display: "flex",
               flexDirection: "row",
               alignItems: "center",
               marginBottom: 4,
               minHeight: 24,
-              cursor: "grab",
+              cursor: isReadOnly ? "default" : "grab",
             }}
           >
-            <Iconify
-              icon="mdi:drag"
-              width={16}
-              sx={{ color: "text.disabled", mr: 0.5, flexShrink: 0 }}
-            />
+            {!isReadOnly && (
+              <Iconify
+                icon="mdi:drag"
+                width={16}
+                sx={{ color: "text.disabled", mr: 0.5, flexShrink: 0 }}
+              />
+            )}
 
             <Typography
               variant="subtitle2"
@@ -529,35 +537,37 @@ function DraggableWidgetCard({
             </Typography>
 
             {/* Actions */}
-            <Stack
-              className="widget-actions"
-              direction="row"
-              spacing={0}
-              onPointerDown={(e) => e.stopPropagation()}
-              sx={{ opacity: 0, transition: "opacity 0.15s" }}
-            >
-              <Tooltip title="Edit">
-                <IconButton
-                  size="small"
-                  onClick={() =>
-                    navigate(
-                      `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`,
-                    )
-                  }
-                >
-                  <Iconify icon="mdi:pencil-outline" width={16} />
-                </IconButton>
-              </Tooltip>
-              <Tooltip title="More">
-                <IconButton
-                  size="small"
-                  aria-label="Widget options"
-                  onClick={(e) => onMenuOpen(e, widget)}
-                >
-                  <Iconify icon="mdi:dots-vertical" width={16} />
-                </IconButton>
-              </Tooltip>
-            </Stack>
+            {!isReadOnly && (
+              <Stack
+                className="widget-actions"
+                direction="row"
+                spacing={0}
+                onPointerDown={(e) => e.stopPropagation()}
+                sx={{ opacity: 0, transition: "opacity 0.15s" }}
+              >
+                <Tooltip title="Edit">
+                  <IconButton
+                    size="small"
+                    onClick={() =>
+                      navigate(
+                        `/dashboard/dashboards/${dashboardId}/widget/${widget.id}${datePreset ? `?timePreset=${datePreset}` : ""}`,
+                      )
+                    }
+                  >
+                    <Iconify icon="mdi:pencil-outline" width={16} />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="More">
+                  <IconButton
+                    size="small"
+                    aria-label="Widget options"
+                    onClick={(e) => onMenuOpen(e, widget)}
+                  >
+                    <Iconify icon="mdi:dots-vertical" width={16} />
+                  </IconButton>
+                </Tooltip>
+              </Stack>
+            )}
           </div>
 
           {/* Chart */}
@@ -631,6 +641,8 @@ export default function DashboardDetailView() {
   const navigate = useNavigate();
   const { dashboardId } = useParams();
   const { enqueueSnackbar } = useSnackbar();
+
+  const { canUpdate, isReadOnly } = useCanEditDashboard();
 
   const { data: dashboard, isLoading } = useDashboardDetail(dashboardId);
   const updateDashboard = useUpdateDashboard();
@@ -1096,15 +1108,17 @@ export default function DashboardDetailView() {
               />
             </IconButton>
           </Tooltip>
-          <Tooltip title="More options">
-            <IconButton
-              size="small"
-              aria-label="Dashboard options"
-              onClick={(e) => setDashMenuAnchor(e.currentTarget)}
-            >
-              <Iconify icon="mdi:dots-horizontal" width={20} />
-            </IconButton>
-          </Tooltip>
+          {!isReadOnly && (
+            <Tooltip title="More options">
+              <IconButton
+                size="small"
+                aria-label="Dashboard options"
+                onClick={(e) => setDashMenuAnchor(e.currentTarget)}
+              >
+                <Iconify icon="mdi:dots-horizontal" width={20} />
+              </IconButton>
+            </Tooltip>
+          )}
         </Stack>
       </Stack>
 
@@ -1190,6 +1204,7 @@ export default function DashboardDetailView() {
           value={dashboard.name}
           onSave={handleNameSave}
           placeholder="Untitled Dashboard"
+          readOnly={!canUpdate}
           typographyProps={{
             variant: "h4",
             sx: {
@@ -1205,6 +1220,7 @@ export default function DashboardDetailView() {
           onSave={handleDescSave}
           placeholder="+ Add description..."
           multiline
+          readOnly={!canUpdate}
           typographyProps={{
             variant: "body2",
             sx: {
@@ -1243,17 +1259,28 @@ export default function DashboardDetailView() {
             <Typography variant="body2" color="text.secondary">
               Add your first widget to start visualizing data
             </Typography>
-            <Button
-              variant="outlined"
-              startIcon={<Iconify icon="mdi:plus" />}
-              onClick={() =>
-                navigate(
-                  `/dashboard/dashboards/${dashboardId}/widget/new${datePreset ? `?timePreset=${datePreset}` : ""}`,
-                )
-              }
+            <CustomTooltip
+              show={isReadOnly}
+              type=""
+              title="You don't have permission to add widgets."
+              size="small"
+              arrow
             >
-              Add Widget
-            </Button>
+              <span>
+                <Button
+                  variant="outlined"
+                  startIcon={<Iconify icon="mdi:plus" />}
+                  disabled={isReadOnly}
+                  onClick={() =>
+                    navigate(
+                      `/dashboard/dashboards/${dashboardId}/widget/new${datePreset ? `?timePreset=${datePreset}` : ""}`,
+                    )
+                  }
+                >
+                  Add Widget
+                </Button>
+              </span>
+            </CustomTooltip>
           </Box>
         ) : (
           <>
@@ -1297,7 +1324,7 @@ export default function DashboardDetailView() {
                       }}
                     >
                       {/* Add-to-row button */}
-                      {!activeWidget && row.length < 4 && (
+                      {!activeWidget && row.length < 4 && !isReadOnly && (
                         <Tooltip title="Add widget to row" placement="left">
                           <IconButton
                             className="row-add-btn"
@@ -1353,17 +1380,20 @@ export default function DashboardDetailView() {
                               isDragActive={!!activeWidget}
                               rowHeight={rowHeight}
                               datePreset={datePreset}
+                              isReadOnly={isReadOnly}
                             />
 
                             {/* Resize handle between adjacent widgets */}
-                            {!activeWidget && widgetIdx < row.length - 1 && (
-                              <ResizeHandle
-                                leftWidget={widget}
-                                rightWidget={row[widgetIdx + 1]}
-                                containerWidth={containerWidth}
-                                onResizeEnd={handleWidthResize}
-                              />
-                            )}
+                            {!activeWidget &&
+                              widgetIdx < row.length - 1 &&
+                              !isReadOnly && (
+                                <ResizeHandle
+                                  leftWidget={widget}
+                                  rightWidget={row[widgetIdx + 1]}
+                                  containerWidth={containerWidth}
+                                  onResizeEnd={handleWidthResize}
+                                />
+                              )}
                           </React.Fragment>
                         ))}
 
@@ -1376,7 +1406,7 @@ export default function DashboardDetailView() {
                     </Box>
 
                     {/* Row-level height resize handle */}
-                    {!activeWidget && (
+                    {!activeWidget && !isReadOnly && (
                       <RowResizeHandle
                         row={row}
                         onRowResize={handleRowResize}
@@ -1402,20 +1432,22 @@ export default function DashboardDetailView() {
             </DndContext>
 
             {/* Add widget button below grid */}
-            <Box sx={{ display: "flex", justifyContent: "center", mt: 3 }}>
-              <Button
-                variant="outlined"
-                startIcon={<Iconify icon="mdi:plus" />}
-                onClick={() =>
-                  navigate(
-                    `/dashboard/dashboards/${dashboardId}/widget/new${datePreset ? `?timePreset=${datePreset}` : ""}`,
-                  )
-                }
-                sx={{ borderStyle: "dashed" }}
-              >
-                Add Widget
-              </Button>
-            </Box>
+            {!isReadOnly && (
+              <Box sx={{ display: "flex", justifyContent: "center", mt: 3 }}>
+                <Button
+                  variant="outlined"
+                  startIcon={<Iconify icon="mdi:plus" />}
+                  onClick={() =>
+                    navigate(
+                      `/dashboard/dashboards/${dashboardId}/widget/new${datePreset ? `?timePreset=${datePreset}` : ""}`,
+                    )
+                  }
+                  sx={{ borderStyle: "dashed" }}
+                >
+                  Add Widget
+                </Button>
+              </Box>
+            )}
           </>
         )}
       </Box>
