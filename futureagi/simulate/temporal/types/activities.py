@@ -371,6 +371,8 @@ class MonitorCallInput:
     provider_call_id: str
     call_type: str  # "inbound" or "outbound"
     provider: str
+    # Customer's provider (agent under test); selects the SIP-outbound poll path.
+    client_provider: str = "vapi"
     provider_config: dict[str, Any] = field(default_factory=dict)
     poll_interval_seconds: int = 20
     max_duration_seconds: int = 14400  # 4 hours
@@ -741,6 +743,11 @@ class InitiateCallInput:
     user_assistant_id: Optional[str] = None
     user_phone_number: Optional[str] = None  # User's phone to call from
 
+    # Customer's provider ("vapi"/"bland"/...) — the agent under test. Distinct
+    # from `provider` above, which is the system simulator. Selects the data
+    # plane for the SIP-outbound trigger.
+    client_provider: str = "vapi"
+
     # WebRTC bridge connection type (None = SIP, "web_vapi", "web_retell")
     connection_type: Optional[str] = None
 
@@ -834,6 +841,8 @@ class FetchAndPersistCallResultInput:
         str  # Provider name — use str to avoid Temporal str,Enum deserialization bug
     )
     call_type: str  # "inbound" or "outbound" — use str to avoid Temporal str,Enum deserialization bug
+    # Customer's provider (agent under test); selects the SIP-outbound fetch path.
+    client_provider: str = "vapi"
     duration_seconds: Optional[float] = None
     end_reason: Optional[str] = None
     provider_data: dict[str, Any] = field(default_factory=dict)

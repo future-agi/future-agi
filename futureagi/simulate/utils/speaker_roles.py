@@ -81,6 +81,11 @@ class SpeakerRoleResolver:
             return ProviderChoices.LIVEKIT
         if provider_call_data.get(ProviderChoices.VAPI.value):
             return ProviderChoices.VAPI
+        if provider_call_data.get(ProviderChoices.BLAND.value):
+            # Bland's stored transcript shape matches VAPI's outbound
+            # convention, so the VAPI role map applies. Handled explicitly to
+            # avoid the unknown-provider error below firing on every read.
+            return ProviderChoices.VAPI
         logger.error(
             "speaker_role_resolver_unknown_provider",
             provider_call_data_keys=list(provider_call_data.keys()),
