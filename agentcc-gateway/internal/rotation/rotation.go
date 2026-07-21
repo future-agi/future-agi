@@ -40,6 +40,13 @@ type Manager struct {
 	states      map[string]*KeyState
 	drainPeriod time.Duration
 	onRotate    func(providerID, newKey string) // callback to update provider with new key
+
+	// done signals shutdown so in-flight drain timers exit instead of sleeping
+	// for the full (potentially long) drain period; wg tracks them so Stop can
+	// wait for a clean exit. stopOnce guards against a double close.
+	done     chan struct{}
+	wg       sync.WaitGroup
+	stopOnce sync.Once
 }
 
 // NewManager creates a key rotation manager.
@@ -49,7 +56,17 @@ func NewManager(drainPeriod time.Duration, onRotate func(providerID, newKey stri
 		states:      make(map[string]*KeyState),
 		drainPeriod: drainPeriod,
 		onRotate:    onRotate,
+		done:        make(chan struct{}),
 	}
+}
+
+// Stop cancels any in-flight drain timers and waits for their goroutines to
+// exit. Safe to call multiple times.
+func (m *Manager) Stop() {
+	m.stopOnce.Do(func() {
+		close(m.done)
+	})
+	m.wg.Wait()
 }
 
 // RegisterProvider registers a provider with its current key.
@@ -135,10 +152,19 @@ func (m *Manager) Promote(providerID string) error {
 		m.onRotate(providerID, state.Primary)
 	}
 
-	// Schedule drain completion.
+	// Schedule drain completion. Use a cancellable timer (not time.Sleep) so the
+	// goroutine exits promptly on Stop instead of leaking for the full drain
+	// period after the manager is shut down.
+	m.wg.Add(1)
 	go func() {
-		time.Sleep(m.drainPeriod)
-		m.completeDrain(providerID)
+		defer m.wg.Done()
+		timer := time.NewTimer(m.drainPeriod)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			m.completeDrain(providerID)
+		case <-m.done:
+		}
 	}()
 
 	return nil

@@ -132,6 +132,38 @@ func TestPromote_NoPending(t *testing.T) {
 	}
 }
 
+// Stop must cancel an in-flight drain timer promptly instead of leaking a
+// goroutine that sleeps for the full (here, long) drain period.
+func TestStopCancelsDrainGoroutine(t *testing.T) {
+	m := NewManager(10*time.Second, nil) // long drain so it cannot complete on its own
+	m.RegisterProvider("openai", "sk-old")
+	m.StartRotation("openai", "sk-new")
+	if err := m.Promote("openai"); err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		m.Stop() // blocks on the drain goroutine's WaitGroup
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Stop returned promptly — the drain goroutine observed the cancel.
+	case <-time.After(2 * time.Second):
+		t.Fatal("Stop did not return promptly — drain goroutine leaked past cancellation")
+	}
+
+	// The drain was cancelled (not completed), so the state stays draining.
+	state, _ := m.GetStatus("openai")
+	if state.Status != StatusDraining {
+		t.Fatalf("expected still draining after cancel, got %s", state.Status)
+	}
+
+	m.Stop() // must be idempotent
+}
+
 func TestRollback(t *testing.T) {
 	m := NewManager(30*time.Second, nil)
 	m.RegisterProvider("openai", "sk-old")

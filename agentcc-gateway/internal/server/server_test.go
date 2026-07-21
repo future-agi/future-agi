@@ -2285,3 +2285,17 @@ func TestProviderPrefixRouting(t *testing.T) {
 		t.Fatalf("status = %d, want 200. Body: %s", w.Code, string(body))
 	}
 }
+
+func TestServerHeaderLimitsConfigured(t *testing.T) {
+	mock := startMockOpenAI(t)
+	defer mock.Close()
+
+	srv := createTestServer(t, mock.URL)
+
+	if got := srv.httpServer.ReadHeaderTimeout; got != 5*time.Second {
+		t.Errorf("ReadHeaderTimeout = %v, want 5s", got)
+	}
+	if got := srv.httpServer.MaxHeaderBytes; got != 1<<20 {
+		t.Errorf("MaxHeaderBytes = %d, want %d", got, 1<<20)
+	}
+}

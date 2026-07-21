@@ -16,6 +16,12 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.DefaultRequestTimeout != 60*time.Second {
 		t.Errorf("default timeout = %v, want 60s", cfg.Server.DefaultRequestTimeout)
 	}
+	if cfg.Server.ReadHeaderTimeout != 5*time.Second {
+		t.Errorf("default read_header_timeout = %v, want 5s", cfg.Server.ReadHeaderTimeout)
+	}
+	if cfg.Server.MaxHeaderBytes != 1<<20 {
+		t.Errorf("default max_header_bytes = %d, want %d", cfg.Server.MaxHeaderBytes, 1<<20)
+	}
 	if cfg.Logging.Level != "info" {
 		t.Errorf("default log level = %q, want %q", cfg.Logging.Level, "info")
 	}
