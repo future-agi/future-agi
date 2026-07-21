@@ -521,7 +521,10 @@ class TestMetricsEndpoint:
         assert str(label.id) in metric_names
 
     @pytest.mark.django_db
-    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=False)
+    @patch(
+        "tracer.services.dashboard_metrics_catalog.is_clickhouse_enabled",
+        return_value=False,
+    )
     @patch("tracer.views.dashboard.SQL_query_handler.get_span_attributes_for_project")
     def test_metrics_suppresses_customer_attribute_aliases_when_canonical_metric_exists(
         self,
@@ -550,7 +553,10 @@ class TestMetricsEndpoint:
         assert "freeform.attr" in metric_names
 
     @pytest.mark.django_db
-    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=False)
+    @patch(
+        "tracer.services.dashboard_metrics_catalog.is_clickhouse_enabled",
+        return_value=False,
+    )
     @patch("tracer.views.dashboard.SQL_query_handler.get_span_attributes_for_project")
     def test_metrics_exposes_agent_talk_percentage_for_simulator_project(
         self,
@@ -2420,7 +2426,11 @@ class TestDashboardQueryExecution:
 
         assert response.status_code == 200
         sql = mock_service.execute_ch_query.call_args.args[0]
-        assert "span_attr_num" in sql
+        # Numeric span attribute read from the trace builder (spans) -- v1 uses
+        # `span_attr_num`, v2 uses `attrs_number` (flips with the DASHBOARD v1/v2
+        # dispatch). Either way it must NOT route to the simulation call table.
+        assert ("span_attr_num[" in sql) or ("attrs_number[" in sql)
+        assert "FROM spans" in sql
         assert "simulate_call_execution" not in sql
 
     def test_query_action_simulation_metric_failure_does_not_blank_other_metrics(
@@ -2778,6 +2788,8 @@ class TestDashboardQueryExecution:
         assert "SELECT DISTINCT model AS val FROM spans" in sql
 
     @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
     def test_filter_values_session_search_adds_ilike_and_limits_to_20(
         self, _mock_enabled, mock_analytics_cls, auth_client, observe_project
     ):
@@ -2805,6 +2817,8 @@ class TestDashboardQueryExecution:
         assert "LIMIT 500" not in sql
 
     @pytest.mark.django_db
+    @patch("tracer.views.dashboard.AnalyticsQueryService")
+    @patch("tracer.views.dashboard.is_clickhouse_enabled", return_value=True)
     def test_filter_values_session_no_search_uses_limit_500_without_ilike(
         self, _mock_enabled, mock_analytics_cls, auth_client, observe_project
     ):
@@ -3208,7 +3222,11 @@ class TestWidgetQueryExecution:
 
         assert response.status_code == 200
         sql = mock_client.execute_read.call_args.args[0]
-        assert "span_attr_num" in sql
+        # Numeric span attribute read from the trace builder (spans) -- v1 uses
+        # `span_attr_num`, v2 uses `attrs_number` (flips with the DASHBOARD v1/v2
+        # dispatch). Either way it must NOT route to the simulation call table.
+        assert ("span_attr_num[" in sql) or ("attrs_number[" in sql)
+        assert "FROM spans" in sql
         assert "simulate_call_execution" not in sql
 
     @pytest.mark.django_db
