@@ -25,11 +25,11 @@
 # permanently disabling trace ingestion. Keep in sync with the base file.
 x-dev-backend-env: &dev-backend-env
   SECRET_KEY: ${SECRET_KEY:-dev-insecure-secret-key-change-me}
-  ENV_TYPE: ${ENV_TYPE:-development}
+  ENV_TYPE: ${ENV_TYPE:-local}
   EE_LICENSE_KEY: ${EE_LICENSE_KEY:-test-license-key}
   DJANGO_SETTINGS_MODULE: tfc.settings.settings
   FAST_STARTUP: ${FAST_STARTUP:-false}
-  INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=}
+  INTEGRATION_ENCRYPTION_KEY: ${INTEGRATION_ENCRYPTION_KEY:-}
 
   AGENTCC_INTERNAL_URL: http://agentcc-gateway:8080
   AGENTCC_GATEWAY_INTERNAL_URL: http://agentcc-gateway:8080
