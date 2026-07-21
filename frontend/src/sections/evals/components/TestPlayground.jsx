@@ -1,8 +1,10 @@
 import {
   Box,
+  Checkbox,
   Chip,
   CircularProgress,
   IconButton,
+  ListItemText,
   Menu,
   MenuItem,
   Select,
@@ -56,6 +58,22 @@ const camelizeKey = (key = "") =>
   key.replace(/_([a-z])/g, (_, char) => char.toUpperCase());
 
 const formatParamLabel = (key) => camelCaseToTitleCase(camelizeKey(key));
+
+// Some code-eval params are comma-separated lists with a fixed set of allowed
+// values declared in their description as "... Options: a, b, c". Parse those
+// out so we can render a multi-select checkbox dropdown instead of a free-text
+// box, and use the remaining text as helper copy. Returns { options, helper }.
+const parseParamOptions = (description) => {
+  const desc = String(description || "");
+  const match = desc.match(/options?\s*:\s*(.+)$/is);
+  if (!match) return { options: [], helper: desc.trim() };
+  const options = match[1]
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
+  const helper = desc.slice(0, match.index).trim();
+  return { options, helper };
+};
 
 // ── Custom JSON Input with AI bar ──
 const CustomJsonInput = ({
@@ -1478,77 +1496,161 @@ const TestPlayground = React.forwardRef(
                     <Typography variant="body2" fontWeight={600} sx={{ mb: 1 }}>
                       Parameters
                     </Typography>
-                    {visibleFunctionParamEntries.map(([key, schema]) => (
-                      <Box
-                        key={key}
-                        sx={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 1,
-                          mb: 0.75,
-                        }}
-                      >
-                        <Tooltip
-                          title={
-                            configParamsDesc?.[key] || schema?.description || ""
-                          }
-                          placement="top"
-                        >
-                          <Typography
-                            variant="caption"
-                            sx={{
-                              minWidth: 90,
-                              fontFamily: "monospace",
-                              color: "primary.main",
-                            }}
-                          >
-                            {formatParamLabel(key)}
-                          </Typography>
-                        </Tooltip>
+                    {visibleFunctionParamEntries.map(([key, schema]) => {
+                      const desc =
+                        configParamsDesc?.[key] || schema?.description || "";
+                      const { options, helper } = parseParamOptions(desc);
+
+                      // Params that declare a fixed option set (e.g. detect_types)
+                      // render as a multi-select checkbox dropdown — all options
+                      // selected by default — with the description shown as a
+                      // helper line below instead of a hover tooltip.
+                      if (options.length > 0) {
+                        const raw = codeParams[key];
+                        const selected =
+                          raw === undefined ||
+                          raw === null ||
+                          String(raw).trim() === ""
+                            ? options
+                            : String(raw)
+                                .split(",")
+                                .map((v) => v.trim())
+                                .filter((v) => options.includes(v));
+                        return (
+                          <Box key={key} sx={{ mb: 1 }}>
+                            <Typography
+                              variant="caption"
+                              sx={{
+                                display: "block",
+                                mb: 0.5,
+                                fontFamily: "monospace",
+                                color: "primary.main",
+                              }}
+                            >
+                              {formatParamLabel(key)}
+                            </Typography>
+                            <Select
+                              multiple
+                              size="small"
+                              fullWidth
+                              value={selected}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                const next = (
+                                  typeof val === "string" ? val.split(",") : val
+                                ).filter(Boolean);
+                                handleCodeParamChange(key, next.join(","));
+                              }}
+                              renderValue={(vals) => vals.join(", ")}
+                              sx={{
+                                fontSize: "12px",
+                                fontFamily: "monospace",
+                                bgcolor: "background.paper",
+                                "& .MuiSelect-select": { py: 0.75 },
+                              }}
+                            >
+                              {options.map((opt) => (
+                                <MenuItem
+                                  key={opt}
+                                  value={opt}
+                                  dense
+                                  sx={{ fontSize: "12px" }}
+                                >
+                                  <Checkbox
+                                    size="small"
+                                    checked={selected.includes(opt)}
+                                    sx={{ p: 0.5, mr: 1 }}
+                                  />
+                                  <ListItemText
+                                    primary={opt}
+                                    primaryTypographyProps={{
+                                      fontSize: "12px",
+                                      fontFamily: "monospace",
+                                    }}
+                                  />
+                                </MenuItem>
+                              ))}
+                            </Select>
+                            {helper && (
+                              <Typography
+                                variant="caption"
+                                color="text.secondary"
+                                sx={{ display: "block", mt: 0.5 }}
+                              >
+                                {helper}
+                              </Typography>
+                            )}
+                          </Box>
+                        );
+                      }
+
+                      return (
                         <Box
-                          component="input"
-                          type={
-                            schema?.type === "integer" ||
-                            schema?.type === "number"
-                              ? "number"
-                              : "text"
-                          }
-                          placeholder={
-                            schema?.nullable
-                              ? "optional"
-                              : String(schema?.default ?? "")
-                          }
-                          value={codeParams[key] ?? ""}
-                          onChange={(e) => {
-                            // BE's `type: number` schema rejects strings; coerce here.
-                            const raw = e.target.value;
-                            const isNumeric =
-                              schema?.type === "integer" ||
-                              schema?.type === "number";
-                            let next = raw;
-                            if (isNumeric && raw !== "") {
-                              const n = Number(raw);
-                              if (!Number.isNaN(n)) next = n;
-                            }
-                            handleCodeParamChange(key, next);
-                          }}
+                          key={key}
                           sx={{
-                            flex: 1,
-                            px: 1,
-                            py: 0.5,
-                            fontSize: "12px",
-                            fontFamily: "monospace",
-                            border: "1px solid",
-                            borderColor: "divider",
-                            borderRadius: "6px",
-                            bgcolor: "background.paper",
-                            color: "text.primary",
-                            outline: "none",
-                            "&:focus": { borderColor: "primary.main" },
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 1,
+                            mb: 0.75,
                           }}
-                        />
-                      </Box>
-                    ))}
+                        >
+                          <Tooltip title={desc} placement="top">
+                            <Typography
+                              variant="caption"
+                              sx={{
+                                minWidth: 90,
+                                fontFamily: "monospace",
+                                color: "primary.main",
+                              }}
+                            >
+                              {formatParamLabel(key)}
+                            </Typography>
+                          </Tooltip>
+                          <Box
+                            component="input"
+                            type={
+                              schema?.type === "integer" ||
+                              schema?.type === "number"
+                                ? "number"
+                                : "text"
+                            }
+                            placeholder={
+                              schema?.nullable
+                                ? "optional"
+                                : String(schema?.default ?? "")
+                            }
+                            value={codeParams[key] ?? ""}
+                            onChange={(e) => {
+                              // BE's `type: number` schema rejects strings; coerce here.
+                              const rawVal = e.target.value;
+                              const isNumeric =
+                                schema?.type === "integer" ||
+                                schema?.type === "number";
+                              let next = rawVal;
+                              if (isNumeric && rawVal !== "") {
+                                const n = Number(rawVal);
+                                if (!Number.isNaN(n)) next = n;
+                              }
+                              handleCodeParamChange(key, next);
+                            }}
+                            sx={{
+                              flex: 1,
+                              px: 1,
+                              py: 0.5,
+                              fontSize: "12px",
+                              fontFamily: "monospace",
+                              border: "1px solid",
+                              borderColor: "divider",
+                              borderRadius: "6px",
+                              bgcolor: "background.paper",
+                              color: "text.primary",
+                              outline: "none",
+                              "&:focus": { borderColor: "primary.main" },
+                            }}
+                          />
+                        </Box>
+                      );
+                    })}
                   </Box>
                 )}
             </Box>

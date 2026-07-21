@@ -14,7 +14,7 @@ import {
   Typography,
 } from "@mui/material";
 import PropTypes from "prop-types";
-import React, { useCallback } from "react";
+import React, { useCallback, useState } from "react";
 import Iconify from "src/components/iconify";
 import CustomTooltip from "src/components/tooltip/CustomTooltip";
 
@@ -37,6 +37,21 @@ const OutputTypeConfig = ({
   // Category radio is locked if either the whole component is disabled OR
   // categoryLocked is explicitly set.
   const radioDisabled = disabled || categoryLocked;
+
+  // Direction of the score scale for the Scoring output type. Default: higher
+  // score is better (1 = good/green, 0 = bad/red). For negative-meaning evals
+  // (e.g. toxicity, hallucination) the user flips this so a lower score is the
+  // good outcome and the chip colours invert. Creation-time hint only.
+  const [lowerIsBetter, setLowerIsBetter] = useState(false);
+
+  const scoreChipColor = useCallback(
+    (score) => {
+      const isGood = lowerIsBetter ? score <= 0.3 : score >= 0.7;
+      const isMid = lowerIsBetter ? score <= 0.7 : score >= 0.3;
+      return isGood ? "success" : isMid ? "warning" : "error";
+    },
+    [lowerIsBetter],
+  );
   // Add an empty row — user types the label inline
   const handleAddEmptyRow = useCallback(
     (defaultScore = 0.5) => {
@@ -181,8 +196,28 @@ const OutputTypeConfig = ({
               sx={{ mb: 1, display: "block" }}
             >
               Create a list of predefined categories. Each choice maps to a
-              score between 0 and 1.
+              score between 0 and 1. All choices and scores must be unique.
             </Typography>
+
+            {/* Score direction — flips the colour scale for negative metrics */}
+            <FormControlLabel
+              control={
+                <Checkbox
+                  size="small"
+                  checked={lowerIsBetter}
+                  onChange={(e) => setLowerIsBetter(e.target.checked)}
+                  disabled={disabled}
+                  sx={{ mt: -0.25 }}
+                />
+              }
+              label={
+                <Typography variant="caption" color="text.secondary">
+                  On for metrics where a low score is good (e.g. toxicity) —
+                  flips the colours so 0 is green and 1 is red.
+                </Typography>
+              }
+              sx={{ alignItems: "flex-start", mb: 1.5, mx: 0 }}
+            />
 
             {Object.entries(choiceScores || {}).map(([label, score]) => (
               <Box
@@ -229,13 +264,7 @@ const OutputTypeConfig = ({
                 <Chip
                   label={score.toFixed(1)}
                   size="small"
-                  color={
-                    score >= 0.7
-                      ? "success"
-                      : score >= 0.3
-                        ? "warning"
-                        : "error"
-                  }
+                  color={scoreChipColor(score)}
                   sx={{
                     minWidth: 40,
                     fontSize: "12px",
