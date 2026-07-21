@@ -264,7 +264,11 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Install backend dependencies
-        run: uv sync --frozen
+        # `--all-extras` so ee tests can import their deps (torch, transformers,
+        # spacy, av, etc). The base install intentionally excludes them per
+        # the slim-image split; CI still needs them to run the EE test files
+        # collected below.
+        run: uv sync --frozen --all-extras
 
       - name: Apply ClickHouse test schema
         run: >

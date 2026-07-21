@@ -13,14 +13,43 @@ import uuid
 from io import BytesIO
 from urllib.parse import urlparse
 
-import av
 import numpy as np
-import soundfile as sf
 import structlog
 from PIL import Image
 
 # from pydub import AudioSegment
 from requests.exceptions import ChunkedEncodingError, ConnectionError, RequestException
+
+
+# Audio/video deps live in the `audio` extra (OSS-light skips them). Importing
+# this module must not fail when extras are absent — the proxy below raises
+# a clear ImportError the first time any caller touches `av.*` or `sf.*`.
+class _MissingExtra:
+    def __init__(self, name: str, extra: str) -> None:
+        self._name = name
+        self._extra = extra
+
+    def _raise(self) -> None:
+        raise ImportError(
+            f"`{self._name}` requires the `{self._extra}` extra. "
+            f"Install with: pip install 'core-backend[{self._extra}]'"
+        )
+
+    def __getattr__(self, item):  # type: ignore[no-untyped-def]
+        self._raise()
+
+    def __call__(self, *_args, **_kwargs):  # type: ignore[no-untyped-def]
+        self._raise()
+
+
+try:
+    import av  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover
+    av = _MissingExtra("av", "audio")  # type: ignore[assignment]
+try:
+    import soundfile as sf  # type: ignore[import-not-found]
+except ImportError:  # pragma: no cover
+    sf = _MissingExtra("soundfile", "audio")  # type: ignore[assignment]
 
 logger = structlog.get_logger(__name__)
 from tfc.settings.settings import MINIO_URL, UPLOAD_BUCKET_NAME

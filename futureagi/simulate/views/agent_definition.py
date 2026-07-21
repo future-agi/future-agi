@@ -13,7 +13,20 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
-from retell import Retell
+
+
+# `retell-sdk` lives in the `voice` extra (OSS-light skips it). Import is
+# lazy — call sites trip a clear ImportError instead of breaking module load.
+def _retell_client(api_key):
+    try:
+        from retell import Retell
+    except ImportError as e:
+        raise ImportError(
+            "Retell agent imports require the `voice` extra. "
+            "Install with: pip install 'core-backend[voice]'"
+        ) from e
+    return Retell(api_key=api_key)
+
 
 from simulate.models import AgentDefinition, AgentVersion
 from simulate.serializers.agent_definition import AgentDefinitionSerializer
@@ -562,7 +575,7 @@ class AgentDefinitionOperationsViewSet(BaseModelViewSetMixin, ModelViewSet):
                 prompt = system_object.get("content")
 
             elif provider == ProviderChoices.RETELL:
-                client = Retell(api_key=api_key)
+                client = _retell_client(api_key)
 
                 assistant_raw = client.agent.retrieve(
                     agent_id=assistant_id
