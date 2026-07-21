@@ -54,13 +54,13 @@ The backend will be at `http://localhost:8000`, the frontend at `http://localhos
 yarn install
 
 # For Python hooks (black, isort, mypy, Django system checks):
-cd futureagi && make pre-commit-install
+./scripts/setup-python-hooks.sh
 ```
 
-On every commit, `lint-staged` auto-formats and lints the staged files:
+On every commit:
 
-- `frontend/src/**` → ESLint + Prettier
-- `futureagi/**/*.py` → `black`, `isort`, `mypy` (via pre-commit)
+- `lint-staged` auto-formats and lints frontend files (`frontend/src/**` → ESLint + Prettier)
+- `pre-commit` runs Python hooks (`futureagi/**/*.py` → `black`, `isort`, `mypy`)
 
 Branch names are validated on `git push`.
 

@@ -163,7 +163,7 @@ SECRET_KEY = "test-secret-key-for-testing-only"
 ALLOWED_HOSTS = ["*"]
 INTEGRATION_ENCRYPTION_KEY = os.environ.get(
     "INTEGRATION_ENCRYPTION_KEY",
-    "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+    "hXmpKaltV2Lw1DTQfJ8HWbpLlTRn6AYpEXURzja_qzw=",
 )
 
 # Security settings for tests
