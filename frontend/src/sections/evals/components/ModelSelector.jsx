@@ -7,6 +7,7 @@ import {
   IconButton,
   MenuItem,
   Popover,
+  Skeleton,
   TextField,
   Tooltip,
   Typography,
@@ -552,6 +553,21 @@ SummarySubmenu.propTypes = {
   onSelect: PropTypes.func.isRequired,
 };
 
+function KBSkeletonRows({ count }) {
+  return Array.from({ length: count }).map((_, i) => (
+    <Box
+      key={`kb-skeleton-${i}`}
+      sx={{ display: "flex", alignItems: "center", gap: 1, px: 2, py: 0.75 }}
+    >
+      <Skeleton variant="rounded" width={18} height={18} />
+      <Skeleton
+        variant="text"
+        sx={{ flex: 1, fontSize: (theme) => theme.typography.s2_1.fontSize }}
+      />
+    </Box>
+  ));
+}
+
 // Main Component — [∞ Mode ▾] [model-name ▾] [+]
 // ---------------------------------------------------------------------------
 const ModelSelector = ({
@@ -647,6 +663,7 @@ const ModelSelector = ({
   };
 
   const [kbSearch, setKbSearch] = useState("");
+  const debouncedKbSearch = useDebounce(kbSearch.trim(), 400);
   const [keysDrawerModel, setKeysDrawerModel] = useState(null);
   const navigate = useNavigate();
   const { isOSS } = useDeploymentMode();
@@ -672,31 +689,40 @@ const ModelSelector = ({
     return Array.isArray(results) ? results : [];
   }, [connectorsData]);
 
-  // Fetch knowledge bases
-  const { data: kbData } = useInfiniteQuery({
-    queryKey: ["eval-knowledge-bases"],
-    queryFn: () => axios.get(endpoints.knowledge.list),
-    getNextPageParam: () => null,
-    initialPageParam: 1,
+  const {
+    data: kbData,
+    fetchNextPage: fetchNextKBPage,
+    hasNextPage: hasNextKBPage,
+    isFetchingNextPage: isFetchingNextKBPage,
+    isLoading: kbLoading,
+  } = useInfiniteQuery({
+    queryKey: ["eval-knowledge-bases", debouncedKbSearch],
+    queryFn: ({ pageParam }) =>
+      axios.get(endpoints.knowledge.list, {
+        params: {
+          search: debouncedKbSearch,
+          page_number: pageParam,
+          page_size: 25,
+        },
+      }),
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce(
+        (n, p) => n + (p?.data?.result?.table_data?.length || 0),
+        0,
+      );
+      const total = lastPage?.data?.result?.total_rows || 0;
+      return loaded < total ? allPages.length : undefined;
+    },
+    initialPageParam: 0,
     staleTime: 60000,
   });
 
-  const knowledgeBases = useMemo(() => {
-    const page = kbData?.pages?.[0]?.data;
-    // API returns {status, result: {tableData: [...], totalRows}}
-    const items =
-      page?.result?.tableData || page?.results || page?.tableData || [];
-    return Array.isArray(items) ? items : [];
-  }, [kbData]);
-
-  const filteredKBs = useMemo(() => {
-    if (!kbSearch) return knowledgeBases;
-    return knowledgeBases.filter((kb) =>
-      (kb.name || kb.title || "")
-        .toLowerCase()
-        .includes(kbSearch.toLowerCase()),
-    );
-  }, [knowledgeBases, kbSearch]);
+  // API returns {status, result: {table_data: [...], total_rows}} per page.
+  const knowledgeBases = useMemo(
+    () =>
+      (kbData?.pages || []).flatMap((p) => p?.data?.result?.table_data || []),
+    [kbData],
+  );
 
   // Fetch BYOK models from API
   const {
@@ -931,10 +957,10 @@ const ModelSelector = ({
                 Knowledge Bases
               </Typography>
               {selectedKBs.map((kbId) => {
-                const kb = knowledgeBases.find((k) => (k.id || k.pk) === kbId);
+                const kb = knowledgeBases.find((k) => k.id === kbId);
                 return (
                   <Typography key={kbId} sx={{ fontSize: "11px" }}>
-                    • {kb?.name || kb?.title || "KB"}
+                    • {kb?.name || "KB"}
                   </Typography>
                 );
               })}
@@ -1559,64 +1585,97 @@ const ModelSelector = ({
             )}
             {/* ══ Knowledge Base submenu ══ */}
             {plusSubmenu === "knowledge" && (
-              <Box sx={{ maxHeight: 350, overflowY: "auto" }}>
-                <Box sx={{ px: 1, pt: 0.5, pb: 0.5 }}>
-                  <TextField
-                    size="small"
-                    fullWidth
-                    autoFocus
-                    placeholder="Search knowledge bases..."
-                    value={kbSearch}
-                    onChange={(e) => setKbSearch(e.target.value)}
-                    InputProps={{
-                      startAdornment: (
-                        <Iconify
-                          icon="mdi:magnify"
-                          width={14}
-                          sx={{ mr: 0.5, color: "text.disabled" }}
-                        />
-                      ),
-                      sx: { fontSize: "12px", height: 28 },
-                    }}
-                  />
+              <Box
+                sx={{ width: 360, maxHeight: 360, overflowY: "auto" }}
+                onScroll={(e) => {
+                  const { scrollTop, scrollHeight, clientHeight } = e.target;
+                  if (
+                    scrollHeight - scrollTop - clientHeight < 50 &&
+                    hasNextKBPage &&
+                    !isFetchingNextKBPage
+                  ) {
+                    fetchNextKBPage();
+                  }
+                }}
+              >
+                <Box
+                  sx={{
+                    position: "sticky",
+                    top: 0,
+                    zIndex: 1,
+                    backgroundColor: "background.paper",
+                    borderBottom: "1px solid",
+                    borderColor: "divider",
+                  }}
+                >
+                  <Box sx={{ px: 1, pt: 0.75, pb: 0.75 }}>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      autoFocus
+                      placeholder="Search knowledge bases..."
+                      value={kbSearch}
+                      onChange={(e) => setKbSearch(e.target.value)}
+                      InputProps={{
+                        startAdornment: (
+                          <Iconify
+                            icon="mdi:magnify"
+                            width={14}
+                            sx={{ mr: 0.5, color: "text.disabled" }}
+                          />
+                        ),
+                        sx: {
+                          fontSize: (theme) => theme.typography.s2.fontSize,
+                          height: 30,
+                        },
+                      }}
+                    />
+                  </Box>
+
+                  {selectedKBs.length > 0 && (
+                    <Box
+                      sx={{
+                        px: 1.25,
+                        pb: 0.75,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                      }}
+                    >
+                      <Typography
+                        variant="s3"
+                        sx={{
+                          fontWeight: "fontWeightSemiBold",
+                          color: "text.secondary",
+                          letterSpacing: "0.02em",
+                        }}
+                      >
+                        {selectedKBs.length} selected
+                      </Typography>
+                      <Typography
+                        component="button"
+                        variant="s3"
+                        onClick={() => setSelectedKBs([])}
+                        sx={{
+                          fontWeight: "fontWeightSemiBold",
+                          color: "primary.main",
+                          background: "none",
+                          border: "none",
+                          p: 0,
+                          cursor: "pointer",
+                          "&:hover": { textDecoration: "underline" },
+                        }}
+                      >
+                        Clear all
+                      </Typography>
+                    </Box>
+                  )}
                 </Box>
 
-                {selectedKBs.length > 0 && (
-                  <Box
-                    sx={{
-                      px: 1,
-                      pb: 0.5,
-                      display: "flex",
-                      flexWrap: "wrap",
-                      gap: 0.5,
-                    }}
-                  >
-                    {selectedKBs.map((kbId) => {
-                      const kb = knowledgeBases.find(
-                        (k) => (k.id || k.pk) === kbId,
-                      );
-                      return (
-                        <Chip
-                          key={kbId}
-                          size="small"
-                          label={kb?.name || kb?.title || "KB"}
-                          onDelete={() =>
-                            setSelectedKBs((prev) =>
-                              prev.filter((x) => x !== kbId),
-                            )
-                          }
-                          deleteIcon={DELETE_ICON}
-                          sx={{ ...CHIP_STYLES, height: 20 }}
-                        />
-                      );
-                    })}
-                  </Box>
-                )}
-
-                {filteredKBs.length > 0 ? (
-                  filteredKBs.map((kb) => {
-                    const kbId = kb.id || kb.pk;
-                    const kbName = kb.name || kb.title || "Untitled";
+                {knowledgeBases.length > 0 ? (
+                  knowledgeBases.map((kb) => {
+                    const kbId = kb.id;
+                    const kbName = kb.name;
                     const isSelected = selectedKBs.includes(kbId);
                     return (
                       <MenuItem
@@ -1628,7 +1687,19 @@ const ModelSelector = ({
                               : [...prev, kbId],
                           )
                         }
-                        sx={{ borderRadius: "6px", py: 0.5, gap: 1 }}
+                        sx={{
+                          borderRadius: "6px",
+                          mx: 0.5,
+                          py: 0.5,
+                          gap: 1,
+                          ...(isSelected && {
+                            backgroundColor: (theme) =>
+                              alpha(
+                                theme.palette.primary.main,
+                                theme.palette.mode === "dark" ? 0.16 : 0.08,
+                              ),
+                          }),
+                        }}
                       >
                         <Iconify
                           icon={
@@ -1645,15 +1716,25 @@ const ModelSelector = ({
                           }}
                         />
                         <Typography
-                          variant="body2"
+                          variant="s2_1"
                           noWrap
-                          sx={{ fontSize: "13px", flex: 1 }}
+                          sx={{
+                            flex: 1,
+                            fontWeight: isSelected
+                              ? "fontWeightSemiBold"
+                              : "fontWeightRegular",
+                            color: isSelected
+                              ? "text.primary"
+                              : "text.secondary",
+                          }}
                         >
                           {kbName}
                         </Typography>
                       </MenuItem>
                     );
                   })
+                ) : kbLoading ? (
+                  <KBSkeletonRows count={6} />
                 ) : (
                   <Box sx={{ py: 2, px: 1.5, textAlign: "center" }}>
                     <Typography
@@ -1674,6 +1755,7 @@ const ModelSelector = ({
                     />
                   </Box>
                 )}
+                {isFetchingNextKBPage && <KBSkeletonRows count={3} />}
               </Box>
             )}
 

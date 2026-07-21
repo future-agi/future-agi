@@ -22,6 +22,11 @@ function makeDashboard(ownerEmail) {
 const mockMutate = vi.fn();
 let mockDashboard = makeDashboard(OWNER_EMAIL);
 let mockAuthUser = { email: OWNER_EMAIL };
+// Role defaults to one with dashboard-update permission (see
+// rolePermissionMapping.js) so the "Dashboard options" button (gated on
+// !isReadOnly since TH-6927) renders and these ownership-gate tests keep
+// isolating just the ownership check.
+let mockRole = "Owner";
 
 vi.mock("react-router-dom", async (importOriginal) => {
   const actual = await importOriginal();
@@ -32,7 +37,7 @@ vi.mock("react-router-dom", async (importOriginal) => {
   };
 });
 vi.mock("src/auth/hooks", () => ({
-  useAuthContext: () => ({ user: mockAuthUser }),
+  useAuthContext: () => ({ user: mockAuthUser, role: mockRole }),
 }));
 vi.mock("src/hooks/useDashboards", () => ({
   useDashboardDetail: () => ({ data: mockDashboard, isLoading: false }),
@@ -85,6 +90,7 @@ describe("DashboardDetailView — delete dashboard ownership gate", () => {
   beforeEach(() => {
     mockMutate.mockReset();
     mockAuthUser = { email: OWNER_EMAIL };
+    mockRole = "Owner";
     mockDashboard = makeDashboard(OWNER_EMAIL);
   });
 

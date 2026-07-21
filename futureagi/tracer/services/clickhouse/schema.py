@@ -346,11 +346,16 @@ CREATE TABLE IF NOT EXISTS tracer_eval_logger (
 
     -- Soft-delete
     deleted UInt8 DEFAULT 0,
-    deleted_at Nullable(DateTime64(3)),
+    deleted_at Nullable(DateTime64(6)),
 
     -- Timestamps
-    created_at DateTime64(3),
-    updated_at DateTime64(3),
+    -- DateTime64(6) REQUIRED: PeerDB (v0.36.x) normalize writes epoch-micros
+    -- regardless of destination precision. With DateTime64(3) every synced row
+    -- landed ~year 58356 (1000x off), exploding the toYYYYMM partition key so
+    -- ReplacingMergeTree FINAL never deduped (2026-07-18 us2 incident). All
+    -- other PeerDB-mirrored tables already use (6).
+    created_at DateTime64(6),
+    updated_at DateTime64(6),
 
     -- PeerDB CDC meta-columns
     _peerdb_synced_at DateTime64(6),

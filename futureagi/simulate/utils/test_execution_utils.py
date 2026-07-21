@@ -1433,3 +1433,49 @@ def reconcile_scenario_column_order(*, scenarios, call_executions, column_order)
 
     changed = rebuilt_column_order != column_order
     return rebuilt_column_order, changed
+
+
+def build_eval_column(eval_config):
+    return {
+        "column_name": eval_config.name,
+        "id": str(eval_config.id),
+        "eval_config": eval_config.eval_template.config,
+        "visible": True,
+        "type": "evaluation",
+    }
+
+
+def reconcile_eval_column_order(*, column_order, eval_configs, evaluated_eval_ids):
+    """Drop removed evals, refresh surviving names + configs, and append
+    a newly-active eval only when its id is in ``evaluated_eval_ids``
+    (i.e. attempted on at least one call of this execution)."""
+    current_eval_by_id = {str(ec.id): ec for ec in eval_configs}
+    changed = False
+    reconciled = []
+    for col in column_order:
+        if not (isinstance(col, dict) and col.get("type") == "evaluation"):
+            reconciled.append(col)
+            continue
+        ec = current_eval_by_id.get(str(col.get("id")))
+        if ec is None:
+            changed = True
+            continue
+        if col.get("column_name") != ec.name:
+            col["column_name"] = ec.name
+            changed = True
+        if col.get("eval_config") != ec.eval_template.config:
+            col["eval_config"] = ec.eval_template.config
+            changed = True
+        reconciled.append(col)
+    preserved = {
+        str(c.get("id"))
+        for c in reconciled
+        if isinstance(c, dict) and c.get("type") == "evaluation"
+    }
+    for eval_config in eval_configs:
+        ec_id = str(eval_config.id)
+        if ec_id in preserved or ec_id not in evaluated_eval_ids:
+            continue
+        reconciled.append(build_eval_column(eval_config))
+        changed = True
+    return reconciled, changed

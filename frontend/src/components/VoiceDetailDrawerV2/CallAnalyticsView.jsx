@@ -123,7 +123,7 @@ KpiCell.propTypes = {
 
 const fmtWpm = (n) => {
   if (n == null || !Number.isFinite(n)) return "—";
-  return String(Math.round(n));
+  return String(n);
 };
 
 const KpiStrip = ({ metrics, apiMetrics }) => {

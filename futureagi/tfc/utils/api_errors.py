@@ -30,12 +30,16 @@ class ApiErrorCode(StrEnum):
     CONFLICT = "conflict"
     GONE = "gone"
     REQUEST_TOO_LARGE = "request_too_large"
+    EXPORT_TOO_LARGE = "export_too_large"
     RATE_LIMITED = "rate_limited"
     SERVER_ERROR = "server_error"
     SERVICE_UNAVAILABLE = "service_unavailable"
     TIMEOUT = "timeout"
     ERROR = "error"
     REQUIRED = "required"
+    # Domain-specific 413 variants: a specific cap was exceeded, so the FE can
+    # distinguish "narrow your selection" from a generic request-too-large.
+    ITEMS_TOO_LARGE = "items_too_large"
 
 
 API_ERROR_TYPE_CHOICES = [(item.value, item.value) for item in ApiErrorType]

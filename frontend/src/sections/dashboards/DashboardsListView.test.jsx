@@ -26,9 +26,13 @@ function makeDashboard(id, ownerEmail, name) {
 const mockMutate = vi.fn();
 let mockDashboards = [];
 let mockAuthUser = { email: OWNER_EMAIL };
+// Role defaults to one with dashboard-delete permission (see
+// rolePermissionMapping.js) so these tests keep isolating the ownership
+// gate; the one role-gate test below overrides this to Viewer.
+let mockRole = "Owner";
 
 vi.mock("src/auth/hooks", () => ({
-  useAuthContext: () => ({ user: mockAuthUser }),
+  useAuthContext: () => ({ user: mockAuthUser, role: mockRole }),
 }));
 
 vi.mock("src/hooks/useDashboards", () => ({
@@ -73,6 +77,7 @@ describe("DashboardsListView — delete icon ownership gate", () => {
   beforeEach(() => {
     mockMutate.mockReset();
     mockAuthUser = { email: OWNER_EMAIL };
+    mockRole = "Owner";
     mockDashboards = [
       makeDashboard("id-1", OWNER_EMAIL, "My Dashboard"),
       makeDashboard("id-2", OTHER_EMAIL, "Their Dashboard"),
@@ -129,6 +134,15 @@ describe("DashboardsListView — delete icon ownership gate", () => {
     // red if fix reverted: renders the button because both sides are undefined
     mockAuthUser = undefined;
     mockDashboards = [makeDashboard("id-1", null, "Legacy Dashboard")];
+    const { container } = render(<DashboardsListView />);
+    expect(getDeleteButtons(container)).toHaveLength(0);
+  });
+
+  it("hides the delete button for a role without dashboard-delete permission, even on an owned dashboard", () => {
+    // scenario: RBAC gate (TH-6927) stacks with the ownership gate — a
+    // Viewer role never sees the button, regardless of ownership
+    // red if the role gate is dropped: renders 1 button for the owned row
+    mockRole = "Viewer";
     const { container } = render(<DashboardsListView />);
     expect(getDeleteButtons(container)).toHaveLength(0);
   });

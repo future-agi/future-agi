@@ -24,6 +24,7 @@ import { useParams } from "react-router";
 import Iconify from "src/components/iconify";
 import { enqueueSnackbar } from "src/components/snackbar";
 import axios, { endpoints } from "src/utils/axios";
+import CustomTooltip from "src/components/tooltip";
 import { useSimulationDetailContext } from "./context/SimulationDetailContext";
 import VersionSelect from "./VersionSelect";
 import SimulationEvaluationDrawer from "./SimulationEvaluationDrawer";
@@ -198,6 +199,7 @@ const SimulationDetailHeader = ({ onBack }) => {
     mutationFn: async () => {
       return axios.post(
         endpoints.promptSimulation.execute(promptTemplateId, simulation?.id),
+        {},
       );
     },
     onSuccess: () => {
@@ -225,6 +227,11 @@ const SimulationDetailHeader = ({ onBack }) => {
 
   const evals =
     simulation?.simulate_eval_configs_detail || simulation?.evals_detail || [];
+
+  const selectedScenarioIds = new Set(selectedScenarios || []);
+  const hasEmptyScenario = (simulation?.scenarios_detail || []).some(
+    (s) => selectedScenarioIds.has(s.id) && (s.dataset_rows || 0) === 0,
+  );
 
   return (
     <>
@@ -356,22 +363,35 @@ const SimulationDetailHeader = ({ onBack }) => {
               </Button>
 
               {/* Run Button */}
-              <Button
-                variant="contained"
+              <CustomTooltip
+                show={hasEmptyScenario}
+                title="Some selected scenarios have no datapoints. Remove them from the selection to run."
                 size="small"
-                color="primary"
-                startIcon={
-                  isExecuting ? (
-                    <CircularProgress size={14} color="inherit" />
-                  ) : (
-                    <SvgColor src="/assets/icons/navbar/ic_get_started.svg" />
-                  )
-                }
-                onClick={() => executeSimulation()}
-                disabled={isExecuting || selectedScenarios.length === 0}
+                arrow
               >
-                {isExecuting ? "Starting..." : "Run Simulation"}
-              </Button>
+                <Box>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    color="primary"
+                    startIcon={
+                      isExecuting ? (
+                        <CircularProgress size={14} color="inherit" />
+                      ) : (
+                        <SvgColor src="/assets/icons/navbar/ic_get_started.svg" />
+                      )
+                    }
+                    onClick={() => executeSimulation()}
+                    disabled={
+                      isExecuting ||
+                      selectedScenarios.length === 0 ||
+                      hasEmptyScenario
+                    }
+                  >
+                    {isExecuting ? "Starting..." : "Run Simulation"}
+                  </Button>
+                </Box>
+              </CustomTooltip>
             </>
           )}
         </Box>

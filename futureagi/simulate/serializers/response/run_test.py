@@ -48,20 +48,23 @@ class RunTestResponseSerializer(serializers.ModelSerializer):
     agent_version snapshot handling, etc.) continues to use RunTestSerializer.
     """
 
-    agent_definition_detail = serializers.DictField(read_only=True, allow_null=True)
+    description = serializers.CharField(
+        read_only=True, allow_null=True, allow_blank=True
+    )
+    agent_definition_detail = serializers.JSONField(read_only=True, allow_null=True)
     source_type_display = serializers.CharField(read_only=True, allow_null=True)
     scenarios_detail = serializers.ListField(
-        child=serializers.DictField(), read_only=True
+        child=serializers.JSONField(), read_only=True
     )
-    simulator_agent_detail = serializers.DictField(read_only=True, allow_null=True)
+    simulator_agent_detail = serializers.JSONField(read_only=True, allow_null=True)
     simulate_eval_configs_detail = SimulateEvalConfigResponseSerializer(
         many=True, read_only=True
     )
     evals_detail = SimulateEvalConfigResponseSerializer(many=True, read_only=True)
     last_run_at = serializers.DateTimeField(read_only=True, allow_null=True)
-    prompt_template_detail = serializers.DictField(read_only=True, allow_null=True)
-    prompt_version_detail = serializers.DictField(read_only=True, allow_null=True)
-    agent_version = serializers.DictField(read_only=True, allow_null=True)
+    prompt_template_detail = serializers.JSONField(read_only=True, allow_null=True)
+    prompt_version_detail = serializers.JSONField(read_only=True, allow_null=True)
+    agent_version = serializers.JSONField(read_only=True, allow_null=True)
 
     class Meta:
         model = RunTest
@@ -139,9 +142,17 @@ class TestExecutionItemResponseSerializer(serializers.Serializer):
     source_type = serializers.CharField(read_only=True)
 
 
-# Kept for backward compatibility — the swagger decorator references this name.
-# The actual per-item shape is TestExecutionItemResponseSerializer above.
-RunTestExecutionsResponseSerializer = TestExecutionItemResponseSerializer
+class RunTestExecutionsResponseSerializer(serializers.Serializer):
+    """Paginated envelope returned by GET /run-tests/{run_test_id}/executions/.
+
+    Runtime shape comes from ``paginator.get_paginated_response(...)``:
+    ``{count, next, previous, results: [TestExecutionItem, ...]}``.
+    """
+
+    count = serializers.IntegerField(read_only=True)
+    next = serializers.CharField(read_only=True, allow_null=True)
+    previous = serializers.CharField(read_only=True, allow_null=True)
+    results = TestExecutionItemResponseSerializer(many=True, read_only=True)
 
 
 class RunTestScenarioItemResponseSerializer(serializers.Serializer):

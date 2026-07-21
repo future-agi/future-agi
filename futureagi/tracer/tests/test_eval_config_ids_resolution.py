@@ -49,14 +49,16 @@ class TestEvalLoggerSource:
     """``eval_logger_source()`` resolves the table + not-deleted predicate."""
 
     @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger")
-    def test_legacy_table_uses_peerdb_predicate(self):
+    def test_legacy_table_uses_deleted_predicate(self):
+        # Legacy table filters on `deleted`, not `_peerdb_is_deleted`: the v2
+        # rewriter renames `_peerdb_is_deleted` → `is_deleted` (which this table
+        # lacks), so `deleted` is the rewrite-safe soft-delete marker.
         from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 
         table, not_deleted = eval_logger_source()
         assert table == "tracer_eval_logger"
-        assert not_deleted == (
-            "_peerdb_is_deleted = 0 AND (deleted = 0 OR deleted IS NULL)"
-        )
+        assert not_deleted == "(deleted = 0 OR deleted IS NULL)"
+        assert "_peerdb_is_deleted" not in not_deleted
 
     @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
     def test_v2_table_uses_is_deleted_predicate(self):
@@ -78,9 +80,7 @@ class TestEvalLoggerSource:
         from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 
         _, not_deleted = eval_logger_source("e")
-        assert not_deleted == (
-            "e._peerdb_is_deleted = 0 AND (e.deleted = 0 OR e.deleted IS NULL)"
-        )
+        assert not_deleted == "(e.deleted = 0 OR e.deleted IS NULL)"
 
 
 @pytest.mark.unit
@@ -94,13 +94,44 @@ class TestEvalConfigIdSelectors:
 
         assert ids == ["a", "b"]
         query = captured["query"]
-        assert "tracer_eval_logger_v2 FINAL" in query
+        assert "tracer_eval_logger_v2" in query
+        # PERF: FINAL dropped — it forced a full-table merge and was a prime
+        # OOM source; DISTINCT config_id needs no row-collapsing.
+        assert "FINAL" not in query
         assert "is_deleted = 0" in query
         assert "_peerdb_is_deleted" not in query
         # project scope is the spans subquery, not dictGet
         assert "project_id = %(project_id)s" in query
         assert "dictGet" not in query
-        assert captured["params"] == {"project_id": "proj-1"}
+        # Default 30-day window bound prunes span + eval partitions.
+        assert captured["params"] == {"project_id": "proj-1", "window_days": 30}
+
+    @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger_v2")
+    def test_project_selector_candidate_config_ids_fast_path(self):
+        # The hot path: caller pre-resolves the project's configs from PG, so
+        # discovery scopes by custom_eval_config_id (the eval table's leading
+        # sort key) — no trace join, no spans scan.
+        svc, captured = _capturing_service([{"config_id": "a"}])
+        ids = svc.get_eval_config_ids_with_data_ch(
+            "proj-1", candidate_config_ids=["a", "b"]
+        )
+
+        assert ids == ["a"]
+        query = captured["query"]
+        assert "FINAL" not in query
+        assert "custom_eval_config_id IN %(config_ids)s" in query
+        assert "trace_id IN" not in query
+        assert "FROM spans" not in query
+        assert captured["params"]["config_ids"] == ("a", "b")
+
+    def test_project_selector_candidate_empty_short_circuits(self):
+        svc, captured = _capturing_service([{"config_id": "a"}])
+        # An empty candidate set means "this project has no configs" — no CH read.
+        assert (
+            svc.get_eval_config_ids_with_data_ch("proj-1", candidate_config_ids=[])
+            == []
+        )
+        assert captured == {}
 
     @override_settings(CH25_EVAL_LOGGER_TABLE="tracer_eval_logger")
     def test_project_selector_legacy_predicate(self):
@@ -108,7 +139,9 @@ class TestEvalConfigIdSelectors:
         svc.get_eval_config_ids_with_data_ch("proj-1")
 
         query = captured["query"]
-        assert "tracer_eval_logger FINAL" in query
+        assert "tracer_eval_logger" in query
+        assert "FINAL" not in query
+        assert "(deleted = 0 OR deleted IS NULL)" in query
         assert "_peerdb_is_deleted = 0" in query
 
     def test_project_selector_forwards_timeout(self):
@@ -123,7 +156,8 @@ class TestEvalConfigIdSelectors:
 
         assert ids == ["x"]
         query = captured["query"]
-        assert "tracer_eval_logger_v2 FINAL" in query
+        assert "tracer_eval_logger_v2" in query
+        assert "FINAL" not in query
         assert "is_deleted = 0" in query
         assert "_peerdb_is_deleted" not in query
         assert "trace_id IN %(trace_ids)s" in query
@@ -257,3 +291,75 @@ class TestEvalReadSelectors:
         assert svc.get_trace_eval_scores_ch([], ["c1"]) == []
         assert svc.get_trace_eval_scores_ch(["t1"], []) == []
         assert captured == {}
+
+
+@pytest.mark.unit
+class TestWindowDaysCovering:
+    """``BaseQueryBuilder.window_days_covering`` sizes the eval-discovery
+    look-back to the *requested* time window rather than a fixed 30 days, so a
+    config with data anywhere in the viewed range keeps its column."""
+
+    @staticmethod
+    def _wd(filters):
+        from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
+
+        return BaseQueryBuilder.window_days_covering(filters)
+
+    def _greater_than(self, days_ago):
+        from datetime import datetime, timedelta
+
+        start = (datetime.utcnow() - timedelta(days=days_ago)).isoformat()
+        return [
+            {
+                "column_id": "start_time",
+                "filter_config": {
+                    "filter_op": "greater_than",
+                    "filter_value": start,
+                },
+            }
+        ]
+
+    def test_no_time_filter_defaults_to_about_30_days(self):
+        # parse_time_range defaults the start to now-30d, so discovery stays ~30d
+        # and the default (unfiltered) view is unchanged from the fixed bound.
+        assert 30 <= self._wd([]) <= 31
+
+    def test_explicit_start_extends_window_to_cover_it(self):
+        # A 6-month view must look back ~180 days — the whole point of the fix.
+        assert 180 <= self._wd(self._greater_than(180)) <= 181
+
+    def test_between_covers_to_range_start_not_range_length(self):
+        # [90d ago, 1d ago]: N must reach the *start* (~90d), not span the 89-day
+        # length — anchored at now(), a shorter N would miss the range entirely.
+        from datetime import datetime, timedelta
+
+        now = datetime.utcnow()
+        filters = [
+            {
+                "column_id": "created_at",
+                "filter_config": {
+                    "filter_op": "between",
+                    "filter_value": [
+                        (now - timedelta(days=90)).isoformat(),
+                        (now - timedelta(days=1)).isoformat(),
+                    ],
+                },
+            }
+        ]
+        assert 90 <= self._wd(filters) <= 91
+
+    def test_sub_day_window_floors_to_one(self):
+        # A last-2-hours view rounds up to a 1-day floor (never 0 / negative).
+        from datetime import datetime, timedelta
+
+        start = (datetime.utcnow() - timedelta(hours=2)).isoformat()
+        filters = [
+            {
+                "column_id": "start_time",
+                "filter_config": {
+                    "filter_op": "greater_than",
+                    "filter_value": start,
+                },
+            }
+        ]
+        assert self._wd(filters) == 1

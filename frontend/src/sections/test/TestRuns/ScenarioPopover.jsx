@@ -18,6 +18,7 @@ import { useScrollEnd } from "../../../hooks/use-scroll-end";
 import { useSelectedScenariosStore } from "./states";
 import { ShowComponent } from "../../../components/show";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
+import CustomTooltip from "src/components/tooltip";
 import { useUpdateTestRuns } from "src/api/tests/testRuns";
 import { useGetScenarioList } from "src/api/scenarios/scenarios";
 import { AGENT_TYPES } from "src/sections/agents/constants";
@@ -68,7 +69,12 @@ const ScenarioPopoverChild = ({ simulationType, testId: testIdProp }) => {
     useSelectedScenariosStore();
 
   const handleToggle = (value) => {
-    const newSelectedScenarios = selectedScenarios?.includes(value)
+    const isSelected = selectedScenarios?.includes(value);
+    if (!isSelected) {
+      const scenario = scenarios?.find((s) => s.id === value);
+      if (scenario && (scenario.dataset_rows || 0) === 0) return;
+    }
+    const newSelectedScenarios = isSelected
       ? selectedScenarios?.filter((id) => id !== value)
       : [...selectedScenarios, value];
     setSelectedScenarios(newSelectedScenarios);
@@ -111,39 +117,54 @@ const ScenarioPopoverChild = ({ simulationType, testId: testIdProp }) => {
           <ScenarioSkeletonItem />
         </ShowComponent>
         <ShowComponent condition={!isPending}>
-          {scenarios?.map(({ id, name, dataset_rows:datasetRows }) => {
+          {scenarios?.map(({ id, name, dataset_rows: datasetRows }) => {
             const labelId = `checkbox-list-label-${id}`;
             const isSelected = selectedScenarios?.includes(id);
+            const isEmpty = (datasetRows || 0) === 0;
+            const blockAdd = isEmpty && !isSelected;
 
             return (
-              <ListItem key={id} disablePadding>
-                <ListItemButton
-                  role={undefined}
-                  onClick={() => handleToggle(id)}
-                  dense
-                >
-                  <ListItemIcon>
-                    <Checkbox
-                      edge="start"
-                      checked={isSelected}
-                      tabIndex={-1}
-                      disableRipple
-                      inputProps={{ "aria-labelledby": labelId }}
-                      sx={{ padding: 0 }}
+              <CustomTooltip
+                key={id}
+                show={blockAdd}
+                arrow
+                placement="left"
+                title="This scenario has no datapoints to run against."
+                size="small"
+              >
+                <ListItem disablePadding>
+                  <ListItemButton
+                    role={undefined}
+                    onClick={() => handleToggle(id)}
+                    disabled={blockAdd}
+                    dense
+                  >
+                    <ListItemIcon>
+                      <Checkbox
+                        edge="start"
+                        checked={isSelected}
+                        disabled={blockAdd}
+                        tabIndex={-1}
+                        disableRipple
+                        inputProps={{ "aria-labelledby": labelId }}
+                        sx={{ padding: 0 }}
+                      />
+                    </ListItemIcon>
+                    <ListItemText
+                      id={labelId}
+                      primary={name}
+                      secondary={
+                        isEmpty ? "No datapoints" : `${datasetRows} records`
+                      }
+                      primaryTypographyProps={{
+                        typography: "s2",
+                        fontWeight: "medium",
+                      }}
+                      secondaryTypographyProps={{ typography: "s2" }}
                     />
-                  </ListItemIcon>
-                  <ListItemText
-                    id={labelId}
-                    primary={name}
-                    secondary={`${datasetRows} records`}
-                    primaryTypographyProps={{
-                      typography: "s2",
-                      fontWeight: "medium",
-                    }}
-                    secondaryTypographyProps={{ typography: "s2" }}
-                  />
-                </ListItemButton>
-              </ListItem>
+                  </ListItemButton>
+                </ListItem>
+              </CustomTooltip>
             );
           })}
         </ShowComponent>

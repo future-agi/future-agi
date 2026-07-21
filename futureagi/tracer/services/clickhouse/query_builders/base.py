@@ -211,6 +211,22 @@ class BaseQueryBuilder(ABC):
             end_date = datetime.utcnow()
         return start_date, end_date
 
+    @staticmethod
+    def window_days_covering(filters: List[Dict]) -> int:
+        """Look-back days (from ``now()``) that cover the requested time window.
+
+        Eval-config discovery bounds its scan to ``created_at >= now() - N
+        days``. To surface every config with data anywhere in the *requested*
+        range — not a fixed 30 days — ``N`` must reach back to the window start.
+        Returns the ceil day-count from the parsed start to now (min 1); with no
+        explicit time filter the parsed default is ``now - 30d``, so the default
+        view stays ~30. Pair with ``candidate_config_ids`` so the scan stays
+        bounded by the eval table's leading sort key regardless of depth.
+        """
+        start_date, _ = BaseQueryBuilder.parse_time_range(filters)
+        delta = datetime.utcnow() - start_date
+        return max(1, delta.days + (1 if (delta.seconds or delta.microseconds) else 0))
+
     # ------------------------------------------------------------------
     # Time-series zero-fill helpers
     # ------------------------------------------------------------------

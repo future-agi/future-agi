@@ -9,7 +9,28 @@ const h = vi.hoisted(() => ({
   deleteWidget: { mutate: vi.fn(), isPending: false },
   deleteDashboard: { mutate: vi.fn(), isPending: false },
   widgets: [{ id: "w-1", name: "Tokens", position: 0, width: 12 }],
+  // Permission state the useCanEditDashboard mock returns; per-test controllable
+  // so we can drive both the writer and viewer (read-only) paths.
+  canEdit: {
+    canCreate: true,
+    canUpdate: true,
+    canDelete: true,
+    isReadOnly: false,
+  },
 }));
+
+const WRITER = {
+  canCreate: true,
+  canUpdate: true,
+  canDelete: true,
+  isReadOnly: false,
+};
+const VIEWER = {
+  canCreate: false,
+  canUpdate: false,
+  canDelete: false,
+  isReadOnly: true,
+};
 
 vi.mock("src/hooks/useDashboards", () => ({
   useDashboardDetail: () => ({
@@ -36,6 +57,10 @@ vi.mock("react-router-dom", async (orig) => ({
   useNavigate: () => vi.fn(),
 }));
 
+vi.mock("../hooks/useCanEditDashboard", () => ({
+  default: () => h.canEdit,
+}));
+
 vi.mock("../WidgetChart", () => ({
   default: () => <div data-testid="widget-chart" />,
 }));
@@ -59,6 +84,7 @@ const openWidgetDeleteDialog = () => {
 describe("DashboardDetailView — delete confirmation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    h.canEdit = { ...WRITER };
     h.deleteWidget.isPending = false;
     h.deleteDashboard.isPending = false;
     h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
@@ -116,6 +142,7 @@ describe("DashboardDetailView — time filter bar visibility", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    h.canEdit = { ...WRITER };
   });
 
   it("hides the time filter bar on an empty (0-widget) dashboard", () => {
@@ -132,5 +159,45 @@ describe("DashboardDetailView — time filter bar visibility", () => {
     render(<DashboardDetailView />);
     expect(screen.getByText(presetLabel)).toBeInTheDocument();
     expect(screen.queryByText(/no widgets yet/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("DashboardDetailView — RBAC gating", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.widgets = [{ id: "w-1", name: "Tokens", position: 0, width: 12 }];
+  });
+
+  it("writer sees the write affordances", () => {
+    h.canEdit = { ...WRITER };
+    render(<DashboardDetailView />);
+    expect(
+      screen.getByRole("button", { name: /dashboard options/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /widget options/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("read-only viewer: every write affordance is gated out", () => {
+    h.canEdit = { ...VIEWER };
+    render(<DashboardDetailView />);
+    // dashboard ⋮ menu (rename / add widget / delete dashboard) — trigger hidden
+    expect(
+      screen.queryByRole("button", { name: /dashboard options/i }),
+    ).toBeNull();
+    // per-widget ⋮ menu (edit / duplicate / resize / delete) — hidden
+    expect(
+      screen.queryByRole("button", { name: /widget options/i }),
+    ).toBeNull();
+    // add-widget affordance — hidden
+    expect(screen.queryByRole("button", { name: /add widget/i })).toBeNull();
+  });
+
+  it("read-only viewer: the read path still renders (dashboard + widgets)", () => {
+    h.canEdit = { ...VIEWER };
+    render(<DashboardDetailView />);
+    // chart still renders — viewers can view, just not edit
+    expect(screen.getByTestId("widget-chart")).toBeInTheDocument();
   });
 });

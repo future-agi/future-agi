@@ -69,6 +69,7 @@ class TestTracesOfSessionPagination:
         analytics = self._routing_analytics(trace_rows=trace_rows, total=total)
 
         with (
+            mock.patch("tracer.views.trace.CustomEvalConfig") as mock_cfg,
             mock.patch(
                 "tracer.views.trace.get_annotation_labels_for_project",
                 return_value=[],
@@ -78,10 +79,20 @@ class TestTracesOfSessionPagination:
                 return_value={},
             ),
         ):
+            # No eval configs for this project → discovery short-circuits with
+            # candidate_ids == [] (no PG/CH eval round-trip). This test pins the
+            # pagination trim, not eval columns.
+            mock_cfg.objects.filter.return_value.select_related.return_value = []
             status, payload = view._list_traces_of_session_clickhouse(
                 request,
                 project_id=str(uuid.uuid4()),
-                validated_data={"filters": []},
+                # Pagination now comes from the serializer-validated query data
+                # (request.validated_query_data), not request.query_params.
+                validated_data={
+                    "filters": [],
+                    "page_number": 0,
+                    "page_size": page_size,
+                },
                 analytics=analytics,
                 org_project_ids=None,
                 org=request.organization,

@@ -133,6 +133,7 @@ class CreateScoreTool(BaseTool):
         # the destination key).
         from model_hub.utils.annotation_queue_helpers import (
             resolve_default_queue_item_for_source,
+            tracer_project_id_for_source,
         )
 
         score_source_type = (
@@ -168,6 +169,11 @@ class CreateScoreTool(BaseTool):
             "organization": context.organization,
             "source_type": score_source_type,
         }
+        tracer_project_id = tracer_project_id_for_source(
+            score_source_type, score_source_obj
+        )
+        if tracer_project_id:
+            score_defaults["tracer_project_id"] = tracer_project_id
         if span:
             # CHSpan.id is already a str; passes through Django's FK
             # coercion the same as PG's UUID pk would.

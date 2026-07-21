@@ -18,6 +18,10 @@ import ModalWrapper from "src/components/ModalWrapper/ModalWrapper";
 import logger from "src/utils/logger";
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
+import {
+  isScenarioFailed,
+  isScenarioInProgress,
+} from "src/utils/scenarioStatus";
 
 const GraphPreview = ({ scenario, agentType, viewOnly = false }) => {
   const { role } = useAuthContext();
@@ -28,7 +32,7 @@ const GraphPreview = ({ scenario, agentType, viewOnly = false }) => {
   const isLoading =
     scenario?.graph && Object.keys(scenario?.graph || {}).length > 0
       ? false
-      : scenario?.status === "Processing";
+      : isScenarioInProgress(scenario?.status);
   const { nodes, edges } = useMemo(() => {
     if (
       !scenario?.graph ||
@@ -150,7 +154,7 @@ const GraphPreview = ({ scenario, agentType, viewOnly = false }) => {
     );
   }
 
-  if (scenario?.status === "Failed") {
+  if (isScenarioFailed(scenario?.status)) {
     return (
       <Box
         sx={{

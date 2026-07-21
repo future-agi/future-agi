@@ -715,23 +715,32 @@ class CHSpanReader:
 
     # ─── Per-trace rollups (latency / tokens) ─────────────────────────────────
     def totals_by_trace_ids(
-        self, trace_ids: list[str]
+        self, trace_ids: list[str], project_ids: list[str] | None = None
     ) -> dict[str, tuple[int | None, int | None, int | None]]:
         """{trace_id: (latency_ms, prompt_tokens, completion_tokens)} summed
         in CH — replaces materializing every span just to add three ints.
 
         No FINAL: analytics-aggregate convention (matches the dashboard query
         builders) — an unmerged duplicate inflates a sum until the merge runs,
-        acceptable for summary stats and far cheaper on fat-row tables."""
+        acceptable for summary stats and far cheaper on fat-row tables.
+
+        ``project_ids`` (optional) scopes the read to known tenants so the
+        primary-key prefix prunes the scan — pass whenever the caller knows the
+        traces' project(s); omit for prior (cross-project) behavior."""
         if not trace_ids:
             return {}
+        where = ["trace_id IN %(trace_ids)s", "is_deleted = 0"]
+        params: dict[str, Any] = {"trace_ids": tuple(trace_ids)}
+        if project_ids:
+            where.append("project_id IN %(project_ids)s")
+            params["project_ids"] = tuple(project_ids)
         rows = self._client.query(
             "SELECT trace_id, sum(latency_ms) AS lat, "
             "sum(prompt_tokens) AS pt, sum(completion_tokens) AS ct "
             "FROM spans "
-            "WHERE trace_id IN %(trace_ids)s AND is_deleted = 0 "
+            f"WHERE {' AND '.join(where)} "
             "GROUP BY trace_id",
-            parameters={"trace_ids": tuple(trace_ids)},
+            parameters=params,
         ).result_rows
         return {
             str(tid): (
@@ -1166,9 +1175,9 @@ class CHSpanReader:
             "spans.trace_session_id", "trace_session_id_remap", "ts_remap"
         )
         resolved_ts = resolved_id_expr("spans.trace_session_id", "ts_remap")
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         where = [
             "trace_id IN %(trace_ids)s",
-            "is_deleted = 0",
             "(parent_span_id IS NULL OR parent_span_id = '')",
         ]
         params: dict[str, Any] = {"trace_ids": tuple(trace_ids)}
@@ -1181,6 +1190,7 @@ class CHSpanReader:
             f"WHERE {' AND '.join(where)} "
             "ORDER BY trace_id, start_time, id",
             parameters=params,
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
 
         def _norm(v: Any) -> str | None:
@@ -1365,6 +1375,7 @@ class CHSpanReader:
         """
         if not trace_ids:
             return {}
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         rows = self._client.query(
             "SELECT toString(trace_id) AS tid, "
             "count() AS n, "
@@ -1373,9 +1384,10 @@ class CHSpanReader:
             "min(start_time) AS st, max(end_time) AS et, "
             "sum(latency_ms) AS lat "
             "FROM spans FINAL "
-            "WHERE trace_id IN %(tids)s AND is_deleted = 0 "
+            "WHERE trace_id IN %(tids)s "
             "GROUP BY toString(trace_id)",
             parameters={"tids": tuple(trace_ids)},
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         return {
             tid: {
@@ -1393,7 +1405,7 @@ class CHSpanReader:
 
     # ─── Root-span start_time per trace (replay_session ordering helper) ─────
     def per_trace_root_span_start_times(
-        self, trace_ids: list[str]
+        self, trace_ids: list[str], project_ids: list[str] | None = None
     ) -> dict[str, datetime | None]:
         """Equivalent to:
             Subquery(ObservationSpan.objects.filter(trace_id=OuterRef("id"),
@@ -1406,16 +1418,26 @@ class CHSpanReader:
 
         CH stores parent_span_id as non-nullable String (schema 001); root
         spans have an empty string. We pick min(start_time) for ties.
+
+        ``project_ids`` (optional) scopes the read to known tenants so the
+        primary-key prefix prunes too — pass whenever the caller knows the
+        traces' project(s); omit for prior (cross-project) behavior.
         """
         if not trace_ids:
             return {}
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
+        where = ["trace_id IN %(tids)s", "parent_span_id = ''"]
+        params: dict[str, Any] = {"tids": tuple(trace_ids)}
+        if project_ids:
+            where.append("project_id IN %(pids)s")
+            params["pids"] = tuple(project_ids)
         rows = self._client.query(
             "SELECT toString(trace_id) AS tid, min(start_time) AS st "
             "FROM spans FINAL "
-            "WHERE trace_id IN %(tids)s AND is_deleted = 0 "
-            "  AND parent_span_id = '' "
+            f"WHERE {' AND '.join(where)} "
             "GROUP BY toString(trace_id)",
-            parameters={"tids": tuple(trace_ids)},
+            parameters=params,
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         result: dict[str, datetime | None] = dict.fromkeys(trace_ids)
         for tid, st in rows:
@@ -1475,7 +1497,7 @@ class CHSpanReader:
 
     # ─── Distinct end_users per trace (feed user-count rollup) ────────────────
     def distinct_end_users_by_trace_ids(
-        self, trace_ids: list[str]
+        self, trace_ids: list[str], project_ids: list[str] | None = None
     ) -> dict[str, set[str]]:
         """Equivalent to:
             ObservationSpan.objects.filter(trace_id__in=trace_ids,
@@ -1485,6 +1507,10 @@ class CHSpanReader:
 
         Pushes DISTINCT into CH so we don't materialize all spans Python-
         side just to count distinct users. Empty trace_ids returns {}.
+
+        ``project_ids`` (optional) scopes the read to known tenants so the
+        primary-key prefix prunes too — pass whenever the caller knows the
+        traces' project(s); omit for prior (cross-project) behavior.
         """
         if not trace_ids:
             return {}
@@ -1495,17 +1521,23 @@ class CHSpanReader:
         # span's own id and the distinct set is unchanged (gate B).
         remap_join = remap_left_join("rs.end_user_id", "end_user_id_remap")
         resolved_eu = resolved_id_expr("rs.end_user_id")
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
+        inner_where = ["trace_id IN %(tids)s", "end_user_id IS NOT NULL"]
+        params: dict[str, Any] = {"tids": tuple(trace_ids)}
+        if project_ids:
+            inner_where.append("project_id IN %(pids)s")
+            params["pids"] = tuple(project_ids)
         rows = self._client.query(
             "SELECT toString(trace_id) AS tid, "
             f"toString({resolved_eu}) AS uid "
             "FROM ("
             "  SELECT trace_id, end_user_id FROM spans FINAL "
-            "  WHERE trace_id IN %(tids)s AND is_deleted = 0 "
-            "    AND end_user_id IS NOT NULL "
+            f"  WHERE {' AND '.join(inner_where)} "
             ") AS rs "
             f"{remap_join} "
             f"GROUP BY toString(trace_id), toString({resolved_eu})",
-            parameters={"tids": tuple(trace_ids)},
+            parameters=params,
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         out: dict[str, set[str]] = {tid: set() for tid in trace_ids}
         for tid, uid in rows:
@@ -1921,12 +1953,13 @@ class CHSpanReader:
         # The span-side remap join + ``<resolved> = %(sid)s`` predicate (same as
         # the single-session filter ``distinct_session_ids_with_filters`` uses).
         session_join, session_pred = self._session_filter_remap()
+        # No is_deleted predicate — see _FINAL_SKIP_INDEX_SETTINGS.
         rows = self._client.query(
             f"SELECT DISTINCT toString(spans.trace_id) AS tid "
             f"FROM spans FINAL {session_join} "
-            f"WHERE spans.project_id = %(p)s AND {session_pred} "
-            f"  AND spans.is_deleted = 0",
+            f"WHERE spans.project_id = %(p)s AND {session_pred}",
             parameters={"p": str(project_id), "sid": resolved_input},
+            settings=_FINAL_SKIP_INDEX_SETTINGS,
         ).result_rows
         return [str(r[0]) for r in rows]
 

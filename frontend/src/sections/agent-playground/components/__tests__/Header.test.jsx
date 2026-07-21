@@ -16,6 +16,10 @@ vi.mock("react-router", () => ({
 }));
 
 let mockIsDraft = true;
+vi.mock("../../hooks/useCanEditAgent", () => ({
+  default: () => ({ canEditAgent: true, isReadOnly: false }),
+}));
+
 vi.mock("../../hooks/useDraftConfirmation", () => ({
   default: () => ({ isDraft: mockIsDraft }),
 }));

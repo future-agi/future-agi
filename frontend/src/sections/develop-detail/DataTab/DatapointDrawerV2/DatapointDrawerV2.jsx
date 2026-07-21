@@ -79,7 +79,7 @@ const ViewDetailsCellRenderer = (props) => {
         ...node?.data?.data?.description,
         evalName: node?.data?.data?.eval_name,
         metadata: metadata,
-        evalMetricId: data?.data?.column?.col?.sourceId,
+        evalMetricId: data?.data?.column?.col?.source_id,
       });
     }
   };
@@ -354,12 +354,12 @@ const DatapointDrawerChild = () => {
 
       return {
         ...currentField,
+        eval_name: column?.headerName,
         metadata: enhancedColumn?.metadata,
-        evalMetricId: column?.col?.sourceId,
+        evalMetricId: column?.col?.source_id,
       };
-    } else {
-      return null;
     }
+    return null;
   });
   const evalValueInfos = evalOpen?.value_infos
   const evalCellValue = evalOpen?.cell_value 
@@ -467,7 +467,7 @@ const DatapointDrawerChild = () => {
         });
         if (evalOpen) {
           const column = allColumns.find(
-            (i) => i?.col?.sourceId === evalOpen?.evalMetricId,
+            (i) => i?.col?.source_id === evalOpen?.evalMetricId,
           );
 
           setEvalOpen({
@@ -501,7 +501,7 @@ const DatapointDrawerChild = () => {
             });
             if (evalOpen) {
               const column = allColumns.find(
-                (i) => i?.col?.sourceId === evalOpen?.evalMetricId,
+                (i) => i?.col?.source_id === evalOpen?.evalMetricId,
               );
               setEvalOpen({
                 ...evalOpen,
@@ -553,7 +553,7 @@ const DatapointDrawerChild = () => {
           });
           if (evalOpen) {
             const column = allColumns.find(
-              (i) => i?.col?.sourceId === evalOpen?.evalMetricId,
+              (i) => i?.col?.source_id === evalOpen?.evalMetricId,
             );
             setEvalOpen({
               ...evalOpen,
@@ -575,7 +575,7 @@ const DatapointDrawerChild = () => {
       });
       if (evalOpen) {
         const column = allColumns.find(
-          (i) => i?.col?.sourceId === evalOpen?.evalMetricId,
+          (i) => i?.col?.source_id === evalOpen?.evalMetricId,
         );
         setEvalOpen({
           ...evalOpen,
@@ -982,12 +982,17 @@ const DatapointDrawerChild = () => {
                       // column / metric.
                       const evalColumn =
                         allColumns.find(
-                          (c) => c?.col?.sourceId === evalOpen?.evalMetricId,
+                          (c) => c?.col?.source_id === evalOpen?.evalMetricId,
                         )?.col ?? column?.col;
                       setAddEvaluationFeeback({
                         ...evalColumn,
                         ...datapoint,
                         rowData: datapoint?.rowData,
+                        value:
+                          evalOpen?.cell_value ??
+                          evalOpen?.value ??
+                          datapoint?.cell_value ??
+                          datapoint?.value,
                         valueInfos:
                           evalOpen?.value_infos ??
                           evalOpen?.valueInfos ??

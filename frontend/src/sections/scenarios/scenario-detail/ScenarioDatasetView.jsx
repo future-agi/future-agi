@@ -15,6 +15,10 @@ import DevelopDetailProvider from "src/sections/develop-detail/DevelopDetailProv
 import AddRowScenario from "./AddRowScenario";
 import ScenarioDetailRightSection from "./ScenarioDetailRightSection";
 import AddColumnScenario from "./AddColumnScenario";
+import {
+  isScenarioFailed,
+  isScenarioInProgress,
+} from "src/utils/scenarioStatus";
 
 const MetaChip = ({ label, value, icon }) => (
   <Box
@@ -167,7 +171,7 @@ const ScenarioDatasetView = () => {
             height: "50%",
           }}
         >
-            <GraphPreview agentType={agentType} scenario={scenario} />
+          <GraphPreview agentType={agentType} scenario={scenario} />
           <PromptPreview scenario={scenario} />
         </Box>
         <Box
@@ -189,7 +193,7 @@ const ScenarioDatasetView = () => {
         </Box>
 
         <ShowComponent condition={!datasetId}>
-          <ShowComponent condition={scenario?.status === "Processing"}>
+          <ShowComponent condition={isScenarioInProgress(scenario?.status)}>
             <Box
               sx={{
                 display: "flex",
@@ -206,7 +210,7 @@ const ScenarioDatasetView = () => {
               </Typography>
             </Box>
           </ShowComponent>
-          <ShowComponent condition={scenario?.status === "Failed"}>
+          <ShowComponent condition={isScenarioFailed(scenario?.status)}>
             <Box
               sx={{
                 display: "flex",

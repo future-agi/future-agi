@@ -11,6 +11,7 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.utils.constants import (
     LIST_OPS,
     NO_VALUE_OPS,
@@ -174,9 +175,11 @@ class ClickHouseFilterBuilder:
     # Voice system metrics — use typed Map columns (span_attr_num) instead of
     # simpleJSONExtractFloat which fails on JSON with spaces after colons.
     VOICE_SYSTEM_METRIC_EXPRS: dict[str, str] = {
+        # Duration: truncate to integer seconds to match the API's int()
+        # (trace.py duration_seconds), so equals matches the displayed value.
         "duration": (
             "if(mapContains(span_attr_num, 'call.duration'), "
-            "span_attr_num['call.duration'], null)"
+            "toInt64(span_attr_num['call.duration']), null)"
         ),
         "turn_count": (
             "if(mapContains(span_attr_num, 'call.total_turns'), "
@@ -189,7 +192,7 @@ class ClickHouseFilterBuilder:
             "if(mapContains(span_attr_num, 'call.talk_ratio') "
             "AND span_attr_num['call.talk_ratio'] > 0, "
             "round(span_attr_num['call.talk_ratio'] / "
-            "(span_attr_num['call.talk_ratio'] + 1) * 100), null)"
+            "(span_attr_num['call.talk_ratio'] + 1) * 100, 2), null)"
         ),
         "avg_agent_latency_ms": (
             "if(mapContains(span_attr_num, 'avg_agent_latency_ms'), "
@@ -218,6 +221,67 @@ class ClickHouseFilterBuilder:
         "ai_interruption_rate": (
             "if(mapContains(span_attr_num, 'ai_interruption_rate'), "
             "span_attr_num['ai_interruption_rate'], null)"
+        ),
+        # Talk ratio: the API returns the raw ratio; the FE (TalkRatioCell)
+        # derives an integer bot percentage via Math.round. Match that integer
+        # percentage so equals filters the value the user sees.
+        "talk_ratio": (
+            "if(mapContains(span_attr_num, 'call.talk_ratio') "
+            "AND span_attr_num['call.talk_ratio'] > 0, "
+            "round(span_attr_num['call.talk_ratio'] / "
+            "(span_attr_num['call.talk_ratio'] + 1) * 100), null)"
+        ),
+        "agent_latency": (
+            "if(mapContains(span_attr_num, 'avg_agent_latency_ms'), "
+            "round(span_attr_num['avg_agent_latency_ms']), null)"
+        ),
+        "ai_interruptions": (
+            "if(mapContains(span_attr_num, 'ai_interruption_count'), "
+            "round(span_attr_num['ai_interruption_count']), null)"
+        ),
+        "user_interruptions": (
+            "if(mapContains(span_attr_num, 'user_interruption_count'), "
+            "round(span_attr_num['user_interruption_count']), null)"
+        ),
+        "stop_time_after_interruption": (
+            "if(mapContains(span_attr_num, 'avg_stop_time_after_interruption_ms'), "
+            "span_attr_num['avg_stop_time_after_interruption_ms'], null)"
+        ),
+        "llm_cost": (
+            "if(mapContains(span_attr_num, 'cost_breakdown.llm'), "
+            "span_attr_num['cost_breakdown.llm'], null)"
+        ),
+        "stt_cost": (
+            "if(mapContains(span_attr_num, 'cost_breakdown.stt'), "
+            "span_attr_num['cost_breakdown.stt'], null)"
+        ),
+        "tts_cost": (
+            "if(mapContains(span_attr_num, 'cost_breakdown.tts'), "
+            "span_attr_num['cost_breakdown.tts'], null)"
+        ),
+        "total_cost": (
+            "if(mapContains(span_attr_num, 'cost_breakdown.total'), "
+            "span_attr_num['cost_breakdown.total'], null)"
+        ),
+        "customer_cost": (
+            "if(mapContains(span_attr_num, 'cost_breakdown.total'), "
+            "span_attr_num['cost_breakdown.total'], null)"
+        ),
+        "llm_latency": (
+            "if(mapContains(span_attr_num, 'modelLatencyAverage'), "
+            "span_attr_num['modelLatencyAverage'], null)"
+        ),
+        "stt_latency": (
+            "if(mapContains(span_attr_num, 'transcriberLatencyAverage'), "
+            "span_attr_num['transcriberLatencyAverage'], null)"
+        ),
+        "tts_latency": (
+            "if(mapContains(span_attr_num, 'voiceLatencyAverage'), "
+            "span_attr_num['voiceLatencyAverage'], null)"
+        ),
+        "response_time": (
+            "if(mapContains(span_attr_num, 'turnLatencyAverage'), "
+            "span_attr_num['turnLatencyAverage'], null)"
         ),
     }
 
@@ -268,6 +332,7 @@ class ClickHouseFilterBuilder:
         project_id: str | None = None,
         project_ids: list[str] | None = None,
         score_date_scope: bool = True,
+        span_date_scope: bool = False,
     ) -> None:
         self.table = table
         self.annotation_label_ids = annotation_label_ids or []
@@ -289,8 +354,28 @@ class ClickHouseFilterBuilder:
         # on s.created_at using ``%(start_date)s`` from the outer params.
         # Callers that don't populate ``%(start_date)s`` must pass False.
         self.score_date_scope = score_date_scope
+        # When True, trace-membership span subqueries (the ``trace_id IN
+        # (SELECT trace_id FROM spans WHERE …)`` wraps emitted in trace-list
+        # mode for system-metric / span-attribute / end-user filters) gain the
+        # same lower-bound ``created_at >= %(start_date)s - INTERVAL 1 DAY``
+        # filter the outer query uses. PERF: without it each filter subquery
+        # scans the project's ENTIRE span history on every request — on
+        # multi-month projects that dwarfs the paginated outer scan and is
+        # the dominant cost of the trace list. The 1-day skew buffer matches
+        # the outer query's (see trace_list.py build()); a trace whose root
+        # is in-window has its children in-window bar ingest skew, so no
+        # legitimately-matching trace is dropped. Opt-in (default False) so
+        # builders that don't bind ``%(start_date)s`` keep byte-identical SQL.
+        self.span_date_scope = span_date_scope
         self._param_counter: int = 0
         self._params: dict[str, Any] = {}
+
+    def _span_membership_date_filter(self) -> str:
+        """Lower-bound ``created_at`` fragment for trace-membership span
+        subqueries; empty unless the caller opted in via ``span_date_scope``."""
+        if not self.span_date_scope:
+            return ""
+        return " AND created_at >= %(start_date)s - INTERVAL 1 DAY"
 
     def _score_date_filter(self, alias: str = "s") -> str:
         """Return a lower-bound ``created_at`` filter for ``model_hub_score``.
@@ -750,7 +835,7 @@ class ClickHouseFilterBuilder:
                 f"trace_id IN ("
                 f"SELECT trace_id FROM {self.table} "
                 f"WHERE end_user_id {comparison_op} toUUID('00000000-0000-0000-0000-000000000000') "
-                f"AND _peerdb_is_deleted = 0)"
+                f"AND _peerdb_is_deleted = 0{self._span_membership_date_filter()})"
             )
 
         if filter_value is None or filter_value == "":
@@ -785,7 +870,7 @@ class ClickHouseFilterBuilder:
             f"SELECT {self._ENDUSER_DIM_ID_COL} FROM {self._ENDUSER_DIM_TABLE} FINAL "
             f"WHERE {inner} "
             f"AND {self._ENDUSER_DIM_NOT_DELETED}"
-            f") AND _peerdb_is_deleted = 0)"
+            f") AND _peerdb_is_deleted = 0{self._span_membership_date_filter()})"
         )
 
     def _build_system_metric_condition(
@@ -863,7 +948,8 @@ class ClickHouseFilterBuilder:
         return (
             f"trace_id IN ("
             f"SELECT trace_id FROM {self.table} "
-            f"WHERE {project_pred} AND _peerdb_is_deleted = 0 "
+            f"WHERE {project_pred} AND _peerdb_is_deleted = 0"
+            f"{self._span_membership_date_filter()} "
             f"{root_clause}"
             f"AND {inner})"
         )
@@ -907,7 +993,8 @@ class ClickHouseFilterBuilder:
             f"trace_id IN ("
             f"SELECT trace_id FROM {self.table} "
             f"WHERE {self._project_scope_predicate()} "
-            f"AND is_deleted = 0 "
+            f"AND is_deleted = 0"
+            f"{self._span_membership_date_filter()} "
             f"AND {inner_predicate})"
         )
 
@@ -1364,6 +1451,31 @@ class ClickHouseFilterBuilder:
             outer_col = "trace_id"
             inner_col = "trace_id"
 
+        # Resolve the eval table + its not-deleted predicate via
+        # ``eval_logger_source()`` so the FILTER reads the same table the
+        # displayed eval cells (build_eval_query) read — previously this was
+        # hardcoded to ``tracer_eval_logger`` with a v2-shaped ``is_deleted``
+        # predicate, so on a ``CH25_EVAL_LOGGER_TABLE=tracer_eval_logger_v2``
+        # stack filters and display disagreed.
+        from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+
+        eval_table, eval_not_deleted = eval_logger_source()
+
+        # PERF: no table-level FINAL — same OOM class the span-list Phase-2
+        # rewrite removed: FINAL merged the WHOLE eval table before the config
+        # filter. The IN-subquery only needs id membership, and the not-deleted
+        # predicate already drops delete markers; a superseded duplicate row
+        # contributes the same id. ``created_at`` lower bound (window-aligned,
+        # 7-day slack; an eval row cannot pre-date its span) restores monthly
+        # partition pruning — measured 0.17s vs 1.31s at 10M eval rows on a
+        # 30-day view. Gated on score_date_scope like the score subqueries:
+        # callers that don't bind %(start_date)s must not emit it.
+        eval_date_clause = (
+            "AND created_at >= %(start_date)s - INTERVAL 7 DAY "
+            if self.score_date_scope
+            else ""
+        )
+
         def eval_value_subquery(
             match_condition: str,
             *,
@@ -1372,9 +1484,10 @@ class ClickHouseFilterBuilder:
             outer_operator = "NOT IN" if negate_outer else "IN"
             return (
                 f"{outer_col} {outer_operator} ("
-                f"SELECT {inner_col} FROM tracer_eval_logger FINAL "
+                f"SELECT {inner_col} FROM {eval_table} "
                 f"WHERE custom_eval_config_id IN %({param_cfg})s "
-                f"AND is_deleted = 0 "
+                f"AND {eval_not_deleted} "
+                f"{eval_date_clause}"
                 f"{error_clause} "
                 f"AND {match_condition}"
                 f")"
@@ -1458,9 +1571,12 @@ class ClickHouseFilterBuilder:
                         f"(has({choice_array}, %({param})s) "
                         f"OR output_str = %({param})s)"
                     )
-            combined = " OR ".join(choice_conditions)
+            # Wrap the OR-join so it binds as one unit — otherwise the subquery's
+            # `AND config/deleted/error` guards only scope the first value and
+            # the rest escape via SQL AND/OR precedence.
+            combined = "(" + " OR ".join(choice_conditions) + ")"
             if filter_op in negative_ops:
-                combined = f"{choice_exists} AND NOT ({combined})"
+                combined = f"{choice_exists} AND NOT {combined}"
             return eval_value_subquery(combined)
 
         # SCORE (default) — numeric on output_float. UI displays scores as
@@ -1825,18 +1941,29 @@ class ClickHouseFilterBuilder:
             filter_value = filter_value.lower() == "true"
         if not filter_value:
             return None
-        # ``tracer_eval_logger`` has no ``project_id`` column, so scope the
-        # subquery by INNER JOIN to the spans table (which does) — otherwise
-        # we would match trace_ids from *every* project. The outer query
-        # builder already exposes ``%(project_id)s`` in its params dict
-        # (seeded by ``BaseQueryBuilder.__init__``), matching the pattern
-        # used by ``_build_span_attr_condition`` above.
+        # The eval table has no ``project_id`` column, so scope the subquery by
+        # INNER JOIN to the spans table (which does) — otherwise we would match
+        # trace_ids from *every* project. Table + not-deleted predicate resolve
+        # via ``eval_logger_source()`` so the filter reads the same table as the
+        # displayed eval cells. PERF: no FINAL (id-membership needs no version
+        # collapse — same rationale as ``eval_value_subquery``) and a
+        # window-aligned ``created_at`` bound for monthly partition pruning
+        # (gated on score_date_scope: needs the outer %(start_date)s binding).
         # toString() casts UUID → String to match spans.trace_id (String type).
+        from tracer.services.clickhouse.eval_logger_table import eval_logger_source
+
+        eval_table, eval_not_deleted = eval_logger_source("el")
+        eval_date_clause = (
+            "AND el.created_at >= %(start_date)s - INTERVAL 7 DAY "
+            if self.score_date_scope
+            else ""
+        )
         return (
             "trace_id IN ("
-            "SELECT DISTINCT toString(el.trace_id) FROM tracer_eval_logger AS el FINAL "
+            f"SELECT DISTINCT toString(el.trace_id) FROM {eval_table} AS el "
             f"INNER JOIN {self.table} AS sp ON sp.trace_id = toString(el.trace_id) "
-            "WHERE el.is_deleted = 0 AND el.trace_id IS NOT NULL "
+            f"WHERE {eval_not_deleted} AND el.trace_id IS NOT NULL "
+            f"{eval_date_clause}"
             "AND sp.is_deleted = 0 "
             f"AND {self._project_scope_predicate('sp')})"
         )

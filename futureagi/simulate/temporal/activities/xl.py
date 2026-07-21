@@ -375,10 +375,10 @@ CONTEXT_MAP_DOT_ALIASES = {
     "prompt_template": "prompt.name",
     "prompt_template_name": "prompt.name",
     "prompt_template_description": "prompt.description",
-    "scenario_info_name": "scenario.name",
-    "scenario_info_description": "scenario.description",
-    "scenario_info_type": "scenario.type",
-    "scenario_info_source": "scenario.source",
+    "scenario_info_name": "scenario.info.name",
+    "scenario_info_description": "scenario.info.description",
+    "scenario_info_type": "scenario.info.type",
+    "scenario_info_source": "scenario.info.source",
     "call_summary": "call.summary",
     "ended_reason": "call.ended_reason",
     "duration_seconds": "call.duration_seconds",
@@ -422,12 +422,23 @@ def stringify_leaf(v):
     return "" if v is None else str(v)
 
 
+# Blocked at both attribute and dict-key layers to keep secret-shaped values out of eval prompts.
+_BLOCKED_ATTRS = frozenset({
+    "api_key", "api_secret", "secret", "secret_key", "password",
+    "token", "access_token", "refresh_token", "access_key", "private_key",
+    "credentials", "credentials_legacy",
+})
+
+
 def _step_segment(current, part):
     """One hop through `current`: dict key / list index / attribute, with snake<->camel coercion."""
     if current is None:
         return _STEP_MISS
+    candidates = (part, to_snake_case(part), to_camel_case(part))
+    if any(c in _BLOCKED_ATTRS for c in candidates):
+        return _STEP_MISS
     if isinstance(current, dict):
-        for candidate in (part, to_snake_case(part), to_camel_case(part)):
+        for candidate in candidates:
             if candidate in current:
                 return current[candidate]
         return _STEP_MISS
@@ -439,7 +450,7 @@ def _step_segment(current, part):
     # Reject dunder / private attrs and callables to block escapes to module globals.
     if part.startswith("_"):
         return _STEP_MISS
-    for candidate in (part, to_snake_case(part), to_camel_case(part)):
+    for candidate in candidates:
         if hasattr(current, candidate):
             value = getattr(current, candidate)
             if callable(value):
@@ -453,7 +464,7 @@ _MAX_PATH_SEGMENTS = 32  # cap traversal depth to bound FK descriptor chains
 
 def walk_subject_path(subjects, path):
     """Resolve a dotted path against any registered subject root at any depth."""
-    if not isinstance(path, str) or "." not in path:
+    if not isinstance(path, str) or not path:
         return PATH_MISSING
     if path.count(".") + 1 > _MAX_PATH_SEGMENTS:
         return PATH_MISSING
@@ -532,13 +543,24 @@ def build_simulation_context_map(call_execution, agent_version):
     # match the explicit flattening block in the frontend, not the raw
     # serializer field names.
     conv_metrics = call_execution.conversation_metrics_data or {}
-    rtm = call_execution.response_time_ms
+    # Cross-modality fallbacks: voice fields live on model, chat in conv_metrics.
+    _cm_lat = conv_metrics.get("avg_latency_ms")
+    _cm_atp = conv_metrics.get("agent_talk_percentage")
+    _cm_csat = conv_metrics.get("csat_score")
+    _tr = call_execution.talk_ratio
+    _rtm = call_execution.response_time_ms
+    _aal = call_execution.avg_agent_latency_ms
+    rtm = _rtm if _rtm is not None else _cm_lat
+    agent_latency_ms = _aal if _aal is not None else _cm_lat
+    avg_latency_ms = _cm_lat if _cm_lat is not None else agent_latency_ms
+    talk_ratio = _tr if _tr is not None else (_cm_atp / 100.0 if _cm_atp is not None else None)
+    agent_talk_percentage = _cm_atp if _cm_atp is not None else (_tr * 100.0 if _tr is not None else None)
+    csat_score = _cm_csat if _cm_csat is not None else call_execution.overall_score
     response_time_seconds = rtm / 1000.0 if rtm is not None else None
-    # Reuse the drawer's provider resolution so the eval column and the
-    # UI chip agree in every payload shape.
     from simulate.serializers.test_execution import CallExecutionDetailSerializer
 
-    provider_name = CallExecutionDetailSerializer().get_provider(call_execution)
+    _detail_serializer = CallExecutionDetailSerializer()
+    provider_name = _detail_serializer.get_provider(call_execution)
 
     ctx = {
         "simulation_name": _s(run_test.name),
@@ -546,6 +568,9 @@ def build_simulation_context_map(call_execution, agent_version):
         "call_summary": _s(call_execution.call_summary),
         "ended_reason": _s(call_execution.ended_reason),
         "duration_seconds": _s(call_execution.duration_seconds),
+        "duration": _s(_detail_serializer.get_duration(call_execution)),
+        "call_type": _s(_detail_serializer.get_call_type(call_execution)),
+        "audio_url": _s(call_execution.recording_url),
         "status": _s(call_execution.status),
         "simulation_call_type": _s(call_execution.simulation_call_type),
         "phone_number": _s(call_execution.phone_number),
@@ -553,10 +578,10 @@ def build_simulation_context_map(call_execution, agent_version):
         "recording_url": _s(call_execution.recording_url),
         "stereo_recording_url": _s(call_execution.stereo_recording_url),
         "response_time": _s(response_time_seconds),
-        "response_time_ms": _s(call_execution.response_time_ms),
-        "avg_agent_latency": _s(call_execution.avg_agent_latency_ms),
-        "avg_agent_latency_ms": _s(call_execution.avg_agent_latency_ms),
-        "avg_latency_ms": _s(conv_metrics.get("avg_latency_ms")),
+        "response_time_ms": _s(rtm),
+        "avg_agent_latency": _s(agent_latency_ms),
+        "avg_agent_latency_ms": _s(agent_latency_ms),
+        "avg_latency_ms": _s(avg_latency_ms),
         "avg_stop_time_after_interruption": _s(
             call_execution.avg_stop_time_after_interruption_ms
         ),
@@ -567,15 +592,15 @@ def build_simulation_context_map(call_execution, agent_version):
         "user_interruption_rate": _s(call_execution.user_interruption_rate),
         "user_wpm": _s(call_execution.user_wpm),
         "bot_wpm": _s(call_execution.bot_wpm),
-        "talk_ratio": _s(call_execution.talk_ratio),
+        "talk_ratio": _s(talk_ratio),
         "ai_interruption_count": _s(call_execution.ai_interruption_count),
         "ai_interruption_rate": _s(call_execution.ai_interruption_rate),
         "total_tokens": _s(conv_metrics.get("total_tokens")),
         "input_tokens": _s(conv_metrics.get("input_tokens")),
         "output_tokens": _s(conv_metrics.get("output_tokens")),
         "turn_count": _s(conv_metrics.get("turn_count")),
-        "agent_talk_percentage": _s(conv_metrics.get("agent_talk_percentage")),
-        "csat_score": _s(conv_metrics.get("csat_score")),
+        "agent_talk_percentage": _s(agent_talk_percentage),
+        "csat_score": _s(csat_score),
         "cost_cents": _s(call_execution.cost_cents),
         "customer_cost_cents": _s(call_execution.customer_cost_cents),
         "provider": _s(provider_name),
@@ -633,12 +658,20 @@ def build_simulation_context_map(call_execution, agent_version):
         ctx["scenario_info_type"] = _s(scenario.scenario_type)
         ctx["scenario_info_source"] = _s(scenario.source)
 
-    # Expose every entry under its dot-hierarchy alias too. This lets the
-    # new frontend dropdowns persist `agent.name` style mapping values
-    # while pre-migration configs with `agent_name` keep resolving.
+    ctx["simulator_agent_name"] = _s(simulator_agent.name) if simulator_agent else ""
+    ctx["agent_definition_used_name"] = _s(agent_def.agent_name) if agent_def else ""
+    ctx["scenario"] = _s(scenario.name) if scenario else ""
+
     for underscore_key, dot_key in CONTEXT_MAP_DOT_ALIASES.items():
         if underscore_key in ctx:
             ctx[dot_key] = ctx[underscore_key]
+
+    try:
+        scenario_columns_subject = _detail_serializer.get_scenario_columns(call_execution) or {}
+        scenario_graph_subject = _detail_serializer.get_scenario_graph(call_execution) or {}
+    except Exception:
+        logger.warning("eval_ctx.subject_build_failed", call_execution_id=str(call_execution.id), exc_info=True)
+        scenario_columns_subject = scenario_graph_subject = {}
 
     # Walker dispatch roots; order is load-bearing (`call` first for bare heads).
     subjects = {
@@ -648,6 +681,8 @@ def build_simulation_context_map(call_execution, agent_version):
         "persona": simulator_agent,
         "prompt": prompt_template,
         "scenario": scenario,
+        "scenario_columns": scenario_columns_subject,
+        "scenario_graph": scenario_graph_subject,
         "simulation": run_test,
     }
     return ctx, subjects

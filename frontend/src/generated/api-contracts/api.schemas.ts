@@ -6038,6 +6038,7 @@ export interface SelectionApi {
 export interface AddItemsApi {
   items?: AddQueueItemApi[];
   selection?: SelectionApi;
+  project_id?: string;
 }
 
 export interface QueueAddItemsResultApi {
@@ -6088,6 +6089,49 @@ export interface ApiSelectionTooLargeErrorApi {
   /** @minLength 1 */
   message: string;
   error: ApiSelectionTooLargeDetailApi;
+}
+
+export type ApiTooLargeErrorApiType = typeof ApiTooLargeErrorApiType[keyof typeof ApiTooLargeErrorApiType];
+
+
+export const ApiTooLargeErrorApiType = {
+  validation_error: 'validation_error',
+  authentication_error: 'authentication_error',
+  payment_required: 'payment_required',
+  entitlement_error: 'entitlement_error',
+  permission_error: 'permission_error',
+  not_found: 'not_found',
+  conflict: 'conflict',
+  client_error: 'client_error',
+  rate_limit: 'rate_limit',
+  server_error: 'server_error',
+  service_unavailable: 'service_unavailable',
+  timeout: 'timeout',
+  api_error: 'api_error',
+} as const;
+
+export type ApiTooLargeErrorApiCode = typeof ApiTooLargeErrorApiCode[keyof typeof ApiTooLargeErrorApiCode];
+
+
+export const ApiTooLargeErrorApiCode = {
+  export_too_large: 'export_too_large',
+  items_too_large: 'items_too_large',
+} as const;
+
+export type ApiTooLargeErrorApiDetails = {[key: string]: string[]};
+
+export interface ApiTooLargeErrorApi {
+  status?: boolean;
+  type?: ApiTooLargeErrorApiType;
+  code?: ApiTooLargeErrorApiCode;
+  detail?: string;
+  /** @minLength 1 */
+  result?: string;
+  /** @minLength 1 */
+  message?: string;
+  error?: string;
+  attr?: string;
+  details?: ApiTooLargeErrorApiDetails;
 }
 
 export type AssignItemsApiAction = typeof AssignItemsApiAction[keyof typeof AssignItemsApiAction];
@@ -11050,6 +11094,8 @@ export interface ExperimentFeedbackDetailsResponseApi {
   result: ExperimentFeedbackDetailsResultApi;
 }
 
+export type ExperimentFeedbackTemplateResultApiChoiceScores = {[key: string]: number};
+
 export interface ExperimentFeedbackTemplateResultApi {
   /** @minLength 1 */
   output_type?: string;
@@ -11060,6 +11106,7 @@ export interface ExperimentFeedbackTemplateResultApi {
   user_eval_name: string;
   choices?: string[];
   multi_choice?: boolean;
+  choice_scores?: ExperimentFeedbackTemplateResultApiChoiceScores;
 }
 
 export interface ExperimentFeedbackTemplateResponseApi {
@@ -11273,6 +11320,26 @@ export interface FeedbackDetailsResponseApi {
   result: FeedbackDetailsResultApi;
 }
 
+export type FeedbackTemplateResultApiChoiceScores = {[key: string]: number};
+
+export interface FeedbackTemplateResultApi {
+  /** @minLength 1 */
+  output_type?: string;
+  eval_description?: string;
+  /** @minLength 1 */
+  eval_name: string;
+  /** @minLength 1 */
+  user_eval_name: string;
+  choices?: string[];
+  multi_choice?: boolean;
+  choice_scores?: FeedbackTemplateResultApiChoiceScores;
+}
+
+export interface FeedbackTemplateResponseApi {
+  status: boolean;
+  result: FeedbackTemplateResultApi;
+}
+
 export type ColumnValuesRequestApiColumnPlaceholders = { [key: string]: unknown };
 
 export interface ColumnValuesRequestApi {
@@ -11359,6 +11426,7 @@ export interface EvalConfigApi {
   config_params_option?: EvalConfigApiConfigParamsOption;
   param_modalities?: EvalConfigApiParamModalities;
   choices?: EvalConfigApiChoices;
+  multi_choice?: boolean;
   check_internet?: boolean;
   kb_id?: EvalConfigApiKbId;
   error_localizer?: boolean;
@@ -12635,11 +12703,23 @@ export interface PromptFolderApi {
 
 export type PromptHistoryExecutionApiOutput = { [key: string]: unknown };
 
+/**
+ *
+Get prompt_config_snapshot with backward compatibility for modelDetail.
+If modelDetail is missing from configuration, generate it from the model name.
+
+ */
+export type PromptHistoryExecutionApiPromptConfigSnapshot = { [key: string]: unknown };
+
 export type PromptHistoryExecutionApiMetadata = { [key: string]: unknown };
+
+export type PromptHistoryExecutionApiVariableNames = { [key: string]: unknown };
 
 export type PromptHistoryExecutionApiEvaluationResults = { [key: string]: unknown };
 
 export type PromptHistoryExecutionApiEvaluationConfigs = { [key: string]: unknown };
+
+export type PromptHistoryExecutionApiLabels = { [key: string]: unknown };
 
 export type PromptHistoryExecutionApiPlaceholders = { [key: string]: unknown };
 
@@ -12651,19 +12731,24 @@ export interface PromptHistoryExecutionApi {
      */
   template_version: string;
   readonly output?: PromptHistoryExecutionApiOutput;
-  readonly prompt_config_snapshot?: string;
+  /**
+  Get prompt_config_snapshot with backward compatibility for modelDetail.
+  If modelDetail is missing from configuration, generate it from the model name.
+   */
+  readonly prompt_config_snapshot?: PromptHistoryExecutionApiPromptConfigSnapshot;
+  /** @minLength 1 */
   readonly template_name?: string;
   original_template?: string;
-  metadata?: PromptHistoryExecutionApiMetadata;
-  readonly variable_names?: string;
+  readonly metadata?: PromptHistoryExecutionApiMetadata;
+  readonly variable_names?: PromptHistoryExecutionApiVariableNames;
   evaluation_results?: PromptHistoryExecutionApiEvaluationResults;
-  evaluation_configs?: PromptHistoryExecutionApiEvaluationConfigs;
+  readonly evaluation_configs?: PromptHistoryExecutionApiEvaluationConfigs;
   readonly created_at?: string;
   is_default?: boolean;
   commit_message?: string;
   readonly updated_at?: string;
   is_draft?: boolean;
-  readonly labels?: string;
+  readonly labels?: PromptHistoryExecutionApiLabels;
   placeholders?: PromptHistoryExecutionApiPlaceholders;
   prompt_base_template?: string;
 }
@@ -16034,9 +16119,9 @@ export interface PersonaFieldOptionsApi {
   readonly regional_mix_choices?: string;
 }
 
-export type RunTestResponseApiAgentVersion = {[key: string]: string};
+export type RunTestResponseApiAgentVersion = { [key: string]: unknown };
 
-export type RunTestResponseApiAgentDefinitionDetail = {[key: string]: string};
+export type RunTestResponseApiAgentDefinitionDetail = { [key: string]: unknown };
 
 /**
  * Source type for the test run: agent_definition or prompt
@@ -16049,13 +16134,13 @@ export const RunTestResponseApiSourceType = {
   prompt: 'prompt',
 } as const;
 
-export type RunTestResponseApiPromptTemplateDetail = {[key: string]: string};
+export type RunTestResponseApiPromptTemplateDetail = { [key: string]: unknown };
 
-export type RunTestResponseApiPromptVersionDetail = {[key: string]: string};
+export type RunTestResponseApiPromptVersionDetail = { [key: string]: unknown };
 
-export type RunTestResponseApiScenariosDetailItem = {[key: string]: string};
+export type RunTestResponseApiScenariosDetailItem = { [key: string]: unknown };
 
-export type RunTestResponseApiSimulatorAgentDetail = {[key: string]: string};
+export type RunTestResponseApiSimulatorAgentDetail = { [key: string]: unknown };
 
 export type SimulateEvalConfigResponseApiConfig = { [key: string]: unknown };
 
@@ -16108,10 +16193,6 @@ export interface RunTestResponseApi {
      * @minLength 1
      */
   readonly name?: string;
-  /**
-     * Description of the test run
-     * @minLength 1
-     */
   readonly description?: string;
   /** Agent definition for this test run */
   readonly agent_definition?: string;
@@ -17298,6 +17379,15 @@ export interface TestExecutionItemResponseApi {
   readonly total_number_of_fagi_agent_turns?: number;
   /** @minLength 1 */
   readonly source_type?: string;
+}
+
+export interface RunTestExecutionsResponseApi {
+  readonly count?: number;
+  /** @minLength 1 */
+  readonly next?: string;
+  /** @minLength 1 */
+  readonly previous?: string;
+  readonly results?: readonly TestExecutionItemResponseApi[];
 }
 
 /**
@@ -24367,13 +24457,6 @@ page?: number;
  * Number of results to return per page.
  */
 limit?: number;
-};
-
-export type ModelHubFeedbackGetTemplate200 = {
-  count: number;
-  next?: string;
-  previous?: string;
-  results: FeedbackApi[];
 };
 
 export type ModelHubGetEvalConfigListParams = {

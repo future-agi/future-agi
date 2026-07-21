@@ -2,6 +2,7 @@ import { getRandomId, safeParse } from "src/utils/utils";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { AnnotationLabelTypes, PROJECT_SOURCE } from "src/utils/constants";
+import { SpanTypes } from "src/utils/constant";
 import CustomTraceHeaderRenderer from "./Renderers/CustomTraceHeaderRenderer";
 import {
   getAnnotationMetricFilterDefinition,
@@ -92,15 +93,7 @@ export const generateObserveTraceFilterDefinition = (
       multiSelect: true,
       filterType: {
         type: "option",
-        options: [
-          { label: "Chain", value: "chain" },
-          { label: "Retriever", value: "retriever" },
-          { label: "Generation", value: "generation" },
-          { label: "LLM", value: "llm" },
-          { label: "Tool", value: "tool" },
-          { label: "Agent", value: "agent" },
-          { label: "Embedding", value: "embedding" },
-        ],
+        options: [...SpanTypes],
       },
     },
     {
@@ -186,15 +179,7 @@ export const generateSpanObserveFilterDefinition = (
       multiSelect: true,
       filterType: {
         type: "option",
-        options: [
-          { label: "Chain", value: "chain" },
-          { label: "Retriever", value: "retriever" },
-          { label: "Generation", value: "generation" },
-          { label: "LLM", value: "llm" },
-          { label: "Tool", value: "tool" },
-          { label: "Agent", value: "agent" },
-          { label: "Embedding", value: "embedding" },
-        ],
+        options: [...SpanTypes],
       },
     },
   ];

@@ -836,7 +836,7 @@ class _CountingReaderCM:
     def __exit__(self, *exc):
         return False
 
-    def list_by_ids(self, span_ids):
+    def list_by_ids(self, span_ids, *, project_id=None, include_heavy=True):
         ids = [str(s) for s in span_ids]
         self.list_by_ids_calls.append(ids)
         return [self._by_id[i] for i in ids if i in self._by_id]
@@ -1073,3 +1073,127 @@ def test_collector_trace_content_deleted_when_ch_missing(organization, workspace
     with mock.patch(CH_READER_PATH, return_value=_ReaderCM(None)):
         content = helpers.resolve_source_content(item)
     assert content == {"type": "trace", "deleted": True}
+
+
+# ───────── CollectorSourceCache.for_items: per-project scoping (TH-6864) ─────────
+# for_items groups a page's items by their denormalized project_id and scopes each
+# CH read to it, pruning the spans PK prefix instead of scanning the whole
+# multi-tenant table — while a page whose items span projects still resolves EVERY
+# root. A single queue-wide scope would drop off-project items and render them
+# deleted; these tests fail if that regression is reintroduced.
+
+
+class _MultiSpanReaderCM:
+    """``get_reader()`` stub over many CHSpans. ``roots_by_trace_ids`` mirrors the
+    real reader: parentless spans matching trace_id AND — when a project_id is
+    passed — that project. So a MIS-scoped read (wrong project_id) resolves nothing,
+    and the correctness tests fail if for_items stops scoping per item."""
+
+    def __init__(self, spans):
+        self._spans = list(spans)
+        self.roots_calls = []  # (sorted trace_ids tuple, project_id) per call
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def roots_by_trace_ids(
+        self, trace_ids, *, include_heavy=False, project_id=None, org_id=None
+    ):
+        self.roots_calls.append((tuple(sorted(str(t) for t in trace_ids)), project_id))
+        ids = {str(t) for t in trace_ids}
+        return [
+            s
+            for s in self._spans
+            if not s.parent_span_id
+            and str(s.trace_id) in ids
+            and (project_id is None or str(s.project_id) == str(project_id))
+        ]
+
+
+def _trace_item(trace_id, project_id):
+    """Unsaved QueueItem carrying only what for_items reads."""
+    return QueueItem(
+        source_type=QueueItemSourceType.TRACE.value,
+        trace_id=trace_id,
+        project_id=project_id,
+    )
+
+
+def test_for_items_mixed_project_resolves_every_root():
+    """A page whose items span two projects resolves ALL roots — each read is scoped
+    to its own project. Fails if for_items scopes the whole page by one project (the
+    off-project items would resolve to nothing → rendered deleted)."""
+    proj_a, proj_b = str(uuid.uuid4()), str(uuid.uuid4())
+    t_a1, t_a2, t_b1 = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    spans = [
+        _make_chspan(project_id=proj_a, trace_id=t_a1, parent_span_id=""),
+        _make_chspan(project_id=proj_a, trace_id=t_a2, parent_span_id=""),
+        _make_chspan(project_id=proj_b, trace_id=t_b1, parent_span_id=""),
+    ]
+    items = [
+        _trace_item(t_a1, proj_a),
+        _trace_item(t_a2, proj_a),
+        _trace_item(t_b1, proj_b),
+    ]
+    reader = _MultiSpanReaderCM(spans)
+    with mock.patch(CH_READER_PATH, return_value=reader):
+        cache = helpers.CollectorSourceCache.for_items(items)
+    assert cache.trace_root(t_a1) is not None
+    assert cache.trace_root(t_a2) is not None
+    assert cache.trace_root(t_b1) is not None
+    # one scoped read per distinct project, each carrying that project's own id
+    assert {pid for _tids, pid in reader.roots_calls} == {proj_a, proj_b}
+
+
+def test_for_items_scopes_read_to_item_project():
+    """for_items forwards each item's project_id to the reader (PK-prefix prune),
+    not None. Fails if the scoping is dropped (regressing to the wide scan)."""
+    proj, tid = str(uuid.uuid4()), str(uuid.uuid4())
+    reader = _MultiSpanReaderCM(
+        [_make_chspan(project_id=proj, trace_id=tid, parent_span_id="")]
+    )
+    with mock.patch(CH_READER_PATH, return_value=reader):
+        cache = helpers.CollectorSourceCache.for_items([_trace_item(tid, proj)])
+    assert cache.trace_root(tid) is not None
+    assert reader.roots_calls == [((tid,), proj)]
+
+
+def test_for_items_null_project_falls_back_unscoped():
+    """A pre-denormalization item (project_id NULL) is read UNSCOPED (project_id
+    None) and still resolves — the migration degrades gracefully, never wrong."""
+    tid = str(uuid.uuid4())
+    reader = _MultiSpanReaderCM(
+        [_make_chspan(project_id=str(uuid.uuid4()), trace_id=tid, parent_span_id="")]
+    )
+    with mock.patch(CH_READER_PATH, return_value=reader):
+        cache = helpers.CollectorSourceCache.for_items([_trace_item(tid, None)])
+    assert cache.trace_root(tid) is not None
+    assert reader.roots_calls == [((tid,), None)]
+
+
+def test_for_items_read_count_is_bounded_by_projects_not_items():
+    """PERF GUARD (TH-6864). A page of many items across a FEW projects issues one
+    scoped CH read PER PROJECT — O(projects), not O(items), and never a single
+    unscoped wide scan. Fails if for_items regresses to a per-item read or drops
+    scoping — both are the full-table shapes that made the endpoint take 10s+. This
+    mirrors the repo's query-shape perf tests (tracer test_session_list_performance),
+    deterministic where a wall-clock assertion would flake."""
+    proj_a, proj_b = str(uuid.uuid4()), str(uuid.uuid4())
+    spans, items = [], []
+    for _ in range(20):
+        t_a, t_b = str(uuid.uuid4()), str(uuid.uuid4())
+        spans.append(_make_chspan(project_id=proj_a, trace_id=t_a, parent_span_id=""))
+        spans.append(_make_chspan(project_id=proj_b, trace_id=t_b, parent_span_id=""))
+        items.append(_trace_item(t_a, proj_a))
+        items.append(_trace_item(t_b, proj_b))
+    reader = _MultiSpanReaderCM(spans)
+    with mock.patch(CH_READER_PATH, return_value=reader):
+        cache = helpers.CollectorSourceCache.for_items(items)
+    # 40 items across 2 projects → exactly 2 reads, one per project, each scoped
+    assert len(reader.roots_calls) == 2
+    assert {pid for _tids, pid in reader.roots_calls} == {proj_a, proj_b}
+    assert all(pid is not None for _tids, pid in reader.roots_calls)
+    assert all(cache.trace_root(it.trace_id) is not None for it in items)
