@@ -69,7 +69,7 @@ func (h *Handlers) TextCompletion(w http.ResponseWriter, r *http.Request) {
 	rc.UserID = req.User
 
 	// Extract client IP for audit.
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.extractClientIP(r)
 
 	setAuthMetadataFromRequest(rc, r)
 

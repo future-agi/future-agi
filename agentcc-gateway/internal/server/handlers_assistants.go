@@ -56,7 +56,7 @@ func (h *Handlers) setupAssistantsRC(r *http.Request, operation string) *models.
 	rc.TraceID = r.Header.Get("x-agentcc-trace-id")
 	rc.EndpointType = "assistants"
 	rc.Metadata["assistants_operation"] = operation
-	rc.Metadata["client_ip"] = extractClientIP(r)
+	rc.Metadata["client_ip"] = h.extractClientIP(r)
 
 	setAuthMetadataFromRequest(rc, r)
 	if meta := r.Header.Get("x-agentcc-metadata"); meta != "" {

@@ -1,0 +1,129 @@
+name: Backend CI
+
+# Root-level backend CI. The previous backend test workflow lived at
+# futureagi/.github/workflows/pr-tests.yml — a nested .github directory that
+# GitHub Actions does NOT read (only the repository-root .github/workflows is
+# active), and it was fully commented out. This replaces it.
+#
+# The lint job runs on every backend PR (fast, no services/secrets).
+# The full test suite needs the Docker stack + GCP credentials and ~2h, so it
+# is wired to workflow_dispatch (manual) rather than auto-running and going red
+# on forks/PRs that lack the secrets.
+
+on:
+  pull_request:
+    branches: [main, dev, develop]
+    paths:
+      - "futureagi/**"
+      - ".github/workflows/backend-ci.yml"
+  push:
+    branches: [main, dev, develop]
+    paths:
+      - "futureagi/**"
+      - ".github/workflows/backend-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (ruff + black)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: futureagi
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Versions are not pinned in the repo; bump these as the team standardizes.
+      - name: Install linters
+        run: pip install "ruff==0.6.9" "black==24.10.0"
+
+      # NOTE: report-mode for now. The backend has never been lint-gated, so we
+      # surface findings without blocking. Remove `continue-on-error` to enforce
+      # once the baseline is clean (`make lint` locally applies the fixes).
+      - name: ruff check
+        continue-on-error: true
+        run: ruff check --output-format=github .
+
+      - name: black --check
+        continue-on-error: true
+        run: black --check .
+
+  test:
+    name: Full test suite (manual)
+    # Heavy: builds the docker-compose.test stack and needs VERTEX_CREDENTIALS.
+    # Manual-only so it never silently red-bars PRs that can't supply secrets.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        working-directory: futureagi
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: "recursive"
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Free up disk space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+
+      - name: Setup Google Cloud credentials
+        env:
+          VERTEX_CREDS: ${{ secrets.VERTEX_CREDENTIALS }}
+        run: |
+          if [ -z "$VERTEX_CREDS" ]; then
+            echo "❌ ERROR: VERTEX_CREDENTIALS secret is not set!"
+            echo "Add it at: https://github.com/${{ github.repository }}/settings/secrets/actions"
+            exit 1
+          fi
+          echo "$VERTEX_CREDS" > Vertex.json
+          echo "✅ Vertex.json created ($(wc -c < Vertex.json) bytes)"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build test images
+        env:
+          DOCKER_BUILDKIT: 1
+          COMPOSE_DOCKER_CLI_BUILD: 1
+        run: docker compose -f docker-compose.test.yml -p futureagi-test build
+
+      - name: Run all tests
+        env:
+          DOCKER_BUILDKIT: 1
+          COMPOSE_DOCKER_CLI_BUILD: 1
+        run: make test
+
+      - name: Cleanup
+        if: always()
+        run: |
+          docker compose -f docker-compose.test.yml -p futureagi-test down -v --remove-orphans || true
+          rm -f Vertex.json
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            futureagi/test-reports/
+            futureagi/coverage-reports/
+            futureagi/htmlcov/
+          retention-days: 7

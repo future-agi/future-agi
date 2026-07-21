@@ -1,0 +1,60 @@
+# Dependabot configuration — automated dependency & security updates.
+# Covers every ecosystem in the monorepo. Security updates are always enabled;
+# the schedules below control routine version-bump PRs.
+version: 2
+updates:
+  # ---- Python backend (futureagi) ----
+  - package-ecosystem: "pip"
+    directory: "/futureagi"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels: ["dependencies", "python"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  # ---- Frontend (npm) ----
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels: ["dependencies", "frontend"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  # ---- Go gateway ----
+  - package-ecosystem: "gomod"
+    directory: "/agentcc-gateway"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels: ["dependencies", "go"]
+    commit-message:
+      prefix: "chore(deps)"
+
+  # ---- GitHub Actions (pins/updates third-party actions) ----
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "ci"]
+    commit-message:
+      prefix: "chore(ci)"
+
+  # ---- Docker base images ----
+  - package-ecosystem: "docker"
+    directory: "/futureagi"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "docker"]
+  - package-ecosystem: "docker"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "docker"]
+  - package-ecosystem: "docker"
+    directory: "/agentcc-gateway"
+    schedule:
+      interval: "weekly"
+    labels: ["dependencies", "docker"]
