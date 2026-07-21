@@ -35,51 +35,41 @@ _BASE_URL = "https://api.smallest.ai/waves/v1"
 _TTS_ENDPOINT = f"{_BASE_URL}/tts"
 _STT_ENDPOINT = f"{_BASE_URL}/stt/"
 
-# Voice IDs as returned by GET /waves/v1/lightning-v3.1/get_voices (all lowercase).
-# Both lightning_v3.1 and lightning_v3.1_pro share the same endpoint; pro is a
-# curated subset of the full catalog.
+# Voice IDs per docs.smallest.ai model cards (lightning-v-3-1 / lightning-v-3-1-pro).
+# The model cards document "featured/best" voices per language and accent, not a
+# literal row-by-row dump of the full catalog (217 voices for lightning_v3.1,
+# 149 for lightning_v3.1_pro). For the complete, exact catalog, call the live
+# GET /waves/v1/{model}/get_voices endpoint.
 LIGHTNING_V3_1_VOICES = [
-    # English (US)
-    "avery", "mia", "magnus", "olivia", "daniel", "rachel", "nicole", "elizabeth",
-    "quinn", "sophia", "robert", "sandra", "brian", "ella", "alex", "lucas",
-    "natasha", "harper", "alice", "jessica", "jordan", "kyle", "tara",
-    # English (British)
-    "liam", "noah", "edward", "isla", "julia", "alistair",
-    # English (Australian)
-    "chloe", "cooper", "sienna", "flynn", "nyah",
-    # English (Canadian)
-    "william", "erica", "alec",
-    # Hindi / English (Indian accent)
-    "neel", "maithili", "devansh", "sameera", "mihir", "aarush", "sakshi", "vivaan",
-    "srishti", "maya", "anika", "sanjay", "arjun", "advika", "aisha", "gaurav",
-    "ishani", "yuvika", "sana", "kunal", "meher", "saira", "kareena", "chinmayi",
-    "sunidhi", "aarini", "inaaya", "rhea", "zariya", "mishka", "aviraj", "vyom",
-    "zoravar", "reyansh", "ahan",
-    # Spanish
-    "jose", "mariana", "luis", "daniella", "lucia", "miguel", "javier",
-    "camilla", "carlos", "emilio", "rodrigo", "marcos", "david", "isabella",
-    "nerea", "alba",
-    # South Indian languages
-    "anitha", "raju", "shrihari", "padmaja", "deepashri", "jeevan", "rajeshwari",
-    "shibi", "vaisakh", "pranav",
-    # British (pro-catalog voices, same endpoint)
-    "benedict", "cormac", "everett", "finley", "rupert", "winston", "caspian",
-    "cressida", "elowen", "ottilie", "seraphina", "tabitha", "arabella",
-    # American (pro-catalog voices)
-    "maverick", "brooks", "asher", "wesley", "hunter", "colton",
-    "willow", "autumn", "skylar", "savannah", "kennedy", "reagan", "sierra",
+    # English (US) — best voices
+    "quinn", "mia", "magnus", "olivia", "daniel", "rachel", "nicole", "elizabeth",
+    # English (Canadian / Australian)
+    "william", "erica", "chloe",
+    # Hindi / English (Indian accent) — best voices
+    "neel", "maithili", "devansh", "sameera", "mihir", "aarush", "sakshi", "vivaan", "srishti",
+    # Spanish — best voices
+    "daniella", "camilla", "alba", "marcos", "david", "nerea", "miguel",
+    # Other Indian languages (Tamil, Malayalam, Telugu, Marathi, Gujarati, Kannada)
+    "jeevan", "rajeshwari", "vaisakh", "shibi", "srihari", "padmaja",
+    "rupali", "nilesh", "niharika", "dhruvit", "deepashri", "pranav",
+    # Additional curated — American English
+    "jordan", "robert", "johnny", "lucas", "ronald", "blofeld", "zorin", "felix", "malcolm",
+    "lauren", "hannah", "vanessa", "brooke", "ilsa", "christine",
+    # Additional curated — Indic
+    "wasim", "rehan", "parth", "atharv",
+    "sunidhi", "chinmayi", "aanya", "siya", "anuja", "avni", "ishani", "yuvika", "advika", "sana", "maya",
 ]
 
 LIGHTNING_V3_1_PRO_VOICES = [
-    # Indian (curated)
+    # Indian accent
     "rhea", "zariya", "kareena", "mishka", "inaaya", "saira", "meher", "aarini",
     "aviraj", "vyom", "zoravar", "reyansh", "ahan",
-    # British (curated)
-    "cressida", "elowen", "ottilie", "seraphina", "tabitha", "arabella",
-    "benedict", "cormac", "everett", "finley", "rupert", "winston", "caspian",
-    # American (curated)
-    "willow", "autumn", "skylar", "savannah", "kennedy", "reagan", "sierra",
-    "maverick", "brooks", "hunter", "colton", "wesley", "asher",
+    # British accent
+    "sophie", "ellie", "cressida", "ottilie", "elowen", "seraphina",
+    "sam", "henry", "benedict", "cormac", "rupert", "finley",
+    # American accent
+    "kaitlyn", "savannah", "amelia", "zoe", "ruby", "leah", "jenna", "kate", "molly", "sara", "fiona",
+    "blake", "austin", "jack", "leo", "luke", "owen",
 ]
 
 
@@ -96,13 +86,14 @@ def smallest_ai_speech_response(run_prompt_instance, start_time, api_key):
 
     cfg = run_prompt_instance.run_prompt_config or {}
     voice_id = cfg.get("voice_id") or cfg.get("voice") or "avery"
-    sample_rate = int(cfg.get("sample_rate", 24000))
+    sample_rate = int(cfg.get("sample_rate", 44100))
     language = cfg.get("language", "en")
     speed = cfg.get("speed", 1.0)
 
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
+        "Accept": "audio/wav",
         "X-Source": "future-agi",
     }
 
@@ -113,6 +104,7 @@ def smallest_ai_speech_response(run_prompt_instance, start_time, api_key):
         "sample_rate": sample_rate,
         "speed": speed,
         "language": language,
+        "output_format": "wav",
     }
 
     logger.info(
@@ -125,24 +117,18 @@ def smallest_ai_speech_response(run_prompt_instance, start_time, api_key):
     )
 
     # stream=True is required — without it the AWS ALB layer can return a cached
-    # zeroed-out body. Streaming bypasses the cache and delivers real PCM frames.
+    # zeroed-out body. Streaming bypasses the cache and delivers real audio frames.
     response = requests.post(
         _TTS_ENDPOINT, json=payload, headers=headers, timeout=30, stream=True
     )
     response.raise_for_status()
 
-    pcm_bytes = b"".join(response.iter_content(chunk_size=4096))
+    raw_bytes = b"".join(response.iter_content(chunk_size=4096))
 
-    # The API returns raw 16-bit PCM regardless of add_wav_header=True.
-    # Wrap in a proper RIFF/WAV container so downstream consumers (STT, players)
-    # can handle it correctly.
-    buf = BytesIO()
-    with wave.open(buf, "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)       # 16-bit
-        w.setframerate(sample_rate)
-        w.writeframes(pcm_bytes)
-    audio_bytes = buf.getvalue()
+    # output_format="wav" should return an already-wrapped RIFF/WAV container,
+    # but earlier API behavior returned raw PCM regardless of the requested
+    # format — fall back to wrapping it ourselves if no RIFF header is present.
+    audio_bytes = _ensure_wav_container(raw_bytes, sample_rate=sample_rate)
 
     return run_prompt_instance._format_audio_output(audio_bytes, start_time, input_text)
 
@@ -244,17 +230,20 @@ def smallest_ai_transcription_response(run_prompt_instance, start_time, api_key)
 def get_smallest_ai_tts_parameters(model_name: str) -> dict:
     """UI parameters for Smallest AI Waves TTS models.
 
-    lightning_v3.1     — 217 voices, 15+ languages including Indian languages
-    lightning_v3.1_pro — 36 curated voices, en/hi/auto
+    lightning_v3.1     — 217 voices, 12 languages
+    lightning_v3.1_pro — 149 voices, 29 languages
     """
     is_pro = "pro" in model_name.lower()
     voices = LIGHTNING_V3_1_PRO_VOICES if is_pro else LIGHTNING_V3_1_VOICES
 
-    # Pro only supports en, hi, auto; base supports full language set
     language_options = (
-        ["en", "hi", "auto"]
+        [
+            "en", "hi", "mr", "ta", "ml", "te", "kn", "pa", "bn", "or", "gu",
+            "ar", "zh", "id", "ja", "ko", "ms", "tr", "vi", "de", "es", "fr",
+            "it", "pt", "ru", "el", "fi", "no", "pl",
+        ]
         if is_pro
-        else ["en", "hi", "auto", "ta", "te", "mr", "kn", "ml", "gu", "bn", "es", "fr", "de", "ja"]
+        else ["en", "hi", "ta", "es", "kn", "mr", "te", "or", "pa", "ml", "gu", "bn"]
     )
 
     return {
@@ -269,12 +258,12 @@ def get_smallest_ai_tts_parameters(model_name: str) -> dict:
                 "label": "language",
                 "options": language_options,
                 "default": "en",
-                "description": "Synthesis language. Use 'auto' for automatic Hindi/English switching (Indian voices).",
+                "description": "Synthesis language. 'hi' supports automatic Hindi/English code-switching.",
             },
             {
                 "label": "sample_rate",
                 "options": [8000, 16000, 24000, 44100],
-                "default": 24000,
+                "default": 44100,
                 "description": "Output audio sample rate in Hz",
             },
         ],

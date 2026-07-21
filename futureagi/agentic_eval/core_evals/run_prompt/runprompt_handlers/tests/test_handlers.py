@@ -2191,7 +2191,7 @@ class TestSmallestAITTSParameters:
         assert "dropdowns" in params
         assert "sliders" in params
         voice_dropdown = next(d for d in params["dropdowns"] if d["label"] == "voice_id")
-        assert "avery" in voice_dropdown["options"]
+        assert "quinn" in voice_dropdown["options"]
         assert "neel" in voice_dropdown["options"]
         speed_slider = next(s for s in params["sliders"] if s["label"] == "speed")
         assert speed_slider["min"] == 0.5
@@ -2207,9 +2207,13 @@ class TestSmallestAITTSParameters:
         # Pro voices only — no US voices like avery
         assert "benedict" in voice_dropdown["options"]
         assert "rhea" in voice_dropdown["options"]
-        # Pro language set is restricted to en/hi/auto
+        # Pro supports 29 languages (en, hi, + 27 more), not just en/hi/auto
         lang_dropdown = next(d for d in params["dropdowns"] if d["label"] == "language")
-        assert lang_dropdown["options"] == ["en", "hi", "auto"]
+        assert "en" in lang_dropdown["options"]
+        assert "hi" in lang_dropdown["options"]
+        assert "ar" in lang_dropdown["options"]
+        assert "auto" not in lang_dropdown["options"]
+        assert len(lang_dropdown["options"]) == 29
 
     def test_stt_parameters_pulse(self):
         from agentic_eval.core_evals.run_prompt.other_services.smallest_ai_response import (
