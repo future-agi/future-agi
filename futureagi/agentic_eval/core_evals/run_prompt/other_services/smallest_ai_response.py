@@ -102,6 +102,7 @@ def smallest_ai_speech_response(run_prompt_instance, start_time, api_key):
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
+        "X-Source": "future-agi",
     }
 
     payload = {
@@ -188,6 +189,7 @@ def smallest_ai_transcription_response(run_prompt_instance, start_time, api_key)
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "audio/wav",
+        "X-Source": "future-agi",
     }
 
     wav_bytes = _ensure_wav_container(audio_bytes)
