@@ -28,6 +28,7 @@ import {
   useHardDeleteAnnotationQueue,
   useUpdateAnnotationQueue,
   useUpdateAnnotationQueueStatus,
+  useCustomEvalConfigList,
 } from "src/api/annotation-queues/annotation-queues";
 import RHFTextField from "src/components/hook-form/rhf-text-field";
 import { RHFCheckbox } from "src/components/hook-form/rhf-checkbox";
@@ -97,6 +98,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
       autoAssign: false,
       label_ids: [],
       annotators: [],
+      custom_eval_config: null,
     },
   });
 
@@ -107,6 +109,10 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
   const autoAssign = watch("autoAssign");
   const annotatorCount = annotators.filter(isQueueAnnotatorRole).length;
   const hasInitializedRef = useRef(false);
+
+  const { data: evalConfigs = [] } = useCustomEvalConfigList({
+    projectId: queue?.project,
+  });
 
   useEffect(() => {
     if (queue && !hasInitializedRef.current) {
@@ -130,6 +136,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
         autoAssign: queue.auto_assign ?? false,
         label_ids: qLabels,
         annotators: qAnnotators,
+        custom_eval_config: queue.custom_eval_config || null,
       });
     }
   }, [queue, reset]);
@@ -150,6 +157,7 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
       annotator_roles: Object.fromEntries(
         formData.annotators.map((a) => [a.userId, a.roles || [a.role]]),
       ),
+      custom_eval_config: formData.custom_eval_config || null,
     };
 
     const currentStatus = queue?.status || "draft";
@@ -269,6 +277,42 @@ export default function QueueSettingsTab({ queue, queueId, creatorId }) {
                       </TextField>
                     );
                   }}
+                />
+
+                <Controller
+                  name="custom_eval_config"
+                  control={control}
+                  render={({ field }) => (
+                    <TextField
+                      {...field}
+                      select
+                      size="small"
+                      label="Evaluator (Judge)"
+                      fullWidth
+                      helperText="Link an evaluator to compare judge scores against human labels in the Agreement tab"
+                      FormHelperTextProps={{ sx: { ml: 0 } }}
+                      sx={{ "& .MuiOutlinedInput-root": { borderRadius: 0.5 } }}
+                      SelectProps={{
+                        displayEmpty: true,
+                        renderValue: (value) => {
+                          if (!value) return "None";
+                          const selected = (evalConfigs || []).find(
+                            (ec) => ec.id === value,
+                          );
+                          return selected?.name || value;
+                        },
+                      }}
+                    >
+                      <MenuItem value="">
+                        <em>None</em>
+                      </MenuItem>
+                      {(evalConfigs || []).map((ec) => (
+                        <MenuItem key={ec.id} value={ec.id}>
+                          {ec.name}
+                        </MenuItem>
+                      ))}
+                    </TextField>
+                  )}
                 />
               </Stack>
             </CardContent>
