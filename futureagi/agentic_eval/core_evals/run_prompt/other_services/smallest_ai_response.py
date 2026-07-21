@@ -11,12 +11,13 @@ TTS (Waves):
 - Body: {"text", "voice_id", "model", "sample_rate", "speed", "language"}
 
 STT (Pulse):
-- REST endpoint: POST https://api.smallest.ai/waves/v1/pulse/get_text
+- REST endpoint: POST https://api.smallest.ai/waves/v1/stt/
+  (unified endpoint; supersedes the legacy POST /waves/v1/pulse/get_text)
 - WebSocket streaming: wss://api.smallest.ai/waves/v1/stt/live
-- Models: pulse (supports both WebSocket streaming and REST/batch),
-  pulse-pro (REST/batch only)  — passed as ?model= query param
+- Models: pulse (multilingual, supports both WebSocket streaming and REST/batch),
+  pulse-pro (English-only, REST/batch only)  — passed as ?model= query param
 - Auth: Authorization: Bearer {api_key}
-- Body: raw audio bytes, Content-Type: audio/wav
+- Body: raw audio bytes, Content-Type: application/octet-stream
 """
 
 import time
@@ -32,7 +33,7 @@ logger = structlog.get_logger(__name__)
 
 _BASE_URL = "https://api.smallest.ai/waves/v1"
 _TTS_ENDPOINT = f"{_BASE_URL}/tts"
-_STT_ENDPOINT = f"{_BASE_URL}/pulse/get_text"
+_STT_ENDPOINT = f"{_BASE_URL}/stt/"
 
 # Voice IDs as returned by GET /waves/v1/lightning-v3.1/get_voices (all lowercase).
 # Both lightning_v3.1 and lightning_v3.1_pro share the same endpoint; pro is a
@@ -162,8 +163,8 @@ def _ensure_wav_container(audio_bytes: bytes, sample_rate: int = 24000) -> bytes
 def smallest_ai_transcription_response(run_prompt_instance, start_time, api_key):
     """Speech-to-Text via Smallest AI Pulse REST API.
 
-    Sends audio as raw bytes with Content-Type: audio/wav.
-    Multipart form upload returns only {"status":"success"} without a transcript.
+    Uses the unified POST /waves/v1/stt/ endpoint, sending audio as raw bytes
+    with Content-Type: application/octet-stream.
     """
     raw_input = run_prompt_instance._get_input_audio_from_messages()
     audio_bytes = audio_bytes_from_url_or_base64(raw_input)
@@ -188,7 +189,7 @@ def smallest_ai_transcription_response(run_prompt_instance, start_time, api_key)
 
     headers = {
         "Authorization": f"Bearer {api_key}",
-        "Content-Type": "audio/wav",
+        "Content-Type": "application/octet-stream",
         "X-Source": "future-agi",
     }
 
@@ -292,16 +293,31 @@ def get_smallest_ai_tts_parameters(model_name: str) -> dict:
 
 def get_smallest_ai_stt_parameters(model_name: str) -> dict:
     """UI parameters for Smallest AI Pulse STT models (pulse, pulse-pro) via REST."""
+    is_pro = "pro" in model_name.lower()
+
+    # pulse-pro is English-only. pulse supports 26 individual language codes
+    # plus 3 regional auto-detect aggregators (multi-eu, multi-asian, multi-indic).
+    language_options = (
+        ["en"]
+        if is_pro
+        else [
+            "en", "hi", "de", "es", "ru", "it", "fr", "nl", "pt", "uk", "pl",
+            "cs", "sk", "lv", "et", "ro", "fi", "sv", "bg", "hu", "da", "lt",
+            "mt", "zh", "ja", "ko",
+            "multi-eu", "multi-asian", "multi-indic",
+        ]
+    )
+
     return {
         "dropdowns": [
             {
                 "label": "language",
-                "options": [
-                    "en", "hi", "ta", "te", "mr", "kn", "ml", "gu", "bn",
-                    "es", "fr", "de", "ja", "ko", "zh", "ar", "pt", "ru",
-                ],
+                "options": language_options,
                 "default": "en",
-                "description": "Audio language. Leave as 'en' or set for better accuracy. Pulse supports 38 languages.",
+                "description": (
+                    "Audio language. pulse-pro is English-only; pulse supports "
+                    "26 languages plus multi-eu/multi-asian/multi-indic auto-detect."
+                ),
             },
         ],
         "booleans": [
