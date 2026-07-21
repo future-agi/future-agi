@@ -1,0 +1,160 @@
+name: "fi-simulate"
+description: "Run a FutureAGI Simulate test and gate your pipeline on the pass-rate result."
+author: "FutureAGI"
+
+branding:
+  icon: "check-circle"
+  color: "purple"
+
+inputs:
+  test-id:
+    description: "Run-test UUID to execute"
+    required: true
+  api-key:
+    description: >
+      FutureAGI API credential. Use a repo or org secret.
+      Accepts a Bearer JWT or an 'api_key:secret_key' pair.
+    required: true
+  scenario-ids:
+    description: "Comma-separated scenario UUIDs to run. Defaults to all scenarios in the test."
+    required: false
+    default: ""
+  simulator-id:
+    description: "Override the simulator for this execution."
+    required: false
+    default: ""
+  threshold:
+    description: "Minimum pass rate (0.0–1.0) required to pass the step. Defaults to 0.8."
+    required: false
+    default: "0.8"
+  timeout:
+    description: "Maximum seconds to wait for the run to finish. Defaults to 1800."
+    required: false
+    default: "1800"
+  poll-interval:
+    description: "Seconds between status polls. Defaults to 5."
+    required: false
+    default: "5"
+  base-url:
+    description: "API base URL. Override for self-hosted deployments."
+    required: false
+    default: "https://app.futureagi.com"
+  python-version:
+    description: "Python version to use on the runner. Defaults to 3.11."
+    required: false
+    default: "3.11"
+
+outputs:
+  execution-id:
+    description: "The execution ID returned by the Simulate run."
+    value: ${{ steps.fi-simulate.outputs.execution-id }}
+  pass-rate:
+    description: "Aggregate pass rate (0.0–1.0) from the eval summary."
+    value: ${{ steps.fi-simulate.outputs.pass-rate }}
+  summary-json:
+    description: "Full eval summary as a JSON string."
+    value: ${{ steps.fi-simulate.outputs.summary-json }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Install fi-simulate
+      shell: bash
+      run: pip install --quiet fi-simulate
+
+    - name: Run fi-simulate
+      id: fi-simulate
+      shell: bash
+      env:
+        FI_API_KEY: ${{ inputs.api-key }}
+        FI_BASE_URL: ${{ inputs.base-url }}
+      run: |
+        # Build argument list
+        ARGS=(
+          run
+          --test-id "${{ inputs.test-id }}"
+          --threshold "${{ inputs.threshold }}"
+          --timeout "${{ inputs.timeout }}"
+          --poll-interval "${{ inputs.poll-interval }}"
+          --output json
+        )
+        if [ -n "${{ inputs.scenario-ids }}" ]; then
+          ARGS+=(--scenario-ids "${{ inputs.scenario-ids }}")
+        fi
+        if [ -n "${{ inputs.simulator-id }}" ]; then
+          ARGS+=(--simulator-id "${{ inputs.simulator-id }}")
+        fi
+
+        # Run and capture JSON output; preserve the exit code
+        JSON_FILE="$(mktemp)"
+        fi-simulate "${ARGS[@]}" | tee "$JSON_FILE"
+        EXIT_CODE=${PIPESTATUS[0]}
+
+        # Write GitHub step summary from the JSON result
+        python3 - "$JSON_FILE" << 'PYEOF'
+        import json, os, sys
+
+        path = sys.argv[1]
+        try:
+            with open(path) as f:
+                d = json.load(f)
+        except Exception:
+            sys.exit(0)
+
+        passed     = d.get("passed", False)
+        pass_rate  = d.get("pass_rate", 0)
+        threshold  = d.get("threshold", 0)
+        exec_id    = d.get("execution_id", "")
+        run_id     = d.get("run_test_id", "")
+        status     = d.get("status", "")
+        calls      = d.get("calls", {})
+        evals      = d.get("eval_summary", [])
+
+        gate  = "✅ PASS" if passed else "❌ FAIL"
+        lines = [
+            "## fi-simulate Results\n",
+            "| | |",
+            "|---|---|",
+            f"| **Test ID** | `{run_id}` |",
+            f"| **Execution ID** | `{exec_id}` |",
+            f"| **Status** | {status} |",
+            f"| **Pass rate** | {pass_rate:.1%} |",
+            f"| **Threshold** | {threshold:.1%} |",
+            f"| **Gate** | {gate} |",
+        ]
+        if calls:
+            lines.append(
+                f"| **Calls** | {calls.get('completed',0)}/{calls.get('total',0)} completed |"
+            )
+        if evals:
+            lines += ["", "### Eval breakdown", "", "| Eval | Pass rate |", "|---|---|"]
+            for e in evals:
+                name = e.get("name") or e.get("eval_name") or "—"
+                rate = e.get("pass_rate") or e.get("score")
+                rate_str = f"{float(rate):.1%}" if rate is not None else "n/a"
+                lines.append(f"| {name} | {rate_str} |")
+
+        md = "\n".join(lines) + "\n"
+        summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary_file:
+            with open(summary_file, "a") as f:
+                f.write(md)
+        else:
+            print(md)
+
+        # Write outputs
+        output_file = os.environ.get("GITHUB_OUTPUT")
+        if output_file:
+            with open(output_file, "a") as f:
+                f.write(f"execution-id={exec_id}\n")
+                f.write(f"pass-rate={pass_rate}\n")
+                f.write(f"summary-json={json.dumps(evals)}\n")
+        PYEOF
+
+        rm -f "$JSON_FILE"
+        exit $EXIT_CODE
