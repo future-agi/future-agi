@@ -7243,7 +7243,7 @@ OSS_AVAILABLE_MODELS = [
             "aviraj", "vyom", "zoravar", "reyansh", "ahan",
             "sophie", "ellie", "cressida", "ottilie", "elowen", "seraphina",
             "sam", "henry", "benedict", "cormac", "rupert", "finley",
-            "kaitlyn", "savannah", "amelia", "zoe", "ruby", "leah", "jenna", "kate", "molly", "sara", "fiona",
+            "kaitlyn", "savannah", "amelia", "zoe", "ruby", "leah", "jenna", "kate", "molly", "fiona",
             "blake", "austin", "jack", "leo", "luke", "owen",
         ],
         "supported_languages": [

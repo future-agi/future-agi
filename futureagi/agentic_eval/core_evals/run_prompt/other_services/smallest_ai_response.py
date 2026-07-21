@@ -35,11 +35,11 @@ _BASE_URL = "https://api.smallest.ai/waves/v1"
 _TTS_ENDPOINT = f"{_BASE_URL}/tts"
 _STT_ENDPOINT = f"{_BASE_URL}/stt/"
 
-# Voice IDs per docs.smallest.ai model cards (lightning-v-3-1 / lightning-v-3-1-pro).
-# The model cards document "featured/best" voices per language and accent, not a
-# literal row-by-row dump of the full catalog (217 voices for lightning_v3.1,
-# 149 for lightning_v3.1_pro). For the complete, exact catalog, call the live
-# GET /waves/v1/{model}/get_voices endpoint.
+# Voice IDs below are a curated subset (per docs.smallest.ai model cards),
+# verified against the live GET /waves/v1/lightning-v3.1[-pro]/get_voices
+# endpoint. The live catalogs are larger — 237 voices for lightning_v3.1 and
+# 230 for lightning_v3.1_pro (two disjoint sets) — so call get_voices
+# directly for the complete, exact list.
 LIGHTNING_V3_1_VOICES = [
     # English (US) — best voices
     "quinn", "mia", "magnus", "olivia", "daniel", "rachel", "nicole", "elizabeth",
@@ -50,7 +50,7 @@ LIGHTNING_V3_1_VOICES = [
     # Spanish — best voices
     "daniella", "camilla", "alba", "marcos", "david", "nerea", "miguel",
     # Other Indian languages (Tamil, Malayalam, Telugu, Marathi, Gujarati, Kannada)
-    "jeevan", "rajeshwari", "vaisakh", "shibi", "srihari", "padmaja",
+    "jeevan", "rajeshwari", "vaisakh", "shibi", "shrihari", "padmaja",
     "rupali", "nilesh", "niharika", "dhruvit", "deepashri", "pranav",
     # Additional curated — American English
     "jordan", "robert", "johnny", "lucas", "ronald", "blofeld", "zorin", "felix", "malcolm",
@@ -68,7 +68,7 @@ LIGHTNING_V3_1_PRO_VOICES = [
     "sophie", "ellie", "cressida", "ottilie", "elowen", "seraphina",
     "sam", "henry", "benedict", "cormac", "rupert", "finley",
     # American accent
-    "kaitlyn", "savannah", "amelia", "zoe", "ruby", "leah", "jenna", "kate", "molly", "sara", "fiona",
+    "kaitlyn", "savannah", "amelia", "zoe", "ruby", "leah", "jenna", "kate", "molly", "fiona",
     "blake", "austin", "jack", "leo", "luke", "owen",
 ]
 
@@ -230,8 +230,8 @@ def smallest_ai_transcription_response(run_prompt_instance, start_time, api_key)
 def get_smallest_ai_tts_parameters(model_name: str) -> dict:
     """UI parameters for Smallest AI Waves TTS models.
 
-    lightning_v3.1     — 217 voices, 12 languages
-    lightning_v3.1_pro — 149 voices, 29 languages
+    lightning_v3.1     — 237 voices live (69 curated here), 12 languages
+    lightning_v3.1_pro — 230 voices live (41 curated here), 29 languages
     """
     is_pro = "pro" in model_name.lower()
     voices = LIGHTNING_V3_1_PRO_VOICES if is_pro else LIGHTNING_V3_1_VOICES
