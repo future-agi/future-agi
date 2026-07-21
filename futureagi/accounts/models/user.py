@@ -314,6 +314,11 @@ class OrgApiKey(BaseModel):
         choices=[("system", "System"), ("user", "User"), ("mcp", "MCP")],
     )
     enabled = models.BooleanField(default=True)
+    expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Optional expiry timestamp. Null means the key never expires.",
+    )
     user = models.ForeignKey(
         User,
         on_delete=models.CASCADE,
