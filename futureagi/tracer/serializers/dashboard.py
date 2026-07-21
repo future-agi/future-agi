@@ -1,3 +1,5 @@
+import re
+
 from rest_framework import serializers
 
 from accounts.serializers.user import UserSerializer
@@ -7,6 +9,12 @@ from tracer.serializers.filters import (
     StrictInputSerializer,
     filter_list_field,
 )
+
+# Metric identifiers that reach the ClickHouse query builder must be valid map
+# keys. Kept identical to `_SAFE_ATTR_KEY_RE` / `_sanitize_attr_key` in
+# tracer/services/clickhouse/query_builders/dashboard.py so the serializer never
+# rejects anything the builder would accept.
+_SAFE_METRIC_KEY_RE = re.compile(r"^[a-zA-Z0-9._\-]+$")
 
 
 DASHBOARD_METRIC_TYPES = (
@@ -117,6 +125,26 @@ class DashboardMetricSerializer(StrictInputSerializer):
 
     class Meta:
         swagger_schema_fields = {"additionalProperties": False}
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        # Reject metric identifiers that could not be valid ClickHouse map keys
+        # (injection / markup payloads) with a static, non-reflecting message so
+        # they never reach the query layer or get echoed back in the response.
+        # Display-only fields (display_name, unit, eval keys, ...) stay free-form.
+        attr_key = attrs.get("attribute_key")
+        if attr_key and not _SAFE_METRIC_KEY_RE.fullmatch(attr_key):
+            raise serializers.ValidationError(
+                {"attribute_key": "Attribute key contains unsupported characters."}
+            )
+        if attrs.get("type") == "system_metric":
+            for field in ("name", "id"):
+                value = attrs.get(field)
+                if value and not _SAFE_METRIC_KEY_RE.fullmatch(value):
+                    raise serializers.ValidationError(
+                        {field: "Metric identifier contains unsupported characters."}
+                    )
+        return attrs
 
 
 class DashboardBreakdownSerializer(StrictInputSerializer):
