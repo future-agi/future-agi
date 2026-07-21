@@ -75162,6 +75162,17 @@ export const OPENAPI_CONTRACT = Object.freeze({
             "description": "Any valid JSON value."
           }
         },
+        "configuration": {
+          "title": "Configuration",
+          "description": "Compatibility shim for legacy template_format only. Use run_prompt_config for canonical run-prompt settings; other configuration keys are ignored unless explicitly migrated. If template_format is provided here and run_prompt_config.template_format is missing, null, or blank, it is normalized into run_prompt_config.template_format so preview and execution match.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "x-nullable": true,
+            "x-json-value": true,
+            "description": "Any valid JSON value."
+          }
+        },
         "messages": {
           "description": "List of messages with format [{'role': 'user/assistant', 'content': 'text'}]",
           "type": "array",

@@ -40,6 +40,53 @@ describe("add_run_prompt_column request contract", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("accepts a representative run payload across add/edit/preview request contracts", () => {
+    // The same PromptConfig shape must clear the add, edit, and preview
+    // request contracts, so a serializer tightening on one surface can't
+    // silently block the others.
+    expect(validateContractedRequestConfig(runRequest).ok).toBe(true);
+
+    const editResult = validateContractedRequestConfig({
+      url: "/model-hub/develops/edit_run_prompt_column/",
+      method: "post",
+      data: {
+        dataset_id: runRequest.data.dataset_id,
+        column_id: "1b30d52f-3b9c-424e-9011-f0e1d3c91c0b",
+        config: runRequest.data.config,
+      },
+    });
+    expect(editResult.ok).toBe(true);
+
+    const previewResult = validateContractedRequestConfig({
+      url: "/model-hub/develops/preview_run_prompt_column/",
+      method: "post",
+      data: {
+        dataset_id: runRequest.data.dataset_id,
+        name: runRequest.data.name,
+        config: runRequest.data.config,
+        row_indices: [0],
+      },
+    });
+    expect(previewResult.ok).toBe(true);
+  });
+
+  it("accepts legacy configuration.template_format as a scalar string", () => {
+    const result = validateContractedRequestConfig({
+      ...runRequest,
+      data: {
+        ...runRequest.data,
+        config: {
+          ...runRequest.data.config,
+          run_prompt_config: {},
+          configuration: {
+            template_format: "jinja",
+          },
+        },
+      },
+    });
+    expect(result.ok).toBe(true);
+  });
+
   it("validates the wire shape: undefined-valued keys are dropped like JSON.stringify does", () => {
     // The Run Prompt form leaves `run_prompt_config.id: undefined` in the
     // in-memory payload. axios serializes bodies with JSON.stringify, which

@@ -17029,6 +17029,9 @@ export const ModelHubDevelopsAddRunPromptColumnCreateBody = zod.object({
   "run_prompt_config": zod.record(zod.string(), zod.object({
 
 }).passthrough().describe('Any valid JSON value.')).optional(),
+  "configuration": zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.')).optional().describe('Compatibility shim for legacy template_format only. Use run_prompt_config for canonical run-prompt settings; other configuration keys are ignored unless explicitly migrated. If template_format is provided here and run_prompt_config.template_format is missing, null, or blank, it is normalized into run_prompt_config.template_format so preview and execution match.'),
   "messages": zod.array(zod.record(zod.string(), zod.object({
 
 }).passthrough().describe('Any valid JSON value.'))).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
@@ -17299,6 +17302,9 @@ export const ModelHubDevelopsEditRunPromptColumnCreateBody = zod.object({
   "run_prompt_config": zod.record(zod.string(), zod.object({
 
 }).passthrough().describe('Any valid JSON value.')).optional(),
+  "configuration": zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.')).optional().describe('Compatibility shim for legacy template_format only. Use run_prompt_config for canonical run-prompt settings; other configuration keys are ignored unless explicitly migrated. If template_format is provided here and run_prompt_config.template_format is missing, null, or blank, it is normalized into run_prompt_config.template_format so preview and execution match.'),
   "messages": zod.array(zod.record(zod.string(), zod.object({
 
 }).passthrough().describe('Any valid JSON value.'))).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
@@ -17544,6 +17550,9 @@ export const ModelHubDevelopsPreviewRunPromptColumnCreateBody = zod.object({
   "run_prompt_config": zod.record(zod.string(), zod.object({
 
 }).passthrough().describe('Any valid JSON value.')).optional(),
+  "configuration": zod.record(zod.string(), zod.object({
+
+}).passthrough().describe('Any valid JSON value.')).optional().describe('Compatibility shim for legacy template_format only. Use run_prompt_config for canonical run-prompt settings; other configuration keys are ignored unless explicitly migrated. If template_format is provided here and run_prompt_config.template_format is missing, null, or blank, it is normalized into run_prompt_config.template_format so preview and execution match.'),
   "messages": zod.array(zod.record(zod.string(), zod.object({
 
 }).passthrough().describe('Any valid JSON value.'))).optional().describe('List of messages with format [{\'role\': \'user\/assistant\', \'content\': \'text\'}]'),
