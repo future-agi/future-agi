@@ -13,6 +13,7 @@ import {
 import { useTheme } from "@mui/material/styles";
 import Chart from "react-apexcharts";
 import { useAnalyticsUsage } from "./hooks/useAnalyticsUsage";
+import { computeGranularity } from "../utils/analyticsHelpers";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -23,17 +24,6 @@ const GROUP_BY_OPTIONS = [
   { value: "model", label: "Model" },
   { value: "provider", label: "Provider" },
 ];
-
-function computeGranularity(start, end) {
-  if (!start || !end) return "1h";
-  const diffMs = new Date(end).getTime() - new Date(start).getTime();
-  const diffHours = diffMs / (1000 * 60 * 60);
-  if (diffHours <= 6) return "5m";
-  if (diffHours <= 24) return "15m";
-  if (diffHours <= 168) return "1h"; // 7 days
-  if (diffHours <= 720) return "6h"; // 30 days
-  return "1d";
-}
 
 // ---------------------------------------------------------------------------
 // Chart option builders
