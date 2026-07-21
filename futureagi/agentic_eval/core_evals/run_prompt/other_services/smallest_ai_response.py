@@ -12,7 +12,9 @@ TTS (Waves):
 
 STT (Pulse):
 - REST endpoint: POST https://api.smallest.ai/waves/v1/pulse/get_text
-- Models: pulse  (passed as ?model= query param)
+- WebSocket streaming: wss://api.smallest.ai/waves/v1/stt/live
+- Models: pulse (supports both WebSocket streaming and REST/batch),
+  pulse-pro (REST/batch only)  — passed as ?model= query param
 - Auth: Authorization: Bearer {api_key}
 - Body: raw audio bytes, Content-Type: audio/wav
 """
@@ -294,7 +296,7 @@ def get_smallest_ai_tts_parameters(model_name: str) -> dict:
 
 
 def get_smallest_ai_stt_parameters(model_name: str) -> dict:
-    """UI parameters for Smallest AI Pulse STT model (pulse-pro, REST)."""
+    """UI parameters for Smallest AI Pulse STT models (pulse, pulse-pro) via REST."""
     return {
         "dropdowns": [
             {
