@@ -603,6 +603,13 @@ LIVEKIT_API_SECRET = os.getenv("LIVEKIT_API_SECRET", "")
 # agent-definition API or globally via this env var.
 DEFAULT_LIVEKIT_MAX_CONCURRENCY = int(os.getenv("DEFAULT_LIVEKIT_MAX_CONCURRENCY", "2"))
 
+# Post-call summary generation for providers that don't supply one (LiveKit).
+# Off by default so it never adds LLM cost until explicitly enabled.
+LIVEKIT_CALL_SUMMARY_ENABLED = (
+    os.getenv("LIVEKIT_CALL_SUMMARY_ENABLED", "false").lower() == "true"
+)
+LIVEKIT_CALL_SUMMARY_MODEL = os.getenv("LIVEKIT_CALL_SUMMARY_MODEL", "gpt-4o-mini")
+
 # Third-party provider URLs for WebRTC bridge connectors
 VAPI_API_URL = os.getenv("VAPI_API_URL", "https://api.vapi.ai/call")
 RETELL_API_URL = os.getenv(

@@ -3211,23 +3211,30 @@ class CallExecutionDetailView(APIView):
             # collapsed raw_log tree. `include_call_logs=False` skips the
             # blocking GET against `artifact.logUrl`; CallExecutionLogsView
             # handles that asynchronously via the ingest task.
+            # Flatten the provider payload through its own engine so this
+            # shared view stays provider-agnostic (no direct import of a
+            # specific provider's flattener). Vapi emits flat OTEL keys;
+            # other engines fall back to a raw_log tree via the blueprint
+            # default.
             pcd = call_execution.provider_call_data or {}
-            vapi_data = pcd.get("vapi") if isinstance(pcd.get("vapi"), dict) else None
-            if vapi_data:
-                from tracer.utils.vapi import _extract_eval_attributes
+            provider = next((p for p in pcd if isinstance(pcd[p], dict)), None)
+            if provider:
+                from ee.voice.services.voice_service_manager import (
+                    VoiceServiceManager,
+                )
+                from tracer.models.observability_provider import ProviderChoices
 
-                response_data["attributes"] = _extract_eval_attributes(
-                    vapi_data, include_call_logs=False
-                )
-            else:
-                # Fallback for other providers (retell etc.): ship the raw
-                # payload under `raw_log` so the Attributes tab at least
-                # renders the full object tree.
-                provider_data = next(
-                    (v for v in pcd.values() if isinstance(v, dict)), None
-                )
-                if provider_data:
-                    response_data["attributes"] = {"raw_log": provider_data}
+                try:
+                    engine = VoiceServiceManager(
+                        system_voice_provider=ProviderChoices(provider)
+                    ).engine
+                    response_data["attributes"] = engine.extract_attributes(
+                        pcd[provider], include_call_logs=False
+                    )
+                except ValueError:
+                    # Provider string not in the engine registry (e.g. retell)
+                    # — ship the raw payload so the tab still renders.
+                    response_data["attributes"] = {"raw_log": pcd[provider]}
 
             return Response(response_data, status=status.HTTP_200_OK)
 
@@ -3442,6 +3449,12 @@ class CallExecutionLogsView(APIView):
             pcd = call_execution.provider_call_data or {}
             vapi = pcd.get("vapi") or {}
             provider_log_url = (vapi.get("artifact") or {}).get("logUrl")
+            # LiveKit has no artifact log file — iter_call_logs reads
+            # transcripts from the DB keyed by call_execution id, so the
+            # "log url" for LiveKit is the id itself. Without this the Logs tab
+            # never triggers ingestion for LiveKit calls.
+            if not provider_log_url and "livekit" in pcd:
+                provider_log_url = str(call_execution.id)
             log_url = call_execution.customer_log_url or provider_log_url
             has_ingestion_summary = bool(call_execution.customer_logs_summary)
             should_start_ingestion = (
@@ -6064,9 +6077,13 @@ def _create_rerun_call_execution(call_execution):
     }
 
     # phone_number_id is only used by VAPI; LiveKit's prepare_call
-    # ignores CreateCallExecution.phone_number_id entirely.
-    system_provider = os.getenv("SYSTEM_VOICE_PROVIDER", "livekit")
-    if system_provider == "livekit":
+    # ignores CreateCallExecution.phone_number_id entirely. The system
+    # provider comes from the single source of truth (defaults to LiveKit).
+    from simulate.utils.voice_provider import resolve_system_voice_provider
+    from tracer.models.observability_provider import ProviderChoices
+
+    system_provider = resolve_system_voice_provider()
+    if system_provider == ProviderChoices.LIVEKIT:
         phone_number_id = ""
     elif phone_number and phone_number.startswith("+91"):
         phone_number_id = VAPI_INDIAN_PHONE_NUMBER_ID or os.getenv(

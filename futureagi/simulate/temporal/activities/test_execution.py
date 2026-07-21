@@ -211,10 +211,13 @@ def _build_voice_settings(
         return {}
     from tracer.models.observability_provider import ProviderChoices
 
+    from simulate.utils.voice_provider import resolve_system_voice_provider
+
     # Voice_id format is determined by the system voice provider (the
     # infrastructure hosting the simulator assistant), not by the user's
-    # agent provider.
-    system_provider = os.getenv("SYSTEM_VOICE_PROVIDER", ProviderChoices.LIVEKIT)
+    # agent provider. Always a ProviderChoices enum via the single source of
+    # truth — no more string/enum drift.
+    system_provider = resolve_system_voice_provider()
 
     # Select voice name based on persona attributes (rule-based scoring)
     selected_voice_name = select_voice_id(persona_data, provider=system_provider)
@@ -232,7 +235,7 @@ def _build_voice_settings(
     # VAPI uses 11Labs voice names directly (e.g. "marissa", "phillip"),
     # so no resolution is needed. LiveKit uses Cartesia UUIDs, resolved
     # via the voice catalog adapter.
-    if system_provider == ProviderChoices.VAPI or system_provider == "vapi":
+    if system_provider == ProviderChoices.VAPI:
         provider_voice_id = selected_voice_name
     else:
         provider_voice_id = resolve_voice_id(

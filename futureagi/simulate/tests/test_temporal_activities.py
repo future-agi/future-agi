@@ -905,6 +905,46 @@ class TestFetchAndPersistCallResultActivity:
 
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
+    async def test_real_extract_costs_from_livekit_usage_persists_real_cost(
+        self, call_execution
+    ):
+        """Real DB CallExecution + REAL extract_costs (real litellm pricing) →
+        non-zero cost. Proves the $0-billing fix end-to-end on the backend,
+        given the usage dict the (SDK-verified) agent worker emits. No mock of
+        the cost path."""
+        from asgiref.sync import sync_to_async
+
+        from ee.voice.services.livekit.service import LivekitService
+
+        call_execution.provider_call_data = {
+            "livekit": {
+                "usage": {
+                    "stt": {"duration": 120.0},
+                    "llm": {"prompt_tokens": 2000, "completion_tokens": 1000},
+                    "tts": {"characters": 5000},
+                    "models": {
+                        "stt": "nova-3",
+                        "llm": "gpt-4o-mini",
+                        "tts": "sonic-2",
+                    },
+                }
+            }
+        }
+        call_execution.duration_seconds = 120.0
+        await sync_to_async(call_execution.save)()
+
+        costs = await LivekitService().extract_costs(str(call_execution.id))
+
+        # Real, non-zero cost components (the $0 bug would make these all 0).
+        assert costs.total > 0
+        assert costs.llm > 0  # real litellm gpt-4o-mini registry pricing
+        assert costs.stt > 0
+        assert costs.tts > 0
+        # Cents conversion, exactly as voice_large persists it.
+        assert int(round(costs.total * 100)) > 0
+
+    @pytest.mark.django_db(transaction=True)
+    @pytest.mark.asyncio
     async def test_fetch_and_persist_call_result_updates_call_execution(
         self, call_execution
     ):
