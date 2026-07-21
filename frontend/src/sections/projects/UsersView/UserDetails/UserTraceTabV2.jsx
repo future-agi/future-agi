@@ -111,18 +111,20 @@ const UserTraceTabV2 = ({ dateFilter }) => {
     return base;
   }, [userId, dateFilter]);
 
-  const { data: evalAttributes } = useQuery({
-    queryKey: ["eval-attributes", projectId],
+  // The custom column dialog promotes span attributes to columns, so it must
+  // be sourced from span-attribute-keys — not the eval-attributes list, which
+  // is empty for any project without configured evals and left the picker
+  // blank even when spans carry attributes (issue #1380).
+  const { data: spanAttributes } = useQuery({
+    queryKey: ["span-attribute-keys", projectId],
     queryFn: () =>
-      axios.get(endpoints.project.getEvalAttributeList(), {
-        params: {
-          filters: JSON.stringify({ project_id: projectId }),
-        },
+      axios.get(endpoints.project.spanAttributeKeys(), {
+        params: { project_id: projectId },
       }),
-    select: (data) => data.data?.result,
+    select: (data) => data.data?.result || [],
     enabled: Boolean(projectId),
   });
-  const attributes = useMemo(() => evalAttributes || [], [evalAttributes]);
+  const attributes = useMemo(() => spanAttributes || [], [spanAttributes]);
 
   const handleAddCustomColumns = (newCols) => {
     setColumns((prev) => {
