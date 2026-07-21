@@ -1851,7 +1851,12 @@ class TraceSessionView(BaseModelViewSetMixin, ModelViewSet):
         eu_by_canonical: dict[str, str] = {}
         for row in result.data:
             sid = str(row.get("session_id", "") if isinstance(row, dict) else row[0])
-            euid = str(row.get("end_user_id", "") if isinstance(row, dict) else row[1])
+            # Guard truthiness BEFORE str() — a NULL end_user_id (user-less
+            # session) would otherwise stringify to "None" and survive the
+            # euid check below, poisoning the downstream Array(UUID) cast in
+            # resolve_end_user_fields (CANNOT_PARSE_UUID → whole CH list fails).
+            raw_euid = row.get("end_user_id") if isinstance(row, dict) else row[1]
+            euid = str(raw_euid) if raw_euid else ""
             if sid and euid and euid != NIL_UUID:
                 eu_by_canonical[sid] = euid
 
