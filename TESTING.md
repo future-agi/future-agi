@@ -13,7 +13,6 @@ Frontend and backend have independent test runners. You rarely need to run both.
 
 - Frontend-specific conventions: [`frontend/TESTING.md`](frontend/TESTING.md)
 - Backend runner internals: `futureagi/bin/test --help`
-- Branch naming (enforced on push): [`BRANCH_NAMING_CONVENTION.md`](BRANCH_NAMING_CONVENTION.md)
 
 ---
 
@@ -65,10 +64,6 @@ Installed once per clone via `yarn install` at repo root (husky's `prepare` scri
 Runs `lint-staged` against files currently staged. For frontend paths that means ESLint auto-fix + Prettier; Python formatting runs separately via `make pre-commit-install` inside `futureagi/`.
 
 The hook auto-skips during `git merge` — merge-commit staging includes the entire merge diff, which makes linting every file pointless and slow.
-
-### `pre-push` (`.husky/pre-push`)
-
-Validates the branch name against the convention in `BRANCH_NAMING_CONVENTION.md`. Protected branches (`main`, `master`, `dev`, `develop`) skip validation. Applies to both frontend and backend commits.
 
 ### Bypassing hooks
 

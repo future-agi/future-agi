@@ -8,40 +8,9 @@ on:
       - '.github/workflows/frontend-feature.yml'
 
 jobs:
-  # Branch name validation
-  validate-branch-name:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Validate branch name
-        run: |
-          echo "🔍 Validating branch name: ${{ github.ref_name }}"
-
-          # Get branch name (handle both push and PR events)
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            branch_name="${{ github.head_ref }}"
-          else
-            branch_name="${{ github.ref_name }}"
-          fi
-
-          echo "Branch name: $branch_name"
-
-          # Define the regex pattern for valid branch names
-          # Types match Conventional Commits prefixes used in CONTRIBUTING.md.
-          branch_regex="^(feat|fix|chore|docs|refactor|test|perf)\/[a-zA-Z0-9]+([a-zA-Z0-9\-]*[a-zA-Z0-9])?$"
-
-          # Validate branch name
-          if [[ ! $branch_name =~ $branch_regex ]]; then
-            echo "❌ Invalid branch name: '$branch_name'"
-            echo "Please see BRANCH_NAMING_CONVENTION.md for guidelines"
-            exit 1
-          fi
-
-          echo "✅ Branch name '$branch_name' is valid"
-
   # Essential tests for feature branches
   essential-tests:
     runs-on: ubuntu-latest
-    needs: validate-branch-name
     defaults:
       run:
         working-directory: frontend
@@ -74,7 +43,7 @@ jobs:
   # Extract branch info and add PR comment
   branch-info:
     runs-on: ubuntu-latest
-    needs: [validate-branch-name, essential-tests]
+    needs: essential-tests
     if: github.event_name == 'pull_request'
     steps:
       - name: Extract branch info and comment
@@ -120,7 +89,7 @@ jobs:
   # Feature branch summary
   feature-summary:
     runs-on: ubuntu-latest
-    needs: [validate-branch-name, essential-tests]
+    needs: essential-tests
     if: always()
     steps:
       - name: Feature Branch Summary
