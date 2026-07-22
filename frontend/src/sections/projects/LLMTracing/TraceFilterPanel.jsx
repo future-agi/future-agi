@@ -635,12 +635,11 @@ export function useTraceFilterProperties(
   { enabled = true, isSimulator = false, sourceScope = null } = {},
 ) {
   return useQuery({
-    queryKey: [
-      "trace-filter-properties-v2",
-      projectId,
-      isSimulator,
-      sourceScope,
-    ],
+    // Key on projectId only: isSimulator/sourceScope don't change the request
+    // (params are always {project_ids, per_eval_config}); they only affect the
+    // per-observer `select`. Keying on them spawned duplicate identical fetches
+    // (e.g. isSimulator flipping false→true once project detail resolves).
+    queryKey: ["trace-filter-properties-v2", projectId],
     enabled: enabled && Boolean(projectId),
     queryFn: async () => {
       const params = {};
