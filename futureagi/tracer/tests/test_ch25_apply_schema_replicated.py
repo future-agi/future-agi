@@ -12,41 +12,56 @@ would create non-replicated tables in prod — silent split-brain across
 replicas. These tests cover the engines and statement shapes we care
 about; any new engine the schema starts using needs a test added here.
 """
+
 from __future__ import annotations
 
 import pytest
 
 from tracer.services.clickhouse.v2.apply_schema_rewriter import (
     ReplicatedRewriteError,
-    extract_table_name as _extract_table_name,
     rewrite_for_replicated,
     split_statements,
+)
+from tracer.services.clickhouse.v2.apply_schema_rewriter import (
+    extract_table_name as _extract_table_name,
 )
 
 
 def _rewrite(sql: str, table: str = "spans") -> str:
     """Convenience wrapper with prod-default cluster + zk_prefix."""
     return rewrite_for_replicated(
-        sql, table_name=table,
-        cluster="default", zk_prefix="/clickhouse/tables",
+        sql,
+        table_name=table,
+        cluster="default",
+        zk_prefix="/clickhouse/tables",
     )
 
 
 class TestExtractTableName:
-    @pytest.mark.parametrize("stmt, expected", [
-        ("CREATE TABLE IF NOT EXISTS spans (a UInt8) ENGINE = MergeTree", "spans"),
-        ("CREATE TABLE spans_v2_dead_letter (...) ENGINE = MergeTree", "spans_v2_dead_letter"),
-        ("CREATE MATERIALIZED VIEW IF NOT EXISTS spans_per_session_mv TO spans_per_session AS ...",
-         "spans_per_session_mv"),
-        ("CREATE MATERIALIZED VIEW eval_per_config_mv TO eval_per_config AS ...",
-         "eval_per_config_mv"),
-        ("ALTER TABLE spans ADD COLUMN foo String", "spans"),
-        ("ALTER TABLE spans_per_session MODIFY TTL ...", "spans_per_session"),
-        # Negative — statements we deliberately don't touch:
-        ("INSERT INTO spans VALUES (1)", None),
-        ("SELECT * FROM spans", None),
-        ("DROP TABLE spans", None),  # we don't rewrite DROPs — safety
-    ])
+    @pytest.mark.parametrize(
+        "stmt, expected",
+        [
+            ("CREATE TABLE IF NOT EXISTS spans (a UInt8) ENGINE = MergeTree", "spans"),
+            (
+                "CREATE TABLE spans_v2_dead_letter (...) ENGINE = MergeTree",
+                "spans_v2_dead_letter",
+            ),
+            (
+                "CREATE MATERIALIZED VIEW IF NOT EXISTS spans_per_session_mv TO spans_per_session AS ...",
+                "spans_per_session_mv",
+            ),
+            (
+                "CREATE MATERIALIZED VIEW eval_per_config_mv TO eval_per_config AS ...",
+                "eval_per_config_mv",
+            ),
+            ("ALTER TABLE spans ADD COLUMN foo String", "spans"),
+            ("ALTER TABLE spans_per_session MODIFY TTL ...", "spans_per_session"),
+            # Negative — statements we deliberately don't touch:
+            ("INSERT INTO spans VALUES (1)", None),
+            ("SELECT * FROM spans", None),
+            ("DROP TABLE spans", None),  # we don't rewrite DROPs — safety
+        ],
+    )
     def test_extracts_or_skips(self, stmt, expected):
         assert _extract_table_name(stmt) == expected
 
@@ -113,8 +128,10 @@ class TestOnClusterAttachment:
             "TO spans_per_session AS SELECT 1",
             table="spans_per_session_mv",
         )
-        assert ("CREATE MATERIALIZED VIEW IF NOT EXISTS spans_per_session_mv "
-                "ON CLUSTER 'default'") in out
+        assert (
+            "CREATE MATERIALIZED VIEW IF NOT EXISTS spans_per_session_mv "
+            "ON CLUSTER 'default'"
+        ) in out
 
     def test_alter_table_gets_on_cluster(self):
         out = _rewrite("ALTER TABLE spans ADD PROJECTION p (...)")
@@ -128,6 +145,71 @@ class TestOnClusterAttachment:
         # Engine still rewrites...
         assert "ReplicatedMergeTree" in out
         # ...but ON CLUSTER count stays at 1
+        assert out.upper().count("ON CLUSTER") == 1
+
+
+class TestDictionaryOnCluster:
+    """Dictionaries are node-local objects — a CREATE DICTIONARY without
+    ON CLUSTER lands only on the replica apply_schema connected to. This
+    shipped: us2 prod had `end_users_dict` / `trace_sessions_dict` on 1 of
+    3 replicas, so queries load-balanced to the other two failed Code 36.
+    """
+
+    @pytest.mark.parametrize(
+        "stmt, expected",
+        [
+            (
+                "CREATE DICTIONARY IF NOT EXISTS end_users_dict (a UInt8) PRIMARY KEY a "
+                "SOURCE(CLICKHOUSE(TABLE 'end_users')) LIFETIME(60) LAYOUT(FLAT())",
+                "end_users_dict",
+            ),
+            (
+                "CREATE OR REPLACE DICTIONARY trace_dict (a UInt8) PRIMARY KEY a "
+                "SOURCE(CLICKHOUSE(TABLE 'traces')) LIFETIME(60) LAYOUT(FLAT())",
+                "trace_dict",
+            ),
+            (
+                "CREATE DICTIONARY analytics.trace_dict (a UInt8) PRIMARY KEY a "
+                "SOURCE(CLICKHOUSE(TABLE 'traces')) LIFETIME(60) LAYOUT(FLAT())",
+                "trace_dict",
+            ),
+            ("DROP DICTIONARY trace_dict", None),
+            ("SYSTEM RELOAD DICTIONARY trace_dict", None),
+        ],
+    )
+    def test_extracts_or_skips(self, stmt, expected):
+        assert _extract_table_name(stmt) == expected
+
+    def test_create_dictionary_gets_on_cluster(self):
+        out = _rewrite(
+            "CREATE DICTIONARY IF NOT EXISTS end_users_dict\n"
+            "(\n    end_user_id UUID,\n    user_id String\n)\n"
+            "PRIMARY KEY end_user_id\n"
+            "SOURCE(CLICKHOUSE(TABLE 'end_users' WHERE 'is_deleted = 0'))\n"
+            "LIFETIME(MIN 60 MAX 120)\n"
+            "LAYOUT(COMPLEX_KEY_HASHED());",
+            table="end_users_dict",
+        )
+        assert (
+            "CREATE DICTIONARY IF NOT EXISTS end_users_dict ON CLUSTER 'default'" in out
+        )
+
+    def test_create_dictionary_without_engine_does_not_raise(self):
+        # Dictionaries have no ENGINE clause — the CREATE-TABLE fail-closed
+        # path must not fire on them.
+        out = _rewrite(
+            "CREATE DICTIONARY d (a UInt8) PRIMARY KEY a "
+            "SOURCE(CLICKHOUSE(TABLE 't')) LIFETIME(60) LAYOUT(FLAT())",
+            table="d",
+        )
+        assert out.upper().count("ON CLUSTER") == 1
+
+    def test_idempotent_on_already_clustered(self):
+        stmt = (
+            "CREATE DICTIONARY d ON CLUSTER 'shard1' (a UInt8) PRIMARY KEY a "
+            "SOURCE(CLICKHOUSE(TABLE 't')) LIFETIME(60) LAYOUT(FLAT())"
+        )
+        out = _rewrite(stmt, table="d")
         assert out.upper().count("ON CLUSTER") == 1
 
 
@@ -155,6 +237,7 @@ class TestAllShippedSchemas:
     @pytest.fixture
     def schema_files(self):
         import pathlib
+
         here = pathlib.Path(__file__).resolve().parents[1]
         schema_dir = here / "services" / "clickhouse" / "v2" / "schema"
         return sorted(schema_dir.glob("*.sql"))
@@ -188,6 +271,29 @@ class TestAllShippedSchemas:
                     continue
                 rewritten = _rewrite(stmt, table=name)
                 assert "ON CLUSTER" in rewritten
+
+    def test_every_create_dictionary_gets_on_cluster(self, schema_files):
+        # The gate for the us2 incident: 015/017/018 ship dictionaries, and
+        # every one of them must fan out to all replicas in prod mode.
+        import re
+
+        create_dict = re.compile(
+            r"\s*CREATE\s+(?:OR\s+REPLACE\s+)?DICTIONARY", re.IGNORECASE
+        )
+        seen = 0
+        for f in schema_files:
+            for stmt in split_statements(f.read_text()):
+                name = _extract_table_name(stmt)
+                if name is None:
+                    continue
+                if not create_dict.match(stmt):
+                    continue
+                seen += 1
+                rewritten = _rewrite(stmt, table=name)
+                assert "ON CLUSTER" in rewritten, (
+                    f"{f.name}: CREATE DICTIONARY for {name} missing ON CLUSTER."
+                )
+        assert seen >= 3, "expected the shipped dictionary DDLs to be swept"
 
     def test_every_alter_table_gets_on_cluster(self, schema_files):
         for f in schema_files:
@@ -235,8 +341,11 @@ class TestFailClosed:
                 "CREATE TABLE foo (a UInt8) ENGINE = CollapsingMergeTree(sign)",
                 table="foo",
             )
-        assert "CollapsingMergeTree" in str(exc.value) or "unrecognised" in str(exc.value).lower() \
+        assert (
+            "CollapsingMergeTree" in str(exc.value)
+            or "unrecognised" in str(exc.value).lower()
             or "recognised" in str(exc.value).lower()
+        )
 
     def test_create_with_no_engine_at_all_raises(self):
         # Defensive: a CREATE without ENGINE is invalid CH SQL anyway, but
@@ -255,15 +364,23 @@ class TestSchemaQualifiedNames:
     path, not the database qualifier.
     """
 
-    @pytest.mark.parametrize("stmt, expected", [
-        ("CREATE TABLE analytics.spans (a UInt8) ENGINE = MergeTree", "spans"),
-        ("CREATE TABLE `analytics`.`spans` (a UInt8) ENGINE = MergeTree", "spans"),
-        ("CREATE MATERIALIZED VIEW analytics.spans_mv TO analytics.spans AS SELECT 1",
-         "spans_mv"),
-        ("ALTER TABLE analytics.spans ADD COLUMN b UInt8", "spans"),
-        ("CREATE TABLE IF NOT EXISTS `default`.`spans` (a UInt8) ENGINE = MergeTree", "spans"),
-        ("CREATE OR REPLACE TABLE foo (a UInt8) ENGINE = MergeTree", "foo"),
-    ])
+    @pytest.mark.parametrize(
+        "stmt, expected",
+        [
+            ("CREATE TABLE analytics.spans (a UInt8) ENGINE = MergeTree", "spans"),
+            ("CREATE TABLE `analytics`.`spans` (a UInt8) ENGINE = MergeTree", "spans"),
+            (
+                "CREATE MATERIALIZED VIEW analytics.spans_mv TO analytics.spans AS SELECT 1",
+                "spans_mv",
+            ),
+            ("ALTER TABLE analytics.spans ADD COLUMN b UInt8", "spans"),
+            (
+                "CREATE TABLE IF NOT EXISTS `default`.`spans` (a UInt8) ENGINE = MergeTree",
+                "spans",
+            ),
+            ("CREATE OR REPLACE TABLE foo (a UInt8) ENGINE = MergeTree", "foo"),
+        ],
+    )
     def test_extracts_table_segment(self, stmt, expected):
         assert _extract_table_name(stmt) == expected
 
@@ -284,20 +401,48 @@ class TestGoldenOutputForShippedFiles:
     must update this test, making the change visible in review.
     """
 
-    @pytest.mark.parametrize("table, expected_engine_substr", [
-        ("spans", "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/spans', '{replica}', _version, is_deleted)"),
-        ("spans_v2_dead_letter", "ReplicatedMergeTree('/clickhouse/tables/{shard}/spans_v2_dead_letter', '{replica}')"),
-        ("schema_versions", "ReplicatedMergeTree('/clickhouse/tables/{shard}/schema_versions', '{replica}')"),
-        ("backfill_checkpoints", "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/backfill_checkpoints', '{replica}', _version)"),
-        ("spans_per_session", "ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/spans_per_session', '{replica}')"),
-        ("eval_per_config", "ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/eval_per_config', '{replica}')"),
-        ("spans_hourly_rollup", "ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/spans_hourly_rollup', '{replica}')"),
-        ("tracer_eval_logger_v2", "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/tracer_eval_logger_v2', '{replica}', _version, is_deleted)"),
-    ])
+    @pytest.mark.parametrize(
+        "table, expected_engine_substr",
+        [
+            (
+                "spans",
+                "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/spans', '{replica}', _version, is_deleted)",
+            ),
+            (
+                "spans_v2_dead_letter",
+                "ReplicatedMergeTree('/clickhouse/tables/{shard}/spans_v2_dead_letter', '{replica}')",
+            ),
+            (
+                "schema_versions",
+                "ReplicatedMergeTree('/clickhouse/tables/{shard}/schema_versions', '{replica}')",
+            ),
+            (
+                "backfill_checkpoints",
+                "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/backfill_checkpoints', '{replica}', _version)",
+            ),
+            (
+                "spans_per_session",
+                "ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/spans_per_session', '{replica}')",
+            ),
+            (
+                "eval_per_config",
+                "ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/eval_per_config', '{replica}')",
+            ),
+            (
+                "spans_hourly_rollup",
+                "ReplicatedAggregatingMergeTree('/clickhouse/tables/{shard}/spans_hourly_rollup', '{replica}')",
+            ),
+            (
+                "tracer_eval_logger_v2",
+                "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/tracer_eval_logger_v2', '{replica}', _version, is_deleted)",
+            ),
+        ],
+    )
     def test_engine_substr_matches(self, table, expected_engine_substr):
         # Find the file that declares this table and assert the rewrite
         # produces the expected engine line.
         import pathlib
+
         here = pathlib.Path(__file__).resolve().parents[1]
         schema_dir = here / "services" / "clickhouse" / "v2" / "schema"
         for f in sorted(schema_dir.glob("*.sql")):
