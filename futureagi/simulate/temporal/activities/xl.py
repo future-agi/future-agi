@@ -317,7 +317,8 @@ def _build_transcript_data(call_execution):
                 if not isinstance(provider_data, dict):
                     continue
 
-                # Pre-stored S3 recording URLs
+                # Only consume normalized URLs. Raw artifact URLs may point to
+                # provider storage and must not leak into eval inputs.
                 recording = provider_data.get("recording", {})
                 if isinstance(recording, dict):
                     if (
