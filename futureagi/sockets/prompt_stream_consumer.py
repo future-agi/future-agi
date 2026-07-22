@@ -44,6 +44,31 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
         self.session_uuid = None
         self.organization_id = None
         self.workspace_id = None
+        # Strong references to in-flight execution tasks. The event loop only
+        # keeps weak references, so a bare create_task() result can be
+        # garbage-collected mid-run, silently freezing the client's stream
+        # right after execution_started.
+        self._background_tasks = set()
+
+    def _spawn(self, coro):
+        """Run coro as a background task, holding a strong reference until done."""
+        task = asyncio.create_task(coro)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_background_task_done)
+        return task
+
+    def _on_background_task_done(self, task):
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            # The execute_* coroutines report their own errors to the client;
+            # anything reaching here escaped those handlers.
+            logger.error(
+                f"Background task failed unexpectedly: session={self.session_uuid}",
+                exc_info=exc,
+            )
 
     async def connect(self):
         self.user = self.scope.get("user")
@@ -75,6 +100,13 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
         logger.info(
             f"PromptStream connection closed: session={self.session_uuid}, code={close_code}"
         )
+        # Stop in-flight executions — with the socket gone there is nowhere
+        # to stream results, so letting them run only wastes LLM calls.
+        pending = [task for task in self._background_tasks if not task.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     async def receive_json(self, content):
         message_type = content.get("type")
@@ -117,7 +149,7 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
             }
         )
 
-        asyncio.create_task(self.execute_template_async(content, template_id))
+        self._spawn(self.execute_template_async(content, template_id))
 
     async def execute_template_async(self, content, template_id):
         try:
@@ -221,7 +253,7 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
             }
         )
 
-        asyncio.create_task(
+        self._spawn(
             self.execute_improve_prompt_async(payload, payload.get("improve_id"))
         )
 
@@ -312,7 +344,7 @@ class PromptStreamConsumer(AsyncJsonWebsocketConsumer):
             }
         )
 
-        asyncio.create_task(self.execute_generate_prompt_async(payload, generation_id))
+        self._spawn(self.execute_generate_prompt_async(payload, generation_id))
 
     async def execute_generate_prompt_async(self, content, generation_id):
         try:

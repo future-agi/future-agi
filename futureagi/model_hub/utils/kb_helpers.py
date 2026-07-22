@@ -5,6 +5,7 @@ This module contains shared utility functions for KB operations,
 used by both views and tasks.
 """
 
+import asyncio
 import os
 import time
 
@@ -17,6 +18,11 @@ from tfc.utils.storage import UPLOAD_BUCKET_NAME
 from tfc.utils.storage_client import get_object_url, get_storage_client
 
 logger = structlog.get_logger(__name__)
+
+# Strong references to fire-and-forget workflow cancellations. The event loop
+# only keeps weak references, so an unreferenced ensure_future() task can be
+# garbage-collected before the cancellation reaches Temporal.
+_pending_cancellations: set["asyncio.Future[None]"] = set()
 
 
 def is_kb_deleted_or_cancelled(kb_id):
@@ -177,8 +183,6 @@ def cancel_kb_ingestion_workflow(kb_id):
     1. Mark KB as DELETING - this signals background tasks to stop
     2. Cancel the Temporal workflow
     """
-    import asyncio
-
     # Step 1: Mark KB as DELETING to signal background tasks to stop
     try:
         KnowledgeBaseFile.objects.filter(id=kb_id).update(
@@ -206,7 +210,9 @@ def cancel_kb_ingestion_workflow(kb_id):
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            asyncio.ensure_future(_cancel())
+            task = asyncio.ensure_future(_cancel())
+            _pending_cancellations.add(task)
+            task.add_done_callback(_pending_cancellations.discard)
         else:
             asyncio.run(_cancel())
     except RuntimeError:
