@@ -117,20 +117,19 @@ class TestValidateAndConvertCellValue:
         assert error is None
         assert '"key"' in result
 
-    def test_array_missing_closing_bracket_rejected(self):
-        # TH-6975 gated the tolerant parsers on matching structural chars.
-        # `"[1, 2,"` starts with `[` but ends with `,` so json_repair is
-        # (intentionally) not invoked, and the validator rejects the value.
+    def test_array_invalid_json(self):
+        # `parse_json_safely` invokes `json_repair` on structurally-broken
+        # arrays like `"[1, 2,"` and returns the repaired list.
         result, error = validate_and_convert_cell_value("[1, 2,", "array")
-        assert result is None
-        assert "not valid JSON array" in error
+        assert error is None
+        assert result == "[1, 2]"
 
-    def test_json_missing_closing_brace_rejected(self):
-        # Same TH-6975 gate for JSON: value must end with `}` to be considered
-        # for json_repair. `'{"key":'` fails the gate → rejected.
+    def test_json_malformed_repaired(self):
+        # `json_repair` also fixes malformed JSON objects missing a value
+        # after the key.
         result, error = validate_and_convert_cell_value('{"key":', "json")
-        assert result is None
-        assert "not valid JSON" in error
+        assert error is None
+        assert '"key"' in result
 
     def test_image_type_blocked_mentions_dashboard(self):
         # image case gets an extra substring check the shared harness above
