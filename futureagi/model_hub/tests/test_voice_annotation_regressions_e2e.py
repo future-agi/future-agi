@@ -862,7 +862,11 @@ class TestVoiceAnnotationRegressionE2E:
         root_conversation_span,
         simulation_call_execution,
     ):
-        from tracer.tests._ch_seed import seed_ch_span
+        from tracer.tests._ch_seed import (
+            _get_ch_client,
+            seed_ch_span,
+            seed_ch_trace,
+        )
 
         ScenarioGraph.objects.create(
             name="Order flow",
@@ -898,6 +902,22 @@ class TestVoiceAnnotationRegressionE2E:
 
         # Seed AFTER .save() so CH has the updated span_attributes/eval_attributes
         seed_ch_span(root_conversation_span)
+        # voice_call_detail resolves the trace's project from the CH `traces` table
+        # (PG tracer_trace is dropped on CH25), so the trace row must be seeded too;
+        # seeding only the span leaves the traces lookup empty (404).
+        seed_ch_trace(observe_trace)
+        # The root_conversation_span fixture already seeded this span WITHOUT
+        # eval_attributes; the re-seed above added them, leaving two
+        # ReplacingMergeTree(_version) rows for the same id. The endpoint reads
+        # `spans` without FINAL, so it can return the stale (no-eval) version and
+        # drop the simulation context (flaky KeyError: call_execution_id). Force the
+        # merge so the later, eval-bearing re-seed (higher insert-time _version)
+        # wins, leaving one deterministic row.
+        _ch = _get_ch_client()
+        try:
+            _ch.command("OPTIMIZE TABLE spans FINAL")
+        finally:
+            _ch.close()
 
         resp = auth_client.get(
             "/tracer/trace/voice_call_detail/",
