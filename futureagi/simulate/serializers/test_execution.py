@@ -467,13 +467,9 @@ class CallExecutionDetailSerializer(serializers.ModelSerializer):
         if hasattr(obj, "provider_call_data") and isinstance(
             obj.provider_call_data, dict
         ):
-            if len(obj.provider_call_data.keys()) == 1:
-                provider_payload = next(iter(obj.provider_call_data.values()))
-            else:
-                # Prefer VAPI payload when present (current tooling support)
-                provider_payload = obj.provider_call_data.get(
-                    ProviderChoices.VAPI.value
-                )
+            provider_payload = obj.provider_call_data.get(
+                ProviderChoices.VAPI.value
+            )
 
         # Shortcut dict from the provider payload's "recording" sub-object.
         shortcut = {}
