@@ -1027,6 +1027,12 @@ const EvalDetailPage = () => {
         });
       }
       testPlaygroundRef.current?.runTest?.(evalId);
+      // Save Version unmounts the active test-mode component (it swaps the
+      // panel to the Versions view), which drops its onTestResult callback
+      // mid-flight and would otherwise leave isTesting stuck true forever.
+      // Same fallback EvalCreatePage.jsx already uses for the same class of
+      // stuck-test state.
+      setTimeout(() => setIsTesting((v) => (v ? false : v)), 60000);
     } catch (error) {
       const message =
         error?.response?.data?.result || error?.message || "Failed to run test";
