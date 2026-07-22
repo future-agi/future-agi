@@ -77,12 +77,14 @@ import {
   DEFAULT_DECIMALS,
   escapeHtml,
   formatValueWithConfig,
+  fromAxisConfigPayload,
   getAggColumnLabel,
   getAutoDecimals,
   getSeriesAverage,
   getSuggestedUnitConfig,
   getUnitRendering,
   getYAxisRangeWarning,
+  toAxisConfigPayload,
 } from "./widgetUtils";
 import {
   AGGREGATION_OPTIONS,
@@ -1368,13 +1370,14 @@ export default function WidgetEditorView() {
         setGranularity(qc.granularity || "day");
         setChartType(cc.chartType || cc.chart_type || "line");
         // Restore axis config if saved
-        const savedAxis = cc.axisConfig || cc.axis_config;
+        const savedAxis = cc.axis_config;
         if (savedAxis) {
+          const restoredAxis = fromAxisConfigPayload(savedAxis);
           setAxisConfig((prev) => ({
-            leftY: { ...prev.leftY, ...savedAxis.leftY },
-            rightY: { ...prev.rightY, ...savedAxis.rightY },
-            xAxis: { ...prev.xAxis, ...savedAxis.xAxis },
-            seriesAxis: savedAxis.seriesAxis || {},
+            leftY: { ...prev.leftY, ...restoredAxis.leftY },
+            rightY: { ...prev.rightY, ...restoredAxis.rightY },
+            xAxis: { ...prev.xAxis, ...restoredAxis.xAxis },
+            seriesAxis: restoredAxis.seriesAxis,
           }));
         }
         // Restore metrics with frontend type keys + source
@@ -2048,7 +2051,10 @@ export default function WidgetEditorView() {
       name: chartName.trim() || "Untitled widget",
       description: chartDescription,
       query_config: buildQueryConfig(),
-      chart_config: { chart_type: chartType, axis_config: axisConfig },
+      chart_config: {
+        chart_type: chartType,
+        axis_config: toAxisConfigPayload(axisConfig),
+      },
     };
 
     setSaveStatus("saving");
@@ -3038,7 +3044,7 @@ export default function WidgetEditorView() {
                   query_config: buildQueryConfig(),
                   chart_config: {
                     chart_type: chartType,
-                    axis_config: axisConfig,
+                    axis_config: toAxisConfigPayload(axisConfig),
                   },
                 };
                 createMutation

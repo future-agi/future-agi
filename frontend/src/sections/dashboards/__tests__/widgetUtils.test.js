@@ -1,10 +1,44 @@
 import { describe, it, expect } from "vitest";
 import {
+  fromAxisConfigPayload,
   getAggColumnLabel,
   getYAxisRangeWarning,
   seriesHasDataPoints,
+  toAxisConfigPayload,
 } from "../widgetUtils";
 import { ALL_AGGREGATIONS } from "../constants";
+
+describe("axis config contract", () => {
+  const uiConfig = {
+    leftY: { prefixSuffix: "prefix", outOfBounds: "visible", unit: "ms" },
+    rightY: { prefixSuffix: "suffix", outOfBounds: "hidden" },
+    xAxis: { visible: true },
+    seriesAxis: { 0: "right" },
+  };
+
+  it("serializes UI state to the snake_case API contract", () => {
+    expect(toAxisConfigPayload(uiConfig)).toEqual({
+      left_y: {
+        prefix_suffix: "prefix",
+        out_of_bounds: "visible",
+        unit: "ms",
+      },
+      right_y: { prefix_suffix: "suffix", out_of_bounds: "hidden" },
+      x_axis: { visible: true },
+      series_axis: { 0: "right" },
+    });
+  });
+
+  it("restores the snake_case API contract to UI state", () => {
+    expect(fromAxisConfigPayload(toAxisConfigPayload(uiConfig))).toEqual(
+      uiConfig,
+    );
+  });
+
+  it("restores legacy camelCase axis configs during rollout", () => {
+    expect(fromAxisConfigPayload(uiConfig)).toEqual(uiConfig);
+  });
+});
 
 describe("seriesHasDataPoints", () => {
   it("returns false when series is empty", () => {
