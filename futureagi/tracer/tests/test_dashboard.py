@@ -396,6 +396,9 @@ class TestWidgetReadEndpoints:
     def test_list_empty_dashboard_returns_ok(self, auth_client, dashboard):
         response = auth_client.get(f"/tracer/dashboard/{dashboard.id}/widgets/")
         assert response.status_code == 200
+        body = response.json()
+        assert body["count"] == 0
+        assert body["results"] == []
 
     @pytest.mark.django_db
     def test_retrieve_returns_single_widget(
@@ -446,6 +449,7 @@ class TestWidgetReadEndpoints:
         list_resp = auth_client.get(
             f"/tracer/dashboard/{other_dash.id}/widgets/"
         )
+        assert list_resp.status_code in (200, 404)
         assert str(other_widget.id) not in list_resp.content.decode()
         # The widget itself is not retrievable across the workspace boundary.
         detail_resp = auth_client.get(
