@@ -34,7 +34,7 @@ export REDIS_URL=redis://localhost:16379/0
 export TEST_CLICKHOUSE_HOST=localhost
 export TEST_CLICKHOUSE_PORT=18123
 
-
+# CH-backed tests: use the compose sidecar, not the dev .env host; :- lets CI override.
 export CH_HOST="${CH_HOST:-localhost}"
 export CH_DATABASE="${CH_DATABASE:-futureagi}"
 export CH25_HOST="${CH25_HOST:-localhost}"
