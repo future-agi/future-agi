@@ -4,11 +4,78 @@ Provides common fixtures for all test modules.
 """
 
 import sys
+import types
 from pathlib import Path
 
 _project_root = Path(__file__).parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
+
+
+def _install_ee_usage_stubs_if_missing() -> None:
+    """Stand in for ``ee.usage.*`` in OSS builds where ``ee/`` isn't on disk.
+
+    Several dataset-flow tests in ``model_hub/tests`` reference ``ee.usage``
+    symbols via ``@patch(...)`` / ``monkeypatch.setattr(...)`` — the feature
+    they cover is core (knowledge base entitlement checks, evaluation-usage
+    metering) but it integrates with the paid usage-tracking module. Without
+    these stubs those patches raise on target-lookup even though the feature
+    under test doesn't need EE.
+
+    Tests that exercise a genuinely EE-only feature (``PromptGenerator``,
+    ``SyntheticDataAgent``) live in the ``ee`` repo under
+    ``agenthub/*/tests/`` — they aren't discovered when ``ee/`` is absent,
+    so they don't need stubs.
+
+    The guard checks the on-disk ``ee`` directory (not
+    ``importlib.util.find_spec``) so a prior stub install can't fool it.
+    """
+    if (_project_root / "ee").is_dir():
+        return
+
+    def _make(name: str) -> types.ModuleType:
+        mod = types.ModuleType(name)
+        # Make the module a proper package so ``importlib`` sub-module lookups
+        # (which need ``__path__``) don't blow up.
+        mod.__path__ = []
+        sys.modules[name] = mod
+        # Attach as attribute on the parent module so dotted-path traversal
+        # (``getattr(ee, "usage")``) resolves — pytest's
+        # ``monkeypatch.setattr`` walks the path this way.
+        if "." in name:
+            parent_name, child_name = name.rsplit(".", 1)
+            parent = sys.modules.get(parent_name)
+            if parent is not None:
+                setattr(parent, child_name, mod)
+        return mod
+
+    _make("ee")
+    _make("ee.usage")
+    _make("ee.usage.services")
+
+    entitlements = _make("ee.usage.services.entitlements")
+
+    class Entitlements:
+        @staticmethod
+        def check_feature(*args, **kwargs):
+            # OSS default: feature always allowed.
+            return types.SimpleNamespace(allowed=True, reason="")
+
+    entitlements.Entitlements = Entitlements
+
+    metering = _make("ee.usage.services.metering")
+
+    def check_usage(*args, **kwargs):
+        # OSS default: usage checks pass.
+        return {"allowed": True}
+
+    metering.check_usage = check_usage
+
+    emitter = _make("ee.usage.services.emitter")
+    emitter.emit = lambda *args, **kwargs: None
+
+
+_install_ee_usage_stubs_if_missing()
 
 
 def pytest_configure(config):
