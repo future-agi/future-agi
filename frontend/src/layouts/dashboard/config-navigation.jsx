@@ -99,16 +99,16 @@ export function useNavData() {
         //   });
         // },
       },
-      {
-        title: "Prototype",
-        path: paths.dashboard.prototype,
-        icon: ICONS.prototype,
-        eventTrigger: () => {
-          trackEvent(Events.navigationPrototypeClicked, {
-            [PropertyName.click]: true,
-          });
-        },
-      },
+      // {
+      //   title: "Prototype",
+      //   path: paths.dashboard.prototype,
+      //   icon: ICONS.prototype,
+      //   eventTrigger: () => {
+      //     trackEvent(Events.navigationPrototypeClicked, {
+      //       [PropertyName.click]: true,
+      //     });
+      //   },
+      // },
       {
         title: "Knowledge base",
         path: paths.dashboard.knowledge_base,
@@ -155,11 +155,11 @@ export function useNavData() {
               });
             },
           },
-          // {
-          //   title: "Error Feed",
-          //   path: paths.dashboard.errorFeed.root,
-          //   icon: <Iconify icon="mdi:bug-outline" />,
-          // },
+          {
+            title: "Error Feed",
+            path: paths.dashboard.errorFeed.root,
+            icon: <Iconify icon="mdi:bug-outline" />,
+          },
           {
             title: "Tasks",
             path: paths.dashboard.tasks,
