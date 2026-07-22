@@ -155,11 +155,11 @@ export function useNavData() {
               });
             },
           },
-          {
-            title: "Error Feed",
-            path: paths.dashboard.errorFeed.root,
-            icon: <Iconify icon="mdi:bug-outline" />,
-          },
+          // {
+          //   title: "Error Feed",
+          //   path: paths.dashboard.errorFeed.root,
+          //   icon: <Iconify icon="mdi:bug-outline" />,
+          // },
           {
             title: "Tasks",
             path: paths.dashboard.tasks,
@@ -175,16 +175,16 @@ export function useNavData() {
             path: paths.dashboard.annotations.queues,
             icon: ICONS.annotate,
           },
-          {
-            title: "Alerts",
-            path: paths.dashboard.alerts,
-            icon: ICONS.alerts,
-            eventTrigger: () => {
-              trackEvent(Events.navigationAlertTabClicked, {
-                [PropertyName.click]: true,
-              });
-            },
-          },
+          // {
+          //   title: "Alerts",
+          //   path: paths.dashboard.alerts,
+          //   icon: ICONS.alerts,
+          //   eventTrigger: () => {
+          //     trackEvent(Events.navigationAlertTabClicked, {
+          //       [PropertyName.click]: true,
+          //     });
+          //   },
+          // },
           {
             title: "Dashboards",
             path: paths.dashboard.dashboards.root,
