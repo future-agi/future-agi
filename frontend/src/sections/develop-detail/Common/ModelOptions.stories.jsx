@@ -19,23 +19,23 @@ const meta = {
   component: ModelOptions,
   title: "UI Components/ModelOptions",
   argTypes: {
-    control: { 
-      control: 'object',
-      description: 'React Hook Form control object' 
+    control: {
+      control: "object",
+      description: "React Hook Form control object",
     },
-    fieldNamePrefix: { 
-      control: 'text',
-      description: 'Prefix for form field names' 
+    fieldNamePrefix: {
+      control: "text",
+      description: "Prefix for form field names",
     },
-    hideAccordion: { 
-      control: 'boolean',
-      description: 'Hide or show accordion' 
+    hideAccordion: {
+      control: "boolean",
+      description: "Hide or show accordion",
     },
-    setValue: { 
-      action: 'setValue',
-      description: 'Function to set form value' 
-    }
-  }
+    setValue: {
+      action: "setValue",
+      description: "Function to set form value",
+    },
+  },
 };
 
 export default meta;
@@ -50,7 +50,7 @@ const Template = (args) => {
         presencePenalty: 1,
         frequencyPenalty: 1,
         responseFormat: "text",
-        toolChoice: "auto"
+        toolChoice: "auto",
       },
     },
   });
@@ -58,11 +58,11 @@ const Template = (args) => {
   return (
     <QueryClientProvider client={queryClient}>
       <FormProvider {...methods}>
-        <ModelOptions 
-          {...args} 
+        <ModelOptions
+          {...args}
           control={methods.control}
           setValue={methods.setValue}
-          fieldNamePrefix="modelOptions" 
+          fieldNamePrefix="modelOptions"
         />
       </FormProvider>
     </QueryClientProvider>
@@ -72,13 +72,13 @@ const Template = (args) => {
 export const Default = {
   render: (args) => <Template {...args} />,
   args: {
-    hideAccordion: false
-  }
+    hideAccordion: false,
+  },
 };
 
 export const HideAccordion = {
   render: (args) => <Template {...args} />,
   args: {
-    hideAccordion: true
-  }
+    hideAccordion: true,
+  },
 };

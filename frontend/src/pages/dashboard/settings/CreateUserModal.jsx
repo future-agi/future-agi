@@ -25,9 +25,7 @@ const CreateUserModal = ({ open, onClose, userData, type, setRefreshData }) => {
     defaultValues: {
       userName: userData ? userData.name : "",
       email: userData ? userData.email : "",
-      organization_role: userData
-        ? userData.organization_role ?? userData.organizationRole ?? ""
-        : "",
+      organization_role: userData ? userData.organization_role ?? "" : "",
     },
   });
 
@@ -116,9 +114,7 @@ const CreateUserModal = ({ open, onClose, userData, type, setRefreshData }) => {
       reset({
         userName: userData ? userData.name : "",
         email: userData ? userData.email : "",
-        organization_role: userData
-          ? userData.organization_role ?? userData.organizationRole ?? ""
-          : "",
+        organization_role: userData ? userData.organization_role ?? "" : "",
       });
     }
   }, [open, userData, reset]);

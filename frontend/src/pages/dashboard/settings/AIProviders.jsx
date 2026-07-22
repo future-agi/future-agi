@@ -18,6 +18,7 @@ import {
   buttonStyles,
   getFilterOptions,
   filterAndSortProviders,
+  normalizeProviderStatus,
   emptyStateContent,
 } from "src/components/custom-model-dropdown/KeysHelper";
 import EmptyLayout from "src/components/EmptyLayout/EmptyLayout";
@@ -30,6 +31,34 @@ import {
 import { useAuthContext } from "src/auth/hooks";
 import { PERMISSIONS, RolePermission } from "src/utils/rolePermissionMapping";
 
+const normalizeCustomModel = (model = {}) => {
+  const userModelId =
+    model.userModelId ?? model.user_model_id ?? model.modelName ?? "";
+  const modelName = model.modelName ?? model.model_name ?? userModelId;
+  const configJson = model.configJson ?? model.config_json ?? null;
+  const modelProvider =
+    model.modelProvider ?? model.model_provider ?? model.provider ?? "";
+  const inputTokenCost = model.inputTokenCost ?? model.input_token_cost ?? "";
+  const outputTokenCost =
+    model.outputTokenCost ?? model.output_token_cost ?? "";
+
+  return {
+    ...model,
+    userModelId,
+    user_model_id: model.user_model_id ?? userModelId,
+    modelName,
+    model_name: model.model_name ?? modelName,
+    configJson,
+    config_json: model.config_json ?? configJson,
+    modelProvider,
+    model_provider: model.model_provider ?? modelProvider,
+    inputTokenCost,
+    input_token_cost: model.input_token_cost ?? inputTokenCost,
+    outputTokenCost,
+    output_token_cost: model.output_token_cost ?? outputTokenCost,
+  };
+};
+
 const ConfigureProviders = () => {
   const { role } = useAuthContext();
   const theme = useTheme();
@@ -38,7 +67,8 @@ const ConfigureProviders = () => {
   const { data, isLoading, isFetching } = useQuery({
     queryKey: ["api-key-status"],
     queryFn: () => axios.get(endpoints.develop.apiKey.status),
-    select: (d) => d.data?.result?.providers,
+    select: (d) =>
+      (d.data?.result?.providers || []).map(normalizeProviderStatus),
   });
 
   const [selectedFilter, setSelectedFilter] = useState("all");
@@ -75,9 +105,9 @@ const ConfigureProviders = () => {
 
   const filteredCustomModels = useMemo(() => {
     const search = searchDebounce.toLowerCase();
-    return (customModalsData?.results || []).filter((model) =>
-      model.userModelId?.toLowerCase().includes(search),
-    );
+    return (customModalsData?.results || [])
+      .map(normalizeCustomModel)
+      .filter((model) => model.userModelId?.toLowerCase().includes(search));
   }, [searchDebounce, customModalsData]);
 
   const filterOptions = useMemo(
@@ -91,9 +121,7 @@ const ConfigureProviders = () => {
   );
 
   const filteredData = data?.filter((d) =>
-    (d.display_name ?? d.displayName ?? "")
-      .toLowerCase()
-      .includes(searchQuery.toLowerCase()),
+    (d.display_name ?? "").toLowerCase().includes(searchQuery.toLowerCase()),
   );
 
   const containerStyles = useMemo(

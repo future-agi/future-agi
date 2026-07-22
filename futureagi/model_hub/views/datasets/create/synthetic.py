@@ -2,19 +2,25 @@ import traceback
 import uuid
 
 import structlog
-from django.shortcuts import get_object_or_404
+from django.db.models import Q
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-from accounts.models import Organization
-
-logger = structlog.get_logger(__name__)
 from model_hub.models.choices import CellStatus, SourceChoices, StatusType
 from model_hub.models.develop_dataset import Cell, Column, Dataset, Row
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+)
 from model_hub.serializers.develop_dataset import (
     DatasetSerializer,
     SyntheticDatasetConfigSerializer,
     SyntheticDatasetCreationSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    SyntheticDatasetConfigResponseSerializer,
+    SyntheticDatasetCreateStartedResponseSerializer,
+    SyntheticDatasetUpdateResponseSerializer,
 )
 from model_hub.tasks.develop_dataset import (
     create_synthetic_dataset,
@@ -23,21 +29,67 @@ from model_hub.tasks.develop_dataset import (
 )
 from model_hub.utils.synthetic_task_manager import SyntheticTaskManager
 from model_hub.views.utils.synthetic_data import determine_data_type_syn_data
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
 from tfc.constants.api_calls import APICallStatusChoices, APICallTypeChoices
 try:
-    from ee.usage.utils.usage_entries import ROW_LIMIT_REACHED_MESSAGE, log_and_deduct_cost_for_resource_request
+    from ee.usage.utils.usage_entries import (
+        ROW_LIMIT_REACHED_MESSAGE,
+        log_and_deduct_cost_for_resource_request,
+    )
 except ImportError:
     ROW_LIMIT_REACHED_MESSAGE = None
     log_and_deduct_cost_for_resource_request = None
+
+logger = structlog.get_logger(__name__)
+
+
+def _request_organization(request):
+    return getattr(request, "organization", None) or request.user.organization
+
+
+def _request_workspace_filter(request, field_name="workspace"):
+    workspace = getattr(request, "workspace", None)
+    if not workspace:
+        return Q()
+
+    if getattr(workspace, "is_default", False):
+        return (
+            Q(**{field_name: workspace})
+            | Q(
+                **{
+                    f"{field_name}__is_default": True,
+                    f"{field_name}__organization_id": workspace.organization_id,
+                }
+            )
+            | Q(**{f"{field_name}__isnull": True})
+        )
+
+    return Q(**{field_name: workspace})
+
+
+def _request_dataset_queryset(request):
+    return Dataset.objects.filter(
+        _request_workspace_filter(request),
+        organization=_request_organization(request),
+        deleted=False,
+    )
 
 
 class CreateSyntheticDataset(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=SyntheticDatasetCreationSerializer,
+        responses={
+            200: SyntheticDatasetCreateStartedResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         try:
             # Entitlement check: synthetic data feature
@@ -59,7 +111,11 @@ class CreateSyntheticDataset(APIView):
             except ImportError:
                 pass
 
-            # SyntheticDataAgent requires the ee module
+            validated_data = request.validated_data
+            dataset_name = validated_data["dataset"]["name"]
+            organization = _request_organization(request)
+
+            # SyntheticDataAgent requires the ee module.
             try:
                 from ee.agenthub.synthetic_data_agent.synthetic_data_agent import SyntheticDataAgent  # noqa: F401
             except ImportError:
@@ -67,10 +123,21 @@ class CreateSyntheticDataset(APIView):
                     "Synthetic data generation is not available on your plan."
                 )
 
+            if _request_dataset_queryset(request).filter(name=dataset_name).exists():
+                return self._gm.bad_request(get_error_message("DATASET_EXIST_IN_ORG"))
+
+            # if len(set(validated_data['columns']) != len(validated_data['columns'])):
+            if len({col["name"] for col in validated_data["columns"]}) != len(
+                validated_data["columns"]
+            ):
+                return self._gm.bad_request(get_error_message("DUPLICATE_COLUMN_NAME"))
+
+            if validated_data["num_rows"] < 10:
+                return self._gm.bad_request(get_error_message("10_ROWS_REQUIRED"))
+
             if log_and_deduct_cost_for_resource_request is not None:
                 call_log_row_entry = log_and_deduct_cost_for_resource_request(
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
+                    organization=organization,
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
                     workspace=request.workspace,
                 )
@@ -85,155 +152,120 @@ class CreateSyntheticDataset(APIView):
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
 
-            serializer = SyntheticDatasetCreationSerializer(data=request.data)
-
-            if serializer.is_valid():
-                validated_data = serializer.validated_data
-                dataset_name = validated_data["dataset"]["name"]
-                organization = (
-                    getattr(request, "organization", None) or request.user.organization
+            # ------------------- Added Row Check -------------------
+            if log_and_deduct_cost_for_resource_request is not None:
+                call_log_row = log_and_deduct_cost_for_resource_request(
+                    organization,
+                    api_call_type=APICallTypeChoices.ROW_ADD.value,
+                    config={"total_rows": validated_data["num_rows"]},
+                    workspace=request.workspace,
                 )
-
-                if Dataset.objects.filter(
-                    name=dataset_name,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                    deleted=False,
-                ).exists():
-                    return self._gm.bad_request(
-                        get_error_message("DATASET_EXIST_IN_ORG")
-                    )
-
-                # if len(set(validated_data['columns']) != len(validated_data['columns'])):
-                if len({col["name"] for col in validated_data["columns"]}) != len(
-                    validated_data["columns"]
+                if (
+                    call_log_row is None
+                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
                 ):
-                    return self._gm.bad_request(
-                        get_error_message("DUPLICATE_COLUMN_NAME")
+                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+                call_log_row.status = APICallStatusChoices.SUCCESS.value
+                call_log_row.save()
+            # dataset = Dataset.objects.create(name=dataset_name)
+            dataset_serializer = DatasetSerializer(
+                data={
+                    "id": str(uuid.uuid4()),
+                    "name": dataset_name,
+                    "organization": organization.id,
+                    "model_type": "GenerativeLLM",
+                    "user": request.user.id,
+                }
+            )
+
+            if dataset_serializer.is_valid():
+                try:
+                    dataset = dataset_serializer.save(
+                        workspace=getattr(request, "workspace", None)
                     )
 
-                if validated_data["num_rows"] < 10:
-                    return self._gm.bad_request(get_error_message("10_ROWS_REQUIRED"))
+                    # Store the validated_data for future editing
+                    config_data = validated_data.copy()
+                    if config_data.get("kb_id"):
+                        config_data["kb_id"] = str(config_data["kb_id"])
 
-                # ------------------- Added Row Check -------------------
-                if log_and_deduct_cost_for_resource_request is not None:
-                    call_log_row = log_and_deduct_cost_for_resource_request(
-                        organization,
-                        api_call_type=APICallTypeChoices.ROW_ADD.value,
-                        config={"total_rows": validated_data["num_rows"]},
-                        workspace=request.workspace,
-                    )
-                    if (
-                        call_log_row is None
-                        or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-                    ):
-                        return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
-                    call_log_row.status = APICallStatusChoices.SUCCESS.value
-                    call_log_row.save()
-                # dataset = Dataset.objects.create(name=dataset_name)
-                dataset_serializer = DatasetSerializer(
-                    data={
-                        "id": str(uuid.uuid4()),
-                        "name": dataset_name,
-                        "organization": organization.id,
-                        "model_type": "GenerativeLLM",
-                        "user": request.user.id,
-                    }
-                )
+                    dataset.synthetic_dataset_config = config_data
+                    dataset.save()
 
-                if dataset_serializer.is_valid():
-                    try:
-                        dataset = dataset_serializer.save()
+                    column_order = []
+                    column_config = {}
 
-                        # Store the validated_data for future editing
-                        config_data = validated_data.copy()
-                        if config_data.get("kb_id"):
-                            config_data["kb_id"] = str(config_data["kb_id"])
+                    for column_data in validated_data["columns"]:
+                        data_type = determine_data_type_syn_data(
+                            column_data["data_type"]
+                        )
 
-                        dataset.synthetic_dataset_config = config_data
-                        dataset.save()
+                        column = Column.objects.create(
+                            id=uuid.uuid4(),
+                            name=column_data["name"],
+                            data_type=data_type,
+                            source=SourceChoices.OTHERS.value,
+                            dataset=dataset,
+                            status=StatusType.RUNNING.value,
+                        )
 
-                        column_order = []
-                        column_config = {}
+                        column_order.append(str(column.id))
+                        column_config[str(column.id)] = {
+                            "is_visible": True,
+                            "is_frozen": None,
+                        }
 
-                        for column_data in validated_data["columns"]:
-                            # print("HERE IS COLD DATA:",column_data)
-                            data_type = determine_data_type_syn_data(
-                                column_data["data_type"]
-                            )
-                            # print("HERE IS COLD DATA:",data_type)
+                    dataset.column_order = column_order
+                    dataset.column_config = column_config
+                    dataset.save()
 
-                            column = Column.objects.create(
+                    # cell_ids =
+                    for i in range(validated_data["num_rows"]):
+                        new_row = Row.objects.create(
+                            id=uuid.uuid4(), dataset=dataset, order=i
+                        )
+                        for column in column_order:
+                            Cell.objects.create(
                                 id=uuid.uuid4(),
-                                name=column_data["name"],
-                                data_type=data_type,
-                                source=SourceChoices.OTHERS.value,
                                 dataset=dataset,
-                                status=StatusType.RUNNING.value,
+                                column_id=column,
+                                row=new_row,
+                                value=None,
+                                status=CellStatus.RUNNING.value,
                             )
 
-                            column_order.append(str(column.id))
-                            column_config[str(column.id)] = {
-                                "is_visible": True,
-                                "is_frozen": None,
-                            }
+                    # If no request_uuid provided, try to get it from the task manager
+                    task_manager = SyntheticTaskManager()
 
-                        dataset.column_order = column_order
-                        dataset.column_config = column_config
-                        dataset.save()
+                    request_uuid = task_manager.start_task(str(dataset.id))
 
-                        # cell_ids =
-                        for i in range(validated_data["num_rows"]):
-                            new_row = Row.objects.create(
-                                id=uuid.uuid4(), dataset=dataset, order=i
-                            )
-                            for column in column_order:
-                                Cell.objects.create(
-                                    id=uuid.uuid4(),
-                                    dataset=dataset,
-                                    column_id=column,
-                                    row=new_row,
-                                    value=None,
-                                    status=CellStatus.RUNNING.value,
-                                )
-
-                        # If no request_uuid provided, try to get it from the task manager
-                        task_manager = SyntheticTaskManager()
-
-                        request_uuid = task_manager.start_task(str(dataset.id))
-
-                        try:
-                            create_synthetic_dataset.delay(
-                                validated_data=validated_data,
-                                dataset_id=dataset.id,
-                                organization_id=organization.id,
-                                creating_synthetic_dataset=True,
-                                request_uuid=request_uuid,
-                            )
-
-                        except Exception:
-                            logger.exception(
-                                f" ===== Error : {traceback.format_exc()} ===== "
-                            )
-
-                        return self._gm.success_response(
-                            {
-                                "message": "Dataset creation started successfully. Please check in some time",
-                                "data": dataset_serializer.data,
-                            }
+                    try:
+                        create_synthetic_dataset.delay(
+                            validated_data=validated_data,
+                            dataset_id=dataset.id,
+                            organization_id=organization.id,
+                            creating_synthetic_dataset=True,
+                            request_uuid=request_uuid,
                         )
 
                     except Exception:
-                        return self._gm.bad_request(
-                            get_error_message("FAILED_TO_CREATE_SYNTHETIC_DATASET")
+                        logger.exception(
+                            f" ===== Error : {traceback.format_exc()} ===== "
                         )
-                else:
-                    return self._gm.bad_request(
-                        parse_serialized_errors(dataset_serializer)
+
+                    return self._gm.success_response(
+                        {
+                            "message": "Dataset creation started successfully. Please check in some time",
+                            "data": dataset_serializer.data,
+                        }
                     )
 
-            else:
-                return self._gm.bad_request(parse_serialized_errors(serializer))
+                except Exception:
+                    return self._gm.bad_request(
+                        get_error_message("FAILED_TO_CREATE_SYNTHETIC_DATASET")
+                    )
+
+            return self._gm.bad_request(parse_serialized_errors(dataset_serializer))
 
         except Exception as e:
             traceback.print_exc()
@@ -247,16 +279,17 @@ class GetSyntheticDatasetConfigView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={
+            200: SyntheticDatasetConfigResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        }
+    )
     def get(self, request, dataset_id, *args, **kwargs):
         try:
-            # Get dataset and verify it exists and belongs to user's organization
-            dataset = get_object_or_404(
-                Dataset,
-                id=dataset_id,
-                deleted=False,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if not dataset:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
             # Check if this is a synthetic dataset (has synthetic_dataset_config)
             if not dataset.synthetic_dataset_config:
@@ -282,19 +315,29 @@ class UpdateSyntheticDatasetConfigView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=SyntheticDatasetConfigSerializer,
+        responses={
+            200: SyntheticDatasetUpdateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def put(self, request, dataset_id, *args, **kwargs):
         try:
-            # Initialize task manager
-            task_manager = SyntheticTaskManager()
+            validated_data = request.validated_data
 
-            # Get dataset and verify it exists and belongs to user's organization
-            dataset = get_object_or_404(
-                Dataset,
-                id=dataset_id,
-                deleted=False,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
+            if len({col["name"] for col in validated_data["columns"]}) != len(
+                validated_data["columns"]
+            ):
+                return self._gm.bad_request(get_error_message("DUPLICATE_COLUMN_NAME"))
+
+            if validated_data["num_rows"] < 10:
+                return self._gm.bad_request(get_error_message("10_ROWS_REQUIRED"))
+
+            dataset = _request_dataset_queryset(request).filter(id=dataset_id).first()
+            if not dataset:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
             # Check if this is a synthetic dataset (has synthetic_dataset_config)
             if not dataset.synthetic_dataset_config:
@@ -302,16 +345,13 @@ class UpdateSyntheticDatasetConfigView(APIView):
                     get_error_message("NOT_A_SYNTHETIC_DATASET")
                 )
 
-            if request.data.get("regenerate"):
+            task_manager = SyntheticTaskManager()
+
+            if validated_data.get("regenerate"):
                 # Add regenerate flag when regenerate is true
                 task_manager.operation_regenerate_key(str(dataset_id), "add")
 
                 # Re-running full generation
-                serializer = SyntheticDatasetConfigSerializer(data=request.data)
-                if not serializer.is_valid():
-                    return self._gm.bad_request(parse_serialized_errors(serializer))
-                validated_data = serializer.validated_data
-
                 # Clear and recreate everything
                 Column.objects.filter(dataset=dataset).delete()
                 Row.objects.filter(
@@ -354,7 +394,10 @@ class UpdateSyntheticDatasetConfigView(APIView):
                             status=CellStatus.RUNNING.value,
                         )
 
-                dataset.synthetic_dataset_config = validated_data
+                config_data = dict(validated_data)
+                if config_data.get("kb_id"):
+                    config_data["kb_id"] = str(config_data["kb_id"])
+                dataset.synthetic_dataset_config = config_data
                 dataset.save()
 
                 request_uuid = task_manager.start_task(str(dataset.id))
@@ -382,58 +425,20 @@ class UpdateSyntheticDatasetConfigView(APIView):
                 # Remove regenerate flag when regenerate is false or not present
                 task_manager.operation_regenerate_key(str(dataset_id), "remove")
 
-            # Validate the new configuration
-            serializer = SyntheticDatasetConfigSerializer(data=request.data)
-            if not serializer.is_valid():
-                return self._gm.bad_request(parse_serialized_errors(serializer))
-
-            validated_data = serializer.validated_data
-
-            # Check for duplicate column names
-            if len({col["name"] for col in validated_data["columns"]}) != len(
-                validated_data["columns"]
+            new_dataset_name = validated_data["dataset"]["name"]
+            if (
+                new_dataset_name != dataset.name
+                and _request_dataset_queryset(request)
+                .filter(name=new_dataset_name)
+                .exclude(id=dataset.id)
+                .exists()
             ):
-                return self._gm.bad_request(get_error_message("DUPLICATE_COLUMN_NAME"))
-
-            # Check minimum rows requirement
-            if validated_data["num_rows"] < 10:
-                return self._gm.bad_request(get_error_message("10_ROWS_REQUIRED"))
-
-            # Check row limit
-            if log_and_deduct_cost_for_resource_request is not None:
-                call_log_row = log_and_deduct_cost_for_resource_request(
-                    getattr(request, "organization", None) or request.user.organization,
-                    api_call_type=APICallTypeChoices.ROW_ADD.value,
-                    config={"total_rows": validated_data["num_rows"]},
-                    workspace=request.workspace,
-                )
-                if (
-                    call_log_row is None
-                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
-                ):
-                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
-                call_log_row.status = APICallStatusChoices.SUCCESS.value
-                call_log_row.save()
+                return self._gm.bad_request(get_error_message("DATASET_EXIST_IN_ORG"))
 
             # Update the dataset name if it changed
-            new_dataset_name = validated_data["dataset"]["name"]
             if new_dataset_name != dataset.name:
-                if Dataset.objects.filter(
-                    name=new_dataset_name,
-                    deleted=False,
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
-                ).exists():
-                    return self._gm.bad_request(
-                        get_error_message("DATASET_EXIST_IN_ORG")
-                    )
                 dataset.name = new_dataset_name
                 dataset.save()
-
-            # Set running status for all columns
-            Column.objects.filter(dataset=dataset, deleted=False).update(
-                status=StatusType.RUNNING.value
-            )
 
             # Handle column changes
             existing_columns = Column.objects.filter(dataset=dataset, deleted=False)
@@ -518,9 +523,30 @@ class UpdateSyntheticDatasetConfigView(APIView):
             current_row_count = existing_rows.count()
             new_row_count = validated_data["num_rows"]
             new_rows_id = []
+            rows_to_add_count = max(new_row_count - current_row_count, 0)
+
+            # Only charge row-add usage when this edit actually appends rows.
+            # Description-only config saves should not mutate existing status
+            # or consume row capacity.
+            if (
+                rows_to_add_count > 0
+                and log_and_deduct_cost_for_resource_request is not None
+            ):
+                call_log_row = log_and_deduct_cost_for_resource_request(
+                    _request_organization(request),
+                    api_call_type=APICallTypeChoices.ROW_ADD.value,
+                    config={"total_rows": rows_to_add_count},
+                    workspace=request.workspace,
+                )
+                if (
+                    call_log_row is None
+                    or call_log_row.status == APICallStatusChoices.RESOURCE_LIMIT.value
+                ):
+                    return self._gm.too_many_requests(ROW_LIMIT_REACHED_MESSAGE)
+                call_log_row.status = APICallStatusChoices.SUCCESS.value
+                call_log_row.save()
 
             if new_row_count > current_row_count:
-                rows_to_add_count = new_row_count - current_row_count
                 last_row = existing_rows.order_by("-order").first()
                 max_order = last_row.order if last_row else -1
 

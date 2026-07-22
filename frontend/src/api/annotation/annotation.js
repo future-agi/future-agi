@@ -8,7 +8,7 @@ import axios from "src/utils/axios";
 export function useAnnotationTasks(predictiveJourney, page = 1) {
   const params = {
     page,
-    predictiveJourney,
+    predictive_journey: predictiveJourney,
   };
 
   const URL = endpoints.annotation.list;

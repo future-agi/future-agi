@@ -40,9 +40,8 @@ import _ from "lodash";
 import GraphSkeleton from "./GraphSkeleton";
 import CustomDateRangePicker from "src/components/custom-datepicker/DatePicker";
 import { formatDate } from "src/utils/report-utils";
-import { FILTER_FOR_HAS_EVAL } from "../common";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
+import { toBackendFilters } from "../common";
+import { combineGraphFilters } from "./graphFilterUtils";
 
 // ---------------------------------------------------------------------------
 // Map dashboard category → graph API type
@@ -159,6 +158,7 @@ function useGraphMetrics() {
 // ---------------------------------------------------------------------------
 const PrimaryGraph = ({
   filters = [],
+  extraFilters,
   dateFilter,
   setDateFilter,
   selectedInterval = "day",
@@ -181,6 +181,7 @@ const PrimaryGraph = ({
   trafficLabel = "traces",
 }) => {
   const { observeId } = useParams();
+  const effectiveObserveId = observeIdOverride || observeId;
   const theme = useTheme();
   const [selectedMetric, setSelectedMetric] = useState(
     defaultMetric || "latency",
@@ -305,43 +306,18 @@ const PrimaryGraph = ({
     return result;
   }, [metricGroups, pickerSearch]);
 
-  // Combine filters with date filter + eval filter
-  const combinedFilters = useMemo(() => {
-    const base = filters || [];
-    const hasDateFilter = base.some((f) => f?.columnId === "created_at");
-    const startDate = dateFilter?.dateFilter?.[0];
-    const endDate = dateFilter?.dateFilter?.[1];
-
-    const dateEntry =
-      !hasDateFilter && startDate && endDate
-        ? [
-            {
-              columnId: "created_at",
-              filterConfig: {
-                filterType: "datetime",
-                filterOp: "between",
-                filterValue: [
-                  new Date(startDate).toISOString(),
-                  new Date(endDate).toISOString(),
-                ],
-              },
-            },
-          ]
-        : [];
-
-    return [
-      ...base,
-      ...(hasEvalFilter ? [FILTER_FOR_HAS_EVAL] : []),
-      ...dateEntry,
-    ];
-  }, [filters, dateFilter, hasEvalFilter]);
+  const combinedFilters = useMemo(
+    () =>
+      combineGraphFilters({ filters, extraFilters, dateFilter, hasEvalFilter }),
+    [filters, extraFilters, dateFilter, hasEvalFilter],
+  );
 
   // Fetch graph data
   const apiEndpoint = graphEndpoint || endpoints.project.getTraceGraphData();
   const { data: graphData, isLoading } = useQuery({
     queryKey: [
       "primary-graph",
-      observeId,
+      effectiveObserveId,
       selectedMetric,
       selectedInterval,
       combinedFilters,
@@ -350,19 +326,17 @@ const PrimaryGraph = ({
     queryFn: () =>
       axios.post(apiEndpoint, {
         interval: selectedInterval,
-        filters: canonicalizeApiFilterColumnIds(
-          objectCamelToSnake(combinedFilters),
-        ),
+        filters: toBackendFilters(combinedFilters),
         property: "average",
         req_data_config: {
           id: metricDef.id,
           type: metricDef.apiType || "SYSTEM_METRIC",
           ...(metricDef.outputType && { output_type: metricDef.outputType }),
         },
-        project_id: observeId,
+        project_id: effectiveObserveId,
       }),
     select: (d) => d.data?.result,
-    enabled: !!observeId && !!metricDef.id,
+    enabled: !!effectiveObserveId && !!metricDef.id,
     staleTime: 30_000,
   });
 
@@ -878,6 +852,7 @@ const PrimaryGraph = ({
 
 PrimaryGraph.propTypes = {
   filters: PropTypes.array,
+  extraFilters: PropTypes.array,
   dateFilter: PropTypes.object,
   setDateFilter: PropTypes.func,
   selectedInterval: PropTypes.string,

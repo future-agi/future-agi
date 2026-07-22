@@ -1,5 +1,5 @@
-import { Box, Skeleton } from '@mui/material';
-import React from 'react'
+import { Box, Skeleton } from "@mui/material";
+import React from "react";
 
 const LoadingOutputSection = () => {
   return (
@@ -13,4 +13,4 @@ const LoadingOutputSection = () => {
   );
 };
 
-export default LoadingOutputSection
+export default LoadingOutputSection;

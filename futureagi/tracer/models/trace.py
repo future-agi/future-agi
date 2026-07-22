@@ -45,6 +45,14 @@ class Trace(BaseModel):
         related_name="traces",
         blank=True,
         null=True,
+        # CH scale: SCALE_ARCHITECTURE.md §9a. Decoupled (no DB FK) so a Trace can
+        # carry a DETERMINISTIC trace_session_id (CH-derived-dimensions, DESIGN §3)
+        # whose TraceSession PG row no longer exists post-P3b-flip — ingestion stamps
+        # the bare id (`trace.session_id = deterministic_trace_session_id(...)`) and
+        # there is no PG `trace_session` row to satisfy a constraint against. The
+        # other telemetry FKs (span→end_user, span→trace, eval_logger→*) were
+        # decoupled in migration 0080; this one was missed and is forced by the flip.
+        db_constraint=False,
     )
     external_id = models.CharField(max_length=255, null=True, blank=True)
     tags = models.JSONField(default=list, blank=True)

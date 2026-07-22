@@ -76,7 +76,7 @@ export const useExperimentsOnDatasetList = (
     queryFn: () =>
       axios.get(endpoints.develop.experiment.experimentListPaginated, {
         params: {
-          datasetId: datasetId,
+          dataset_id: datasetId,
           ...(searchText && { search: searchText }),
           page: pageNumber + 1,
           limit: pageSize,

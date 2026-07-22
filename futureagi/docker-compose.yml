@@ -46,7 +46,7 @@ services:
       - "8888:8888"
       - "50051:50051"
     volumes:
-      - '.:/app/backend'
+      - ".:/app/backend"
     env_file:
       - .env
     environment:
@@ -57,10 +57,15 @@ services:
       - TEMPORAL_NAMESPACE=${TEMPORAL_NAMESPACE:-default}
       - FAST_STARTUP=${FAST_STARTUP:-true}
       - AGENTCC_INTERNAL_URL=http://agentcc-gateway:8090
+      - AGENTCC_GATEWAY_INTERNAL_URL=http://agentcc-gateway:8090
       - AGENTCC_INTERNAL_API_KEY=${AGENTCC_INTERNAL_API_KEY:-}
-      # Read replica: uncomment to test read/write split locally (points to same DB)
+      - CH25_DATABASE=${CH25_DATABASE:-futureagi}
+      # Read replica: uncomment to test read/write split locally (points to same DB).
+      # Both PGBOUNCER_READ_HOST and READ_REPLICA_OPT_IN must be set for any
+      # routing to happen. See .env.example for the full list of feature keys.
       # - PGBOUNCER_READ_HOST=pgbouncer
       # - PGBOUNCER_READ_PORT=6432
+      # - READ_REPLICA_OPT_IN=feature:org_config_bulk
     depends_on:
       pgbouncer:
         condition: service_started
@@ -86,11 +91,14 @@ services:
       - "${SERVING_PORT:-8080}:8080"
     env_file:
       - .env
+    environment:
+      HF_HOME: /root/.cache/huggingface
     depends_on:
       - backend
     restart: unless-stopped
     volumes:
       - ./model_serving:/app/embedding
+      - serving-hf-cache:/root/.cache/huggingface
 
   # ===========================================
   # agentcc Gateway (LLM Proxy)
@@ -136,7 +144,7 @@ services:
       resources:
         limits:
           memory: 1G
-          cpus: '2'
+          cpus: "2"
 
   # ===========================================
   # Celery Workers (commented - using Temporal instead)
@@ -313,7 +321,7 @@ services:
       - ./config/userlist.txt:/etc/pgbouncer/userlist.txt
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.10.2.80
+    image: clickhouse/clickhouse-server:25.3.14.14-alpine
     container_name: clickhouse
     ports:
       - "${CH_HTTP_PORT:-8123}:8123"
@@ -322,16 +330,50 @@ services:
       - clickhouse_data:/var/lib/clickhouse
       - ./config/clickhouse/config.xml:/etc/clickhouse-server/config.d/custom.xml:ro
       - ./config/clickhouse/users.xml:/etc/clickhouse-server/users.d/custom.xml:ro
+      - ./config/clickhouse/default-user.xml:/etc/clickhouse-server/users.d/default-user.xml:ro
+      - ./.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/storage_policy.xml:ro
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 4G
+          cpus: "4.0"
+          memory: 12G
     healthcheck:
       test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  # ===========================================
+  # OTel Collector (direct SDK → CH 25.3 write path)
+  # ===========================================
+
+  fi-collector:
+    build:
+      context: ../fi-collector
+      dockerfile: Dockerfile
+    container_name: fi-collector
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      FI_CH_URL: http://clickhouse:8123
+      FI_CH_DATABASE: ${CH25_DATABASE:-futureagi}
+      FI_GRPC_ADDR: ":4317"
+      FI_HTTP_ADDR: ":4318"
+      FI_DEAD_LETTER_FILE: /var/lib/fi-collector/dead_letter.jsonl
+      FI_PG_WRITE: postgres://${PG_USER:-user}:${PG_PASSWORD:-password}@db:5432/${PG_DB:-tfc}
+      FI_PG_READ: postgres://${PG_USER:-user}:${PG_PASSWORD:-password}@db:5432/${PG_DB:-tfc}
+      FI_AUTH_REDIS_ADDR: redis:6379
+    ports:
+      - "${FI_COLLECTOR_GRPC_PORT:-4317}:4317"
+      - "${FI_COLLECTOR_HTTP_PORT:-4318}:4318"
+    volumes:
+      - fi-dead-letter:/var/lib/fi-collector
+    restart: unless-stopped
 
   # ===========================================
   # Message Queue & Cache
@@ -468,7 +510,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /app/backend
     volumes:
-      - '.:/app/backend'
+      - ".:/app/backend"
     env_file:
       - .env
     environment:
@@ -494,7 +536,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /app/backend
     volumes:
-      - '.:/app/backend'
+      - ".:/app/backend"
     env_file:
       - .env
     environment:
@@ -520,7 +562,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /app/backend
     volumes:
-      - '.:/app/backend'
+      - ".:/app/backend"
     env_file:
       - .env
     environment:
@@ -546,7 +588,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /app/backend
     volumes:
-      - '.:/app/backend'
+      - ".:/app/backend"
     env_file:
       - .env
     environment:
@@ -572,7 +614,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /app/backend
     volumes:
-      - '.:/app/backend'
+      - ".:/app/backend"
     env_file:
       - .env
     environment:
@@ -598,7 +640,7 @@ services:
       dockerfile: Dockerfile
     working_dir: /app/backend
     volumes:
-      - '.:/app/backend'
+      - ".:/app/backend"
     env_file:
       - .env
     environment:
@@ -835,6 +877,8 @@ volumes:
     driver: local
   rabbitmq_data:
     driver: local
+  serving-hf-cache:
+    driver: local
   clickhouse_data:
     driver: local
   redis_data:
@@ -844,6 +888,8 @@ volumes:
   peerdb-catalog-data:
     driver: local
   peerdb-minio-data:
+    driver: local
+  fi-dead-letter:
     driver: local
 
 # ===========================================

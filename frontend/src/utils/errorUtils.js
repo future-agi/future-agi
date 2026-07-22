@@ -1,7 +1,6 @@
 import { RESPONSE_CODES } from "./constants";
 
-const DEFAULT_RATE_LIMIT_MESSAGE =
-  "Rate limit reached.";
+const DEFAULT_RATE_LIMIT_MESSAGE = "Rate limit reached.";
 const DEFAULT_RETRY_GUIDANCE = "Please try again in a few minutes.";
 
 const hasTerminalPunctuation = (message) => /[.!?]$/.test(message);

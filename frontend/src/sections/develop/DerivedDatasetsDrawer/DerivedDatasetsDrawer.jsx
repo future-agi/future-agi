@@ -36,7 +36,7 @@ const DerivedDatasetsDrawer = ({
       try {
         setLoading(true);
         const response = await axios.get(
-          `${endpoints.develop.getDerivedDatasets()}${id}/`,
+          endpoints.develop.getDerivedDatasets(id),
         );
         if (response?.data?.result) {
           setLoading(false);

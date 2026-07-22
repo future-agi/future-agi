@@ -1,8 +1,11 @@
+import json
+
 from rest_framework import serializers
 
 from accounts.serializers.user import UserSerializer
 from tracer.models.custom_eval_config import CustomEvalConfig
 from tracer.models.monitor import (
+    AlertTypeChoices,
     MonitorMetricTypeChoices,
     ThresholdCalculationMethodChoices,
     UserAlertMonitor,
@@ -10,6 +13,7 @@ from tracer.models.monitor import (
 )
 from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
+from tracer.serializers.filters import StrictInputSerializer, filter_list_field
 
 OBSERVATION_SPAN_TYPES = [t[0] for t in ObservationSpan.OBSERVATION_SPAN_TYPES]
 
@@ -28,14 +32,21 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
     def get_metric_name(self, obj):
         if obj.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
             if obj.metric:
-                try:
-                    eval_config = CustomEvalConfig.objects.get(id=obj.metric)
+                eval_config = (
+                    CustomEvalConfig.objects.filter(
+                        id=obj.metric,
+                        project=obj.project,
+                        deleted=False,
+                    )
+                    .select_related("eval_template")
+                    .first()
+                )
+                if eval_config:
                     metric_name = eval_config.name
                     if obj.threshold_metric_value:
                         metric_name += f" ({obj.threshold_metric_value})"
                     return metric_name
-                except CustomEvalConfig.DoesNotExist:
-                    return "Invalid Eval"
+                return "Invalid Eval"
         return obj.get_metric_type_display()
 
     def validate_notification_emails(self, value):
@@ -173,12 +184,9 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
                         }
                     )
             if span_attributes_filters:
-                if not isinstance(span_attributes_filters, list):
-                    raise serializers.ValidationError(
-                        {
-                            "span_attributes_filters": "span_attributes_filters must be a list of dictionaries."
-                        }
-                    )
+                filters["span_attributes_filters"] = filter_list_field().run_validation(
+                    span_attributes_filters
+                )
         return filters
 
     def validate(self, data):
@@ -209,10 +217,29 @@ class UserAlertMonitorSerializer(serializers.ModelSerializer):
         self._validate_unique_name(project, name)
         self._validate_metric_type(full_data)
         self._validate_threshold_type(full_data)
-        if filters:
-            self.validate_filters(filters)
+        if "filters" in validated_data and filters:
+            validated_data["filters"] = self.validate_filters(filters)
 
         return validated_data
+
+
+class UserAlertMonitorBulkMuteRequestSerializer(StrictInputSerializer):
+    ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+    is_mute = serializers.BooleanField(required=False, default=True)
+    select_all = serializers.BooleanField(required=False, default=False)
+    exclude_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+
+
+class UserAlertMonitorPreviewGraphSerializer(UserAlertMonitorSerializer):
+    name = serializers.CharField(required=False, allow_blank=True)
 
 
 class UserAlertMonitorLogSerializer(serializers.ModelSerializer):
@@ -221,6 +248,99 @@ class UserAlertMonitorLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserAlertMonitorLog
         exclude = ["deleted_at", "deleted", "alert", "updated_at"]
+
+
+class UserAlertMonitorLogWriteSerializer(serializers.ModelSerializer):
+    alert = serializers.PrimaryKeyRelatedField(queryset=UserAlertMonitor.objects.none())
+    resolved_by = UserSerializer(read_only=True)
+
+    class Meta:
+        model = UserAlertMonitorLog
+        fields = [
+            "id",
+            "alert",
+            "type",
+            "message",
+            "resolved",
+            "resolved_at",
+            "resolved_by",
+            "link",
+            "time_window_start",
+            "time_window_end",
+            "created_at",
+        ]
+        read_only_fields = ["id", "created_at", "resolved_by"]
+
+
+class UserAlertMonitorLogWriteRequestSerializer(StrictInputSerializer):
+    alert = serializers.UUIDField()
+    type = serializers.ChoiceField(choices=AlertTypeChoices.choices)
+    message = serializers.CharField()
+    resolved = serializers.BooleanField(required=False, default=False)
+    resolved_at = serializers.DateTimeField(required=False, allow_null=True)
+    link = serializers.URLField(required=False, allow_blank=True, allow_null=True)
+    time_window_start = serializers.DateTimeField(required=False, allow_null=True)
+    time_window_end = serializers.DateTimeField(required=False, allow_null=True)
+
+
+class UserAlertMonitorLogWriteResponseSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    alert = serializers.UUIDField()
+    type = serializers.ChoiceField(choices=AlertTypeChoices.choices)
+    message = serializers.CharField()
+    resolved = serializers.BooleanField()
+    resolved_at = serializers.DateTimeField(required=False, allow_null=True)
+    resolved_by = UserSerializer(required=False, allow_null=True)
+    link = serializers.URLField(required=False, allow_blank=True, allow_null=True)
+    time_window_start = serializers.DateTimeField(required=False, allow_null=True)
+    time_window_end = serializers.DateTimeField(required=False, allow_null=True)
+    created_at = serializers.DateTimeField()
+
+
+class UserAlertMonitorLogResolveRequestSerializer(StrictInputSerializer):
+    log_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+    select_all = serializers.BooleanField(required=False, default=False)
+    exclude_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+
+
+class UserAlertMonitorLogResolveResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = serializers.CharField()
+
+
+class UserAlertMonitorDuplicateSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    name = serializers.CharField(max_length=255)
+
+
+class UserAlertMonitorDuplicateResultSerializer(serializers.Serializer):
+    id = serializers.UUIDField()
+    message = serializers.CharField()
+
+
+class UserAlertMonitorDuplicateResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = UserAlertMonitorDuplicateResultSerializer()
+
+
+class UserAlertMonitorMetricOptionSerializer(serializers.Serializer):
+    id = serializers.CharField(read_only=True)
+    name = serializers.CharField(read_only=True)
+    metric_type = serializers.CharField(read_only=True)
+    output_type = serializers.CharField(read_only=True, allow_blank=True)
+
+
+class UserAlertMonitorMetricOptionsResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = UserAlertMonitorMetricOptionSerializer(many=True, read_only=True)
 
 
 class UserAlertMonitorDetailSerializer(serializers.ModelSerializer):
@@ -235,14 +355,21 @@ class UserAlertMonitorDetailSerializer(serializers.ModelSerializer):
     def get_metric_name(self, obj):
         if obj.metric_type == MonitorMetricTypeChoices.EVALUATION_METRICS.value:
             if obj.metric:
-                try:
-                    eval_config = CustomEvalConfig.objects.get(id=obj.metric)
+                eval_config = (
+                    CustomEvalConfig.objects.filter(
+                        id=obj.metric,
+                        project=obj.project,
+                        deleted=False,
+                    )
+                    .select_related("eval_template")
+                    .first()
+                )
+                if eval_config:
                     metric_name = eval_config.name
                     if obj.threshold_metric_value:
                         metric_name += f" ({obj.threshold_metric_value})"
                     return metric_name
-                except CustomEvalConfig.DoesNotExist:
-                    return "Invalid Eval"
+                return "Invalid Eval"
         return obj.get_metric_type_display()
 
 
@@ -257,9 +384,34 @@ class MetricDetailSerializer(serializers.ModelSerializer):
         return obj.eval_template.config.get("output")
 
 
-class FetchGraphSerializer(serializers.Serializer):
+class FetchGraphMetricConfigField(serializers.Field):
+    def to_internal_value(self, data):
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except json.JSONDecodeError as exc:
+                raise serializers.ValidationError(
+                    "req_data_config must be valid JSON."
+                ) from exc
+        if not isinstance(data, dict):
+            raise serializers.ValidationError("req_data_config must be an object.")
+        if "type" not in data:
+            raise serializers.ValidationError("req_data_config.type is required.")
+        if data["type"] not in ("EVAL", "SYSTEM_METRIC", "SYSTEM_METRICS"):
+            raise serializers.ValidationError(
+                "req_data_config.type must be EVAL, SYSTEM_METRIC, or SYSTEM_METRICS."
+            )
+        return data
+
+    def to_representation(self, value):
+        return value
+
+
+class FetchGraphSerializer(StrictInputSerializer):
     interval = serializers.CharField()
-    filters = serializers.ListField(child=serializers.JSONField())
-    property = serializers.CharField()
-    req_data_config = serializers.JSONField()
-    project_id = serializers.CharField()
+    filters = filter_list_field(required=False, default=list)
+    property = serializers.CharField(
+        required=False, allow_blank=True, default="average"
+    )
+    req_data_config = FetchGraphMetricConfigField()
+    project_id = serializers.UUIDField()

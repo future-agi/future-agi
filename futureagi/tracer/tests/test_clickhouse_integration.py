@@ -58,19 +58,42 @@ def ch_schema(ch_client):
 
     Creates the test_futureagi database and applies all DDL statements.
     Runs once per test session.
+
+    Uses ``_to_single_node_engine`` so the DDL works on the single-node
+    test ClickHouse instance (no Keeper / Replicated engines).
     """
-    from tracer.services.clickhouse.schema import get_all_schema_ddl
+    import clickhouse_connect
+    from tracer.services.clickhouse.schema import (
+        _to_single_node_engine,
+        SCHEMA_DDL_STATEMENTS,
+    )
 
     ch_client.command(f"CREATE DATABASE IF NOT EXISTS {_TEST_DATABASE}")
 
-    for name, ddl in get_all_schema_ddl():
-        # Rewrite DDL to target the test database
-        ddl_test = ddl.replace("futureagi.", f"{_TEST_DATABASE}.")
-        try:
-            ch_client.command(ddl_test)
-        except Exception:
-            pass  # Table/view may already exist from a previous run
+    # Connect with the test database as default so unqualified table names
+    # in DDL (``CREATE TABLE foo``) land in test_futureagi, not ``default``.
+    db_client = clickhouse_connect.get_client(
+        host=os.environ.get("CH_TEST_HOST", "localhost"),
+        port=int(os.environ.get("CH_TEST_PORT", "18123")),
+        database=_TEST_DATABASE,
+    )
 
+    for name, ddl in SCHEMA_DDL_STATEMENTS:
+        # Convert to single-node engines for the test CH instance
+        ddl_test = _to_single_node_engine(ddl)
+        # Rewrite any explicit ``futureagi.`` references to the test database
+        ddl_test = ddl_test.replace("futureagi.", f"{_TEST_DATABASE}.")
+        try:
+            db_client.command(ddl_test)
+        except Exception as exc:
+            # Ignore "already exists" errors; propagate others so schema
+            # issues surface during test runs instead of hiding silently.
+            err_msg = str(exc)
+            if "already exists" not in err_msg.lower():
+                import warnings
+                warnings.warn(f"CH schema DDL failed for {name}: {err_msg[:200]}")
+
+    db_client.close()
     return ch_client
 
 
@@ -169,7 +192,6 @@ def ch_test_data(ch_schema):
 def ch_eval_data(ch_test_data):
     """Insert eval logger data linked to the test spans."""
     client = ch_test_data["client"]
-    project_id = ch_test_data["project_id"]
     config_id = str(uuid.uuid4())
     now = ch_test_data["now"]
 
@@ -181,13 +203,13 @@ def ch_eval_data(ch_test_data):
         client.command(
             f"""
             INSERT INTO {_TEST_DATABASE}.tracer_eval_logger
-                (id, span_id, trace_id, project_id, config_id,
-                 output_float, output_bool, eval_name,
+                (id, observation_span_id, trace_id, custom_eval_config_id,
+                 output_float, output_bool,
                  created_at,
                  _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
             VALUES
-                ('{eval_id}', '{span["id"]}', '{span["trace_id"]}', '{project_id}',
-                 '{config_id}', {score}, {passed}, 'accuracy',
+                ('{eval_id}', '{span["id"]}', '{span["trace_id"]}',
+                 '{config_id}', {score}, {passed},
                  '{now.strftime("%Y-%m-%d %H:%M:%S")}',
                  now64(), 0, {i + 1})
             """
@@ -206,58 +228,29 @@ def ch_eval_data(ch_test_data):
 def ch_simulation_data(ch_schema):
     """Insert test simulation call data."""
     client = ch_schema
-    workspace_id = str(uuid.uuid4())
+    test_execution_id = str(uuid.uuid4())
     scenario_id = str(uuid.uuid4())
-    agent_def_id = str(uuid.uuid4())
+    agent_version_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
-
-    # Create simulate_call_execution table if not already present from schema
-    try:
-        client.command(
-            f"""
-            CREATE TABLE IF NOT EXISTS {_TEST_DATABASE}.simulate_call_execution (
-                id UUID DEFAULT generateUUIDv4(),
-                workspace_id UUID,
-                scenario_id UUID,
-                agent_definition_id UUID,
-                agent_version String DEFAULT '',
-                call_type LowCardinality(String) DEFAULT 'text',
-                status LowCardinality(String) DEFAULT 'completed',
-                duration_seconds Float64 DEFAULT 0,
-                response_time_ms Float64 DEFAULT 0,
-                avg_agent_latency_ms Float64 DEFAULT 0,
-                cost_cents Float64 DEFAULT 0,
-                overall_score Float64 DEFAULT 0,
-                message_count UInt32 DEFAULT 0,
-                created_at DateTime64(3) DEFAULT now64(),
-                _peerdb_synced_at DateTime64(6) DEFAULT now64(),
-                _peerdb_is_deleted UInt8 DEFAULT 0,
-                _peerdb_version Int64 DEFAULT 1
-            ) ENGINE = ReplacingMergeTree(_peerdb_version)
-            ORDER BY (id)
-            """
-        )
-    except Exception:
-        pass
 
     for i in range(5):
         call_id = str(uuid.uuid4())
         call_type = "voice" if i % 2 == 0 else "text"
-        status = "completed" if i < 4 else "failed"
+        call_status = "completed" if i < 4 else "failed"
         duration = 30.0 + i * 10
         score = 0.6 + i * 0.08
 
         client.command(
             f"""
             INSERT INTO {_TEST_DATABASE}.simulate_call_execution
-                (id, workspace_id, scenario_id, agent_definition_id,
-                 agent_version, call_type, status,
+                (id, test_execution_id, scenario_id, agent_version_id,
+                 simulation_call_type, status,
                  duration_seconds, cost_cents, overall_score,
                  message_count, created_at,
                  _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
             VALUES
-                ('{call_id}', '{workspace_id}', '{scenario_id}', '{agent_def_id}',
-                 'v1.{i}', '{call_type}', '{status}',
+                ('{call_id}', '{test_execution_id}', '{scenario_id}', '{agent_version_id}',
+                 '{call_type}', '{call_status}',
                  {duration}, {i * 0.5}, {score},
                  {10 + i}, '{now.strftime("%Y-%m-%d %H:%M:%S")}',
                  now64(), 0, {i + 1})
@@ -266,9 +259,9 @@ def ch_simulation_data(ch_schema):
 
     yield {
         "client": client,
-        "workspace_id": workspace_id,
+        "test_execution_id": test_execution_id,
         "scenario_id": scenario_id,
-        "agent_def_id": agent_def_id,
+        "agent_version_id": agent_version_id,
     }
 
     try:
@@ -281,34 +274,9 @@ def ch_simulation_data(ch_schema):
 def ch_dataset_data(ch_schema):
     """Insert test dataset cell data."""
     client = ch_schema
-    workspace_id = str(uuid.uuid4())
     dataset_id = str(uuid.uuid4())
+    row_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc)
-
-    # Create model_hub_cell table if not already present
-    try:
-        client.command(
-            f"""
-            CREATE TABLE IF NOT EXISTS {_TEST_DATABASE}.model_hub_cell (
-                id UUID DEFAULT generateUUIDv4(),
-                workspace_id UUID,
-                dataset_id UUID,
-                column_id UUID,
-                row_number UInt32 DEFAULT 0,
-                prompt_tokens Nullable(UInt32),
-                completion_tokens Nullable(UInt32),
-                response_time Nullable(Float64),
-                status LowCardinality(String) DEFAULT 'completed',
-                created_at DateTime64(3) DEFAULT now64(),
-                _peerdb_synced_at DateTime64(6) DEFAULT now64(),
-                _peerdb_is_deleted UInt8 DEFAULT 0,
-                _peerdb_version Int64 DEFAULT 1
-            ) ENGINE = ReplacingMergeTree(_peerdb_version)
-            ORDER BY (id)
-            """
-        )
-    except Exception:
-        pass
 
     column_id = str(uuid.uuid4())
 
@@ -317,18 +285,18 @@ def ch_dataset_data(ch_schema):
         prompt_tokens = 50 + i * 10
         completion_tokens = 20 + i * 5
         response_time = 100.0 + i * 50
-        status = "completed" if i < 4 else "error"
+        cell_status = "completed" if i < 4 else "error"
 
         client.command(
             f"""
             INSERT INTO {_TEST_DATABASE}.model_hub_cell
-                (id, workspace_id, dataset_id, column_id, row_number,
+                (id, dataset_id, column_id, row_id,
                  prompt_tokens, completion_tokens, response_time, status,
                  created_at,
                  _peerdb_synced_at, _peerdb_is_deleted, _peerdb_version)
             VALUES
-                ('{cell_id}', '{workspace_id}', '{dataset_id}', '{column_id}', {i},
-                 {prompt_tokens}, {completion_tokens}, {response_time}, '{status}',
+                ('{cell_id}', '{dataset_id}', '{column_id}', '{row_id}',
+                 {prompt_tokens}, {completion_tokens}, {response_time}, '{cell_status}',
                  '{now.strftime("%Y-%m-%d %H:%M:%S")}',
                  now64(), 0, {i + 1})
             """
@@ -336,7 +304,6 @@ def ch_dataset_data(ch_schema):
 
     yield {
         "client": client,
-        "workspace_id": workspace_id,
         "dataset_id": dataset_id,
         "column_id": column_id,
     }
@@ -364,28 +331,29 @@ class TestClickHouseConnection:
     def test_schema_initialization(self, ch_schema):
         """Applying DDL should create all expected tables."""
         client = ch_schema
-        result = client.command(
+        result = client.query(
             f"SELECT name FROM system.tables WHERE database = '{_TEST_DATABASE}'"
         )
-        tables = result if isinstance(result, list) else result.split("\n")
-        table_str = str(tables)
+        tables = [row[0] for row in result.result_rows]
         # Core CDC tables should exist
-        assert "tracer_observation_span" in table_str
-        assert "tracer_trace" in table_str
+        assert "tracer_observation_span" in tables
+        assert "tracer_trace" in tables
 
     def test_drop_and_recreate_schema(self, ch_client):
         """Should be able to drop and recreate the test database."""
         from tracer.services.clickhouse.schema import (
-            get_all_schema_ddl,
+            _to_single_node_engine,
             get_drop_statements,
+            SCHEMA_DDL_STATEMENTS,
         )
 
         temp_db = "test_futureagi_temp"
         ch_client.command(f"CREATE DATABASE IF NOT EXISTS {temp_db}")
 
-        # Apply schema
-        for name, ddl in get_all_schema_ddl():
-            ddl_test = ddl.replace("futureagi.", f"{temp_db}.")
+        # Apply schema (single-node engines for test CH)
+        for name, ddl in SCHEMA_DDL_STATEMENTS:
+            ddl_test = _to_single_node_engine(ddl)
+            ddl_test = ddl_test.replace("futureagi.", f"{temp_db}.")
             try:
                 ch_client.command(ddl_test)
             except Exception:
@@ -436,13 +404,13 @@ class TestClickHouseDataInsertion:
     def test_insert_eval_data(self, ch_eval_data):
         """Inserting eval logger entries should be queryable."""
         client = ch_eval_data["client"]
-        project_id = ch_eval_data["project_id"]
+        config_id = ch_eval_data["config_id"]
 
         result = client.command(
             f"""
             SELECT count()
             FROM {_TEST_DATABASE}.tracer_eval_logger FINAL
-            WHERE project_id = '{project_id}'
+            WHERE custom_eval_config_id = '{config_id}'
               AND _peerdb_is_deleted = 0
             """
         )
@@ -602,7 +570,7 @@ class TestDashboardQueryBuilderIntegration:
             "time_range": {"preset": preset},
             "metrics": [
                 {
-                    "id": "m1",
+                    "id": metric_name,
                     "name": metric_name,
                     "type": metric_type,
                     "aggregation": aggregation,
@@ -927,7 +895,7 @@ class TestSimulationQueryBuilderIntegration:
             "time_range": {"preset": preset},
             "metrics": [
                 {
-                    "id": "m1",
+                    "id": metric_name,
                     "name": metric_name,
                     "type": "system_metric",
                     "aggregation": aggregation,
@@ -944,7 +912,7 @@ class TestSimulationQueryBuilderIntegration:
             SimulationQueryBuilder,
         )
 
-        config = self._build_config(ch_simulation_data["workspace_id"])
+        config = self._build_config(ch_simulation_data["test_execution_id"])
         builder = SimulationQueryBuilder(config)
         queries = builder.build_all_queries()
         assert len(queries) == 1
@@ -967,7 +935,7 @@ class TestSimulationQueryBuilderIntegration:
         )
 
         config = self._build_config(
-            ch_simulation_data["workspace_id"],
+            ch_simulation_data["test_execution_id"],
             breakdowns=[{"type": "system_metric", "name": "agent_version"}],
         )
         builder = SimulationQueryBuilder(config)
@@ -982,7 +950,7 @@ class TestSimulationQueryBuilderIntegration:
         )
 
         config = self._build_config(
-            ch_simulation_data["workspace_id"],
+            ch_simulation_data["test_execution_id"],
             filters=[
                 {
                     "metric_type": "system_metric",
@@ -1034,7 +1002,7 @@ class TestDatasetQueryBuilderIntegration:
             "time_range": {"preset": preset},
             "metrics": [
                 {
-                    "id": "m1",
+                    "id": metric_name,
                     "name": metric_name,
                     "type": "system_metric",
                     "aggregation": aggregation,
@@ -1051,7 +1019,7 @@ class TestDatasetQueryBuilderIntegration:
             DatasetQueryBuilder,
         )
 
-        config = self._build_config(ch_dataset_data["workspace_id"])
+        config = self._build_config(ch_dataset_data["dataset_id"])
         builder = DatasetQueryBuilder(config)
         queries = builder.build_all_queries()
         assert len(queries) == 1
@@ -1073,7 +1041,7 @@ class TestDatasetQueryBuilderIntegration:
         )
 
         config = self._build_config(
-            ch_dataset_data["workspace_id"],
+            ch_dataset_data["dataset_id"],
             breakdowns=[{"type": "system_metric", "name": "column_name"}],
         )
         builder = DatasetQueryBuilder(config)

@@ -50,8 +50,8 @@ const FolderSkeleton = ({ isChildren = false, hasChildren = false }) => {
 };
 
 FolderSkeleton.propTypes = {
-  isChildren: PropTypes.isChildren,
-  hasChildren: PropTypes.hasChildren,
+  isChildren: PropTypes.bool,
+  hasChildren: PropTypes.bool,
 };
 
 // Skeleton for nested folder structure

@@ -34,6 +34,14 @@ class TraceScanConfig(BaseModel):
     )
     enabled = models.BooleanField(default=True)
     scan_version = models.CharField(max_length=20, default="v7.2")
+    last_swept_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Scan-sweep watermark (CH root-span created_at). The sweep scans "
+            "(last_swept_at, now-grace] and advances this. NULL = never swept."
+        ),
+    )
 
     class Meta:
         db_table = "tracer_trace_scan_config"
@@ -50,6 +58,7 @@ class TraceScanResult(BaseModel):
         Trace,
         on_delete=models.CASCADE,
         related_name="scan_results",
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     project = models.ForeignKey(
         Project,

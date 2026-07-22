@@ -3,8 +3,8 @@ pip install agent-simulate
 """
 
 CHAT_SDK_CODE = """
-# export FI_API_KEY="{fi_api_key}"
-# export FI_SECRET_KEY="{fi_secret_key}"
+# export FI_API_KEY="<YOUR_FI_API_KEY>"
+# export FI_SECRET_KEY="<YOUR_FI_SECRET_KEY>"
 
 import asyncio
 import os

@@ -45,18 +45,18 @@ describe("ScoresListSection", () => {
       trace: [
         {
           id: "score-1",
-          labelId: "label-1",
-          sourceType: "trace",
-          sourceId: "trace-1",
-          labelName: "category",
-          labelType: "thumbs_up_down",
+          label_id: "label-1",
+          source_type: "trace",
+          source_id: "trace-1",
+          label_name: "category",
+          label_type: "thumbs_up_down",
           value: { value: "up" },
-          annotatorName: "Kartik",
-          scoreSource: "human",
+          annotator_name: "Kartik",
+          score_source: "human",
           notes: "",
           updated_at: "2026-05-09T19:13:00Z",
-          queueId: "queue-1",
-          queueItem: "item-1",
+          queue_id: "queue-1",
+          queue_item: "item-1",
         },
       ],
     };
@@ -99,20 +99,95 @@ describe("ScoresListSection", () => {
     );
   });
 
+  it("maps live API snake_case score fields before opening a queue item", async () => {
+    const user = userEvent.setup();
+    mockState.scoresBySource = {
+      trace: [
+        {
+          id: "score-1",
+          label_id: "label-1",
+          source_type: "trace",
+          source_id: "trace-1",
+          label_name: "live category",
+          label_type: "text",
+          value: { text: "review this answer" },
+          annotator_name: "Kartik",
+          score_source: "human",
+          notes: "label note",
+          updated_at: "2026-05-09T19:13:00Z",
+          queue_id: "queue-1",
+          queue_item: { id: "item-1" },
+        },
+      ],
+    };
+
+    render(
+      <ScoresListSection
+        sourceType="trace"
+        sourceId="trace-1"
+        openQueueItemOnRowClick
+      />,
+    );
+
+    expect(screen.getByText("live category")).toBeInTheDocument();
+    expect(screen.getByText("review this answer")).toBeInTheDocument();
+
+    await user.click(screen.getByText("live category"));
+
+    expect(window.open).toHaveBeenCalledWith(
+      "/dashboard/annotations/queues/queue-1/annotate?itemId=item-1",
+      "_blank",
+      "noopener,noreferrer",
+    );
+  });
+
+  it("keeps rows inert when queue row linking is enabled but no target exists", async () => {
+    const user = userEvent.setup();
+    mockState.scoresBySource = {
+      trace: [
+        {
+          id: "score-1",
+          label_id: "label-1",
+          source_type: "trace",
+          source_id: "trace-1",
+          label_name: "unlinked category",
+          label_type: "text",
+          value: { text: "not in any queue" },
+          annotator_name: "Kartik",
+          score_source: "human",
+          updated_at: "2026-05-09T19:13:00Z",
+        },
+      ],
+    };
+    mockState.queueEntries = [];
+
+    render(
+      <ScoresListSection
+        sourceType="trace"
+        sourceId="trace-1"
+        openQueueItemOnRowClick
+      />,
+    );
+
+    await user.click(screen.getByText("unlinked category"));
+
+    expect(window.open).not.toHaveBeenCalled();
+  });
+
   it("falls back to source queue items when the score has no queue item", async () => {
     const user = userEvent.setup();
     mockState.scoresBySource = {
       trace: [
         {
           id: "score-1",
-          labelId: "label-1",
-          sourceType: "trace",
-          sourceId: "trace-1",
-          labelName: "category",
-          labelType: "thumbs_up_down",
+          label_id: "label-1",
+          source_type: "trace",
+          source_id: "trace-1",
+          label_name: "category",
+          label_type: "thumbs_up_down",
           value: { value: "up" },
-          annotatorName: "Kartik",
-          scoreSource: "human",
+          annotator_name: "Kartik",
+          score_source: "human",
           notes: "",
           updated_at: "2026-05-09T19:13:00Z",
         },
@@ -123,8 +198,8 @@ describe("ScoresListSection", () => {
         queue: { id: "queue-from-source" },
         item: {
           id: "item-from-source",
-          sourceType: "trace",
-          sourceId: "trace-1",
+          source_type: "trace",
+          source_id: "trace-1",
         },
         labels: [{ id: "label-1", name: "category" }],
       },
@@ -142,6 +217,78 @@ describe("ScoresListSection", () => {
 
     expect(window.open).toHaveBeenCalledWith(
       "/dashboard/annotations/queues/queue-from-source/annotate?itemId=item-from-source",
+      "_blank",
+      "noopener,noreferrer",
+    );
+  });
+
+  it("uses source-specific fallback when primary and secondary scores share a label", async () => {
+    const user = userEvent.setup();
+    mockState.scoresBySource = {
+      trace: [
+        {
+          id: "trace-score",
+          label_id: "label-1",
+          source_type: "trace",
+          source_id: "trace-1",
+          label_name: "trace shared",
+          label_type: "text",
+          value: { text: "trace value" },
+          annotator_name: "Kartik",
+          score_source: "human",
+          updated_at: "2026-05-09T19:13:00Z",
+        },
+      ],
+      observation_span: [
+        {
+          id: "span-score",
+          label_id: "label-1",
+          source_type: "observation_span",
+          source_id: "span-1",
+          label_name: "span shared",
+          label_type: "text",
+          value: { text: "span value" },
+          annotator_name: "Kartik",
+          score_source: "human",
+          updated_at: "2026-05-09T19:13:00Z",
+        },
+      ],
+    };
+    mockState.queueEntries = [
+      {
+        queue: { id: "trace-queue" },
+        item: {
+          id: "trace-item",
+          source_type: "trace",
+          source_id: "trace-1",
+        },
+        labels: [{ id: "label-1", name: "shared" }],
+      },
+      {
+        queue: { id: "span-queue" },
+        item: {
+          id: "span-item",
+          source_type: "observation_span",
+          source_id: "span-1",
+        },
+        labels: [{ id: "label-1", name: "shared" }],
+      },
+    ];
+
+    render(
+      <ScoresListSection
+        sourceType="trace"
+        sourceId="trace-1"
+        secondarySourceType="observation_span"
+        secondarySourceId="span-1"
+        openQueueItemOnRowClick
+      />,
+    );
+
+    await user.click(screen.getByText("span shared"));
+
+    expect(window.open).toHaveBeenCalledWith(
+      "/dashboard/annotations/queues/span-queue/annotate?itemId=span-item",
       "_blank",
       "noopener,noreferrer",
     );

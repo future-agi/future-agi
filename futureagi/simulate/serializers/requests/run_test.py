@@ -14,9 +14,12 @@ import uuid
 from rest_framework import serializers
 
 from simulate.models import AgentDefinition, RunTest, Scenarios, SimulateEvalConfig
+from simulate.serializers.requests.run_test_evals import EvalConfigDefinitionSerializer
+from tracer.serializers.filters import StrictInputSerializer
+from tracer.utils.workspace_scope import get_request_organization
 
 
-class RunTestFilterSerializer(serializers.Serializer):
+class RunTestFilterSerializer(StrictInputSerializer):
     """
     Validates GET /run-tests/ query parameters.
     """
@@ -33,7 +36,7 @@ class RunTestFilterSerializer(serializers.Serializer):
     limit = serializers.IntegerField(required=False, min_value=1)
 
 
-class CreateRunTestSerializer(serializers.Serializer):
+class CreateRunTestSerializer(StrictInputSerializer):
     """Serializer for creating a new RunTest"""
 
     name = serializers.CharField(max_length=255)
@@ -49,7 +52,7 @@ class CreateRunTestSerializer(serializers.Serializer):
         child=serializers.UUIDField(), allow_empty=True, required=False, default=list
     )
     evaluations_config = serializers.ListField(
-        child=serializers.DictField(),
+        child=EvalConfigDefinitionSerializer(),
         allow_empty=True,
         required=False,
         default=list,
@@ -65,10 +68,15 @@ class CreateRunTestSerializer(serializers.Serializer):
         allow_null=True,
         help_text="Optional replay session ID to mark as completed after run test creation",
     )
+    agent_version = serializers.UUIDField(
+        required=False,
+        allow_null=True,
+        help_text="Optional agent version to bind to this test run",
+    )
 
     def validate_agent_definition_id(self, value):
         """Validate that the agent definition exists"""
-        organization = self.context["request"].user.organization
+        organization = get_request_organization(self.context["request"])
         if not AgentDefinition.objects.filter(
             id=value, organization=organization
         ).exists():
@@ -77,7 +85,7 @@ class CreateRunTestSerializer(serializers.Serializer):
 
     def validate_scenario_ids(self, value):
         """Validate that all scenario IDs exist"""
-        organization = self.context["request"].user.organization
+        organization = get_request_organization(self.context["request"])
         existing_ids = set(
             Scenarios.objects.filter(
                 id__in=value, organization=organization
@@ -104,7 +112,7 @@ class CreateRunTestSerializer(serializers.Serializer):
         if not valid_uuids:
             return []
 
-        organization = self.context["request"].user.organization
+        organization = get_request_organization(self.context["request"])
         existing_ids = set(
             SimulateEvalConfig.objects.filter(
                 id__in=valid_uuids, run_test__organization=organization
@@ -113,7 +121,7 @@ class CreateRunTestSerializer(serializers.Serializer):
         return list(existing_ids)
 
 
-class UpdateRunTestSerializer(serializers.Serializer):
+class UpdateRunTestSerializer(StrictInputSerializer):
     """Serializer for updating a RunTest (PATCH)"""
 
     name = serializers.CharField(max_length=255, required=False)
@@ -130,14 +138,33 @@ class UpdateRunTestSerializer(serializers.Serializer):
     )
 
 
-class CreatePromptSimulationSerializer(serializers.Serializer):
-    """Serializer for creating a new prompt-based simulation run"""
+class RunTestComponentsUpdateSerializer(StrictInputSerializer):
+    """Serializer for updating run-test component references."""
+
+    agent_definition_id = serializers.UUIDField(required=False)
+    version = serializers.UUIDField(required=False)
+    simulator_agent_id = serializers.UUIDField(required=False)
+    scenarios = serializers.ListField(
+        child=serializers.UUIDField(), allow_empty=True, required=False
+    )
+    enable_tool_evaluation = serializers.BooleanField(required=False)
+
+
+class ExecuteRunTestSerializer(StrictInputSerializer):
+    """Serializer for POST /run-tests/{run_test_id}/execute/."""
+
+    scenario_ids = serializers.ListField(
+        child=serializers.UUIDField(), allow_empty=True, required=False, default=list
+    )
+    simulator_id = serializers.UUIDField(required=False, allow_null=True)
+    select_all = serializers.BooleanField(required=False, default=False)
+
+
+class PromptSimulationCreateFieldsSerializer(StrictInputSerializer):
+    """Shared body fields for prompt-based simulation creation."""
 
     name = serializers.CharField(max_length=255)
     description = serializers.CharField(allow_blank=True, required=False)
-    prompt_template_id = serializers.UUIDField(
-        help_text="Prompt template to use as the agent source"
-    )
     prompt_version_id = serializers.CharField(
         max_length=255, help_text="Prompt version ID (UUID) or template_version string"
     )
@@ -148,7 +175,7 @@ class CreatePromptSimulationSerializer(serializers.Serializer):
         child=serializers.CharField(max_length=255), allow_empty=True, required=False
     )
     evaluations_config = serializers.ListField(
-        child=serializers.DictField(),
+        child=EvalConfigDefinitionSerializer(),
         allow_empty=True,
         required=False,
         default=list,
@@ -160,11 +187,26 @@ class CreatePromptSimulationSerializer(serializers.Serializer):
         help_text="Enable automatic tool evaluation for this simulation run",
     )
 
+
+class CreatePromptSimulationRequestSerializer(PromptSimulationCreateFieldsSerializer):
+    """Public request body for creating a prompt-based simulation run."""
+
+    class Meta:
+        ref_name = "CreatePromptSimulationRequest"
+
+
+class CreatePromptSimulationSerializer(PromptSimulationCreateFieldsSerializer):
+    """Internal serializer for validating path-owned prompt simulation data."""
+
+    prompt_template_id = serializers.UUIDField(
+        help_text="Prompt template to use as the agent source"
+    )
+
     def validate_prompt_template_id(self, value):
         """Validate that the prompt template exists"""
         from model_hub.models.run_prompt import PromptTemplate
 
-        organization = self.context["request"].user.organization
+        organization = get_request_organization(self.context["request"])
         if not PromptTemplate.objects.filter(
             id=value, organization=organization, deleted=False
         ).exists():
@@ -181,7 +223,7 @@ class CreatePromptSimulationSerializer(serializers.Serializer):
 
     def validate_scenario_ids(self, value):
         """Validate that all scenario IDs exist"""
-        organization = self.context["request"].user.organization
+        organization = get_request_organization(self.context["request"])
         existing_ids = set(
             Scenarios.objects.filter(
                 id__in=value, organization=organization

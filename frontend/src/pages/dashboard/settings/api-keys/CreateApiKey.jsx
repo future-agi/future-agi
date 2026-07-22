@@ -52,7 +52,14 @@ const CreateApiKey = ({ open, onClose, refreshGrid }) => {
     return createdKey && showKeys && open;
   }, [showKeys, createdKey, open]);
 
-  const keys = createdKey?.data?.result || {};
+  const keyResult = createdKey?.data?.result || {};
+  const keys = {
+    apiKey: keyResult.api_key || keyResult.apiKey || "",
+    secretKey: keyResult.secret_key || keyResult.secretKey || "",
+    maskedApiKey: keyResult.masked_api_key || keyResult.maskedApiKey || "",
+    maskedSecretKey:
+      keyResult.masked_secret_key || keyResult.maskedSecretKey || "",
+  };
 
   return (
     <Dialog

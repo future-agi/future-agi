@@ -14,22 +14,43 @@ from rest_framework.views import APIView
 from accounts.models import User
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    WorkspaceCreateRequestSerializer,
+    WorkspaceCreateResponseSerializer,
+    WorkspaceDeleteResponseSerializer,
+    WorkspaceManagementListResponseSerializer,
+    WorkspaceMemberRemoveResponseSerializer,
+    WorkspaceMembersAddResponseSerializer,
+    WorkspaceMembersListResponseSerializer,
+    WorkspaceMembersRequestSerializer,
+    WorkspaceUpdateRequestSerializer,
+    WorkspaceUpdateResponseSerializer,
+)
+from accounts.services.workspace_membership import create_workspace_membership
 from accounts.utils import generate_password, resolve_org, resolve_org_role
-
-logger = structlog.get_logger(__name__)
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
 from tfc.settings import settings
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.email import email_helper
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
+
+logger = structlog.get_logger(__name__)
 
 
 class WorkspaceManagementView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    def get(self, request, *args, **kwargs):
+    @validated_request(
+        responses={
+            200: WorkspaceManagementListResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
+    )
+    def get(self, request, workspace_id=None, *args, **kwargs):
         """Get workspaces for the current organization"""
         user = request.user
         organization = resolve_org(request)
@@ -60,6 +81,11 @@ class WorkspaceManagementView(APIView):
             workspaces = Workspace.objects.filter(
                 organization=organization, is_active=True
             )
+
+        if workspace_id:
+            workspaces = workspaces.filter(id=workspace_id)
+            if not workspaces.exists():
+                return self._gm.not_found("Workspace not found")
 
         # Apply ordering
         workspaces = workspaces.order_by("-created_at")
@@ -92,9 +118,19 @@ class WorkspaceManagementView(APIView):
 
         return self._gm.success_response(response)
 
+    @validated_request(
+        request_serializer=WorkspaceCreateRequestSerializer,
+        responses={201: WorkspaceCreateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     @transaction.atomic
     def post(self, request, *args, **kwargs):
         """Create a new workspace"""
+        if kwargs.get("workspace_id"):
+            return self._gm.bad_request(
+                "Workspace detail POST is not supported; use /accounts/workspaces/ to create a workspace"
+            )
+
         user = request.user
         organization = resolve_org(request)
         if not organization:
@@ -113,7 +149,7 @@ class WorkspaceManagementView(APIView):
         if not has_org_permission:
             return self._gm.forbidden_response(get_error_message("UNAUTHORIZED_ACCESS"))
 
-        workspace_name = request.data.get("name")
+        workspace_name = request.validated_data.get("name")
         if not workspace_name:
             return self._gm.bad_request("Workspace name is required")
 
@@ -124,8 +160,8 @@ class WorkspaceManagementView(APIView):
             return self._gm.bad_request("Workspace with this name already exists")
 
         # Validate emails and role
-        emails = request.data.get("emails", [])
-        role = request.data.get("role", "")
+        emails = request.validated_data.get("emails", [])
+        role = request.validated_data.get("role", "")
 
         if not isinstance(emails, list):
             return self._gm.bad_request("Emails must be a list")
@@ -169,8 +205,8 @@ class WorkspaceManagementView(APIView):
             # Create new workspace
             workspace = Workspace.objects.create(
                 name=workspace_name,
-                display_name=request.data.get("display_name", workspace_name),
-                description=request.data.get("description", ""),
+                display_name=request.validated_data.get("display_name", workspace_name),
+                description=request.validated_data.get("description", ""),
                 organization=organization,
                 created_by=user,
             )
@@ -179,7 +215,7 @@ class WorkspaceManagementView(APIView):
             org_membership = OrganizationMembership.no_workspace_objects.filter(
                 user=user, organization=organization, is_active=True
             ).first()
-            WorkspaceMembership.no_workspace_objects.create(
+            create_workspace_membership(
                 workspace=workspace,
                 user=user,
                 role=OrganizationRoles.WORKSPACE_ADMIN,
@@ -210,7 +246,7 @@ class WorkspaceManagementView(APIView):
                             ).first()
                         )
                         ws_level = Level.STRING_TO_LEVEL.get(str(role))
-                        WorkspaceMembership.no_workspace_objects.create(
+                        create_workspace_membership(
                             workspace=workspace,
                             user=member,
                             role=role,
@@ -348,7 +384,7 @@ class WorkspaceManagementView(APIView):
                             new_member.save()
 
                             # Add user to workspace
-                            WorkspaceMembership.no_workspace_objects.create(
+                            create_workspace_membership(
                                 workspace=workspace,
                                 user=new_member,
                                 role=role,
@@ -411,8 +447,16 @@ class WorkspaceManagementView(APIView):
             logger.exception(f"Failed to create workspace: {str(e)}")
             return self._gm.bad_request("Failed to create workspace")
 
-    def put(self, request, workspace_id, *args, **kwargs):
+    @validated_request(
+        request_serializer=WorkspaceUpdateRequestSerializer,
+        responses={200: WorkspaceUpdateResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
+    def put(self, request, workspace_id=None, *args, **kwargs):
         """Update workspace details"""
+        if not workspace_id:
+            return self._gm.bad_request("workspace_id is required")
+
         user = request.user
         organization = resolve_org(request)
         if not organization:
@@ -450,10 +494,10 @@ class WorkspaceManagementView(APIView):
             return self._gm.forbidden_response(get_error_message("UNAUTHORIZED_ACCESS"))
 
         # Update workspace fields
-        if "display_name" in request.data:
-            workspace.display_name = request.data["display_name"]
-        if "description" in request.data:
-            workspace.description = request.data["description"]
+        if "display_name" in request.validated_data:
+            workspace.display_name = request.validated_data["display_name"]
+        if "description" in request.validated_data:
+            workspace.description = request.validated_data["description"]
 
         workspace.save()
 
@@ -469,8 +513,14 @@ class WorkspaceManagementView(APIView):
 
         return self._gm.success_response(response_data)
 
-    def delete(self, request, workspace_id, *args, **kwargs):
+    @validated_request(
+        responses={200: WorkspaceDeleteResponseSerializer, **ACCOUNTS_ERROR_RESPONSES}
+    )
+    def delete(self, request, workspace_id=None, *args, **kwargs):
         """Delete a workspace"""
+        if not workspace_id:
+            return self._gm.bad_request("workspace_id is required")
+
         user = request.user
         organization = resolve_org(request)
         org_role = resolve_org_role(user, organization) if organization else None
@@ -511,7 +561,13 @@ class WorkspaceMembershipView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
-    def get(self, request, workspace_id, *args, **kwargs):
+    @validated_request(
+        responses={
+            200: WorkspaceMembersListResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
+    )
+    def get(self, request, workspace_id, member_id=None, *args, **kwargs):
         """Get members of a specific workspace"""
         user = request.user
         organization = resolve_org(request)
@@ -553,6 +609,10 @@ class WorkspaceMembershipView(APIView):
         memberships = WorkspaceMembership.no_workspace_objects.filter(
             workspace=workspace, is_active=True
         ).select_related("user")
+        if member_id:
+            memberships = memberships.filter(user_id=member_id)
+            if not memberships.exists():
+                return self._gm.not_found("User not found in workspace")
 
         members_data = []
         for membership in memberships:
@@ -581,9 +641,22 @@ class WorkspaceMembershipView(APIView):
 
         return self._gm.success_response(response)
 
+    @validated_request(
+        request_serializer=WorkspaceMembersRequestSerializer,
+        responses={
+            201: WorkspaceMembersAddResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @transaction.atomic
     def post(self, request, workspace_id, *args, **kwargs):
         """Add users to workspace"""
+        if kwargs.get("member_id"):
+            return self._gm.bad_request(
+                "Workspace member detail POST is not supported; use /members/ to add users"
+            )
+
         user = request.user
         organization = resolve_org(request)
         if not organization:
@@ -620,7 +693,7 @@ class WorkspaceMembershipView(APIView):
         if not (has_org_permission or has_workspace_permission):
             return self._gm.forbidden_response(get_error_message("UNAUTHORIZED_ACCESS"))
 
-        users_data = request.data.get("users", [])
+        users_data = request.validated_data.get("users", [])
         if not isinstance(users_data, list):
             return self._gm.bad_request("Users data must be a list")
 
@@ -631,12 +704,6 @@ class WorkspaceMembershipView(APIView):
             OrganizationRoles.MEMBER,
             OrganizationRoles.MEMBER_VIEW_ONLY,
         ]
-        workspace_level_roles = [
-            OrganizationRoles.WORKSPACE_ADMIN,
-            OrganizationRoles.WORKSPACE_MEMBER,
-            OrganizationRoles.WORKSPACE_VIEWER,
-        ]
-
         added_users = []
         errors = []
 
@@ -833,7 +900,7 @@ class WorkspaceMembershipView(APIView):
                         )
                 else:
                     # Add user to workspace
-                    WorkspaceMembership.no_workspace_objects.create(
+                    create_workspace_membership(
                         workspace=workspace,
                         user=target_user,
                         role=user_role,
@@ -864,8 +931,17 @@ class WorkspaceMembershipView(APIView):
 
         return self._gm.create_response(response_data)
 
-    def delete(self, request, workspace_id, member_id, *args, **kwargs):
+    @validated_request(
+        responses={
+            200: WorkspaceMemberRemoveResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
+    )
+    def delete(self, request, workspace_id, member_id=None, *args, **kwargs):
         """Remove user from workspace"""
+        if not member_id:
+            return self._gm.bad_request("member_id is required")
+
         user = request.user
         organization = resolve_org(request)
         if not organization:

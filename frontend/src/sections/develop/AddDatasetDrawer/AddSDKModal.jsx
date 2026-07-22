@@ -85,9 +85,9 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
     mutationFn: (data) => axios.post(endpoints.row.addRowSdk, data, {}),
     onSuccess: (data) => {
       const result = data?.data?.result;
-      setValue("Pcode", result?.code?.pythonAddCol || "");
-      setValue("Tcode", result?.code?.typescriptAddCol || "");
-      setValue("CUcode", result?.code?.curlAddCol || "");
+      setValue("Pcode", result?.code?.python_add_col || "");
+      setValue("Tcode", result?.code?.typescript_add_col || "");
+      setValue("CUcode", result?.code?.curl_add_col || "");
     },
     onError: (error) => {
       setIsNext(false);
@@ -109,7 +109,7 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
       onCloseClick();
       //@ts-ignore
       addRowSDK({
-        dataset_name: data?.data?.result?.datasetName,
+        dataset_name: data?.data?.result?.dataset_name,
       });
       setIsNext(true);
     },
@@ -375,13 +375,13 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     p="5px 12px"
                     color="black"
                   >
-                    {data?.data?.result?.apiKeys?.apiKey}
+                    {data?.data?.result?.api_keys?.api_key}
                   </Typography>
                   <IconButton
                     size="small"
                     onClick={() =>
                       copyToClipboard(
-                        data?.data?.result?.apiKeys?.apiKey,
+                        data?.data?.result?.api_keys?.api_key,
                         "API Key",
                       )
                     }
@@ -410,13 +410,13 @@ const AddSDKModal = ({ open, onClose, refreshGrid }) => {
                     p="5px 12px"
                     color="black"
                   >
-                    {data?.data?.result?.apiKeys?.secretKey}
+                    {data?.data?.result?.api_keys?.secret_key}
                   </Typography>
                   <IconButton
                     size="small"
                     onClick={() =>
                       copyToClipboard(
-                        data?.data?.result?.apiKeys?.secretKey,
+                        data?.data?.result?.api_keys?.secret_key,
                         "Secret Key",
                       )
                     }

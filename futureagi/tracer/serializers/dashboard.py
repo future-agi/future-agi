@@ -2,6 +2,151 @@ from rest_framework import serializers
 
 from accounts.serializers.user import UserSerializer
 from tracer.models.dashboard import Dashboard, DashboardWidget
+from tracer.serializers.filters import (
+    JsonValueField,
+    StrictInputSerializer,
+    filter_list_field,
+)
+
+
+DASHBOARD_METRIC_TYPES = (
+    "system_metric",
+    "eval_metric",
+    "annotation_metric",
+    "custom_attribute",
+    "custom_column",
+)
+DASHBOARD_METRIC_SOURCES = ("traces", "datasets", "simulation", "both", "all")
+DASHBOARD_GRANULARITIES = ("minute", "hour", "day", "week", "month")
+DASHBOARD_TIME_RANGE_PRESETS = (
+    "30m",
+    "6h",
+    "today",
+    "yesterday",
+    "7D",
+    "30D",
+    "3M",
+    "6M",
+    "12M",
+)
+DASHBOARD_AGGREGATIONS = (
+    "avg",
+    "median",
+    "max",
+    "min",
+    "p25",
+    "p50",
+    "p75",
+    "p90",
+    "p95",
+    "p99",
+    "count",
+    "count_distinct",
+    "sum",
+    "pass_rate",
+    "fail_rate",
+    "pass_count",
+    "fail_count",
+    "true_rate",
+)
+DASHBOARD_DATA_TYPES = (
+    "string",
+    "text",
+    "number",
+    "float",
+    "integer",
+    "boolean",
+    "datetime",
+    "date",
+)
+
+
+class DashboardTimeRangeSerializer(StrictInputSerializer):
+    preset = serializers.ChoiceField(
+        choices=DASHBOARD_TIME_RANGE_PRESETS, required=False
+    )
+    custom_start = serializers.DateTimeField(required=False)
+    custom_end = serializers.DateTimeField(required=False)
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+    def validate(self, attrs):
+        has_custom_start = "custom_start" in attrs
+        has_custom_end = "custom_end" in attrs
+        if has_custom_start != has_custom_end:
+            raise serializers.ValidationError(
+                "custom_start and custom_end must be provided together."
+            )
+        if not attrs.get("preset") and not (has_custom_start and has_custom_end):
+            raise serializers.ValidationError(
+                "Provide either preset or custom_start/custom_end."
+            )
+        return attrs
+
+
+class DashboardMetricSerializer(StrictInputSerializer):
+    id = serializers.CharField(required=False, allow_blank=True)
+    name = serializers.CharField(required=True, allow_blank=False)
+    display_name = serializers.CharField(required=False, allow_blank=True)
+    type = serializers.ChoiceField(choices=DASHBOARD_METRIC_TYPES)
+    source = serializers.ChoiceField(
+        choices=DASHBOARD_METRIC_SOURCES, required=False, default="traces"
+    )
+    aggregation = serializers.ChoiceField(
+        choices=DASHBOARD_AGGREGATIONS, required=False, default="avg"
+    )
+    unit = serializers.CharField(required=False, allow_blank=True)
+    output_type = serializers.CharField(required=False, allow_blank=True)
+    eval_key = serializers.CharField(required=False, allow_blank=True)
+    config_id = serializers.CharField(required=False, allow_blank=True)
+    label_id = serializers.CharField(required=False, allow_blank=True)
+    attribute_key = serializers.CharField(required=False, allow_blank=True)
+    attribute_type = serializers.ChoiceField(
+        choices=DASHBOARD_DATA_TYPES,
+        required=False,
+        default="string",
+    )
+    column_id = serializers.CharField(required=False, allow_blank=True)
+    data_type = serializers.ChoiceField(
+        choices=DASHBOARD_DATA_TYPES,
+        required=False,
+        default="string",
+    )
+    filters = filter_list_field(required=False, default=list)
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+
+class DashboardBreakdownSerializer(StrictInputSerializer):
+    name = serializers.CharField(required=True, allow_blank=False)
+    display_name = serializers.CharField(required=False, allow_blank=True)
+    type = serializers.ChoiceField(
+        choices=DASHBOARD_METRIC_TYPES, required=False, default="system_metric"
+    )
+    source = serializers.ChoiceField(
+        choices=DASHBOARD_METRIC_SOURCES, required=False, default="traces"
+    )
+    output_type = serializers.CharField(required=False, allow_blank=True)
+    label_id = serializers.CharField(required=False, allow_blank=True)
+    config_id = serializers.CharField(required=False, allow_blank=True)
+    eval_key = serializers.CharField(required=False, allow_blank=True)
+    attribute_key = serializers.CharField(required=False, allow_blank=True)
+    attribute_type = serializers.ChoiceField(
+        choices=DASHBOARD_DATA_TYPES,
+        required=False,
+        default="string",
+    )
+    column_id = serializers.CharField(required=False, allow_blank=True)
+    data_type = serializers.ChoiceField(
+        choices=DASHBOARD_DATA_TYPES,
+        required=False,
+        default="string",
+    )
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
 
 
 class DashboardWidgetSerializer(serializers.ModelSerializer):
@@ -35,6 +180,10 @@ class DashboardWidgetSerializer(serializers.ModelSerializer):
     def validate_query_config(self, value):
         if not isinstance(value, dict):
             raise serializers.ValidationError("query_config must be a JSON object.")
+        if value.get("metrics"):
+            serializer = DashboardQuerySerializer(data=value)
+            if not serializer.is_valid():
+                raise serializers.ValidationError(serializer.errors)
         return value
 
     def validate_chart_config(self, value):
@@ -132,23 +281,146 @@ class DashboardCreateUpdateSerializer(serializers.ModelSerializer):
         return value.strip()
 
 
-class DashboardQuerySerializer(serializers.Serializer):
+class DashboardQuerySerializer(StrictInputSerializer):
     workflow = serializers.ChoiceField(
-        choices=["observability", "dataset", "simulation"], default="observability"
+        choices=("observability", "dataset", "simulation"),
+        required=False,
+        default="observability",
     )
     project_ids = serializers.ListField(
         child=serializers.CharField(), required=False, default=list
     )
-    time_range = serializers.DictField(required=True)
+    time_range = DashboardTimeRangeSerializer(required=True)
     granularity = serializers.ChoiceField(
-        choices=["minute", "hour", "day", "week", "month"], default="day"
+        choices=DASHBOARD_GRANULARITIES, required=False, default="day"
     )
-    metrics = serializers.ListField(
-        child=serializers.DictField(), min_length=1, max_length=5
+    metrics = DashboardMetricSerializer(many=True)
+    filters = filter_list_field(required=False, default=list)
+    breakdowns = DashboardBreakdownSerializer(
+        many=True, required=False, default=list
     )
-    filters = serializers.ListField(
-        child=serializers.DictField(), required=False, default=list
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+    def validate_metrics(self, value):
+        if not value:
+            raise serializers.ValidationError("At least one metric is required.")
+        if len(value) > 5:
+            raise serializers.ValidationError("At most 5 metrics are allowed.")
+        return value
+
+
+class DashboardPreviewQuerySerializer(StrictInputSerializer):
+    query_config = DashboardQuerySerializer(required=True)
+
+    class Meta:
+        swagger_schema_fields = {"additionalProperties": False}
+
+
+class DashboardQuerySeriesPointSerializer(serializers.Serializer):
+    timestamp = serializers.CharField()
+    value = serializers.FloatField(allow_null=True)
+
+
+class DashboardQuerySeriesSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    data = DashboardQuerySeriesPointSerializer(many=True)
+
+
+class DashboardQueryMetricResultSerializer(serializers.Serializer):
+    id = serializers.CharField(allow_blank=True)
+    name = serializers.CharField(allow_blank=True)
+    aggregation = serializers.ChoiceField(choices=DASHBOARD_AGGREGATIONS)
+    unit = serializers.CharField(allow_blank=True)
+    series = DashboardQuerySeriesSerializer(many=True)
+
+
+class DashboardQueryTimeRangeResultSerializer(serializers.Serializer):
+    start = serializers.CharField()
+    end = serializers.CharField()
+
+
+class DashboardQueryResultSerializer(serializers.Serializer):
+    metrics = DashboardQueryMetricResultSerializer(many=True)
+    time_range = DashboardQueryTimeRangeResultSerializer()
+    granularity = serializers.ChoiceField(choices=DASHBOARD_GRANULARITIES)
+
+
+class DashboardQueryApiResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = DashboardQueryResultSerializer()
+
+
+class DashboardMetricCatalogItemSerializer(serializers.Serializer):
+    name = serializers.CharField()
+    display_name = serializers.CharField(required=False, allow_blank=True)
+    category = serializers.CharField(required=False, allow_blank=True)
+    source = serializers.CharField(required=False, allow_blank=True)
+    sources = serializers.ListField(
+        child=serializers.CharField(), required=False, allow_empty=True
     )
-    breakdowns = serializers.ListField(
-        child=serializers.DictField(), required=False, default=list
+    type = serializers.CharField(required=False, allow_blank=True)
+    unit = serializers.CharField(required=False, allow_blank=True)
+    output_type = serializers.CharField(required=False, allow_blank=True)
+    choices = serializers.ListField(
+        child=JsonValueField(), required=False, allow_empty=True
     )
+    allowed_aggregations = serializers.ListField(
+        child=serializers.CharField(), required=False, allow_empty=True
+    )
+    data_type = serializers.CharField(required=False, allow_blank=True)
+
+
+class DashboardMetricsCatalogResultSerializer(serializers.Serializer):
+    metrics = DashboardMetricCatalogItemSerializer(many=True)
+
+
+class DashboardMetricsCatalogResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField(default=True)
+    result = DashboardMetricsCatalogResultSerializer()
+
+
+class CommaSeparatedListField(serializers.Field):
+    """Query-param helper for explicit comma-separated lists."""
+
+    def to_internal_value(self, data):
+        if data in (None, ""):
+            return []
+        if isinstance(data, (list, tuple)):
+            items = data
+        else:
+            items = str(data).split(",")
+        return [str(item).strip() for item in items if str(item).strip()]
+
+    def to_representation(self, value):
+        return value or []
+
+
+class DashboardFilterValuesQuerySerializer(serializers.Serializer):
+    metric_name = serializers.CharField(required=True, allow_blank=False)
+    metric_type = serializers.ChoiceField(
+        choices=[
+            "system_metric",
+            "eval_metric",
+            "annotation_metric",
+            "custom_attribute",
+            "custom_column",
+        ],
+        required=False,
+        default="system_metric",
+    )
+    source = serializers.ChoiceField(
+        choices=[
+            "traces",
+            "sessions",
+            "datasets",
+            "dataset_column",
+            "simulation",
+        ],
+        required=False,
+        default="traces",
+    )
+    project_ids = CommaSeparatedListField(required=False, default=list)
+    dataset_id = serializers.UUIDField(required=False)
+    search = serializers.CharField(required=False, allow_blank=True, default="")

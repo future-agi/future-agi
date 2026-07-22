@@ -20,6 +20,9 @@ the model or the query engine.
 import json
 import unittest
 from unittest import mock
+from types import SimpleNamespace
+
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 
 class FetchDatasetColumnValuesTests(unittest.TestCase):
@@ -216,6 +219,95 @@ class RunSmartAgentFetchValuesTests(unittest.TestCase):
         # Only the string field gets pre-fetched; numeric fields don't.
         self.assertIn("col-lang", calls)
         self.assertNotIn("col-score", calls)
+
+
+class AIFilterViewContractTests(unittest.TestCase):
+    """The view should use its declared request serializer at runtime."""
+
+    def test_select_fields_uses_validated_request_payload(self):
+        from model_hub.views.ai_filter import AIFilterView
+
+        factory = APIRequestFactory()
+        request = factory.post(
+            "/model-hub/ai-filter/",
+            {
+                "mode": "select_fields",
+                "query": "show failed rows",
+                "schema": [
+                    {
+                        "field": "status",
+                        "label": "Status",
+                        "type": "enum",
+                        "category": "system",
+                    }
+                ],
+            },
+            format="json",
+        )
+        force_authenticate(
+            request,
+            user=SimpleNamespace(is_authenticated=True),
+        )
+
+        with mock.patch("agentic_eval.core.llm.llm.LLM") as llm_cls:
+            llm_cls.return_value._get_completion_content.return_value = (
+                '{"fields": ["status"]}'
+            )
+            response = AIFilterView.as_view()(request)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["result"], {"fields": ["status"]})
+
+    def test_invalid_request_returns_management_error_envelope(self):
+        from model_hub.views.ai_filter import AIFilterView
+
+        factory = APIRequestFactory()
+        request = factory.post(
+            "/model-hub/ai-filter/",
+            {"mode": "select_fields", "schema": []},
+            format="json",
+        )
+        force_authenticate(
+            request,
+            user=SimpleNamespace(is_authenticated=True),
+        )
+
+        response = AIFilterView.as_view()(request)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse(response.data["status"])
+        self.assertIn("query", response.data["details"])
+        self.assertIn("query", response.data["result"])
+
+    def test_unknown_request_fields_are_rejected(self):
+        from model_hub.views.ai_filter import AIFilterView
+
+        factory = APIRequestFactory()
+        request = factory.post(
+            "/model-hub/ai-filter/",
+            {
+                "mode": "select_fields",
+                "query": "show failed rows",
+                "schema": [
+                    {
+                        "field": "status",
+                        "label": "Status",
+                        "type": "enum",
+                    }
+                ],
+                "projectId": "legacy camel alias",
+            },
+            format="json",
+        )
+        force_authenticate(
+            request,
+            user=SimpleNamespace(is_authenticated=True),
+        )
+
+        response = AIFilterView.as_view()(request)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data["details"]["projectId"], ["Unknown field."])
 
 
 if __name__ == "__main__":

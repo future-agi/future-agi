@@ -52,7 +52,7 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
         # ClickHouse to scan all historical spans — triggering OOM on large
         # projects and the intermittent errors seen in TH-4422.
         has_date_filter = any(
-            (f.get("column_id") or f.get("columnId")) in ("created_at", "start_time")
+            f.get("column_id") in ("created_at", "start_time")
             for f in self.filters
         )
         if not has_date_filter:
@@ -102,12 +102,12 @@ class AgentGraphQueryBuilder(BaseQueryBuilder):
             ON child.parent_span_id = parent.id
             AND child.trace_id = parent.trace_id
             AND parent.project_id = %(project_id)s
-            AND parent._peerdb_is_deleted = 0
+            AND parent.is_deleted = 0
             AND parent.start_time >= %(start_date)s
             AND parent.start_time < %(end_date)s
         WHERE child.project_id = %(project_id)s
           AND parent.project_id = %(project_id)s
-          AND child._peerdb_is_deleted = 0
+          AND child.is_deleted = 0
           AND child.parent_span_id IS NOT NULL
           AND child.parent_span_id != ''
           AND child.created_at >= %(start_date)s - INTERVAL 1 DAY

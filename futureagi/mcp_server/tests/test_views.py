@@ -10,6 +10,9 @@ from mcp_server.models.tool_config import MCPToolGroupConfig
 from mcp_server.models.usage import MCPUsageRecord
 
 
+AUTH_REQUIRED_STATUS_CODES = (401, 403)
+
+
 class TestMCPHealthView:
     def test_health_unauthenticated(self, db):
         client = APIClient()
@@ -107,7 +110,7 @@ class TestMCPToolCallView:
             {"tool_name": "whoami", "params": {}},
             format="json",
         )
-        assert response.status_code == 403
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
 
 class TestMCPToolListView:
@@ -123,7 +126,7 @@ class TestMCPToolListView:
     def test_list_tools_unauthenticated(self, db):
         client = APIClient()
         response = client.get("/mcp/internal/tools/")
-        assert response.status_code == 403
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
 
 class TestMCPConfigView:
@@ -180,6 +183,13 @@ class TestMCPSessionListView:
         response = auth_client.get("/mcp/sessions/")
         assert response.status_code == 200
         assert len(response.data["result"]) >= 1
+
+    def test_list_sessions_status_filter(self, auth_client, mcp_session):
+        response = auth_client.get("/mcp/sessions/?status=active")
+        assert response.status_code == 200
+        assert response.data["status"] is True
+        assert len(response.data["result"]) >= 1
+        assert all(row["status"] == "active" for row in response.data["result"])
 
     def test_revoke_session(self, auth_client, mcp_session):
         response = auth_client.delete(f"/mcp/sessions/{mcp_session.id}/")

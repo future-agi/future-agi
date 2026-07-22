@@ -7,7 +7,7 @@ TOOL_GROUPS = {
     },
     "evaluations": {
         "name": "Evaluations",
-        "description": "Run, compare, and analyze LLM evaluations; manage eval templates and groups",
+        "description": "Run, compare, and analyze LLM evaluations; manage eval templates and composite evals",
     },
     "datasets": {
         "name": "Datasets & Knowledge Bases",

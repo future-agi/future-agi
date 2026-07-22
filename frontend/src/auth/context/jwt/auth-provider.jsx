@@ -23,35 +23,6 @@ import useFalconStore from "src/sections/falcon-ai/store/useFalconStore";
 // Session storage key for per-tab user tracking
 const SESSION_USER_ID_KEY = "currentUserId";
 
-// Normalize user payload from /auth/me so that both snake_case (from the API)
-// and camelCase aliases are available. Existing code across the app reads
-// fields like `user.defaultWorkspaceId` / `user.organizationRole`; this keeps
-// those working after the camelCase response renderer was removed.
-function normalizeUserPayload(user) {
-  if (!user || typeof user !== "object") return user;
-  const aliased = {
-    ...user,
-    defaultWorkspaceId:
-      user.default_workspace_id ?? user.defaultWorkspaceId ?? null,
-    defaultWorkspaceName:
-      user.default_workspace_name ?? user.defaultWorkspaceName ?? null,
-    defaultWorkspaceDisplayName:
-      user.default_workspace_display_name ??
-      user.defaultWorkspaceDisplayName ??
-      null,
-    defaultWorkspaceRole:
-      user.default_workspace_role ?? user.defaultWorkspaceRole ?? null,
-    organizationRole: user.organization_role ?? user.organizationRole ?? null,
-    orgLevel: user.org_level ?? user.orgLevel ?? null,
-    wsLevel: user.ws_level ?? user.wsLevel ?? null,
-    effectiveLevel: user.effective_level ?? user.effectiveLevel ?? null,
-    wsEnabled: user.ws_enabled ?? user.wsEnabled ?? null,
-    requiresOrgSetup: user.requires_org_setup ?? user.requiresOrgSetup ?? false,
-    rememberMe: user.remember_me ?? user.rememberMe ?? false,
-  };
-  return aliased;
-}
-
 // Helper to decode JWT and extract user ID (without verification)
 function decodeTokenUserId(token) {
   if (!token) return null;
@@ -112,7 +83,7 @@ export function AuthProvider({ children }) {
           },
         });
 
-        const user = normalizeUserPayload(response.data);
+        const user = response.data;
 
         // Org-less user (removed from org) — still authenticated but flagged
         if (user?.requires_org_setup) {
@@ -246,7 +217,7 @@ export function AuthProvider({ children }) {
       setRefreshToken(refreshToken);
     }
 
-    const user = normalizeUserPayload(userResponse.data);
+    const user = userResponse.data;
 
     // Store user ID in sessionStorage for cross-tab user detection
     sessionStorage.setItem(SESSION_USER_ID_KEY, user.id);
@@ -280,7 +251,14 @@ export function AuthProvider({ children }) {
 
       return response.data; // Return response so calling function can use it
     } catch (error) {
-      logger.error("Registration Error:", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Registration Error (expected)", error);
+      } else {
+        logger.error("Registration Error:", error);
+      }
       throw error; // Ensure errors are caught by caller
     }
   }, []);
@@ -293,7 +271,14 @@ export function AuthProvider({ children }) {
 
       return response.data; // Return response so calling function can use it
     } catch (error) {
-      logger.error("Registration Error:", error);
+      if (
+        (error?.statusCode >= 400 && error?.statusCode < 500) ||
+        error?.name === "NotAllowedError"
+      ) {
+        logger.info("Registration Error (expected)", error);
+      } else {
+        logger.error("Registration Error:", error);
+      }
       throw error; // Ensure errors are caught by caller
     }
   }, []);
@@ -334,7 +319,7 @@ export function AuthProvider({ children }) {
       dispatch({
         type: "UPDATE",
         payload: {
-          user: normalizeUserPayload({ ...userData }),
+          user: { ...userData },
         },
       });
     } catch (error) {

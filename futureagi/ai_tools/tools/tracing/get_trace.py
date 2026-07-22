@@ -33,8 +33,8 @@ class GetTraceTool(BaseTool):
 
     def execute(self, params: GetTraceInput, context: ToolContext) -> ToolResult:
 
-        from tracer.models.observation_span import ObservationSpan
         from tracer.models.trace import Trace
+        from tracer.services.clickhouse.v2 import get_reader
 
         try:
             trace = Trace.objects.select_related("project").get(
@@ -77,18 +77,22 @@ class GetTraceTool(BaseTool):
                 f"\n\n### Error\n\n```json\n{truncate(str(trace.error), 500)}\n```"
             )
 
-        # Spans
+        # Spans (read from CH 25.3 — was ObservationSpan.objects.filter;
+        # see DECISIONS D-027 + in-flight ORM migration). CHSpanReader
+        # filters is_deleted=0 and orders by start_time, id — matches the
+        # PG path's deleted=False + start_time ordering. Secondary sort
+        # was created_at in PG; CH uses id which is functionally equivalent
+        # for tie-breaking display order.
         span_data = []
         if params.include_spans:
-            spans = ObservationSpan.objects.filter(trace=trace, deleted=False).order_by(
-                "start_time", "created_at"
-            )
+            with get_reader() as reader:
+                spans = reader.list_by_trace(str(trace.id))
 
-            if spans.exists():
+            if spans:
                 # Summary stats
                 total_tokens = sum(s.total_tokens or 0 for s in spans)
                 total_cost = sum(s.cost or 0 for s in spans)
-                span_count = spans.count()
+                span_count = len(spans)
 
                 content += f"\n\n### Spans ({span_count})\n\n"
                 content += key_value_block(
@@ -139,8 +143,8 @@ class GetTraceTool(BaseTool):
                 )
                 content += f"\n\n{span_table}"
 
-                if spans.count() > 30:
-                    content += f"\n\n_Showing 30 of {spans.count()} spans._"
+                if len(spans) > 30:
+                    content += f"\n\n_Showing 30 of {len(spans)} spans._"
 
         data = {
             "id": str(trace.id),

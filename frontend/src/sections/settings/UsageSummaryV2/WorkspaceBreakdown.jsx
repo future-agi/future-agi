@@ -43,7 +43,11 @@ export default function WorkspaceBreakdown({
     queryKey: ["v2-workspace-breakdown", dimension, period, periodEnd],
     queryFn: () =>
       axios.get(endpoints.settings.v2.usageWorkspaceBreakdown, {
-        params: { dimension, period, ...(periodEnd ? { period_end: periodEnd } : {}) },
+        params: {
+          dimension,
+          period,
+          ...(periodEnd ? { period_end: periodEnd } : {}),
+        },
       }),
     select: (res) => res.data?.result?.workspaces || [],
     enabled: !!dimension,

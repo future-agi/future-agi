@@ -71,6 +71,34 @@ export const KeyOptimizerMapping = {
   gepa: "GEPA",
 };
 
+export const normalizeDatasetOptimizationRun = (run = {}) => ({
+  ...run,
+  optimizationName: run.optimizationName ?? run.optimization_name,
+  startedAt: run.startedAt ?? run.started_at,
+  optimizerAlgorithm: run.optimizerAlgorithm ?? run.optimizer_algorithm,
+  optimizerModelId: run.optimizerModelId ?? run.optimizer_model_id,
+  optimizerConfig: run.optimizerConfig ?? run.optimizer_config,
+  columnId: run.columnId ?? run.column_id,
+});
+
+export const normalizeDatasetOptimizationDetail = (optimization = {}) => ({
+  ...optimization,
+  optimiserName: optimization.optimiserName ?? optimization.optimiser_name,
+  optimiserType: optimization.optimiserType ?? optimization.optimiser_type,
+  providerLogo: optimization.providerLogo ?? optimization.provider_logo,
+  startTime: optimization.startTime ?? optimization.start_time,
+  errorMessage: optimization.errorMessage ?? optimization.error_message,
+  columnId: optimization.columnId ?? optimization.column_id,
+  columnName: optimization.columnName ?? optimization.column_name,
+  bestScore: optimization.bestScore ?? optimization.best_score,
+  baselineScore: optimization.baselineScore ?? optimization.baseline_score,
+  columnConfig: optimization.columnConfig ?? optimization.column_config,
+  optimizerModelId:
+    optimization.optimizerModelId ?? optimization.optimizer_model_id,
+  userEvalTemplates:
+    optimization.userEvalTemplates ?? optimization.user_eval_templates,
+});
+
 export const OptimizerConfigurationMapping = {
   random_search: {
     task_description: "",
@@ -291,8 +319,8 @@ export const getTrialsColumnConfig = (columnConfig) => {
           colId: "trial",
           valueGetter: (params) => ({
             title: params.data?.trial,
-            improvement: params.data?.scorePercentageChange,
-            isBest: params.data?.isBest,
+            improvement: params.data?.score_percentage_change,
+            isBest: params.data?.is_best,
           }),
         };
 
@@ -311,13 +339,13 @@ export const getTrialsColumnConfig = (columnConfig) => {
 
       default:
         return {
-          field: column?.id,
           headerName: column?.name,
           minWidth: 170,
           colId: column?.id,
           cellRenderer: "averageEvalCellRenderer",
           isVisible: true,
           id: column?.id,
+          valueGetter: (params) => params.data?.eval_scores?.[column?.id],
         };
     }
   });

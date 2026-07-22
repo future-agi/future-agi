@@ -23,8 +23,8 @@ async def fetch_trace_data(input: FetchTraceInput) -> str:
     """Fetch trace + spans from DB and format as context string for LLM."""
     from channels.db import database_sync_to_async
 
-    from tracer.models.observation_span import ObservationSpan
     from tracer.models.trace import Trace
+    from tracer.services.clickhouse.v2 import get_reader
 
     try:
         trace = await database_sync_to_async(
@@ -36,54 +36,51 @@ async def fetch_trace_data(input: FetchTraceInput) -> str:
     except Trace.DoesNotExist:
         return f"Trace {input.trace_id} not found."
 
-    spans = await database_sync_to_async(
-        lambda: list(
-            ObservationSpan.objects.filter(trace_id=str(input.trace_id))
-            .order_by("start_time")
-            .values(
-                "id",
-                "name",
-                "observation_type",
-                "status",
-                "latency_ms",
-                "total_tokens",
-                "model",
-                "input",
-                "output",
-                "cost",
-            )[:20]
-        )
-    )()
+    # Spans now come from ClickHouse via CHSpanReader. The legacy ORM
+    # call returned `.values("id", "name", ..., "input", "output", ...)`
+    # in start_time order; CHSpan exposes these as dataclass fields and
+    # list_by_trace already orders by start_time. input/output are
+    # JSON-string columns on CH — keep them as strings for the truncated
+    # display string below (matches the prior `str(...)[:300]`).
+    reader = await database_sync_to_async(get_reader)()
+
+    def _fetch_spans():
+        try:
+            return reader.list_by_trace(str(input.trace_id))[:20]
+        finally:
+            reader.close()
+
+    chspans = await database_sync_to_async(_fetch_spans)()
 
     project_name = trace.project.name if trace.project else "?"
 
     lines = [
         f"Trace ID: {trace.id}",
         f"Project: {project_name}",
-        f"Spans: {len(spans)}",
+        f"Spans: {len(chspans)}",
         "",
     ]
 
     total_latency = 0
     total_tokens = 0
-    for i, s in enumerate(spans):
-        lat = s.get("latency_ms") or 0
-        tok = s.get("total_tokens") or 0
+    for i, s in enumerate(chspans):
+        lat = s.latency_ms or 0
+        tok = s.total_tokens or 0
         total_latency += lat
         total_tokens += tok
-        model = f" model={s['model']}" if s.get("model") else ""
+        model_str = f" model={s.model}" if s.model else ""
         lines.append(
-            f"  {i + 1}. {s['name']} [{s.get('observation_type', '?')}] "
-            f"{lat}ms {tok}tok status={s.get('status', '?')}{model}"
+            f"  {i + 1}. {s.name} [{s.observation_type or '?'}] "
+            f"{lat}ms {tok}tok status={s.status or '?'}{model_str}"
         )
 
     lines.insert(3, f"Total: {total_latency}ms latency, {total_tokens} tokens")
 
     # Root span input/output
-    if spans:
-        root = spans[0]
-        inp = str(root.get("input", ""))[:300]
-        out = str(root.get("output", ""))[:300]
+    if chspans:
+        root = chspans[0]
+        inp = str(root.input or "")[:300]
+        out = str(root.output or "")[:300]
         if inp:
             lines.append(f"\nInput: {inp}")
         if out:

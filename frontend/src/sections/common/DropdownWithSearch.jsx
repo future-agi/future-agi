@@ -43,6 +43,10 @@ const DropdownWithSearch = ({
   useCustomStyle,
   iconUrl,
   labelSx,
+  // Some legacy call sites pass react-hook-form's setValue through. The
+  // search dropdown does not use it, and MUI would otherwise forward it to DOM.
+  // eslint-disable-next-line no-unused-vars
+  setValue: _setValue,
   ...rest
 }) => {
   const [open, setOpen] = useState(false);
@@ -228,6 +232,7 @@ DropdownWithSearch.propTypes = {
   useCustomStyle: PropTypes.bool,
   iconUrl: PropTypes.string,
   labelSx: PropTypes.object,
+  setValue: PropTypes.func,
 };
 
 DropdownWithSearch.defaultProps = {

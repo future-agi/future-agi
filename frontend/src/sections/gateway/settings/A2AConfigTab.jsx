@@ -126,8 +126,8 @@ const A2AConfigTab = ({ a2a, onChange }) => {
               Agent Card
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-              Customize how Agent Command Center identifies itself as an A2A agent for this
-              organization.
+              Customize how Agent Command Center identifies itself as an A2A
+              agent for this organization.
             </Typography>
             <Stack spacing={2}>
               <TextField

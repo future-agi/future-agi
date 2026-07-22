@@ -90,8 +90,8 @@ async def improve_prompt_async(
                 await ws_manager.send_improve_prompt_error_message(
                     improve_id=improve_id,
                     error="Insufficient credits",
-            )
-            return
+                )
+                return
 
         # Run the improve_prompt process with WebSocket manager
         # Use async version when ws_manager is provided (WebSocket context)

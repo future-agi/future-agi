@@ -19,6 +19,7 @@ import {
   useAddQueueItems,
 } from "src/api/annotation-queues/annotation-queues";
 import CreateQueueDrawer from "../create-queue-drawer";
+import { canViewerAddItemsToQueue } from "../constants";
 
 const PAGE_SIZE = 8;
 
@@ -77,7 +78,7 @@ export default function AddToQueueDialog({
   const queues = useMemo(() => {
     const all = queuesData?.results || [];
     return all
-      .filter((q) => q.status !== "completed")
+      .filter((q) => q.status !== "completed" && canViewerAddItemsToQueue(q))
       .sort((a, b) => a.name.localeCompare(b.name));
   }, [queuesData]);
 
@@ -102,6 +103,57 @@ export default function AddToQueueDialog({
     setPage(0);
     setFocusIndex(0);
   }, [searchQuery]);
+
+  const showAddResult = useCallback(
+    (queue, data) => {
+      const result = data?.data?.result || data?.data;
+      const added = result?.added || 0;
+      const duplicates = result?.duplicates || 0;
+      const errors = Array.isArray(result?.errors) ? result.errors : [];
+      const label = itemName || "Item";
+      const plural = (n, s = "s") => (n === 1 ? "" : s);
+      if (added === 0 && duplicates === 0 && errors.length > 0) {
+        // Backend returned 200 but resolution failed — surface the
+        // real reason instead of pretending the add succeeded.
+        enqueueSnackbar(`Couldn't add to ${queue.name}: ${errors[0]}`, {
+          variant: "error",
+        });
+      } else if (added === 0 && duplicates > 0) {
+        // Nothing added — everything was already there.
+        enqueueSnackbar(
+          duplicates === 1
+            ? `${label} already in ${queue.name}`
+            : `All ${duplicates} ${label.toLowerCase()}s already in ${queue.name}`,
+          { variant: "info" },
+        );
+      } else if (added > 0 && (duplicates > 0 || errors.length > 0)) {
+        const details = [];
+        if (duplicates > 0) details.push(`${duplicates} already in queue`);
+        if (errors.length > 0) details.push(errors[0]);
+        enqueueSnackbar(
+          `${added} ${label.toLowerCase()}${plural(added)} added to ${queue.name} · ${details.join(" · ")}`,
+          { variant: "info" },
+        );
+      } else if (added === 0) {
+        // Nothing added and no duplicates or errors reported — don't
+        // claim success.
+        enqueueSnackbar(
+          `Couldn't add ${label.toLowerCase()} to ${queue.name}`,
+          {
+            variant: "error",
+          },
+        );
+      } else {
+        enqueueSnackbar(
+          added === 1
+            ? `${label} added to ${queue.name}`
+            : `${added} ${label.toLowerCase()}s added to ${queue.name}`,
+          { variant: "success" },
+        );
+      }
+    },
+    [itemName],
+  );
 
   const handleSelect = useCallback(
     (queue) => {
@@ -132,47 +184,7 @@ export default function AddToQueueDialog({
 
       addItems(mutationArgs, {
         onSuccess: (data) => {
-          const result = data?.data?.result || data?.data;
-          const added = result?.added || 0;
-          const duplicates = result?.duplicates || 0;
-          const errors = Array.isArray(result?.errors) ? result.errors : [];
-          const label = itemName || "Item";
-          const plural = (n, s = "s") => (n === 1 ? "" : s);
-          if (added === 0 && duplicates === 0 && errors.length > 0) {
-            // Backend returned 200 but resolution failed — surface the
-            // real reason instead of pretending the add succeeded.
-            enqueueSnackbar(`Couldn't add to ${queue.name}: ${errors[0]}`, {
-              variant: "error",
-            });
-          } else if (added === 0 && duplicates > 0) {
-            // Nothing added — everything was already there.
-            enqueueSnackbar(
-              duplicates === 1
-                ? `${label} already in ${queue.name}`
-                : `All ${duplicates} ${label.toLowerCase()}s already in ${queue.name}`,
-              { variant: "info" },
-            );
-          } else if (added > 0 && duplicates > 0) {
-            // Partial — report both counts so the user isn't misled.
-            enqueueSnackbar(
-              `${added} ${label.toLowerCase()}${plural(added)} added to ${queue.name} · ${duplicates} already in queue`,
-              { variant: "info" },
-            );
-          } else if (added === 0) {
-            // Nothing added and no duplicates or errors reported — don't
-            // claim success.
-            enqueueSnackbar(
-              `Couldn't add ${label.toLowerCase()} to ${queue.name}`,
-              { variant: "error" },
-            );
-          } else {
-            enqueueSnackbar(
-              added === 1
-                ? `${label} added to ${queue.name}`
-                : `${added} ${label.toLowerCase()}s added to ${queue.name}`,
-              { variant: "success" },
-            );
-          }
+          showAddResult(queue, data);
           onSuccess?.();
           onClose();
         },
@@ -188,7 +200,7 @@ export default function AddToQueueDialog({
       isVoiceCall,
       removeSimulationCalls,
       addItems,
-      itemName,
+      showAddResult,
       onSuccess,
       onClose,
     ],
@@ -423,6 +435,8 @@ export default function AddToQueueDialog({
                   project_id: projectId,
                   filter: filter || [],
                   exclude_ids: sourceIds,
+                  is_voice_call: !!isVoiceCall,
+                  remove_simulation_calls: !!removeSimulationCalls,
                 },
               }
             : {
@@ -434,12 +448,9 @@ export default function AddToQueueDialog({
               };
 
           addItems(mutationArgs, {
-            onSuccess: () => {
-              const label = itemName || "Item";
-              const queueName = queue.name || "queue";
-              enqueueSnackbar(`${label} added to ${queueName}`, {
-                variant: "success",
-              });
+            onSuccess: (data) => {
+              showAddResult(queue, data);
+              setCreateDrawerOpen(false);
               onSuccess?.();
             },
           });

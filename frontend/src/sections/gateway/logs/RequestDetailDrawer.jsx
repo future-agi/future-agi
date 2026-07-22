@@ -201,7 +201,7 @@ function OverviewTab({ log }) {
     {
       key: "isStream",
       label: "Streaming",
-      value: log.is_stream ?? log.isStream,
+      value: log.is_stream,
       icon: <Iconify icon="mdi:arrow-right-bold-outline" width={18} />,
     },
     {
@@ -213,13 +213,13 @@ function OverviewTab({ log }) {
     {
       key: "fallbackUsed",
       label: "Fallback Used",
-      value: log.fallback_used ?? log.fallbackUsed,
+      value: log.fallback_used,
       icon: <Iconify icon="mdi:swap-horizontal" width={18} />,
     },
     {
       key: "guardrailTriggered",
       label: "Guardrail Triggered",
-      value: log.guardrail_triggered ?? log.guardrailTriggered,
+      value: log.guardrail_triggered,
       icon: <Iconify icon="mdi:shield-outline" width={18} />,
     },
     {
@@ -258,12 +258,11 @@ function OverviewTab({ log }) {
         </Typography>
         <Stack spacing={0.5}>
           <Typography variant="body2">
-            <strong>Strategy:</strong>{" "}
-            {log.routing_strategy || log.routingStrategy || "Default"}
+            <strong>Strategy:</strong> {log.routing_strategy || "Default"}
           </Typography>
           <Typography variant="body2">
             <strong>Resolved Model:</strong>{" "}
-            {log.resolved_model || log.resolvedModel || log.model || "N/A"}
+            {log.resolved_model || log.model || "N/A"}
           </Typography>
         </Stack>
         {log.is_error && log.error_message && (
@@ -280,10 +279,10 @@ function OverviewTab({ log }) {
         </Typography>
         <Stack spacing={0.5}>
           <Typography variant="body2">
-            <strong>API Key:</strong> {log.api_key_id || log.apiKeyId || "N/A"}
+            <strong>API Key:</strong> {log.api_key_id || "N/A"}
           </Typography>
           <Typography variant="body2">
-            <strong>User ID:</strong> {log.user_id || log.userId || "N/A"}
+            <strong>User ID:</strong> {log.user_id || "N/A"}
           </Typography>
           <Typography variant="body2">
             <strong>Session ID:</strong> {log.session_id || "N/A"}
@@ -300,10 +299,7 @@ function RequestTab({ log }) {
   return (
     <Stack spacing={2} p={2}>
       <JsonViewer data={log.request_body} label="Request Body" />
-      <HeadersAccordion
-        title="Request Headers"
-        headers={log.request_headers ?? log.requestHeaders}
-      />
+      <HeadersAccordion title="Request Headers" headers={log.request_headers} />
     </Stack>
   );
 }
@@ -316,7 +312,7 @@ function ResponseTab({ log }) {
       <JsonViewer data={log.response_body} label="Response Body" />
       <HeadersAccordion
         title="Response Headers"
-        headers={log.response_headers ?? log.responseHeaders}
+        headers={log.response_headers}
       />
     </Stack>
   );
@@ -366,7 +362,7 @@ function MetadataTab({ log }) {
 GuardrailsTab.propTypes = { log: PropTypes.object.isRequired };
 
 function GuardrailsTab({ log }) {
-  let raw = log.guardrail_results ?? log.guardrailResults;
+  let raw = log.guardrail_results;
   if (typeof raw === "string") {
     try {
       raw = JSON.parse(raw);
@@ -447,9 +443,9 @@ function GuardrailsTab({ log }) {
                   {gr.threshold != null ? ` / Threshold: ${gr.threshold}` : ""}
                 </Typography>
               )}
-              {(gr.latencyMs ?? gr.latency_ms) != null && (
+              {gr.latency_ms != null && (
                 <Typography variant="body2" color="text.secondary">
-                  Latency: {gr.latencyMs ?? gr.latency_ms}ms
+                  Latency: {gr.latency_ms}ms
                 </Typography>
               )}
               {(gr.message || gr.details) && (
@@ -482,7 +478,7 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
   const log = data?.result ?? data ?? null;
 
   // Build the dynamic tab list -- conditionally include Guardrails
-  const showGuardrails = log?.guardrailTriggered;
+  const showGuardrails = log?.guardrail_triggered;
   const tabs = [
     { label: "Overview", value: 0 },
     { label: "Request", value: 1 },
@@ -527,19 +523,10 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
             </>
           ) : log ? (
             <>
-              <Tooltip
-                title={log.request_id || log.requestId || log.id}
-                placement="top"
-                arrow
-              >
+              <Tooltip title={log.request_id || log.id} placement="top" arrow>
                 <Typography variant="h6" noWrap>
-                  {(log.request_id || log.requestId || log.id || "").slice(
-                    0,
-                    20,
-                  )}
-                  {(log.request_id || log.requestId || log.id || "").length > 20
-                    ? "..."
-                    : ""}
+                  {(log.request_id || log.id || "").slice(0, 20)}
+                  {(log.request_id || log.id || "").length > 20 ? "..." : ""}
                 </Typography>
               </Tooltip>
               <Stack direction="row" spacing={1} alignItems="center">
@@ -591,14 +578,12 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
               fontWeight={600}
               sx={{
                 color:
-                  (log.latency_ms ?? log.latencyMs) != null
-                    ? getLatencyColor(log.latency_ms ?? log.latencyMs)
+                  log.latency_ms != null
+                    ? getLatencyColor(log.latency_ms)
                     : undefined,
               }}
             >
-              {(log.latency_ms ?? log.latencyMs) != null
-                ? `${log.latency_ms ?? log.latencyMs}ms`
-                : "N/A"}
+              {log.latency_ms != null ? `${log.latency_ms}ms` : "N/A"}
             </Typography>
           </Box>
           <Box>
@@ -622,7 +607,7 @@ const RequestDetailDrawer = ({ logId, open, onClose }) => {
               Started
             </Typography>
             <Typography variant="body2" fontWeight={600}>
-              {formatFullTimestamp(log.started_at ?? log.startedAt)}
+              {formatFullTimestamp(log.started_at)}
             </Typography>
           </Box>
         </Stack>

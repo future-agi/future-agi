@@ -68,6 +68,13 @@ class TestMCPToolGroupConfig:
         config.refresh_from_db()
         assert config.enabled_groups == ["context"]
 
+    def test_update_groups_to_empty_list(self, mcp_connection):
+        config = mcp_connection.tool_config
+        config.enabled_groups = []
+        config.save()
+        config.refresh_from_db()
+        assert config.enabled_groups == []
+
 
 class TestMCPSession:
     def test_create_session(self, mcp_session):

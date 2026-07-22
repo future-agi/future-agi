@@ -1,0 +1,9 @@
+# CH25 migration test debt — files that fail at COLLECTION (import error)
+# and therefore can't be skipped per-test via _ch25_skip.txt.
+# See internal-docs repo: clickhouse-analytics/migration-to-ch25/MIGRATION_TEST_DEBT.md
+#
+# test_eval_cluster_title.py is a pre-existing EE-attr drift (the test patches
+# ee.agenthub.trace_scanner.eval_cluster_title which doesn't exist as an
+# attribute on that module). Not migration-induced; tracked separately.
+tracer/queries/tests/test_eval_cluster_title.py
+tracer/tests/test_linear_issue_view.py

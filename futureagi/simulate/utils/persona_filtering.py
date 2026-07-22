@@ -74,8 +74,7 @@ def _persona_exprs(queryset, field: str) -> list[str]:
 
     aliases = PERSONA_FILTER_FIELD_ALIASES[field]
     return [
-        f"{table}.call_metadata #>> '{{row_data,persona,{alias}}}'"
-        for alias in aliases
+        f"{table}.call_metadata #>> '{{row_data,persona,{alias}}}'" for alias in aliases
     ]
 
 
@@ -98,7 +97,9 @@ def _boolean_clause(expr: str, value: Any) -> tuple[str, list[Any]]:
     return f"LOWER({_coalesced(expr)}) = %s", [normalized]
 
 
-def _any_clause(expressions: list[str], values: list[Any], builder) -> tuple[str, list[Any]]:
+def _any_clause(
+    expressions: list[str], values: list[Any], builder
+) -> tuple[str, list[Any]]:
     clauses: list[str] = []
     params: list[Any] = []
     for expr in expressions:
@@ -140,19 +141,19 @@ def apply_persona_filter(queryset, column_id, op, value, filter_type=None):
 
     if filter_type == "boolean":
         where, params = _any_clause(expressions, values, _boolean_clause)
-        if op in ("equals", "eq", "in"):
+        if op in ("equals", "in"):
             return queryset.extra(where=[where], params=params)
-        if op in ("not_equals", "ne", "not_in"):
+        if op in ("not_equals", "not_in"):
             return queryset.extra(where=[f"NOT {where}"], params=params)
         raise UnsupportedPersonaFilter(f"Unsupported boolean persona op: {op}")
 
-    if op in ("equals", "eq", "in"):
+    if op in ("equals", "in"):
         where, params = _any_clause(expressions, values, _equals_clause)
         return queryset.extra(where=[where], params=params)
-    if op in ("not_equals", "ne", "not_in"):
+    if op in ("not_equals", "not_in"):
         where, params = _any_clause(expressions, values, _equals_clause)
         return queryset.extra(where=[f"NOT {where}"], params=params)
-    if op in ("contains", "icontains"):
+    if op == "contains":
         where, params = _any_clause(expressions, values, _contains_clause)
         return queryset.extra(where=[where], params=params)
     if op == "not_contains":

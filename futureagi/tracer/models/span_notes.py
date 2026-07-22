@@ -10,7 +10,8 @@ from tracer.models.observation_span import ObservationSpan
 class SpanNotes(BaseModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     span = models.ForeignKey(
-        ObservationSpan, on_delete=models.CASCADE, related_name="notes"
+        ObservationSpan, on_delete=models.CASCADE, related_name="notes",
+        db_constraint=False,  # CH scale: SCALE_ARCHITECTURE.md §9a
     )
     notes = models.TextField()
     created_by_user = models.ForeignKey(

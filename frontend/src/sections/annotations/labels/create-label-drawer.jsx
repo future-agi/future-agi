@@ -441,7 +441,7 @@ export default function CreateLabelDrawer({
  * Build a settings object suitable for the LabelInput preview.
  * Maps form field names to what LabelInput expects.
  */
-function buildPreviewSettings(type, settings) {
+export function buildPreviewSettings(type, settings) {
   if (!settings) return {};
 
   if (type === "categorical") {
@@ -459,6 +459,7 @@ function buildPreviewSettings(type, settings) {
       min: settings.min ?? 0,
       max: settings.max ?? 10,
       step: settings.step_size ?? settings.step ?? 1,
+      display_type: settings.display_type || "slider",
     };
   }
 

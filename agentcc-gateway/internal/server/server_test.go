@@ -162,6 +162,21 @@ func startMockOpenAI(t *testing.T) *httptest.Server {
 			json.NewEncoder(w).Encode(resp)
 
 		case r.URL.Path == "/v1/embeddings" && r.Method == "POST":
+			var req models.EmbeddingRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(models.ErrorResponse{
+					Error: models.ErrorDetail{Message: "bad request", Type: "invalid_request_error", Code: "bad_request"},
+				})
+				return
+			}
+			if req.Model != "gpt-4o" && req.Model != "gpt-4o-mini" {
+				w.WriteHeader(http.StatusNotFound)
+				json.NewEncoder(w).Encode(models.ErrorResponse{
+					Error: models.ErrorDetail{Message: "model not found", Type: "invalid_request_error", Code: "model_not_found"},
+				})
+				return
+			}
 			resp := models.EmbeddingResponse{
 				Object: "list",
 				Data: []models.EmbeddingData{{
@@ -169,7 +184,7 @@ func startMockOpenAI(t *testing.T) *httptest.Server {
 					Index:     0,
 					Embedding: json.RawMessage(`[0.1,0.2,0.3]`),
 				}},
-				Model: "gpt-4o",
+				Model: req.Model,
 				Usage: &models.EmbeddingUsage{PromptTokens: 3, TotalTokens: 3},
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -421,6 +436,38 @@ func createTestServer(t *testing.T, mockURL string) *Server {
 	return srv
 }
 
+func TestAdminKeyRoutesAvailableWhenRequestAuthDisabled(t *testing.T) {
+	mock := startMockOpenAI(t)
+	defer mock.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.Admin.Token = "admin-secret"
+	cfg.Auth.Enabled = false
+	cfg.Providers["openai"] = config.ProviderConfig{
+		BaseURL:   mock.URL,
+		APIFormat: "openai",
+		Models:    []string{"gpt-4o", "gpt-4o-mini"},
+	}
+
+	registry, err := providers.NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("creating registry: %v", err)
+	}
+
+	engine := pipeline.NewEngine()
+	srv := New(cfg, "", registry, engine, nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/-/keys", nil)
+	req.Header.Set("Authorization", "Bearer admin-secret")
+	w := httptest.NewRecorder()
+
+	srv.httpServer.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d. Body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+}
+
 func createAnthropicAuthTestServer(t *testing.T, mockURL string) *Server {
 	t.Helper()
 
@@ -430,7 +477,7 @@ func createAnthropicAuthTestServer(t *testing.T, mockURL string) *Server {
 		Name:    "test-service",
 		Key:     "test-api-key",
 		Owner:   "test-org",
-		KeyType: "standard",
+		KeyType: "internal",
 	}}
 	cfg.Providers["anthropic"] = config.ProviderConfig{
 		BaseURL:   mockURL,
@@ -529,7 +576,7 @@ func createAuthRequiredTestServerWithPlugins(t *testing.T, mockURL string, plugi
 		Name:    "test-service",
 		Key:     "sk-test-key-001",
 		Owner:   "test-org",
-		KeyType: "standard",
+		KeyType: "internal",
 	}}
 	cfg.Providers["openai"] = config.ProviderConfig{
 		BaseURL:   mockURL,
@@ -557,7 +604,7 @@ func createAuthRequiredTestServer(t *testing.T, mockURL string) *Server {
 		Name:    "test-service",
 		Key:     "sk-test-key-001",
 		Owner:   "test-org",
-		KeyType: "standard",
+		KeyType: "internal",
 	}}
 	cfg.Providers["openai"] = config.ProviderConfig{
 		BaseURL:   mockURL,
@@ -587,7 +634,7 @@ func createAuthRequiredA2ATestServer(t *testing.T, mockURL string) *Server {
 		Name:    "test-service",
 		Key:     "sk-test-key-001",
 		Owner:   "test-org",
-		KeyType: "standard",
+		KeyType: "internal",
 	}}
 	cfg.A2A.Enabled = true
 	cfg.A2A.Card = config.A2ACardConfig{
@@ -659,7 +706,7 @@ func createOrgScopedModelsTestServer(t *testing.T, mockURL string) *Server {
 			Name:    "org-internal",
 			Key:     "sk-agentcc-org-internal-test",
 			Owner:   "test-org",
-			KeyType: "standard",
+			KeyType: "internal",
 			Metadata: map[string]string{
 				"org_id": "org-123",
 			},
@@ -1223,6 +1270,45 @@ func TestChatCompletionByokKeyCannotUseGlobalProvider(t *testing.T) {
 	}
 }
 
+// The env-seeded internal key (AGENTCC_INTERNAL_API_KEY) must reach the global,
+// FutureAGI-credentialed providers — i.e. loadFromEnv types it "internal", not
+// byok. This goes through the real path (config.Load -> keystore -> resolveProvider),
+// so a mistyped seed surfaces as a 403 here, not just a config-struct mismatch.
+func TestChatCompletionEnvSeededInternalKeyReachesGlobalProvider(t *testing.T) {
+	mock := startMockOpenAI(t)
+	defer mock.Close()
+
+	t.Setenv("AGENTCC_INTERNAL_API_KEY", "sk-agentcc-internal-test")
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	cfg.Providers["openai"] = config.ProviderConfig{
+		BaseURL:   mock.URL,
+		APIFormat: "openai",
+		Models:    []string{"gpt-4o", "gpt-4o-mini"},
+	}
+
+	registry, err := providers.NewRegistry(cfg)
+	if err != nil {
+		t.Fatalf("creating registry: %v", err)
+	}
+	srv := New(cfg, "", registry, pipeline.NewEngine(), nil, nil, nil, nil, testModelDBPtr(), nil, nil)
+	srv.ready.Store(true)
+
+	reqBody := `{"model":"gpt-4o","messages":[{"role":"user","content":"Hello"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/completions", bytes.NewBufferString(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer sk-agentcc-internal-test")
+	w := httptest.NewRecorder()
+
+	srv.httpServer.Handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — the env-seeded internal key must reach the global provider (a byok-typed seed 403s here). Body: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestA2AByokKeyDoesNotLeakInternalPermissionMessage(t *testing.T) {
 	mock := startMockOpenAI(t)
 	defer mock.Close()
@@ -1620,7 +1706,12 @@ func TestGetModel_ReturnsGlobalModelForOrgRequest(t *testing.T) {
 func TestCreateEmbedding_InternalKeySkipsOrgProviderOverride(t *testing.T) {
 	var upstreamAuth string
 	mock := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		upstreamAuth = r.Header.Get("Authorization")
+		// The provider's async connectivity check (GET /v1/models, no auth) hits
+		// this same mock; capture auth only from the embedding call so a late ping
+		// can't clobber it to "" and flake the assertion.
+		if strings.HasSuffix(r.URL.Path, "/embeddings") {
+			upstreamAuth = r.Header.Get("Authorization")
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(models.EmbeddingResponse{
 			Object: "list",

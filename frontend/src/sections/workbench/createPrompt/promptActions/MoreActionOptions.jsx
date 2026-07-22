@@ -146,18 +146,24 @@ const MoreActionOptionsChild = (
   );
 };
 
-MoreActionOptionsChild.propTypes = {
+const moreActionOptionsPropTypes = {
   open: PropTypes.bool,
   id: PropTypes.string,
   onClose: PropTypes.func,
   handleRename: PropTypes.func,
   saveDefault: PropTypes.func,
   setSaveCommitOpen: PropTypes.func,
-  data: PropTypes.object,
+  data: PropTypes.shape({
+    isDraft: PropTypes.bool,
+  }),
 };
 
+MoreActionOptionsChild.propTypes = moreActionOptionsPropTypes;
+
 // @ts-ignore
+MoreActionOptionsChild.propTypes = moreActionOptionsPropTypes;
 export const MoreActionOptions = forwardRef(MoreActionOptionsChild);
+MoreActionOptions.propTypes = moreActionOptionsPropTypes;
 
 const modifier = [
   {

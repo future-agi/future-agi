@@ -43,6 +43,11 @@ const categories = [
   { label: "Text", value: "TEXT" },
 ];
 
+const evalTemplateTags = (evalItem) =>
+  Array.isArray(evalItem?.eval_template_tags)
+    ? evalItem.eval_template_tags
+    : [];
+
 const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
   const theme = useTheme();
   const [searchText, setSearchText] = useState("");
@@ -59,27 +64,29 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
       }),
     select: (d) => d?.data?.result?.evals,
   });
+  const evals = useMemo(
+    () => (Array.isArray(evalList) ? evalList : []),
+    [evalList],
+  );
 
   const filteredEvalList = useMemo(() => {
-    if (!evalList) return [];
     if (selectedCategory === "all") {
-      return evalList.filter(
+      return evals.filter(
         (each) =>
           !searchText ||
           each.name.toLowerCase().includes(searchText.toLowerCase()),
       );
     }
-    return evalList.filter(
+    return evals.filter(
       (each) =>
-        each.evalTemplateTags.includes(selectedCategory) &&
+        evalTemplateTags(each).includes(selectedCategory) &&
         (!searchText ||
           each.name.toLowerCase().includes(searchText.toLowerCase())),
     );
-  }, [selectedCategory, evalList, searchText]);
+  }, [selectedCategory, evals, searchText]);
 
   const categoryCount = useMemo(() => {
-    if (!evalList) return {};
-    return evalList
+    return evals
       .filter(
         (each) =>
           !searchText ||
@@ -88,14 +95,14 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
       .reduce(
         (acc, each) => {
           acc["all"] = (acc["all"] || 0) + 1;
-          each.evalTemplateTags.forEach(
-            (tag) => (acc[tag] = (acc[tag] || 0) + 1),
-          );
+          evalTemplateTags(each).forEach((tag) => {
+            acc[tag] = (acc[tag] || 0) + 1;
+          });
           return acc;
         },
         { all: 0 },
       );
-  }, [evalList, searchText]);
+  }, [evals, searchText]);
 
   const handleSearchChange = (event) => {
     const value = event.target.value;
@@ -193,7 +200,7 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
                   <Skeleton variant="text" width={20} height={35} />
                 ) : (
                   <Label variant="soft" color="success" sx={{ fontSize: 12 }}>
-                    {evalList.length}
+                    {evals.length}
                   </Label>
                 )
               }
@@ -239,14 +246,14 @@ const ConfiguredEvaluationType = ({ onClose, onOptionClick, datasetId }) => {
       >
         {loadingEvalList && <EvalTypesSkeleton />}
         {filteredEvalList.map((eachEval) => {
-          const { name, id, description, evalTemplateTags } = eachEval;
+          const { name, id, description } = eachEval;
 
           return (
             <EvaluationTypeCard
               key={id}
               title={name}
               subTitle={description}
-              tags={evalTemplateTags}
+              tags={evalTemplateTags(eachEval)}
               onClick={() => onOptionClick(eachEval)}
             />
           );

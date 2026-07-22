@@ -12,11 +12,11 @@ const DateTimeFilterOperators = [
   { label: "Greater Than Or Equal", value: "greater_than_or_equal" },
   { label: "Less Than Or Equal", value: "less_than_or_equal" },
   { label: "Between", value: "between" },
-  { label: "Not In Between", value: "not_in_between" },
+  { label: "Not Between", value: "not_between" },
 ];
 
 const DevelopDateTimeFilter = ({ filter, updateFilter }) => {
-  const multipleInput = ["between", "not_in_between"].includes(
+  const multipleInput = ["between", "not_between"].includes(
     filter.filterConfig.filterOp,
   );
 
@@ -102,7 +102,7 @@ const DevelopDateTimeFilter = ({ filter, updateFilter }) => {
         value={getValue(0) || null}
         onChange={(v) => updater(0, v)}
       />
-      {["between", "not_in_between"].includes(filter.filterConfig.filterOp) &&
+      {["between", "not_between"].includes(filter.filterConfig.filterOp) &&
         renderExtraInput()}
     </>
   );

@@ -9,8 +9,11 @@ import structlog
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_serializers import ApiErrorResponseSerializer
 from tfc.utils.general_methods import GeneralMethods
 from tracer.serializers.feed import (
+    FeedDetailApiResponseSerializer,
     FeedDetailCoreSerializer,
     FeedDetailQuerySerializer,
     FeedUpdateBodySerializer,
@@ -21,6 +24,13 @@ from tracer.views.feed._permissions import resolve_requested_project_ids
 
 logger = structlog.get_logger(__name__)
 
+ERROR_RESPONSES = {
+    400: ApiErrorResponseSerializer,
+    403: ApiErrorResponseSerializer,
+    404: ApiErrorResponseSerializer,
+    500: ApiErrorResponseSerializer,
+}
+
 
 class FeedDetailView(APIView):
     """GET + PATCH /tracer/feed/issues/{cluster_id}/"""
@@ -28,18 +38,22 @@ class FeedDetailView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        query_serializer=FeedDetailQuerySerializer,
+        responses={200: FeedDetailApiResponseSerializer, **ERROR_RESPONSES},
+    )
     def get(self, request, cluster_id: str):
-        query = FeedDetailQuerySerializer(data=request.query_params)
-        if not query.is_valid():
-            return self._gm.bad_request(query.errors)
-
-        requested_project_id = query.validated_data.get("project_id")
+        requested_project_id = request.validated_query_data.get("project_id")
         project_ids = resolve_requested_project_ids(
             request,
             str(requested_project_id) if requested_project_id else None,
         )
         if project_ids is None:
             return self._gm.forbidden_response("Access denied to this project")
+        if not project_ids:
+            return self._gm.forbidden_response(
+                "User not associated with an organization"
+            )
 
         try:
             detail = feed_service.get_feed_detail(cluster_id, project_ids)
@@ -52,23 +66,28 @@ class FeedDetailView(APIView):
 
         return self._gm.success_response(FeedDetailCoreSerializer(detail).data)
 
+    @validated_request(
+        request_serializer=FeedUpdateBodySerializer,
+        responses={200: FeedDetailApiResponseSerializer, **ERROR_RESPONSES},
+    )
     def patch(self, request, cluster_id: str):
-        body = FeedUpdateBodySerializer(data=request.data)
-        if not body.is_valid():
-            return self._gm.bad_request(body.errors)
-
-        requested_project_id = body.validated_data.get("project_id")
+        requested_project_id = request.validated_data.get("project_id")
         project_ids = resolve_requested_project_ids(
             request,
             str(requested_project_id) if requested_project_id else None,
         )
         if project_ids is None:
             return self._gm.forbidden_response("Access denied to this project")
+        if not project_ids:
+            return self._gm.forbidden_response(
+                "User not associated with an organization"
+            )
 
         payload = FeedUpdatePayload(
-            status=body.validated_data.get("status"),
-            severity=body.validated_data.get("severity"),
-            assignee=body.validated_data.get("assignee"),
+            status=request.validated_data.get("status"),
+            severity=request.validated_data.get("severity"),
+            assignee=request.validated_data.get("assignee"),
+            assignee_provided="assignee" in request.validated_data,
         )
 
         try:

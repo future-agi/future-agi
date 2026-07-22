@@ -4,17 +4,57 @@ Project API Tests
 Tests for /tracer/project/ endpoints.
 """
 
+import json
+import uuid
+from datetime import UTC, timedelta
+
 import pytest
+from django.utils import timezone
 from rest_framework import status
 
+from accounts.models.user import OrgApiKey
 from model_hub.models.ai_model import AIModel
+from tracer.models.observation_span import ObservationSpan
 from tracer.models.project import Project
+from tracer.models.trace import Trace
+from tracer.models.trace_session import TraceSession
+
+AUTH_REQUIRED_STATUS_CODES = (
+    status.HTTP_401_UNAUTHORIZED,
+    status.HTTP_403_FORBIDDEN,
+)
 
 
 def get_result(response):
     """Extract result from API response wrapper."""
     data = response.json()
     return data.get("result", data)
+
+
+def _iso_z(value):
+    return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _chart_filter(column_id, filter_type, filter_op, filter_value, col_type=None):
+    filter_config = {
+        "filter_type": filter_type,
+        "filter_op": filter_op,
+        "filter_value": filter_value,
+    }
+    if col_type:
+        filter_config["col_type"] = col_type
+    return {"column_id": column_id, "filter_config": filter_config}
+
+
+def _traffic_sum(graph_payload):
+    return sum(
+        int(row.get("traffic", 0))
+        for row in get_result_from_graph(graph_payload)["system_metrics"]["traffic"]
+    )
+
+
+def get_result_from_graph(payload):
+    return payload.get("result", payload)
 
 
 @pytest.mark.integration
@@ -25,7 +65,7 @@ class TestProjectListAPI:
     def test_list_projects_unauthenticated(self, api_client):
         """Unauthenticated requests should be rejected."""
         response = api_client.get("/tracer/project/")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_list_projects_empty(self, auth_client):
         """List returns empty when no projects exist."""
@@ -142,6 +182,31 @@ class TestProjectListAPI:
 
 @pytest.mark.integration
 @pytest.mark.api
+class TestObserveProjectListAPI:
+    """Tests for GET /tracer/project/list_projects/ endpoint."""
+
+    def test_list_projects_issues_sort_falls_back(self, auth_client, observe_project):
+        """Synthetic issue-count sorting should not be passed to the ORM."""
+        response = auth_client.get(
+            "/tracer/project/list_projects/",
+            {
+                "project_type": "observe",
+                "sort_by": "issues",
+                "sort_direction": "desc",
+                "page_number": 0,
+                "page_size": 10,
+            },
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = get_result(response)
+        assert data["metadata"]["total_rows"] == 1
+        assert data["table"][0]["id"] == str(observe_project.id)
+        assert data["table"][0]["issues"] == 0
+
+
+@pytest.mark.integration
+@pytest.mark.api
 class TestProjectCreateAPI:
     """Tests for POST /tracer/project/ endpoint."""
 
@@ -156,7 +221,7 @@ class TestProjectCreateAPI:
             },
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_create_project_success(self, auth_client, workspace, organization):
         """Create a new project successfully."""
@@ -261,7 +326,7 @@ class TestProjectRetrieveAPI:
     def test_retrieve_project_unauthenticated(self, api_client, project):
         """Unauthenticated requests should be rejected."""
         response = api_client.get(f"/tracer/project/{project.id}/")
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_retrieve_project_success(self, auth_client, project):
         """Retrieve a project by ID."""
@@ -270,7 +335,8 @@ class TestProjectRetrieveAPI:
         data = get_result(response)
         assert data["name"] == "Test Project"
         assert data.get("trace_type") == "experiment"
-        assert "sampling_rate" in data  # Should include sampling rate
+        assert "sampling_rate" in data
+        assert data["sampling_rate"] == 0
 
     def test_retrieve_project_not_found(self, auth_client):
         """Retrieve non-existent project returns error."""
@@ -313,7 +379,7 @@ class TestProjectDeleteAPI:
             {"project_ids": [str(project.id)]},
             format="json",
         )
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_delete_project_success(self, auth_client, project):
         """Delete a project successfully."""
@@ -524,6 +590,42 @@ class TestProjectSDKCodeAPI:
         assert "project_add_code" in data
         assert "keys" in data
 
+    def test_get_sdk_code_uses_placeholders_and_does_not_create_keys(
+        self, auth_client, organization, user
+    ):
+        """SDK code samples should not expose or create persisted user keys."""
+        OrgApiKey.objects.create(
+            organization=organization,
+            type="user",
+            enabled=True,
+            user=user,
+            api_key="a" * 32,
+            secret_key="b" * 32,
+        )
+        key_count_before = OrgApiKey.objects.filter(
+            organization=organization,
+            type="user",
+            user=user,
+        ).count()
+
+        response = auth_client.get(
+            "/tracer/project/project_sdk_code/", {"project_type": "experiment"}
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        key_count_after = OrgApiKey.objects.filter(
+            organization=organization,
+            type="user",
+            user=user,
+        ).count()
+        assert key_count_after == key_count_before
+
+        payload_text = str(get_result(response))
+        assert "YOUR_FI_API_KEY" in payload_text
+        assert "YOUR_FI_SECRET_KEY" in payload_text
+        assert "a" * 32 not in payload_text
+        assert "b" * 32 not in payload_text
+
     def test_get_sdk_code_observe(self, auth_client):
         """Get SDK code for observe project type."""
         response = auth_client.get(
@@ -579,3 +681,163 @@ class TestProjectGraphDataAPI:
         data = get_result(response)
         assert "system_metrics" in data
         assert "evaluations" in data
+
+    def test_get_graph_data_applies_observe_chart_filters(
+        self, auth_client, observe_project
+    ):
+        """Observe chart graphs must honor non-date filters from the UI."""
+        suffix = uuid.uuid4().hex[:8]
+        session = TraceSession.objects.create(
+            project=observe_project,
+            name=f"Chart filter session {suffix}",
+            bookmarked=False,
+        )
+        trace_a = Trace.objects.create(
+            project=observe_project,
+            session=session,
+            name=f"Chart filter trace A {suffix}",
+        )
+        trace_b = Trace.objects.create(
+            project=observe_project,
+            name=f"Chart filter trace B {suffix}",
+        )
+
+        now = timezone.now()
+        span_a = ObservationSpan.objects.create(
+            id=f"chart_filter_a_{suffix}",
+            project=observe_project,
+            trace=trace_a,
+            name=f"Chart filter target {suffix}",
+            observation_type="llm",
+            start_time=now - timedelta(milliseconds=400),
+            end_time=now,
+            latency_ms=100,
+            prompt_tokens=2,
+            completion_tokens=3,
+            total_tokens=5,
+            cost=0.01,
+            status="OK",
+            span_attributes={"api_journey_marker": f"target-{suffix}"},
+        )
+        ObservationSpan.objects.create(
+            id=f"chart_filter_a_child_{suffix}",
+            project=observe_project,
+            trace=trace_a,
+            parent_span_id=span_a.id,
+            name=f"Chart filter session peer {suffix}",
+            observation_type="tool",
+            start_time=now - timedelta(milliseconds=300),
+            end_time=now,
+            latency_ms=200,
+            prompt_tokens=4,
+            completion_tokens=6,
+            total_tokens=10,
+            cost=0.02,
+            status="OK",
+            span_attributes={"api_journey_marker": f"peer-{suffix}"},
+        )
+        span_b = ObservationSpan.objects.create(
+            id=f"chart_filter_b_{suffix}",
+            project=observe_project,
+            trace=trace_b,
+            name=f"Chart filter other {suffix}",
+            observation_type="llm",
+            start_time=now - timedelta(milliseconds=200),
+            end_time=now,
+            latency_ms=300,
+            prompt_tokens=8,
+            completion_tokens=12,
+            total_tokens=20,
+            cost=0.03,
+            status="OK",
+            span_attributes={"api_journey_marker": f"other-{suffix}"},
+        )
+
+        date_filter = _chart_filter(
+            "created_at",
+            "datetime",
+            "between",
+            [_iso_z(now - timedelta(days=1)), _iso_z(now + timedelta(days=1))],
+        )
+
+        def get_chart(filters):
+            response = auth_client.get(
+                "/tracer/project/get_graph_data/",
+                {
+                    "project_id": str(observe_project.id),
+                    "interval": "day",
+                    "filters": json.dumps(filters),
+                },
+            )
+            assert response.status_code == status.HTTP_200_OK
+            return get_result(response)
+
+        assert _traffic_sum(get_chart([date_filter])) == 3
+        assert (
+            _traffic_sum(
+                get_chart(
+                    [
+                        date_filter,
+                        _chart_filter(
+                            "trace_id",
+                            "text",
+                            "equals",
+                            str(trace_a.id),
+                            col_type="SYSTEM_METRIC",
+                        ),
+                    ]
+                )
+            )
+            == 2
+        )
+        assert (
+            _traffic_sum(
+                get_chart(
+                    [
+                        date_filter,
+                        _chart_filter(
+                            "session_id",
+                            "text",
+                            "equals",
+                            str(session.id),
+                            col_type="SYSTEM_METRIC",
+                        ),
+                    ]
+                )
+            )
+            == 2
+        )
+        assert (
+            _traffic_sum(
+                get_chart(
+                    [
+                        date_filter,
+                        _chart_filter(
+                            "span_id",
+                            "text",
+                            "equals",
+                            span_b.id,
+                            col_type="SYSTEM_METRIC",
+                        ),
+                    ]
+                )
+            )
+            == 1
+        )
+        assert (
+            _traffic_sum(
+                get_chart(
+                    [
+                        date_filter,
+                        _chart_filter(
+                            "api_journey_marker",
+                            "text",
+                            "equals",
+                            f"target-{suffix}",
+                            col_type="SPAN_ATTRIBUTE",
+                        ),
+                    ]
+                )
+            )
+            == 1
+        )

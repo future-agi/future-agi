@@ -25,7 +25,7 @@ from django.utils import timezone
 logger = structlog.get_logger(__name__)
 
 # Bump this when system evals change. Seeder skips if DB is already at this version.
-SYSTEM_EVALS_VERSION = 14
+SYSTEM_EVALS_VERSION = 15
 
 # Postgres advisory-lock key. Serialises concurrent seed_evals() calls
 # across pods so the bulk_create path can't race on new eval_ids. Any
@@ -106,9 +106,7 @@ def seed_evals(dry_run=False, force=False, verbose=False):
         # Serialise concurrent seeders. pg_advisory_xact_lock releases at
         # COMMIT/ROLLBACK, so a killed pod can't leave an orphan lock.
         with connection.cursor() as cur:
-            cur.execute(
-                "SELECT pg_advisory_xact_lock(%s)", [_SEED_EVALS_LOCK_KEY]
-            )
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", [_SEED_EVALS_LOCK_KEY])
 
         # Re-check version cache INSIDE the lock — another pod may have
         # finished seeding while we were waiting for the lock.
@@ -238,7 +236,6 @@ def _eval_accepts_pdf(config):
 def _yaml_to_template_fields(eval_def):
     """Convert a YAML eval definition dict into EvalTemplate field values."""
     from model_hub.models.choices import OwnerChoices
-
     from tfc.ee_gating import is_oss
 
     track = eval_def.get("_track", "agent")

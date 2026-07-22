@@ -2,7 +2,7 @@ import { Box, Drawer, IconButton, Typography } from "@mui/material";
 import PropTypes from "prop-types";
 import React, { useMemo, useState } from "react";
 import Iconify from "src/components/iconify";
-import { useDevelopDetailContext } from "src/sections/develop-detail/Context/DevelopDetailContext";
+import { useRefreshScenarioGrid } from "./useRefreshScenarioGrid";
 import DatasetOptions from "src/sections/develop/AddRowDrawer/DatasetOptions";
 import ExistingDatasetModal from "src/sections/develop/AddRowDrawer/ExistingDatasetModal";
 import SetEmptyRow from "src/sections/develop/AddRowDrawer/SetEmptyRow";
@@ -52,7 +52,7 @@ const AddRowScenario = ({
     return options;
   }, [scenarioType]);
 
-  const { refreshGrid } = useDevelopDetailContext();
+  const refreshGrid = useRefreshScenarioGrid(scenarioId);
 
   const [emptyRow, setEmptyRow] = useState(false);
   const [existingDataset, setExistingDataset] = useState(false);

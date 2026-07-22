@@ -24,17 +24,18 @@ class SecretViewSet(BaseModelViewSetMixinWithUserOrg, viewsets.ModelViewSet):
         """Automatically set the organization when creating a secret"""
         serializer.save(
             organization=getattr(self.request, "organization", None)
-            or self.request.user.organization
+            or self.request.user.organization,
+            workspace=getattr(self.request, "workspace", None),
         )
 
     def perform_update(self, serializer):
         """Ensure organization is maintained when updating a secret"""
         serializer.save(
             organization=getattr(self.request, "organization", None)
-            or self.request.user.organization
+            or self.request.user.organization,
+            workspace=getattr(self.request, "workspace", None),
         )
 
     def perform_destroy(self, instance):
         """Override destroy to implement soft delete"""
-        instance.deleted = True
-        instance.save()
+        instance.delete()

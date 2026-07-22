@@ -21,6 +21,7 @@ from nltk.stem import WordNetLemmatizer
 logger = structlog.get_logger(__name__)
 
 from agentic_eval.core_evals.run_prompt.available_models import AVAILABLE_MODELS
+
 # (available_models always available)
 from model_hub.models.ai_model import AIModel
 from model_hub.models.api_key import ApiKey
@@ -36,6 +37,18 @@ from tfc.settings.settings import (
 from tfc.utils.clickhouse import ClickHouseClientSingleton
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.types import ClickhouseDatatypes
+
+# The HuggingFace Hub now emits the `List` feature type (datasets 4.0) in dataset
+# metadata, which pinned datasets 3.6.0 can't parse: load_dataset() raises
+# "Feature type 'List' not found" and streaming ingestion loads zero rows. Alias it
+# to the 3.6.0 equivalent (LargeList); setdefault leaves a future upgrade untouched.
+try:
+    from datasets.features import features as _hf_features
+
+    if hasattr(_hf_features, "_FEATURE_TYPES") and hasattr(_hf_features, "LargeList"):
+        _hf_features._FEATURE_TYPES.setdefault("List", _hf_features.LargeList)
+except Exception:  # defensive: datasets internals moved
+    logger.warning("hf List feature-type shim did not install", exc_info=True)
 
 
 class MyCustomLLM(CustomLLM):
@@ -410,7 +423,13 @@ def validate_model_working(model_name, api_key, provider):
             return response.choices[0].message.content
 
     except Exception as e:
-        logger.exception(f"An error occurred: {str(e)}")
+        # Expected user-input/connectivity validation failure (e.g. a bad
+        # Vertex/Bedrock credential or an invalid private key). This function
+        # only validates user-supplied model credentials and always returns the
+        # error to the caller as an Exception (-> clean 400), so log at WARNING
+        # to keep it out of Sentry (event_level=ERROR) while preserving a
+        # breadcrumb. See CORE-BACKEND-119X.
+        logger.warning(f"An error occurred: {str(e)}")
         status = False
         try:
             error_message = str(e).split("litellm.")[1].split("Traceback")[0]
@@ -724,6 +743,11 @@ def get_data_type_huggingface(column_info):
         "datetime": DataTypeChoices.DATETIME.value,
         "Image": DataTypeChoices.IMAGE.value,
         "Audio": DataTypeChoices.AUDIO.value,
+        "Pdf": DataTypeChoices.DOCUMENT.value,
+        "PDF": DataTypeChoices.DOCUMENT.value,
+        "pdf": DataTypeChoices.DOCUMENT.value,
+        "Document": DataTypeChoices.DOCUMENT.value,
+        "document": DataTypeChoices.DOCUMENT.value,
         "date32": DataTypeChoices.DATETIME.value,
         "date64": DataTypeChoices.DATETIME.value,
         "date": DataTypeChoices.DATETIME.value,

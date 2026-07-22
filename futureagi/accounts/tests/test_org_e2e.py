@@ -524,7 +524,8 @@ class TestMemberListAPI:
 
         # Filter for Pending only
         resp = owner_client.get(
-            '/accounts/organization/members/?filterStatus=["Pending"]'
+            "/accounts/organization/members/",
+            {"filter_status": "Pending"},
         )
         data = resp.json()["result"]
         assert all(m["status"] == "Pending" for m in data["results"])
@@ -1173,6 +1174,10 @@ class TestOrgWorkspaceIntegration:
 class TestOrgUpdate:
     """PATCH /accounts/organizations/update/ — org name/display updates."""
 
+    def _assert_unknown_field(self, response, field_name):
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert field_name in response.json()["details"]
+
     def test_owner_can_update_org_name(self, owner_client, org):
         """Owner can update organization name."""
         resp = owner_client.patch(
@@ -1194,6 +1199,18 @@ class TestOrgUpdate:
         assert resp.status_code == status.HTTP_200_OK
         org.refresh_from_db()
         assert org.display_name == "ACME Corporation"
+
+    def test_update_rejects_unknown_request_fields(self, owner_client, org):
+        """Org updates reject camelCase aliases and other stray fields."""
+        resp = owner_client.patch(
+            "/accounts/organizations/update/",
+            {
+                "display_name": "ACME Corporation",
+                "displayName": "legacy camel alias",
+            },
+            format="json",
+        )
+        self._assert_unknown_field(resp, "displayName")
 
 
 # =====================================================================

@@ -1,6 +1,8 @@
 import structlog
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
+from django.utils.decorators import method_decorator
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
@@ -8,6 +10,7 @@ from agent_playground.models.graph import Graph
 from agent_playground.models.graph_version import GraphVersion
 from agent_playground.models.node import Node
 from agent_playground.models.node_connection import NodeConnection
+from agent_playground.serializers.contracts import AGENT_PLAYGROUND_ERROR_RESPONSES
 from agent_playground.serializers.node_connection import (
     CreateNodeConnectionSerializer,
     NodeConnectionReadSerializer,
@@ -20,7 +23,13 @@ from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
 
+agent_playground_errors = swagger_auto_schema(
+    responses=AGENT_PLAYGROUND_ERROR_RESPONSES
+)
 
+
+@method_decorator(name="create", decorator=agent_playground_errors)
+@method_decorator(name="destroy", decorator=agent_playground_errors)
 class NodeConnectionCrudViewSet(ModelViewSet):
     """Granular CRUD for node connections within a graph version."""
 

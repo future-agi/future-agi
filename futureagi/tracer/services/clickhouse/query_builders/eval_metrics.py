@@ -18,7 +18,7 @@ Supports three eval output types:
   appears in ``output_str_list``, expressed as a percentage of total evals.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
@@ -95,12 +95,17 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
         # graph reflects the filtered result set.
         self.use_preaggregated = use_preaggregated and not self.filters
 
-        # Default time range
+        # Graph endpoints historically default to a compact 7-day window.
+        # BaseQueryBuilder's list-view fallback is intentionally much wider,
+        # so only use parse_time_range here when the caller supplied filters.
         if start_date is None or end_date is None:
-            from datetime import timedelta
-
-            self.end_date = end_date or datetime.utcnow()
-            self.start_date = start_date or (self.end_date - timedelta(days=7))
+            if self.filters:
+                parsed_start, parsed_end = self.parse_time_range(self.filters)
+            else:
+                parsed_end = datetime.utcnow()
+                parsed_start = parsed_end - timedelta(days=7)
+            self.start_date = start_date or parsed_start
+            self.end_date = end_date or parsed_end
         else:
             self.start_date = start_date
             self.end_date = end_date
@@ -117,14 +122,14 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
             ClickHouseFilterBuilder,
         )
 
-        fb = ClickHouseFilterBuilder(project_ids=[self.project_id])
+        fb = ClickHouseFilterBuilder(project_id=self.project_id)
         extra_where, extra_params = fb.translate(self.filters)
         if extra_where:
             self.params.update(extra_params)
             return (
                 f"AND trace_id IN ("
                 f"SELECT DISTINCT trace_id FROM spans "
-                f"WHERE project_id = %(project_id)s AND _peerdb_is_deleted = 0 "
+                f"WHERE project_id = %(project_id)s AND is_deleted = 0 "
                 f"AND {extra_where})"
             )
         return ""
@@ -210,7 +215,6 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
             ifNotFinite(avg(output_float) * 100, NULL) AS value
         FROM {self.RAW_TABLE} FINAL
         WHERE project_id = %(project_id)s
-          AND _peerdb_is_deleted = 0
           AND (deleted = 0 OR deleted IS NULL)
           AND custom_eval_config_id = toUUID(%(eval_config_id)s)
           AND created_at >= %(start_date)s
@@ -260,7 +264,6 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
                 AS value
         FROM {self.RAW_TABLE} FINAL
         WHERE project_id = %(project_id)s
-          AND _peerdb_is_deleted = 0
           AND (deleted = 0 OR deleted IS NULL)
           AND custom_eval_config_id = toUUID(%(eval_config_id)s)
           AND created_at >= %(start_date)s
@@ -311,7 +314,6 @@ class EvalMetricsQueryBuilder(BaseQueryBuilder):
             {choice_select}
         FROM {self.RAW_TABLE} FINAL
         WHERE project_id = %(project_id)s
-          AND _peerdb_is_deleted = 0
           AND (deleted = 0 OR deleted IS NULL)
           AND custom_eval_config_id = toUUID(%(eval_config_id)s)
           AND created_at >= %(start_date)s

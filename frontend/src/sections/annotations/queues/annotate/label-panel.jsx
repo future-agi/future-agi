@@ -392,6 +392,7 @@ const LabelPanel = forwardRef(function LabelPanel(
 
   // Refs for flushing debounced text inputs before submit
   const textFlushRefs = useRef({});
+  const labelRefs = useRef(new Map());
   // Mirror of values state, always up-to-date (including after flush)
   const valuesRef = useRef(values);
   valuesRef.current = values;
@@ -509,9 +510,8 @@ const LabelPanel = forwardRef(function LabelPanel(
     // Read from ref to capture any values flushed above
     const currentValues = valuesRef.current;
 
-    // Check required labels have values
-    const missingRequired = labels.filter((ql) => {
-      if (!ql.required) return false;
+    // Every label must be annotated before submitting
+    const missingLabels = labels.filter((ql) => {
       const labelId = ql.label_id;
       const v = currentValues[labelId];
       if (v === null || v === undefined) return true;
@@ -525,13 +525,13 @@ const LabelPanel = forwardRef(function LabelPanel(
       return false;
     });
 
-    if (missingRequired.length > 0) {
-      const names = missingRequired.map((l) => l.name).join(", ");
-      enqueueSnackbar(`Required labels missing: ${names}`, {
+    if (missingLabels.length > 0) {
+      const names = missingLabels.map((l) => l.name).join(", ");
+      enqueueSnackbar(`Please annotate all labels: ${names}`, {
         variant: "warning",
       });
-      // Highlight the missing required labels
-      const errorSet = new Set(missingRequired.map((l) => l.label_id));
+      // Highlight the labels still missing a value
+      const errorSet = new Set(missingLabels.map((l) => l.label_id));
       setErrorLabels(errorSet);
       return;
     }
@@ -596,61 +596,92 @@ const LabelPanel = forwardRef(function LabelPanel(
         setFocusedIndex((prev) => {
           const total = labels.length;
           if (total === 0) return 0;
-          if (e.shiftKey) return (prev - 1 + total) % total;
-          return (prev + 1) % total;
+          const next = e.shiftKey
+            ? (prev - 1 + total) % total
+            : (prev + 1) % total;
+          window.requestAnimationFrame(() => {
+            const nextLabel = labels[next];
+            const node = labelRefs.current.get(
+              String(nextLabel?.label_id || ""),
+            );
+            node?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+            const focusTarget = node?.querySelector(
+              'input, textarea, button, [tabindex]:not([tabindex="-1"])',
+            );
+            focusTarget?.focus?.({ preventScroll: true });
+          });
+          return next;
         });
         return;
       }
 
       // Number keys → dispatch to focused label
       const num = parseInt(e.key, 10);
-      if (num >= 1 && num <= 9 && labels.length > 0) {
-        const ql = labels[focusedIndex];
-        if (!ql) return;
-        const labelId = ql.label_id;
-        const currentVal = displayValues[labelId] ?? null;
+      if (Number.isNaN(num) || labels.length === 0) return;
+
+      const ql = labels[focusedIndex];
+      if (!ql) return;
+      const labelId = ql.label_id;
+      const currentVal = displayValues[labelId] ?? null;
+
+      if (ql.type === "star") {
+        const max = ql.settings?.no_of_stars || 5;
+        // A single keypress can't produce "10", so the "0" key maps to a
+        // rating of 10 (the max). Digits 1-9 map to themselves.
+        const rating = num === 0 ? 10 : num;
+        if (rating >= 1 && rating <= max) {
+          e.preventDefault();
+          const current = currentVal?.rating || 0;
+          handleChange(labelId, { rating: rating === current ? 0 : rating });
+        }
+        return;
+      }
+
+      if (ql.type === "thumbs_up_down") {
+        if (num === 1) {
+          e.preventDefault();
+          handleChange(labelId, {
+            value: currentVal?.value === "up" ? null : "up",
+          });
+        } else if (num === 2) {
+          e.preventDefault();
+          handleChange(labelId, {
+            value: currentVal?.value === "down" ? null : "down",
+          });
+        }
+        return;
+      }
+
+      if (ql.type === "categorical") {
+        const rawOptions = ql.settings?.options || [];
+        const options = rawOptions
+          .map((opt) =>
+            typeof opt === "string" ? opt : opt?.label || opt?.value || "",
+          )
+          .filter(Boolean);
+        // Number shortcuts are only offered for up to 10 options: digits 1-9
+        // select options 1-9 and "0" selects the 10th (same as the star
+        // "0 = 10" mapping). With more than 10 options the mapping is
+        // ambiguous, so number shortcuts are disabled entirely.
+        if (options.length > 10) return;
+        let optIndex = -1;
+        if (num >= 1 && num <= 9) optIndex = num - 1;
+        else if (num === 0 && options.length === 10) optIndex = 9;
+        if (optIndex < 0 || optIndex >= options.length) return;
 
         e.preventDefault();
-
-        if (ql.type === "star") {
-          const max = ql.settings?.no_of_stars || 5;
-          if (num <= max) {
-            const current = currentVal?.rating || 0;
-            handleChange(labelId, { rating: num === current ? 0 : num });
-          }
-        } else if (ql.type === "thumbs_up_down") {
-          if (num === 1) {
-            handleChange(labelId, {
-              value: currentVal?.value === "up" ? null : "up",
-            });
-          } else if (num === 2) {
-            handleChange(labelId, {
-              value: currentVal?.value === "down" ? null : "down",
-            });
-          }
-        } else if (ql.type === "categorical") {
-          const rawOptions = ql.settings?.options || [];
-          const options = rawOptions
-            .map((opt) =>
-              typeof opt === "string" ? opt : opt?.label || opt?.value || "",
-            )
-            .filter(Boolean);
-          const optIndex = num - 1;
-          if (optIndex < options.length) {
-            const opt = options[optIndex];
-            const selected = currentVal?.selected || [];
-            const isMulti = ql.settings?.multi_choice || false;
-            if (isMulti) {
-              const next = selected.includes(opt)
-                ? selected.filter((v) => v !== opt)
-                : [...selected, opt];
-              handleChange(labelId, { selected: next });
-            } else {
-              handleChange(labelId, {
-                selected: selected[0] === opt ? [] : [opt],
-              });
-            }
-          }
+        const opt = options[optIndex];
+        const selected = currentVal?.selected || [];
+        const isMulti = ql.settings?.multi_choice || false;
+        if (isMulti) {
+          const next = selected.includes(opt)
+            ? selected.filter((v) => v !== opt)
+            : [...selected, opt];
+          handleChange(labelId, { selected: next });
+        } else {
+          handleChange(labelId, {
+            selected: selected[0] === opt ? [] : [opt],
+          });
         }
       }
     };
@@ -1037,6 +1068,11 @@ const LabelPanel = forwardRef(function LabelPanel(
           return (
             <Box
               key={ql.id}
+              ref={(node) => {
+                const key = String(labelId || "");
+                if (node) labelRefs.current.set(key, node);
+                else labelRefs.current.delete(key);
+              }}
               data-review-label-id={labelId}
               data-comment-focus={labelFocused ? "true" : undefined}
               onClick={() => !readOnly && setFocusedIndex(i)}
@@ -1175,51 +1211,66 @@ const LabelPanel = forwardRef(function LabelPanel(
 
       {/* Submit (hidden in read-only mode) */}
       {!readOnly && (
-        <Tooltip title="Ctrl+Enter" placement="top">
-          <span>
-            <Button
-              variant="contained"
-              fullWidth
-              color="inherit"
-              sx={{
-                mt: 2,
-                borderRadius: 0.75,
-                minHeight: 42,
-                fontWeight: 800,
-                bgcolor: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? theme.palette.common.white
-                    : theme.palette.grey[900],
-                color: (theme) =>
-                  theme.palette.mode === "dark"
-                    ? theme.palette.grey[900]
-                    : theme.palette.common.white,
-                boxShadow: "none",
-                "&:hover": {
+        <Box
+          data-testid="annotation-submit-action"
+          data-sticky-action="true"
+          sx={{
+            position: "sticky",
+            bottom: 0,
+            zIndex: 2,
+            mt: 2,
+            pt: 1.25,
+            pb: 0.5,
+            bgcolor: "background.paper",
+            borderTop: 1,
+            borderColor: "divider",
+          }}
+        >
+          <Tooltip title="Ctrl+Enter" placement="top">
+            <span>
+              <Button
+                variant="contained"
+                fullWidth
+                color="inherit"
+                sx={{
+                  borderRadius: 0.75,
+                  minHeight: 42,
+                  fontWeight: 800,
                   bgcolor: (theme) =>
                     theme.palette.mode === "dark"
-                      ? alpha(theme.palette.common.white, 0.92)
-                      : theme.palette.grey[800],
-                  boxShadow: (theme) =>
-                    `0 12px 24px ${alpha(theme.palette.text.primary, 0.14)}`,
-                },
-                "&.Mui-disabled": {
-                  color: "text.disabled",
-                  bgcolor: (theme) => quietSurface(theme, 0.08),
-                },
-              }}
-              onClick={handleSubmit}
-              disabled={isPending || !hasValues}
-              startIcon={
-                isPending ? (
-                  <CircularProgress size={16} color="inherit" />
-                ) : null
-              }
-            >
-              {submitLabel}
-            </Button>
-          </span>
-        </Tooltip>
+                      ? theme.palette.common.white
+                      : theme.palette.grey[900],
+                  color: (theme) =>
+                    theme.palette.mode === "dark"
+                      ? theme.palette.grey[900]
+                      : theme.palette.common.white,
+                  boxShadow: "none",
+                  "&:hover": {
+                    bgcolor: (theme) =>
+                      theme.palette.mode === "dark"
+                        ? alpha(theme.palette.common.white, 0.92)
+                        : theme.palette.grey[800],
+                    boxShadow: (theme) =>
+                      `0 12px 24px ${alpha(theme.palette.text.primary, 0.14)}`,
+                  },
+                  "&.Mui-disabled": {
+                    color: "text.disabled",
+                    bgcolor: (theme) => quietSurface(theme, 0.08),
+                  },
+                }}
+                onClick={handleSubmit}
+                disabled={isPending || !hasValues}
+                startIcon={
+                  isPending ? (
+                    <CircularProgress size={16} color="inherit" />
+                  ) : null
+                }
+              >
+                {submitLabel}
+              </Button>
+            </span>
+          </Tooltip>
+        </Box>
       )}
     </Box>
   );

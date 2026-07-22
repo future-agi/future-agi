@@ -22,8 +22,6 @@ import { getStorage, setStorage } from "src/hooks/use-local-storage";
 import { ShareDialog } from "src/components/share-dialog";
 import FormSearchField from "src/components/FormSearchField/FormSearchField";
 import { useDebounce } from "src/hooks/use-debounce";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 
 import { useProjectList, DOC_LINKS } from "./LLMTracing/common";
 import { resetTraceGridStore, resetSpanGridStore } from "./LLMTracing/states";
@@ -59,6 +57,9 @@ const ObserveHeader = ({
   filterSpan,
   selectedTab,
   filterSession,
+  filterUsers,
+  searchUsers,
+  sortUsers,
   refreshData,
   resetFilters,
 }) => {
@@ -213,10 +214,21 @@ const ObserveHeader = ({
     mutationFn: () => {
       let url;
       let filters;
+      const extraParams = {};
 
       if (text === "Sessions") {
         url = endpoints.project.projectSessionListExport;
         filters = filterSession;
+      } else if (text === "Users") {
+        url = endpoints.project.getUsersList();
+        filters = filterUsers;
+        extraParams.export = true;
+        // Match the grid: it fetches with search + sort_params too, so the CSV
+        // reflects a searched/sorted table rather than just the filter set.
+        if (searchUsers) extraParams.search = searchUsers;
+        if (sortUsers && sortUsers.length) {
+          extraParams.sort_params = JSON.stringify(sortUsers);
+        }
       } else if (selectedTab === "spans") {
         url = endpoints.project.getSpansForObserveExport;
         filters = filterSpan;
@@ -229,9 +241,8 @@ const ObserveHeader = ({
       return axios.get(url, {
         params: {
           project_id: observeId,
-          filters: JSON.stringify(
-            canonicalizeApiFilterColumnIds(objectCamelToSnake(filters)),
-          ),
+          filters: JSON.stringify(filters || []),
+          ...extraParams,
         },
       });
     },
@@ -240,11 +251,13 @@ const ObserveHeader = ({
       const fileSuffix =
         text === "Sessions"
           ? "sessions"
-          : selectedTab === "trace"
-            ? "traces"
-            : selectedTab === "spans"
-              ? "spans"
-              : "data";
+          : text === "Users"
+            ? "users"
+            : selectedTab === "trace"
+              ? "traces"
+              : selectedTab === "spans"
+                ? "spans"
+                : "data";
 
       enqueueSnackbar(
         `${fileSuffix.charAt(0).toUpperCase() + fileSuffix.slice(1)} downloaded successfully`,
@@ -257,13 +270,18 @@ const ObserveHeader = ({
         type: "text/csv;charset=utf-8;",
       });
 
+      // Prefer the backend's Content-Disposition name for every export so the
+      // server is the single source of truth; fall back to the readable
+      // project-label name when the header isn't present.
+      let downloadName = `${currentProject?.label || "project"}-${fileSuffix}.csv`;
+      const disposition = response.headers?.["content-disposition"] || "";
+      const match = /filename="?([^";]+)"?/i.exec(disposition);
+      if (match?.[1]) downloadName = match[1];
+
       const link = document.createElement("a");
       const url = window.URL.createObjectURL(blob);
       link.href = url;
-      link.setAttribute(
-        "download",
-        `${currentProject?.label || "project"}-${fileSuffix}.csv`,
-      );
+      link.setAttribute("download", downloadName);
       document.body.appendChild(link);
       link.click();
 
@@ -669,6 +687,9 @@ ObserveHeader.propTypes = {
   filterSpan: PropTypes.array,
   selectedTab: PropTypes.string,
   filterSession: PropTypes.array,
+  filterUsers: PropTypes.array,
+  searchUsers: PropTypes.string,
+  sortUsers: PropTypes.array,
   refreshData: PropTypes.func,
   resetFilters: PropTypes.func,
 };

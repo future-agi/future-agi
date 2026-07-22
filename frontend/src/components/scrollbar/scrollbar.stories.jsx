@@ -12,9 +12,15 @@ const Template = (args) => (
       <h2>Content</h2>
       <p>This is a scrollable area. Scroll to see more content.</p>
       <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit.</p>
-      <p>Quisque sollicitudin, sapien vel cursus hendrerit, odio augue sollicitudin tortor.</p>
+      <p>
+        Quisque sollicitudin, sapien vel cursus hendrerit, odio augue
+        sollicitudin tortor.
+      </p>
       <p>Fusce nec sapien id leo posuere auctor non nec orci.</p>
-      <p>Nulla facilisi. Vivamus scelerisque, enim in varius tincidunt, eros nisl fermentum dui.</p>
+      <p>
+        Nulla facilisi. Vivamus scelerisque, enim in varius tincidunt, eros nisl
+        fermentum dui.
+      </p>
       <p>Curabitur consequat ligula non risus euismod scelerisque.</p>
       <p>Donec non suscipit libero, eget pharetra leo.</p>
       <p>Donec non suscipit libero, eget pharetra leo.</p>

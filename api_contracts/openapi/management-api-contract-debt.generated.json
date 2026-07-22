@@ -1,0 +1,170 @@
+{
+  "generated_from": "api_contracts/openapi/swagger.json",
+  "summary": {
+    "paths": 968,
+    "operations": 1314,
+    "mutation_endpoints_without_body_schema": 0,
+    "operations_without_response_schema": 0,
+    "broad_success_response_schemas": 0,
+    "operations_without_error_response_schema": 0,
+    "broad_error_response_schemas": 0
+  },
+  "by_group": {
+    "accounts": {
+      "paths": 79,
+      "operations": 103,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "agent-playground": {
+      "paths": 24,
+      "operations": 34,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "agentcc": {
+      "paths": 101,
+      "operations": 149,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "ai-tools": {
+      "paths": 1,
+      "operations": 1,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "api": {
+      "paths": 8,
+      "operations": 8,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "call-websocket": {
+      "paths": 1,
+      "operations": 1,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "falcon-ai": {
+      "paths": 17,
+      "operations": 27,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "health": {
+      "paths": 1,
+      "operations": 1,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "integrations": {
+      "paths": 8,
+      "operations": 12,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "mcp": {
+      "paths": 15,
+      "operations": 17,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "model-hub": {
+      "paths": 365,
+      "operations": 468,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "saml2_auth": {
+      "paths": 12,
+      "operations": 15,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "sdk": {
+      "paths": 9,
+      "operations": 11,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "simulate": {
+      "paths": 106,
+      "operations": 126,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "tracer": {
+      "paths": 154,
+      "operations": 218,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "usage": {
+      "paths": 66,
+      "operations": 122,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    },
+    "v1": {
+      "paths": 1,
+      "operations": 1,
+      "mutation_endpoints_without_body_schema": 0,
+      "operations_without_response_schema": 0,
+      "broad_success_response_schemas": 0,
+      "operations_without_error_response_schema": 0,
+      "broad_error_response_schemas": 0
+    }
+  },
+  "mutation_endpoints_without_body_schema": [],
+  "operations_without_response_schema": [],
+  "broad_success_response_schemas": []
+}

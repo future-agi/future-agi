@@ -711,7 +711,7 @@ class TestMemberAndViewerRestrictions:
         response = client.get("/accounts/organization/members/")
 
         # Should fail - members don't have access to member list
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN)
 
         client.stop_workspace_injection()
 

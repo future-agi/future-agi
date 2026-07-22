@@ -1,6 +1,9 @@
 from rest_framework import serializers
 
-from tracer.models.observability_provider import ObservabilityProvider
+from tracer.models.observability_provider import ObservabilityProvider, ProviderChoices
+
+# Providers whose api-key / assistant verification is actually implemented.
+VERIFIABLE_PROVIDERS = [ProviderChoices.VAPI.value, ProviderChoices.RETELL.value]
 
 
 class ObservabilityProviderSerializer(serializers.ModelSerializer):
@@ -42,3 +45,31 @@ class ObservabilityProviderSerializer(serializers.ModelSerializer):
                 {"project": "Project cannot be changed after creation."}
             )
         return super().update(instance, validated_data)
+
+
+class VerifyApiKeyRequestSerializer(serializers.Serializer):
+    """verify_api_key body. provider is constrained to the providers the verify
+    logic actually supports, so the contract advertises only those (not the full
+    enum) and an unsupported provider is rejected at validation."""
+
+    provider = serializers.ChoiceField(choices=VERIFIABLE_PROVIDERS)
+    api_key = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    agent_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+class VerifyAssistantIdRequestSerializer(serializers.Serializer):
+    """verify_assistant_id body; provider constrained to the verifiable set."""
+
+    provider = serializers.ChoiceField(choices=VERIFIABLE_PROVIDERS)
+    assistant_id = serializers.CharField(
+        required=False, allow_blank=True, allow_null=True
+    )
+    api_key = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    agent_id = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+
+
+class VerifyResponseSerializer(serializers.Serializer):
+    """verify_* success envelope: a status flag and a human-readable message."""
+
+    status = serializers.BooleanField(default=True)
+    result = serializers.CharField()

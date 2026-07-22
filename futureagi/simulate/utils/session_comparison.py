@@ -3,15 +3,10 @@ from collections import ChainMap
 from datetime import datetime
 from typing import List
 
-from django.db import models
-from django.db.models import Count, F, Max, Min, Q, Sum
-from django.db.models.functions import Coalesce
-
 from simulate.models import CallExecution
 from simulate.models.chat_message import ChatMessageModel
 from simulate.pydantic_schemas.chat import ChatRole
 from simulate.serializers.chat_message import ChatMessageSerializer
-from tracer.models.observation_span import ObservationSpan
 from tracer.models.trace import Trace
 from tracer.utils.otel import CallAttributes, ConversationAttributes
 
@@ -23,43 +18,64 @@ RECORDING_ATTR_KEYS = {
 }
 
 
-def fetch_base_session_metrics(session_id: str):
+def fetch_base_session_metrics(session_id: str, *, organization=None):
 
     if not session_id:
         raise ValueError("Session ID is required")
 
-    # Calculate session-level aggregates
-    base_session_aggregates = ObservationSpan.objects.filter(
-        trace__session_id=session_id
-    ).aggregate(
-        start_time=Min("start_time"),
-        end_time=Max("end_time"),
-        total_tokens=Coalesce(
-            Sum(F("total_tokens"), output_field=models.IntegerField()),
-            0,
-        ),
-        total_traces=Count("trace_id", distinct=True),
-        total_tools_count=Count(
-            "id",
-            filter=Q(observation_type="tool"),
-            distinct=False,
-        ),
-    )
+    # Codex wave-3 P0 (2026-05-26): the legacy ORM path joined through
+    # `trace__session=session` which the caller had already org-scoped
+    # via `CallExecution.objects.filter(test_execution__organization=)`.
+    # The new CH path receives a raw `session_id` (from `Row.metadata`)
+    # and queries by id only — a forged/stale Row.metadata could return
+    # another tenant's metrics. Verify tenant scope BEFORE the CH read.
+    if organization is not None:
+        from tracer.models.trace_session import TraceSession
 
-    base_session_duration = (
-        base_session_aggregates["end_time"] - base_session_aggregates["start_time"]
-    )
+        if not TraceSession.objects.filter(
+            id=session_id, project__organization=organization
+        ).exists():
+            raise ValueError("Session not found in organization scope")
+
+    # Session-level aggregates from ClickHouse via wave-3 reader extension
+    # ``CHSpanReader.aggregate_by_session_ids`` (commit 93c5c415f).
+    #
+    # Original PG query was a single .aggregate() call producing:
+    #   {start_time, end_time, total_tokens, total_traces, total_tools_count}
+    #
+    # The reader returns most of those in one query
+    # (span_count, traces_count, tokens, cost, start_time, end_time) but NOT
+    # the conditional ``Count(filter=Q(observation_type="tool"))``. For a
+    # single session a second narrow CH read via ``count_with_filters`` is
+    # cheap and avoids burdening the bulk-rollup helper with a special
+    # case (no N+1 — this function takes one session at a time).
+    from tracer.services.clickhouse.v2 import get_reader
+
+    with get_reader() as reader:
+        per_session = reader.aggregate_by_session_ids([str(session_id)])
+        tools_count = reader.count_with_filters(
+            session_id=str(session_id),
+            observation_type="tool",
+        )
+
+    agg = per_session.get(str(session_id))
+    if not agg or agg["start_time"] is None or agg["end_time"] is None:
+        # PG path raised on missing duration via the subsequent subtraction;
+        # surface the same ValueError shape here when CH has no spans for
+        # the session yet (or the session_id is unknown).
+        raise ValueError("Session duration is required")
+
+    base_session_duration = (agg["end_time"] - agg["start_time"]).total_seconds()
     if not base_session_duration:
         raise ValueError("Session duration is required")
 
-    base_session_duration = base_session_duration.total_seconds()
-
-    # Coalesce(..., 0) and Count() guarantee non-null integers
+    # Reader guarantees non-null ints for tokens/traces_count (sum/uniqExact
+    # return 0 on empty groups); count_with_filters returns 0 on no match.
     base_session_metrics = {
         "duration": base_session_duration,
-        "tokens": base_session_aggregates["total_tokens"],
-        "turn_count": base_session_aggregates["total_traces"],
-        "tools_count": base_session_aggregates["total_tools_count"],
+        "tokens": int(agg["tokens"] or 0),
+        "turn_count": int(agg["traces_count"] or 0),
+        "tools_count": int(tools_count or 0),
     }
 
     return base_session_metrics
@@ -219,7 +235,16 @@ def fetch_comparison_metrics(call_execution: CallExecution, session_id: str):
     if not call_execution or not session_id:
         raise ValueError("Call execution and session ID are required")
 
-    base_session_metrics = fetch_base_session_metrics(session_id)
+    # Codex wave-3 P0: thread the call_execution's organization through to
+    # the session lookup so the CH read is tenant-scoped. The CallExecution
+    # is the caller's org-scoped anchor (test_execution__organization gate
+    # upstream); the session_id comes from Row.metadata which is untrusted.
+    organization = getattr(
+        getattr(call_execution, "test_execution", None), "organization", None
+    )
+    base_session_metrics = fetch_base_session_metrics(
+        session_id, organization=organization
+    )
     comparison_call_metrics = fetch_call_execution_metrics(call_execution)
 
     return _build_metric_comparisons(base_session_metrics, comparison_call_metrics)
@@ -227,25 +252,57 @@ def fetch_comparison_metrics(call_execution: CallExecution, session_id: str):
 
 def fetch_voice_conversation_span(trace_id: str) -> dict:
     """
-    Fetch the conversation span for a voice trace (single DB query).
-    Returns the raw span dict with span_attributes and eval_attributes.
+    Fetch the conversation span for a voice trace via ClickHouse.
+    Returns a dict with span_attributes and eval_attributes (legacy shape).
+
+    Voice traces have at most a handful of conversation spans (typically one
+    per trace), so list_by_trace + Python filter is bounded. `eval_attributes`
+    was a PG-only JSONField; in CH it round-trips through `attributes_extra`
+    (see tracer/services/clickhouse/v2/adapter.py:330). We reconstruct the
+    same dict shape downstream callers expect.
     """
     if not trace_id:
         raise ValueError("Trace ID is required")
 
-    span = (
-        ObservationSpan.objects.filter(
-            trace_id=trace_id,
-            observation_type="conversation",
-        )
-        .values("span_attributes", "eval_attributes")
-        .first()
-    )
+    from tracer.services.clickhouse.v2 import get_reader
 
-    if not span:
+    with get_reader() as reader:
+        spans = reader.list_by_trace(str(trace_id))
+
+    conversation_span = next(
+        (s for s in spans if s.observation_type == "conversation"), None
+    )
+    if conversation_span is None:
         raise ValueError(f"No conversation span found for trace {trace_id}")
 
-    return span
+    # Legacy callers expect a dict shaped like
+    # {"span_attributes": {...}, "eval_attributes": {...}}.
+    # CH's `span_attributes` is the merge of attrs_string/number/bool +
+    # attributes_extra (without the round-tripped eval_attributes /
+    # model_parameters keys, which live alongside in attributes_extra).
+    extra = type(reader).attributes_extra_as_dict(conversation_span)
+    # Defensive: attributes_extra_as_dict can yield a non-dict if the
+    # underlying CH column is a raw String (schema 013) rather than typed
+    # JSON. Treat anything that's not a dict as no overflow data.
+    if not isinstance(extra, dict):
+        extra = {}
+    span_attributes: dict = {}
+    span_attributes.update(conversation_span.attrs_string or {})
+    span_attributes.update(conversation_span.attrs_number or {})
+    span_attributes.update(conversation_span.attrs_bool or {})
+    # Overflow keys that aren't the round-tripped PG JSONField columns are
+    # part of the original span_attributes; keep them merged in.
+    _ROUND_TRIP_COLS = ("model_parameters", "input_images", "eval_input", "eval_attributes")
+    for k, v in extra.items():
+        if k not in _ROUND_TRIP_COLS:
+            span_attributes[k] = v
+
+    eval_attributes = extra.get("eval_attributes") or {}
+
+    return {
+        "span_attributes": span_attributes,
+        "eval_attributes": eval_attributes,
+    }
 
 
 def merge_span_attrs(span: dict) -> ChainMap:
@@ -522,7 +579,10 @@ def fetch_simulated_call_recordings(call_execution: CallExecution) -> dict:
     provider_data = call_execution.provider_call_data
     payload = None
     if isinstance(provider_data, dict):
-        payload = provider_data.get("vapi", {})
+        if len(provider_data) == 1:
+            payload = next(iter(provider_data.values()))
+        else:
+            payload = provider_data.get("vapi", {})
     if not isinstance(payload, dict):
         payload = {}
 

@@ -518,8 +518,13 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
 
             agent = FixYourAgent()
 
+            configured_model_name = (run.optimizer_config or {}).get("model_name")
             # Get execution model (model used to run prompts and generate outputs)
-            execution_model_name = run.model.model_name if run.model else "gpt-4o"
+            execution_model_name = (
+                run.model.user_model_id
+                if run.model
+                else configured_model_name or "gpt-4o"
+            )
 
             logger.info(
                 "Starting optimization with DirectEvaluator",
@@ -548,7 +553,9 @@ async def run_optimization_activity(input: Dict[str, Any]) -> Dict[str, Any]:
                 execution_data=execution_data,
                 optimizer_type=run.optimizer_algorithm,
                 optimization_model=(
-                    run.optimizer_model.model_name if run.optimizer_model else "gpt-4o"
+                    run.optimizer_model.user_model_id
+                    if run.optimizer_model
+                    else configured_model_name or "gpt-4o"
                 ),
                 optimizer_config=optimizer_config,
                 use_dual_llm_sim=False,  # Not using dual LLM for dataset optimization
@@ -654,6 +661,11 @@ def _prepare_dataset_execution_data(column, dataset, user_eval_metrics, initial_
                 "eval_type_id": template_config.get("eval_type_id"),
                 "output_type": template_config.get("output"),
                 "required_keys": template_config.get("required_keys"),
+                "output_type_normalized": eval_template.output_type_normalized,
+                "choice_scores": eval_template.choice_scores,
+                "pass_threshold": eval_template.pass_threshold,
+                "eval_config_id": str(user_eval_metric.id),
+                "eval_name": user_eval_metric.name or eval_template.name,
             }
         )
 

@@ -5,6 +5,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { normalizePersonas } from "src/sections/persona/personaApiShape";
 
 export const useGetPersonas = (search, type) => {
   const queryData = useInfiniteQuery({
@@ -31,7 +32,7 @@ export const useGetPersonas = (search, type) => {
     ...queryData,
     personas: queryData.data?.pages.reduce((acc, curr) => {
       if (curr.data?.result?.results) {
-        acc.push(...(curr.data?.result?.results || []));
+        acc.push(...normalizePersonas(curr.data?.result?.results));
       }
       return acc;
     }, []),
@@ -67,7 +68,11 @@ export const useGetPersonasPaginated = ({
           simulation_type: simulationType || undefined,
         },
       });
-      return data?.result;
+      const result = data?.result || {};
+      return {
+        ...result,
+        results: normalizePersonas(result.results),
+      };
     },
     enabled,
     keepPreviousData: true,

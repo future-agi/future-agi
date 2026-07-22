@@ -1,12 +1,12 @@
-import React from 'react';
-import { useForm } from 'react-hook-form';
-import { FormTextField } from './FormTextField';
+import React from "react";
+import { useForm } from "react-hook-form";
+import { FormTextField } from "./FormTextField";
 
 export default {
-  title: 'Components/FormTextField',
+  title: "Components/FormTextField",
   component: FormTextField,
   parameters: {
-    layout: 'centered',
+    layout: "centered",
   },
 };
 
@@ -14,14 +14,14 @@ const FormWrapper = ({ children, defaultValues = {} }) => {
   const methods = useForm({
     defaultValues,
   });
-  
+
   return children(methods);
 };
 
 // Basic text field
 export const Basic = {
   render: () => (
-    <FormWrapper defaultValues={{ basic: '' }}>
+    <FormWrapper defaultValues={{ basic: "" }}>
       {(methods) => (
         <FormTextField
           control={methods.control}
@@ -42,7 +42,7 @@ export const Basic = {
 // Required field
 export const Required = {
   render: () => (
-    <FormWrapper defaultValues={{ required: '' }}>
+    <FormWrapper defaultValues={{ required: "" }}>
       {(methods) => (
         <FormTextField
           control={methods.control}
@@ -85,7 +85,7 @@ export const NumberSpinner = {
 // With helper text
 export const WithHelperText = {
   render: () => (
-    <FormWrapper defaultValues={{ helper: '' }}>
+    <FormWrapper defaultValues={{ helper: "" }}>
       {(methods) => (
         <FormTextField
           control={methods.control}
@@ -106,7 +106,7 @@ export const WithHelperText = {
 // With error state
 export const WithError = {
   render: () => (
-    <FormWrapper defaultValues={{ error: '' }}>
+    <FormWrapper defaultValues={{ error: "" }}>
       {(methods) => (
         <FormTextField
           control={methods.control}

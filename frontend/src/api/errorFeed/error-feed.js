@@ -232,10 +232,8 @@ export const useRunDeepAnalysis = () => {
           dispatched.status === DEEP_ANALYSIS_STATUS.RUNNING
             ? {
                 root_causes: [],
-                rootCauses: [],
                 recommendations: [],
                 immediate_fix: null,
-                immediateFix: null,
               }
             : {};
         queryClient.setQueryData(key, {
@@ -246,7 +244,6 @@ export const useRunDeepAnalysis = () => {
               ...(previousResult ?? {}),
               status: dispatched.status,
               trace_id: traceIdValue,
-              traceId: traceIdValue,
               ...wipeOnRunning,
             },
           },
@@ -287,7 +284,14 @@ export const useCreateLinearIssue = () => {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ clusterId, teamId, traceId, title, description, priority }) =>
+    mutationFn: ({
+      clusterId,
+      teamId,
+      traceId,
+      title,
+      description,
+      priority,
+    }) =>
       axios.post(endpoints.errorFeed.createLinearIssue(clusterId), {
         team_id: teamId,
         ...(traceId && { trace_id: traceId }),

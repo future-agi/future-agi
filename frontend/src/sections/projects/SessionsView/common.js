@@ -126,11 +126,11 @@ export const getVisiblePercentage = (elementRect, containerRect) => {
 };
 
 export const defaultFilter = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 

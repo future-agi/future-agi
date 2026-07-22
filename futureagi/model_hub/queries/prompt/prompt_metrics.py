@@ -201,6 +201,46 @@ def fetch_prompt_metrics_span_query(
     page_number: int | None = 0,
     page_size: int | None = 10,
 ):
+    # CH25-TODO: this is a deep ORM query that returns Django model
+    # instances enriched with F-expression annotations spanning multiple
+    # FK chains (prompt_version → original_template, project → sessions,
+    # prompt_label → name). The downstream consumer at
+    # ``model_hub/services/prompt_metrics.py:159`` reads:
+    #   result.id, result.input, result.output, result.name,
+    #   result.observation_type, result.created_at, result.trace_id,
+    #   result.project.id, result.session_id, result.prompt_label_id,
+    #   result.prompt_label_name, result.prompt_template_version,
+    #   getattr(result, f"metric_<config_id>", ...)
+    # off each row.
+    #
+    # Wave-3 status (93c5c415f): no reader covering filter-driven
+    # span listing by prompt_template was added. The required
+    # extension is still:
+    #
+    #   list_spans_for_prompt_template(prompt_template_id, *,
+    #       prompt_version_ids, filters, search_term,
+    #       page_number, page_size) -> (rows: list[dict], total_count: int)
+    #
+    # ... where filters route through the v2 ClickHouseFilterBuilder
+    # (same translator as TraceListQueryBuilder uses).
+    #
+    # Migration plan (deferred):
+    #   1. Reader extension as above.
+    #   2. Caller refactor:
+    #      Replace `result.project.id` (FK traversal) with a Project
+    #      lookup keyed on `result["project_id"]`; the in-CH row already
+    #      carries project_id. Replace the F-expression annotations with
+    #      explicit Python joins on the PG-side caches (prompt_version,
+    #      prompt_label) that the caller already needs to resolve for
+    #      template_version/label_name fields.
+    #   3. EvalLogger metric_<config_id> annotations stay PG (EvalLogger
+    #      is a PG table) — the caller would query EvalLogger separately
+    #      for the (span_id, custom_eval_config_id) pairs returned from
+    #      CH and stitch them in.
+    #
+    # Cross-cutting blast radius (caller refactor + new reader +
+    # EvalLogger zip) makes this a separate commit; KEEP-PG until the
+    # reader extension lands.
 
     base_query = (
         ObservationSpan.objects.filter(

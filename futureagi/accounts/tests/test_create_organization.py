@@ -25,6 +25,12 @@ from tfc.middleware.workspace_context import (
     set_workspace_context,
 )
 
+
+def _assert_unknown_field(response, field_name):
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    assert field_name in response.json()["details"]
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -238,6 +244,18 @@ class TestCreateAdditionalOrganization:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+    def test_create_rejects_unknown_request_fields(self, auth_client):
+        """Additional org creation should only accept name/display_name."""
+        response = auth_client.post(
+            "/accounts/organizations/new/",
+            {
+                "name": "New Org",
+                "displayName": "legacy camel alias",
+            },
+            format="json",
+        )
+        _assert_unknown_field(response, "displayName")
 
     def test_display_name_defaults_to_name(self, auth_client):
         """If display_name not provided, it defaults to name."""

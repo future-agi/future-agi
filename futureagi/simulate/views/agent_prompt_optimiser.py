@@ -1,15 +1,20 @@
 import structlog
 from django.db import transaction
 from django.db.models import Avg, Count
+from django.http import Http404
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
-logger = structlog.get_logger(__name__)
 from model_hub.utils.dataset_optimization import calculate_percentage_point_change
 from model_hub.utils.llm_providers import get_provider_logo_url
+from model_hub.utils.workspace_scope import (
+    request_organization,
+    request_workspace_filter,
+)
 from simulate.constants.agent_prompt_optimiser import (
     AGENT_PROMPT_OPTIMISER_RUN_TABLE_CONFIG,
     TRIAL_TABLE_EVAL_COLUMNS,
@@ -23,9 +28,16 @@ from simulate.models import (
 )
 from simulate.serializers.agent_prompt_optimiser import (
     OPTIMISER_REQUIRED_CONFIG_KEYS,
+    AgentPromptOptimiserGraphResponseSerializer,
     AgentPromptOptimiserRunCreateSerializer,
+    AgentPromptOptimiserRunDetailResponseSerializer,
     AgentPromptOptimiserRunListSerializer,
+    AgentPromptOptimiserRunModelResponseSerializer,
     AgentPromptOptimiserRunSerializer,
+    AgentPromptOptimiserRunStepsResponseSerializer,
+    AgentPromptOptimiserTrialEvaluationsResponseSerializer,
+    AgentPromptOptimiserTrialPromptResponseSerializer,
+    AgentPromptOptimiserTrialScenariosResponseSerializer,
 )
 from simulate.utils.agent_prompt_optimiser import (
     build_trial_table_data,
@@ -36,10 +48,13 @@ from simulate.utils.agent_prompt_optimiser import (
 from tfc.temporal.agent_prompt_optimiser.client import (
     start_agent_prompt_optimiser_workflow,
 )
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.errors import format_validation_error
 from tfc.utils.general_methods import GeneralMethods
+
+logger = structlog.get_logger(__name__)
 
 # Human-readable labels and descriptions for optimizer configuration parameters
 OPTIMISER_PARAM_META = {
@@ -142,14 +157,20 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
     serializer_class = AgentPromptOptimiserRunSerializer
 
     def get_queryset(self):
-        user_organization = (
-            getattr(self.request, "organization", None)
-            or self.request.user.organization
-        )
         queryset = (
             super()
             .get_queryset()
-            .filter(test_execution__run_test__organization=user_organization)
+            .filter(
+                test_execution__run_test__organization=request_organization(
+                    self.request
+                )
+            )
+            .filter(
+                request_workspace_filter(
+                    self.request,
+                    field_name="test_execution__run_test__workspace",
+                )
+            )
             .order_by("-created_at")
         )
 
@@ -170,6 +191,12 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             return AgentPromptOptimiserRunListSerializer
         return AgentPromptOptimiserRunSerializer
 
+    @swagger_auto_schema(
+        responses={
+            400: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
     def list(self, request, *args, **kwargs):
         """
         List all agent prompt optimiser runs with table config for dynamic columns.
@@ -196,6 +223,34 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error listing AgentPromptOptimiserRuns: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
+    @swagger_auto_schema(
+        responses={
+            200: AgentPromptOptimiserRunModelResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
+    def update(self, request, *args, **kwargs):
+        return super().update(request, *args, **kwargs)
+
+    @swagger_auto_schema(
+        responses={
+            200: AgentPromptOptimiserRunModelResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
+    def partial_update(self, request, *args, **kwargs):
+        return super().partial_update(request, *args, **kwargs)
+
+    @swagger_auto_schema(
+        responses={
+            400: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
     @transaction.atomic
     def create(self, request, *args, **kwargs):
         try:
@@ -232,6 +287,14 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error creating AgentPromptOptimiserRun: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
+    @swagger_auto_schema(
+        responses={
+            200: AgentPromptOptimiserRunDetailResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
     def retrieve(self, request, *args, **kwargs):
         """
         Get run details with trial comparison table.
@@ -268,10 +331,20 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "column_config": column_config,
                 }
             )
+        except Http404:
+            return self._gm.not_found("Agent prompt optimiser run not found")
         except Exception as e:
             logger.exception(f"Error retrieving AgentPromptOptimiserRun: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
+    @swagger_auto_schema(
+        responses={
+            200: AgentPromptOptimiserRunStepsResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
     @action(detail=True, methods=["get"])
     def steps(self, request, *args, **kwargs):
         """Get all steps for this optimization run."""
@@ -279,12 +352,22 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             instance = self.get_object()
             steps = get_agent_prompt_optimiser_run_steps(str(instance.id))
             return self._gm.success_response(steps)
+        except Http404:
+            return self._gm.not_found("Agent prompt optimiser run not found")
         except Exception as e:
             logger.exception(
                 f"Error retrieving agent prompt optimiser run steps: {str(e)}"
             )
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
+    @swagger_auto_schema(
+        responses={
+            200: AgentPromptOptimiserGraphResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
     @action(detail=True, methods=["get"])
     def graph(self, request, *args, **kwargs):
         """
@@ -294,6 +377,8 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             instance = self.get_object()
             graph_data = get_agent_prompt_optimiser_run_graph_data(instance)
             return self._gm.success_response(graph_data)
+        except Http404:
+            return self._gm.not_found("Agent prompt optimiser run not found")
         except Exception as e:
             logger.exception(
                 f"Error retrieving agent prompt optimiser run graph data: {str(e)}"
@@ -321,6 +406,14 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
             "score_percentage_change": score_percentage_change,
         }
 
+    @swagger_auto_schema(
+        responses={
+            200: AgentPromptOptimiserTrialPromptResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
     @action(
         detail=True,
         methods=["get"],
@@ -346,12 +439,22 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "base_prompt": baseline_trial.prompt if baseline_trial else None,
                 }
             )
+        except Http404:
+            return self._gm.not_found("Agent prompt optimiser run not found")
         except PromptTrial.DoesNotExist:
             return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))
         except Exception as e:
             logger.exception(f"Error retrieving trial prompt: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
+    @swagger_auto_schema(
+        responses={
+            200: AgentPromptOptimiserTrialEvaluationsResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
     @action(
         detail=True,
         methods=["get"],
@@ -430,12 +533,22 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "column_config": TRIAL_TABLE_EVAL_COLUMNS,
                 }
             )
+        except Http404:
+            return self._gm.not_found("Agent prompt optimiser run not found")
         except PromptTrial.DoesNotExist:
             return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))
         except Exception as e:
             logger.exception(f"Error retrieving trial evaluations: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
+    @swagger_auto_schema(
+        responses={
+            200: AgentPromptOptimiserTrialScenariosResponseSerializer,
+            400: ApiTextErrorResponseSerializer,
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
     @action(
         detail=True,
         methods=["get"],
@@ -494,8 +607,19 @@ class AgentPromptOptimiserRunViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "column_config": column_config,
                 }
             )
+        except Http404:
+            return self._gm.not_found("Agent prompt optimiser run not found")
         except PromptTrial.DoesNotExist:
             return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))
         except Exception as e:
             logger.exception(f"Error retrieving trial scenarios: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
+
+    @swagger_auto_schema(
+        responses={
+            404: ApiTextErrorResponseSerializer,
+            500: ApiTextErrorResponseSerializer,
+        }
+    )
+    def destroy(self, request, *args, **kwargs):
+        return super().destroy(request, *args, **kwargs)

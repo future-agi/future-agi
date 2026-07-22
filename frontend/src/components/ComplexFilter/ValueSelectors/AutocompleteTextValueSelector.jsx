@@ -12,7 +12,7 @@ const AutocompleteTextValueSelector = ({
   updateFilter,
 }) => {
   const [inputValue, setInputValue] = useState(
-    filter?.filterConfig?.filterValue || "",
+    filter?.filter_config?.filter_value || "",
   );
   const debouncedInput = useDebounce(inputValue, 300);
   const { id: projectId } = useParams();
@@ -48,23 +48,23 @@ const AutocompleteTextValueSelector = ({
       onInputChange={(_, newInputValue) => {
         setInputValue(newInputValue);
       }}
-      value={filter?.filterConfig?.filterValue || ""}
+      value={filter?.filter_config?.filter_value || ""}
       onChange={(_, newValue) => {
         updateFilter({
           ...filter,
-          filterConfig: {
-            ...filter?.filterConfig,
-            filterValue: newValue || "",
+          filter_config: {
+            ...filter?.filter_config,
+            filter_value: newValue || "",
           },
         });
       }}
       onBlur={() => {
-        if (inputValue !== filter?.filterConfig?.filterValue) {
+        if (inputValue !== filter?.filter_config?.filter_value) {
           updateFilter({
             ...filter,
-            filterConfig: {
-              ...filter?.filterConfig,
-              filterValue: inputValue,
+            filter_config: {
+              ...filter?.filter_config,
+              filter_value: inputValue,
             },
           });
         }
@@ -99,8 +99,8 @@ AutocompleteTextValueSelector.propTypes = {
     propertyId: PropTypes.string,
   }),
   filter: PropTypes.shape({
-    filterConfig: PropTypes.shape({
-      filterValue: PropTypes.string,
+    filter_config: PropTypes.shape({
+      filter_value: PropTypes.string,
     }),
   }),
   updateFilter: PropTypes.func.isRequired,

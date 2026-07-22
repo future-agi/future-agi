@@ -7,16 +7,22 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
 logger = structlog.get_logger(__name__)
+from model_hub.db_routing import DATABASE_FOR_EVAL_GROUP_LIST
 from model_hub.models.eval_groups import EvalGroup, History
 from model_hub.models.evals_metric import EvalTemplate
-from model_hub.serializers.eval_group import EvalGroupSerializer
+from model_hub.serializers.eval_group import (
+    ApplyEvalGroupRequestSerializer,
+    EvalGroupSerializer,
+)
 from model_hub.services.eval_group import (
     apply_eval_group,
     create_eval_group,
     edit_eval_list_manager,
+    filter_eval_templates_for_group_scope,
 )
 from model_hub.utils.function_eval_params import get_function_params_schema
 from model_hub.views.utils.utils import fetch_required_keys_for_eval_template
+from tfc.routers import uses_db
 from tfc.utils.base_viewset import BaseModelViewSetMixin
 from tfc.utils.general_methods import GeneralMethods
 
@@ -57,8 +63,15 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
                 )
             return self._gm.bad_request(f"Failed to create eval group: {str(e)}")
 
+    @uses_db(DATABASE_FOR_EVAL_GROUP_LIST, feature_key="feature:eval_group_list")
     def list(self, request, *args, **kwargs):
-        """List all eval groups for the user's organization"""
+        """List all eval groups for the user's organization.
+
+        Pure routing: three independent bulk reads in this method (main
+        EvalGroup queryset, EvalGroup.eval_templates through-table, and
+        EvalTemplate) all route to DATABASE_FOR_EVAL_GROUP_LIST when
+        "feature:eval_group_list" is opted in. No query semantics change.
+        """
         try:
             name = request.query_params.get("name")
             page_size = int(request.query_params.get("page_size", 10))
@@ -66,7 +79,9 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
             start = page_number * page_size
             end = start + page_size
 
-            eval_groups = EvalGroup.no_workspace_objects.filter(
+            eval_groups = EvalGroup.no_workspace_objects.db_manager(
+                DATABASE_FOR_EVAL_GROUP_LIST
+            ).filter(
                 Q(
                     workspace=request.workspace,
                     deleted=False,
@@ -77,7 +92,8 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
             ).select_related("organization", "created_by")
 
             if name:
-                eval_groups = eval_groups.filter(name__icontains=name)
+                from model_hub.utils.eval_list import normalize_search_for_name
+                eval_groups = eval_groups.filter(normalize_search_for_name(name))
 
             # Get total count before pagination
             total_count = eval_groups.count()
@@ -95,9 +111,12 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
             eval_group_ids = [str(eval_group.id) for eval_group in eval_groups]
 
             # Single query to get all template relationships from through table
-            all_relationships = EvalGroup.eval_templates.through.objects.filter(
-                evalgroup_id__in=eval_group_ids
-            ).values_list("evalgroup_id", "evaltemplate_id")
+            all_relationships = (
+                EvalGroup.eval_templates.through.objects
+                .using(DATABASE_FOR_EVAL_GROUP_LIST)
+                .filter(evalgroup_id__in=eval_group_ids)
+                .values_list("evalgroup_id", "evaltemplate_id")
+            )
 
             # Build mapping of eval_group_id -> template_ids
             for eval_group_id, template_id in all_relationships:
@@ -110,8 +129,12 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
                 all_template_ids.add(template_id_str)
 
             # Single query to get all eval_templates
-            all_eval_templates = EvalTemplate.no_workspace_objects.filter(
-                id__in=list(all_template_ids)
+            all_eval_templates = filter_eval_templates_for_group_scope(
+                EvalTemplate.no_workspace_objects.db_manager(
+                    DATABASE_FOR_EVAL_GROUP_LIST
+                ).filter(id__in=list(all_template_ids)),
+                getattr(request, "organization", None) or request.user.organization,
+                request.workspace,
             )
             template_id_to_template = {
                 str(template.id): template for template in all_eval_templates
@@ -177,12 +200,15 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
                     evalgroup_id=eval_group.id
                 ).values_list("evaltemplate_id", flat=True)
             )
-            eval_templates = EvalTemplate.no_workspace_objects.filter(
-                id__in=template_ids
+            eval_templates = filter_eval_templates_for_group_scope(
+                EvalTemplate.no_workspace_objects.filter(id__in=template_ids),
+                getattr(request, "organization", None) or request.user.organization,
+                request.workspace,
             )
 
             if name:
-                eval_templates = eval_templates.filter(name__icontains=name)
+                from model_hub.utils.eval_list import normalize_search_for_name
+                eval_templates = eval_templates.filter(normalize_search_for_name(name))
 
             # Get all template IDs for efficient querying
             template_ids = [str(template.id) for template in eval_templates]
@@ -373,8 +399,7 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
 
     def perform_destroy(self, instance):
         """Override destroy to implement soft delete"""
-        instance.deleted = True
-        instance.save()
+        instance.delete()
 
     @action(detail=False, methods=["post"], url_path="edit-eval-list")
     def edit_eval_list(self, request, *args, **kwargs):
@@ -405,10 +430,13 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
                 added_template_ids=added_template_ids,
                 deleted_template_ids=deleted_template_ids,
                 user=request.user,
+                workspace=request.workspace,
             )
 
             return self._gm.success_response("Eval group has been updated succesfully")
 
+        except ValueError as e:
+            return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception(f"Error in editing eval list: {str(e)}")
             return self._gm.internal_server_error_response(
@@ -418,17 +446,17 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
     @action(detail=False, methods=["post"], url_path="apply-eval-group")
     def apply_eval_group(self, request, *args, **kwargs):
         try:
-            eval_group_id = request.data.get("eval_group_id")
-            filters = request.data.get("filters")
-            page_id = request.data.get("page_id")
-            mapping = request.data.get("mapping")
-            deselected_evals = request.data.get("deselected_evals")
-            params = request.data.get("params", {})
+            serializer = ApplyEvalGroupRequestSerializer(data=request.data)
+            if not serializer.is_valid():
+                return self._gm.bad_request(serializer.errors)
+            payload = serializer.validated_data
 
-            if params is not None and not isinstance(params, dict):
-                return self._gm.bad_request(
-                    "Invalid function parameter input. Please check the value and try again."
-                )
+            eval_group_id = payload["eval_group_id"]
+            filters = payload.get("filters", {})
+            page_id = payload["page_id"]
+            mapping = payload["mapping"]
+            deselected_evals = payload.get("deselected_evals", [])
+            params = payload.get("params", {})
 
             try:
                 eval_group = EvalGroup.no_workspace_objects.get(
@@ -455,6 +483,8 @@ class EvalGroupView(BaseModelViewSetMixin, ModelViewSet):
             )
             return self._gm.success_response(response)
 
+        except ValueError as e:
+            return self._gm.bad_request(str(e))
         except Exception as e:
             logger.exception(f"Error in applying eval group: {str(e)}")
             return self._gm.internal_server_error_response(

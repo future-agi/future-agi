@@ -6,6 +6,7 @@ import gzip
 import io
 import json
 import logging
+import os
 import uuid
 from datetime import datetime
 from datetime import timezone as dt_timezone
@@ -14,6 +15,8 @@ from typing import Any, Iterable, Optional
 import httpx
 import requests
 import structlog
+
+from simulate.temporal.utils.async_storage import MAX_AUDIO_FILE_SIZE
 
 logger = structlog.get_logger(__name__)
 
@@ -38,11 +41,15 @@ _URL_TYPE_TO_ARTIFACT: dict[str, str] = {
     "mono_customer": VapiArtifactType.CUSTOMER,
     "mono_assistant": VapiArtifactType.ASSISTANT,
     "stereo": VapiArtifactType.STEREO,
+    # Legacy EE persist_audio_to_s3() names.
+    "recording": VapiArtifactType.MONO,
+    "stereo_recording": VapiArtifactType.STEREO,
+    "customer_recording": VapiArtifactType.CUSTOMER,
+    "assistant_recording": VapiArtifactType.ASSISTANT,
 }
 
 
 DEFAULT_TIMEOUT_SECONDS = 60.0
-S3_URL_MARKERS = ("amazonaws.com", "minio")
 
 
 class VapiAuthError(Exception):
@@ -60,6 +67,14 @@ class VapiRateLimitError(Exception):
 class VapiRecordingService:
     """Single entry point for Vapi recording and call-log operations."""
 
+    _FAGI_S3_BUCKETS: tuple[str, ...] = tuple(
+        b.strip()
+        for b in os.getenv(
+            "OWN_S3_BUCKETS",
+            "fi-customer-data,fi-customer-data-dev,fi-content,fi-content-dev",
+        ).split(",")
+        if b.strip()
+    )
     @classmethod
     def build_artifact_url(cls, call_id: str, artifact_type: VapiArtifactType) -> str:
         """Build the authenticated endpoint URL for a call artifact."""
@@ -86,14 +101,20 @@ class VapiRecordingService:
         return provider == ProviderChoices.VAPI
 
     @classmethod
-    def is_s3_url(cls, url: Optional[str]) -> bool:
-        """True if url points to an S3 (amazonaws.com) or MinIO host.
+    def is_fagi_s3_url(cls, url: Optional[str]) -> bool:
+        """True if ``url`` is an S3/MinIO URL owned by FutureAGI.
 
-        Note: this matches ANY S3 host, not only FutureAGI's own buckets.
+        Delegates to :func:`tfc.utils.storage.is_own_storage_url` which
+        validates the bucket name and host pattern against the
+        ``OWN_S3_BUCKETS`` env-var list — not a blind substring match.
         """
+        from tfc.utils.storage import is_own_storage_url
+
         if not url:
             return False
-        return any(marker in url for marker in S3_URL_MARKERS)
+        return any(
+            is_own_storage_url(url, bucket) for bucket in cls._FAGI_S3_BUCKETS
+        )
 
     @classmethod
     def get_api_key_for_project(cls, project_id: Any) -> Optional[str]:
@@ -127,33 +148,25 @@ class VapiRecordingService:
             return None
 
     @classmethod
-    def get_api_key_for_agent_definition(
-        cls, agent_definition_id: Any
-    ) -> Optional[str]:
-        """Resolve the Vapi api_key for an AgentDefinition; None on failure."""
+    def get_api_key_for_agent_definition(cls, agent_definition_id: Any) -> Optional[str]:
+        """Resolve the Vapi api_key for an AgentDefinition by id; None on failure."""
         if agent_definition_id is None:
             return None
-
+        try:
+            uuid.UUID(str(agent_definition_id))
+        except (ValueError, AttributeError):
+            return None
         try:
             from simulate.models.agent_definition import AgentDefinition
+
+            agent_def = AgentDefinition.objects.get(id=agent_definition_id)
+            return cls._api_key_from_agent_definition(agent_def)
         except Exception:
+            logger.exception(
+                "vapi_recording_service.get_api_key_agent_definition_lookup_failed",
+                agent_definition_id=str(agent_definition_id),
+            )
             return None
-
-        if isinstance(agent_definition_id, str):
-            try:
-                agent_definition_id = uuid.UUID(agent_definition_id)
-            except ValueError:
-                return None
-
-        agent_def = (
-            AgentDefinition.objects.filter(id=agent_definition_id)
-            .only("id", "api_key")
-            .first()
-        )
-        if agent_def is None:
-            return None
-        return cls._api_key_from_agent_definition(agent_def)
-
     @classmethod
     def _get_vapi_provider_for_project(cls, project_id: Any):
         from tracer.models.observability_provider import (
@@ -208,17 +221,13 @@ class VapiRecordingService:
 
     @classmethod
     def _api_key_from_agent_definition(cls, agent_def) -> Optional[str]:
-        try:
-            latest_version = getattr(agent_def, "latest_version", None)
-        except Exception:
-            latest_version = None
-        if latest_version is not None:
-            snapshot = getattr(latest_version, "configuration_snapshot", None) or {}
-            snapshot_key = snapshot.get("api_key") if isinstance(snapshot, dict) else None
-            if snapshot_key:
-                return snapshot_key
-        raw_key = getattr(agent_def, "api_key", None) or None
-        return raw_key or None
+        """Resolve Vapi api_key through the canonical ProviderCredentials chain."""
+        from simulate.services.agent_definition import resolve_api_key_for_version
+
+        version = agent_def.active_version or agent_def.latest_version
+        if version is None:
+            return None
+        return resolve_api_key_for_version(version)
 
     @classmethod
     async def download_artifact_async(
@@ -238,7 +247,9 @@ class VapiRecordingService:
             follow_redirects=True, timeout=timeout_seconds
         ) as client:
             try:
-                response = await client.get(url, headers=headers)
+                async with client.stream("GET", url, headers=headers) as response:
+                    cls._raise_for_artifact_response(response, call_id, artifact_type)
+                    return await cls._read_artifact_stream_async(response)
             except httpx.HTTPError as exc:
                 logger.warning(
                     "vapi_artifact_download_transport_error",
@@ -247,7 +258,6 @@ class VapiRecordingService:
                     error=str(exc),
                 )
                 raise
-            return cls._raise_or_return_body(response, call_id, artifact_type)
 
     @classmethod
     def download_artifact_sync(
@@ -267,7 +277,9 @@ class VapiRecordingService:
             follow_redirects=True, timeout=timeout_seconds
         ) as client:
             try:
-                response = client.get(url, headers=headers)
+                with client.stream("GET", url, headers=headers) as response:
+                    cls._raise_for_artifact_response(response, call_id, artifact_type)
+                    return cls._read_artifact_stream_sync(response)
             except httpx.HTTPError as exc:
                 logger.warning(
                     "vapi_artifact_download_transport_error",
@@ -276,7 +288,6 @@ class VapiRecordingService:
                     error=str(exc),
                 )
                 raise
-            return cls._raise_or_return_body(response, call_id, artifact_type)
 
     @staticmethod
     def _require_download_args(
@@ -290,7 +301,7 @@ class VapiRecordingService:
             raise ValueError("api_key is required")
 
     @staticmethod
-    def _raise_or_return_body(response, call_id: str, artifact_type: str) -> bytes:
+    def _raise_for_artifact_response(response, call_id: str, artifact_type: str) -> None:
         status = response.status_code
         if status in (401, 403):
             logger.warning(
@@ -311,7 +322,34 @@ class VapiRecordingService:
                 f"Vapi returned 429 for {artifact_type} on {call_id}"
             )
         response.raise_for_status()
-        return response.content
+
+    @staticmethod
+    async def _read_artifact_stream_async(response) -> bytes:
+        chunks = []
+        total_size = 0
+        async for chunk in response.aiter_bytes(chunk_size=8192):
+            total_size += len(chunk)
+            if total_size > MAX_AUDIO_FILE_SIZE:
+                raise ValueError(
+                    f"Vapi artifact exceeds maximum size of "
+                    f"{MAX_AUDIO_FILE_SIZE / (1024 * 1024):.1f}MB"
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    @staticmethod
+    def _read_artifact_stream_sync(response) -> bytes:
+        chunks = []
+        total_size = 0
+        for chunk in response.iter_bytes(chunk_size=8192):
+            total_size += len(chunk)
+            if total_size > MAX_AUDIO_FILE_SIZE:
+                raise ValueError(
+                    f"Vapi artifact exceeds maximum size of "
+                    f"{MAX_AUDIO_FILE_SIZE / (1024 * 1024):.1f}MB"
+                )
+            chunks.append(chunk)
+        return b"".join(chunks)
 
     @classmethod
     def mirror_s3_url_to_consumer_fields(
@@ -327,9 +365,9 @@ class VapiRecordingService:
         mono_s3 = s3_url_by_url_type.get("mono_combined")
         stereo_s3 = s3_url_by_url_type.get("stereo")
 
-        if mono_s3 and not cls.is_s3_url(attrs.get("recording_url")):
+        if mono_s3 and not cls.is_fagi_s3_url(attrs.get("recording_url")):
             attrs["recording_url"] = mono_s3
-        if stereo_s3 and not cls.is_s3_url(attrs.get("stereo_recording_url")):
+        if stereo_s3 and not cls.is_fagi_s3_url(attrs.get("stereo_recording_url")):
             attrs["stereo_recording_url"] = stereo_s3
 
         if call_id and (mono_s3 or stereo_s3):
@@ -350,8 +388,7 @@ class VapiRecordingService:
         except Exception:
             return
 
-        # service_provider_call_id is the globally unique Vapi call id, so this
-        # lookup is already unambiguous without an extra org/project scope.
+        # Provider call IDs are not DB-unique; update one matching execution.
         row = (
             CallExecution.objects.filter(service_provider_call_id=call_id)
             .only("id", "recording_url", "stereo_recording_url")
@@ -361,10 +398,10 @@ class VapiRecordingService:
             return
 
         update_fields: list[str] = []
-        if mono_s3 and not cls.is_s3_url(row.recording_url or ""):
+        if mono_s3 and not cls.is_fagi_s3_url(row.recording_url or ""):
             row.recording_url = mono_s3
             update_fields.append("recording_url")
-        if stereo_s3 and not cls.is_s3_url(row.stereo_recording_url or ""):
+        if stereo_s3 and not cls.is_fagi_s3_url(row.stereo_recording_url or ""):
             row.stereo_recording_url = stereo_s3
             update_fields.append("stereo_recording_url")
         if update_fields:
@@ -382,18 +419,17 @@ class VapiRecordingService:
         except Exception:
             return
 
-        # service_provider_call_id is the globally unique Vapi call id, so this
-        # lookup is already unambiguous without an extra org/project scope.
+        # Multiple historical snapshots may share a provider call ID; update all.
         rows = list(
             CallExecutionSnapshot.objects.filter(service_provider_call_id=call_id)
             .only("id", "recording_url", "stereo_recording_url")
         )
         for row in rows:
             update_fields: list[str] = []
-            if mono_s3 and not cls.is_s3_url(row.recording_url or ""):
+            if mono_s3 and not cls.is_fagi_s3_url(row.recording_url or ""):
                 row.recording_url = mono_s3
                 update_fields.append("recording_url")
-            if stereo_s3 and not cls.is_s3_url(row.stereo_recording_url or ""):
+            if stereo_s3 and not cls.is_fagi_s3_url(row.stereo_recording_url or ""):
                 row.stereo_recording_url = stereo_s3
                 update_fields.append("stereo_recording_url")
             if update_fields:
@@ -519,6 +555,10 @@ class VapiRecordingService:
                 try:
                     payload = json.loads(line)
                 except json.JSONDecodeError:
+                    logger.warning(
+                        "vapi_call_logs_line_json_decode_failed",
+                        line_length=len(line),
+                    )
                     payload = {"raw_line": line}
                 entries.append(cls._normalise_call_log_entry(payload))
         return entries

@@ -4,13 +4,11 @@ ClickHouse Client for Analytics Backend
 Provides connection management and query execution for ClickHouse.
 """
 
-import json
 import queue
 import threading
 import time
 from contextlib import contextmanager
-from functools import lru_cache
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import structlog
 from django.conf import settings
@@ -40,11 +38,11 @@ class ClickHouseClient:
 
     def __init__(
         self,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        user: Optional[str] = None,
-        password: Optional[str] = None,
-        database: Optional[str] = None,
+        host: str | None = None,
+        port: int | None = None,
+        user: str | None = None,
+        password: str | None = None,
+        database: str | None = None,
     ):
         """
         Initialize ClickHouse client with connection settings.
@@ -149,9 +147,10 @@ class ClickHouseClient:
     def execute(
         self,
         query: str,
-        params: Optional[Dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
         with_column_types: bool = False,
-    ) -> List[Tuple]:
+        settings: dict[str, Any] | None = None,
+    ) -> list[tuple]:
         """
         Execute a query and return results.
 
@@ -159,6 +158,9 @@ class ClickHouseClient:
             query: SQL query string
             params: Query parameters for parameterized queries
             with_column_types: If True, returns (results, column_types)
+            settings: Optional per-query ClickHouse settings (e.g.
+                {"data_type_default_nullable": 0} for DDL that must not be
+                auto-wrapped in Nullable when the server profile sets it to 1)
 
         Returns:
             List of result tuples, or (results, column_types) if with_column_types=True
@@ -172,13 +174,16 @@ class ClickHouseClient:
                 query,
                 params or {},
                 with_column_types=with_column_types,
+                settings=settings,
             )
 
             query_time_ms = (time.monotonic() - t_start) * 1000
             rows_returned = (
                 len(result[0])
                 if with_column_types and result
-                else len(result) if result and not isinstance(result, int) else 0
+                else len(result)
+                if result and not isinstance(result, int)
+                else 0
             )
             logger.info(
                 "ClickHouse query completed",
@@ -206,9 +211,10 @@ class ClickHouseClient:
     def execute_read(
         self,
         query: str,
-        params: Optional[Dict[str, Any]] = None,
-        timeout_ms: Optional[int] = None,
-    ) -> Tuple[List[Tuple], List[Tuple], float]:
+        params: dict[str, Any] | None = None,
+        timeout_ms: int | None = None,
+        settings: dict[str, Any] | None = None,
+    ) -> tuple[list[tuple], list[tuple], float]:
         """
         Execute a read-only query with ClickHouse readonly=2 setting.
 
@@ -228,7 +234,7 @@ class ClickHouseClient:
         client = self._get_client()
         t_start = time.monotonic()
 
-        query_settings = {"readonly": 2}
+        query_settings = {**(settings or {}), "readonly": 2}
         if timeout_ms is not None:
             # max_execution_time is in seconds
             query_settings["max_execution_time"] = max(timeout_ms / 1000.0, 0.001)
@@ -276,7 +282,7 @@ class ClickHouseClient:
     def execute_iter(
         self,
         query: str,
-        params: Optional[Dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
     ):
         """
         Execute a query and return an iterator over results.
@@ -295,8 +301,8 @@ class ClickHouseClient:
     def insert(
         self,
         table: str,
-        data: List[Dict[str, Any]],
-        columns: Optional[List[str]] = None,
+        data: list[dict[str, Any]],
+        columns: list[str] | None = None,
     ) -> int:
         """
         Insert data into a table.
@@ -383,7 +389,7 @@ class ClickHouseClient:
             logger.warning("ClickHouse ping failed", error=str(e))
             return False
 
-    def create_database(self, database: Optional[str] = None) -> None:
+    def create_database(self, database: str | None = None) -> None:
         """Create database if it doesn't exist."""
         db = database or self.database
         self.execute(f"CREATE DATABASE IF NOT EXISTS {db}")
@@ -401,7 +407,7 @@ class ClickHouseClient:
         result = self.execute(f"SELECT count() FROM {table}")
         return result[0][0]
 
-    def check_replication_lag(self) -> Dict[str, float]:
+    def check_replication_lag(self) -> dict[str, float]:
         """
         Query CDC replication lag per table.
 
@@ -414,13 +420,15 @@ class ClickHouseClient:
         """
         from datetime import datetime
 
+        # CH25 close-out (2026-05-28): removed `tracer_observation_span`
+        # from the CDC lag check. Spans now land in v2 typed-JSON `spans`
+        # via fi-collector OTLP — no CDC mirror, no lag to measure.
         tables = [
-            "tracer_observation_span",
             "tracer_trace",
             "trace_session",
             "tracer_eval_logger",
         ]
-        lag: Dict[str, float] = {}
+        lag: dict[str, float] = {}
         for table in tables:
             try:
                 result = self.execute(
@@ -458,7 +466,7 @@ class ClickHouseClient:
 
 
 # Singleton instance
-_clickhouse_client: Optional[ClickHouseClient] = None
+_clickhouse_client: ClickHouseClient | None = None
 
 
 def get_clickhouse_client() -> ClickHouseClient:

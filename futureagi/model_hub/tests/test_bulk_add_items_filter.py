@@ -14,17 +14,38 @@ from datetime import timedelta
 
 import pytest
 from django.utils import timezone
+from structlog.testing import capture_logs
 
 from model_hub.models.ai_model import AIModel
 from model_hub.models.annotation_queues import AnnotationQueue, QueueItem
 from tracer.models.observation_span import ObservationSpan
-from tracer.models.project import Project
+from tracer.models.project import Project, ProjectSourceChoices
 from tracer.models.trace import Trace
 from tracer.models.trace_session import TraceSession
+from tracer.tests._ch_seed import seed_ch_span
 
 # --------------------------------------------------------------------------
 # Fixtures
 # --------------------------------------------------------------------------
+
+
+def _seed_ch_trace_root(trace):
+    """Give a bare PG ``trace`` a CH-only root span so the enumerated add path
+    resolves it CH-native (tracer sources are read from ClickHouse only). Built in
+    memory and seeded to CH — never written to PG (the tracer tables are dropped)."""
+    import uuid
+
+    span = ObservationSpan(
+        id=f"chroot_{uuid.uuid4().hex[:16]}",
+        project=trace.project,
+        trace=trace,
+        name="trace root",
+        observation_type="agent",
+        start_time=timezone.now() - timedelta(seconds=1),
+        end_time=timezone.now(),
+        status="OK",
+    )
+    seed_ch_span(span)  # CH only — NOT ObservationSpan.objects.create
 
 
 @pytest.fixture
@@ -39,17 +60,12 @@ def observe_project(db, organization, workspace):
 
 
 @pytest.fixture
-def active_queue(db, auth_client):
-    resp = auth_client.post(
-        "/model-hub/annotation-queues/",
-        {"name": "Bulk Test Queue"},
-        format="json",
+def active_queue(db, organization, workspace):
+    return AnnotationQueue.objects.create(
+        name="Bulk Test Queue",
+        organization=organization,
+        workspace=workspace,
     )
-    assert resp.status_code == 201, resp.data
-    # Some endpoints wrap the body in {"result": {...}}, others return the
-    # object directly — handle both.
-    body = resp.data.get("result", resp.data) if isinstance(resp.data, dict) else resp.data
-    return AnnotationQueue.objects.get(id=body["id"])
 
 
 def _add_items_url(queue_id):
@@ -74,10 +90,9 @@ def _api_filter(column_id, filter_type, filter_op, filter_value):
 
 @pytest.mark.django_db
 class TestAddItemsEnumeratedRegression:
-    def test_enumerated_happy_path(
-        self, auth_client, active_queue, observe_project
-    ):
+    def test_enumerated_happy_path(self, auth_client, active_queue, observe_project):
         t = Trace.objects.create(project=observe_project, name="t1")
+        _seed_ch_trace_root(t)
         resp = auth_client.post(
             _add_items_url(active_queue.id),
             {"items": [{"source_type": "trace", "source_id": str(t.id)}]},
@@ -93,17 +108,229 @@ class TestAddItemsEnumeratedRegression:
         self, auth_client, active_queue, observe_project
     ):
         t = Trace.objects.create(project=observe_project, name="t-dup")
+        _seed_ch_trace_root(t)
         payload = {"items": [{"source_type": "trace", "source_id": str(t.id)}]}
-        auth_client.post(
-            _add_items_url(active_queue.id), payload, format="json"
-        )
-        resp = auth_client.post(
-            _add_items_url(active_queue.id), payload, format="json"
-        )
+        auth_client.post(_add_items_url(active_queue.id), payload, format="json")
+        resp = auth_client.post(_add_items_url(active_queue.id), payload, format="json")
         assert resp.status_code == 200, resp.data
         result = resp.data["result"]
         assert result["added"] == 0
         assert result["duplicates"] == 1
+
+    def test_enumerated_add_populates_project_id(
+        self, auth_client, active_queue, observe_project
+    ):
+        """The denormalized project_id is stamped on add so the render/list read can
+        scope its CH scan to one tenant (TH-6864). Fails if the write path drops it —
+        NULL project_id degrades to the full-table wide scan the fix removes."""
+        t = Trace.objects.create(project=observe_project, name="t-proj")
+        _seed_ch_trace_root(t)
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {"items": [{"source_type": "trace", "source_id": str(t.id)}]},
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        item = QueueItem.objects.get(queue=active_queue, trace=t, deleted=False)
+        assert str(item.project_id) == str(observe_project.id)
+
+    def test_enumerated_scoped_with_project_id(
+        self, auth_client, active_queue, observe_project
+    ):
+        """With the payload ``project_id``, the source resolves through the scoped batch
+        read (the fast path the FE now sends) and the item is added + stamped."""
+        t = Trace.objects.create(project=observe_project, name="t-scoped")
+        _seed_ch_trace_root(t)
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "items": [{"source_type": "trace", "source_id": str(t.id)}],
+                "project_id": str(observe_project.id),
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        assert resp.data["result"]["added"] == 1
+        item = QueueItem.objects.get(queue=active_queue, trace=t, deleted=False)
+        assert str(item.project_id) == str(observe_project.id)
+
+    def test_enumerated_payload_dedupe_counts_once(
+        self, auth_client, active_queue, observe_project
+    ):
+        """A repeated (source_type, id) in ONE payload creates a single row — the batch
+        resolve-then-create path dedupes within the payload (the old per-item .exists()
+        only caught ids already committed, so two copies in one request slipped through)."""
+        t = Trace.objects.create(project=observe_project, name="t-dedupe")
+        _seed_ch_trace_root(t)
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "items": [
+                    {"source_type": "trace", "source_id": str(t.id)},
+                    {"source_type": "trace", "source_id": str(t.id)},
+                ],
+                "project_id": str(observe_project.id),
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        assert resp.data["result"]["added"] == 1
+        assert resp.data["result"]["duplicates"] == 1
+        assert (
+            QueueItem.objects.filter(queue=active_queue, trace=t, deleted=False).count()
+            == 1
+        )
+
+    def test_enumerated_project_id_scopes_out_other_project(
+        self, auth_client, active_queue, organization, workspace
+    ):
+        """A ``project_id`` scopes the CH read to that tenant: a trace living in another
+        project can't be resolved under it (reported not-found), while the same trace
+        resolves under its real project. Pins the scoped-resolution semantics."""
+        proj_a = Project.objects.create(
+            name="scope-proj-a",
+            organization=organization,
+            workspace=workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        proj_b = Project.objects.create(
+            name="scope-proj-b",
+            organization=organization,
+            workspace=workspace,
+            model_type=AIModel.ModelTypes.GENERATIVE_LLM,
+            trace_type="observe",
+        )
+        t = Trace.objects.create(project=proj_a, name="t-in-a")
+        _seed_ch_trace_root(t)
+
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "items": [{"source_type": "trace", "source_id": str(t.id)}],
+                "project_id": str(proj_b.id),
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        assert resp.data["result"]["added"] == 0
+        assert resp.data["result"]["errors"]
+
+        resp_a = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "items": [{"source_type": "trace", "source_id": str(t.id)}],
+                "project_id": str(proj_a.id),
+            },
+            format="json",
+        )
+        assert resp_a.data["result"]["added"] == 1
+
+    def test_enumerated_add_batches_span_reads(
+        self, auth_client, active_queue, observe_project
+    ):
+        """N collector-span items resolve in ONE batched CH read (``list_by_ids`` once
+        with every id), never a point-read per item — the N+1 this change removes."""
+        from unittest import mock
+
+        from model_hub.tests.test_ch25_annotation_collector_source_resolution import (
+            _CountingReaderCM,
+            _make_chspan,
+        )
+
+        spans = [_make_chspan(project_id=observe_project.id) for _ in range(3)]
+        reader_cm = _CountingReaderCM(spans)
+        payload = {
+            "items": [
+                {"source_type": "observation_span", "source_id": str(s.id)}
+                for s in spans
+            ],
+            "project_id": str(observe_project.id),
+        }
+        with mock.patch(
+            "tracer.services.clickhouse.v2.get_reader", return_value=reader_cm
+        ):
+            resp = auth_client.post(
+                _add_items_url(active_queue.id), payload, format="json"
+            )
+        assert resp.status_code == 200, resp.data
+        assert resp.data["result"]["added"] == 3
+        assert len(reader_cm.list_by_ids_calls) == 1, reader_cm.list_by_ids_calls
+        assert set(reader_cm.list_by_ids_calls[0]) == {str(s.id) for s in spans}
+        assert reader_cm.get_calls == []
+
+    def test_enumerated_add_ch_failure_fails_open(
+        self, auth_client, active_queue, observe_project
+    ):
+        """A CH read failure during resolve fails OPEN — the unresolved items surface in
+        ``errors`` and the request is a clean 200, never a 500 that pins a worker."""
+        import uuid
+        from unittest import mock
+
+        class _RaisingReaderCM:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def list_by_ids(self, *args, **kwargs):
+                raise RuntimeError("CH unavailable")
+
+        span_id = f"ch-span-{uuid.uuid4().hex[:12]}"
+        payload = {
+            "items": [{"source_type": "observation_span", "source_id": span_id}],
+            "project_id": str(observe_project.id),
+        }
+        with mock.patch(
+            "tracer.services.clickhouse.v2.get_reader",
+            return_value=_RaisingReaderCM(),
+        ):
+            with capture_logs() as logs:
+                resp = auth_client.post(
+                    _add_items_url(active_queue.id), payload, format="json"
+                )
+        assert resp.status_code == 200, resp.data
+        assert resp.data["result"]["added"] == 0
+        assert resp.data["result"]["errors"]
+        # A CH fail-open emits one canonical, alertable event carrying the
+        # source_type and the caller — so an add-time outage is queryable as
+        # ch_bulk_resolve_failed{caller="add_items"} without a bespoke per-name
+        # query, and isn't bucketed under render errors that misdirect oncall.
+        assert any(
+            e["event"] == "ch_bulk_resolve_failed"
+            and e.get("source_type") == "span"
+            and e.get("caller") == "add_items"
+            for e in logs
+        )
+
+    def test_enumerated_over_cap_returns_413(
+        self, auth_client, active_queue, observe_project
+    ):
+        """An enumerated payload larger than the sync cap is rejected with a 413 +
+        code before any resolve/insert, so an oversized add can't pin the worker
+        pool on one giant IN(...) + sequential INSERT run."""
+        import uuid
+
+        import model_hub.views.annotation_queues as views_mod
+
+        # Lower the cap for the test instead of POSTing 1001 items.
+        original = views_mod.ADD_ITEMS_SYNC_MAX
+        views_mod.ADD_ITEMS_SYNC_MAX = 2
+        try:
+            items = [
+                {"source_type": "trace", "source_id": str(uuid.uuid4())}
+                for _ in range(3)
+            ]
+            resp = auth_client.post(
+                _add_items_url(active_queue.id),
+                {"items": items, "project_id": str(observe_project.id)},
+                format="json",
+            )
+        finally:
+            views_mod.ADD_ITEMS_SYNC_MAX = original
+        assert resp.status_code == 413, resp.data
+        assert resp.data.get("code") == "items_too_large"
 
 
 # --------------------------------------------------------------------------
@@ -117,7 +344,9 @@ class TestAddItemsFilterMode:
         self, auth_client, active_queue, observe_project
     ):
         for i in range(3):
-            Trace.objects.create(project=observe_project, name=f"t-{i}")
+            _seed_ch_trace_root(
+                Trace.objects.create(project=observe_project, name=f"t-{i}")
+            )
 
         resp = auth_client.post(
             _add_items_url(active_queue.id),
@@ -137,6 +366,30 @@ class TestAddItemsFilterMode:
         assert result["errors"] == []
         assert result["total_matching"] == 3
 
+    def test_filter_mode_add_populates_project_id(
+        self, auth_client, active_queue, observe_project
+    ):
+        """Filter-mode add stamps project_id from the selection too (TH-6864), so
+        every path that fills a queue leaves items scope-able by the render read."""
+        _seed_ch_trace_root(
+            Trace.objects.create(project=observe_project, name="t-fp")
+        )
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "trace",
+                    "project_id": str(observe_project.id),
+                }
+            },
+            format="json",
+        )
+        assert resp.status_code == 200, resp.data
+        items = list(QueueItem.objects.filter(queue=active_queue, deleted=False))
+        assert items
+        assert all(str(it.project_id) == str(observe_project.id) for it in items)
+
     def test_filter_mode_respects_exclude_ids(
         self, auth_client, active_queue, observe_project
     ):
@@ -144,6 +397,8 @@ class TestAddItemsFilterMode:
             Trace.objects.create(project=observe_project, name=f"t-{i}")
             for i in range(5)
         ]
+        for _t in traces:
+            _seed_ch_trace_root(_t)
         exclude = [str(traces[0].id), str(traces[1].id)]
 
         resp = auth_client.post(
@@ -163,6 +418,36 @@ class TestAddItemsFilterMode:
         assert result["added"] == 3
         assert result["total_matching"] == 3
 
+    def test_filter_mode_trace_id_filter_adds_exact_trace(
+        self, auth_client, active_queue, observe_project
+    ):
+        target = Trace.objects.create(project=observe_project, name="target-trace")
+        other = Trace.objects.create(project=observe_project, name="other-trace")
+        _seed_ch_trace_root(target)
+        _seed_ch_trace_root(other)
+
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "trace",
+                    "project_id": str(observe_project.id),
+                    "filter": [
+                        _api_filter("trace_id", "text", "equals", str(target.id))
+                    ],
+                }
+            },
+            format="json",
+        )
+
+        assert resp.status_code == 200, resp.data
+        result = resp.data["result"]
+        assert result["added"] == 1
+        assert result["total_matching"] == 1
+        assert QueueItem.objects.filter(trace=target, deleted=False).exists()
+        assert not QueueItem.objects.filter(trace=other, deleted=False).exists()
+
     def test_filter_mode_counts_existing_as_duplicates(
         self, auth_client, active_queue, observe_project
     ):
@@ -170,6 +455,8 @@ class TestAddItemsFilterMode:
             Trace.objects.create(project=observe_project, name=f"t-{i}")
             for i in range(3)
         ]
+        for _t in traces:
+            _seed_ch_trace_root(_t)
         # Pre-add one via the enumerated path.
         auth_client.post(
             _add_items_url(active_queue.id),
@@ -205,7 +492,9 @@ class TestAddItemsFilterMode:
         views_mod.MAX_SELECTION_CAP = 2
         try:
             for i in range(3):
-                Trace.objects.create(project=observe_project, name=f"t-{i}")
+                _seed_ch_trace_root(
+                    Trace.objects.create(project=observe_project, name=f"t-{i}")
+                )
             resp = auth_client.post(
                 _add_items_url(active_queue.id),
                 {
@@ -221,16 +510,47 @@ class TestAddItemsFilterMode:
             views_mod.MAX_SELECTION_CAP = original_cap
 
         assert resp.status_code == 400, resp.data
+        assert resp.data.get("type") == "selection_too_large"
+        assert resp.data.get("code") == "selection_too_large"
+        assert resp.data.get("detail")
         err = resp.data.get("error") or {}
         assert err.get("type") == "selection_too_large"
         assert err.get("total_matching") == 3
         assert err.get("cap") == 2
 
+    def test_filter_mode_ch_failure_returns_503_not_500(
+        self, auth_client, active_queue, observe_project, monkeypatch
+    ):
+        # The filter-mode resolvers are ClickHouse-only (no PG fallback). A CH
+        # outage must surface as a structured, retryable 503 the FE can show —
+        # not a raw 500 from Django's default handler.
+        import model_hub.views.annotation_queues as views_mod
+
+        def _boom(**kwargs):
+            raise RuntimeError("CH down")
+
+        monkeypatch.setitem(views_mod.FILTER_MODE_RESOLVERS, "trace", _boom)
+        resp = auth_client.post(
+            _add_items_url(active_queue.id),
+            {
+                "selection": {
+                    "mode": "filter",
+                    "source_type": "trace",
+                    "project_id": str(observe_project.id),
+                }
+            },
+            format="json",
+        )
+        assert resp.status_code == 503, resp.data
+        assert resp.data.get("code") == "source_resolve_unavailable"
+
     def test_filter_mode_queue_item_count_matches_added(
         self, auth_client, active_queue, observe_project
     ):
         for i in range(4):
-            Trace.objects.create(project=observe_project, name=f"t-{i}")
+            _seed_ch_trace_root(
+                Trace.objects.create(project=observe_project, name=f"t-{i}")
+            )
 
         resp = auth_client.post(
             _add_items_url(active_queue.id),
@@ -279,9 +599,7 @@ class TestAddItemsValidation:
         )
         assert resp.status_code == 400
 
-    def test_neither_items_nor_selection_rejected(
-        self, auth_client, active_queue
-    ):
+    def test_neither_items_nor_selection_rejected(self, auth_client, active_queue):
         resp = auth_client.post(_add_items_url(active_queue.id), {}, format="json")
         assert resp.status_code == 400
 
@@ -301,9 +619,7 @@ class TestAddItemsValidation:
         )
         assert resp.status_code == 400
 
-    def test_unsupported_source_type(
-        self, auth_client, active_queue, observe_project
-    ):
+    def test_unsupported_source_type(self, auth_client, active_queue, observe_project):
         # All four source types (trace / observation_span / trace_session /
         # call_execution) are supported after Phase 8. This test keeps the
         # validation path covered by trying an obviously wrong value.
@@ -319,368 +635,6 @@ class TestAddItemsValidation:
             format="json",
         )
         assert resp.status_code == 400
-
-
-# --------------------------------------------------------------------------
-# Phase 4 — filter-mode for source_type=observation_span
-# --------------------------------------------------------------------------
-
-
-def _make_span(project, trace, *, name, offset_minutes=0):
-    now = timezone.now()
-    return ObservationSpan.objects.create(
-        id=f"sp-{name}-{trace.id.hex[:6]}",
-        project=project,
-        trace=trace,
-        name=name,
-        observation_type="llm",
-        start_time=now + timezone.timedelta(minutes=offset_minutes)
-        if hasattr(timezone, "timedelta")
-        else now,
-        end_time=now,
-        parent_span_id=None,
-    )
-
-
-@pytest.fixture
-def span_parent_trace(db, observe_project):
-    return Trace.objects.create(project=observe_project, name="span-parent")
-
-
-@pytest.mark.django_db
-class TestAddItemsFilterModeSpan:
-    def test_filter_mode_span_no_filter_adds_all(
-        self, auth_client, active_queue, observe_project, span_parent_trace
-    ):
-        from datetime import timedelta
-
-        now = timezone.now()
-        for i in range(3):
-            ObservationSpan.objects.create(
-                id=f"sp-{i}-{span_parent_trace.id.hex[:6]}",
-                project=observe_project,
-                trace=span_parent_trace,
-                name=f"sp-{i}",
-                observation_type="llm",
-                start_time=now - timedelta(minutes=i),
-                end_time=now - timedelta(minutes=i) + timedelta(seconds=1),
-                parent_span_id=None,
-            )
-
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "observation_span",
-                    "project_id": str(observe_project.id),
-                }
-            },
-            format="json",
-        )
-        assert resp.status_code == 200, resp.data
-        result = resp.data["result"]
-        assert result["added"] == 3
-        assert result["duplicates"] == 0
-        assert result["total_matching"] == 3
-
-    def test_filter_mode_span_respects_exclude_ids(
-        self, auth_client, active_queue, observe_project, span_parent_trace
-    ):
-        from datetime import timedelta
-
-        now = timezone.now()
-        spans = []
-        for i in range(5):
-            spans.append(
-                ObservationSpan.objects.create(
-                    id=f"spx-{i}-{span_parent_trace.id.hex[:6]}",
-                    project=observe_project,
-                    trace=span_parent_trace,
-                    name=f"spx-{i}",
-                    observation_type="llm",
-                    start_time=now - timedelta(minutes=i),
-                    end_time=now - timedelta(minutes=i) + timedelta(seconds=1),
-                    parent_span_id=None,
-                )
-            )
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "observation_span",
-                    "project_id": str(observe_project.id),
-                    "exclude_ids": [spans[0].id, spans[1].id],
-                }
-            },
-            format="json",
-        )
-        assert resp.status_code == 200, resp.data
-        assert resp.data["result"]["added"] == 3
-        assert resp.data["result"]["total_matching"] == 3
-
-    def test_filter_mode_span_counts_existing_as_duplicates(
-        self, auth_client, active_queue, observe_project, span_parent_trace
-    ):
-        from datetime import timedelta
-
-        now = timezone.now()
-        spans = []
-        for i in range(3):
-            spans.append(
-                ObservationSpan.objects.create(
-                    id=f"spd-{i}-{span_parent_trace.id.hex[:6]}",
-                    project=observe_project,
-                    trace=span_parent_trace,
-                    name=f"spd-{i}",
-                    observation_type="llm",
-                    start_time=now - timedelta(minutes=i),
-                    end_time=now - timedelta(minutes=i) + timedelta(seconds=1),
-                    parent_span_id=None,
-                )
-            )
-        # Pre-add one via enumerated path
-        auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "items": [
-                    {"source_type": "observation_span", "source_id": spans[0].id}
-                ]
-            },
-            format="json",
-        )
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "observation_span",
-                    "project_id": str(observe_project.id),
-                }
-            },
-            format="json",
-        )
-        assert resp.status_code == 200, resp.data
-        assert resp.data["result"]["added"] == 2
-        assert resp.data["result"]["duplicates"] == 1
-
-    def test_filter_mode_span_truncation_returns_400(
-        self, auth_client, active_queue, observe_project, span_parent_trace
-    ):
-        from datetime import timedelta
-
-        import model_hub.views.annotation_queues as views_mod
-
-        original_cap = views_mod.MAX_SELECTION_CAP
-        views_mod.MAX_SELECTION_CAP = 2
-        try:
-            now = timezone.now()
-            for i in range(3):
-                ObservationSpan.objects.create(
-                    id=f"spt-{i}-{span_parent_trace.id.hex[:6]}",
-                    project=observe_project,
-                    trace=span_parent_trace,
-                    name=f"spt-{i}",
-                    observation_type="llm",
-                    start_time=now - timedelta(minutes=i),
-                    end_time=now - timedelta(minutes=i) + timedelta(seconds=1),
-                    parent_span_id=None,
-                )
-            resp = auth_client.post(
-                _add_items_url(active_queue.id),
-                {
-                    "selection": {
-                        "mode": "filter",
-                        "source_type": "observation_span",
-                        "project_id": str(observe_project.id),
-                    }
-                },
-                format="json",
-            )
-        finally:
-            views_mod.MAX_SELECTION_CAP = original_cap
-
-        assert resp.status_code == 400, resp.data
-        err = resp.data.get("error") or {}
-        assert err.get("type") == "selection_too_large"
-        assert err.get("total_matching") == 3
-        assert err.get("cap") == 2
-
-
-# --------------------------------------------------------------------------
-# Phase 6 — filter-mode for source_type=trace_session
-# --------------------------------------------------------------------------
-
-
-@pytest.fixture
-def seeded_sessions_for_dispatch(db, observe_project):
-    """3 sessions with spans for endpoint-level session dispatch tests."""
-    from datetime import timedelta
-
-    from tracer.models.trace_session import TraceSession
-
-    now = timezone.now()
-    sessions = []
-    for i in range(3):
-        s = TraceSession.objects.create(
-            project=observe_project, name=f"ds-{i}", bookmarked=False
-        )
-        t = Trace.objects.create(project=observe_project, session=s, name=f"dt-{i}")
-        ObservationSpan.objects.create(
-            id=f"sp-disp-{i}-{s.id.hex[:6]}",
-            project=observe_project,
-            trace=t,
-            name=f"sp-{i}",
-            observation_type="llm",
-            start_time=now - timedelta(minutes=i),
-            end_time=now - timedelta(minutes=i) + timedelta(seconds=1),
-            parent_span_id=None,
-            cost=0.0,
-            total_tokens=0,
-        )
-        sessions.append(s)
-    return sessions
-
-
-@pytest.mark.django_db
-class TestAddItemsFilterModeSession:
-    def test_filter_mode_session_no_filter_adds_all(
-        self, auth_client, active_queue, observe_project, seeded_sessions_for_dispatch
-    ):
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "trace_session",
-                    "project_id": str(observe_project.id),
-                }
-            },
-            format="json",
-        )
-        assert resp.status_code == 200, resp.data
-        assert resp.data["result"]["added"] == 3
-        assert resp.data["result"]["total_matching"] == 3
-
-    @pytest.mark.api
-    def test_filter_mode_session_date_filter_matches_list_endpoint(
-        self, auth_client, active_queue, observe_project, seeded_sessions_for_dispatch
-    ):
-        now = timezone.now()
-        recent_start = now - timedelta(days=7)
-        recent_end = now + timedelta(days=1)
-        recent_sessions = seeded_sessions_for_dispatch[:2]
-        old_session = seeded_sessions_for_dispatch[2]
-
-        TraceSession.objects.filter(id=recent_sessions[0].id).update(
-            created_at=now - timedelta(days=2)
-        )
-        TraceSession.objects.filter(id=recent_sessions[1].id).update(
-            created_at=now - timedelta(days=1)
-        )
-        TraceSession.objects.filter(id=old_session.id).update(
-            created_at=now - timedelta(days=90)
-        )
-
-        filters = [
-            _api_filter(
-                "created_at",
-                "datetime",
-                "between",
-                [recent_start.isoformat(), recent_end.isoformat()],
-            )
-        ]
-        expected_ids = {str(session.id) for session in recent_sessions}
-
-        list_resp = auth_client.get(
-            "/tracer/trace-session/list_sessions/",
-            {
-                "project_id": str(observe_project.id),
-                "filters": json.dumps(filters),
-                "sort_params": "[]",
-                "page_number": 0,
-                "page_size": 20,
-            },
-        )
-        assert list_resp.status_code == 200, list_resp.data
-        list_ids = {
-            row["session_id"]
-            for row in list_resp.data["result"]["table"]
-        }
-        assert list_ids == expected_ids
-
-        add_resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "trace_session",
-                    "project_id": str(observe_project.id),
-                    "filter": filters,
-                }
-            },
-            format="json",
-        )
-        assert add_resp.status_code == 200, add_resp.data
-        assert add_resp.data["result"]["added"] == 2
-        assert add_resp.data["result"]["total_matching"] == 2
-
-        queue_session_ids = {
-            str(item.trace_session_id)
-            for item in QueueItem.objects.filter(
-                queue=active_queue,
-                source_type="trace_session",
-                deleted=False,
-            )
-        }
-        assert queue_session_ids == expected_ids
-
-    def test_filter_mode_session_respects_exclude_ids(
-        self, auth_client, active_queue, observe_project, seeded_sessions_for_dispatch
-    ):
-        exclude = [str(seeded_sessions_for_dispatch[0].id)]
-        resp = auth_client.post(
-            _add_items_url(active_queue.id),
-            {
-                "selection": {
-                    "mode": "filter",
-                    "source_type": "trace_session",
-                    "project_id": str(observe_project.id),
-                    "exclude_ids": exclude,
-                }
-            },
-            format="json",
-        )
-        assert resp.status_code == 200, resp.data
-        assert resp.data["result"]["added"] == 2
-
-    def test_filter_mode_session_truncation_returns_400(
-        self, auth_client, active_queue, observe_project, seeded_sessions_for_dispatch
-    ):
-        import model_hub.views.annotation_queues as views_mod
-
-        original_cap = views_mod.MAX_SELECTION_CAP
-        views_mod.MAX_SELECTION_CAP = 2
-        try:
-            resp = auth_client.post(
-                _add_items_url(active_queue.id),
-                {
-                    "selection": {
-                        "mode": "filter",
-                        "source_type": "trace_session",
-                        "project_id": str(observe_project.id),
-                    }
-                },
-                format="json",
-            )
-        finally:
-            views_mod.MAX_SELECTION_CAP = original_cap
-        assert resp.status_code == 400, resp.data
-        err = resp.data.get("error") or {}
-        assert err.get("type") == "selection_too_large"
-        assert err.get("total_matching") == 3
-        assert err.get("cap") == 2
 
 
 # --------------------------------------------------------------------------
@@ -714,8 +668,7 @@ def seeded_call_executions_for_dispatch(db, organization, workspace):
         workspace=workspace,
     )
     ces = [
-        CallExecution.objects.create(test_execution=te, scenario=scen)
-        for _ in range(3)
+        CallExecution.objects.create(test_execution=te, scenario=scen) for _ in range(3)
     ]
     return agent_def, ces
 
@@ -783,6 +736,8 @@ class TestAddItemsFilterModeCallExecution:
         finally:
             views_mod.MAX_SELECTION_CAP = original_cap
         assert resp.status_code == 400, resp.data
+        assert resp.data.get("type") == "selection_too_large"
+        assert resp.data.get("code") == "selection_too_large"
         err = resp.data.get("error") or {}
         assert err.get("type") == "selection_too_large"
         assert err.get("total_matching") == 3
@@ -914,8 +869,10 @@ def seeded_mixed_call_executions(db, organization, workspace):
     }
     te.save(update_fields=["scenario_ids", "execution_metadata"])
     completed_short = CallExecution.objects.create(
-        test_execution=te, scenario=scen,
-        status="completed", duration_seconds=10,
+        test_execution=te,
+        scenario=scen,
+        status="completed",
+        duration_seconds=10,
         cost_cents=12,
         row_id=high_priority_row.id,
         call_metadata={
@@ -933,8 +890,10 @@ def seeded_mixed_call_executions(db, organization, workspace):
         tool_outputs={"tool_eval_accuracy": {"output": "pass"}},
     )
     completed_long = CallExecution.objects.create(
-        test_execution=te, scenario=scen,
-        status="completed", duration_seconds=120,
+        test_execution=te,
+        scenario=scen,
+        status="completed",
+        duration_seconds=120,
         customer_cost_cents=120,
         row_id=low_priority_row.id,
         call_metadata={
@@ -952,8 +911,10 @@ def seeded_mixed_call_executions(db, organization, workspace):
         tool_outputs={"tool_eval_accuracy": {"output": "fail"}},
     )
     failed = CallExecution.objects.create(
-        test_execution=te, scenario=scen,
-        status="failed", duration_seconds=30,
+        test_execution=te,
+        scenario=scen,
+        status="failed",
+        duration_seconds=30,
         cost_cents=56,
         row_id=failed_row.id,
         call_metadata={
@@ -970,7 +931,15 @@ def seeded_mixed_call_executions(db, organization, workspace):
         },
         tool_outputs={"tool_eval_accuracy": {"output": "pass"}},
     )
-    return agent_def, te, completed_short, completed_long, failed, priority_column, attempts_column
+    return (
+        agent_def,
+        te,
+        completed_short,
+        completed_long,
+        failed,
+        priority_column,
+        attempts_column,
+    )
 
 
 @pytest.mark.django_db
@@ -1006,9 +975,7 @@ class TestAddItemsFilterModeCallExecutionRichFilters:
 
         assert resp.status_code == 200, resp.data
         assert resp.data["count"] == 1
-        assert [row["id"] for row in resp.data["results"]] == [
-            str(completed_short.id)
-        ]
+        assert [row["id"] for row in resp.data["results"]] == [str(completed_short.id)]
 
     def test_simulation_add_items_grid_endpoint_filters_scenario_attributes(
         self, auth_client, seeded_mixed_call_executions
@@ -1104,9 +1071,7 @@ class TestAddItemsFilterModeCallExecutionRichFilters:
 
         assert resp.status_code == 200, resp.data
         assert resp.data["count"] == 1
-        assert [row["id"] for row in resp.data["results"]] == [
-            str(completed_short.id)
-        ]
+        assert [row["id"] for row in resp.data["results"]] == [str(completed_short.id)]
 
     def test_simulation_add_items_grid_endpoint_filters_persona_fields(
         self, auth_client, seeded_mixed_call_executions
@@ -1141,9 +1106,7 @@ class TestAddItemsFilterModeCallExecutionRichFilters:
 
         assert resp.status_code == 200, resp.data
         assert resp.data["count"] == 1
-        assert [row["id"] for row in resp.data["results"]] == [
-            str(completed_long.id)
-        ]
+        assert [row["id"] for row in resp.data["results"]] == [str(completed_long.id)]
 
     def test_filter_mode_status_filter_narrows_result(
         self, auth_client, active_queue, seeded_mixed_call_executions

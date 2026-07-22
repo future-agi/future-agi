@@ -22,6 +22,7 @@ import {
   useUpdateProvider,
   useFetchProviderModels,
 } from "./hooks/useGatewayConfig";
+import { parseTimeoutSeconds } from "./utils";
 
 const PROVIDER_PRESETS = {
   openai: {
@@ -346,6 +347,10 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       newErrors.models = "Select at least one model";
     }
 
+    if (timeoutVal.trim() && parseTimeoutSeconds(timeoutVal) === null) {
+      newErrors.timeout = "Use seconds, e.g. 30 or 30s";
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -363,7 +368,8 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
       config.api_key = apiKey;
     }
     if (models.length > 0) config.models = models;
-    if (timeoutVal) config.default_timeout = timeoutVal;
+    const timeoutSeconds = parseTimeoutSeconds(timeoutVal);
+    if (timeoutSeconds !== null) config.default_timeout = timeoutSeconds;
     if (maxConcurrent) config.max_concurrent = Number(maxConcurrent);
 
     updateProvider.mutate(
@@ -535,14 +541,12 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
 
           {(() => {
             const currentPreset = PROVIDER_PRESETS[name];
-            const visibleFormats =
-              currentPreset?.supportedFormats?.length
-                ? API_FORMATS.filter((f) =>
-                    currentPreset.supportedFormats.includes(f),
-                  )
-                : API_FORMATS;
-            const isFiltered =
-              visibleFormats.length < API_FORMATS.length;
+            const visibleFormats = currentPreset?.supportedFormats?.length
+              ? API_FORMATS.filter((f) =>
+                  currentPreset.supportedFormats.includes(f),
+                )
+              : API_FORMATS;
+            const isFiltered = visibleFormats.length < API_FORMATS.length;
             const isSingleOption = visibleFormats.length === 1;
             return (
               <TextField
@@ -674,8 +678,13 @@ const AddProviderDialog = ({ open, onClose, gatewayId, provider }) => {
             <TextField
               label="Timeout"
               value={timeoutVal}
-              onChange={(e) => setTimeoutVal(e.target.value)}
+              onChange={(e) => {
+                setTimeoutVal(e.target.value);
+                setErrors((prev) => ({ ...prev, timeout: undefined }));
+              }}
               placeholder="30s"
+              error={!!errors.timeout}
+              helperText={errors.timeout || "Seconds; accepts 30 or 30s"}
               sx={{ flex: 1 }}
             />
             <TextField

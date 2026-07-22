@@ -168,7 +168,10 @@ export function useReloadConfig() {
 
   return useMutation({
     mutationFn: async (gatewayId) => {
-      const { data } = await axios.post(endpoints.gateway.reload(gatewayId));
+      const { data } = await axios.post(
+        endpoints.gateway.reload(gatewayId),
+        {},
+      );
       return data.result;
     },
     onSuccess: () => {

@@ -338,7 +338,6 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => {
   // so users can drill into nested keys (e.g. `prompt.messages.0.content`)
   // instead of seeing "[object Object]". Strings, numbers, booleans, and
   // null still render as plain text.
-  
 
   const isResultRow =
     typeof label === "string" && label.trim().toLowerCase() === "result";
@@ -624,7 +623,6 @@ const ErrorDetails = ({ rawError }) => {
 ErrorDetails.propTypes = {
   rawError: PropTypes.string,
 };
-
 
 PartialInputWarningDetails.propTypes = {
   warnings: PropTypes.arrayOf(PropTypes.object),

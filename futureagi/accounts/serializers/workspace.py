@@ -1,3 +1,6 @@
+import json
+import re
+
 from rest_framework import serializers
 
 from accounts.models import User
@@ -27,15 +30,19 @@ class WorkspaceListSerializer(serializers.ModelSerializer):
 
     def get_admin_names(self, obj):
         """Get admin names for the workspace"""
-        admin_memberships = WorkspaceMembership.no_workspace_objects.filter(
-            workspace=obj,
-            role__in=[
-                OrganizationRoles.WORKSPACE_ADMIN,
-                OrganizationRoles.OWNER,
-                OrganizationRoles.ADMIN,
-            ],
-            is_active=True,
-        ).select_related("user")
+        # Use the prefetched cache when the view supplies it (avoids the
+        # per-workspace N+1); fall back to a direct query otherwise.
+        admin_memberships = getattr(obj, "admin_memberships_cache", None)
+        if admin_memberships is None:
+            admin_memberships = WorkspaceMembership.no_workspace_objects.filter(
+                workspace=obj,
+                role__in=[
+                    OrganizationRoles.WORKSPACE_ADMIN,
+                    OrganizationRoles.OWNER,
+                    OrganizationRoles.ADMIN,
+                ],
+                is_active=True,
+            ).select_related("user")
 
         return [
             {"name": membership.user.name, "id": str(membership.user.id)}
@@ -197,6 +204,7 @@ class DeleteUserSerializer(serializers.Serializer):
 class SwitchWorkspaceSerializer(serializers.Serializer):
     """Serializer for switching workspaces"""
 
+    old_workspace_id = serializers.UUIDField(required=False)
     new_workspace_id = serializers.UUIDField()
 
 
@@ -206,9 +214,7 @@ class PaginationSerializer(serializers.Serializer):
     page = serializers.IntegerField(min_value=1, default=1)
     limit = serializers.IntegerField(min_value=1, max_value=100, default=10)
     search = serializers.CharField(required=False, allow_blank=True, default="")
-    sort = serializers.ListField(
-        child=serializers.CharField(), required=False, default=list
-    )
+    sort = serializers.CharField(required=False, allow_blank=True, default="")
 
 
 class WorkspaceListRequestSerializer(PaginationSerializer):
@@ -217,16 +223,144 @@ class WorkspaceListRequestSerializer(PaginationSerializer):
     pass
 
 
+class UserListSortField(serializers.Field):
+    """Normalize supported user-list sort payload shapes to Django order_by fields."""
+
+    default_error_messages = {
+        "invalid": "Sort must be a field name, JSON object, or JSON list."
+    }
+    _DESC_VALUES = {"desc", "descending", "down", "false"}
+    _COLUMN_MAP = {
+        "name": "name",
+        "email": "email",
+        "role": "computed_role_rank",
+        "status": "computed_status",
+        "startdate": "created_at",
+        "start_date": "created_at",
+        "lastupdateddate": "created_at",
+        "last_updated_date": "created_at",
+    }
+
+    def to_internal_value(self, data):
+        if data in (None, ""):
+            return []
+        if isinstance(data, str):
+            data = self._parse_string(data)
+        if isinstance(data, dict):
+            data = [data]
+        if not isinstance(data, list):
+            self.fail("invalid")
+
+        ordering = []
+        for item in data:
+            order_by = self._item_to_ordering(item)
+            if order_by:
+                ordering.append(order_by)
+        return ordering
+
+    def to_representation(self, value):
+        return value or []
+
+    def _parse_string(self, value):
+        value = value.strip()
+        if not value:
+            return []
+        if value[0] in "[{":
+            try:
+                return json.loads(value)
+            except (TypeError, ValueError):
+                self.fail("invalid")
+        return [value]
+
+    def _item_to_ordering(self, item):
+        if isinstance(item, str):
+            descending = item.startswith("-")
+            field_name = self._map_column(item[1:] if descending else item)
+            if not field_name:
+                return None
+            return f"-{field_name}" if descending else field_name
+
+        if not isinstance(item, dict):
+            return None
+
+        column_id = item.get("columnId") or item.get("id") or item.get("column")
+        field_name = self._map_column(column_id)
+        if not field_name:
+            return None
+        sort_type = item.get("type") or item.get("order") or item.get("dir")
+        if str(sort_type).lower() in self._DESC_VALUES:
+            return f"-{field_name}"
+        return field_name
+
+    def _map_column(self, column_id):
+        if not column_id:
+            return None
+        key = str(column_id).strip()
+        return self._COLUMN_MAP.get(key.lower())
+
+
 class UserListRequestSerializer(PaginationSerializer):
     """Serializer for user list request with additional filters"""
 
+    sort = UserListSortField(required=False, default=list)
+    workspace_id = serializers.UUIDField(required=False)
     filter_status = serializers.ListField(
         child=serializers.ChoiceField(
-            choices=["Active", "Inactive", "Request Pending", "Request Expired"]
+            choices=[
+                "All status",
+                "Active",
+                "Inactive",
+                "Pending",
+                "Expired",
+                "Request Pending",
+                "Request Expired",
+            ]
         ),
         required=False,
         default=list,
     )
+
+    _SORT_BRACKET_KEY_RE = re.compile(r"^sort\[(\d+)\]\[(columnId|type)\]$")
+
+    def allows_unknown_field(self, field_name):
+        return bool(self._SORT_BRACKET_KEY_RE.match(field_name))
+
+    def to_internal_value(self, data):
+        normalized = self._normalized_query_data(data)
+        bracket_sort = self._sort_from_bracket_query(data)
+        if bracket_sort and not normalized.get("sort"):
+            normalized["sort"] = bracket_sort
+        return super().to_internal_value(normalized)
+
+    def _normalized_query_data(self, data):
+        if not hasattr(data, "keys"):
+            return data
+
+        normalized = {}
+        multi_value_fields = {"filter_status", "filter_role"}
+        for key in data.keys():
+            if self._SORT_BRACKET_KEY_RE.match(key):
+                continue
+            if hasattr(data, "getlist") and key in multi_value_fields:
+                normalized[key] = data.getlist(key)
+            else:
+                normalized[key] = data.get(key)
+        return normalized
+
+    def _sort_from_bracket_query(self, data):
+        if not hasattr(data, "keys"):
+            return []
+
+        sort_items = {}
+        for key in data.keys():
+            match = self._SORT_BRACKET_KEY_RE.match(key)
+            if not match:
+                continue
+            index = int(match.group(1))
+            sort_key = match.group(2)
+            sort_items.setdefault(index, {})[sort_key] = data.get(key)
+
+        return [sort_items[index] for index in sorted(sort_items.keys())]
     filter_role = serializers.ListField(
         child=serializers.ChoiceField(choices=OrganizationRoles.choices),
         required=False,

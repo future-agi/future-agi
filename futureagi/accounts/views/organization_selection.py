@@ -1,6 +1,7 @@
 import logging
 from uuid import UUID
 
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
@@ -8,7 +9,17 @@ from rest_framework.views import APIView
 from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    CurrentOrganizationResponseSerializer,
+    OrganizationSelectionListResponseSerializer,
+    OrganizationSelectResponseSerializer,
+    OrganizationSwitchRequestSerializer,
+    OrganizationSwitchResponseSerializer,
+)
+from accounts.services.workspace_membership import resolve_org_membership
 from tfc.constants.roles import RoleMapping
+from tfc.utils.api_contracts import validated_api_request, validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = logging.getLogger(__name__)
@@ -27,15 +38,18 @@ class OrganizationSelectionView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=OrganizationSwitchRequestSerializer,
+        responses={
+            200: OrganizationSelectResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         """Select an organization for the current session."""
         try:
-            organization_id = request.data.get("organization_id")
-            if not organization_id:
-                return self._gm.bad_request("Organization ID is required")
-
-            if not _validate_uuid(organization_id):
-                return self._gm.bad_request("Invalid organization ID format")
+            organization_id = request.validated_data["organization_id"]
 
             try:
                 selected_org = Organization.objects.get(id=organization_id)
@@ -70,6 +84,12 @@ class OrganizationSelectionView(APIView):
             logger.error(f"Failed to select organization: {str(e)}")
             return self._gm.bad_request("Failed to select organization")
 
+    @validated_request(
+        responses={
+            200: OrganizationSelectionListResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        }
+    )
     def get(self, request, *args, **kwargs):
         """Get all organizations the user has access to."""
         try:
@@ -148,6 +168,14 @@ class SwitchOrganizationView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=OrganizationSwitchRequestSerializer,
+        responses={
+            200: OrganizationSwitchResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         """Switch to a different organization.
 
@@ -155,12 +183,7 @@ class SwitchOrganizationView(APIView):
         or its default workspace, so the frontend can update both contexts.
         """
         try:
-            organization_id = request.data.get("organization_id")
-            if not organization_id:
-                return self._gm.bad_request("Organization ID is required")
-
-            if not _validate_uuid(organization_id):
-                return self._gm.bad_request("Invalid organization ID format")
+            organization_id = request.validated_data["organization_id"]
 
             try:
                 selected_org = Organization.objects.get(id=organization_id)
@@ -268,6 +291,9 @@ class SwitchOrganizationView(APIView):
                     "role": ws_role,
                     "invited_by": user,
                     "is_active": True,
+                    "organization_membership": resolve_org_membership(
+                        user, organization
+                    ),
                 },
             )
             return ws
@@ -276,8 +302,16 @@ class SwitchOrganizationView(APIView):
             return None
 
 
+@swagger_auto_schema(
+    method="get",
+    responses={200: CurrentOrganizationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+)
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
+@validated_api_request(
+    responses={200: CurrentOrganizationResponseSerializer, **ACCOUNTS_ERROR_RESPONSES},
+    document=False,
+)
 def get_current_organization(request):
     """Get the currently selected organization for the user."""
     _gm = GeneralMethods()

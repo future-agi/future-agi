@@ -26,7 +26,7 @@ const ConfigureDefaultDataset = ({ open, onClose, modelDetails }) => {
 
   const { mutate: updateDefaultDataset, isPending } = useMutation({
     mutationFn: (body) =>
-      axios.post(`${endpoints.model.updateDefaultDataset}${id}/`, body),
+      axios.post(endpoints.model.updateDefaultDataset(id), body),
     onSuccess: () => {
       enqueueSnackbar("Default dataset configured", {
         variant: "success",

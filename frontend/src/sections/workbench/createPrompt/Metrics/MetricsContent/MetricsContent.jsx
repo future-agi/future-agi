@@ -37,7 +37,7 @@ const MetricsContent = () => {
   const { id } = useParams();
 
   const hasActiveFiltersOrSearch = useMemo(() => {
-    const hasFilters = filters?.some((f) => f.columnId !== "");
+    const hasFilters = filters?.some((f) => f.column_id);
     return hasFilters;
   }, [filters]);
 
@@ -104,39 +104,47 @@ const MetricsContent = () => {
     const bottomRowObj = {};
 
     for (const eachCol of columns) {
-      if (eachCol?.groupBy) {
-        if (!grouping[eachCol?.groupBy]) {
-          grouping[eachCol?.groupBy] = [eachCol];
+      if (eachCol?.group_by) {
+        if (!grouping[eachCol?.group_by]) {
+          grouping[eachCol?.group_by] = [eachCol];
         } else {
-          grouping[eachCol?.groupBy].push(eachCol);
+          grouping[eachCol?.group_by].push(eachCol);
         }
       } else {
         grouping[getRandomId()] = [eachCol];
       }
     }
 
-    const columnDefsResult = Object.entries(grouping).map(([group, cols]) => {
-      if (!AllowedGroups.includes(group) && cols.length === 1) {
-        const c = cols[0];
-        bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
-        return getMetricsListColumnDefs(c);
-      } else {
-        return {
-          headerName: group,
-          children: cols.map((c) => {
-            bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
-            const colDef = getMetricsListColumnDefs(c, "evaluation");
-            return {
-              ...colDef,
-              minWidth: 200,
-              flex: 1,
-              cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
-            };
-          }),
-          headerGroupComponent: CustomTraceGroupHeaderRenderer,
-        };
-      }
-    });
+    const columnDefsResult = Object.entries(grouping).flatMap(
+      ([group, cols]) => {
+        if (group === "Annotation Metrics") {
+          return cols.map((c) => {
+            bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+            return getMetricsListColumnDefs(c, "evaluation");
+          });
+        }
+        if (!AllowedGroups.includes(group) && cols.length === 1) {
+          const c = cols[0];
+          bottomRowObj[c?.id] = c?.average ? `${c?.average}` : null;
+          return getMetricsListColumnDefs(c);
+        } else {
+          return {
+            headerName: group,
+            children: cols.map((c) => {
+              bottomRowObj[c?.id] = c?.average ? `Average ${c?.average}` : null;
+              const colDef = getMetricsListColumnDefs(c, "evaluation");
+              return {
+                ...colDef,
+                minWidth: 200,
+                flex: 1,
+                cellStyle: mergeCellStyle(colDef, { paddingInline: 0 }),
+              };
+            }),
+            headerGroupComponent: CustomTraceGroupHeaderRenderer,
+          };
+        }
+      },
+    );
 
     return {
       columnDefs: columnDefsResult,
@@ -153,7 +161,7 @@ const MetricsContent = () => {
       getRows: async (params) => {
         try {
           setIsLoading(true);
-          const validFilters = filters?.filter((f) => f.columnId !== "");
+          const validFilters = filters?.filter((f) => f.column_id);
           // --- API Request ---
           const response = await axios.get(
             endpoints.develop.runPrompt.getPromptMetrics(),
@@ -195,7 +203,7 @@ const MetricsContent = () => {
         }
       },
 
-      getRowId: ({ data }) => data.promptVersionId,
+      getRowId: ({ data }) => data.prompt_version_id,
     }),
     [id, filters, setColumns],
   );

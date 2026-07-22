@@ -76,12 +76,7 @@ const TestDetailConfigureEval = () => {
   }, [agentType, sourceType, testData]);
 
   const { mutateAsync: updateEvalAsync } = useMutation({
-    mutationFn: (
-      {
-        evalConfigId,
-        payload,
-      },
-    ) =>
+    mutationFn: ({ evalConfigId, payload }) =>
       axios.post(
         endpoints.runTests.updateSimulateEval(testId, evalConfigId),
         payload,
@@ -97,25 +92,18 @@ const TestDetailConfigureEval = () => {
     async (evalConfig) => {
       if (!testId || !editingEvalItem?.id) return;
       const payload = serializeEvalConfig(evalConfig);
-      try {
-        await updateEvalAsync({
-          evalConfigId: editingEvalItem.id,
-          payload: {
-            ...payload,
-            ...(executionId
-              ? { run: true, test_execution_id: executionId }
-              : {}),
-          },
-        });
+      await updateEvalAsync({
+        evalConfigId: editingEvalItem.id,
+        payload: {
+          ...payload,
+          ...(executionId
+            ? { run: true, test_execution_id: executionId }
+            : {}),
+        },
+      });
 
-        enqueueSnackbar("Eval updated successfully", { variant: "success" });
-        handleRefresh();
-      } catch (error) {
-        enqueueSnackbar(error?.response?.data?.error || "Failed to save eval", {
-          variant: "error",
-        });
-        throw error;
-      }
+      enqueueSnackbar("Eval updated successfully", { variant: "success" });
+      handleRefresh();
     },
     [testId, executionId, editingEvalItem, updateEvalAsync, handleRefresh],
   );

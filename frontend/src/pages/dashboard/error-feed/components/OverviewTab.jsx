@@ -3,9 +3,11 @@ import ApexCharts from "apexcharts";
 import { format } from "date-fns";
 import {
   Box,
+  Button,
   Chip,
   Skeleton,
   Stack,
+  Tooltip,
   Typography,
   alpha,
   useTheme,
@@ -13,17 +15,20 @@ import {
 import PropTypes from "prop-types";
 import Iconify from "src/components/iconify";
 import AgentGraph from "src/sections/projects/LLMTracing/GraphSection/AgentGraph";
+import AgentPath from "src/sections/projects/LLMTracing/GraphSection/AgentPath";
+import GraphSkeleton from "src/sections/projects/LLMTracing/GraphSection/GraphSkeleton";
 import { buildTraceGraph } from "src/components/traceDetail/buildTraceGraph";
+import { error as errorPalette, success } from "src/theme/palette";
 import { useGetTraceDetail } from "src/api/project/trace-detail";
-import { useGetProjectDetails } from "src/api/project/project-detail";
-import { PROJECT_SOURCE } from "src/utils/constants";
-import TraceVoicePanel from "./TraceVoicePanel";
-import {
-  DEEP_ANALYSIS_STATUS,
-  useErrorFeedDeepAnalysis,
-  useErrorFeedOverview,
-} from "src/api/errorFeed/error-feed";
+import { useErrorFeedOverview } from "src/api/errorFeed/error-feed";
+import EvalIOPanel from "./EvalIOPanel";
+import VoiceEvalPanel from "./VoiceEvalPanel";
+import { buildGraphDiff } from "./buildGraphDiff";
 import { useErrorFeedStore } from "../store";
+import { TOKEN_PRICE_USD, TRACE_STATUS } from "../constants";
+
+const estimateTraceCost = (inputTokens = 0, outputTokens = 0) =>
+  inputTokens * TOKEN_PRICE_USD.INPUT + outputTokens * TOKEN_PRICE_USD.OUTPUT;
 
 // ── Shared section card (collapsible) ────────────────────────────────────────
 function SectionCard({
@@ -103,107 +108,7 @@ SectionCard.propTypes = {
   defaultOpen: PropTypes.bool,
 };
 
-// ── Trace navigation header ──────────────────────────────────────────────────
-function TraceHeader({ trace, traceIndex, total, onPrev, onNext }) {
-  const theme = useTheme();
-  const isDark = theme.palette.mode === "dark";
-  const isFail = trace.status === "fail";
-  const statusColor = isFail ? "#DB2F2D" : "#5ACE6D";
-
-  return (
-    <Box
-      sx={{
-        border: "1px solid",
-        borderColor: isDark ? alpha("#fff", 0.1) : alpha("#000", 0.1),
-        borderRadius: "8px",
-        bgcolor: isDark ? alpha("#fff", 0.025) : "background.paper",
-        overflow: "hidden",
-      }}
-    >
-      <Stack
-        direction="row"
-        alignItems="center"
-        gap={1.25}
-        sx={{
-          px: 1.75,
-          py: 1.1,
-          borderBottom: "1px solid",
-          borderColor: "divider",
-          bgcolor: isDark ? alpha("#fff", 0.02) : alpha("#000", 0.018),
-        }}
-      >
-        {/* Trace ID */}
-        <Iconify
-          icon="mdi:sitemap-outline"
-          width={13}
-          sx={{ color: "text.disabled", flexShrink: 0 }}
-        />
-        <Typography
-          fontSize="12px"
-          fontWeight={700}
-          color="text.primary"
-          sx={{ letterSpacing: "0.02em" }}
-        >
-          {trace.id}
-        </Typography>
-
-        <Box sx={{ flex: 1 }} />
-
-        {/* Latency · Cost · Tokens */}
-        <Stack direction="row" alignItems="center" gap={1.5} flexShrink={0}>
-          <Stack direction="row" alignItems="center" gap={0.4}>
-            <Iconify
-              icon="mdi:timer-outline"
-              width={12}
-              sx={{ color: "text.disabled" }}
-            />
-            <Typography fontSize="12px" color="text.secondary">
-              {trace.summary.latencyMs}ms
-            </Typography>
-          </Stack>
-          <Stack direction="row" alignItems="center" gap={0.4}>
-            <Iconify
-              icon="mdi:currency-usd"
-              width={12}
-              sx={{ color: "text.disabled" }}
-            />
-            <Typography fontSize="12px" color="text.secondary">
-              $
-              {(
-                trace.summary.cost ??
-                (trace.summary.inputTokens ?? 0) * 0.000003 +
-                  (trace.summary.outputTokens ?? 0) * 0.000015
-              ).toFixed(4)}
-            </Typography>
-          </Stack>
-          <Stack direction="row" alignItems="center" gap={0.4}>
-            <Iconify
-              icon="mdi:text-box-outline"
-              width={12}
-              sx={{ color: "text.disabled" }}
-            />
-            <Typography fontSize="12px" color="text.secondary">
-              {(
-                (trace.summary.inputTokens ?? 0) +
-                (trace.summary.outputTokens ?? 0)
-              ).toLocaleString()}{" "}
-              tok
-            </Typography>
-          </Stack>
-        </Stack>
-      </Stack>
-    </Box>
-  );
-}
-TraceHeader.propTypes = {
-  trace: PropTypes.object.isRequired,
-  traceIndex: PropTypes.number.isRequired,
-  total: PropTypes.number.isRequired,
-  onPrev: PropTypes.func.isRequired,
-  onNext: PropTypes.func.isRequired,
-};
-
-// ── (SparkRow removed — replaced by unified EventsUsersChart below) ──────────
+// ── SparkRow ─────────────────────────────────────────────────────────────────
 function SparkRow({
   label,
   total,
@@ -684,18 +589,16 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
   return (
     <Stack gap={0}>
       {traces.map((t, i) => {
-        const isFail = t.status === "fail";
         const isSelected = i === selectedIndex;
-        const statusColor = isFail ? "#DB2F2D" : "#5ACE6D";
         const time = new Date(t.timestamp).toLocaleTimeString([], {
           hour: "2-digit",
           minute: "2-digit",
         });
         const tokens =
-          (t.summary.inputTokens ?? 0) + (t.summary.outputTokens ?? 0);
-        const cost = (
-          (t.summary.inputTokens ?? 0) * 0.000003 +
-          (t.summary.outputTokens ?? 0) * 0.000015
+          (t.summary.input_tokens ?? 0) + (t.summary.output_tokens ?? 0);
+        const cost = estimateTraceCost(
+          t.summary.input_tokens ?? 0,
+          t.summary.output_tokens ?? 0,
         ).toFixed(4);
 
         return (
@@ -762,7 +665,7 @@ function TraceList({ traces, selectedIndex, onSelect, loading = false }) {
                   sx={{ color: "text.disabled" }}
                 />
                 <Typography fontSize="10px" color="text.disabled">
-                  {t.summary.latencyMs}ms
+                  {t.summary.latency_ms}ms
                 </Typography>
               </Stack>
               <Stack direction="row" alignItems="center" gap={0.3}>
@@ -799,38 +702,43 @@ TraceList.propTypes = {
   onSelect: PropTypes.func.isRequired,
 };
 
-function PatternSummary({ summary, clusterId }) {
+function renderRichCaption(text) {
+  if (!text) return null;
+  // Split on **bold** markers; alternate plain / bold spans.
+  const parts = text.split(/(\*\*[^*]+\*\*)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**") && part.length > 4) {
+      return (
+        <Box
+          key={i}
+          component="span"
+          sx={{ fontWeight: 700, color: "text.primary" }}
+        >
+          {part.slice(2, -2)}
+        </Box>
+      );
+    }
+    return <React.Fragment key={i}>{part}</React.Fragment>;
+  });
+}
+
+function PatternSummary({ summary }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
-  const insights = summary?.insights ?? [];
+  // No stub fallback — un-analyzed clusters show the empty state, never fabricated cards.
+  const insights = (summary?.insights ?? []).filter((i) => i && i.title);
 
-  if (!insights.length) {
-    // Cluster ID prefix is canonical: E-* = eval-source, S-* = scanner-source.
-    const isEvalCluster = typeof clusterId === "string" && clusterId.startsWith("E-");
-    const message = isEvalCluster
-      ? "No eval scores aggregated yet — this cluster's evaluations are still landing."
-      : "Not enough data yet — waiting for more scanner results.";
-    return (
-      <Typography
-        fontSize="11px"
-        color="text.disabled"
-        sx={{ py: 2, textAlign: "center" }}
-      >
-        {message}
-      </Typography>
-    );
-  }
-
-  // Always render a 4-column grid so cards stay aligned across clusters;
-  // fill empty slots with a muted placeholder when we have fewer insights.
-  const slots = [...insights];
-  while (slots.length < 4) slots.push(null);
+  if (!insights.length) return null;
 
   return (
     <Box
-      sx={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 1, overflowX: "auto" }}
+      sx={{
+        display: "grid",
+        gridTemplateColumns: `repeat(${Math.min(insights.length, 4)}, 1fr)`,
+        gap: 1,
+      }}
     >
-      {slots.map((insight, i) => (
+      {insights.map((insight, i) => (
         <Box
           key={i}
           sx={{
@@ -840,17 +748,32 @@ function PatternSummary({ summary, clusterId }) {
             px: 1.75,
             py: 1.5,
             bgcolor: isDark ? alpha("#fff", 0.03) : alpha("#000", 0.025),
-            opacity: insight ? 1 : 0.35,
-            minHeight: 56,
+            minHeight: 92,
+            display: "flex",
+            flexDirection: "column",
+            gap: 0.6,
           }}
         >
+          {insight?.title && (
+            <Typography
+              fontSize="10px"
+              fontWeight={600}
+              color="text.disabled"
+              sx={{
+                textTransform: "uppercase",
+                letterSpacing: "0.07em",
+                lineHeight: 1.2,
+              }}
+            >
+              {insight.title}
+            </Typography>
+          )}
           <Typography
-            fontSize="15px"
+            fontSize="18px"
             fontWeight={700}
             color="text.primary"
             sx={{
-              lineHeight: 1,
-              mb: 0.6,
+              lineHeight: 1.1,
               fontFeatureSettings: "'tnum'",
               whiteSpace: "nowrap",
               overflow: "hidden",
@@ -860,11 +783,11 @@ function PatternSummary({ summary, clusterId }) {
             {insight?.value ?? "—"}
           </Typography>
           <Typography
-            fontSize="11px"
-            color="text.disabled"
-            sx={{ lineHeight: 1.4 }}
+            fontSize="11.5px"
+            color="text.secondary"
+            sx={{ lineHeight: 1.45 }}
           >
-            {insight?.caption ?? ""}
+            {renderRichCaption(insight?.caption ?? "")}
           </Typography>
         </Box>
       ))}
@@ -880,12 +803,10 @@ PatternSummary.propTypes = {
       }),
     ),
   }),
-  clusterId: PropTypes.string,
 };
 
 // ── Agent flow from real span tree ────────────────────────────────────────────
-
-function TraceAgentFlow({ traceId }) {
+function TraceGraphView({ traceId, mode }) {
   const { data, isLoading } = useGetTraceDetail(traceId);
   const spanTree = data?.observation_spans || data?.observationSpans;
 
@@ -896,13 +817,9 @@ function TraceAgentFlow({ traceId }) {
 
   if (isLoading) {
     return (
-      <Typography
-        fontSize="12px"
-        color="text.disabled"
-        sx={{ py: 2, textAlign: "center" }}
-      >
-        Loading agent flow…
-      </Typography>
+      <Box sx={{ height: 340 }}>
+        <GraphSkeleton />
+      </Box>
     );
   }
 
@@ -919,20 +836,341 @@ function TraceAgentFlow({ traceId }) {
   }
 
   return (
-    <Box sx={{ height: 300 }}>
-      <AgentGraph data={graphData} isLoading={false} direction="TB" />
+    <Box
+      sx={{
+        height: 340,
+        borderRadius: "8px",
+        overflow: "hidden",
+        bgcolor: (theme) =>
+          theme.palette.mode === "dark" ? "#111111" : "background.paper",
+      }}
+    >
+      {mode === "path" ? (
+        <AgentPath data={graphData} isLoading={false} />
+      ) : (
+        <AgentGraph data={graphData} isLoading={false} direction="TB" />
+      )}
     </Box>
   );
 }
-TraceAgentFlow.propTypes = { traceId: PropTypes.string };
+TraceGraphView.propTypes = {
+  traceId: PropTypes.string,
+  mode: PropTypes.oneOf(["graph", "path"]),
+};
 
+// ── Split-with-working graph compare ─────────────────────────────────────────
+// Diff cues only land on graph mode — AgentPath nodes are too compressed for colored rings.
+function CompareLegend({ summary }) {
+  const items = [
+    summary.failed > 0 && {
+      color: "#DB2F2D",
+      label: `${summary.failed} failed here`,
+      badge: "✕",
+    },
+    summary.missing > 0 && {
+      color: "#5ACE6D",
+      label: `−${summary.missing} skipped path`,
+      badge: "−",
+    },
+    summary.added > 0 && {
+      color: "#DB2F2D",
+      label: `+${summary.added} extra step${summary.added > 1 ? "s" : ""}`,
+      badge: "+",
+    },
+    summary.regressed > 0 && {
+      color: "#F5A623",
+      label: `${summary.regressed} regressed`,
+      badge: "Δ",
+    },
+    summary.shared > 0 && {
+      color: "#9AA3AF",
+      label: `${summary.shared} shared`,
+      badge: null,
+    },
+  ].filter(Boolean);
+
+  if (!items.length) {
+    return (
+      <Typography fontSize="11px" color="text.disabled">
+        No structural differences between the failing and working traces.
+      </Typography>
+    );
+  }
+
+  return (
+    <Stack direction="row" alignItems="center" gap={1.25} flexWrap="wrap">
+      {items.map((item) => (
+        <Stack
+          key={item.label}
+          direction="row"
+          alignItems="center"
+          gap={0.5}
+          sx={{ flexShrink: 0 }}
+        >
+          {item.badge ? (
+            <Box
+              sx={{
+                minWidth: 14,
+                height: 14,
+                px: 0.4,
+                borderRadius: "7px",
+                bgcolor: item.color,
+                color: "#fff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 9,
+                fontWeight: 700,
+                fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                lineHeight: 1,
+              }}
+            >
+              {item.badge}
+            </Box>
+          ) : (
+            <Box
+              sx={{
+                width: 8,
+                height: 8,
+                borderRadius: "50%",
+                bgcolor: item.color,
+              }}
+            />
+          )}
+          <Typography
+            fontSize="11px"
+            fontWeight={600}
+            color="text.secondary"
+            sx={{ whiteSpace: "nowrap" }}
+          >
+            {item.label}
+          </Typography>
+        </Stack>
+      ))}
+    </Stack>
+  );
+}
+CompareLegend.propTypes = { summary: PropTypes.object.isRequired };
+
+function CompareColumn({ title, accentColor, traceShortId, children }) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
+  return (
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: alpha(accentColor, isDark ? 0.35 : 0.4),
+        borderRadius: "8px",
+        overflow: "hidden",
+        bgcolor: isDark ? alpha("#fff", 0.015) : alpha("#000", 0.012),
+        display: "flex",
+        flexDirection: "column",
+        minWidth: 0,
+      }}
+    >
+      <Stack
+        direction="row"
+        alignItems="center"
+        gap={0.75}
+        sx={{
+          px: 1.25,
+          py: 0.75,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          bgcolor: alpha(accentColor, isDark ? 0.1 : 0.06),
+        }}
+      >
+        <Box
+          sx={{
+            width: 7,
+            height: 7,
+            borderRadius: "50%",
+            bgcolor: accentColor,
+          }}
+        />
+        <Typography
+          fontSize="10.5px"
+          fontWeight={700}
+          sx={{
+            color: accentColor,
+            textTransform: "uppercase",
+            letterSpacing: "0.07em",
+          }}
+        >
+          {title}
+        </Typography>
+        {traceShortId && (
+          <Typography
+            fontSize="10px"
+            color="text.disabled"
+            sx={{
+              ml: 0.25,
+              fontFamily: "ui-monospace, SFMono-Regular, monospace",
+            }}
+          >
+            {traceShortId}
+          </Typography>
+        )}
+      </Stack>
+      {/* Near-black bg in dark mode so diff halos pop */}
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          bgcolor: (theme) =>
+            theme.palette.mode === "dark" ? "#111111" : "background.paper",
+        }}
+      >
+        {children}
+      </Box>
+    </Box>
+  );
+}
+CompareColumn.propTypes = {
+  title: PropTypes.string.isRequired,
+  accentColor: PropTypes.string.isRequired,
+  traceShortId: PropTypes.string,
+  children: PropTypes.node,
+};
+
+function TraceGraphCompare({ failingTraceId, workingTraceId, mode }) {
+  const failQ = useGetTraceDetail(failingTraceId);
+  const passQ = useGetTraceDetail(workingTraceId);
+
+  const failGraph = useMemo(() => {
+    const tree = failQ.data?.observation_spans || failQ.data?.observationSpans;
+    if (!tree?.length) return null;
+    return buildTraceGraph(tree);
+  }, [failQ.data]);
+
+  const passGraph = useMemo(() => {
+    const tree = passQ.data?.observation_spans || passQ.data?.observationSpans;
+    if (!tree?.length) return null;
+    return buildTraceGraph(tree);
+  }, [passQ.data]);
+
+  const { failAnnotated, passAnnotated, summary } = useMemo(() => {
+    if (!failGraph || !passGraph) {
+      return {
+        failAnnotated: failGraph,
+        passAnnotated: passGraph,
+        summary: { added: 0, missing: 0, regressed: 0, shared: 0 },
+      };
+    }
+    return buildGraphDiff(failGraph, passGraph);
+  }, [failGraph, passGraph]);
+
+  const failLoading = !!failingTraceId && failQ.isLoading && !failQ.data;
+  const passLoading = !!workingTraceId && passQ.isLoading && !passQ.data;
+
+  const NoWorkingNotice = !workingTraceId && (
+    <Box
+      sx={{
+        border: "1px dashed",
+        borderColor: "divider",
+        borderRadius: "8px",
+        py: 3,
+        px: 2,
+        textAlign: "center",
+      }}
+    >
+      <Typography fontSize="12px" color="text.disabled">
+        No matching working trace yet for this cluster — backend KNN matching
+        will populate it shortly.
+      </Typography>
+    </Box>
+  );
+
+  const renderSide = (graph, loading, label) => {
+    if (loading) {
+      return (
+        <Box sx={{ height: 360 }}>
+          <GraphSkeleton />
+        </Box>
+      );
+    }
+    if (!graph) {
+      return (
+        <Stack
+          alignItems="center"
+          justifyContent="center"
+          sx={{ height: 360, p: 2 }}
+        >
+          <Typography fontSize="12px" color="text.disabled" textAlign="center">
+            No span data for {label}.
+          </Typography>
+        </Stack>
+      );
+    }
+    return (
+      <Box sx={{ height: 360 }}>
+        {mode === "path" ? (
+          <AgentPath data={graph} isLoading={false} />
+        ) : (
+          <AgentGraph data={graph} isLoading={false} direction="TB" />
+        )}
+      </Box>
+    );
+  };
+
+  if (NoWorkingNotice) return NoWorkingNotice;
+
+  return (
+    <Stack gap={1.25}>
+      {/* Diff summary strip — explains the colour cues on the graph nodes. */}
+      <Box
+        sx={{
+          border: "1px solid",
+          borderColor: "divider",
+          borderRadius: "8px",
+          px: 1.25,
+          py: 0.85,
+        }}
+      >
+        <CompareLegend summary={summary} />
+      </Box>
+
+      {/* Side-by-side graphs */}
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+          gap: 1.25,
+          alignItems: "stretch",
+        }}
+      >
+        <CompareColumn
+          title="Failing trace"
+          accentColor="#DB2F2D"
+          traceShortId={failingTraceId ? failingTraceId.slice(0, 8) : null}
+        >
+          {renderSide(failAnnotated, failLoading, "failing trace")}
+        </CompareColumn>
+        <CompareColumn
+          title="Working trace"
+          accentColor="#5ACE6D"
+          traceShortId={workingTraceId ? workingTraceId.slice(0, 8) : null}
+        >
+          {renderSide(passAnnotated, passLoading, "working trace")}
+        </CompareColumn>
+      </Box>
+    </Stack>
+  );
+}
+TraceGraphCompare.propTypes = {
+  failingTraceId: PropTypes.string,
+  workingTraceId: PropTypes.string,
+  mode: PropTypes.oneOf(["graph", "path"]),
+};
 
 // ── Trace evidence reel (fail / pass tabs) ───────────────────────────────────
-
-// Renders a text value that may be a plain string or a rich [{t, hl}] array
 function RichText({ text, isFailReel: _isFailReel }) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
   const errorColor = "#DB2F2D";
   const okColor = "#5ACE6D";
+  const codeColor = isDark ? "#7DB1FF" : "#2563EB";
+  const boldColor = isDark ? "#ffb3b3" : "#c0322f";
 
   if (!text) return null;
   if (!Array.isArray(text)) {
@@ -941,6 +1179,43 @@ function RichText({ text, isFailReel: _isFailReel }) {
   return (
     <>
       {text.map((seg, i) => {
+        if (seg.code) {
+          return (
+            <Box
+              key={i}
+              component="code"
+              sx={{
+                fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                fontSize: "11.5px",
+                color: codeColor,
+              }}
+            >
+              {seg.t}
+            </Box>
+          );
+        }
+        if (seg.em) {
+          return (
+            <Box
+              key={i}
+              component="em"
+              sx={{ fontStyle: "italic", color: "text.secondary" }}
+            >
+              {seg.t}
+            </Box>
+          );
+        }
+        if (seg.b) {
+          return (
+            <Box
+              key={i}
+              component="strong"
+              sx={{ fontWeight: 700, color: boldColor }}
+            >
+              {seg.t}
+            </Box>
+          );
+        }
         if (!seg.hl) return <React.Fragment key={i}>{seg.t}</React.Fragment>;
         const color = seg.hl === "error" ? errorColor : okColor;
         return (
@@ -972,156 +1247,795 @@ RichText.propTypes = {
   isFailReel: PropTypes.bool,
 };
 
-function ReelStep({ step, isFailReel }) {
+// Module-scoped (used outside component bodies), so read the palette export
+// rather than the theme hook.
+const FAIL_COLOR = errorPalette.main;
+const PASS_COLOR = success.main;
+
+function SpanPointer({ pointer }) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
+  const blue = isDark ? "#7DB1FF" : "#2563EB";
   return (
-    <Stack
-      direction="row"
-      gap={1.25}
-      sx={{
-        px: 1.5,
-        py: 1.25,
-        borderBottom: "1px solid",
-        borderColor: "divider",
-        "&:last-child": { borderBottom: "none" },
-      }}
-    >
-      {/* Content */}
-      <Stack gap={0.25} flex={1} minWidth={0}>
-        <Typography
-          fontSize="10px"
-          fontWeight={600}
-          color="text.disabled"
-          sx={{ textTransform: "uppercase", letterSpacing: "0.05em" }}
+    <Tooltip title="Open this span in the trace drawer" arrow>
+      <Box
+        component="span"
+        sx={{
+          ml: "auto",
+          flexShrink: 0,
+          fontSize: "10px",
+          fontFamily: "ui-monospace, SFMono-Regular, monospace",
+          color: blue,
+          cursor: "pointer",
+          whiteSpace: "nowrap",
+          "&:hover": { textDecoration: "underline" },
+        }}
+      >
+        ⌖ {pointer}
+      </Box>
+    </Tooltip>
+  );
+}
+SpanPointer.propTypes = { pointer: PropTypes.string.isRequired };
+
+function roleColor(isFailure, isDark) {
+  if (isFailure) return isDark ? "#ff9a99" : "#c0322f";
+  return isDark ? alpha("#fff", 0.42) : alpha("#000", 0.45);
+}
+
+function ReelStep({ step, isFailReel, isLast }) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
+  const [showRaw, setShowRaw] = useState(false);
+
+  const status = step.status;
+  const isFailure = step.isFailure || status === "fail";
+  const dotColor = isFailure
+    ? FAIL_COLOR
+    : status === "pass" || status === "ok"
+      ? PASS_COLOR
+      : isDark
+        ? alpha("#fff", 0.28)
+        : alpha("#000", 0.28);
+  const pointer = step.spanPointer || step.span;
+  const raw = step.rawJson || step.raw;
+  const note = step.note;
+  const rColor = roleColor(isFailure, isDark);
+
+  const header = (
+    <Stack direction="row" alignItems="baseline" gap={0.85}>
+      <Box
+        component="span"
+        sx={{
+          flexShrink: 0,
+          fontSize: "9.5px",
+          fontWeight: 600,
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+          color: rColor,
+        }}
+      >
+        {step.label}
+      </Box>
+      <Typography
+        component="span"
+        fontSize="12.5px"
+        color="text.primary"
+        sx={{ lineHeight: 1.5, flex: 1, minWidth: 0 }}
+      >
+        <RichText text={step.text} isFailReel={isFailReel} />
+      </Typography>
+      {step.meta && (
+        <Box
+          component="span"
+          sx={{
+            flexShrink: 0,
+            fontSize: "10px",
+            fontFamily: "ui-monospace, SFMono-Regular, monospace",
+            color: "text.disabled",
+            whiteSpace: "nowrap",
+          }}
         >
-          {step.label}
-        </Typography>
-        <Typography
-          fontSize="12px"
-          color="text.primary"
-          sx={{ lineHeight: 1.6 }}
-        >
-          <RichText text={step.text} isFailReel={isFailReel} />
-        </Typography>
-        {step.meta && (
-          <Typography
-            fontSize="10px"
-            color="text.disabled"
-            sx={{ lineHeight: 1.4 }}
-          >
-            {step.meta}
-          </Typography>
-        )}
-      </Stack>
+          {step.meta}
+        </Box>
+      )}
+      {pointer && <SpanPointer pointer={pointer} />}
     </Stack>
+  );
+
+  return (
+    <Box sx={{ position: "relative", mb: isLast ? 0 : 1.25 }}>
+      {/* Timeline dot — ! badge for the failure moment, else status dot. */}
+      {isFailure ? (
+        <Box
+          sx={{
+            position: "absolute",
+            left: "-16px",
+            top: "11px",
+            width: 13,
+            height: 13,
+            borderRadius: "50%",
+            bgcolor: isDark ? "#0e0e10" : "#fff",
+            border: `2px solid ${FAIL_COLOR}`,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: "9px",
+            fontWeight: 700,
+            color: FAIL_COLOR,
+            zIndex: 1,
+          }}
+        >
+          !
+        </Box>
+      ) : (
+        <Box
+          sx={{
+            position: "absolute",
+            left: "-16px",
+            top: "4px",
+            width: 11,
+            height: 11,
+            borderRadius: "50%",
+            bgcolor: isDark ? alpha("#fff", 0.06) : "background.paper",
+            border: `2px solid ${dotColor}`,
+            zIndex: 1,
+          }}
+        />
+      )}
+
+      {isFailure ? (
+        <Box
+          sx={{
+            border: "1px solid",
+            borderColor: alpha(FAIL_COLOR, 0.4),
+            borderRadius: "6px",
+            bgcolor: alpha(FAIL_COLOR, isDark ? 0.07 : 0.05),
+            px: 1.25,
+            py: 0.85,
+          }}
+        >
+          {header}
+          {note && (
+            <Typography
+              component="div"
+              fontSize="11.5px"
+              color="text.secondary"
+              sx={{ lineHeight: 1.55, mt: 0.6 }}
+            >
+              <RichText text={note} isFailReel={isFailReel} />
+            </Typography>
+          )}
+        </Box>
+      ) : (
+        <>
+          {header}
+          {raw && (
+            <Box
+              onClick={() => setShowRaw((v) => !v)}
+              sx={{
+                fontSize: "10.5px",
+                color: "text.disabled",
+                mt: 0.4,
+                cursor: "pointer",
+                userSelect: "none",
+                "&:hover": { color: "text.secondary" },
+              }}
+            >
+              {showRaw ? "− raw JSON" : "+ raw JSON ▾"}
+            </Box>
+          )}
+          {raw && showRaw && (
+            <Box
+              component="pre"
+              sx={{
+                m: 0,
+                mt: 0.5,
+                p: 1,
+                borderRadius: "6px",
+                bgcolor: isDark ? alpha("#fff", 0.03) : alpha("#000", 0.03),
+                fontFamily: "ui-monospace, SFMono-Regular, monospace",
+                fontSize: "11px",
+                lineHeight: 1.5,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-word",
+                color: "text.secondary",
+                maxHeight: 200,
+                overflow: "auto",
+              }}
+            >
+              {typeof raw === "string" ? raw : JSON.stringify(raw, null, 2)}
+            </Box>
+          )}
+        </>
+      )}
+    </Box>
   );
 }
 ReelStep.propTypes = {
   step: PropTypes.object.isRequired,
   isFailReel: PropTypes.bool,
+  isLast: PropTypes.bool,
 };
 
-function TraceEvidence({ evidence }) {
+function BreadcrumbList({ steps, isFailReel, showFooter = true }) {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
-  const [activeReel, setActiveReel] = useState("fail");
-
-  const steps =
-    activeReel === "fail" ? evidence.failReel || [] : evidence.passReel || [];
-  const isFailActive = activeReel === "fail";
-  const failColor = "#DB2F2D";
-  const passColor = "#5ACE6D";
-
+  const accent = isFailReel ? FAIL_COLOR : PASS_COLOR;
+  if (!steps.length) {
+    return (
+      <Box sx={{ p: 2, textAlign: "center" }}>
+        <Typography fontSize="12px" color="text.disabled">
+          No steps available
+        </Typography>
+      </Box>
+    );
+  }
   return (
-    <Stack gap={1.25}>
-      {/* Segmented tab control */}
-      <Box
+    <Box>
+      <Box sx={{ position: "relative", pl: 2, pt: 0.5 }}>
+        {/* Vertical timeline line — gradient from the reel accent → fade. */}
+        <Box
+          sx={{
+            position: "absolute",
+            left: "5px",
+            top: 10,
+            bottom: 10,
+            width: "2px",
+            borderRadius: "1px",
+            background: `linear-gradient(${alpha(accent, isDark ? 0.5 : 0.4)}, ${alpha(
+              accent,
+              0.08,
+            )})`,
+          }}
+        />
+        {steps.map((step, i) => (
+          <ReelStep
+            key={i}
+            step={step}
+            isFailReel={isFailReel}
+            isLast={i === steps.length - 1}
+          />
+        ))}
+      </Box>
+      {showFooter && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          justifyContent="flex-end"
+          gap={0.4}
+          sx={{ mt: 1.25 }}
+        >
+          <Iconify
+            icon="mdi:cursor-default-click-outline"
+            width={11}
+            sx={{ color: "text.disabled" }}
+          />
+          <Typography fontSize="10.5px" color="text.disabled">
+            click any pointer to open that span in the trace drawer
+          </Typography>
+        </Stack>
+      )}
+    </Box>
+  );
+}
+BreadcrumbList.propTypes = {
+  steps: PropTypes.array.isRequired,
+  isFailReel: PropTypes.bool,
+  showFooter: PropTypes.bool,
+};
+
+function ReelColumn({
+  title,
+  headerMeta,
+  accentColor,
+  steps,
+  isFailReel,
+  emptyMessage,
+}) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
+  return (
+    <Box
+      sx={{
+        border: "1px solid",
+        borderColor: alpha(accentColor, 0.28),
+        borderRadius: "8px",
+        overflow: "hidden",
+        bgcolor: isDark ? alpha("#fff", 0.01) : "transparent",
+        display: "flex",
+        flexDirection: "column",
+        minWidth: 0,
+      }}
+    >
+      <Stack
+        direction="row"
+        alignItems="center"
+        gap={1}
         sx={{
-          display: "inline-flex",
-          alignSelf: "flex-start",
-          p: "3px",
-          borderRadius: "8px",
-          bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.06),
+          px: 1.5,
+          py: 0.85,
+          borderBottom: "1px solid",
+          borderColor: alpha(accentColor, 0.2),
+          bgcolor: alpha(accentColor, isDark ? 0.1 : 0.06),
         }}
       >
-        {[
-          { value: "fail", label: "Failing Trace" },
-          { value: "pass", label: "Working Trace" },
-        ].map(({ value, label }) => {
-          const isActive = activeReel === value;
-          return (
-            <Box
-              key={value}
-              onClick={() => setActiveReel(value)}
+        <Box
+          sx={{
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            bgcolor: accentColor,
+            flexShrink: 0,
+          }}
+        />
+        <Typography
+          fontSize="11px"
+          fontWeight={700}
+          sx={{
+            color: accentColor,
+            textTransform: "uppercase",
+            letterSpacing: "0.06em",
+          }}
+        >
+          {title}
+        </Typography>
+        <Box sx={{ flex: 1 }} />
+        {headerMeta && (
+          <Typography
+            fontSize="10.5px"
+            color="text.disabled"
+            sx={{
+              fontFamily: "ui-monospace, SFMono-Regular, monospace",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {headerMeta}
+          </Typography>
+        )}
+      </Stack>
+      <Box sx={{ flex: 1, px: 1.25, py: 1 }}>
+        {steps.length > 0 ? (
+          <BreadcrumbList
+            steps={steps}
+            isFailReel={isFailReel}
+            showFooter={false}
+          />
+        ) : (
+          <Stack
+            alignItems="center"
+            justifyContent="center"
+            sx={{ p: 2.5, gap: 0.5 }}
+          >
+            <Iconify
+              icon="mdi:file-search-outline"
+              width={20}
+              sx={{ color: "text.disabled" }}
+            />
+            <Typography
+              fontSize="11.5px"
+              color="text.disabled"
+              sx={{ textAlign: "center" }}
+            >
+              {emptyMessage}
+            </Typography>
+          </Stack>
+        )}
+      </Box>
+    </Box>
+  );
+}
+ReelColumn.propTypes = {
+  title: PropTypes.string.isRequired,
+  headerMeta: PropTypes.string,
+  accentColor: PropTypes.string.isRequired,
+  steps: PropTypes.array.isRequired,
+  isFailReel: PropTypes.bool,
+  emptyMessage: PropTypes.string,
+};
+
+function ViewModeToggle({ value, onChange }) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
+  const options = [
+    { v: "breadcrumb", label: "Breadcrumb", icon: "mdi:format-list-bulleted" },
+    { v: "agentgraph", label: "Agent Graph", icon: "mdi:graph-outline" },
+    { v: "agentpath", label: "Agent Path", icon: "mdi:sitemap-outline" },
+  ];
+  return (
+    <Box
+      sx={{
+        display: "inline-flex",
+        p: "3px",
+        borderRadius: "8px",
+        bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.06),
+      }}
+    >
+      {options.map((opt) => {
+        const isActive = opt.v === value;
+        return (
+          <Stack
+            key={opt.v}
+            direction="row"
+            alignItems="center"
+            gap={0.4}
+            onClick={() => onChange(opt.v)}
+            sx={{
+              px: 1.25,
+              py: "5px",
+              borderRadius: "6px",
+              cursor: "pointer",
+              bgcolor: isActive
+                ? isDark
+                  ? alpha("#fff", 0.1)
+                  : "#fff"
+                : "transparent",
+              boxShadow: isActive
+                ? isDark
+                  ? "none"
+                  : "0 1px 3px rgba(0,0,0,0.12)"
+                : "none",
+              transition: "all 0.15s",
+            }}
+          >
+            <Iconify
+              icon={opt.icon}
+              width={12}
+              sx={{ color: isActive ? "text.primary" : "text.disabled" }}
+            />
+            <Typography
+              fontSize="11px"
+              fontWeight={isActive ? 600 : 400}
               sx={{
-                px: 1.5,
-                py: "5px",
-                borderRadius: "6px",
-                cursor: "pointer",
-                bgcolor: isActive
-                  ? isDark
-                    ? alpha("#fff", 0.1)
-                    : "#fff"
-                  : "transparent",
-                boxShadow: isActive
-                  ? isDark
-                    ? "none"
-                    : "0 1px 3px rgba(0,0,0,0.12)"
-                  : "none",
-                transition: "all 0.15s",
-                "&:hover": {
-                  bgcolor: isActive
-                    ? isDark
-                      ? alpha("#fff", 0.1)
-                      : "#fff"
-                    : isDark
-                      ? alpha("#fff", 0.05)
-                      : alpha("#000", 0.04),
-                },
+                color: isActive ? "text.primary" : "text.disabled",
+                whiteSpace: "nowrap",
               }}
             >
+              {opt.label}
+            </Typography>
+          </Stack>
+        );
+      })}
+    </Box>
+  );
+}
+ViewModeToggle.propTypes = {
+  value: PropTypes.string.isRequired,
+  onChange: PropTypes.func.isRequired,
+};
+
+function ReelTabs({ value, onChange }) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
+  const opts = [
+    { v: "fail", label: "Failing", dot: FAIL_COLOR },
+    { v: "pass", label: "Working", dot: PASS_COLOR },
+  ];
+  return (
+    <Box
+      sx={{
+        display: "inline-flex",
+        p: "3px",
+        borderRadius: "8px",
+        bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.06),
+      }}
+    >
+      {opts.map(({ v, label, dot }) => {
+        const isActive = value === v;
+        return (
+          <Stack
+            key={v}
+            direction="row"
+            alignItems="center"
+            gap={0.5}
+            onClick={() => onChange(v)}
+            sx={{
+              px: 1.25,
+              py: "5px",
+              borderRadius: "6px",
+              cursor: "pointer",
+              bgcolor: isActive
+                ? isDark
+                  ? alpha("#fff", 0.1)
+                  : "#fff"
+                : "transparent",
+              boxShadow:
+                isActive && !isDark ? "0 1px 3px rgba(0,0,0,0.12)" : "none",
+              transition: "all 0.15s",
+            }}
+          >
+            <Box
+              sx={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                bgcolor: dot,
+                opacity: isActive ? 1 : 0.5,
+              }}
+            />
+            <Typography
+              fontSize="11px"
+              fontWeight={isActive ? 600 : 500}
+              sx={{
+                color: isActive ? "text.primary" : "text.disabled",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {label}
+            </Typography>
+          </Stack>
+        );
+      })}
+    </Box>
+  );
+}
+ReelTabs.propTypes = {
+  value: PropTypes.string.isRequired,
+  onChange: PropTypes.func.isRequired,
+};
+
+function TraceEvidence({ evidence, trace, traceId, workingTraceId }) {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
+  const [viewMode, setViewMode] = useState("breadcrumb");
+  const [activeReel, setActiveReel] = useState("fail");
+  const [splitView, setSplitView] = useState(false);
+
+  const supportsSplit =
+    viewMode === "breadcrumb" ||
+    viewMode === "agentgraph" ||
+    viewMode === "agentpath";
+  const isGraphMode = viewMode === "agentgraph" || viewMode === "agentpath";
+
+  const failReel = evidence.fail_reel || [];
+  const passReel = evidence.pass_reel || [];
+  const hasPassing = passReel.length > 0;
+
+  const steps = activeReel === "fail" ? failReel : passReel;
+  const isFailActive = activeReel === "fail";
+  const isBreadcrumb = viewMode === "breadcrumb";
+
+  const summary = trace?.summary ?? {};
+  const tokens =
+    (summary.input_tokens ?? 0) + (summary.output_tokens ?? 0) || null;
+  const cost =
+    summary.cost ??
+    (estimateTraceCost(summary.input_tokens ?? 0, summary.output_tokens ?? 0) ||
+      null);
+  const shortId = traceId ? traceId.slice(0, 8) : null;
+  // Fail explicitly — an undefined/loading status must not read as "Failing".
+  const isTraceFail = trace?.status === TRACE_STATUS.FAIL;
+
+  const metaItems = [
+    shortId && { icon: "mdi:sitemap-outline", text: shortId, mono: true },
+    summary.latency_ms != null && {
+      icon: "mdi:timer-outline",
+      text: `${summary.latency_ms}ms`,
+    },
+    tokens != null && { icon: "mdi:text-box-outline", text: `${tokens} tok` },
+    cost != null && { icon: "mdi:currency-usd", text: cost.toFixed(4) },
+  ].filter(Boolean);
+
+  return (
+    <Box
+      sx={{
+        borderRadius: "8px",
+        border: "1px solid",
+        borderColor: "divider",
+        overflow: "hidden",
+        bgcolor: isDark ? alpha("#fff", 0.02) : "background.paper",
+      }}
+    >
+      {/* ── Header — matches the other section headings (icon + uppercase) ── */}
+      <Stack
+        direction="row"
+        alignItems="center"
+        gap={1.25}
+        flexWrap="wrap"
+        sx={{
+          px: 1.75,
+          py: 1.1,
+          borderBottom: "1px solid",
+          borderColor: "divider",
+          bgcolor: isDark ? alpha("#fff", 0.02) : alpha("#000", 0.018),
+        }}
+      >
+        <Stack direction="row" alignItems="center" gap={0.75}>
+          <Iconify
+            icon="mdi:file-search-outline"
+            width={14}
+            sx={{ color: "text.disabled" }}
+          />
+          <Typography
+            fontSize="11px"
+            fontWeight={600}
+            color="text.secondary"
+            sx={{ textTransform: "uppercase", letterSpacing: "0.06em" }}
+          >
+            Trace Evidence
+          </Typography>
+        </Stack>
+
+        <ViewModeToggle value={viewMode} onChange={setViewMode} />
+
+        <Box sx={{ flex: 1 }} />
+
+        {isBreadcrumb && !splitView && (
+          <ReelTabs value={activeReel} onChange={setActiveReel} />
+        )}
+
+        {supportsSplit && (
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={
+              <Iconify
+                icon={
+                  splitView
+                    ? "mdi:view-sequential-outline"
+                    : "mdi:compare-horizontal"
+                }
+                width={13}
+              />
+            }
+            onClick={() => setSplitView((v) => !v)}
+            sx={{
+              height: 28,
+              fontSize: "11.5px",
+              fontWeight: 600,
+              borderRadius: "6px",
+              textTransform: "none",
+              // Dark theme: translucent lift avoids flat mismatch against header strip.
+              color: "text.primary",
+              borderColor: isDark ? alpha("#fff", 0.16) : "divider",
+              bgcolor: isDark ? alpha("#fff", 0.05) : "background.paper",
+              "&:hover": {
+                borderColor: isDark ? alpha("#fff", 0.3) : "text.secondary",
+                bgcolor: isDark ? alpha("#fff", 0.09) : alpha("#000", 0.04),
+              },
+            }}
+          >
+            {splitView ? "Single view" : "Split with working"}
+          </Button>
+        )}
+      </Stack>
+
+      {/* ── Dense trace meta strip (observability style) ── */}
+      {metaItems.length > 0 && (
+        <Stack
+          direction="row"
+          alignItems="center"
+          gap={1.5}
+          flexWrap="wrap"
+          sx={{
+            px: 2,
+            py: 0.85,
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            bgcolor: isDark ? alpha("#fff", 0.015) : alpha("#000", 0.012),
+          }}
+        >
+          <Stack
+            direction="row"
+            alignItems="center"
+            gap={0.4}
+            sx={{ flexShrink: 0 }}
+          >
+            <Box
+              sx={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                bgcolor: isTraceFail ? FAIL_COLOR : PASS_COLOR,
+              }}
+            />
+            <Typography
+              fontSize="10px"
+              fontWeight={700}
+              sx={{
+                textTransform: "uppercase",
+                letterSpacing: "0.05em",
+                color: isTraceFail ? FAIL_COLOR : PASS_COLOR,
+              }}
+            >
+              {isTraceFail ? "Failing" : "Passing"}
+            </Typography>
+          </Stack>
+          {metaItems.map((m, i) => (
+            <Stack
+              key={i}
+              direction="row"
+              alignItems="center"
+              gap={0.4}
+              sx={{ flexShrink: 0 }}
+            >
+              <Iconify
+                icon={m.icon}
+                width={11}
+                sx={{ color: "text.disabled" }}
+              />
               <Typography
-                fontSize="11px"
-                fontWeight={isActive ? 600 : 400}
+                fontSize="10.5px"
                 sx={{
-                  color: isActive ? "text.primary" : "text.disabled",
+                  color: "text.secondary",
+                  fontFamily: "ui-monospace, SFMono-Regular, monospace",
                   whiteSpace: "nowrap",
                 }}
               >
-                {label}
+                {m.text}
               </Typography>
-            </Box>
-          );
-        })}
-      </Box>
+            </Stack>
+          ))}
+        </Stack>
+      )}
 
-      {/* Reel */}
-      <Box
-        sx={{
-          border: "1px solid",
-          borderColor: isFailActive
-            ? alpha(failColor, 0.18)
-            : alpha(passColor, 0.18),
-          borderRadius: "8px",
-          overflow: "hidden",
-          bgcolor: isDark ? alpha("#fff", 0.01) : "transparent",
-        }}
-      >
-        {steps.length > 0 ? (
-          steps.map((step, i) => (
-            <ReelStep key={i} step={step} isFailReel={isFailActive} />
-          ))
-        ) : (
-          <Box sx={{ p: 2, textAlign: "center" }}>
-            <Typography fontSize="12px" color="text.disabled">
-              No steps available
+      {/* ── Body ── */}
+      <Box sx={{ p: 1.75 }}>
+        {/* Agent Graph / Agent Path — single trace, OR split with working. */}
+        {isGraphMode &&
+          (traceId ? (
+            splitView ? (
+              <TraceGraphCompare
+                failingTraceId={traceId}
+                workingTraceId={workingTraceId}
+                mode={viewMode === "agentpath" ? "path" : "graph"}
+              />
+            ) : (
+              <TraceGraphView
+                traceId={traceId}
+                mode={viewMode === "agentpath" ? "path" : "graph"}
+              />
+            )
+          ) : (
+            <Typography
+              fontSize="12px"
+              color="text.disabled"
+              sx={{ py: 2, textAlign: "center" }}
+            >
+              No trace selected.
             </Typography>
-          </Box>
-        )}
+          ))}
+
+        {/* Breadcrumb mode — single reel or side-by-side */}
+        {isBreadcrumb &&
+          (!splitView ? (
+            <BreadcrumbList steps={steps} isFailReel={isFailActive} />
+          ) : (
+            <Box
+              sx={{
+                display: "grid",
+                gridTemplateColumns: { xs: "1fr", md: "1fr 1fr" },
+                gap: 1.25,
+                alignItems: "stretch",
+              }}
+            >
+              <ReelColumn
+                title="Failing trace"
+                accentColor={FAIL_COLOR}
+                steps={failReel}
+                isFailReel
+                emptyMessage="No failing-trace evidence available."
+              />
+              <ReelColumn
+                title="Working trace"
+                headerMeta={hasPassing ? "nearest passing run" : undefined}
+                accentColor={PASS_COLOR}
+                steps={passReel}
+                isFailReel={false}
+                emptyMessage="No matching passing trace found for this cluster yet."
+              />
+            </Box>
+          ))}
       </Box>
-    </Stack>
+    </Box>
   );
 }
-TraceEvidence.propTypes = { evidence: PropTypes.object.isRequired };
+TraceEvidence.propTypes = {
+  evidence: PropTypes.object.isRequired,
+  trace: PropTypes.object,
+  traceId: PropTypes.string,
+  workingTraceId: PropTypes.string,
+};
 
 // ── Co-occurring issues ───────────────────────────────────────────────────────
 function CoOccurringIssues({ issues }) {
@@ -1175,7 +2089,7 @@ function CoOccurringIssues({ issues }) {
               </Typography>
             </Stack>
             <Chip
-              label={`${Math.round(issue.coOccurrence * 100)}% co-occurrence`}
+              label={`${Math.round(issue.co_occurrence * 100)}% co-occurrence`}
               size="small"
               sx={{
                 height: 16,
@@ -1209,10 +2123,7 @@ function RootCauses({ causes }) {
   return (
     <Stack gap={0.75}>
       {causes.map((c) => {
-        // Backend splits title vs description at first period/comma. When
-        // the agent produces a short single-clause string with no internal
-        // punctuation, both fields end up identical — skip the description
-        // line in that case so we're not rendering the same text twice.
+        // Skip description when identical to title (short single-clause strings).
         const hasDistinctDescription =
           c.description && c.description.trim() !== c.title?.trim();
         return (
@@ -1298,7 +2209,7 @@ RecSectionLabel.propTypes = { icon: PropTypes.string, label: PropTypes.string };
 function RecommendationCard({ rec, rootCauses, isDark }) {
   const [expanded, setExpanded] = useState(false);
   const pm = PRIORITY_META[rec.priority] || PRIORITY_META.medium;
-  const linkedCause = rootCauses?.find((c) => c.rank === rec.rootCauseLink);
+  const linkedCause = rootCauses?.find((c) => c.rank === rec.root_cause_link);
 
   return (
     <Box
@@ -1428,7 +2339,7 @@ function RecommendationCard({ rec, rootCauses, isDark }) {
                     wordBreak: "break-word",
                   }}
                 >
-                  {rec.immediateFix}
+                  {rec.immediate_fix}
                 </Typography>
               </Box>
             </Box>
@@ -1605,21 +2516,21 @@ export default function OverviewTab({ _error: currentError }) {
   const isDraggingRef = useRef(false);
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
-  const clusterId = currentError?.clusterId;
-  const projectId = currentError?.projectId;
-  const { data: projectDetail } = useGetProjectDetails(projectId, !!projectId);
-  const isVoiceProject =
-    projectDetail?.source === PROJECT_SOURCE.SIMULATOR;
+  const clusterId = currentError?.cluster_id;
+  // A cluster's modality (text vs voice) decides the per-trace surface —
+  // the BE derives it from the project's voice agent definition.
+  const isVoice = currentError?.modality === "voice";
   const { data: overview, isLoading: isOverviewLoading } =
     useErrorFeedOverview(clusterId);
   const traces = useMemo(
-    () => overview?.representativeTraces ?? [],
+    () => overview?.representative_traces ?? [],
     [overview],
   );
+  // BE caps the card list (rep_limit, default 20); full membership lives in
+  // the Traces tab.
+  const repTotal = overview?.representative_total ?? traces.length;
 
-  // Selected trace is kept in the Zustand store (per-cluster) so the
-  // sidebar's AI Metadata / Evaluations / Deep Analysis sections stay in
-  // sync. Local ``traceIndex`` is derived from the store's trace id.
+  // Per-cluster in Zustand so sidebar stays in sync.
   const selectedTraceId = useErrorFeedStore(
     (s) => s.selectedTraceIdByCluster[clusterId] ?? null,
   );
@@ -1633,10 +2544,7 @@ export default function OverviewTab({ _error: currentError }) {
   }, [traces, selectedTraceId]);
   const trace = traces[traceIndex];
 
-  // Backfill the store on first overview load so the sidebar has a trace
-  // id to work with even before the user clicks anything. Without this,
-  // the sidebar would fall back to the cluster's "latest" trace which
-  // might not be what the Overview tab is showing at index 0.
+  // Seed store so sidebar reads the same trace the Overview shows at index 0.
   useEffect(() => {
     if (!clusterId) return;
     if (!traces.length) return;
@@ -1644,24 +2552,8 @@ export default function OverviewTab({ _error: currentError }) {
     setSelectedTraceId(clusterId, traces[0].id);
   }, [clusterId, traces, selectedTraceId, setSelectedTraceId]);
 
-  const eventsOverTime = overview?.eventsOverTime ?? null;
-  const patternSummary = overview?.patternSummary ?? null;
-
-  // Deep analysis is driven by the backend root-cause query for the
-  // currently-selected trace. When status flips to ``done`` we smooth-
-  // scroll to the results panel.
-  const { data: deepAnalysis } = useErrorFeedDeepAnalysis(clusterId, trace?.id);
-  const deepAnalysisState = deepAnalysis?.status ?? DEEP_ANALYSIS_STATUS.IDLE;
-  const deepAnalysisRef = useRef(null);
-
-  useEffect(() => {
-    if (deepAnalysisState === DEEP_ANALYSIS_STATUS.DONE && deepAnalysisRef.current) {
-      deepAnalysisRef.current.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-    }
-  }, [deepAnalysisState]);
+  const eventsOverTime = overview?.events_over_time ?? null;
+  const patternSummary = overview?.pattern_summary ?? null;
 
   const selectTrace = (i) => {
     const next = traces[i];
@@ -1690,275 +2582,251 @@ export default function OverviewTab({ _error: currentError }) {
   }, []);
 
   return (
-    <Box
-      ref={containerRef}
-      sx={{
-        display: "flex",
-        gap: 0,
-        height: "calc(100vh - 182px)",
-        border: "1px solid",
-        borderColor: "divider",
-        borderRadius: "8px",
-        overflow: "hidden",
-        bgcolor: isDark ? alpha("#fff", 0.015) : "background.paper",
-      }}
-    >
-      {/* ── LEFT PANEL: chart + trace list ── */}
-      <Stack
-        sx={{
-          width: leftWidth,
-          flexShrink: 0,
-          overflow: "hidden",
-        }}
-      >
-        {/* Events/Users chart — flat (no own border) */}
-        <Box
-          sx={{
-            flexShrink: 0,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-          }}
+    <Stack gap={1.5} sx={{ minHeight: 0 }}>
+      {/* ── Patterns across the cluster ── */}
+      {(patternSummary?.insights ?? []).some((i) => i && i.title) && (
+        <SectionCard
+          title="Patterns across the cluster"
+          icon="mdi:clipboard-text-outline"
         >
-          <EventsUsersChart
-            flat
-            data={eventsOverTime}
-            deployMarkers={[]}
-            loading={isOverviewLoading && !overview}
-          />
-        </Box>
+          <PatternSummary summary={patternSummary} />
+        </SectionCard>
+      )}
 
-        {/* Traces heading */}
-        <Stack
-          direction="row"
-          alignItems="center"
-          gap={0.75}
-          sx={{
-            px: 1.5,
-            py: 0.75,
-            flexShrink: 0,
-            borderBottom: "1px solid",
-            borderColor: "divider",
-          }}
-        >
-          <Typography fontSize="11px" fontWeight={600} color="text.secondary">
-            Traces affected
-          </Typography>
-          {isOverviewLoading && !overview ? (
-            <Skeleton
-              width={28}
-              height={14}
-              sx={{
-                borderRadius: "4px",
-                bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.05),
-              }}
-            />
-          ) : (
-            <Typography
-              fontSize="11px"
-              fontWeight={600}
-              sx={{
-                color: "text.disabled",
-                bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.05),
-                px: 0.75,
-                py: 0.1,
-                borderRadius: "4px",
-              }}
-            >
-              {traces.length.toLocaleString()}
-            </Typography>
-          )}
-        </Stack>
-
-        {/* Scrollable trace list */}
-        <Box sx={{ flex: 1, overflow: "auto" }}>
-          <TraceList
-            traces={traces}
-            selectedIndex={traceIndex}
-            onSelect={selectTrace}
-            loading={isOverviewLoading && !overview}
-          />
-        </Box>
-      </Stack>
-
-      {/* ── DRAG HANDLE ── */}
       <Box
-        onMouseDown={(e) => {
-          e.preventDefault();
-          isDraggingRef.current = true;
-          document.body.style.cursor = "col-resize";
-          document.body.style.userSelect = "none";
-        }}
+        ref={containerRef}
         sx={{
-          width: 5,
-          flexShrink: 0,
-          cursor: "col-resize",
-          bgcolor: "transparent",
-          borderLeft: "1px solid",
+          display: "flex",
+          gap: 0,
+          height: "calc(100vh - 360px)",
+          minHeight: 420,
+          border: "1px solid",
           borderColor: "divider",
-          position: "relative",
-          transition: "background 0.15s",
-          "&:hover": {
-            bgcolor: isDark ? alpha("#7857FC", 0.18) : alpha("#7857FC", 0.1),
-          },
-          "&:hover .drag-dots": { opacity: 1 },
+          borderRadius: "8px",
+          overflow: "hidden",
+          bgcolor: isDark ? alpha("#fff", 0.015) : "background.paper",
         }}
       >
-        {/* Grip dots */}
+        {/* ── LEFT PANEL: chart + trace list ── */}
         <Stack
-          className="drag-dots"
-          alignItems="center"
-          justifyContent="center"
-          gap={0.4}
           sx={{
-            position: "absolute",
-            top: "50%",
-            left: "50%",
-            transform: "translate(-50%, -50%)",
-            opacity: 0,
-            transition: "opacity 0.15s",
+            width: leftWidth,
+            flexShrink: 0,
+            overflow: "hidden",
           }}
         >
-          {[0, 1, 2, 3, 4].map((i) => (
-            <Box
-              key={i}
-              sx={{
-                width: 3,
-                height: 3,
-                borderRadius: "50%",
-                bgcolor: isDark ? alpha("#fff", 0.35) : alpha("#000", 0.25),
-              }}
+          {/* Events/Users chart — flat (no own border) */}
+          <Box
+            sx={{
+              flexShrink: 0,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <EventsUsersChart
+              flat
+              data={eventsOverTime}
+              deployMarkers={[]}
+              loading={isOverviewLoading && !overview}
             />
-          ))}
-        </Stack>
-      </Box>
+          </Box>
 
-      {/* ── RIGHT PANEL: trace detail ── */}
-      <Box sx={{ flex: 1, minWidth: 0, overflow: "auto" }}>
-        {isOverviewLoading && !trace ? (
-          <Stack gap={1.5} sx={{ p: 1.75 }}>
-            <Skeleton
-              variant="rectangular"
-              height={56}
-              sx={{ borderRadius: "6px" }}
-            />
-            <Skeleton
-              variant="rectangular"
-              height={140}
-              sx={{ borderRadius: "8px" }}
-            />
-            <Skeleton
-              variant="rectangular"
-              height={260}
-              sx={{ borderRadius: "8px" }}
-            />
-            <Skeleton
-              variant="rectangular"
-              height={200}
-              sx={{ borderRadius: "8px" }}
-            />
-          </Stack>
-        ) : !trace ? (
+          {/* Traces heading */}
           <Stack
+            direction="row"
+            alignItems="center"
+            gap={0.75}
+            sx={{
+              px: 1.5,
+              py: 0.75,
+              flexShrink: 0,
+              borderBottom: "1px solid",
+              borderColor: "divider",
+            }}
+          >
+            <Typography fontSize="11px" fontWeight={600} color="text.secondary">
+              Traces affected
+            </Typography>
+            {isOverviewLoading && !overview ? (
+              <Skeleton
+                width={28}
+                height={14}
+                sx={{
+                  borderRadius: "4px",
+                  bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.05),
+                }}
+              />
+            ) : (
+              <Typography
+                fontSize="11px"
+                fontWeight={600}
+                sx={{
+                  color: "text.disabled",
+                  bgcolor: isDark ? alpha("#fff", 0.06) : alpha("#000", 0.05),
+                  px: 0.75,
+                  py: 0.1,
+                  borderRadius: "4px",
+                }}
+              >
+                {repTotal.toLocaleString()}
+              </Typography>
+            )}
+          </Stack>
+
+          {/* Scrollable trace list */}
+          <Box sx={{ flex: 1, overflow: "auto" }}>
+            <TraceList
+              traces={traces}
+              selectedIndex={traceIndex}
+              onSelect={selectTrace}
+              loading={isOverviewLoading && !overview}
+            />
+            {repTotal > traces.length && (
+              <Typography
+                fontSize="11px"
+                color="text.disabled"
+                sx={{ px: 1.5, py: 1, textAlign: "center" }}
+              >
+                Showing the {traces.length} most recent — all{" "}
+                {repTotal.toLocaleString()} are in the Traces tab
+              </Typography>
+            )}
+          </Box>
+        </Stack>
+
+        {/* ── DRAG HANDLE ── */}
+        <Box
+          onMouseDown={(e) => {
+            e.preventDefault();
+            isDraggingRef.current = true;
+            document.body.style.cursor = "col-resize";
+            document.body.style.userSelect = "none";
+          }}
+          sx={{
+            width: 5,
+            flexShrink: 0,
+            cursor: "col-resize",
+            bgcolor: "transparent",
+            borderLeft: "1px solid",
+            borderColor: "divider",
+            position: "relative",
+            transition: "background 0.15s",
+            "&:hover": {
+              bgcolor: isDark ? alpha("#7857FC", 0.18) : alpha("#7857FC", 0.1),
+            },
+            "&:hover .drag-dots": { opacity: 1 },
+          }}
+        >
+          {/* Grip dots */}
+          <Stack
+            className="drag-dots"
             alignItems="center"
             justifyContent="center"
-            sx={{ height: "100%", p: 4 }}
+            gap={0.4}
+            sx={{
+              position: "absolute",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              opacity: 0,
+              transition: "opacity 0.15s",
+            }}
           >
-            <Iconify
-              icon="mdi:file-search-outline"
-              width={40}
-              sx={{ color: "text.disabled", mb: 1.5 }}
-            />
-            <Typography fontSize="13px" color="text.disabled">
-              No trace evidence available for this cluster yet.
-            </Typography>
+            {[0, 1, 2, 3, 4].map((i) => (
+              <Box
+                key={i}
+                sx={{
+                  width: 3,
+                  height: 3,
+                  borderRadius: "50%",
+                  bgcolor: isDark ? alpha("#fff", 0.35) : alpha("#000", 0.25),
+                }}
+              />
+            ))}
           </Stack>
-        ) : (
-          <Stack gap={1.5} sx={{ p: 1.75 }}>
-            {/* Trace header bar */}
-            <TraceHeader
-              trace={trace}
-              traceIndex={traceIndex}
-              total={traces.length}
-              onPrev={() => selectTrace(Math.max(0, traceIndex - 1))}
-              onNext={() =>
-                selectTrace(Math.min(traces.length - 1, traceIndex + 1))
-              }
-            />
+        </Box>
 
-            {/* Pattern Summary */}
-            <SectionCard
-              title="Pattern Summary"
-              icon="mdi:information-outline"
-              collapsible
+        {/* ── RIGHT PANEL: trace detail ── */}
+        <Box sx={{ flex: 1, minWidth: 0, overflow: "auto" }}>
+          {isOverviewLoading && !trace ? (
+            <Stack gap={1.5} sx={{ p: 1.75 }}>
+              <Skeleton
+                variant="rectangular"
+                height={56}
+                sx={{ borderRadius: "6px" }}
+              />
+              <Skeleton
+                variant="rectangular"
+                height={140}
+                sx={{ borderRadius: "8px" }}
+              />
+              <Skeleton
+                variant="rectangular"
+                height={260}
+                sx={{ borderRadius: "8px" }}
+              />
+              <Skeleton
+                variant="rectangular"
+                height={200}
+                sx={{ borderRadius: "8px" }}
+              />
+            </Stack>
+          ) : !trace ? (
+            <Stack
+              alignItems="center"
+              justifyContent="center"
+              sx={{ height: "100%", p: 4 }}
             >
-              <PatternSummary summary={patternSummary} clusterId={clusterId} />
-            </SectionCard>
-
-            <SectionCard
-              title={isVoiceProject ? "Call Recording" : "Agent Flow"}
-              icon={isVoiceProject ? "mdi:phone-outline" : "mdi:graph-outline"}
-              collapsible
-            >
-              {isVoiceProject ? (
-                <TraceVoicePanel traceId={trace.id} projectId={projectId} />
-              ) : (
-                <TraceAgentFlow traceId={trace.id} />
-              )}
-            </SectionCard>
-
-            {/* Trace Evidence — scanner clusters only (evals don't have scanner steps) */}
-            {currentError?.source !== "eval" && (
-              <SectionCard
-                title="Trace Evidence"
+              <Iconify
                 icon="mdi:file-search-outline"
-                collapsible
-              >
-                <TraceEvidence evidence={trace.evidence ?? {}} />
-              </SectionCard>
-            )}
-
-            {/* Deep analysis results — shown only when done */}
-            {deepAnalysisState === DEEP_ANALYSIS_STATUS.DONE && (
-              <Box ref={deepAnalysisRef}>
-                <Stack direction="row" alignItems="center" gap={1} mb={1.75}>
-                  <Box sx={{ flex: 1, height: "1px", bgcolor: "divider" }} />
-                  <Stack direction="row" alignItems="center" gap={0.6}>
-                    <Iconify
-                      icon="mdi:check-circle"
-                      width={14}
-                      sx={{ color: "#5ACE6D" }}
+                width={40}
+                sx={{ color: "text.disabled", mb: 1.5 }}
+              />
+              <Typography fontSize="13px" color="text.disabled">
+                No trace evidence available for this cluster yet.
+              </Typography>
+            </Stack>
+          ) : (
+            <Stack gap={1.5} sx={{ p: 1.75 }}>
+              {currentError?.source === "eval" ? (
+                <SectionCard
+                  title={isVoice ? "Voice call" : "Input / Output"}
+                  icon={isVoice ? "mdi:phone-outline" : "mdi:code-tags"}
+                  collapsible
+                >
+                  {isVoice ? (
+                    <VoiceEvalPanel
+                      trace={trace}
+                      evalScore={trace?.eval_score}
+                      successTraceId={currentError?.success_trace?.trace_id}
                     />
-                    <Typography
-                      fontSize="11px"
-                      fontWeight={600}
-                      color="text.secondary"
-                      sx={{
-                        textTransform: "uppercase",
-                        letterSpacing: "0.05em",
-                      }}
-                    >
-                      Deep Analysis Results
-                    </Typography>
-                  </Stack>
-                  <Box sx={{ flex: 1, height: "1px", bgcolor: "divider" }} />
-                </Stack>
-                <DeepAnalysisResults
-                  rootCauses={deepAnalysis?.rootCauses}
-                  recommendations={deepAnalysis?.recommendations}
+                  ) : (
+                    <EvalIOPanel trace={trace} evalScore={trace?.eval_score} />
+                  )}
+                </SectionCard>
+              ) : (
+                <TraceEvidence
+                  evidence={trace.evidence ?? {}}
+                  trace={trace}
+                  traceId={trace.id}
+                  workingTraceId={currentError?.success_trace?.trace_id}
                 />
-              </Box>
-            )}
-          </Stack>
-        )}
+              )}
+            </Stack>
+          )}
+        </Box>
       </Box>
-    </Box>
+    </Stack>
   );
 }
 
 OverviewTab.propTypes = {
   _error: PropTypes.shape({
-    clusterId: PropTypes.string,
+    cluster_id: PropTypes.string,
     source: PropTypes.string,
-    projectId: PropTypes.string,
+    modality: PropTypes.string,
+    success_trace: PropTypes.shape({
+      trace_id: PropTypes.string,
+    }),
   }),
 };

@@ -17,6 +17,8 @@ import { useNavigate } from "react-router";
 import axios, { endpoints } from "src/utils/axios";
 import SvgColor from "src/components/svg-color";
 
+const ORG_2FA_GRACE_PERIOD_MAX_DAYS = 30;
+
 const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
   const theme = useTheme();
   const queryClient = useQueryClient();
@@ -85,7 +87,11 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
 
   const handleGracePeriodChange = (event) => {
     const val = parseInt(event.target.value, 10);
-    setGracePeriodDays(isNaN(val) ? 1 : Math.min(90, Math.max(1, val)));
+    setGracePeriodDays(
+      isNaN(val)
+        ? 1
+        : Math.min(ORG_2FA_GRACE_PERIOD_MAX_DAYS, Math.max(1, val)),
+    );
     setHasChanges(true);
   };
 
@@ -279,7 +285,7 @@ const OrgTwoFactorPolicySection = ({ onStatusChange }) => {
             value={gracePeriodDays}
             onChange={handleGracePeriodChange}
             size="small"
-            inputProps={{ min: 1, max: 90 }}
+            inputProps={{ min: 1, max: ORG_2FA_GRACE_PERIOD_MAX_DAYS }}
             sx={{ width: "100px" }}
           />
           <Typography

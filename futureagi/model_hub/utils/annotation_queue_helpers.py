@@ -1,14 +1,20 @@
-import structlog
 from datetime import datetime, timedelta
+from typing import Any, TypedDict
 
+import structlog
+from django.core.exceptions import ObjectDoesNotExist
+from django.db import DatabaseError
 from django.db.models import DateTimeField, F, FloatField, Q
 from django.db.models.functions import Cast
 
+from model_hub.constants import ANNOTATION_LABEL_VALUE_KEYS
 from model_hub.models.choices import (
     AnnotatorRole,
     AutomationRuleTriggerFrequency,
     QueueItemSourceType,
 )
+from simulate.serializers import CallTranscriptSerializer
+from simulate.utils.stored_transcript_roles import get_displayable_transcript_roles
 
 logger = structlog.get_logger(__name__)
 
@@ -34,6 +40,17 @@ SOURCE_MODEL_MAP = {
     ),
 }
 
+# Tracer-owned sources live only in ClickHouse (the tracer app is CH-native; the
+# legacy PG tables are gone). Annotation reads of these resolve/render/filter from
+# CH, never PG. The remaining source types stay PG-backed.
+_CH_NATIVE_SOURCE_TYPES = frozenset(
+    {
+        QueueItemSourceType.TRACE.value,
+        QueueItemSourceType.OBSERVATION_SPAN.value,
+        QueueItemSourceType.TRACE_SESSION.value,
+    }
+)
+
 FILTER_MODE_SOURCE_TYPES = {
     QueueItemSourceType.DATASET_ROW.value,
     QueueItemSourceType.TRACE.value,
@@ -42,46 +59,29 @@ FILTER_MODE_SOURCE_TYPES = {
     QueueItemSourceType.CALL_EXECUTION.value,
 }
 
+AUTOMATION_RULE_FILTER_ERROR_MESSAGE = (
+    "Rule evaluation failed while applying filters. Check the selected fields "
+    "and values, then try again."
+)
+TRACE_IN_PROGRESS_ADD_ERROR = (
+    "Trace is still in progress and can't be added to an annotation queue yet."
+)
 
-def _trace_primary_span(trace):
-    if not trace:
-        return None
-
-    prefetched_spans = getattr(trace, "_queue_export_spans", None)
-    if prefetched_spans is not None:
-        spans = list(prefetched_spans)
-        root_spans = [
-            span for span in spans if not getattr(span, "parent_span_id", None)
-        ]
-        return (
-            next(
-                (
-                    span
-                    for span in root_spans
-                    if getattr(span, "observation_type", None) == "conversation"
-                ),
-                None,
-            )
-            or (root_spans[0] if root_spans else None)
-            or (spans[0] if spans else None)
-        )
-
-    spans = trace.observation_spans.filter(deleted=False)
-    root_spans = spans.filter(Q(parent_span_id__isnull=True) | Q(parent_span_id=""))
-    return (
-        root_spans.filter(observation_type="conversation")
-        .order_by("start_time", "created_at")
-        .first()
-        or root_spans.order_by("start_time", "created_at").first()
-        or spans.order_by("start_time", "created_at").first()
-    )
+# A trace's root span is terminal (the trace is complete and addable) once its
+# status reaches OK / ERROR; any other value (e.g. UNSET) means still in progress.
+_TERMINAL_SPAN_STATUSES = frozenset({"OK", "ERROR"})
 
 
-def _metric_payload(obj, *, response_field="response_time"):
-    return {
-        "latency_ms": getattr(obj, "latency_ms", None),
-        "response_time_ms": getattr(obj, response_field, None),
-    }
+def _is_terminal_span_status(status):
+    return (status or "").upper() in _TERMINAL_SPAN_STATUSES
+
+
+def _automation_rule_filter_error_message(exc):
+    """Return a short public error while full exception details stay in logs."""
+    message = str(exc).strip()
+    if isinstance(exc, ValueError) and message and "\n" not in message:
+        return message[:240]
+    return AUTOMATION_RULE_FILTER_ERROR_MESSAGE
 
 
 def _call_execution_metric_payload(call):
@@ -92,6 +92,25 @@ def _call_execution_metric_payload(call):
         "avg_agent_latency_ms": avg_agent_latency_ms,
     }
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def _call_transcript_turns(call: Any) -> list[dict[str, Any]]:
+    if not call:
+        return []
+    try:
+        rows = getattr(call, "_displayable_transcripts", None)
+        if rows is None:
+            rows = list(
+                call.transcripts.filter(
+                    speaker_role__in=get_displayable_transcript_roles()
+                ).order_by("start_time_ms")
+            )
+        return list(CallTranscriptSerializer(rows, many=True).data)
+    except (ObjectDoesNotExist, AttributeError, DatabaseError) as exc:
+        logger.warning(
+            "call_transcript_fetch_failed", call_id=str(call.id), error=str(exc)
+        )
+        return []
 
 
 def get_source_model(source_type):
@@ -115,28 +134,384 @@ def get_fk_field_name(source_type):
     return fk_field
 
 
-def resolve_source_object(source_type, source_id, organization=None, workspace=None):
-    """Look up a source model instance by type and ID.
+def _trace_project_workspace_filter(workspace):
+    if getattr(workspace, "is_default", False):
+        return Q(project__workspace=workspace) | Q(project__workspace__isnull=True)
+    return Q(project__workspace=workspace)
 
-    When *organization* is provided the returned object is verified to belong
-    to that organization.  The check accounts for the fact that some source
-    models store ``organization`` directly while others reach it through a
-    related FK (e.g. ``project.organization`` or ``dataset.organization``).
-    ``None`` is returned when the object exists but does not belong to the
-    requested organization.
 
-    When *workspace* is provided, an additional check ensures the object
-    belongs to that workspace (via direct FK or through a related project /
-    dataset).  ``None`` is returned on mismatch.
+def is_source_available_for_annotation(source_type, source_obj):
+    """Return ``(is_available, reason)`` for a single queue add-item.
+
+    CH-native: a trace is in progress while its CH root span has not reached a
+    terminal status (OK / ERROR); otherwise it's addable. ``source_obj`` is the
+    duck-typed :class:`_CHTraceSource` the resolver already built, so its
+    ``root_span`` is in hand — no extra CH read. A source with no resolvable root
+    never reaches here (the resolver returns ``None`` first); defensively, a
+    missing root reads as available. Never query PG.
     """
+    if source_type != QueueItemSourceType.TRACE.value:
+        return True, None
+    root_span = getattr(source_obj, "root_span", None)
+    if root_span is None or _is_terminal_span_status(
+        getattr(root_span, "status", None)
+    ):
+        return True, None
+    return False, TRACE_IN_PROGRESS_ADD_ERROR
+
+
+def filter_available_source_ids_for_annotation(
+    source_type, source_ids, *, organization=None, workspace=None, project_id=None
+):
+    """Split resolved filter-mode trace IDs into available / unavailable.
+
+    CH-native mirror of :func:`is_source_available_for_annotation` for the bulk
+    filter path: a trace is in progress while its CH root span is not terminal.
+    Reads the roots LEAN in one batched call (OOM-safe) via
+    :func:`_batch_ch_trace_roots`, scoped by ``project_id`` (the filter selection is
+    per-project). A trace with no CH root reads as available (it was never resolvable
+    as in-progress). FAIL OPEN on a CH error — a transient read must not silently
+    drop every add. ``organization`` / ``workspace`` are already applied upstream by
+    ``resolve_filtered_trace_ids``. Returns ``(available_ids, unavailable_count,
+    unavailable_message)`` preserving input order. Never query PG.
+    """
+    ordered_ids = [str(source_id) for source_id in source_ids]
+    if source_type != QueueItemSourceType.TRACE.value or not ordered_ids:
+        return ordered_ids, 0, None
+
+    roots_by_trace = _batch_ch_trace_roots(
+        ordered_ids,
+        project_id=str(project_id) if project_id else None,
+        caller="add_items",
+    )
+
+    def _available(trace_id):
+        root = roots_by_trace.get(trace_id)
+        # No CH root → available (matches the single-add no-root branch); else
+        # addable only once the root span reaches a terminal status.
+        return root is None or _is_terminal_span_status(getattr(root, "status", None))
+
+    available_ids = [sid for sid in ordered_ids if _available(sid)]
+    unavailable_count = len(ordered_ids) - len(available_ids)
+    if unavailable_count <= 0:
+        return available_ids, 0, None
+
+    if unavailable_count == 1:
+        message = (
+            "1 trace is still in progress and was not added to the annotation queue."
+        )
+    else:
+        message = (
+            f"{unavailable_count} traces are still in progress and "
+            "were not added to the annotation queue."
+        )
+    return available_ids, unavailable_count, message
+
+
+def source_project(source_obj, organization=None):
+    """Return the PG ``Project`` for *source_obj*, or ``None``.
+
+    A tracer source resolves CH-native and duck-types (``_CHTraceSource`` /
+    :class:`CHSpan` / ``_CHTraceSessionSource``) — it carries only ``project_id``,
+    not a ``.project`` relation. Resolve the Project row directly (org-scoped when
+    given, fail-closed): the default-queue scope row lives in PG, which is not a
+    tracer table, and cross-store FK joins aren't possible. A PG-backed source
+    (dataset_row / call_execution) still exposes ``.project`` and short-circuits.
+    """
+    project = getattr(source_obj, "project", None)
+    if project is not None:
+        return project
+    project_id = getattr(source_obj, "project_id", None)
+    if not project_id:
+        return None
+    from tracer.models.project import Project
+
+    qs = Project.objects.filter(id=project_id)
+    if organization is not None:
+        qs = qs.filter(organization=organization)
+    return qs.first()
+
+
+_TRACER_SOURCE_TYPES = frozenset(
+    {
+        QueueItemSourceType.TRACE.value,
+        QueueItemSourceType.OBSERVATION_SPAN.value,
+        QueueItemSourceType.TRACE_SESSION.value,
+    }
+)
+
+
+def tracer_project_id_for_source(source_type, source_obj):
+    """Denormalized ``tracer.Project`` id for a Score on *source_obj*, or ``None``.
+
+    Only tracer sources (trace/observation_span/trace_session) carry a tracer
+    project; other source types return ``None``. Reads ``project_id`` straight
+    off the source object (no DB hit) so it's safe on the hot write path.
+    """
+    if source_type not in _TRACER_SOURCE_TYPES:
+        return None
+    project_id = getattr(source_obj, "project_id", None)
+    if project_id is not None:
+        return project_id
+    project = getattr(source_obj, "project", None)
+    return getattr(project, "id", None) if project is not None else None
+
+
+def _resolve_default_queue_scope(source_type, source_obj, organization=None):
+    """Return ``(lookup_kwargs, scope_name)`` identifying the default-queue
+    scope for *source_obj*, or ``(None, None)`` if the source has no
+    resolvable scope (e.g. a prototype_run without a develop project).
+
+    Default queues are scoped per project / dataset / agent definition —
+    they're not per-row. This helper centralises the mapping so the scores
+    endpoints and the explicit ``get-or-create-default`` endpoint agree on
+    what counts as "the default queue" for a given source.
+    """
+    if source_type in (
+        QueueItemSourceType.TRACE.value,
+        QueueItemSourceType.OBSERVATION_SPAN.value,
+        QueueItemSourceType.TRACE_SESSION.value,
+    ):
+        project = source_project(source_obj, organization)
+        if not project:
+            return None, None
+        scope_name = (
+            getattr(project, "name", None)
+            or getattr(project, "agent_name", None)
+            or str(project)
+        )
+        return {"project": project}, scope_name
+    if source_type == QueueItemSourceType.DATASET_ROW.value:
+        dataset = getattr(source_obj, "dataset", None)
+        if not dataset:
+            return None, None
+        return {"dataset": dataset}, getattr(dataset, "name", None) or str(dataset)
+    if source_type == QueueItemSourceType.CALL_EXECUTION.value:
+        agent_def = getattr(
+            getattr(source_obj, "test_execution", None), "agent_definition", None
+        )
+        if not agent_def:
+            return None, None
+        scope_name = (
+            getattr(agent_def, "name", None)
+            or getattr(agent_def, "agent_name", None)
+            or str(agent_def)
+        )
+        return {"agent_definition": agent_def}, scope_name
+    return None, None
+
+
+def resolve_default_queue_for_source(source_type, source_obj, organization, user):
+    """Return the active default ``AnnotationQueue`` for *source_obj*, creating
+    one if neither an active nor an archived default exists for the scope.
+
+    Returns ``None`` when the source has no resolvable scope (e.g. an
+    orphaned ``prototype_run`` not linked to a project) so callers can
+    decide whether to attribute the score elsewhere or skip queue scoping.
+
+    NOTE: this is the single source of truth for "what queue does an
+    inline/auto-created score belong to". Score writes from
+    ``/scores/`` and ``/scores/bulk/`` route through here so every Score
+    row has a non-null queue_item — matching the new per-queue uniqueness.
+    """
+    from model_hub.models.annotation_queues import (
+        AnnotationQueue,
+        AnnotationQueueStatusChoices,
+    )
+
+    lookup, scope_name = _resolve_default_queue_scope(
+        source_type, source_obj, organization=organization
+    )
+    if not lookup:
+        return None
+
+    queue = AnnotationQueue.objects.filter(
+        **lookup,
+        is_default=True,
+        deleted=False,
+        organization=organization,
+    ).first()
+    if queue:
+        _ensure_default_queue_member_can_manage(queue, user)
+        return queue
+
+    archived = (
+        AnnotationQueue.all_objects.filter(
+            **lookup,
+            is_default=True,
+            deleted=True,
+            organization=organization,
+        )
+        .order_by("-deleted_at")
+        .first()
+    )
+    if archived:
+        from model_hub.views.annotation_queues import _restore_archived_default_queue
+
+        _restore_archived_default_queue(archived)
+        _ensure_default_queue_member_can_manage(archived, user)
+        return archived
+
+    workspace = None
+    scope_obj = next(iter(lookup.values()))
+    workspace = getattr(scope_obj, "workspace", None)
+
+    queue = AnnotationQueue.objects.create(
+        is_default=True,
+        name=f"Default - {scope_name}",
+        description=f"Default annotation queue for {scope_name}",
+        status=AnnotationQueueStatusChoices.ACTIVE.value,
+        organization=organization,
+        workspace=workspace,
+        created_by=user,
+        **lookup,
+    )
+    _ensure_default_queue_member_can_manage(queue, user)
+    return queue
+
+
+def _ensure_default_queue_member_can_manage(queue, user):
+    """Give active default-queue users full queue roles.
+
+    Default queues are created/reused from inline annotation surfaces, not
+    only from the queue settings page. Without this membership, a user can
+    create annotations but cannot manage the resulting default queue.
+    """
+    if not queue or not user or not getattr(queue, "is_default", False):
+        return None
+
+    from model_hub.models.annotation_queues import (
+        FULL_ACCESS_QUEUE_ROLES,
+        AnnotationQueueAnnotator,
+    )
+    from model_hub.models.choices import AnnotatorRole
+
+    active = AnnotationQueueAnnotator.objects.filter(
+        queue=queue,
+        user=user,
+        deleted=False,
+    ).first()
+    if active:
+        if (
+            active.role == AnnotatorRole.MANAGER.value
+            and active.normalized_roles == FULL_ACCESS_QUEUE_ROLES
+        ):
+            return active
+        active.role = AnnotatorRole.MANAGER.value
+        active.roles = FULL_ACCESS_QUEUE_ROLES
+        active.save(update_fields=["role", "roles", "updated_at"])
+        return active
+
+    soft_deleted = (
+        AnnotationQueueAnnotator.all_objects.filter(queue=queue, user=user)
+        .order_by("-updated_at")
+        .first()
+    )
+    if soft_deleted:
+        soft_deleted.deleted = False
+        soft_deleted.deleted_at = None
+        soft_deleted.role = AnnotatorRole.MANAGER.value
+        soft_deleted.roles = FULL_ACCESS_QUEUE_ROLES
+        soft_deleted.save(
+            update_fields=["deleted", "deleted_at", "role", "roles", "updated_at"]
+        )
+        return soft_deleted
+
+    return AnnotationQueueAnnotator.objects.create(
+        queue=queue,
+        user=user,
+        role=AnnotatorRole.MANAGER.value,
+        roles=FULL_ACCESS_QUEUE_ROLES,
+    )
+
+
+def resolve_default_queue_item_for_source(source_type, source_obj, organization, user):
+    """Return a ``QueueItem`` on the source's default queue, creating both
+    the queue and the item if they don't exist yet.
+
+    Used by score writes to guarantee every Score has a ``queue_item``.
+    Returns ``None`` when the source has no resolvable default-queue scope.
+
+    *source_obj* may be either a Django model instance (uses ``.pk``) or
+    a CH-loaded dataclass like :class:`CHSpan` (uses ``.id``); the FK
+    column on ``QueueItem`` is a ``CharField``-like that accepts the str
+    UUID identically either way.
+    """
+    from model_hub.models.annotation_queues import QueueItem
+    from model_hub.models.choices import QueueItemStatus
+
+    queue = resolve_default_queue_for_source(
+        source_type, source_obj, organization, user
+    )
+    if not queue:
+        return None
+
+    fk_field = get_fk_field_name(source_type)
+    if not fk_field:
+        return None
+
+    # CHSpan dataclasses don't expose a Django ``pk`` descriptor; fall back
+    # to ``.id`` for parity. Django models also expose ``.id`` for the PK on
+    # every model in this codebase, so this works uniformly.
+    source_pk = getattr(source_obj, "pk", None) or getattr(source_obj, "id", None)
+    if source_pk is None:
+        return None
+
+    item, _ = QueueItem.objects.get_or_create(
+        queue=queue,
+        source_type=source_type,
+        **{f"{fk_field}_id": source_pk},
+        deleted=False,
+        defaults={
+            "organization": queue.organization,
+            "workspace": queue.workspace,
+            "status": QueueItemStatus.PENDING.value,
+        },
+    )
+    return item
+
+
+def resolve_source_object(source_type, source_id, organization=None, workspace=None):
+    """Look up a source object by type and ID.
+
+    Tracer sources (trace / observation_span / trace_session) live only in
+    ClickHouse — the tracer app is CH-native — so they resolve straight from CH and
+    come back duck-typed (``.id`` / ``.project_id``); the CH resolver tenant-scopes
+    them against the PG ``Project`` (which is not a tracer table), fail-closed.
+
+    Non-tracer source types (dataset_row / call_execution / prototype_run) are
+    PG-backed models, verified to belong to *organization* / *workspace* (directly or
+    via a related project / dataset). ``None`` on mismatch or absence.
+    """
+    if source_type in _CH_NATIVE_SOURCE_TYPES:
+        return _resolve_ch_source_object(
+            source_type, source_id, organization=organization, workspace=workspace
+        )
+
     model = get_source_model(source_type)
     if not model:
         return None
-    try:
-        obj = model.objects.get(pk=source_id)
-    except model.DoesNotExist:
+
+    obj = model.objects.filter(pk=source_id).first()
+    if obj is None:
         return None
 
+    if not _source_passes_tenant_gate(
+        obj, source_type, source_id, organization=organization, workspace=workspace
+    ):
+        return None
+
+    return obj
+
+
+def _source_passes_tenant_gate(
+    obj, source_type, source_id, *, organization=None, workspace=None
+):
+    """Org + workspace gate for a PG-backed source, shared by the per-item
+    (:func:`resolve_source_object`) and bulk (:func:`_resolve_pg_sources_bulk`)
+    resolvers so both apply the identical rule. FAIL CLOSED: a missing/mismatched org,
+    or a workspace that doesn't match (allowing a null source workspace only under a
+    default workspace), denies. ``None`` org/workspace skips that check (unscoped call)."""
     if organization is not None:
         obj_org = _get_source_organization(obj)
         if obj_org is None or obj_org != organization:
@@ -147,13 +522,12 @@ def resolve_source_object(source_type, source_id, organization=None, workspace=N
                 expected_org=str(organization.pk),
                 actual_org=str(obj_org.pk) if obj_org else None,
             )
-            return None
+            return False
 
     if workspace is not None:
         obj_ws = _get_source_workspace(obj)
-        ws_match = (
-            obj_ws == workspace
-            or (obj_ws is None and getattr(workspace, "is_default", False))
+        ws_match = obj_ws == workspace or (
+            obj_ws is None and getattr(workspace, "is_default", False)
         )
         if not ws_match:
             logger.warning(
@@ -163,9 +537,622 @@ def resolve_source_object(source_type, source_id, organization=None, workspace=N
                 expected_workspace=str(workspace.pk),
                 actual_workspace=str(obj_ws.pk) if obj_ws else None,
             )
-            return None
+            return False
 
-    return obj
+    return True
+
+
+def _tenant_scoped_project(project_id, *, organization=None, workspace=None):
+    """Tenant gate for CH-resolved collector sources: return the PG ``Project`` for
+    *project_id* iff accessible to the org/workspace, else ``None``. ``organization``
+    is required (a CH source has no tenant of its own — the org distinguishes a
+    same-org null-workspace project from a foreign one). FAIL CLOSED: missing
+    project_id / missing organization / org or workspace mismatch all deny.
+    """
+    if not project_id or organization is None:
+        return None
+    from tracer.models.project import Project
+
+    project = Project.objects.filter(id=project_id, organization=organization).first()
+    if project is None:
+        return None
+    if workspace is not None:
+        proj_ws = getattr(project, "workspace", None)
+        ws_match = proj_ws == workspace or (
+            proj_ws is None and getattr(workspace, "is_default", False)
+        )
+        if not ws_match:
+            return None
+    return project
+
+
+class _CHTraceSource:
+    """Duck-typed collector trace for annotation resolution (no PG ``Trace`` row).
+
+    Exposes the soft id the add path stores (``.id`` / ``.pk`` = trace_id), the
+    ``.project_id``, and the resolved ``.root_span`` (:class:`CHSpan`). Mirrors how a
+    collector observation_span is duck-typed as a bare CHSpan. The in-progress guard
+    reads ``.root_span.status`` (terminal = addable) — the trace already resolved
+    from its CH root, so no extra read is needed.
+    """
+
+    def __init__(self, trace_id, root_span):
+        self.id = str(trace_id)
+        self.pk = str(trace_id)
+        self.root_span = root_span
+        self.project_id = str(getattr(root_span, "project_id", "") or "") or None
+
+
+def _resolve_ch_source_object(
+    source_type, source_id, *, organization=None, workspace=None
+):
+    """CH fallback for :func:`resolve_source_object` (collector data, no PG row).
+    Returns a duck-typed CH object (``.id`` / ``.project_id``) or ``None``, tenant-
+    verified against the PG ``Project``. CH errors are logged and denied (fail closed).
+    """
+    if source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
+        from tracer.services.clickhouse.v2 import get_reader
+
+        try:
+            with get_reader() as reader:
+                span = reader.get(str(source_id))
+        except Exception as exc:  # narrow: any CH read failure → deny
+            logger.warning(
+                "ch_source_resolve_error",
+                source_type=source_type,
+                source_id=str(source_id),
+                error=str(exc),
+            )
+            return None
+        if span is None:
+            return None
+        if (
+            _tenant_scoped_project(
+                getattr(span, "project_id", None),
+                organization=organization,
+                workspace=workspace,
+            )
+            is None
+        ):
+            logger.warning(
+                "ch_source_tenant_denied",
+                source_type=source_type,
+                source_id=str(source_id),
+            )
+            return None
+        return span
+
+    if source_type == QueueItemSourceType.TRACE_SESSION.value:
+        return _resolve_ch_trace_session(
+            source_id, organization=organization, workspace=workspace
+        )
+
+    if source_type == QueueItemSourceType.TRACE.value:
+        # Collector trace (no PG row): resolve its root span from CH for the
+        # project_id, tenant-gate, and duck-type the trace so the add path
+        # stores the soft trace_id. The item is annotated at this root span.
+        root_span = _ch_root_span_for_trace(source_id)
+        if root_span is None:
+            return None
+        if (
+            _tenant_scoped_project(
+                getattr(root_span, "project_id", None),
+                organization=organization,
+                workspace=workspace,
+            )
+            is None
+        ):
+            logger.warning(
+                "ch_source_tenant_denied",
+                source_type=source_type,
+                source_id=str(source_id),
+            )
+            return None
+        return _CHTraceSource(source_id, root_span)
+
+    # other source types are not CH-resolvable in this wave.
+    return None
+
+
+def _resolve_ch_trace_session(source_id, *, organization=None, workspace=None):
+    """CH fallback for a collector ``trace_session`` (no PG row): existence +
+    project_id from the CH reader, tenant-verified against PG. Returns a duck-typed
+    object (``.id`` / ``.project_id`` / ``.name``) or ``None`` (fail closed)."""
+    from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+        resolve_session_fields,
+    )
+
+    try:
+        fields = resolve_session_fields([str(source_id)]).get(str(source_id))
+    except Exception as exc:  # narrow: CH read failure → deny
+        logger.warning(
+            "ch_session_resolve_error",
+            source_id=str(source_id),
+            error=str(exc),
+        )
+        return None
+    if not fields:
+        return None
+    project_id = fields.get("project_id")
+    if (
+        _tenant_scoped_project(
+            project_id, organization=organization, workspace=workspace
+        )
+        is None
+    ):
+        logger.warning("ch_session_tenant_denied", source_id=str(source_id))
+        return None
+    return _CHTraceSessionSource(
+        id=str(source_id),
+        project_id=str(project_id) if project_id else None,
+        name=fields.get("display_name") or fields.get("external_session_id") or "",
+        first_seen=fields.get("first_seen"),
+    )
+
+
+def _ch_span_for_item(span_id):
+    """Best-effort CH point-read for a render path (preview/content). Returns the
+    :class:`CHSpan` or ``None`` (genuinely-gone span OR CH error). FAIL OPEN on the
+    render (None → ``deleted`` sentinel) but logs — never raises into the page."""
+    if not span_id:
+        return None
+    from tracer.services.clickhouse.v2 import get_reader
+
+    try:
+        with get_reader() as reader:
+            return reader.get(str(span_id))
+    except Exception as exc:
+        logger.warning("ch_span_render_error", span_id=str(span_id), error=str(exc))
+        return None
+
+
+def _pick_conversation_root(root_spans):
+    """From a trace's parentless (root) spans, prefer the conversation root, else
+    the first. Shared by the per-item (:func:`_ch_root_span_for_trace`) and batched
+    (:func:`_batch_ch_trace_roots`) CH trace reads so both pick identically."""
+    if not root_spans:
+        return None
+    for span in root_spans:
+        if getattr(span, "observation_type", None) == "conversation":
+            return span
+    return root_spans[0]
+
+
+def _ch_root_span_for_trace(trace_id):
+    """Best-effort CH read of a trace's root span (resolve/render path).
+
+    Reads ONLY the parentless (root) spans, LEAN, via ``roots_by_trace_ids``: a
+    voice conversation root carries its whole raw log in the heavy columns, and a
+    full ``list_by_trace`` here is the exact TH-6442 code-241 OOM shape on the
+    shared cluster — this runs on every trace resolution. Prefers the conversation
+    root, else the first parentless span; a trace with no parentless span in CH
+    resolves to ``None`` (fail closed — never a full scan to find one root). FAIL
+    OPEN on CH error — logs, never raises into the page."""
+    if not trace_id:
+        return None
+    from tracer.services.clickhouse.v2 import get_reader
+
+    try:
+        with get_reader() as reader:
+            roots = reader.roots_by_trace_ids([str(trace_id)], include_heavy=False)
+    except Exception as exc:
+        logger.warning("ch_trace_render_error", trace_id=str(trace_id), error=str(exc))
+        return None
+    return _pick_conversation_root(roots)
+
+
+def _ch_session_fields_for_item(session_id):
+    """Best-effort CH read of a session's identity fields for a render path.
+    Returns the fields dict or ``None`` (missing session OR CH error). FAIL OPEN on
+    the render but logs."""
+    if not session_id:
+        return None
+    from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+        resolve_session_fields,
+    )
+
+    try:
+        return resolve_session_fields([str(session_id)]).get(str(session_id))
+    except Exception as exc:
+        logger.warning(
+            "ch_session_render_error", session_id=str(session_id), error=str(exc)
+        )
+        return None
+
+
+def _batch_ch_spans(span_ids, *, project_id=None, include_heavy=True, caller="render"):
+    """Batch CH point-read for a render path: ``{str(id): CHSpan}`` over *span_ids*
+    in one query. CH error → ``{}`` (FAIL OPEN — the per-item collector branch then
+    renders the ``deleted`` sentinel, same as a single-read miss). Backs
+    :class:`CollectorSourceCache` so list/export pages do one CH read, not one per item.
+    ``project_id`` (optional) scopes the read to one tenant on the ``spans`` PK prefix;
+    omit for prior behavior — see :func:`_batch_ch_trace_roots` on why not ``org_id``.
+    ``include_heavy`` defaults True (the render path needs the preview/content columns);
+    the add path passes ``False`` to read only the identity/status columns it gates and
+    stamps on, so a large scoped add stays a sub-second point read, not a heavy scan."""
+    if not span_ids:
+        return {}
+    from tracer.services.clickhouse.v2 import get_reader
+
+    try:
+        with get_reader() as reader:
+            spans = reader.list_by_ids(
+                [str(s) for s in span_ids],
+                project_id=project_id,
+                include_heavy=include_heavy,
+            )
+    except Exception as exc:
+        logger.warning(
+            "ch_bulk_resolve_failed",
+            source_type="span",
+            count=len(span_ids),
+            error=str(exc),
+            caller=caller,
+        )
+        return {}
+    return {str(span.id): span for span in spans}
+
+
+# Chunk the trace-id IN-list so one batch can't grow unbounded; a queue's selection
+# reaches 10k items. The read itself is LEAN (see below), so peak memory is bounded
+# by row count, not by the fat voice columns.
+_CH_TRACE_ID_BATCH = 500
+
+
+def _batch_ch_trace_roots(trace_ids, *, project_id=None, caller="render"):
+    """Batch CH read of each trace's root span for a render/availability path:
+    ``{str(trace_id): CHSpan}`` over *trace_ids* (chunked, LEAN).
+
+    Reads the parentless (root) spans LEAN — input / output / metadata /
+    span_attributes stay real; the heavy ``resource_attributes`` and ``events`` come
+    back empty. That is a deliberate trade against ClickHouse OOM: those columns
+    carry the voice raw_log on the CONVERSATION ROOT, and a batched heavy read of
+    many roots is exactly the code-241 shape on the shared cluster. ``project_id``
+    (optional) scopes the read to one tenant on the non-null PK-prefix column — do
+    NOT scope by ``org_id`` here: a collector span row may carry a NULL ``org_id``
+    (``ObservationSpan.org_id`` is nullable and copied verbatim in the backfill), so
+    an org filter would silently drop those roots and read them as "no root". When
+    *project_id* is omitted the ``trace_ids`` are already tenant-scoped by the caller.
+    CH error → ``{}`` (FAIL OPEN — the per-item branch then does its own point-read
+    or renders the ``deleted`` sentinel). Backs :class:`CollectorSourceCache` so a
+    list page over CH traces does one read per chunk, not one per item."""
+    if not trace_ids:
+        return {}
+    from tracer.services.clickhouse.v2 import get_reader
+
+    ids = [str(t) for t in trace_ids]
+    roots_by_trace: dict[str, list] = {}
+    try:
+        with get_reader() as reader:
+            for start in range(0, len(ids), _CH_TRACE_ID_BATCH):
+                chunk = ids[start : start + _CH_TRACE_ID_BATCH]
+                for span in reader.roots_by_trace_ids(
+                    chunk, include_heavy=False, project_id=project_id
+                ):
+                    roots_by_trace.setdefault(str(span.trace_id), []).append(span)
+    except Exception as exc:
+        logger.warning(
+            "ch_bulk_resolve_failed",
+            source_type="trace",
+            count=len(ids),
+            error=str(exc),
+            caller=caller,
+        )
+        return {}
+    return {
+        trace_id: _pick_conversation_root(spans)
+        for trace_id, spans in roots_by_trace.items()
+    }
+
+
+def _batch_ch_session_fields(session_ids, *, project_id=None, caller="render"):
+    """Batch CH read of session identity fields: ``{str(id): fields}`` in one query.
+    CH error → ``{}`` (FAIL OPEN). Companion to :func:`_batch_ch_spans`. ``project_id``
+    (optional) scopes the read to one tenant on the ``trace_sessions`` PK prefix."""
+    if not session_ids:
+        return {}
+    from tracer.services.clickhouse.v2.trace_session_dict_reader import (
+        resolve_session_fields,
+    )
+
+    try:
+        return (
+            resolve_session_fields([str(s) for s in session_ids], project_id=project_id)
+            or {}
+        )
+    except Exception as exc:
+        logger.warning(
+            "ch_bulk_resolve_failed",
+            source_type="session",
+            count=len(session_ids),
+            error=str(exc),
+            caller=caller,
+        )
+        return {}
+
+
+class CollectorSourceCache:
+    """Page-scoped batch cache of CH-resolved sources (trace / span / session).
+
+    ``resolve_source_preview`` / ``resolve_source_content`` run once per item; tracer
+    sources (trace / observation_span / trace_session) are read CH-only, so each call
+    would otherwise do its own CH point-read — an N+1 against ClickHouse on every
+    list/export page (CH has no ORM prefetch). Build one cache per page with
+    :meth:`for_items` and pass it as ``ch_cache=`` so the page does a single CH read
+    per kind. A cache miss returns ``None`` → ``deleted`` sentinel, matching the
+    single-read fail-open.
+    """
+
+    __slots__ = ("_spans", "_sessions", "_trace_roots")
+
+    def __init__(self, *, spans=None, sessions=None, trace_roots=None):
+        self._spans = spans or {}
+        self._sessions = sessions or {}
+        self._trace_roots = trace_roots or {}
+
+    @classmethod
+    def for_items(cls, items):
+        """Collect the tracer source ids across *items* and batch-resolve each kind
+        from CH. Traces resolve to their root span (LEAN), spans and sessions by soft id.
+
+        Reads are grouped by the item's denormalized ``project_id`` and scoped to it,
+        so each read prunes the ``spans`` PK prefix to one tenant instead of scanning
+        the whole multi-tenant table. A page's items can legitimately span projects
+        (add-items only tenant-scopes the source), so a single queue-wide scope would
+        drop off-project items and render them ``deleted`` — hence per-item project.
+        Items whose ``project_id`` is NULL (pre-denormalization rows) fall into one
+        unscoped group: correct, just unpruned. A page spans few distinct projects, so
+        this is a handful of scoped reads, not one per item. Empty id-sets short-circuit."""
+        # project_id (str, or None for pre-denorm rows) -> per-kind soft-id sets
+        by_project: dict[object, dict] = {}
+        for item in items or []:
+            source_type = getattr(item, "source_type", None)
+            pid = getattr(item, "project_id", None)
+            buckets = by_project.setdefault(
+                str(pid) if pid else None,
+                {"spans": set(), "sessions": set(), "traces": set()},
+            )
+            if (
+                source_type == QueueItemSourceType.OBSERVATION_SPAN.value
+                and item.observation_span_id
+            ):
+                buckets["spans"].add(str(item.observation_span_id))
+            elif (
+                source_type == QueueItemSourceType.TRACE_SESSION.value
+                and item.trace_session_id
+            ):
+                buckets["sessions"].add(str(item.trace_session_id))
+            elif source_type == QueueItemSourceType.TRACE.value and item.trace_id:
+                buckets["traces"].add(str(item.trace_id))
+
+        # A soft id belongs to exactly one project, so the per-group results never
+        # collide on merge. NULL-project group (project_id=None) is the prior read.
+        spans, sessions, trace_roots = {}, {}, {}
+        for pid, buckets in by_project.items():
+            spans.update(_batch_ch_spans(buckets["spans"], project_id=pid))
+            sessions.update(
+                _batch_ch_session_fields(buckets["sessions"], project_id=pid)
+            )
+            trace_roots.update(_batch_ch_trace_roots(buckets["traces"], project_id=pid))
+        return cls(spans=spans, sessions=sessions, trace_roots=trace_roots)
+
+    def span(self, span_id):
+        return self._spans.get(str(span_id)) if span_id else None
+
+    def trace_root(self, trace_id):
+        return self._trace_roots.get(str(trace_id)) if trace_id else None
+
+    def session_fields(self, session_id):
+        return self._sessions.get(str(session_id)) if session_id else None
+
+
+def dataset_cells_by_row(items):
+    """Batch the dataset-row cell read for a render/export page: ``{row_id(str): [Cell]}``.
+
+    The Postgres companion to :class:`CollectorSourceCache`. ``resolve_source_content``
+    builds a dataset row's field map from its cells; run once per item that is an
+    unbatched ``Cell.objects.filter(row=…)`` — an N+1 across a list/export page. Build
+    this map once and pass it as ``cell_cache=`` so the page does a single ``row_id__in``
+    read. Every requested row_id is pre-seeded with ``[]``: a row with no cells is a
+    cache HIT (no fallback query); a row_id absent from the map was never batched, so
+    the caller falls back to its own per-row read (keys are ``str`` throughout to dodge
+    the UUID-vs-str lookup mismatch)."""
+    row_ids = [
+        str(item.dataset_row_id)
+        for item in items or []
+        if getattr(item, "source_type", None) == QueueItemSourceType.DATASET_ROW.value
+        and getattr(item, "dataset_row_id", None)
+    ]
+    if not row_ids:
+        return {}
+    from model_hub.models.develop_dataset import Cell
+
+    cells_by_row = {row_id: [] for row_id in row_ids}
+    for cell in Cell.objects.filter(row_id__in=row_ids).select_related("column"):
+        cells_by_row[str(cell.row_id)].append(cell)
+    return cells_by_row
+
+
+class _CHTraceSessionSource:
+    """Duck-typed stand-in for a PG ``TraceSession`` resolved from CH. Carries only
+    the attributes the annotation scope/store/render path reads off a session
+    (``id`` / ``pk`` / ``project_id`` / ``name`` / ``first_seen``); it is NOT a Django
+    model and must never be assigned to a relation (the store path uses the soft id).
+
+    ``pk`` mirrors ``id`` for Django-model parity — the score store reads
+    ``source_obj.pk`` (same as :class:`CHSpan` and :class:`_CHTraceSource`)."""
+
+    __slots__ = ("id", "pk", "project_id", "name", "first_seen")
+
+    def __init__(self, *, id, project_id, name, first_seen):
+        self.id = id
+        self.pk = str(id)
+        self.project_id = project_id
+        self.name = name
+        self.first_seen = first_seen
+
+
+# Above this many CH-native ids resolved without a project to scope by, the add path
+# takes the per-item CH fallback (bounded, but slow enough to be worth a log line).
+# 25 keeps that fallback's sequential point-reads well under the gateway timeout while
+# still flagging an unusually large no-project add: a project-scoped UI add takes the
+# batched path and never reaches here, so crossing this is an SDK/API caller.
+_CH_BULK_FALLBACK_WARN = 25
+
+# select_related paths that let the PG tenant gate traverse org/workspace off a batched
+# fetch without a lazy load per row. Only dataset_row is common on the enumerated add
+# path; the rarer kinds keep their multi-hop traversal lazy (small N).
+_PG_SOURCE_SELECT_RELATED = {
+    QueueItemSourceType.DATASET_ROW.value: ("dataset",),
+}
+
+
+def resolve_source_objects_bulk(
+    items_data, *, project_id=None, organization=None, workspace=None
+):
+    """Batch sibling of :func:`resolve_source_object` for the enumerated add path.
+
+    Returns ``{(source_type, str(source_id)): source_obj}`` for every resolved,
+    tenant-verified source in *items_data* (a missing or cross-tenant id is simply
+    absent — the caller reports it). One scoped CH read per tracer kind + one ``pk__in``
+    fetch per PG kind, replacing the former per-item N+1 (a fresh CH client + point read
+    + ``.exists()`` per item, which blew the 30s gateway on large adds).
+
+    The CH-native kinds need *project_id* (the payload's project) to scope the read to
+    the ``spans`` PK prefix — an unscoped batch of a few hundred ids scans the whole
+    multi-tenant table and times out, so batching without scoping is strictly worse than
+    the N+1. The tenant is gated against that project **once** here (fail closed); a
+    scoped read then only returns that project's rows, so no per-row project check is
+    needed. When *project_id* is absent (or not the caller's), the CH kinds fall back to
+    the per-item resolver (bounded — a point read per id). PG kinds resolve regardless."""
+    from collections import defaultdict
+
+    ids_by_type: dict[str, list[str]] = defaultdict(list)
+    seen: set[tuple[str, str]] = set()
+    for item in items_data:
+        source_type = item["source_type"]
+        source_id = str(item["source_id"])
+        if (source_type, source_id) in seen:
+            continue
+        seen.add((source_type, source_id))
+        ids_by_type[source_type].append(source_id)
+
+    ch_scope_ok = (
+        project_id is not None
+        and _tenant_scoped_project(
+            project_id, organization=organization, workspace=workspace
+        )
+        is not None
+    )
+
+    resolved: dict[tuple[str, str], object] = {}
+    for source_type, ids in ids_by_type.items():
+        if source_type in _CH_NATIVE_SOURCE_TYPES:
+            resolved.update(
+                _resolve_ch_sources_bulk(
+                    source_type,
+                    ids,
+                    project_id=project_id if ch_scope_ok else None,
+                    organization=organization,
+                    workspace=workspace,
+                )
+            )
+        else:
+            resolved.update(
+                _resolve_pg_sources_bulk(
+                    source_type,
+                    ids,
+                    organization=organization,
+                    workspace=workspace,
+                )
+            )
+    return resolved
+
+
+def _resolve_ch_sources_bulk(source_type, ids, *, project_id, organization, workspace):
+    """Resolve CH-native sources (trace / observation_span / trace_session) for the add
+    path → ``{(source_type, str(id)): source_obj}``. With *project_id* (already tenant-
+    gated by the caller): one scoped, LEAN batch read — the only shape that stays under
+    the gateway timeout at scale. Without it: per-item fallback via
+    :func:`resolve_source_object` (bounded — a point read per id, never a full scan).
+    FAIL OPEN on CH errors is inherited from the batch helpers (a miss ⇒ the id is
+    absent ⇒ the caller reports it as an add error)."""
+    if not ids:
+        return {}
+
+    if not project_id:
+        if len(ids) > _CH_BULK_FALLBACK_WARN:
+            logger.warning(
+                "add_items_ch_resolve_unscoped_fallback",
+                source_type=source_type,
+                count=len(ids),
+            )
+        resolved = {}
+        for source_id in ids:
+            obj = resolve_source_object(
+                source_type,
+                source_id,
+                organization=organization,
+                workspace=workspace,
+            )
+            if obj is not None:
+                resolved[(source_type, str(source_id))] = obj
+        return resolved
+
+    pid = str(project_id)
+    if source_type == QueueItemSourceType.TRACE.value:
+        roots = _batch_ch_trace_roots(ids, project_id=pid, caller="add_items")
+        return {
+            (source_type, str(trace_id)): _CHTraceSource(trace_id, root)
+            for trace_id, root in roots.items()
+            if root is not None
+        }
+    if source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
+        spans = _batch_ch_spans(
+            ids, project_id=pid, include_heavy=False, caller="add_items"
+        )
+        return {(source_type, str(span_id)): span for span_id, span in spans.items()}
+    if source_type == QueueItemSourceType.TRACE_SESSION.value:
+        fields_by_id = _batch_ch_session_fields(ids, project_id=pid, caller="add_items")
+        resolved = {}
+        for session_id, fields in fields_by_id.items():
+            if not fields:
+                continue
+            session_pid = fields.get("project_id")
+            resolved[(source_type, str(session_id))] = _CHTraceSessionSource(
+                id=str(session_id),
+                project_id=str(session_pid) if session_pid else None,
+                name=fields.get("display_name")
+                or fields.get("external_session_id")
+                or "",
+                first_seen=fields.get("first_seen"),
+            )
+        return resolved
+    return {}
+
+
+def _resolve_pg_sources_bulk(source_type, ids, *, organization, workspace):
+    """Batch-fetch + tenant-gate PG-backed sources (dataset_row / call_execution /
+    prototype_run) for the add path → ``{(source_type, str(pk)): obj}``. One ``pk__in``
+    query for the fetch (vs one per item), gated per row through the SAME
+    :func:`_source_passes_tenant_gate` the per-item resolver uses (fail closed). A row
+    that isn't found or doesn't pass the gate is simply absent."""
+    if not ids:
+        return {}
+    model = get_source_model(source_type)
+    if model is None:
+        return {}
+    queryset = model.objects.filter(pk__in=list(ids))
+    select_related = _PG_SOURCE_SELECT_RELATED.get(source_type)
+    if select_related:
+        queryset = queryset.select_related(*select_related)
+    resolved = {}
+    for obj in queryset:
+        if _source_passes_tenant_gate(
+            obj, source_type, obj.pk, organization=organization, workspace=workspace
+        ):
+            resolved[(source_type, str(obj.pk))] = obj
+    return resolved
 
 
 def _get_source_organization(obj):
@@ -201,9 +1188,7 @@ def _get_source_organization(obj):
         ):
             related = getattr(test_execution, relation_name, None)
             org = (
-                getattr(related, "organization", None)
-                if related is not None
-                else None
+                getattr(related, "organization", None) if related is not None else None
             )
             if org is not None:
                 return org
@@ -248,11 +1233,7 @@ def _get_source_workspace(obj):
             "simulator_agent",
         ):
             related = getattr(test_execution, relation_name, None)
-            ws = (
-                getattr(related, "workspace", None)
-                if related is not None
-                else None
-            )
+            ws = getattr(related, "workspace", None) if related is not None else None
             if ws is not None:
                 return ws
 
@@ -264,8 +1245,13 @@ def _get_source_workspace(obj):
     return None
 
 
-def resolve_source_preview(item):
-    """Return a standardized preview dict for a QueueItem's source."""
+def resolve_source_preview(item, *, ch_cache=None):
+    """Return a standardized preview dict for a QueueItem's source.
+
+    Tracer sources (trace / observation_span / trace_session) are read CH-only.
+    ``ch_cache`` (opt-in :class:`CollectorSourceCache`): when supplied, they read
+    from the page-batched map instead of a per-item CH point-read. Single-item
+    callers pass ``None`` and keep the per-item read."""
     try:
         if item.source_type == QueueItemSourceType.DATASET_ROW.value:
             row = item.dataset_row
@@ -279,33 +1265,46 @@ def resolve_source_preview(item):
             }
 
         elif item.source_type == QueueItemSourceType.TRACE.value:
-            trace = item.trace
-            if not trace:
+            # CH-only: a trace previews from its CH root span (conversation root
+            # preferred). The PG tracer tables are dropped — never read them.
+            root_span = (
+                ch_cache.trace_root(item.trace_id)
+                if ch_cache is not None
+                else _ch_root_span_for_trace(item.trace_id)
+            )
+            if root_span is None:
                 return {"type": "trace", "deleted": True}
-            primary_span = _trace_primary_span(trace)
-            metrics = _metric_payload(primary_span) if primary_span else {}
             return {
                 "type": "trace",
-                "name": trace.name or "",
-                "project_id": str(trace.project_id) if trace.project_id else None,
-                "input_preview": _truncate(str(trace.input or ""), 200),
-                "output_preview": _truncate(str(trace.output or ""), 200),
-                **metrics,
+                "name": root_span.name or "",
+                "project_id": (
+                    str(root_span.project_id) if root_span.project_id else None
+                ),
+                "input_preview": _truncate(str(root_span.input or ""), 200),
+                "output_preview": _truncate(str(root_span.output or ""), 200),
+                # CH has no response_time column; latency is the only signal.
+                "latency_ms": root_span.latency_ms,
+                "response_time_ms": root_span.latency_ms,
             }
 
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
-            span = item.observation_span
-            if not span:
+            # CH-only: resolve the span from CH by its soft id.
+            ch_span = (
+                ch_cache.span(item.observation_span_id)
+                if ch_cache is not None
+                else _ch_span_for_item(item.observation_span_id)
+            )
+            if ch_span is None:
                 return {"type": "observation_span", "deleted": True}
             return {
                 "type": "observation_span",
-                "name": span.name or "",
-                "observation_type": getattr(span, "observation_type", ""),
-                "input_preview": _truncate(str(getattr(span, "input", "") or ""), 200),
-                "output_preview": _truncate(
-                    str(getattr(span, "output", "") or ""), 200
-                ),
-                **_metric_payload(span),
+                "name": ch_span.name or "",
+                "observation_type": ch_span.observation_type or "",
+                "input_preview": _truncate(str(ch_span.input or ""), 200),
+                "output_preview": _truncate(str(ch_span.output or ""), 200),
+                # CH has no response_time column; latency is the only signal.
+                "latency_ms": ch_span.latency_ms,
+                "response_time_ms": ch_span.latency_ms,
             }
 
         elif item.source_type == QueueItemSourceType.PROTOTYPE_RUN.value:
@@ -332,14 +1331,23 @@ def resolve_source_preview(item):
             }
 
         elif item.source_type == QueueItemSourceType.TRACE_SESSION.value:
-            session = item.trace_session
-            if not session:
+            # CH-only: resolve the session identity fields from CH.
+            fields = (
+                ch_cache.session_fields(item.trace_session_id)
+                if ch_cache is not None
+                else _ch_session_fields_for_item(item.trace_session_id)
+            )
+            if fields is None:
                 return {"type": "trace_session", "deleted": True}
             return {
                 "type": "trace_session",
-                "session_id": str(session.id),
-                "name": session.name or "",
-                "project_id": str(session.project_id) if session.project_id else None,
+                "session_id": str(item.trace_session_id),
+                "name": fields.get("display_name")
+                or fields.get("external_session_id")
+                or "",
+                "project_id": (
+                    str(fields["project_id"]) if fields.get("project_id") else None
+                ),
             }
 
     except Exception as e:
@@ -348,8 +1356,15 @@ def resolve_source_preview(item):
     return {"type": item.source_type, "error": "Could not resolve preview"}
 
 
-def resolve_source_content(item):
-    """Return full renderable content for a QueueItem's source (used in annotation view)."""
+def resolve_source_content(item, *, ch_cache=None, cell_cache=None):
+    """Return full renderable content for a QueueItem's source (used in annotation view).
+
+    Tracer sources (trace / observation_span / trace_session) are read CH-only.
+    ``ch_cache`` (opt-in :class:`CollectorSourceCache`): when supplied, they read
+    from the page-batched map instead of a per-item CH point-read. ``cell_cache``
+    (opt-in, from :func:`dataset_cells_by_row`): when supplied, a dataset row's cells
+    read from the page-batched map instead of a per-item ``Cell`` query. Single-item
+    callers pass ``None`` for both and keep the per-item reads."""
     try:
         if item.source_type == QueueItemSourceType.DATASET_ROW.value:
             row = item.dataset_row
@@ -370,9 +1385,13 @@ def resolve_source_content(item):
             fields = {}
             field_types = {}
             try:
-                from model_hub.models.develop_dataset import Cell
+                row_key = str(row.id)
+                if cell_cache is not None and row_key in cell_cache:
+                    cells = cell_cache[row_key]
+                else:
+                    from model_hub.models.develop_dataset import Cell
 
-                cells = Cell.objects.filter(row=row).select_related("column")
+                    cells = Cell.objects.filter(row=row).select_related("column")
                 for cell in cells:
                     col_name = (
                         cell.column.name if cell.column else f"column_{cell.column_id}"
@@ -397,83 +1416,45 @@ def resolve_source_content(item):
             return data
 
         elif item.source_type == QueueItemSourceType.TRACE.value:
-            trace = item.trace
-            if not trace:
+            # CH-only: render a trace from its CH root span (conversation root
+            # preferred). The PG tracer tables are dropped — never read them. The
+            # non-voice UI focuses the root via ``root_span_id`` (a render choice —
+            # the stored item stays a trace).
+            root_span = (
+                ch_cache.trace_root(item.trace_id)
+                if ch_cache is not None
+                else _ch_root_span_for_trace(item.trace_id)
+            )
+            if root_span is None:
                 return {"type": "trace", "deleted": True}
-            project_source = trace.project.source if trace.project_id else None
-            primary_span = _trace_primary_span(trace)
-            span_metrics = _metric_payload(primary_span) if primary_span else {}
-            trace_latency = getattr(trace, "latency", None)
-            trace_status = getattr(trace, "status", None)
-            return {
-                "type": "trace",
-                "trace_id": str(trace.id),
-                "name": trace.name or "",
-                "project_id": str(trace.project_id) if trace.project_id else None,
-                "project_source": project_source,
-                "created_at": trace.created_at,
-                "updated_at": trace.updated_at,
-                "input": trace.input,
-                "output": trace.output,
-                "metadata": trace.metadata if hasattr(trace, "metadata") else {},
-                "latency": trace_latency,
-                "latency_ms": (
-                    span_metrics.get("latency_ms")
-                    if span_metrics.get("latency_ms") is not None
-                    else trace_latency
-                ),
-                "response_time_ms": span_metrics.get("response_time_ms"),
-                "status": (
-                    trace_status
-                    if trace_status is not None
-                    else getattr(primary_span, "status", None)
-                    if primary_span
-                    else None
-                ),
-                "span_attributes": (
-                    getattr(primary_span, "span_attributes", {}) if primary_span else {}
-                ),
-                "resource_attributes": (
-                    getattr(primary_span, "resource_attributes", {})
-                    if primary_span
-                    else {}
-                ),
-            }
+            from tracer.services.clickhouse.v2.span_reader import (
+                chspan_to_annotation_source_dict,
+            )
+
+            # Headline content of the trace = its root span, reshaped to the trace
+            # dict. Drop span_id: the FE renders a trace item via
+            # InlineTraceView(trace_id) and only reads span_id for an
+            # observation_span item, so it's dead + mis-attachment-prone here.
+            data = chspan_to_annotation_source_dict(root_span)
+            data["type"] = "trace"
+            data["trace_id"] = str(item.trace_id)
+            data.pop("span_id", None)
+            return data
 
         elif item.source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
-            span = item.observation_span
-            if not span:
+            # CH-only: rebuild content from CH via the canonical mapper.
+            ch_span = (
+                ch_cache.span(item.observation_span_id)
+                if ch_cache is not None
+                else _ch_span_for_item(item.observation_span_id)
+            )
+            if ch_span is None:
                 return {"type": "observation_span", "deleted": True}
-            return {
-                "type": "observation_span",
-                "span_id": str(span.id),
-                "trace_id": str(span.trace_id) if span.trace_id else None,
-                "name": span.name or "",
-                "observation_type": getattr(span, "observation_type", ""),
-                "project_id": str(span.project_id) if span.project_id else None,
-                "created_at": span.created_at,
-                "updated_at": span.updated_at,
-                "start_time": span.start_time,
-                "end_time": span.end_time,
-                "input": getattr(span, "input", None),
-                "output": getattr(span, "output", None),
-                "metadata": getattr(span, "metadata", {}),
-                "events": getattr(span, "events", []),
-                "latency_ms": getattr(span, "latency_ms", None),
-                "response_time_ms": getattr(span, "response_time", None),
-                "model": getattr(span, "model", None),
-                "provider": getattr(span, "provider", None),
-                "cost": getattr(span, "cost", None),
-                "prompt_tokens": getattr(span, "prompt_tokens", None),
-                "completion_tokens": getattr(span, "completion_tokens", None),
-                "total_tokens": getattr(span, "total_tokens", None),
-                "status": getattr(span, "status", None),
-                "status_message": getattr(span, "status_message", None),
-                "tags": getattr(span, "tags", []),
-                "span_attributes": getattr(span, "span_attributes", {}),
-                "resource_attributes": getattr(span, "resource_attributes", {}),
-                "eval_attributes": getattr(span, "eval_attributes", {}),
-            }
+            from tracer.services.clickhouse.v2.span_reader import (
+                chspan_to_annotation_source_dict,
+            )
+
+            return chspan_to_annotation_source_dict(ch_span)
 
         elif item.source_type == QueueItemSourceType.PROTOTYPE_RUN.value:
             run = item.prototype_run
@@ -495,15 +1476,35 @@ def resolve_source_content(item):
             call = item.call_execution
             if not call:
                 return {"type": "call_execution", "deleted": True}
+            call_meta = getattr(call, "call_metadata", {}) or {}
+            provider = getattr(call, "provider_call_data", {}) or {}
+            transcript_turns = _call_transcript_turns(call)
+            raw_transcript = ""
+            for sub in provider.values():
+                if isinstance(sub, dict) and isinstance(sub.get("transcript"), str):
+                    raw_transcript = sub["transcript"]
+                    break
+            call_summary = getattr(call, "call_summary", "") or ""
+            scenario_name = call_meta.get("scenario_name") or ""
+            row_data = call_meta.get("row_data") or {}
+            if isinstance(row_data, dict) and row_data:
+                scenario_input = row_data
+            elif scenario_name:
+                scenario_input = {"scenario_name": scenario_name}
+            else:
+                scenario_input = {}
             return {
                 "type": "call_execution",
                 "call_id": str(call.id),
                 "source_id": str(call.id),
+                "name": scenario_name or (call_summary[:80] if call_summary else ""),
                 "status": getattr(call, "status", ""),
                 "simulation_call_type": getattr(call, "simulation_call_type", ""),
                 "call_type": getattr(call, "call_type", None),
                 "phone_number": getattr(call, "phone_number", None),
-                "service_provider_call_id": getattr(call, "service_provider_call_id", None),
+                "service_provider_call_id": getattr(
+                    call, "service_provider_call_id", None
+                ),
                 "customer_call_id": getattr(call, "customer_call_id", None),
                 "customer_number": getattr(call, "customer_number", None),
                 "assistant_id": getattr(call, "assistant_id", None),
@@ -517,17 +1518,18 @@ def resolve_source_content(item):
                 "cost": getattr(call, "cost_cents", None),
                 "ended_reason": getattr(call, "ended_reason", None),
                 "message_count": getattr(call, "message_count", None),
-                "call_summary": getattr(call, "call_summary", None),
+                "call_summary": call_summary or None,
                 "user_wpm": getattr(call, "user_wpm", None),
                 "agent_wpm": getattr(call, "bot_wpm", None),
                 "talk_ratio": getattr(call, "talk_ratio", None),
-                "user_interruption_count": getattr(call, "user_interruption_count", None),
+                "user_interruption_count": getattr(
+                    call, "user_interruption_count", None
+                ),
                 "ai_interruption_count": getattr(call, "ai_interruption_count", None),
-                "input": getattr(call, "input", None),
-                "output": getattr(call, "output", None),
-                "metadata": getattr(call, "call_metadata", {}) or {},
-                "call_metadata": getattr(call, "call_metadata", {}) or {},
-                "provider_call_data": getattr(call, "provider_call_data", {}) or {},
+                "input": scenario_input,
+                "output": transcript_turns or raw_transcript or call_summary or "",
+                "metadata": call_meta,
+                "provider_call_data": provider,
                 "monitor_call_data": getattr(call, "monitor_call_data", {}) or {},
                 "analysis_data": getattr(call, "analysis_data", {}) or {},
                 "evaluation_data": getattr(call, "evaluation_data", {}) or {},
@@ -537,23 +1539,63 @@ def resolve_source_content(item):
             }
 
         elif item.source_type == QueueItemSourceType.TRACE_SESSION.value:
-            session = item.trace_session
-            if not session:
+            # CH-only: resolve the session from CH (first_seen is the
+            # created_at/updated_at proxy — CH has no audit columns).
+            fields = (
+                ch_cache.session_fields(item.trace_session_id)
+                if ch_cache is not None
+                else _ch_session_fields_for_item(item.trace_session_id)
+            )
+            if fields is None:
                 return {"type": "trace_session", "deleted": True}
+            first_seen = fields.get("first_seen")
             return {
                 "type": "trace_session",
-                "session_id": str(session.id),
-                "source_id": str(session.id),
-                "name": session.name or "",
-                "project_id": str(session.project_id) if session.project_id else None,
-                "created_at": session.created_at,
-                "updated_at": session.updated_at,
+                "session_id": str(item.trace_session_id),
+                "source_id": str(item.trace_session_id),
+                "name": fields.get("display_name")
+                or fields.get("external_session_id")
+                or "",
+                "project_id": (
+                    str(fields["project_id"]) if fields.get("project_id") else None
+                ),
+                "created_at": first_seen,
+                "updated_at": first_seen,
             }
 
     except Exception as e:
         logger.warning("source_content_error", item_id=str(item.id), error=str(e))
 
     return {"type": item.source_type, "error": "Could not resolve content"}
+
+
+def assign_items_to_all_annotators(queue, items):
+    """Assign every item to every queue member with the annotator role."""
+    from model_hub.models.annotation_queues import (
+        QueueItemAssignment,
+        annotation_queue_role_q,
+    )
+
+    item_list = list(items or [])
+    if not item_list:
+        return 0
+
+    annotator_ids = list(
+        queue.queue_annotators.filter(deleted=False)
+        .filter(annotation_queue_role_q(AnnotatorRole.ANNOTATOR.value))
+        .values_list("user_id", flat=True)
+        .distinct()
+    )
+    if not annotator_ids:
+        return 0
+
+    assignments = [
+        QueueItemAssignment(queue_item=item, user_id=user_id)
+        for item in item_list
+        for user_id in annotator_ids
+    ]
+    QueueItemAssignment.objects.bulk_create(assignments, ignore_conflicts=True)
+    return len(assignments)
 
 
 def auto_assign_items(queue, items):
@@ -583,7 +1625,6 @@ def auto_assign_items(queue, items):
     elif queue.assignment_strategy == "load_balanced":
         # Assign to annotator with fewest pending + in_progress items
         from django.db.models import Count
-        from django.db.models import Q as DQ
 
         counts = dict.fromkeys(annotator_ids, 0)
         qs = (
@@ -649,9 +1690,15 @@ def calculate_agreement(queue):
                 disagreement_items.append(str(qi_id))
 
         agreement_pct = agree_count / total_count if total_count > 0 else None
+        comparable_for_kappa = info["type"] in {
+            "categorical",
+            "numeric",
+            "star",
+            "thumbs_up_down",
+        }
         kappa = (
             _cohens_kappa(item_label_map, label_id)
-            if info["type"] == "categorical"
+            if comparable_for_kappa and total_count > 0
             else None
         )
 
@@ -669,7 +1716,7 @@ def calculate_agreement(queue):
     # Overall agreement
     total_pairs = 0
     agree_pairs = 0
-    for (qi_id, lid), entries in item_label_map.items():
+    for (_qi_id, _lid), entries in item_label_map.items():
         if len(entries) < 2:
             continue
         total_pairs += 1
@@ -712,12 +1759,11 @@ def _cohens_kappa(item_label_map, label_id):
     When there are 3+ annotators on an item, every pair is compared using
     ``itertools.combinations`` rather than only the first two entries.
     """
-    from collections import Counter
     from itertools import combinations
 
     all_values = []
     pairs = []
-    for (qi_id, lid), entries in item_label_map.items():
+    for (_qi_id, lid), entries in item_label_map.items():
         if lid != label_id or len(entries) < 2:
             continue
         # Compare ALL annotator pairs, not just the first two
@@ -755,7 +1801,7 @@ def _annotator_pair_agreement(item_label_map):
 
     pair_data = defaultdict(lambda: {"agree": 0, "total": 0})
 
-    for (qi_id, lid), entries in item_label_map.items():
+    for (_qi_id, _lid), entries in item_label_map.items():
         if len(entries) < 2:
             continue
         for (a1_id, v1), (a2_id, v2) in combinations(entries, 2):
@@ -780,10 +1826,8 @@ def _annotator_pair_agreement(item_label_map):
 
 
 # ---------------------------------------------------------------------------
-# Field mapping: view-level camelCase field IDs → Django ORM field names.
-# The frontend sends camelCase propertyIds (matching the tracing / session /
-# simulation filter UIs).  This mapping converts them to ORM lookups.
-# It also serves as an allowlist – unmapped fields are rejected.
+# Field mapping: canonical snake_case field IDs → Django ORM field names.
+# This serves as an allowlist; unmapped fields are rejected.
 # ---------------------------------------------------------------------------
 FIELD_MAPPING = {
     QueueItemSourceType.TRACE.value: {
@@ -801,19 +1845,17 @@ FIELD_MAPPING = {
         "status": "status",  # annotated from root span
         "created_at": "created_at",
         "project__name": "project__name",
-        # Legacy camelCase
-        "traceId": "id",
-        "traceName": "name",
-        "nodeType": "node_type",
-        "userId": "user_id",
-        "projectName": "project__name",
     },
     QueueItemSourceType.OBSERVATION_SPAN.value: {
         # Snake_case (primary)
         "trace_id": "trace_id",
         "trace_name": "trace__name",  # trace's name via FK
         "node_type": "observation_type",
-        "user_id": "end_user__user_id",
+        # CH-derived-dimensions cutover (DESIGN §4.3): EndUser moved to CH, so
+        # the old ``end_user__user_id`` FK join into ``tracer_enduser`` is gone.
+        # ``user_id`` is now an annotation (see ``_annotate_span_for_rules``) that
+        # resolves the span's OWN ``end_user_id`` soft-id through the CH dict.
+        "user_id": "user_id",  # annotated from the span's own end_user_id
         "project_name": "project__name",
         "name": "name",
         "observation_type": "observation_type",
@@ -824,12 +1866,6 @@ FIELD_MAPPING = {
         "status": "status",  # direct field on span
         "created_at": "created_at",
         "project__name": "project__name",
-        # Legacy camelCase
-        "traceId": "trace_id",
-        "traceName": "trace__name",
-        "nodeType": "observation_type",
-        "userId": "end_user__user_id",
-        "projectName": "project__name",
     },
     QueueItemSourceType.TRACE_SESSION.value: {
         # Snake_case (primary)
@@ -842,12 +1878,6 @@ FIELD_MAPPING = {
         "name": "name",
         "created_at": "created_at",
         "project__name": "project__name",
-        # Legacy camelCase
-        "totalCost": "total_cost",
-        "startTime": "start_time",
-        "endTime": "end_time",
-        "userId": "user_id",
-        "projectName": "project__name",
     },
     QueueItemSourceType.CALL_EXECUTION.value: {
         # Snake_case (primary)
@@ -859,9 +1889,6 @@ FIELD_MAPPING = {
         "duration_seconds": "duration_seconds",
         "overall_score": "overall_score",
         "created_at": "created_at",
-        # Legacy camelCase
-        "agentDefinition": "test_execution__agent_definition__name",
-        "callType": "simulation_call_type",
     },
     QueueItemSourceType.DATASET_ROW.value: {
         # Snake_case (primary)
@@ -869,23 +1896,22 @@ FIELD_MAPPING = {
         "order": "order",
         "created_at": "created_at",
         "dataset__name": "dataset__name",
-        # Legacy camelCase
-        "datasetName": "dataset__name",
-        "createdAt": "created_at",
     },
     QueueItemSourceType.PROTOTYPE_RUN.value: {
         "name": "name",
         "model": "model",
         "status": "status",
         "created_at": "created_at",
-        # Legacy camelCase
-        "createdAt": "created_at",
     },
 }
 
 # ORM field names that require queryset annotation (not stored on model).
 _NEEDS_ANNOTATION = {
     QueueItemSourceType.TRACE.value: {"node_type", "status", "user_id"},
+    # ``user_id`` is annotated post EndUser→CH cutover (DESIGN §4.3): it used to
+    # be a direct ``end_user__user_id`` FK-join filter, now it is resolved from
+    # the span's own ``end_user_id`` via the CH dict.
+    QueueItemSourceType.OBSERVATION_SPAN.value: {"user_id"},
     QueueItemSourceType.TRACE_SESSION.value: {
         "duration_seconds",
         "total_cost",
@@ -905,13 +1931,27 @@ def _annotate_for_rules(qs, source_type, needed_orm_fields):
 
     if source_type == QueueItemSourceType.TRACE.value:
         return _annotate_trace_for_rules(qs, to_annotate)
+    if source_type == QueueItemSourceType.OBSERVATION_SPAN.value:
+        return _annotate_span_for_rules(qs, to_annotate)
     if source_type == QueueItemSourceType.TRACE_SESSION.value:
         return _annotate_session_for_rules(qs, to_annotate)
     return qs
 
 
 def _annotate_trace_for_rules(qs, fields):
-    """Annotate Trace queryset with computed fields derived from root spans."""
+    """Annotate Trace queryset with computed fields derived from root spans.
+
+    ``user_id`` is the CH-derived-dimensions cutover (DESIGN §4.3). The old
+    annotation traversed the PG ``end_user`` FK
+    (``Subquery(root_span_qs.values("end_user__user_id"))``); EndUser now lives
+    in CH, so the FK target ``tracer_enduser`` is gone. We keep the EXACT same
+    correlated ``Subquery(root_span_qs...)`` shape — so the annotation stays lazy
+    and the downstream ``qs.filter(user_id__…)`` / ``exclude`` rule loop, the
+    ``qs[:cap+1]`` capped scan, and ``rules_applied`` accounting are untouched —
+    but swap the FK column for the span's OWN ``end_user_id`` soft-id mapped
+    through a CASE that carries the CH ``end_users_dict`` label (built once,
+    bounded by enduser count, NOT by trace count). See ``_user_id_label_case``.
+    """
     from django.db.models import (
         Case,
         CharField,
@@ -957,9 +1997,59 @@ def _annotate_trace_for_rules(qs, fields):
         )
 
     if "user_id" in fields:
-        qs = qs.annotate(user_id=Subquery(root_span_qs.values("end_user__user_id")[:1]))
+        # Distinct end_user_ids reachable from these traces' root spans (bounded
+        # by enduser count). dictGet their labels and fold into a CASE the
+        # correlated subquery evaluates per root span — matching the OLD
+        # ``root_span_qs.values("end_user__user_id")[:1]`` exactly: no added
+        # order_by / null-exclusion, so it picks the SAME arbitrary root span and
+        # yields NULL on a null/orphan end_user_id, just as the FK join did.
+        end_user_ids = (
+            ObservationSpan.objects.filter(
+                trace_id__in=qs.values("id"), parent_span_id__isnull=True
+            )
+            .exclude(end_user_id__isnull=True)
+            .values_list("end_user_id", flat=True)
+            .distinct()
+        )
+        label_case = _user_id_label_case(end_user_ids)
+        qs = qs.annotate(
+            user_id=Subquery(
+                root_span_qs.annotate(_uid_label=label_case).values("_uid_label")[:1]
+            )
+        )
 
     return qs
+
+
+def _annotate_span_for_rules(qs, fields):
+    """Annotate an ObservationSpan queryset with ``user_id`` (CH cutover).
+
+    OLD: the span rule used ``user_id`` as a DIRECT FK-join filter
+    (``end_user__user_id`` → ``tracer_enduser.user_id``). After EndUser→CH that
+    table is gone (DESIGN §4.3). The entity here IS the span, so unlike the
+    trace/session paths there is no correlation: we annotate ``user_id`` directly
+    from the span's OWN ``end_user_id`` column via a CASE that carries the CH
+    ``end_users_dict`` label (bounded by enduser count). The annotated
+    ``user_id`` is a normal CharField, so the downstream filter loop, cap scan,
+    and accounting are unchanged.
+
+    NULL fidelity: a span with NULL ``end_user_id`` → no CASE arm → NULL (old
+    inner FK join produced no/NULL match → the row was filtered/NULL the same
+    way); an orphan ``end_user_id`` (missing dict key) → NULL via the CASE
+    default (old FK miss → NULL too).
+    """
+    if "user_id" not in fields:
+        return qs
+
+    from tracer.models.observation_span import ObservationSpan  # noqa: F401
+
+    end_user_ids = (
+        qs.exclude(end_user_id__isnull=True)
+        .values_list("end_user_id", flat=True)
+        .distinct()
+    )
+    label_case = _user_id_label_case(end_user_ids)
+    return qs.annotate(user_id=label_case)
 
 
 def _annotate_session_for_rules(qs, fields):
@@ -1016,15 +2106,79 @@ def _annotate_session_for_rules(qs, fields):
         )
 
     if "user_id" in fields:
+        # CH-derived-dimensions cutover (DESIGN §4.3). OLD:
+        # ``spans_qs.exclude(end_user__isnull=True).order_by("start_time")
+        #   .values("end_user__user_id")[:1]`` — first non-null-enduser span by
+        # start_time, then the FK label. We keep that EXACT correlated shape
+        # (exclude + order_by + ``[:1]``) so the picked span is identical, and
+        # the annotation stays a lazy Subquery (cap/accounting untouched); only
+        # the FK-label column is swapped for the span's OWN ``end_user_id`` mapped
+        # through a CASE carrying the CH ``end_users_dict`` label (bounded by
+        # enduser count). ``end_user__isnull`` → ``end_user_id__isnull`` is a
+        # column NULL check, NOT an FK join.
+        end_user_ids = (
+            ObservationSpan.objects.filter(trace__session_id__in=qs.values("id"))
+            .exclude(end_user_id__isnull=True)
+            .values_list("end_user_id", flat=True)
+            .distinct()
+        )
+        label_case = _user_id_label_case(end_user_ids)
         qs = qs.annotate(
             user_id=Subquery(
-                spans_qs.exclude(end_user__isnull=True)
+                spans_qs.exclude(end_user_id__isnull=True)
                 .order_by("start_time")
-                .values("end_user__user_id")[:1]
+                .annotate(_uid_label=label_case)
+                .values("_uid_label")[:1]
             )
         )
 
     return qs
+
+
+def _user_id_label_case(end_user_ids):
+    """Build a Django ``Case`` mapping a span's ``end_user_id`` → its CH
+    ``user_id`` label, for the EndUser reads cutover (DESIGN §4.3).
+
+    ``end_user_ids`` is an iterable (typically a lazy ``ValuesList`` queryset) of
+    the DISTINCT non-null ``end_user_id``s reachable from the queryset's spans —
+    bounded by enduser count, NOT by trace/session count, so the resulting CASE
+    stays small even on a million-row span scan. The labels are fetched from CH
+    ``end_users_dict`` in ONE batched ``dictGet`` and folded into
+    ``When(end_user_id=eu, then=Value(label))`` arms.
+
+    Used INSIDE a correlated ``Subquery`` over the spans (``.annotate(...)
+    .values(...)[:1]``), so the host annotation stays lazy — the cap-and-scan
+    machinery in ``_evaluate_rule_inner`` is preserved.
+
+    NULL fidelity vs the old ``end_user__user_id`` FK join:
+      • a span whose ``end_user_id`` is NULL → no ``When`` matches → CASE
+        ``default=None`` → NULL (old FK was NULL too).
+      • a span whose ``end_user_id`` is an ORPHAN (no dict row — possible under
+        ``db_constraint=False``) → ``dictGetOrNull`` returned ``None`` →
+        we emit NO arm for it → CASE default → NULL (old FK miss → NULL too).
+    Both reproduce the old subquery's NULL exactly.
+    """
+    from django.db.models import Case, CharField, Value, When
+
+    from tracer.services.clickhouse.v2.end_user_dict_reader import resolve_user_ids
+
+    ids = list(end_user_ids)
+    label_by_end_user = resolve_user_ids(ids)
+
+    whens = []
+    for end_user_id in ids:
+        label = label_by_end_user.get(str(end_user_id))
+        if label is None:
+            # Orphan / missing dict key → leave to default=None (FK-miss → NULL).
+            continue
+        whens.append(When(end_user_id=end_user_id, then=Value(label)))
+
+    if not whens:
+        # No resolvable labels → a constant-NULL CharField, so the subquery still
+        # yields NULL for every span (identical to an all-NULL FK join).
+        return Value(None, output_field=CharField())
+
+    return Case(*whens, default=Value(None), output_field=CharField())
 
 
 RULE_TRIGGER_INTERVALS = {
@@ -1036,6 +2190,13 @@ RULE_TRIGGER_INTERVALS = {
     # new date arithmetic dependency.
     AutomationRuleTriggerFrequency.MONTHLY.value: timedelta(days=30),
 }
+
+# Cutoff between "process inline in the HTTP request" and "hand to Temporal".
+# A capped dry-run with this cap is the cheap peek used to decide; with the
+# ``[:cap+1]`` count fix in place the peek is sub-100ms even on million-row
+# tables. Tuned for "user clicks Run, gets answer in <2s" while still keeping
+# auto-assign + finalize work bounded enough to fit inside an HTTP timeout.
+RULE_RUN_SYNC_THRESHOLD = 500
 
 
 def is_automation_rule_due(rule, now=None):
@@ -1111,9 +2272,7 @@ def _finalize_automation_items(rule, created_items):
         QueueItem.objects.bulk_update(created_items, ["assigned_to"])
     elif queue.auto_assign:
         member_ids = list(
-            AnnotationQueueAnnotator.objects.filter(
-                queue=queue, deleted=False
-            )
+            AnnotationQueueAnnotator.objects.filter(queue=queue, deleted=False)
             .filter(annotation_queue_role_q(AnnotatorRole.ANNOTATOR.value))
             .values_list("user_id", flat=True)
             .distinct()
@@ -1134,21 +2293,19 @@ def _finalize_automation_items(rule, created_items):
 
 
 def _normalize_filter_payload(filters):
-    """Normalize camelCase/snake_case UI filter entries to backend shape."""
+    """Keep queue rule filters in the canonical snake_case API shape."""
     normalized = []
     for item in filters or []:
-        column_id = item.get("column_id") or item.get("columnId")
+        column_id = item.get("column_id")
         if not column_id:
             continue
-        config = item.get("filter_config") or item.get("filterConfig") or {}
+        config = item.get("filter_config") or {}
         filter_config = {
-            "filter_type": config.get("filter_type") or config.get("filterType"),
-            "filter_op": config.get("filter_op") or config.get("filterOp"),
-            "filter_value": config.get("filter_value")
-            if "filter_value" in config
-            else config.get("filterValue"),
+            "filter_type": config.get("filter_type"),
+            "filter_op": config.get("filter_op"),
+            "filter_value": config.get("filter_value"),
         }
-        col_type = config.get("col_type") or config.get("colType")
+        col_type = config.get("col_type")
         if col_type:
             filter_config["col_type"] = col_type
         normalized.append(
@@ -1156,11 +2313,8 @@ def _normalize_filter_payload(filters):
                 "column_id": column_id,
                 "filter_config": filter_config,
                 **(
-                    {
-                        "display_name": item.get("display_name")
-                        or item.get("displayName")
-                    }
-                    if item.get("display_name") or item.get("displayName")
+                    {"display_name": item.get("display_name")}
+                    if item.get("display_name")
                     else {}
                 ),
             }
@@ -1192,10 +2346,10 @@ def _parse_datetime_value(value):
 
 def _apply_scalar_filter(qs, field_name, op, value):
     """Apply rule operators to a regular Django field."""
-    if op in ("between", "not_between", "not_in_between"):
+    if op in ("between", "not_between"):
         start, end = _coerce_range_value(value)
         lookup = {f"{field_name}__range": (start, end)}
-        if op in ("not_between", "not_in_between"):
+        if op == "not_between":
             return qs.exclude(**lookup)
         return qs.filter(**lookup)
     if op == "not_in":
@@ -1211,10 +2365,47 @@ def _apply_scalar_filter(qs, field_name, op, value):
     return qs.filter(**{lookup: value})
 
 
+# The six case-insensitive substring/equality operators shared by the
+# dataset-table filter and the annotation-queue cell filter. Kept separate from
+# _op_to_lookup, whose ``equals``/``not_equals`` map to a case-SENSITIVE exact
+# match — do not merge the two maps.
+TEXT_FILTER_LOOKUPS = {
+    "contains": "__icontains",
+    "not_contains": "__icontains",
+    "equals": "__iexact",
+    "not_equals": "__iexact",
+    "starts_with": "__istartswith",
+    "ends_with": "__iendswith",
+}
+_NEGATED_TEXT_OPS = ("not_contains", "not_equals")
+
+
+def or_text_filter_q(field, op, value):
+    """Build a case-insensitive text filter for ``op``, OR-ed across the terms.
+
+    The UI sends a list value for array-typed columns (e.g. ``["C"]``);
+    stringifying the whole list yields a Python repr (``"['c']"``) that never
+    matches a ``json.dumps`` cell, so match each element instead. ``value`` may
+    be a scalar or a list. ``not_contains`` / ``not_equals`` return the De
+    Morgan complement (matches none of the terms). Returns ``None`` for an
+    unrecognized op so the caller can reject it in its own way.
+    """
+    lookup = TEXT_FILTER_LOOKUPS.get(op)
+    if lookup is None:
+        return None
+    terms = value if isinstance(value, list) else [value]
+    condition = Q()
+    for term in terms:
+        condition |= Q(**{f"{field}{lookup}": "" if term is None else str(term)})
+    if op in _NEGATED_TEXT_OPS:
+        return ~condition
+    return condition
+
+
 def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_type):
     """Apply one DevelopFilterRow-style filter to a Cell queryset."""
     if filter_type == "number":
-        if filter_op in ("between", "not_between", "not_in_between"):
+        if filter_op in ("between", "not_between"):
             min_val, max_val = _coerce_range_value(filter_value)
             min_val, max_val = float(min_val), float(max_val)
             if column_type == "audio":
@@ -1229,7 +2420,7 @@ def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_ty
                     numeric_value=Cast("value", FloatField())
                 )
             condition = Q(numeric_value__gte=min_val) & Q(numeric_value__lte=max_val)
-            if filter_op in ("not_between", "not_in_between"):
+            if filter_op == "not_between":
                 return cells.filter(~condition)
             return cells.filter(condition)
 
@@ -1267,20 +2458,9 @@ def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_ty
             if filter_op == "not_in":
                 return cells.filter(~condition)
             return cells.filter(condition)
-        text_value = "" if filter_value is None else str(filter_value)
-        op_map = {
-            "contains": Q(value__icontains=text_value),
-            "not_contains": Q(value__icontains=text_value),
-            "equals": Q(value__iexact=text_value),
-            "not_equals": Q(value__iexact=text_value),
-            "starts_with": Q(value__istartswith=text_value),
-            "ends_with": Q(value__iendswith=text_value),
-        }
-        condition = op_map.get(filter_op)
+        condition = or_text_filter_q("value", filter_op, values)
         if condition is None:
             return cells.none()
-        if filter_op in ("not_contains", "not_equals"):
-            return cells.filter(~condition)
         return cells.filter(condition)
 
     if filter_type == "boolean":
@@ -1292,7 +2472,7 @@ def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_ty
         return cells.none()
 
     if filter_type == "datetime":
-        if filter_op in ("between", "not_between", "not_in_between"):
+        if filter_op in ("between", "not_between"):
             start_raw, end_raw = _coerce_range_value(filter_value)
             start = _parse_datetime_value(start_raw)
             end = _parse_datetime_value(end_raw)
@@ -1302,7 +2482,7 @@ def _filter_dataset_cells(cells, filter_type, filter_op, filter_value, column_ty
                 condition &= Q(datetime_value__gte=start)
             if end:
                 condition &= Q(datetime_value__lte=end)
-            if filter_op in ("not_between", "not_in_between"):
+            if filter_op == "not_between":
                 return cells.filter(~condition)
             return cells.filter(condition)
 
@@ -1389,7 +2569,9 @@ def _resolve_dataset_rule_ids(rule, filters, dataset_id, cap):
     return total_matching, ids
 
 
-def _add_source_ids_to_queue(rule, source_ids, total_matching, dry_run=False):
+def _add_source_ids_to_queue(
+    rule, source_ids, total_matching, dry_run=False, project_id=None
+):
     from model_hub.models.annotation_queues import QueueItem
 
     fk_field = get_fk_field_name(rule.source_type)
@@ -1397,7 +2579,14 @@ def _add_source_ids_to_queue(rule, source_ids, total_matching, dry_run=False):
         return {"matched": 0, "added": 0, "duplicates": 0, "error": "Invalid FK field"}
 
     if dry_run:
-        return {"matched": total_matching, "added": 0, "duplicates": 0}
+        result = {"matched": total_matching, "added": 0, "duplicates": 0}
+        # Propagate truncation from the resolver so the manual-run endpoint's
+        # peek can branch sync vs async. Without this, filter-mode dry-runs
+        # always reported ``truncated`` absent and every run took the sync
+        # path (regression from before the sync/async split).
+        if total_matching > len(source_ids):
+            result["truncated"] = True
+        return result
 
     candidate_ids = list(dict.fromkeys(source_ids))
     existing_source_ids = {
@@ -1426,6 +2615,8 @@ def _add_source_ids_to_queue(rule, source_ids, total_matching, dry_run=False):
                 queue=rule.queue,
                 source_type=rule.source_type,
                 organization=rule.organization,
+                workspace=rule.queue.workspace,
+                project_id=project_id,
                 order=max_order,
                 **{f"{fk_field}_id": source_id},
             )
@@ -1472,7 +2663,9 @@ def _add_source_ids_to_queue(rule, source_ids, total_matching, dry_run=False):
     return result
 
 
-def _evaluate_filter_mode_rule(rule, filters, scope, dry_run=False, user=None, cap=1000):
+def _evaluate_filter_mode_rule(
+    rule, filters, scope, dry_run=False, user=None, cap=1000
+):
     filters = _normalize_filter_payload(filters)
     source_type = rule.source_type
     queue = rule.queue
@@ -1517,12 +2710,13 @@ def _evaluate_filter_mode_rule(rule, filters, scope, dry_run=False, user=None, c
                 rule_id=str(rule.pk),
                 dataset_id=str(dataset_id),
                 error=str(exc),
+                error_type=exc.__class__.__name__,
             )
             return {
                 "matched": 0,
                 "added": 0,
                 "duplicates": 0,
-                "error": str(exc),
+                "error": _automation_rule_filter_error_message(exc),
             }
         return _add_source_ids_to_queue(rule, ids, total_matching, dry_run=dry_run)
 
@@ -1582,7 +2776,9 @@ def _evaluate_filter_mode_rule(rule, filters, scope, dry_run=False, user=None, c
 
         resolver = resolve_filtered_session_ids
     elif source_type == QueueItemSourceType.CALL_EXECUTION.value:
-        from model_hub.services.bulk_selection import resolve_filtered_call_execution_ids
+        from model_hub.services.bulk_selection import (
+            resolve_filtered_call_execution_ids,
+        )
 
         resolver = resolve_filtered_call_execution_ids
 
@@ -1619,12 +2815,13 @@ def _evaluate_filter_mode_rule(rule, filters, scope, dry_run=False, user=None, c
             rule_id=str(rule.pk),
             source_type=source_type,
             error=str(exc),
+            error_type=exc.__class__.__name__,
         )
         return {
             "matched": 0,
             "added": 0,
             "duplicates": 0,
-            "error": str(exc),
+            "error": _automation_rule_filter_error_message(exc),
         }
 
     return _add_source_ids_to_queue(
@@ -1632,6 +2829,15 @@ def _evaluate_filter_mode_rule(rule, filters, scope, dry_run=False, user=None, c
         result.ids,
         result.total_matching,
         dry_run=dry_run,
+        # ``project_id`` here is a real project only for trace/span/session; for
+        # call_execution the same local holds an agent_definition_id (not a
+        # Project), so leave those items' project NULL — they aren't read through
+        # the project-scoped span path anyway.
+        project_id=(
+            project_id
+            if source_type != QueueItemSourceType.CALL_EXECUTION.value
+            else None
+        ),
     )
 
 
@@ -1640,7 +2846,8 @@ def evaluate_rule(rule, dry_run=False, user=None, cap=1000):
     Returns dict with 'matched', 'added', 'duplicates' counts.
     """
     from django.db import transaction
-    from model_hub.models.annotation_queues import AutomationRule, QueueItem
+
+    from model_hub.models.annotation_queues import AutomationRule
 
     if dry_run:
         return _evaluate_rule_inner(rule, dry_run, user, cap)
@@ -1700,6 +2907,22 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
                 test_execution__agent_definition_id=queue.agent_definition_id
             )
 
+    # High-water mark for scheduled rules: each tick rescans only rows newer
+    # than the last run, with one interval of overlap to absorb clock skew +
+    # late CDC replication. Manual runs intentionally skip this cutoff: the
+    # manual endpoint uses ``last_triggered_at`` as a short duplicate-click
+    # reservation before async work starts, and treating that reservation as
+    # a data watermark would skip the existing backlog.
+    frequency = getattr(rule, "trigger_frequency", None)
+    if (
+        rule.last_triggered_at
+        and not dry_run
+        and frequency != AutomationRuleTriggerFrequency.MANUAL.value
+        and hasattr(model, "created_at")
+    ):
+        overlap = RULE_TRIGGER_INTERVALS.get(frequency or "", timedelta(minutes=5))
+        qs = qs.filter(created_at__gte=rule.last_triggered_at - overlap)
+
     conditions = rule.conditions or {}
     has_filter_payload = "filter" in conditions or "filters" in conditions
     filter_payload = (
@@ -1758,10 +2981,8 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
         if django_field == "duration_seconds":
             django_field = "_session_duration"
             if op not in ("is_null", "is_not_null"):
-                from datetime import timedelta
-
                 try:
-                    if op in ("between", "not_between", "not_in_between"):
+                    if op in ("between", "not_between"):
                         start, end = _coerce_range_value(value)
                         value = (
                             timedelta(seconds=float(start)),
@@ -1777,7 +2998,7 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
                     )
                     continue
 
-        if op in ("between", "not_between", "not_in_between"):
+        if op in ("between", "not_between"):
             start, end = _coerce_range_value(value)
             if start is None or end is None:
                 logger.warning(
@@ -1789,7 +3010,7 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
                 continue
             lookup = f"{django_field}__range"
             try:
-                if op in ("not_between", "not_in_between"):
+                if op == "not_between":
                     qs = qs.exclude(**{lookup: (start, end)})
                 else:
                     qs = qs.filter(**{lookup: (start, end)})
@@ -1842,9 +3063,20 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
             ),
         }
 
-    matched = qs.count()
+    # Capped match check — avoid an unbounded COUNT(*) on 10M+ row span tables.
+    # We only need to know "≥ cap" to set the truncated flag; the exact count
+    # for huge matches is not actionable here and was the primary timeout
+    # source on /preview (held under select_for_update for non-dry runs).
+    capped_candidates = list(qs[: cap + 1])
+    truncated = len(capped_candidates) > cap
+    candidates = capped_candidates[:cap]
+    matched = len(candidates) + (1 if truncated else 0)
+
     if dry_run:
-        return {"matched": matched, "added": 0, "duplicates": 0}
+        result = {"matched": matched, "added": 0, "duplicates": 0}
+        if truncated:
+            result["truncated"] = True
+        return result
 
     added = 0
     duplicates = 0
@@ -1854,8 +3086,6 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
         .values_list("order", flat=True)
         .first()
     ) or 0
-
-    candidates = list(qs[:cap])  # Limit per evaluation
     if candidates:
         # Batch-check existing items with a single query
         existing_source_ids = set(
@@ -1877,6 +3107,8 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
                     queue=rule.queue,
                     source_type=rule.source_type,
                     organization=rule.organization,
+                    workspace=rule.queue.workspace,
+                    project_id=getattr(obj, "project_id", None),
                     order=max_order,
                     **{fk_field: obj},
                 )
@@ -1912,7 +3144,7 @@ def _evaluate_rule_inner(rule, dry_run, user, cap):
     _update_rule_stats(rule)
 
     result = {"matched": matched, "added": added, "duplicates": duplicates}
-    if matched > len(candidates):
+    if truncated:
         result["truncated"] = True
     return result
 
@@ -1958,3 +3190,213 @@ def _truncate(text, max_len):
     if len(text) <= max_len:
         return text
     return text[:max_len] + "..."
+
+
+# ---------------------------------------------------------------------------
+# Rule-completion email
+# ---------------------------------------------------------------------------
+
+
+def _rule_completion_recipients(rule, triggered_by_user_id=None):
+    """Return list of email addresses to notify when a rule run completes.
+
+    Recipients: rule.created_by + queue managers (AnnotatorRole.MANAGER on the
+    queue). Triggering user is added so a manager who ran someone else's rule
+    still gets the result. Dedup by user_id; skip users without an email.
+    """
+    from model_hub.models.annotation_queues import (
+        AnnotationQueueAnnotator,
+        annotation_queue_role_q,
+    )
+
+    seen_ids = set()
+    emails = []
+
+    def _add(user):
+        if not user or not getattr(user, "email", None):
+            return
+        if user.id in seen_ids:
+            return
+        seen_ids.add(user.id)
+        emails.append(user.email)
+
+    _add(getattr(rule, "created_by", None))
+
+    if triggered_by_user_id and triggered_by_user_id != getattr(
+        rule.created_by, "id", None
+    ):
+        from django.contrib.auth import get_user_model
+
+        try:
+            _add(get_user_model().objects.get(pk=triggered_by_user_id))
+        except Exception:
+            pass
+
+    manager_users = (
+        AnnotationQueueAnnotator.objects.filter(queue=rule.queue, deleted=False)
+        .filter(annotation_queue_role_q(AnnotatorRole.MANAGER.value))
+        .select_related("user")
+    )
+    for ann in manager_users:
+        _add(ann.user)
+
+    return emails
+
+
+def send_rule_completion_email(
+    rule,
+    result,
+    *,
+    triggered_by_user_id=None,
+    error_message=None,
+):
+    """Send the rule-run completion email to creator + queue managers.
+
+    ``result`` is the dict returned by ``evaluate_rule`` (or partial when the
+    run failed). ``error_message`` overrides the success template with a
+    failure variant. Failures here must not crash the activity — log and
+    continue so the underlying queue writes (which succeeded) aren't rolled
+    back.
+    """
+    import os
+
+    from tfc.utils.email import email_helper
+
+    recipients = _rule_completion_recipients(
+        rule, triggered_by_user_id=triggered_by_user_id
+    )
+    if not recipients:
+        logger.info(
+            "automation_rule_completion_email_no_recipients",
+            rule_id=str(rule.pk),
+        )
+        return
+
+    queue = rule.queue
+    queue_id = str(queue.id)
+    frontend_url = os.environ.get("FRONTEND_URL", "https://app.futureagi.com").rstrip(
+        "/"
+    )
+    queue_url = f"{frontend_url}/annotation-queues/{queue_id}"
+
+    triggered_by_name = "the rule schedule"
+    if triggered_by_user_id:
+        from django.contrib.auth import get_user_model
+
+        try:
+            user = get_user_model().objects.get(pk=triggered_by_user_id)
+            triggered_by_name = user.get_full_name() or user.email or triggered_by_name
+        except Exception:
+            pass
+
+    status = "error" if error_message else "ok"
+    subject_prefix = "[failed] " if status == "error" else ""
+    subject = (
+        f"{subject_prefix}Rule run: {rule.name} added "
+        f"{result.get('added', 0)} item(s) to {queue.name}"
+    )
+
+    try:
+        email_helper(
+            mail_subject=subject,
+            template_name="automation_rule_completion.html",
+            template_data={
+                "rule_name": rule.name,
+                "queue_name": queue.name,
+                "source_type": rule.source_type,
+                "matched": result.get("matched", 0),
+                "added": result.get("added", 0),
+                "duplicates": result.get("duplicates", 0),
+                "queue_url": queue_url,
+                "triggered_by_name": triggered_by_name,
+                "status": status,
+                "error_message": error_message or "",
+            },
+            to_email_list=recipients,
+        )
+    except Exception as exc:
+        logger.warning(
+            "automation_rule_completion_email_send_failed",
+            rule_id=str(rule.pk),
+            recipients=len(recipients),
+            error=str(exc),
+        )
+
+
+EvalOutputScalar = bool | float | int | str | list[str] | dict[str, Any] | None
+
+
+class EvalMetricEntry(TypedDict):
+    score: EvalOutputScalar
+    explanation: str | None
+    tags: list[str] | None
+    error: bool | str | None
+    error_message: str | None
+    created_at: str | None
+
+
+def eval_output_value(source: Any) -> EvalOutputScalar:
+    """Resolve score scalar from an EvalLogger row or a call_execution eval_outputs entry."""
+    if source is None:
+        return None
+    if isinstance(source, dict):
+        if source.get("output_float") is not None:
+            return source["output_float"]
+        if source.get("output_bool") is not None:
+            return source["output_bool"]
+        output_str = source.get("output_str")
+        if output_str not in (None, ""):
+            return output_str
+        if source.get("output_str_list"):
+            return source["output_str_list"]
+        output = source.get("output")
+        if isinstance(output, dict):
+            score = output.get("score")
+            return score if score is not None else output.get("choice")
+        return output
+    if source.output_float is not None:
+        return source.output_float
+    if source.output_bool is not None:
+        return source.output_bool
+    if source.output_str not in (None, ""):
+        return source.output_str
+    return source.output_str_list
+
+
+def eval_metrics_from_call_execution(
+    call: Any,
+) -> dict[str, list[EvalMetricEntry]]:
+    if not call:
+        return {}
+    raw = getattr(call, "eval_outputs", {}) or {}
+    metrics: dict[str, list[EvalMetricEntry]] = {}
+    for eval_id, entry in raw.items():
+        if not isinstance(entry, dict):
+            continue
+        key = entry.get("name") or str(eval_id)
+        error = entry.get("error")
+        metric: EvalMetricEntry = {
+            "score": eval_output_value(entry),
+            "explanation": entry.get("reason") or entry.get("explanation"),
+            "tags": entry.get("tags"),
+            "error": error,
+            "error_message": entry.get("error_message") if error else None,
+            "created_at": entry.get("created_at"),
+        }
+        metrics.setdefault(key, []).append(metric)
+    return metrics
+
+
+def canonical_score_value(label: Any, raw: Any) -> Any:
+    if raw is None or not isinstance(raw, dict):
+        return raw
+    label_type = getattr(label, "type", None) if label else None
+    key = ANNOTATION_LABEL_VALUE_KEYS.get(label_type)
+    if key and key in raw:
+        return raw[key]
+    logger.warning(
+        "label_type_missing_in_value_map",
+        label_type=label_type,
+        label_id=str(getattr(label, "id", "")) or None,
+    )
+    return raw

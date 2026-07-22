@@ -11,9 +11,9 @@ import CallLogsHeaderCellRenderer from "./CallLogs/CallLogsHeaderCellRenderer";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
 import { Box, Skeleton } from "@mui/material";
+import EvaluationCell from "src/sections/projects/LLMTracing/Renderers/EvaluationCell";
 import { AGENT_TYPES, isLiveKitProvider } from "./constants";
 import AnnotationHeaderCellRenderer from "./CallLogs/AnnotationHeaderCellRenderer";
-import headerComponentLabels from "./headerComponetLabels";
 import NewAnnotationCellRenderer from "./NewAnnotationCellRenderer";
 
 export const agentDefinitionSections = [
@@ -72,6 +72,7 @@ export const emptyAgentSteps = [
 // New schema including all fields in the accordions
 export const createAgentDefinitionSchema = (options) => {
   const keysRequired = options?.keysRequired || false;
+  const agentDefinitionId = options?.agentDefinitionId;
   return z
     .object({
       // Basic Information
@@ -142,36 +143,36 @@ export const createAgentDefinitionSchema = (options) => {
         const hasCountryCode = !!data.countryCode?.trim();
         const hasContactNumber = !!data.contactNumber?.trim();
         // if (!hasWebBridgeCreds) {
-          if (!hasCountryCode) {
-            ctx.addIssue({
-              path: ["countryCode"],
-              message: "Country code is required",
-              code: z.ZodIssueCode.custom,
-            });
-          }
-          if (!hasContactNumber) {
-            ctx.addIssue({
-              path: ["contactNumber"],
-              message: "Contact number is required",
-              code: z.ZodIssueCode.custom,
-            });
-          }
+        if (!hasCountryCode) {
+          ctx.addIssue({
+            path: ["countryCode"],
+            message: "Country code is required",
+            code: z.ZodIssueCode.custom,
+          });
+        }
+        if (!hasContactNumber) {
+          ctx.addIssue({
+            path: ["contactNumber"],
+            message: "Contact number is required",
+            code: z.ZodIssueCode.custom,
+          });
+        }
         // } else {
-          // Both are optional, but if one is provided the other is required
-          if (hasContactNumber && !hasCountryCode) {
-            ctx.addIssue({
-              path: ["countryCode"],
-              message: "Country code is required when contact number is provided",
-              code: z.ZodIssueCode.custom,
-            });
-          }
-          if (hasCountryCode && !hasContactNumber) {
-            ctx.addIssue({
-              path: ["contactNumber"],
-              message: "Contact number is required when country code is provided",
-              code: z.ZodIssueCode.custom,
-            });
-          }
+        // Both are optional, but if one is provided the other is required
+        if (hasContactNumber && !hasCountryCode) {
+          ctx.addIssue({
+            path: ["countryCode"],
+            message: "Country code is required when contact number is provided",
+            code: z.ZodIssueCode.custom,
+          });
+        }
+        if (hasCountryCode && !hasContactNumber) {
+          ctx.addIssue({
+            path: ["contactNumber"],
+            message: "Contact number is required when country code is provided",
+            code: z.ZodIssueCode.custom,
+          });
+        }
         // }
         if (hasContactNumber) {
           // Validate contact number format only if it's provided
@@ -289,6 +290,7 @@ export const createAgentDefinitionSchema = (options) => {
               await axios.post(endpoints.agentDefinitions.verifyApiKey, {
                 provider: data.provider,
                 api_key: data.apiKey,
+                ...(agentDefinitionId && { agent_id: agentDefinitionId }),
               });
             } catch (error) {
               ctx.addIssue({
@@ -323,6 +325,7 @@ export const createAgentDefinitionSchema = (options) => {
                   provider: data.provider,
                   api_key: data.apiKey,
                   assistant_id: data.assistantId,
+                  ...(agentDefinitionId && { agent_id: agentDefinitionId }),
                 });
               } catch (error) {
                 ctx.addIssue({
@@ -383,6 +386,39 @@ export const generateEvalColumnsFromConfig = (items = []) => {
     const displayName = item.name?.replace(/_/g, " ") || evalId;
     const isReason = item.source_field === "reason";
     const dataKey = isReason ? item.parent_eval_id : evalId;
+
+    // CHOICES evals render one column per choice (id `${configId}**${choice}`)
+    // carrying the per-choice percentage as a FLAT row key — the same contract
+    // list_traces_of_session uses. Nested `eval_outputs` is keyed by config id
+    // and never matches a per-choice column id, so read the flat key directly.
+    if (evalId.includes("**")) {
+      return {
+        headerName: displayName,
+        field: evalId,
+        flex: 1,
+        minWidth: 140,
+        hide: item.is_visible === false,
+        headerComponent: CallLogsHeaderCellRenderer,
+        headerComponentParams: { displayName },
+        valueGetter: (params) => {
+          const v = params.data?.[evalId];
+          return v === null || v === undefined || v === "" ? null : Number(v);
+        },
+        // Reuse the trace list's eval cell for identical rendering (percentage
+        // + interpolated background). The per-choice value is numeric, so it
+        // takes the numeric-percentage path.
+        cellRenderer: (params) => (
+          <EvaluationCell
+            value={params.value}
+            column={{
+              outputType: item.output_type,
+              reverseOutput: item.reverse_output,
+            }}
+          />
+        ),
+      };
+    }
+
     return {
       headerName: displayName,
       field: `eval_outputs.${evalId}`,
@@ -411,11 +447,19 @@ export const generateEvalColumnsFromConfig = (items = []) => {
             </Box>
           );
         }
+        // PASS_FAIL carries a numeric pass rate — route it through the score
+        // (percentage) renderer so it shows "X%" instead of the pill path,
+        // which string-matches "fail" and would render 0% as a false "Pass".
+        const rawType = evalData?.output_type;
+        const isPassFail =
+          String(rawType || "")
+            .toLowerCase()
+            .replace(/[/ ]/g, "_") === "pass_fail";
         return (
           <EvalCellRenderer
             value={{
               ...evalData,
-              type: evalData?.output_type,
+              type: isPassFail ? "percentage" : rawType,
               value: evalData.output,
             }}
           />
@@ -455,9 +499,8 @@ const generateAnnotationColumnsFromConfig = (
     }
   }
 
-  return Object.entries(grouping).map(([groupName, metrics]) => ({
-    headerName: groupName,
-    children: metrics.map((metric) => {
+  return Object.values(grouping).flatMap((metrics) =>
+    metrics.flatMap((metric) => {
       const metricId = metric?.id;
       const displayName = metric?.name?.replace(/_/g, " ") || metricId;
       const outputType = metric?.annotation_label_type;
@@ -466,7 +509,6 @@ const generateAnnotationColumnsFromConfig = (
         outputType === "text" || expandedMetrics.includes(metricId);
 
       if (!isExpanded) {
-        // Collapsed: flat column under group → 2 header rows
         return {
           headerName: displayName,
           field: `annotation_outputs.${metricId}`,
@@ -477,6 +519,7 @@ const generateAnnotationColumnsFromConfig = (
             displayName: displayName,
             metricId,
             isTextType: outputType === "text",
+            showActions: true,
           },
           valueGetter: (params) => {
             const metricData = params?.data?.annotation_outputs?.[metricId];
@@ -494,7 +537,8 @@ const generateAnnotationColumnsFromConfig = (
         };
       }
 
-      // Expanded: nested group → 3 header rows with annotator columns
+      // Expanded columns stay flat so AG Grid does not create a tall global
+      // grouped-header row that makes unrelated columns look oversized.
       const metricAnnotators = Object.values(metric?.annotators || {});
 
       const avgColumn = {
@@ -502,10 +546,14 @@ const generateAnnotationColumnsFromConfig = (
         field: `annotation_outputs.${metricId}.score`,
         flex: 1,
         minWidth: 200,
-        headerComponent: headerComponentLabels,
+        headerComponent: AnnotationHeaderCellRenderer,
         headerComponentParams: {
-          displayName: "Avg",
-          isAverage: true,
+          displayName,
+          metricId,
+          isTextType: false,
+          subLabel: "Avg",
+          subLabelType: "average",
+          showActions: true,
         },
         valueGetter: (params) => {
           const metricData = params?.data?.annotation_outputs?.[metricId];
@@ -528,10 +576,14 @@ const generateAnnotationColumnsFromConfig = (
         flex: 1,
         minWidth: 200,
         ...(outputType === "text" ? { wrapText: true, autoHeight: true } : {}),
-        headerComponent: headerComponentLabels,
+        headerComponent: AnnotationHeaderCellRenderer,
         headerComponentParams: {
-          displayName: annotator?.user_name,
-          isAverage: false,
+          displayName,
+          metricId,
+          isTextType: outputType === "text",
+          subLabel: annotator?.user_name,
+          subLabelType: "person",
+          showActions: outputType === "text",
         },
         valueGetter: (params) => {
           const annotatorData =
@@ -551,21 +603,12 @@ const generateAnnotationColumnsFromConfig = (
         },
       }));
 
-      return {
-        headerName: displayName,
-        headerGroupComponent: AnnotationHeaderCellRenderer,
-        headerGroupComponentParams: {
-          displayName,
-          metricId,
-          isTextType: outputType === "text",
-        },
-        children: [
-          ...(outputType !== "text" ? [avgColumn] : []),
-          ...annotatorColumns,
-        ],
-      };
+      return [
+        ...(outputType !== "text" ? [avgColumn] : []),
+        ...annotatorColumns,
+      ];
     }),
-  }));
+  );
 };
 
 // Generate AG Grid columns from evalOutputs
@@ -577,32 +620,6 @@ export const getCallLogsColumnDefs = (
   config = null,
   expandedMetrics = [],
 ) => {
-  if (isLoading) {
-    return [
-      {
-        headerName:
-          agentType === AGENT_TYPES.CHAT ? "Chat Details" : "Call Details",
-        field: "call_summary",
-        cellRenderer: LoadingSkeleton,
-      },
-      {
-        headerName: "Participant",
-        field: "customer_name",
-        cellRenderer: LoadingSkeleton,
-      },
-      {
-        headerName: "Duration",
-        field: "duration_seconds",
-        cellRenderer: LoadingSkeleton,
-      },
-      {
-        headerName: "Status",
-        field: "status",
-        cellRenderer: LoadingSkeleton,
-      },
-    ];
-  }
-
   const evalItems = [];
   const annotationItems = [];
   (config || []).forEach((item) => {
@@ -618,7 +635,8 @@ export const getCallLogsColumnDefs = (
   const baseColumns = [
     // ── Identity ──────────────────────────────────────────────────────
     {
-      headerName: "Call Details",
+      headerName:
+        agentType === AGENT_TYPES.CHAT ? "Chat Details" : "Call Details",
       field: "call_summary",
       flex: 2,
       minWidth: 200,
@@ -774,6 +792,14 @@ export const getCallLogsColumnDefs = (
     },
   ];
 
+  if (isLoading) {
+    return baseColumns.map((column) => ({
+      ...column,
+      cellRenderer: LoadingSkeleton,
+      valueGetter: undefined,
+    }));
+  }
+
   return [...baseColumns, ...evalColumns, ...annotationColumns];
 };
 
@@ -818,18 +844,19 @@ export const useCallLogs = ({
   params,
   enabled = true,
 }) => {
-  let endpoint = endpoints.agentDefinitions.getCallLogs(id, version);
-  let condition = !!id && !!version;
-  let queryKey = ["callLogs", module, id, version, pageLimit, params, page];
-  if (module === "project") {
-    endpoint = endpoints.project.getCallLogs;
-    condition = !!id;
-    queryKey = ["callLogs", module, id, pageLimit, params, page];
-  }
+  const isProjectModule = module === "project";
+  const condition = isProjectModule ? !!id : !!id && !!version;
+  const queryKey = isProjectModule
+    ? ["callLogs", module, id, pageLimit, params, page]
+    : ["callLogs", module, id, version, pageLimit, params, page];
+  const getEndpoint = () =>
+    isProjectModule
+      ? endpoints.project.getCallLogs
+      : endpoints.agentDefinitions.getCallLogs(id, version);
   const { data, isLoading, error } = useQuery({
     queryKey: queryKey,
     queryFn: () =>
-      axios.get(endpoint, {
+      axios.get(getEndpoint(), {
         params: { page, page_size: pageLimit, ...params },
       }),
     enabled: condition && enabled,
@@ -842,12 +869,17 @@ export const prefetchCallLogs = (
   queryClient,
   { module, id, version, page, pageLimit, params },
 ) => {
-  let endpoint = endpoints.agentDefinitions.getCallLogs(id, version);
-  let queryKey = ["callLogs", module, id, version, pageLimit, params, page];
-  if (module === "project") {
-    endpoint = endpoints.project.getCallLogs;
-    queryKey = ["callLogs", module, id, pageLimit, params, page];
+  const isProjectModule = module === "project";
+  const condition = isProjectModule ? !!id : !!id && !!version;
+  if (!condition) {
+    return;
   }
+  const endpoint = isProjectModule
+    ? endpoints.project.getCallLogs
+    : endpoints.agentDefinitions.getCallLogs(id, version);
+  const queryKey = isProjectModule
+    ? ["callLogs", module, id, pageLimit, params, page]
+    : ["callLogs", module, id, version, pageLimit, params, page];
   queryClient.prefetchQuery({
     queryKey,
     queryFn: () =>

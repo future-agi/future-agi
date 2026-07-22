@@ -32,6 +32,7 @@ import {
 import Iconify from "src/components/iconify";
 import axios from "src/utils/axios";
 import { enqueueSnackbar } from "notistack";
+import { apiPath } from "src/api/contracts/api-surface";
 
 const BAND_CONFIG = {
   team: {
@@ -243,12 +244,12 @@ export default function EELicensesPage() {
 
   const { data: licenses, isLoading } = useQuery({
     queryKey: ["ee-licenses"],
-    queryFn: () => axios.get("/usage/ee/licenses/"),
+    queryFn: () => axios.get(apiPath("/usage/ee/licenses/")),
     select: (res) => res.data?.result?.licenses || [],
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => axios.post("/usage/ee/licenses/", data),
+    mutationFn: (data) => axios.post(apiPath("/usage/ee/licenses/"), data),
     onSuccess: (res) => {
       const result = res.data?.result;
       if (result?.jwt_key) {
@@ -263,7 +264,11 @@ export default function EELicensesPage() {
   });
 
   const revokeMutation = useMutation({
-    mutationFn: (id) => axios.post(`/usage/ee/licenses/${id}/revoke/`),
+    mutationFn: (id) =>
+      axios.post(
+        apiPath("/usage/ee/licenses/{grant_id}/revoke/", { grant_id: id }),
+        {},
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["ee-licenses"] });
       enqueueSnackbar("License revoked", { variant: "info" });
@@ -437,7 +442,7 @@ export default function EELicensesPage() {
                 }
               >
                 <MenuItem value="monthly">Monthly</MenuItem>
-                <MenuItem value="annual">Annual (save ~17%)</MenuItem>
+                <MenuItem value="yearly">Annual (save ~17%)</MenuItem>
               </Select>
             </FormControl>
 

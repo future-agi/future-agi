@@ -27,9 +27,9 @@ def test_normalize_integer_rejects_double_negative_string_with_clean_error():
         normalize_eval_runtime_config(_k_schema(), {"params": {"k": "--5"}})
 
 
-def test_normalize_integer_rejects_whitespace_only_string_with_clean_error():
-    with pytest.raises(ValueError, match="k must be an integer"):
-        normalize_eval_runtime_config(_k_schema(), {"params": {"k": "   "}})
+def test_normalize_integer_treats_whitespace_only_string_as_empty():
+    normalized = normalize_eval_runtime_config(_k_schema(), {"params": {"k": "   "}})
+    assert normalized["params"]["k"] is None
 
 
 def test_fallback_schema_resolves_from_evals_source_of_truth():

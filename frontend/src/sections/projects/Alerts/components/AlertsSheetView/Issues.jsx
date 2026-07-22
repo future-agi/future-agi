@@ -299,14 +299,14 @@ export default function Issues() {
       resizable: true,
       suppressHeaderMenuButton: true,
       suppressHeaderContextMenu: true,
-      suppressMultiSort: true,
     }),
     [],
   );
 
   const gridOptions = {
     pagination: false,
-    rowSelection: { mode: "multiRow" },
+    rowSelection: { mode: "multiRow", enableClickSelection: false },
+    suppressMultiSort: true,
   };
 
   const refreshRowsManual = useCallback(async () => {
@@ -392,13 +392,15 @@ export default function Issues() {
             name: data?.result?.name,
             createdBy: data?.result?.created_by?.name,
             createdAt: data.result?.created_at,
-            lastTriggered: data?.result?.last_checked_at,
+            lastTriggered:
+              data?.result?.last_triggered_at ?? data?.result?.last_checked_at,
             metricType: data?.result?.metric_type,
             metricName: data?.result?.metric_name,
             thresholdOperator: data?.result?.threshold_operator,
             criticalThresholdValue: data?.result?.critical_threshold_value,
             warningThresholdValue: data?.result?.warning_threshold_value,
             notificationEmails: data?.result?.notification_emails,
+            isMute: data?.result?.is_mute,
           });
 
           if (data?.result?.project) {

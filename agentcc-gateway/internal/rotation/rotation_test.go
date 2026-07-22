@@ -231,7 +231,7 @@ func TestMaskedState(t *testing.T) {
 	if masked.Primary == state.Primary {
 		t.Fatal("primary should be masked")
 	}
-	if masked.Primary != "sk-p...3456" {
+	if masked.Primary != "sk-a...3456" {
 		t.Fatalf("unexpected mask format: %s", masked.Primary)
 	}
 	if masked.PendingKey != "sk-n...alue" {
@@ -250,7 +250,7 @@ func TestMaskKey(t *testing.T) {
 		{"", ""},
 		{"short", "***"},
 		{"12345678", "***"},
-		{"sk-agentcc-abcdef123456", "sk-p...3456"},
+		{"sk-agentcc-abcdef123456", "sk-a...3456"},
 		{"longer-key-value-here", "long...here"},
 	}
 

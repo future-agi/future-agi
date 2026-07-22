@@ -214,6 +214,8 @@ const MCPToolsTab = ({ mcpTools, isLoading }) => {
             value={serverFilter}
             onChange={(e) => setServerFilter(e.target.value)}
             label="Server"
+            displayEmpty
+            renderValue={(value) => value || "All Servers"}
           >
             <MenuItem value="">All Servers</MenuItem>
             {servers.map((s) => (

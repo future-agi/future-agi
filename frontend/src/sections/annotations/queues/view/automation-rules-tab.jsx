@@ -8,6 +8,7 @@ import {
   Skeleton,
   Stack,
   Switch,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import { AgGridReact } from "ag-grid-react";
@@ -23,9 +24,8 @@ import { ConfirmDialog } from "src/components/custom-dialog";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import "src/styles/clean-data-table.css";
-import CreateRuleDialog, {
-  TRIGGER_FREQUENCY_OPTIONS,
-} from "./create-rule-dialog";
+import CreateRuleDialog from "./create-rule-dialog";
+import { TRIGGER_FREQUENCY_OPTIONS } from "../constants";
 import EditRuleDialog from "./edit-rule-dialog";
 
 // ---------------------------------------------------------------------------
@@ -113,21 +113,50 @@ function LastTriggeredCellRenderer({ data }) {
 }
 
 function ActionsCellRenderer({ data, context }) {
+  const { mutate: evaluateRule, isPending: isRunning } = useEvaluateRule();
   if (!data) return null;
+  const runDisabled = isRunning || !data.enabled;
+  const tooltip = data.enabled
+    ? "Run this rule now"
+    : "Enable this rule before running it";
+
   return (
     <Box
       sx={{ display: "flex", alignItems: "center", height: "100%", gap: 0.5 }}
     >
-      <Button
-        size="small"
-        onClick={(e) => {
-          e.stopPropagation();
-          context?.onRunNow(data);
-        }}
-        disabled={context?.evaluatingRuleId != null || !data.enabled}
-      >
-        Run Now
-      </Button>
+      <Tooltip title={tooltip} placement="top">
+        <span>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={
+              <Iconify
+                icon={
+                  isRunning ? "svg-spinners:180-ring" : "mingcute:play-line"
+                }
+                width={15}
+              />
+            }
+            onClick={(e) => {
+              if (isRunning) return;
+              e.stopPropagation();
+              evaluateRule({ queueId: context?.queueId, ruleId: data?.id });
+            }}
+            disabled={runDisabled}
+            sx={{
+              minWidth: 108,
+              justifyContent: "center",
+              fontWeight: 700,
+              borderColor: "primary.main",
+              "&.Mui-disabled": {
+                borderColor: "action.disabledBackground",
+              },
+            }}
+          >
+            {isRunning ? "Running..." : "Run Now"}
+          </Button>
+        </span>
+      </Tooltip>
       <IconButton
         size="small"
         color="error"
@@ -154,8 +183,6 @@ export default function AutomationRulesTab({ queueId, queue }) {
   const { data: rules = [], isLoading } = useAutomationRules(queueId);
   const { mutate: updateRule } = useUpdateAutomationRule();
   const { mutate: deleteRule } = useDeleteAutomationRule();
-  const [evaluatingRuleId, setEvaluatingRuleId] = useState(null);
-  const { mutate: evaluateRule } = useEvaluateRule();
 
   const rulesList = Array.isArray(rules) ? rules : [];
 
@@ -230,19 +257,12 @@ export default function AutomationRulesTab({ queueId, queue }) {
 
   const gridContext = useMemo(
     () => ({
+      queueId,
       onToggleEnabled: (rule) =>
         updateRule({ queueId, ruleId: rule.id, enabled: !rule.enabled }),
-      onRunNow: (rule) => {
-        setEvaluatingRuleId(rule.id);
-        evaluateRule(
-          { queueId, ruleId: rule.id },
-          { onSettled: () => setEvaluatingRuleId(null) },
-        );
-      },
       onDeleteConfirm: (rule) => setDeleteTarget(rule),
-      evaluatingRuleId,
     }),
-    [queueId, updateRule, evaluateRule, evaluatingRuleId],
+    [queueId, updateRule],
   );
 
   const onCellClicked = useCallback((event) => {

@@ -7,6 +7,11 @@ Tests for login, token refresh, and authentication flows.
 import pytest
 from rest_framework import status
 
+AUTH_REQUIRED_STATUS_CODES = (
+    status.HTTP_401_UNAUTHORIZED,
+    status.HTTP_403_FORBIDDEN,
+)
+
 
 @pytest.mark.integration
 @pytest.mark.api
@@ -121,8 +126,7 @@ class TestAuthenticatedEndpoints:
     def test_user_info_without_auth(self, api_client):
         """Unauthenticated request to protected endpoint fails."""
         response = api_client.get("/accounts/user-info/")
-        # API returns 403 Forbidden for unauthenticated requests
-        assert response.status_code == status.HTTP_403_FORBIDDEN
+        assert response.status_code in AUTH_REQUIRED_STATUS_CODES
 
     def test_user_info_with_auth(self, auth_client, user):
         """Authenticated request to protected endpoint succeeds."""

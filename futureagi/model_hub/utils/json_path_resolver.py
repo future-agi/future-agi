@@ -292,7 +292,7 @@ def parse_json_safely(value: Any) -> Tuple[Optional[Any], bool]:
         data = json_repair.loads(stripped)
         if isinstance(data, (dict, list)):
             return data, True
-    except (json.JSONDecodeError, ValueError, TypeError):
+    except (json.JSONDecodeError, ValueError, TypeError, IndexError, RecursionError):
         pass
 
     # 3. Python literal eval (handles True/False/None, single-quoted keys)

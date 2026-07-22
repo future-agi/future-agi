@@ -4,25 +4,49 @@ import PropTypes from "prop-types";
 import { useWatch } from "react-hook-form";
 import { useQuery } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { useParams } from "react-router";
 
 import ChartsGenerator from "../ChartsView/ChartsGenerator";
 
 const MonitorGraph = ({ selectedMetric, control, metricList }) => {
   const metric = useWatch({ control, name: "metric" });
+  const thresholdOperator = useWatch({ control, name: "thresholdType" });
+  const thresholdValue = useWatch({ control, name: "thresholdValue" });
   const metricDetails = metricList?.find((m) => m.id === metric);
+  const { observeId } = useParams();
 
   const { data: graphData } = useQuery({
-    queryKey: ["monitor-graph", metricDetails],
+    queryKey: [
+      "monitor-graph",
+      observeId,
+      metricDetails,
+      thresholdOperator,
+      thresholdValue,
+    ],
     queryFn: () =>
-      axios.post(endpoints.project.getMonitorGraph(), {
-        metric_type: metricDetails?.metricType,
-        metric_name: metricDetails?.id,
+      axios.post(endpoints.project.getAlertGraphPreview, {
+        name: "Preview",
+        project: observeId,
+        metric_type: metricDetails?.metric_type,
+        ...(metricDetails?.metric_type === "evaluation_metrics" && {
+          metric: metricDetails?.id,
+        }),
+        threshold_operator: thresholdOperator,
+        threshold_type: "static",
+        critical_threshold_value: Number(thresholdValue),
       }),
-    enabled: !!metricDetails,
+    enabled:
+      !!observeId &&
+      !!metricDetails &&
+      !!thresholdOperator &&
+      thresholdValue !== undefined &&
+      thresholdValue !== "",
     select: (data) => data.data.result,
   });
 
-  const chartData = Array.isArray(graphData) ? graphData : [];
+  const chartData = Array.isArray(graphData)
+    ? graphData
+    : graphData?.graph_data || [];
   const theme = useTheme();
 
   const chartCategories = [

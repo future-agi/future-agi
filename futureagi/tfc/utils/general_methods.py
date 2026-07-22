@@ -9,6 +9,7 @@ import secrets
 import string
 import sys
 import uuid
+from collections.abc import Mapping
 
 import structlog
 from rest_framework.response import Response
@@ -24,15 +25,17 @@ from rest_framework.status import (
     HTTP_500_INTERNAL_SERVER_ERROR,
 )
 
+from tfc.utils.api_errors import build_error_envelope
 from tfc.utils.contants import (
-    ERROR_MESSAGE_KEY_NAME,
-    ERROR_STATUS_CODE,
     RESULT_KEY_NAME,
     STATUS_KEY_NAME,
     SUCCESS_STATUS_CODE,
 )
 
 logger = structlog.get_logger(__name__)
+
+_ERROR_MESSAGE_KEYS = {"message", "detail", "error"}
+_ERROR_ENVELOPE_KEYS = _ERROR_MESSAGE_KEYS | {"code"}
 
 
 class GeneralMethods:
@@ -240,15 +243,26 @@ class GeneralMethods:
         Server Error:             500 <= http status code <= 599
     """
 
+    def _error_response_body(self, result, *, status_code, code=None):
+        response = build_error_envelope(result, status_code=status_code, code=code)
+        if isinstance(result, Mapping):
+            has_structured_error_code = bool(result.get("error_code"))
+            has_structured_metadata = bool(
+                _ERROR_MESSAGE_KEYS.intersection(result)
+            ) and any(key not in _ERROR_ENVELOPE_KEYS for key in result)
+            if has_structured_error_code or has_structured_metadata:
+                response["result"] = dict(result)
+        return response
+
     def bad_request(self, result):
         """
         Gives bad_request response with status code=400 with given message.
         :param result:
         :return:
         """
-        response = {}
-        response[STATUS_KEY_NAME] = ERROR_STATUS_CODE
-        response[RESULT_KEY_NAME] = result
+        response = self._error_response_body(
+            result, status_code=HTTP_400_BAD_REQUEST
+        )
         return Response(response, status=HTTP_400_BAD_REQUEST)
 
     def usage_limit_response(self, check_result):
@@ -257,14 +271,20 @@ class GeneralMethods:
         Preserves error_code, upgrade_cta, and usage stats so the frontend
         can show contextual upgrade nudges instead of generic error messages.
         """
-        response = {
-            STATUS_KEY_NAME: ERROR_STATUS_CODE,
-            RESULT_KEY_NAME: check_result.reason or "Usage limit exceeded",
-            "error_code": check_result.error_code,
-            "dimension": check_result.dimension,
-            "current_usage": check_result.current_usage,
-            "limit": check_result.limit,
-        }
+        message = check_result.reason or "Usage limit exceeded"
+        response = self._error_response_body(
+            message,
+            status_code=HTTP_402_PAYMENT_REQUIRED,
+            code=check_result.error_code,
+        )
+        response.update(
+            {
+                "error_code": check_result.error_code,
+                "dimension": check_result.dimension,
+                "current_usage": check_result.current_usage,
+                "limit": check_result.limit,
+            }
+        )
         if check_result.upgrade_cta:
             response["upgrade_cta"] = check_result.upgrade_cta.model_dump()
         return Response(response, status=HTTP_402_PAYMENT_REQUIRED)
@@ -275,21 +295,9 @@ class GeneralMethods:
         :param result:
         :return:
         """
-        message = None
-        if type(result) is not str:
-            keys = list(dict(result).keys())
-            if len(keys) > 0:
-                try:
-                    message = f"{keys[0]}: " + str(dict(result).get(keys[0])[0])
-                except (KeyError, IndexError, AttributeError, TypeError) as e:
-                    logger.error(e, exc_info=True)
-                    result = result
-        elif type(result) is str:
-            message = result
-        response = {}
-        response[STATUS_KEY_NAME] = ERROR_STATUS_CODE
-        response[RESULT_KEY_NAME] = result
-        response[ERROR_MESSAGE_KEY_NAME] = message
+        response = self._error_response_body(
+            result, status_code=HTTP_404_NOT_FOUND, code="not_found"
+        )
         return Response(response, status=HTTP_404_NOT_FOUND)
 
     def success_response(self, result, status=HTTP_200_OK):
@@ -328,13 +336,9 @@ class GeneralMethods:
         :param result:
         :return:
         """
-        response = {}
-        # response[STATUS_KEY_NAME] = ERROR_STATUS_CODE
-        # response[RESULT_KEY_NAME] = result
-        # response[ERROR_MESSAGE_KEY_NAME] = result
-        # if programatic_response:
-        #     response = dict()
-        response[RESULT_KEY_NAME] = result
+        response = self._error_response_body(
+            result, status_code=HTTP_500_INTERNAL_SERVER_ERROR, code="server_error"
+        )
         return Response(response, status=HTTP_500_INTERNAL_SERVER_ERROR)
 
     def param_missing_response(self, key, message):
@@ -343,14 +347,13 @@ class GeneralMethods:
         :param result:
         :return:
         """
-        response = {}
         result = {}
         errors = []
         errors.append(message)
         result.update({key: errors})
-        response[STATUS_KEY_NAME] = ERROR_STATUS_CODE
-        response[RESULT_KEY_NAME] = result
-        response[ERROR_MESSAGE_KEY_NAME] = result
+        response = self._error_response_body(
+            result, status_code=HTTP_400_BAD_REQUEST, code="required"
+        )
         return Response(response, status=HTTP_400_BAD_REQUEST)
 
     def unauthorized_response(self):
@@ -359,31 +362,33 @@ class GeneralMethods:
         :param result:
         :return:
         """
-        response = {}
-        response[STATUS_KEY_NAME] = ERROR_STATUS_CODE
-        response[RESULT_KEY_NAME] = (
+        message = (
             "The request requires authentication. Please login to continue."
         )
-        response[ERROR_MESSAGE_KEY_NAME] = (
-            "The request requires authentication. Please login to continue."
+        response = self._error_response_body(
+            message,
+            status_code=HTTP_401_UNAUTHORIZED,
+            code="not_authenticated",
         )
         return Response(response, status=HTTP_401_UNAUTHORIZED)
 
     def forbidden_response(self, message="You don't have access to this api"):
-        response = {}
-        response[STATUS_KEY_NAME] = ERROR_STATUS_CODE
-        response[RESULT_KEY_NAME] = message
-        response[ERROR_MESSAGE_KEY_NAME] = message
+        response = self._error_response_body(
+            message,
+            status_code=HTTP_403_FORBIDDEN,
+            code="permission_denied",
+        )
         return Response(response, status=HTTP_403_FORBIDDEN)
 
-    def custom_error_response(self, status_code, result):
+    def custom_error_response(self, status_code, result, code=None):
         """
         Gives created custom_error_response with custom status code with given message.
         :param result:
         :return:
         """
-        response = {}
-        response[RESULT_KEY_NAME] = result
+        response = self._error_response_body(
+            result, status_code=status_code, code=code
+        )
         return Response(response, status=status_code)
 
     def detect_delimiter(self, file):
@@ -453,7 +458,9 @@ class GeneralMethods:
         :param result:
         :return:
         """
-        response = {}
-        response[STATUS_KEY_NAME] = ERROR_STATUS_CODE
-        response[RESULT_KEY_NAME] = message
+        response = self._error_response_body(
+            message,
+            status_code=HTTP_429_TOO_MANY_REQUESTS,
+            code="rate_limited",
+        )
         return Response(response, status=HTTP_429_TOO_MANY_REQUESTS)

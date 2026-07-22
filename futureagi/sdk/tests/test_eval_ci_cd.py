@@ -118,6 +118,10 @@ class TestCICDEvaluationsPostAPI:
             format="json",
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
+        payload = response.json()
+        assert payload["result"] == "Validation failed"
+        assert payload["message"] == "Validation failed"
+        assert "project_name" in payload["errors"]
 
     def test_create_evaluation_run_missing_version(self, auth_client, observe_project):
         """Request without version fails."""

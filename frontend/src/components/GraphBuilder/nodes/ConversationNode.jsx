@@ -4,6 +4,7 @@ import { Box, Chip, Typography, useTheme } from "@mui/material";
 import SvgColor from "src/components/svg-color";
 import Iconify from "src/components/iconify";
 import { NODE_TYPES, useGraphStore } from "../store/graphStore";
+import Label from "src/components/label";
 import NodeHeader from "./NodeHeader";
 import PropTypes from "prop-types";
 import { ShowComponent } from "src/components/show";
@@ -80,7 +81,17 @@ const ConversationNode = ({ data, isConnectable, id }) => {
             borderColor: theme.palette.primary.main,
           }}
         />
-        <NodeHeader type="conversation" title={data?.name} />
+        <NodeHeader
+          type="conversation"
+          title={data?.name}
+          badge={
+            data?.isStart ? (
+              <Label color="primary" variant="soft">
+                Start
+              </Label>
+            ) : null
+          }
+        />
         <ShowComponent condition={data?.isGlobal}>
           <Chip
             icon={<Iconify icon="mdi:earth" width={14} />}

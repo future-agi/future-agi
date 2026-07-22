@@ -131,7 +131,7 @@ const COLUMNS = [
   { id: "severity", label: "Severity", sortable: true, width: 100 },
   { id: "status", label: "Status", sortable: false, width: 118 },
   { id: "traceCount", label: "Events", sortable: true, width: 85 },
-  { id: "usersAffected", label: "Users", sortable: true, width: 75 },
+  { id: "usersAffected", label: "Users", sortable: false, width: 75 },
   { id: "fixLayer", label: "Fix Layer", sortable: false, width: 120 },
   { id: "trends", label: "Trend (14d)", sortable: false, width: 130 },
   { id: "lastSeen", label: "Last seen", sortable: true, width: 120 },
@@ -260,9 +260,6 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
   const apiParams = useErrorFeedApiParams();
   const { data, isLoading } = useErrorFeedList(apiParams);
 
-  const rows = useMemo(() => data?.data ?? [], [data]);
-  const totalCount = data?.total ?? 0;
-
   const isFiltered = useErrorFeedStore(
     (s) =>
       !!(
@@ -274,6 +271,9 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
         s.selectedErrorType
       ),
   );
+
+  const rows = useMemo(() => data?.data ?? [], [data]);
+  const totalCount = data?.total ?? 0;
 
   const handleRowClick = useCallback(
     (clusterId) => {
@@ -327,7 +327,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                   onChange={(e) =>
                     onSelectAll(
                       e.target.checked,
-                      rows.map((r) => r.clusterId),
+                      rows.map((r) => r.cluster_id),
                     )
                   }
                 />
@@ -383,13 +383,13 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
               <EmptyState filtered={isFiltered} />
             ) : (
               rows.map((row) => {
-                const isSelected = selected.includes(row.clusterId);
+                const isSelected = selected.includes(row.cluster_id);
                 return (
                   <TableRow
-                    key={row.clusterId}
+                    key={row.cluster_id}
                     hover
                     selected={isSelected}
-                    onClick={() => handleRowClick(row.clusterId)}
+                    onClick={() => handleRowClick(row.cluster_id)}
                     sx={{
                       cursor: "pointer",
                       height: 56,
@@ -413,7 +413,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                         size="small"
                         checked={isSelected}
                         onChange={(e) =>
-                          onSelect(row.clusterId, e.target.checked)
+                          onSelect(row.cluster_id, e.target.checked)
                         }
                       />
                     </TableCell>
@@ -447,13 +447,13 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                         </Tooltip>
                         <Stack direction="row" alignItems="center" gap={0.75}>
                           <ErrorTypeTag type={row.error.type} isDark={isDark} />
-                          {row.evalScore != null && (
+                          {row.eval_score != null && (
                             <Typography
                               typography="s3"
                               color="text.disabled"
                               sx={{ fontFeatureSettings: "'tnum'" }}
                             >
-                              eval: {row.evalScore.toFixed(2)}
+                              eval: {row.eval_score.toFixed(2)}
                             </Typography>
                           )}
                         </Stack>
@@ -478,7 +478,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                         color="text.primary"
                         sx={{ fontFeatureSettings: "'tnum'" }}
                       >
-                        {fmt(row.traceCount)}
+                        {fmt(row.trace_count)}
                       </Typography>
                     </TableCell>
 
@@ -489,13 +489,13 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                         color="text.secondary"
                         sx={{ fontFeatureSettings: "'tnum'" }}
                       >
-                        {fmt(row.usersAffected)}
+                        {fmt(row.users_affected)}
                       </Typography>
                     </TableCell>
 
                     {/* Fix Layer */}
                     <TableCell>
-                      <FixLayerChip layer={row.fixLayer} />
+                      <FixLayerChip layer={row.fix_layer} />
                     </TableCell>
 
                     {/* Trend sparkline */}
@@ -509,7 +509,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                     {/* Last seen */}
                     <TableCell>
                       <Typography typography="s3" color="text.disabled" noWrap>
-                        {row.lastSeenHuman ?? humanizeTime(row.lastSeen)}
+                        {row.lastSeenHuman ?? humanizeTime(row.last_seen)}
                       </Typography>
                     </TableCell>
 
@@ -523,7 +523,7 @@ export default function ErrorFeedTable({ selected, onSelect, onSelectAll }) {
                             transition: "opacity 0.15s",
                             ".MuiTableRow-root:hover &": { opacity: 1 },
                           }}
-                          onClick={() => handleRowClick(row.clusterId)}
+                          onClick={() => handleRowClick(row.cluster_id)}
                         >
                           <Iconify icon="mdi:arrow-right" width={16} />
                         </IconButton>

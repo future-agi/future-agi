@@ -83,7 +83,6 @@ const HuggingFaceView = () => {
   const [tempRowCount, setTempRowCount] = useState([0, 1000000000]);
   const [mainFilter, setMainFilter] = useState("Main");
   const [selectedTask, setSelectedTask] = useState(null);
-  const [, setTotalDatasets] = useState(0);
 
   // Add pagination state
   const [page, setPage] = useState(1); // Initialize page state here
@@ -267,12 +266,6 @@ const HuggingFaceView = () => {
         },
       );
     },
-    select: (data) => {
-      if (huggingFaceList?.data?.result?.totalDatasets !== undefined) {
-        setTotalDatasets(huggingFaceList?.data?.result?.totalDatasets);
-      }
-      return data;
-    },
   });
 
   // Modify the filtered datasets to include pagination
@@ -283,11 +276,11 @@ const HuggingFaceView = () => {
   const MAX_PAGES = 100; // Define maximum number of pages
 
   const totalPages = useMemo(() => {
-    const total = huggingFaceList?.data?.result?.totalDatasets || 0;
+    const total = huggingFaceList?.data?.result?.total_datasets || 0;
     const calculatedPages = Math.ceil(total / itemsPerPage);
     // Limit to maximum 100 pages
     return Math.min(MAX_PAGES, Math.max(1, calculatedPages));
-  }, [huggingFaceList?.data?.result?.totalDatasets, itemsPerPage]);
+  }, [huggingFaceList?.data?.result?.total_datasets, itemsPerPage]);
 
   const {
     mutate: createHuggingFaceDataset,
@@ -381,7 +374,7 @@ const HuggingFaceView = () => {
     let subsetOptions = [];
     let splitOptions = [];
 
-    const datasetInfo = loadedDataset?.data?.result?.datasetInfo?.splits;
+    const datasetInfo = loadedDataset?.data?.result?.dataset_info?.splits;
 
     if (datasetInfo) {
       subsetOptions = Object.keys(datasetInfo).map((subset) => ({
@@ -1010,7 +1003,7 @@ const HuggingFaceView = () => {
             >
               <Typography fontSize="12px" color="text.secondary">
                 <b style={{ fontSize: "14px" }}>Total Datasets : </b>
-                {huggingFaceList?.data?.result?.totalDatasets || 0}
+                {huggingFaceList?.data?.result?.total_datasets || 0}
               </Typography>
 
               {/* Sort controls */}
@@ -1076,21 +1069,17 @@ const HuggingFaceView = () => {
                     <Iconify icon="eva:close-fill" width={16} height={16} />
                   }
                   sx={{
-                    backgroundColor:
-                      theme.palette.mode === "light"
-                        ? "primary.main"
-                        : "primary.light",
-                    color:
-                      theme.palette.mode === "light"
-                        ? "common.white"
-                        : "primary.dark",
+                    backgroundColor: "primary.main",
+                    color: "primary.contrastText",
                     borderRadius: "4px",
+                    fontWeight: 500,
+                    "& .MuiChip-deleteIcon": {
+                      color: "primary.contrastText",
+                      opacity: 0.7,
+                      "&:hover": { color: "primary.contrastText", opacity: 1 },
+                    },
                     "&:hover": {
-                      backgroundColor:
-                        theme.palette.mode === "light"
-                          ? theme.palette.primary.dark
-                          : theme.palette.primary.light,
-                      opacity: theme.palette.mode === "light" ? 1 : 0.8,
+                      backgroundColor: "primary.dark",
                       cursor: "default",
                     },
                   }}
@@ -1205,7 +1194,7 @@ const HuggingFaceView = () => {
             page={page}
             totalPages={isLoadingHuggingFaceList ? 1 : totalPages}
             onPageChange={handlePageChange}
-            totalItems={huggingFaceList?.data?.result?.totalDatasets || 0}
+            totalItems={huggingFaceList?.data?.result?.total_datasets || 0}
             itemsPerPage={itemsPerPage}
             isLoading={isLoadingHuggingFaceList}
           />

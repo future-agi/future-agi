@@ -16,7 +16,10 @@ import {
   Typography,
 } from "@mui/material";
 import Iconify from "src/components/iconify";
-import { useQueueAnalytics } from "src/api/annotation-queues/annotation-queues";
+import {
+  annotationQueueEndpoints,
+  useQueueAnalytics,
+} from "src/api/annotation-queues/annotation-queues";
 import { fDateTime } from "src/utils/format-time";
 
 function StatCard({ title, value, color = "text.primary" }) {
@@ -44,8 +47,10 @@ function StatusBar({ statusBreakdown, total }) {
   if (!total) return null;
   const segments = [
     { key: "completed", color: "success.main", label: "Completed" },
-    { key: "in_progress", color: "warning.main", label: "In Progress" },
-    { key: "pending", color: "info.main", label: "Pending" },
+    { key: "in_review", color: "warning.main", label: "In Review" },
+    { key: "needs_changes", color: "error.main", label: "Needs Changes" },
+    { key: "resubmitted", color: "secondary.main", label: "Resubmitted" },
+    { key: "pending", color: "info.main", label: "Pending Annotation" },
     { key: "skipped", color: "text.disabled", label: "Skipped" },
   ];
 
@@ -89,7 +94,13 @@ function StatusBar({ statusBreakdown, total }) {
           );
         })}
       </Box>
-      <Stack direction="row" spacing={2} sx={{ mt: 1 }}>
+      <Stack
+        direction="row"
+        spacing={2}
+        useFlexGap
+        flexWrap="wrap"
+        sx={{ mt: 1 }}
+      >
         {segments.map((seg) => (
           <Stack
             key={seg.key}
@@ -249,7 +260,7 @@ export default function QueueAnalyticsTab({ queueId }) {
     try {
       const { default: axiosInstance } = await import("src/utils/axios");
       const response = await axiosInstance.get(
-        `/model-hub/annotation-queues/${queueId}/export/`,
+        annotationQueueEndpoints.export(queueId),
         { params: { export_format: format }, responseType: "blob" },
       );
       const blob = new Blob([response.data]);
@@ -261,9 +272,20 @@ export default function QueueAnalyticsTab({ queueId }) {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-    } catch {
+    } catch (err) {
       const { enqueueSnackbar } = await import("notistack");
-      enqueueSnackbar("Export failed", { variant: "error" });
+      let message = "Export failed";
+      // The request uses responseType:"blob", so an error body arrives as a Blob —
+      // read and parse it to surface the server's actionable message (e.g. the 413
+      // export_too_large cap) instead of a generic failure.
+      try {
+        const data = err?.response?.data;
+        const parsed = data instanceof Blob ? JSON.parse(await data.text()) : data;
+        message = parsed?.result || parsed?.message || message;
+      } catch {
+        // non-JSON / unreadable error body — keep the generic message
+      }
+      enqueueSnackbar(message, { variant: "error" });
     }
   };
 

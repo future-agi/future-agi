@@ -3,10 +3,18 @@ import { z } from "zod";
 import {
   ANNOTATION_COLUMN_IDS,
   FIELD_CATEGORY_TO_COL_TYPE,
+  RANGE_OPS,
+  LIST_OPS,
+  NO_VALUE_OPS,
 } from "src/sections/common/EvalsTasks/common";
 
-const RANGE_OPS = new Set(["between", "not_between"]);
-const LIST_OPS = new Set(["in", "not_in"]);
+const TASK_FILTER_PROPERTY_TO_API = {
+  span_kind: "observation_type",
+  observation_type: "observation_type",
+};
+
+export const getTaskFilterApiKey = (property) =>
+  TASK_FILTER_PROPERTY_TO_API[property] || property;
 
 // Form-row `property` → outer-filters sibling key the BE honors. `node_type`
 // is a FE alias for `observation_type` (the eval-task handler can't resolve
@@ -14,16 +22,17 @@ const LIST_OPS = new Set(["in", "not_in"]);
 const TOP_LEVEL_SIBLING_KEY_BY_PROPERTY = {
   observation_type: "observation_type",
   node_type: "observation_type",
+  span_kind: "observation_type",
   session_id: "session_id",
+  trace_id: "trace_id",
 };
 
-// Merge form rows for the same (columnId, op) into one wire entry. Scalar
-// rows for list ops fold into array `filterValue`; multiple scalars under a
-// single-value op are promoted to `in`. Matches list_spans_observe's flat
-// shape — every chip carries its own `col_type` and the BE dispatches.
+// One form row → one wire entry. Cross-row composition is the BE's job —
+// merging same-column rows would collapse "not_contains A AND not_contains B"
+// into "in [A, B]" and invert intent. OR is expressed within a single multi-
+// value `in`/`not_in` row, not across rows.
 export const extractAttributeFilters = (filters) => {
-  const merged = new Map();
-  (filters || [])
+  return (filters || [])
     .filter((f) => {
       if (!f) return false;
       // Sibling keys are emitted separately by getNewTaskFilters.
@@ -32,75 +41,57 @@ export const extractAttributeFilters = (filters) => {
       if (!f.propertyId && f.property !== "attributes") return false;
       return true;
     })
-    .forEach((f) => {
+    .map((f) => {
       const columnId = f.propertyId || f.property;
-      if (!columnId) return;
       const op = f?.filterConfig?.filterOp || "equals";
       const filterType = f?.filterConfig?.filterType || "text";
-      const key = `${columnId}|${op}|${filterType}`;
-      if (!merged.has(key)) {
-        // Resolution: pinned ANNOTATION ids → row.apiColType (canonical) →
-        // fieldCategory fallback → SPAN_ATTRIBUTE default.
-        let apiColType;
-        if (ANNOTATION_COLUMN_IDS.has(columnId)) {
-          apiColType = "ANNOTATION";
-        } else if (f?.apiColType) {
-          apiColType = f.apiColType;
-        } else if (FIELD_CATEGORY_TO_COL_TYPE[f?.fieldCategory]) {
-          apiColType = FIELD_CATEGORY_TO_COL_TYPE[f.fieldCategory];
-        } else {
-          apiColType = "SPAN_ATTRIBUTE";
-        }
-
-        merged.set(key, {
-          columnId,
-          op,
-          filterType,
-          apiColType,
-          rangeValue: undefined,
-          values: [],
-        });
-      }
-      const entry = merged.get(key);
       const v = f?.filterConfig?.filterValue;
-      if (RANGE_OPS.has(op)) {
-        entry.rangeValue = Array.isArray(v) ? v : entry.rangeValue;
+
+      // Resolution: pinned ANNOTATION ids → row.apiColType (canonical) →
+      // fieldCategory fallback → SPAN_ATTRIBUTE default.
+      let apiColType;
+      if (ANNOTATION_COLUMN_IDS.has(columnId)) {
+        apiColType = "ANNOTATION";
+      } else if (f?.apiColType) {
+        apiColType = f.apiColType;
+      } else if (FIELD_CATEGORY_TO_COL_TYPE[f?.fieldCategory]) {
+        apiColType = FIELD_CATEGORY_TO_COL_TYPE[f.fieldCategory];
+      } else {
+        apiColType = "SPAN_ATTRIBUTE";
+      }
+
+      let filterValue;
+      if (NO_VALUE_OPS.has(op)) {
+        filterValue = "";
+      } else if (RANGE_OPS.has(op)) {
+        if (Array.isArray(v) && v.length > 0) filterValue = v;
       } else if (LIST_OPS.has(op)) {
         const arr = Array.isArray(v)
           ? v
           : v !== undefined && v !== null && v !== ""
             ? [v]
             : [];
-        entry.values.push(...arr);
+        if (arr.length > 0) filterValue = arr;
       } else if (v !== undefined && v !== null && v !== "") {
-        entry.values.push(v);
+        filterValue = v;
       }
-    });
 
-  return Array.from(merged.values()).map((entry) => {
-    let filterValue;
-    let filterOp = entry.op;
-    if (RANGE_OPS.has(filterOp)) {
-      filterValue = entry.rangeValue;
-    } else if (LIST_OPS.has(filterOp)) {
-      filterValue = entry.values;
-    } else if (entry.values.length > 1) {
-      // Multiple scalar rows under a single-value op → promote to `in`.
-      filterOp = "in";
-      filterValue = entry.values;
-    } else if (entry.values.length === 1) {
-      filterValue = entry.values[0];
-    }
-    return {
-      columnId: entry.columnId,
-      filterConfig: {
-        filterType: entry.filterType,
-        filterOp,
-        colType: entry.apiColType,
-        ...(filterValue !== undefined && { filterValue }),
-      },
-    };
-  });
+      return {
+        column_id: columnId,
+        filter_config: {
+          filter_type: filterType,
+          filter_op: op,
+          col_type: apiColType,
+          ...(filterValue !== undefined && { filter_value: filterValue }),
+        },
+      };
+    })
+    // Drop value-less in/not_in (legacy/hand-edited)
+    .filter(
+      (entry) =>
+        !LIST_OPS.has(entry.filter_config.filter_op) ||
+        entry.filter_config.filter_value !== undefined,
+    );
 };
 
 // Sibling-key extraction: rows whose property maps to a top-level BE key
@@ -169,7 +160,10 @@ export const NewTaskValidationSchema = () =>
       runType: z.enum(["historical", "continuous"], {
         message: "Run Type is required",
       }),
-      // Declared so zod's strip doesn't drop the tab-selected value pre-transform.
+      // Without listing rowType here, zod's .object() strips it before
+      // the transform runs and the form-state value (set by the
+      // Spans/Traces/Sessions tabs in TaskConfigPanel) is silently
+      // dropped — every payload then defaults to "spans".
       rowType: z.enum(["spans", "traces", "sessions", "voiceCalls"]).optional(),
       filters: z
         .array(

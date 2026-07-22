@@ -5,6 +5,7 @@ from simulate.models.run_test import RunTest
 from simulate.models.scenarios import Scenarios
 from tracer.models.project import Project
 from tracer.models.replay_session import ReplaySession, ReplayType
+from tracer.utils.workspace_scope import project_queryset_for_request
 
 
 class AgentDefinitionNestedSerializer(serializers.ModelSerializer):
@@ -170,11 +171,7 @@ class CreateReplaySessionSerializer(serializers.Serializer):
             return value
 
         try:
-            project = Project.objects.get(
-                id=value,
-                organization=getattr(request, "organization", None)
-                or request.user.organization,
-            )
+            project = project_queryset_for_request(request).get(id=value)
             # Cache project instance in context for use in view
             self.context["project"] = project
         except Project.DoesNotExist:

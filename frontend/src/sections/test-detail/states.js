@@ -3,11 +3,11 @@ import { useShallow } from "zustand/react/shallow";
 import { getRandomId } from "src/utils/utils";
 
 const defaultFilter = {
-  columnId: "",
-  filterConfig: {
-    filterType: "",
-    filterOp: "",
-    filterValue: "",
+  column_id: "",
+  filter_config: {
+    filter_type: "",
+    filter_op: "",
+    filter_value: "",
   },
 };
 

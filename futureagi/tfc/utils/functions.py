@@ -546,8 +546,7 @@ def calculate_column_average(column_id, row_ids=None):
                                                 sum(cell_scores) / len(cell_scores)
                                             )
                             except Exception as e:
-                                logger.error(f"Error processing cell: {str(e)}")
-                                traceback.print_exc()
+                                logger.warning(f"Error processing cell: {str(e)}")
                                 continue
                         if valid_scores:
                             stats["average"] = round(
@@ -605,7 +604,7 @@ def calculate_column_average(column_id, row_ids=None):
                             stats["success_rate"] = stats["average"]
 
                 except UserEvalMetric.DoesNotExist:
-                    logger.error(
+                    logger.warning(
                         f"UserEvalMetric does not exist for column {column_id}"
                     )
                     stats["average"] = None

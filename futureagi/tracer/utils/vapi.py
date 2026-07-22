@@ -12,6 +12,7 @@ try:
     from ee.voice.services.conversation_metrics import ConversationMetricsCalculator
 except ImportError:
     ConversationMetricsCalculator = None
+from simulate.temporal.utils.async_storage import convert_audio_url_to_s3_sync
 from tracer.utils.helper import flatten_dict
 
 logger = structlog.get_logger(__name__)
@@ -27,19 +28,141 @@ from tracer.utils.otel import (
 
 metrics_calculator = ConversationMetricsCalculator() if ConversationMetricsCalculator else None
 
+# The four Vapi recording OTel attribute keys that _extract_recording_urls writes.
+_VAPI_RECORDING_KEYS: list[str] = [
+    f"{ConversationAttributes.CONVERSATION_RECORDING}.{ConversationAttributes.MONO_COMBINED}",
+    f"{ConversationAttributes.CONVERSATION_RECORDING}.{ConversationAttributes.MONO_CUSTOMER}",
+    f"{ConversationAttributes.CONVERSATION_RECORDING}.{ConversationAttributes.MONO_ASSISTANT}",
+    f"{ConversationAttributes.CONVERSATION_RECORDING}.{ConversationAttributes.STEREO}",
+]
 
-def normalize_vapi_data(log: dict, *, api_key: str | None = None) -> dict:
+# Mapping from OTel key tail segment to url-type shorthand used in S3 object keys / billing.
+_VAPI_URL_TYPE_BY_KEY: dict[str, str] = {
+    ConversationAttributes.MONO_COMBINED: "mono_combined",
+    ConversationAttributes.MONO_CUSTOMER: "mono_customer",
+    ConversationAttributes.MONO_ASSISTANT: "mono_assistant",
+    ConversationAttributes.STEREO: "stereo",
+}
+
+
+def _rehost_recording_urls_sync(
+    log: dict,
+    eval_attributes: dict,
+    *,
+    api_key: str | None = None,
+    project_id: str | None = None,
+) -> tuple[int, dict[str, int]]:
+    """Best-effort inline rehost of Vapi recording URLs to FA S3.
+
+    Iterates the 4 Vapi recording keys; for each non-S3 URL calls
+    ``convert_audio_url_to_s3_sync`` and replaces in-place on success.
+    On failure the original URL is left untouched (best-effort).
+    After the loop, mirrors S3 URLs onto flat aliases and propagates
+    to ``CallExecution`` / ``CallExecutionSnapshot`` consumer fields
+    via ``VapiRecordingService.mirror_s3_url_to_consumer_fields``.
+
+    Returns ``(total_artifact_bytes, bytes_by_url_type)`` where
+    ``bytes_by_url_type`` maps each rehosted url-type to its byte count.
+    Existing S3 objects contribute their stored size so a failed billing emit
+    can be retried with the same idempotency key on a later poll.
+    """
+    from tracer.utils.vapi_recording import VapiRecordingService
+
+    call_id = log.get("id") if isinstance(log, dict) else None
+
+    s3_url_by_url_type: dict[str, str] = {}
+    bytes_by_url_type: dict[str, int] = {}
+    prefix = f"{ConversationAttributes.CONVERSATION_RECORDING}."
+    total_bytes_uploaded: int = 0
+
+    for key in _VAPI_RECORDING_KEYS:
+        url = eval_attributes.get(key)
+        if not url:
+            continue
+        # Skip if already FA S3 (canonical check — matches our own bucket list).
+        if VapiRecordingService.is_fagi_s3_url(url):
+            continue
+
+        # Derive url_type from the key tail (e.g. "mono.combined" -> "mono_combined")
+        if key.startswith(prefix):
+            tail = key[len(prefix):]
+        else:
+            tail = key
+        url_type = _VAPI_URL_TYPE_BY_KEY.get(tail)
+        if not url_type:
+            continue
+
+        artifact_type = VapiRecordingService.artifact_for_url_type(url_type)
+        s3_url, bytes_uploaded = convert_audio_url_to_s3_sync(
+            call_id=call_id,
+            audio_url=url,
+            url_type=url_type,
+            provider="vapi",
+            api_key=api_key,
+            artifact_type=artifact_type,
+            project_id=project_id,
+        )
+        # Replace in-place only if we got a different (S3) URL back
+        if s3_url and s3_url != url:
+            eval_attributes[key] = s3_url
+            s3_url_by_url_type[url_type] = s3_url
+            total_bytes_uploaded += bytes_uploaded
+            bytes_by_url_type[url_type] = bytes_uploaded
+
+    # Mirror S3 URLs onto flat consumer-facing aliases (in-place on eval_attributes)
+    mono_s3 = s3_url_by_url_type.get("mono_combined")
+    stereo_s3 = s3_url_by_url_type.get("stereo")
+    if mono_s3 and not VapiRecordingService.is_fagi_s3_url(eval_attributes.get("recording_url")):
+        eval_attributes["recording_url"] = mono_s3
+    if stereo_s3 and not VapiRecordingService.is_fagi_s3_url(eval_attributes.get("stereo_recording_url")):
+        eval_attributes["stereo_recording_url"] = stereo_s3
+
+    # Mirror to CallExecution / CallExecutionSnapshot (best-effort, import-guarded).
+    if s3_url_by_url_type:
+        try:
+            VapiRecordingService.mirror_s3_url_to_consumer_fields(
+                attrs=eval_attributes,
+                call_id=call_id,
+                s3_url_by_url_type=s3_url_by_url_type,
+            )
+        except Exception:
+            logger.exception(
+                "_rehost_recording_urls_sync: mirror_s3_url_to_consumer_fields failed (non-fatal)"
+            )
+
+    return total_bytes_uploaded, bytes_by_url_type
+
+
+def normalize_vapi_data(
+    log: dict, *, api_key: str | None = None, project_id: str | None = None
+) -> dict:
     """Normalize a Vapi log entry; api_key routes call-logs through the auth endpoint."""
+    if not isinstance(log, dict):
+        logger.error(
+            "normalize_vapi_data: LOG IS NOT A DICT — skipping",
+            log_type=type(log).__name__,
+        )
+        return {"id": None, "span_attributes": {}}
     status = _map_status(log.get("status", ""))
     start_time, end_time = _extract_timestamps(log)
     eval_attributes = _extract_eval_attributes(log, api_key=api_key)
+
+    # Inline best-effort rehost: try to convert Vapi recording URLs to S3;
+    # on failure leave the original URL (non-fatal).
+    try:
+        total_bytes, bytes_by_url_type = _rehost_recording_urls_sync(
+            log, eval_attributes, api_key=api_key, project_id=project_id
+        )
+    except Exception:
+        logger.exception("normalize_vapi_data: inline rehost failed (non-fatal)")
+        total_bytes, bytes_by_url_type = 0, {}
 
     prompt_tokens = eval_attributes.get(SpanAttributes.USAGE_INPUT_TOKENS)
     completion_tokens = eval_attributes.get(SpanAttributes.USAGE_OUTPUT_TOKENS)
     total_tokens = eval_attributes.get(SpanAttributes.USAGE_TOTAL_TOKENS)
     latency_ms = eval_attributes.get("avg_agent_latency_ms")
 
-    return {
+    out = {
         "id": log.get("id"),
         "start_time": start_time,
         "end_time": end_time,
@@ -51,7 +174,11 @@ def normalize_vapi_data(log: dict, *, api_key: str | None = None) -> dict:
         "status": status,
         "metadata": log.get("metadata"),
         "span_attributes": eval_attributes,
+        "rehost_bytes_uploaded": total_bytes,
+        # Per-url-type byte counts for idempotent billing across re-polls.
+        "rehost_uploads": bytes_by_url_type,
     }
+    return out
 
 
 def _map_status(vapi_status: str) -> str:
@@ -81,6 +208,12 @@ def _extract_eval_attributes(
     api_key: str | None = None,
 ) -> dict:
     """Extract and flatten eval attributes from a Vapi log; skip call-logs via include_call_logs=False."""
+    if not isinstance(log, dict):
+        logger.error(
+            "extract_eval_attributes: LOG IS NOT A DICT",
+            log_type=type(log).__name__,
+        )
+        return {}
     eval_attributes = {
         SpanAttributes.SPAN_KIND: "conversation",
         "raw_log": log,
@@ -94,7 +227,6 @@ def _extract_eval_attributes(
     _extract_common_call_fields(log, eval_attributes)
     if include_call_logs:
         _extract_call_logs(log, eval_attributes, api_key=api_key)
-
     return eval_attributes
 
 
@@ -247,7 +379,8 @@ def _extract_metadata(log: dict, eval_attributes: dict):
 
 def _extract_recording_urls(log: dict, eval_attributes: dict):
     """Extracts recording URLs and adds them to eval_attributes."""
-    recording = log.get("artifact", {}).get("recording")
+    artifact = log.get("artifact")
+    recording = artifact.get("recording") if isinstance(artifact, dict) else None
     if not (recording and isinstance(recording, dict)):
         return
 
@@ -355,8 +488,16 @@ def _extract_call_logs(log: dict, eval_attributes: dict, *, api_key: str | None 
     """Fetch call logs (Tier 1 auth then Tier 2 legacy) and store under call_logs in span_attributes."""
     from tracer.utils.vapi_recording import VapiRecordingService
 
+    if not isinstance(log, dict):
+        logger.error(
+            "extract_call_logs: LOG IS NOT A DICT — cannot extract call_id/artifact",
+            log_type=type(log).__name__,
+        )
+        return
+
     call_id = log.get("id")
-    legacy_url = log.get("artifact", {}).get("logUrl")
+    artifact = log.get("artifact", {})
+    legacy_url = artifact.get("logUrl") if isinstance(artifact, dict) else None
     if not (call_id or legacy_url):
         return
 
@@ -366,11 +507,7 @@ def _extract_call_logs(log: dict, eval_attributes: dict, *, api_key: str | None 
         legacy_url=legacy_url,
     )
     if entries is None:
+        logger.warning("extract_call_logs: fetch returned None")
         return
 
     eval_attributes["call_logs"] = entries
-    logger.info(
-        "Extracted call logs from VAPI",
-        log_count=len(entries),
-        call_id=call_id,
-    )

@@ -142,10 +142,8 @@ export default function SkillEditorDialog({ open, skill, onClose, onSaved }) {
     }
   };
 
-  const hasPhrase =
-    form.trigger_phrases.length > 0 || !!phraseInput.trim();
-  const canSave =
-    form.name.trim() && form.instructions.trim() && hasPhrase;
+  const hasPhrase = form.trigger_phrases.length > 0 || !!phraseInput.trim();
+  const canSave = form.name.trim() && form.instructions.trim() && hasPhrase;
 
   return (
     <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>

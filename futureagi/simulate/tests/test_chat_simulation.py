@@ -10,16 +10,12 @@ Tests cover:
 """
 
 import uuid
-from datetime import datetime, timedelta
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-from django.db import close_old_connections
 from django.utils import timezone
 
-from accounts.models import Organization
-from accounts.models.workspace import Workspace
-from simulate.models import AgentDefinition, Scenarios
+from simulate.models import AgentDefinition, AgentVersion, Scenarios
 from simulate.models.chat_message import ChatMessageModel
 from simulate.models.run_test import RunTest
 from simulate.models.simulator_agent import SimulatorAgent
@@ -31,8 +27,6 @@ from simulate.models.test_execution import (
 from simulate.pydantic_schemas.chat import (
     ChatMessage,
     ChatRole,
-    ChatSessionResponse,
-    ChatSessionSendMessageResponse,
 )
 from simulate.services.chat_sim import initiate_chat, send_message_to_chat
 from simulate.services.types.chat import (
@@ -151,6 +145,61 @@ def ongoing_call_execution(db, test_execution, scenario):
         },
         assistant_id="asst-123",
     )
+
+
+# ============================================================================
+# Tests for TestExecutionChatBatchView
+# ============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.api
+def test_chat_batch_creates_text_calls_without_voice_provider_config(
+    auth_client,
+    monkeypatch,
+    agent_definition,
+    simulator_agent,
+    run_test,
+    test_execution,
+    scenario,
+):
+    """Chat batching should not require voice-provider credentials."""
+    monkeypatch.delenv("VAPI_API_KEY", raising=False)
+    agent_version = agent_definition.create_version(
+        description="Active text chat version",
+        commit_message="Initial chat version",
+        status=AgentVersion.StatusChoices.ACTIVE,
+    )
+    run_test.agent_version = agent_version
+    run_test.save(update_fields=["agent_version"])
+    test_execution.agent_definition = agent_definition
+    test_execution.agent_version = agent_version
+    test_execution.simulator_agent = simulator_agent
+    test_execution.scenario_ids = [str(scenario.id)]
+    test_execution.save(
+        update_fields=[
+            "agent_definition",
+            "agent_version",
+            "simulator_agent",
+            "scenario_ids",
+        ]
+    )
+
+    response = auth_client.post(
+        f"/simulate/test-executions/{test_execution.id}/chat/call-executions/batch/",
+        {},
+        format="json",
+    )
+
+    assert response.status_code == 200
+    result = response.data["result"]
+    assert len(result["call_execution_ids"]) == 1
+    call_execution = CallExecution.objects.get(id=result["call_execution_ids"][0])
+    assert call_execution.test_execution == test_execution
+    assert call_execution.scenario == scenario
+    assert call_execution.simulation_call_type == CallExecution.SimulationCallType.TEXT
+    assert call_execution.call_metadata["call_channel"] == "chat"
+    assert call_execution.call_metadata["call_direction"] == "inbound"
 
 
 # ============================================================================
@@ -387,6 +436,7 @@ class TestCheckCallBalance:
         ``allowed=True`` for paid plans, which must propagate as a pass."""
         from simulate.pydantic_schemas.chat import SimulationCallType
         from simulate.services.test_executor import TestExecutor
+
         try:
             from ee.usage.schemas.events import CheckResult
         except ImportError:
@@ -410,6 +460,7 @@ class TestCheckCallBalance:
         """Free-tier caps enforced: disallowed result propagates the reason."""
         from simulate.pydantic_schemas.chat import SimulationCallType
         from simulate.services.test_executor import TestExecutor
+
         try:
             from ee.usage.schemas.events import CheckResult
         except ImportError:
@@ -562,6 +613,62 @@ class TestSendMessageToChat:
         ongoing_call_execution.refresh_from_db()
         assert ongoing_call_execution.status == CallExecution.CallStatus.ANALYZING
         assert ongoing_call_execution.completed_at is not None
+
+    @patch("simulate.services.chat_sim.ChatServiceManager")
+    @patch(
+        "simulate.tasks.chat_sim.store_chat_messages.apply_async",
+        side_effect=TimeoutError("temporal dispatch timed out"),
+    )
+    def test_send_message_store_dispatch_failure_falls_back_sync(
+        self,
+        mock_store_task,
+        mock_chat_service_manager,
+        ongoing_call_execution,
+        organization,
+        workspace,
+    ):
+        """Chat response should survive async store dispatch failure."""
+        mock_service_instance = MagicMock()
+        mock_chat_service_manager.return_value = mock_service_instance
+
+        input_messages = [ChatMessage(role=ChatRole.USER, content="Goodbye")]
+        output_messages = [ChatMessage(role=ChatRole.ASSISTANT, content="Take care!")]
+
+        mock_service_instance.get_session.return_value = GetSessionResult(
+            success=True,
+            session_id="test-session-123",
+            name="Test Session",
+            status="active",
+            assistant_id="asst-123",
+            messages=[],
+        )
+        mock_service_instance.send_message.return_value = SendMessageResult(
+            success=True,
+            input_messages=input_messages,
+            output_messages=output_messages,
+            message_id="msg-123",
+            has_chat_ended=False,
+        )
+
+        result = send_message_to_chat(
+            ongoing_call_execution,
+            organization,
+            workspace,
+            input_messages,
+        )
+
+        assert result["chat_ended"] is False
+        mock_store_task.assert_called_once()
+        assert (
+            ChatMessageModel.objects.filter(
+                call_execution=ongoing_call_execution
+            ).count()
+            == 2
+        )
+
+        ongoing_call_execution.refresh_from_db()
+        assert ongoing_call_execution.status == CallExecution.CallStatus.ONGOING
+        assert ongoing_call_execution.completed_at is None
 
     @patch("simulate.services.chat_sim.ChatServiceManager")
     def test_send_message_to_non_ongoing_call(
@@ -727,12 +834,14 @@ class TestStoreChatMessages:
         assert user_message.messages == ["Response message"]
 
     @patch("tfc.temporal.drop_in.decorator.close_old_connections")
+    @patch("simulate.tasks.chat_sim.monitor_test_execution_for_chat.apply_async")
     @patch("simulate.tasks.chat_sim._run_simulate_evaluations_task.apply_async")
     @patch("simulate.tasks.chat_sim._aggregate_chat_metrics")
     def test_store_messages_triggers_eval_on_chat_end(
         self,
         mock_aggregate,
         mock_eval_task,
+        mock_monitor_task,
         mock_close_connections,
         ongoing_call_execution,
         organization,
@@ -758,10 +867,68 @@ class TestStoreChatMessages:
         # Assert
         mock_aggregate.assert_called_once_with(ongoing_call_execution)
         mock_eval_task.assert_called_once()
+        mock_monitor_task.assert_called_once()
 
         # Verify eval_started flag was set
         ongoing_call_execution.refresh_from_db()
         assert ongoing_call_execution.call_metadata.get("eval_started") is True
+
+    @patch("tfc.temporal.drop_in.decorator.close_old_connections")
+    @patch(
+        "simulate.tasks.chat_sim.monitor_test_execution_for_chat.apply_async",
+        side_effect=TimeoutError("monitor dispatch timed out"),
+    )
+    @patch(
+        "simulate.tasks.chat_sim._run_simulate_evaluations_task.apply_async",
+        side_effect=TimeoutError("eval dispatch timed out"),
+    )
+    @patch("simulate.tasks.chat_sim._aggregate_chat_metrics")
+    @patch("simulate.services.test_executor.TestExecutor._deduct_call_cost")
+    def test_store_messages_completes_call_when_terminal_dispatch_fails(
+        self,
+        mock_deduct_cost,
+        mock_aggregate,
+        mock_eval_task,
+        mock_monitor_task,
+        mock_close_connections,
+        ongoing_call_execution,
+        organization,
+        workspace,
+    ):
+        """Terminal chat persistence should not fail on downstream dispatch timeouts."""
+        input_messages = [ChatMessage(role=ChatRole.USER, content="Goodbye")]
+        output_messages = [ChatMessage(role=ChatRole.ASSISTANT, content="Bye!")]
+
+        result = store_chat_messages(
+            call_execution_id=str(ongoing_call_execution.id),
+            organization_id=str(organization.id),
+            workspace_id=str(workspace.id),
+            input_messages=input_messages,
+            output_messages=output_messages,
+            chat_ended=True,
+            chat_session_id="test-session-123",
+            create_timestamp=timezone.now(),
+        )
+
+        assert result is True
+        mock_aggregate.assert_called_once()
+        mock_deduct_cost.assert_called_once()
+        mock_eval_task.assert_called_once()
+        mock_monitor_task.assert_called_once()
+        assert (
+            ChatMessageModel.objects.filter(
+                call_execution=ongoing_call_execution
+            ).count()
+            == 2
+        )
+
+        ongoing_call_execution.refresh_from_db()
+        assert ongoing_call_execution.status == CallExecution.CallStatus.COMPLETED
+        assert ongoing_call_execution.call_metadata.get("eval_started") is False
+        assert (
+            ongoing_call_execution.call_metadata.get("eval_dispatch_failed")
+            == "eval dispatch timed out"
+        )
 
     @patch("tfc.temporal.drop_in.decorator.close_old_connections")
     @patch("simulate.tasks.chat_sim._run_simulate_evaluations_task.apply_async")
@@ -910,7 +1077,7 @@ class TestMonitorTestExecutionForChat:
         """Test execution marked completed when all calls are completed."""
         # Setup - create completed call executions
         for i in range(3):
-            call_exec = CallExecution.objects.create(
+            CallExecution.objects.create(
                 test_execution=test_execution,
                 scenario=scenario,
                 phone_number=f"+123456789{i}",
@@ -1055,7 +1222,7 @@ class TestMonitorChatTestExecutions:
         """Should process active test executions in batches."""
         # Setup - create multiple active test executions
         test_executions = []
-        for i in range(5):
+        for _ in range(5):
             te = TestExecution.objects.create(
                 run_test=run_test,
                 status=TestExecution.ExecutionStatus.PENDING,
@@ -1083,7 +1250,7 @@ class TestMonitorChatTestExecutions:
     ):
         """Should process only batch size (10) test executions at a time."""
         # Setup - create more than batch size
-        for i in range(15):
+        for _ in range(15):
             TestExecution.objects.create(
                 run_test=run_test,
                 status=TestExecution.ExecutionStatus.PENDING,
@@ -1133,7 +1300,7 @@ class TestMonitorChatTestExecutions:
             organization=organization,
             workspace=workspace,
         )
-        voice_test_exec = TestExecution.objects.create(
+        TestExecution.objects.create(
             run_test=run_test,
             status=TestExecution.ExecutionStatus.PENDING,
             agent_definition=voice_agent,
@@ -1468,6 +1635,7 @@ class TestStoreChatMessagesWithCostDeduction:
     """Tests for cost deduction integration in store_chat_messages."""
 
     @patch("tfc.temporal.drop_in.decorator.close_old_connections")
+    @patch("simulate.tasks.chat_sim.monitor_test_execution_for_chat.apply_async")
     @patch("simulate.tasks.chat_sim._run_simulate_evaluations_task.apply_async")
     @patch("simulate.tasks.chat_sim._aggregate_chat_metrics")
     @patch("simulate.services.test_executor.TestExecutor._deduct_call_cost")
@@ -1476,6 +1644,7 @@ class TestStoreChatMessagesWithCostDeduction:
         mock_deduct_cost,
         mock_aggregate,
         mock_eval_task,
+        mock_monitor_task,
         mock_close_connections,
         ongoing_call_execution,
         organization,
@@ -1500,6 +1669,7 @@ class TestStoreChatMessagesWithCostDeduction:
 
         # Assert - cost deduction was called
         mock_deduct_cost.assert_called_once()
+        mock_monitor_task.assert_called_once()
         # Verify it was called with the call_execution
         call_args = mock_deduct_cost.call_args
         assert call_args[0][0].id == ongoing_call_execution.id

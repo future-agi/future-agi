@@ -39,12 +39,12 @@ const LLMFilterRow = ({
     if (filter?._meta?.parentProperty) {
       return filter._meta.parentProperty;
     }
-    if (filter?.columnId) {
-      // Check if columnId matches a top-level definition
+    if (filter?.column_id) {
+      // Check if column_id matches a top-level definition
       const matchingDef = filterDefinition.find(
         (def) =>
-          def.propertyId === filter.columnId ||
-          def.propertyName === filter.columnId,
+          def.propertyId === filter.column_id ||
+          def.propertyName === filter.column_id,
       );
       if (matchingDef) {
         return matchingDef.propertyName || matchingDef.propertyId;
@@ -52,7 +52,10 @@ const LLMFilterRow = ({
 
       for (const def of filterDefinition) {
         if (def.dependents) {
-          const nestedMatch = findInDependents(def.dependents, filter.columnId);
+          const nestedMatch = findInDependents(
+            def.dependents,
+            filter.column_id,
+          );
           if (nestedMatch) {
             return def.propertyName || def.propertyId;
           }
@@ -63,13 +66,13 @@ const LLMFilterRow = ({
     return "";
   };
 
-  const findInDependents = (dependents, columnId) => {
+  const findInDependents = (dependents, column_id) => {
     for (const dep of dependents) {
-      if (dep.propertyId === columnId || dep.propertyName === columnId) {
+      if (dep.propertyId === column_id || dep.propertyName === column_id) {
         return dep;
       }
       if (dep.dependents) {
-        const nested = findInDependents(dep.dependents, columnId);
+        const nested = findInDependents(dep.dependents, column_id);
         if (nested) return nested;
       }
     }
@@ -81,7 +84,7 @@ const LLMFilterRow = ({
   // Helper function to render the appropriate value selector based on filter type
   const renderValueSelector = (ogDefinition) => {
     const filterType =
-      ogDefinition?.filterType?.type || filter?.filterConfig?.filterType;
+      ogDefinition?.filterType?.type || filter?.filter_config?.filter_type;
 
     switch (filterType) {
       case "boolean":
@@ -144,7 +147,7 @@ const LLMFilterRow = ({
           if (
             def.maxUsage &&
             propertyIdCount[def.propertyId] >= def.maxUsage &&
-            filter.columnId !== def.propertyId
+            filter.column_id !== def.propertyId
           ) {
             return false;
           }
@@ -206,15 +209,15 @@ const LLMFilterRow = ({
 
                 if (dependentOgDefinition?.propertyId) {
                   updateFilter(filter.id, (existingFilter) => ({
-                    columnId: dependentOgDefinition.propertyId,
-                    filterConfig: {
-                      filterType: getFilterType(dependentOgDefinition),
-                      filterOp:
+                    column_id: dependentOgDefinition.propertyId,
+                    filter_config: {
+                      filter_type: getFilterType(dependentOgDefinition),
+                      filter_op:
                         dependentOgDefinition.defaultFilter ??
                         FilterDefaultOperators[
                           dependentOgDefinition.filterType.type
                         ],
-                      filterValue:
+                      filter_value:
                         dependentOgDefinition?.defaultFilterValue ??
                         FilterDefaultValues[
                           dependentOgDefinition.filterType.type
@@ -230,8 +233,8 @@ const LLMFilterRow = ({
                 } else {
                   updateFilter(filter.id, (existingFilter) => ({
                     ...defaultFilter,
-                    filterConfig: {
-                      ...defaultFilter?.filterConfig,
+                    filter_config: {
+                      ...defaultFilter?.filter_config,
                       col_type: FilterColTypes[ogDefinition?.propertyName],
                     },
                     _meta: {
@@ -256,15 +259,15 @@ const LLMFilterRow = ({
 
                     if (dependentOgDefinition?.propertyId) {
                       updateFilter(filter.id, (existingFilter) => ({
-                        columnId: dependentOgDefinition.propertyId,
-                        filterConfig: {
-                          filterType: getFilterType(dependentOgDefinition),
-                          filterOp:
+                        column_id: dependentOgDefinition.propertyId,
+                        filter_config: {
+                          filter_type: getFilterType(dependentOgDefinition),
+                          filter_op:
                             dependentOgDefinition.defaultFilter ??
                             FilterDefaultOperators[
                               dependentOgDefinition.filterType.type
                             ],
-                          filterValue:
+                          filter_value:
                             dependentOgDefinition?.defaultFilterValue ??
                             FilterDefaultValues[
                               dependentOgDefinition.filterType.type
@@ -279,8 +282,8 @@ const LLMFilterRow = ({
                     } else {
                       updateFilter(filter.id, (existingFilter) => ({
                         ...defaultFilter,
-                        filterConfig: {
-                          ...defaultFilter?.filterConfig,
+                        filter_config: {
+                          ...defaultFilter?.filter_config,
                           col_type: FilterColTypes[ogDefinition?.propertyName],
                         },
                         _meta: {
@@ -370,11 +373,11 @@ const LLMFilterRow = ({
 
                   updateFilter(filter.id, (existingFilter) => ({
                     ...existingFilter,
-                    filterConfig: {
-                      ...existingFilter.filterConfig,
-                      filterType: e?.target?.value,
-                      filterValue: FilterDefaultValues[e?.target?.value],
-                      filterOp: FilterDefaultOperators[e?.target?.value],
+                    filter_config: {
+                      ...existingFilter.filter_config,
+                      filter_type: e?.target?.value,
+                      filter_value: FilterDefaultValues[e?.target?.value],
+                      filter_op: FilterDefaultOperators[e?.target?.value],
                     },
                   }));
                 }}
@@ -439,13 +442,13 @@ const LLMFilterRow = ({
           );
           if (ogDefinition?.propertyId) {
             updateFilter(filter.id, {
-              columnId: ogDefinition.propertyId,
-              filterConfig: {
-                filterType: getFilterType(ogDefinition),
-                filterOp:
+              column_id: ogDefinition.propertyId,
+              filter_config: {
+                filter_type: getFilterType(ogDefinition),
+                filter_op:
                   ogDefinition.defaultFilter ??
                   FilterDefaultOperators[ogDefinition.filterType.type],
-                filterValue: FilterDefaultValues[ogDefinition.filterType.type],
+                filter_value: FilterDefaultValues[ogDefinition.filterType.type],
                 col_type: FilterColTypes[ogDefinition?.propertyName],
               },
               _meta: {
@@ -455,8 +458,8 @@ const LLMFilterRow = ({
           } else {
             updateFilter(filter.id, {
               ...defaultFilter,
-              filterConfig: {
-                ...defaultFilter?.filterConfig,
+              filter_config: {
+                ...defaultFilter?.filter_config,
                 col_type: FilterColTypes[ogDefinition?.propertyName],
               },
               _meta: {
@@ -480,13 +483,13 @@ const LLMFilterRow = ({
 
               if (ogDefinition?.propertyId) {
                 updateFilter(filter.id, {
-                  columnId: ogDefinition.propertyId,
-                  filterConfig: {
-                    filterType: getFilterType(ogDefinition),
-                    filterOp:
+                  column_id: ogDefinition.propertyId,
+                  filter_config: {
+                    filter_type: getFilterType(ogDefinition),
+                    filter_op:
                       ogDefinition.defaultFilter ??
                       FilterDefaultOperators[ogDefinition.filterType.type],
-                    filterValue:
+                    filter_value:
                       FilterDefaultValues[ogDefinition.filterType.type],
                     col_type: FilterColTypes[ogDefinition?.propertyName],
                   },
@@ -497,8 +500,8 @@ const LLMFilterRow = ({
               } else {
                 updateFilter(filter.id, {
                   ...defaultFilter,
-                  filterConfig: {
-                    ...defaultFilter?.filterConfig,
+                  filter_config: {
+                    ...defaultFilter?.filter_config,
                     col_type: FilterColTypes[ogDefinition?.propertyName],
                   },
                   _meta: {
@@ -562,11 +565,11 @@ LLMFilterRow.propTypes = {
   addFilter: PropTypes.func.isRequired,
   filter: PropTypes.shape({
     id: PropTypes.string.isRequired,
-    columnId: PropTypes.string,
-    filterConfig: PropTypes.shape({
-      filterType: PropTypes.string,
-      filterOp: PropTypes.string,
-      filterValue: PropTypes.oneOfType([
+    column_id: PropTypes.string,
+    filter_config: PropTypes.shape({
+      filter_type: PropTypes.string,
+      filter_op: PropTypes.string,
+      filter_value: PropTypes.oneOfType([
         PropTypes.string,
         PropTypes.array,
         PropTypes.bool,

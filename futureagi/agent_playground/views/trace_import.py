@@ -3,7 +3,14 @@ from django.core.exceptions import ValidationError
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
+from agent_playground.serializers.contracts import AGENT_PLAYGROUND_ERROR_RESPONSES
+from agent_playground.serializers.trace_import import (
+    TraceToGraphRequestSerializer,
+    TraceToGraphResponseSerializer,
+)
 from agent_playground.services.trace_to_graph import convert_trace_to_graph
+from model_hub.utils.workspace_scope import request_workspace_filter
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 from tracer.models.trace import Trace
 
@@ -20,18 +27,28 @@ class TraceToGraphView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=TraceToGraphRequestSerializer,
+        responses={
+            201: TraceToGraphResponseSerializer,
+            **AGENT_PLAYGROUND_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
-        trace_id = request.data.get("trace_id")
-        if not trace_id:
-            return self._gm.bad_request("trace_id is required")
+        trace_id = request.validated_data["trace_id"]
 
-        # Validate trace exists and belongs to user's organization
         try:
-            trace = Trace.no_workspace_objects.get(id=trace_id)
+            trace = (
+                Trace.no_workspace_objects.select_related("project")
+                .filter(
+                    request_workspace_filter(request, field_name="project__workspace"),
+                    id=trace_id,
+                    project__organization=request.organization,
+                )
+                .get()
+            )
         except Trace.DoesNotExist:
-            return self._gm.not_found("Trace not found")
-
-        if trace.project.organization_id != request.organization.id:
             return self._gm.not_found("Trace not found")
 
         try:

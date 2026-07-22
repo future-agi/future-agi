@@ -64,8 +64,7 @@ const SelectWorkspaceChild = React.forwardRef(
     useEffect(() => {
       if (!workspaces || !currentWorkspaceId) return;
       const current = workspaces.find((ws) => ws.id === currentWorkspaceId);
-      const latestName =
-        current?.display_name || current?.displayName || current?.name;
+      const latestName = current?.display_name || current?.name;
       if (latestName && latestName !== currentWorkspaceDisplayName) {
         updateWorkspaceName(latestName);
       }
@@ -174,9 +173,7 @@ const SelectWorkspaceChild = React.forwardRef(
                   color="text.primary"
                   fontWeight={500}
                 >
-                  {workspace.display_name ||
-                    workspace.displayName ||
-                    workspace.name}
+                  {workspace.display_name || workspace.name}
                 </Typography>
                 <ShowComponent condition={workspace.id === currentWorkspaceId}>
                   <Iconify

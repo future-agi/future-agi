@@ -236,6 +236,99 @@ describe("parseVersionResponse", () => {
     expect(result.edges[0].target).toBe("n2");
   });
 
+  it("maps backend snake_case nodes and node_connections to graph data", () => {
+    const apiData = {
+      nodes: [
+        {
+          id: "n1",
+          type: "atomic",
+          name: "Source",
+          node_template_id: "tpl-backend",
+          prompt_template: {
+            prompt_template_id: "pt-1",
+            prompt_version_id: "pv-1",
+            model: "gpt-4",
+            messages: [{ role: "user", content: "Hi" }],
+            response_format: "text",
+          },
+          ports: [
+            {
+              id: "port-1",
+              key: "response",
+              display_name: "response",
+              direction: "output",
+              data_schema: { type: "string" },
+              required: true,
+            },
+          ],
+        },
+        {
+          id: "n2",
+          type: "atomic",
+          name: "Target",
+          node_template_id: "tpl-backend",
+          prompt_template: {
+            prompt_template_id: "pt-2",
+            prompt_version_id: "pv-2",
+            model: "gpt-4",
+            messages: [],
+          },
+          ports: [],
+        },
+      ],
+      node_connections: [
+        { id: "nc-backend", source_node_id: "n1", target_node_id: "n2" },
+      ],
+    };
+
+    const result = parseVersionResponse(apiData);
+
+    expect(result.nodes[0].data.node_template_id).toBe("tpl-backend");
+    expect(result.nodes[0].data.prompt_template_id).toBe("pt-1");
+    expect(result.nodes[0].data.prompt_version_id).toBe("pv-1");
+    expect(result.nodes[0].data.ports[0].display_name).toBe("response");
+    expect(result.edges).toEqual([
+      { id: "nc-backend", source: "n1", target: "n2" },
+    ]);
+  });
+
+  it("maps backend snake_case subgraph references", () => {
+    const apiData = {
+      nodes: [
+        {
+          id: "agent-1",
+          type: "subgraph",
+          name: "Nested Agent",
+          ref_graph_version_id: "version-backend",
+          ref_graph_id: "graph-backend",
+          input_mappings: [{ key: "topic", value: "source.response" }],
+          ports: [
+            {
+              id: "port-agent",
+              key: "topic",
+              display_name: "topic",
+              direction: "input",
+              data_schema: { type: "string" },
+              required: true,
+              ref_port_id: "ref-port-1",
+            },
+          ],
+        },
+      ],
+      node_connections: [],
+    };
+
+    const result = parseVersionResponse(apiData);
+
+    expect(result.nodes[0].data.graphId).toBe("graph-backend");
+    expect(result.nodes[0].data.versionId).toBe("version-backend");
+    expect(result.nodes[0].data.ref_graph_version_id).toBe("version-backend");
+    expect(result.nodes[0].data.config.payload.inputMappings).toEqual([
+      { key: "topic", value: "source.response" },
+    ]);
+    expect(result.nodes[0].data.ports[0].ref_port_id).toBe("ref-port-1");
+  });
+
   it("transforms API promptTemplate to form config (string content → block array)", () => {
     const apiData = {
       nodes: [

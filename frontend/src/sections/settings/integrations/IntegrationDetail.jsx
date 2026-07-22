@@ -1,6 +1,6 @@
 import { useState } from "react";
 import PropTypes from "prop-types";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   Alert,
   Box,
@@ -58,8 +58,16 @@ function formatInterval(seconds) {
 
 export default function IntegrationDetail() {
   const theme = useTheme();
-  const { connectionId } = useParams();
+  const { connectionId, workspaceId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const integrationsPath =
+    workspaceId &&
+    location.pathname.includes(
+      `/settings/workspace/${workspaceId}/integrations`,
+    )
+      ? paths.dashboard.settings.workspaceIntegrations(workspaceId)
+      : paths.dashboard.settings.integrations;
   const {
     data: connection,
     isLoading,
@@ -92,7 +100,7 @@ export default function IntegrationDetail() {
           size="small"
           variant="outlined"
           startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
-          onClick={() => navigate(paths.dashboard.settings.integrations)}
+          onClick={() => navigate(integrationsPath)}
           sx={{ mt: theme.spacing(1), ...backButtonSx }}
         >
           Back to Integrations
@@ -109,7 +117,7 @@ export default function IntegrationDetail() {
           size="small"
           variant="outlined"
           startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
-          onClick={() => navigate(paths.dashboard.settings.integrations)}
+          onClick={() => navigate(integrationsPath)}
           sx={{ mt: theme.spacing(1), ...backButtonSx }}
         >
           Back to Integrations
@@ -127,7 +135,7 @@ export default function IntegrationDetail() {
         size="small"
         variant="outlined"
         startIcon={<Iconify icon="formkit:left" width={16} height={16} />}
-        onClick={() => navigate(paths.dashboard.settings.integrations)}
+        onClick={() => navigate(integrationsPath)}
         sx={{ mb: theme.spacing(2), ...backButtonSx }}
       >
         Back to Integrations
@@ -352,7 +360,7 @@ export default function IntegrationDetail() {
         onClose={() => setDeleteOpen(false)}
         onDeleted={() => {
           setDeleteOpen(false);
-          navigate(paths.dashboard.settings.integrations);
+          navigate(integrationsPath);
         }}
         connection={connData}
       />

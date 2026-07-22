@@ -320,11 +320,11 @@ const BatchJobsTab = ({ config, gatewayId }) => {
       { gatewayId, requests, maxConcurrency },
       {
         onSuccess: (result) => {
-          const batchId = result?.batch_id ?? result?.batch_id;
+          const batchId = result?.batch_id;
           if (batchId) {
             setTrackedJobs((prev) => [
               {
-                batchId,
+                batch_id: batchId,
                 submittedAt: new Date().toISOString(),
                 total: requests.length,
               },
@@ -884,6 +884,7 @@ const GatewaySettingsSection = () => {
     mutationFn: async (id) => {
       const { data } = await axiosInstance.post(
         endpoints.gateway.healthCheck(id),
+        {},
       );
       return data.result;
     },

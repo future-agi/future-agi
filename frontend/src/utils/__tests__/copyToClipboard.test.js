@@ -4,20 +4,23 @@ import { logger } from "../logger";
 
 describe("copyToClipboard", () => {
   let writeTextMock;
-  let loggerErrorSpy;
+  let loggerWarnSpy;
+  let originalClipboard;
 
   beforeEach(() => {
     writeTextMock = vi.fn().mockResolvedValue(undefined);
+    originalClipboard = navigator.clipboard;
     Object.assign(navigator, {
       clipboard: { writeText: writeTextMock },
     });
-    // Silence expected error logging from the "does not throw" path so it
-    // doesn't pollute test output.
-    loggerErrorSpy = vi.spyOn(logger, "error").mockImplementation(() => {});
+    // Copy failures are now logged at WARNING (breadcrumb), not ERROR; silence
+    // it so the "does not throw" path doesn't pollute test output.
+    loggerWarnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
   });
 
   afterEach(() => {
-    loggerErrorSpy.mockRestore();
+    loggerWarnSpy.mockRestore();
+    Object.assign(navigator, { clipboard: originalClipboard });
   });
 
   it("copies a string as-is", async () => {
@@ -52,8 +55,28 @@ describe("copyToClipboard", () => {
     expect(writeTextMock).toHaveBeenCalledWith(42);
   });
 
-  it("does not throw on clipboard error", async () => {
+  it("returns true on a successful copy", async () => {
+    await expect(copyToClipboard("text")).resolves.toBe(true);
+  });
+
+  it("does not throw and returns false on clipboard error", async () => {
     writeTextMock.mockRejectedValue(new Error("denied"));
-    await expect(copyToClipboard("text")).resolves.toBeUndefined();
+    await expect(copyToClipboard("text")).resolves.toBe(false);
+  });
+
+  // Regression for the FRONTEND null-guard fix: navigator.clipboard is
+  // undefined on insecure (http) origins — must NOT throw
+  // "Cannot read properties of undefined (reading 'writeText')".
+  it("falls back to execCommand when navigator.clipboard is undefined", async () => {
+    Object.assign(navigator, { clipboard: undefined });
+    // jsdom doesn't implement execCommand — define it so we can assert the fallback.
+    const execMock = vi.fn(() => true);
+    const hadExec = "execCommand" in document;
+    document.execCommand = execMock;
+    const result = await copyToClipboard("text"); // must not throw
+    expect(writeTextMock).not.toHaveBeenCalled();
+    expect(execMock).toHaveBeenCalledWith("copy");
+    expect(result).toBe(true);
+    if (!hadExec) delete document.execCommand;
   });
 });

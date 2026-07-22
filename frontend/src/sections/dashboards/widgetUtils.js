@@ -1,5 +1,49 @@
 export const DEFAULT_DECIMALS = 2;
 
+const toAxisPayload = ({ prefixSuffix, outOfBounds, ...axis } = {}) => ({
+  ...axis,
+  ...(prefixSuffix !== undefined && { prefix_suffix: prefixSuffix }),
+  ...(outOfBounds !== undefined && { out_of_bounds: outOfBounds }),
+});
+
+const fromAxisPayload = ({ prefix_suffix, out_of_bounds, ...axis } = {}) => ({
+  ...axis,
+  ...(prefix_suffix !== undefined && { prefixSuffix: prefix_suffix }),
+  ...(out_of_bounds !== undefined && { outOfBounds: out_of_bounds }),
+});
+
+export const toAxisConfigPayload = ({
+  leftY,
+  rightY,
+  xAxis,
+  seriesAxis,
+  ...config
+} = {}) => ({
+  ...config,
+  ...(leftY !== undefined && { left_y: toAxisPayload(leftY) }),
+  ...(rightY !== undefined && { right_y: toAxisPayload(rightY) }),
+  ...(xAxis !== undefined && { x_axis: xAxis }),
+  ...(seriesAxis !== undefined && { series_axis: seriesAxis }),
+});
+
+export const fromAxisConfigPayload = ({
+  left_y,
+  leftY,
+  right_y,
+  rightY,
+  x_axis,
+  xAxis,
+  series_axis,
+  seriesAxis,
+  ...config
+} = {}) => ({
+  ...config,
+  leftY: fromAxisPayload(left_y ?? leftY),
+  rightY: fromAxisPayload(right_y ?? rightY),
+  xAxis: x_axis ?? xAxis ?? {},
+  seriesAxis: series_axis ?? seriesAxis ?? {},
+});
+
 export const escapeHtml = (str) => {
   if (typeof str !== "string") return str;
   return str
@@ -46,12 +90,6 @@ const UNIT_LESS_AGGREGATIONS = new Set([
   "fail_count",
 ]);
 
-// Units the backend may return on a metric. Anything listed as "suffix"
-// is rendered after the value (e.g. "120 ms", "5 /min"); "prefix" is for
-// currency-like indicators rendered before the value (e.g. "$3").
-// Without this mapping, non-percent units (ms, s, cents, /min, …) were
-// silently dropped, which is why latency metrics rendered with no unit
-// while percentage metrics misleadingly looked the same as latencies.
 const UNIT_RENDERING = {
   $: { prefixSuffix: "prefix" },
   "%": { prefixSuffix: "suffix" },
@@ -64,6 +102,12 @@ const UNIT_RENDERING = {
   "/min": { prefixSuffix: "suffix" },
 };
 
+export const getUnitRendering = (unit) => {
+  if (!unit) return { unit: "", prefixSuffix: "prefix" };
+  const r = UNIT_RENDERING[unit];
+  return r ? { unit, ...r } : { unit, prefixSuffix: "suffix", separator: " " };
+};
+
 export const getSuggestedUnitConfig = (metricConfigs = []) => {
   if (
     metricConfigs.some((metric) =>
@@ -72,11 +116,6 @@ export const getSuggestedUnitConfig = (metricConfigs = []) => {
   ) {
     return { unit: "", prefixSuffix: "prefix" };
   }
-  // Don't filter empty strings here — a chart that mixes a unit-less
-  // metric (e.g. ``call_count`` with unit "") and a metric with a unit
-  // (e.g. ``duration`` with unit "s") should fall back to no suggested
-  // unit instead of inheriting the non-empty one. Otherwise call_count
-  // ends up rendered as ``35 s`` because it shares the axis suggestion.
   const allUnits = metricConfigs.map((metric) => metric?.unit ?? "");
   const uniqueUnits = [...new Set(allUnits)];
   if (uniqueUnits.length !== 1 || !uniqueUnits[0]) {
@@ -86,6 +125,65 @@ export const getSuggestedUnitConfig = (metricConfigs = []) => {
   const rendering = UNIT_RENDERING[unit];
   if (rendering) return { unit, ...rendering };
   return { unit: "", prefixSuffix: "prefix" };
+};
+
+export const getAggColumnLabel = (metrics, allAggregations) => {
+  if (!metrics?.length) return "Average";
+  const uniqueAggs = [...new Set(metrics.map((m) => m.aggregation || "avg"))];
+  if (uniqueAggs.length === 1) {
+    return (
+      allAggregations.find((a) => a.value === uniqueAggs[0])?.label ?? "Average"
+    );
+  }
+  return "Agg.";
+};
+
+// True if any series entry has at least one data point.
+export const seriesHasDataPoints = (series = []) =>
+  series.some((s) => (s?.data || []).length > 0);
+
+// ApexCharts silently clips any series point outside yaxis min/max — if
+// every point in every series falls outside the configured bounds, the
+// chart renders fully blank with no indication why. Surface that as a
+// message instead of an empty canvas.
+export const getYAxisRangeWarning = (series = [], axisConfig = {}) => {
+  const rightCfg = axisConfig?.rightY || {};
+  const seriesAxis = axisConfig?.seriesAxis || {};
+  const hasRightAxis =
+    rightCfg.visible && Object.values(seriesAxis).some((s) => s === "right");
+  if (hasRightAxis) return null;
+
+  const leftAxisConfig = axisConfig?.leftY || {};
+  const parseBound = (value) => {
+    if (value === undefined || value === "") return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  };
+  const min = parseBound(leftAxisConfig.min);
+  const max = parseBound(leftAxisConfig.max);
+  if (min == null && max == null) return null;
+
+  let sawPoint = false;
+  for (const s of series) {
+    for (const pt of s.data || []) {
+      if (pt?.y == null) continue;
+      const y = Number(pt.y);
+      if (!Number.isFinite(y)) continue;
+      sawPoint = true;
+      if ((min == null || y >= min) && (max == null || y <= max)) {
+        return null;
+      }
+    }
+  }
+  if (!sawPoint) return null;
+
+  if (min != null && max != null) {
+    return `Data is outside your configured Y-axis range (${min}–${max}). Adjust bounds to see your data.`;
+  }
+  if (min != null) {
+    return `Data is outside your configured Y-axis minimum (${min}). Adjust bounds to see your data.`;
+  }
+  return `Data is outside your configured Y-axis maximum (${max}). Adjust bounds to see your data.`;
 };
 
 export const formatValueWithConfig = (

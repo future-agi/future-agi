@@ -445,7 +445,10 @@ const LeftInputSection = ({
     onError: (error) => {
       if (!handleCreditError(error)) {
         enqueueSnackbar(
-          error?.result || error?.detail || error?.message || "Failed to run evaluation",
+          error?.result ||
+            error?.detail ||
+            error?.message ||
+            "Failed to run evaluation",
           { variant: "error" },
         );
       }

@@ -781,6 +781,11 @@ const DatapointDrawerChild = ({
                   sourceId: runEval?.evalMetricId
                     ? runEval?.evalMetricId
                     : datapoint?.sourceId,
+                  value:
+                    runEval?.cell_value ??
+                    runEval?.value ??
+                    datapoint?.cell_value ??
+                    datapoint?.value,
                   valueInfos: runEval?.valueInfos
                     ? runEval?.valueInfos
                     : datapoint?.valueInfos,
@@ -930,7 +935,7 @@ const DatapointDrawerChild = ({
             return (
               <div key={key}>
                 {isAudioColumn ? (
-                  value?.cellValue ? (
+                  value?.cell_value ? (
                     <AudioDatapointCard value={value} column={col} />
                   ) : (
                     <DatapointCard
@@ -947,7 +952,7 @@ const DatapointDrawerChild = ({
                     />
                   )
                 ) : isImageColumn ? (
-                  value?.cellValue ? (
+                  value?.cell_value ? (
                     <ImageDatapointCard value={value} column={col} />
                   ) : (
                     <DatapointCard

@@ -49,7 +49,7 @@ export function fUsage(value, unit) {
   if (value >= 1e3) return `${(value / 1e3).toFixed(1)}K${suffix}`;
   if (Number.isInteger(value)) return `${value.toLocaleString()}${suffix}`;
   if (value < 1) {
-  
+
     const order = Math.floor(Math.log10(Math.abs(value)));
     const decimals = Math.min(6, Math.max(2, -order + 1));
     return `${Number(value.toFixed(decimals))}${suffix}`;

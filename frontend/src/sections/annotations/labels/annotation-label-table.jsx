@@ -19,6 +19,7 @@ import { fDate } from "src/utils/format-time";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import { AG_THEME_OVERRIDES } from "src/theme/ag-theme";
 import "src/styles/clean-data-table.css";
+import { getAnnotationLabelUsageCount } from "./annotation-label-usage";
 
 const SkeletonCell = () => (
   <Box sx={{ display: "flex", alignItems: "center", height: "100%", px: 1 }}>
@@ -92,7 +93,9 @@ function UsedInCellRenderer({ data }) {
   if (!data) return null;
   return (
     <Box sx={{ display: "flex", alignItems: "center", height: "100%" }}>
-      <Typography variant="body2">{data.usage_count ?? 0}</Typography>
+      <Typography variant="body2">
+        {getAnnotationLabelUsageCount(data)}
+      </Typography>
     </Box>
   );
 }
@@ -122,6 +125,9 @@ function ActionsCellRenderer({ data, context }) {
     >
       <IconButton
         size="small"
+        aria-label={
+          context?.archivedView ? "Restore label actions" : "Label actions"
+        }
         onClick={(e) => {
           e.stopPropagation();
           context?.onOpenMenu(e, data);
@@ -160,6 +166,8 @@ AnnotationLabelTable.propTypes = {
   onEdit: PropTypes.func,
   onDuplicate: PropTypes.func,
   onArchive: PropTypes.func,
+  onRestore: PropTypes.func,
+  archivedView: PropTypes.bool,
 };
 
 export default function AnnotationLabelTable({
@@ -173,6 +181,8 @@ export default function AnnotationLabelTable({
   onEdit,
   onDuplicate,
   onArchive,
+  onRestore,
+  archivedView = false,
 }) {
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.noHeaderBorder);
   const gridRef = useRef(null);
@@ -195,6 +205,7 @@ export default function AnnotationLabelTable({
     if (action === "edit") onEdit?.(row);
     else if (action === "duplicate") onDuplicate?.(row);
     else if (action === "archive") onArchive?.(row);
+    else if (action === "restore") onRestore?.(row);
   };
 
   const columnDefs = useMemo(
@@ -221,7 +232,7 @@ export default function AnnotationLabelTable({
         cellRenderer: loading ? SkeletonCell : DescriptionCellRenderer,
       },
       {
-        field: "usage_count",
+        field: "annotation_count",
         headerName: "Used In",
         flex: 0.8,
         minWidth: 100,
@@ -260,17 +271,18 @@ export default function AnnotationLabelTable({
   );
 
   const gridContext = useMemo(
-    () => ({ onOpenMenu: handleOpenMenu }),
-    [handleOpenMenu],
+    () => ({ onOpenMenu: handleOpenMenu, archivedView }),
+    [handleOpenMenu, archivedView],
   );
 
   const onCellClicked = useCallback(
     (event) => {
       if (!event?.data) return;
+      if (archivedView) return;
       if (event.column?.getColId() === "actions") return;
       onEdit?.(event.data);
     },
-    [onEdit],
+    [archivedView, onEdit],
   );
 
   const getRowId = useCallback((params) => params.data?.id, []);
@@ -415,30 +427,49 @@ export default function AnnotationLabelTable({
         transformOrigin={{ vertical: "top", horizontal: "right" }}
       >
         <Box sx={{ py: 0.5 }}>
-          <MenuItem onClick={() => handleAction("edit")}>
-            <SvgColor
-              src="/assets/icons/ic_edit.svg"
-              sx={{ width: 18, height: 18, mr: 1 }}
-            />
-            Edit
-          </MenuItem>
-          <MenuItem onClick={() => handleAction("duplicate")}>
-            <SvgColor
-              src="/assets/icons/ic_duplicate.svg"
-              sx={{ width: 18, height: 18, mr: 1 }}
-            />
-            Duplicate
-          </MenuItem>
           <MenuItem
-            onClick={() => handleAction("archive")}
-            sx={{ color: "error.main" }}
+            onClick={() => handleAction(archivedView ? "restore" : "edit")}
           >
-            <SvgColor
-              src="/assets/icons/ic_delete.svg"
-              sx={{ width: 18, height: 18, mr: 1, color: "error.main" }}
-            />
-            Archive
+            {archivedView ? (
+              <>
+                <Iconify
+                  icon="solar:archive-up-bold"
+                  width={18}
+                  sx={{ mr: 1 }}
+                />
+                Restore
+              </>
+            ) : (
+              <>
+                <SvgColor
+                  src="/assets/icons/ic_edit.svg"
+                  sx={{ width: 18, height: 18, mr: 1 }}
+                />
+                Edit
+              </>
+            )}
           </MenuItem>
+          {!archivedView && (
+            <MenuItem onClick={() => handleAction("duplicate")}>
+              <SvgColor
+                src="/assets/icons/ic_duplicate.svg"
+                sx={{ width: 18, height: 18, mr: 1 }}
+              />
+              Duplicate
+            </MenuItem>
+          )}
+          {!archivedView && (
+            <MenuItem
+              onClick={() => handleAction("archive")}
+              sx={{ color: "error.main" }}
+            >
+              <SvgColor
+                src="/assets/icons/ic_delete.svg"
+                sx={{ width: 18, height: 18, mr: 1, color: "error.main" }}
+              />
+              Archive
+            </MenuItem>
+          )}
         </Box>
       </Popover>
     </>

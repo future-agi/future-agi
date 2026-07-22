@@ -16,13 +16,13 @@ import logger from "../../utils/logger";
  *  {
  *    "propertyName": "Name of property 1",
  *    "propertyId" : "" // parent property ID for which the filter value in eventually set
- *    "filterType" : "filterType" // filter type (options, number, text)
+ *    "filter_type" : "filter_type" // filter type (options, number, text)
  *    "dependents" : [
  *      {
  *        "stringConnector" : "is",
  *        "propertyName": "Dependent property name 1",
  *        "propertyId" : "" // dependent property ID (on priority) for which the filter value in eventually set
- *        "filterType" : "filterType" // filter type (options, number),
+ *        "filter_type" : "filter_type" // filter type (options, number),
  *        "options" : [
  *          {
  *            "value": "value 1",
@@ -55,6 +55,7 @@ const ComplexFilter = ({
   setFilters,
   filterDefinition,
   onClose,
+  className,
 }) => {
   const addFilter = useCallback(() => {
     setFilters(() => [...filters, { ...defaultFilter, id: getRandomId() }]);
@@ -62,8 +63,8 @@ const ComplexFilter = ({
   const propertyIdCount = useMemo(() => {
     logger.debug({ filters });
     return filters.reduce((acc, curr) => {
-      if (curr.columnId) {
-        acc[curr.columnId] = (acc[curr.columnId] || 0) + 1;
+      if (curr.column_id) {
+        acc[curr.column_id] = (acc[curr.column_id] || 0) + 1;
       }
       return acc;
     }, {});
@@ -108,7 +109,7 @@ const ComplexFilter = ({
         if (
           def.maxUsage &&
           propertyIdCount[def.propertyId] >= def.maxUsage &&
-          filter.columnId !== def.propertyId
+          filter.column_id !== def.propertyId
         ) {
           return false;
         }
@@ -141,6 +142,7 @@ const ComplexFilter = ({
 
   return (
     <Box
+      className={className}
       sx={{
         display: "flex",
         flexDirection: "column",
@@ -159,6 +161,7 @@ const ComplexFilter = ({
         </Typography>
       </Box> */}
       <Box
+        className="cf-rows"
         sx={{
           border: "1px solid",
           borderRadius: "8px",
@@ -181,6 +184,7 @@ ComplexFilter.propTypes = {
   setFilters: PropTypes.func,
   filterDefinition: PropTypes.array,
   onClose: PropTypes.func,
+  className: PropTypes.string,
 };
 
 export default ComplexFilter;

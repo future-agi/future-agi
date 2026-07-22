@@ -5,7 +5,7 @@ export const useGetMetricOptions = (id, metricId = null, options = {}) => {
   return useQuery({
     queryKey: ["dataset-options", id, metricId],
     queryFn: () =>
-      axios.get(`${endpoints.dataset.options}${id}/`, {
+      axios.get(endpoints.dataset.options(id), {
         params: { metric_id: metricId },
       }),
     select: (d) => d.data,
@@ -18,7 +18,7 @@ export const useGetAllCustomMetrics = (id, options) => {
   return useQuery({
     ...options,
     queryKey: ["all-custom-metric", id],
-    queryFn: () => axios.get(`${endpoints.customMetric.all}${id}/`),
+    queryFn: () => axios.get(endpoints.customMetric.all(id)),
     staleTime: 30 * 60 * 1000, // 30 min stale time
     select: (d) => d.data?.metrics,
   });
@@ -28,7 +28,7 @@ export const useGetMetricTagOptions = (id, options) => {
   return useQuery({
     ...options,
     queryKey: ["metric-tag-options", id],
-    queryFn: () => axios.get(`${endpoints.customMetric.tagOptions}${id}/`),
+    queryFn: () => axios.get(endpoints.customMetric.tagOptions(id)),
     staleTime: 30 * 60 * 1000, // 30 min stale time
     select: (d) => d.data,
   });

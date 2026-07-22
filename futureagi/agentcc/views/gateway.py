@@ -5,8 +5,9 @@ import uuid
 import structlog
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Avg, Count, Max, Q
+from django.db.models import Avg, Count, Q
 from django.utils import timezone
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ViewSet
@@ -18,13 +19,44 @@ from agentcc.org_config_defaults import (
     default_cost_tracking_config,
     normalize_cost_tracking_config,
 )
+from agentcc.serializers.contracts import (
+    AgentccEmptyRequestSerializer,
+    AgentccErrorResponseSerializer,
+    AgentccListResultResponseSerializer,
+    GatewayBatchCancelResponseSerializer,
+    GatewayBatchDetailResponseSerializer,
+    GatewayBatchRequestSerializer,
+    GatewayBatchSubmitRequestSerializer,
+    GatewayBatchSubmitResponseSerializer,
+    GatewayBudgetRemoveRequestSerializer,
+    GatewayBudgetSetRequestSerializer,
+    GatewayConfigPatchRequestSerializer,
+    GatewayConfigResponseSerializer,
+    GatewayDetailResponseSerializer,
+    GatewayHealthResponseSerializer,
+    GatewayListResponseSerializer,
+    GatewayMCPGuardrailsUpdateRequestSerializer,
+    GatewayMCPServerRemoveRequestSerializer,
+    GatewayMCPServerUpdateRequestSerializer,
+    GatewayMCPStatusResponseSerializer,
+    GatewayMCPToolTestRequestSerializer,
+    GatewayMCPToolTestResponseSerializer,
+    GatewayMutationResponseSerializer,
+    GatewayNamedConfigRequestSerializer,
+    GatewayNameRequestSerializer,
+    GatewayPlaygroundTestRequestSerializer,
+    GatewayPlaygroundTestResponseSerializer,
+    GatewayProvidersResponseSerializer,
+    GatewayProviderUpdateRequestSerializer,
+    GatewayToggleGuardrailRequestSerializer,
+)
 from agentcc.services.config_push import push_all_org_configs, push_org_config
 from agentcc.services.gateway_client import (
-    AGENTCC_ADMIN_TOKEN,
     AGENTCC_GATEWAY_URL,
     GatewayClientError,
     get_gateway_client,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -39,6 +71,16 @@ AGENTCC_GATEWAY_PUBLIC_URL = (
     os.environ.get("AGENTCC_GATEWAY_PUBLIC_URL", "") or AGENTCC_GATEWAY_URL
 )
 
+GATEWAY_BAD_REQUEST_RESPONSES = {
+    400: AgentccErrorResponseSerializer,
+}
+GATEWAY_NOT_FOUND_RESPONSES = {
+    404: AgentccErrorResponseSerializer,
+}
+GATEWAY_BAD_REQUEST_OR_NOT_FOUND_RESPONSES = {
+    **GATEWAY_BAD_REQUEST_RESPONSES,
+    **GATEWAY_NOT_FOUND_RESPONSES,
+}
 
 _BUDGET_LEVEL_KEY_ALIASES = {
     "orgLimit": "org_limit",
@@ -100,6 +142,9 @@ class AgentccGatewayViewSet(ViewSet):
     No DB model — returns a virtual singleton gateway with live health.
     """
 
+    # Keep action contracts explicit: each endpoint owns its success serializer,
+    # while shared error serializers live at module level. If this file grows
+    # further, split by gateway surface instead of hiding contracts in factories.
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
@@ -114,6 +159,12 @@ class AgentccGatewayViewSet(ViewSet):
     # list / retrieve — virtual gateway with live health
     # ------------------------------------------------------------------
 
+    @swagger_auto_schema(
+        responses={
+            200: GatewayListResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        }
+    )
     def list(self, request, *args, **kwargs):
         try:
             status = "healthy"
@@ -134,6 +185,12 @@ class AgentccGatewayViewSet(ViewSet):
             logger.exception("gateway_list_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @swagger_auto_schema(
+        responses={
+            200: GatewayDetailResponseSerializer,
+            **GATEWAY_NOT_FOUND_RESPONSES,
+        }
+    )
     def retrieve(self, request, *args, **kwargs):
         """Accept any pk and ignore it — there is only one gateway."""
         try:
@@ -176,6 +233,14 @@ class AgentccGatewayViewSet(ViewSet):
     # health_check
     # ------------------------------------------------------------------
 
+    @validated_request(
+        request_serializer=AgentccEmptyRequestSerializer,
+        responses={
+            200: GatewayHealthResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"])
     def health_check(self, request, pk=None):
         try:
@@ -240,6 +305,12 @@ class AgentccGatewayViewSet(ViewSet):
     # config / reload / update-config
     # ------------------------------------------------------------------
 
+    @swagger_auto_schema(
+        responses={
+            200: GatewayConfigResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        }
+    )
     @action(detail=True, methods=["get"])
     def config(self, request, pk=None):
         try:
@@ -304,6 +375,14 @@ class AgentccGatewayViewSet(ViewSet):
             logger.exception("config_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=AgentccEmptyRequestSerializer,
+        responses={
+            200: GatewayMutationResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"])
     def reload(self, request, pk=None):
         """Re-push this org's config to the gateway."""
@@ -318,12 +397,20 @@ class AgentccGatewayViewSet(ViewSet):
             logger.exception("reload_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=GatewayConfigPatchRequestSerializer,
+        responses={
+            200: GatewayMutationResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="update-config")
     def update_config(self, request, pk=None):
         """Patch one or more JSON fields on the org's active config and push."""
         try:
             org = self._current_org(request)
-            config_patch = request.data
+            config_patch = request.validated_data
             if not config_patch or not isinstance(config_patch, dict):
                 return self._gm.bad_request("Config patch must be a JSON object")
 
@@ -388,13 +475,21 @@ class AgentccGatewayViewSet(ViewSet):
     # update-provider / remove-provider
     # ------------------------------------------------------------------
 
+    @validated_request(
+        request_serializer=GatewayProviderUpdateRequestSerializer,
+        responses={
+            200: GatewayMutationResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="update-provider")
     def update_provider(self, request, pk=None):
         """Add or update a provider credential for the org, then push config."""
         try:
             org = self._current_org(request)
-            provider_name = request.data.get("name")
-            provider_config = request.data.get("config")
+            provider_name = request.validated_data.get("name")
+            provider_config = request.validated_data.get("config")
             if not provider_name or not provider_config:
                 return self._gm.bad_request("name and config are required")
 
@@ -456,11 +551,11 @@ class AgentccGatewayViewSet(ViewSet):
                 "display_name": provider_config.get("display_name", "")
                 or provider_name,
             }
-            lookup = dict(
-                organization=org,
-                provider_name=provider_name,
-                deleted=False,
-            )
+            lookup = {
+                "organization": org,
+                "provider_name": provider_name,
+                "deleted": False,
+            }
             with transaction.atomic():
                 try:
                     cred = AgentccProviderCredential.no_workspace_objects.select_for_update().get(
@@ -500,12 +595,20 @@ class AgentccGatewayViewSet(ViewSet):
             logger.exception("update_provider_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=GatewayNameRequestSerializer,
+        responses={
+            200: GatewayMutationResponseSerializer,
+            **GATEWAY_BAD_REQUEST_OR_NOT_FOUND_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="remove-provider")
     def remove_provider(self, request, pk=None):
         """Soft-delete a provider credential and push config."""
         try:
             org = self._current_org(request)
-            provider_name = request.data.get("name")
+            provider_name = request.validated_data.get("name")
             if not provider_name:
                 return self._gm.bad_request("name is required")
 
@@ -536,12 +639,20 @@ class AgentccGatewayViewSet(ViewSet):
     # guardrails
     # ------------------------------------------------------------------
 
+    @validated_request(
+        request_serializer=GatewayToggleGuardrailRequestSerializer,
+        responses={
+            200: GatewayMutationResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="toggle-guardrail")
     def toggle_guardrail(self, request, pk=None):
         try:
             org = self._current_org(request)
-            guardrail_name = request.data.get("name")
-            enabled = request.data.get("enabled")
+            guardrail_name = request.validated_data.get("name")
+            enabled = request.validated_data.get("enabled")
             if not guardrail_name or enabled is None:
                 return self._gm.bad_request("name and enabled are required")
 
@@ -599,6 +710,12 @@ class AgentccGatewayViewSet(ViewSet):
             logger.exception("toggle_guardrail_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @swagger_auto_schema(
+        responses={
+            200: AgentccListResultResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        }
+    )
     @action(detail=False, methods=["get"], url_path="protect-templates")
     def protect_templates(self, request):
         """Return eval templates compatible with the FI protect guardrail."""
@@ -637,12 +754,20 @@ class AgentccGatewayViewSet(ViewSet):
             logger.exception("protect_templates_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=GatewayNamedConfigRequestSerializer,
+        responses={
+            200: GatewayMutationResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="update-guardrail")
     def update_guardrail(self, request, pk=None):
         try:
             org = self._current_org(request)
-            guardrail_name = request.data.get("name")
-            guardrail_config = request.data.get("config")
+            guardrail_name = request.validated_data.get("name")
+            guardrail_config = request.validated_data.get("config")
             if not guardrail_name or not guardrail_config:
                 return self._gm.bad_request("name and config are required")
 
@@ -683,6 +808,14 @@ class AgentccGatewayViewSet(ViewSet):
     # test-playground
     # ------------------------------------------------------------------
 
+    @validated_request(
+        request_serializer=GatewayPlaygroundTestRequestSerializer,
+        responses={
+            200: GatewayPlaygroundTestResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="test-playground")
     def test_playground(self, request, pk=None):
         """Send a real chat completion through the gateway to test guardrails."""
@@ -690,9 +823,9 @@ class AgentccGatewayViewSet(ViewSet):
         try:
             client = get_gateway_client()
 
-            prompt = request.data.get("prompt", "").strip()
-            model = request.data.get("model", "")
-            system_prompt = request.data.get("system_prompt", "")
+            prompt = request.validated_data.get("prompt", "").strip()
+            model = request.validated_data.get("model", "")
+            system_prompt = request.validated_data.get("system_prompt", "")
             if not prompt:
                 return self._gm.bad_request("prompt is required")
 
@@ -819,12 +952,20 @@ class AgentccGatewayViewSet(ViewSet):
     # budgets
     # ------------------------------------------------------------------
 
+    @validated_request(
+        request_serializer=GatewayBudgetSetRequestSerializer,
+        responses={
+            200: GatewayMutationResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="set-budget")
     def set_budget(self, request, pk=None):
         try:
             org = self._current_org(request)
-            level = request.data.get("level")
-            budget_config = request.data.get("config")
+            level = request.validated_data.get("level")
+            budget_config = request.validated_data.get("config")
             if not level or not budget_config:
                 return self._gm.bad_request("level and config are required")
 
@@ -854,11 +995,19 @@ class AgentccGatewayViewSet(ViewSet):
             logger.exception("set_budget_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=GatewayBudgetRemoveRequestSerializer,
+        responses={
+            200: GatewayMutationResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="remove-budget")
     def remove_budget(self, request, pk=None):
         try:
             org = self._current_org(request)
-            level = request.data.get("level")
+            level = request.validated_data.get("level")
             if not level:
                 return self._gm.bad_request("level is required")
 
@@ -886,12 +1035,20 @@ class AgentccGatewayViewSet(ViewSet):
 
     # --- Batch API proxy ---
 
+    @validated_request(
+        request_serializer=GatewayBatchSubmitRequestSerializer,
+        responses={
+            200: GatewayBatchSubmitResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="submit-batch")
     def submit_batch(self, request, pk=None):
         try:
             client = get_gateway_client()
-            requests_list = request.data.get("requests", [])
-            max_concurrency = request.data.get("max_concurrency", 5)
+            requests_list = request.validated_data.get("requests", [])
+            max_concurrency = request.validated_data.get("max_concurrency", 5)
             if not requests_list:
                 return self._gm.bad_request("requests array is required")
             result = client.submit_batch(requests_list, max_concurrency)
@@ -906,6 +1063,12 @@ class AgentccGatewayViewSet(ViewSet):
             logger.exception("submit_batch_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @swagger_auto_schema(
+        responses={
+            200: GatewayBatchDetailResponseSerializer,
+            **GATEWAY_BAD_REQUEST_OR_NOT_FOUND_RESPONSES,
+        }
+    )
     @action(detail=True, methods=["get"], url_path="get-batch")
     def get_batch(self, request, pk=None):
         try:
@@ -924,11 +1087,19 @@ class AgentccGatewayViewSet(ViewSet):
             logger.exception("get_batch_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=GatewayBatchRequestSerializer,
+        responses={
+            200: GatewayBatchCancelResponseSerializer,
+            **GATEWAY_BAD_REQUEST_OR_NOT_FOUND_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="cancel-batch")
     def cancel_batch(self, request, pk=None):
         try:
             client = get_gateway_client()
-            batch_id = request.data.get("batch_id")
+            batch_id = request.validated_data.get("batch_id")
             if not batch_id:
                 return self._gm.bad_request("batch_id is required")
             owner = cache.get(f"agentcc_batch:{batch_id}")
@@ -942,6 +1113,12 @@ class AgentccGatewayViewSet(ViewSet):
             logger.exception("cancel_batch_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @swagger_auto_schema(
+        responses={
+            200: GatewayProvidersResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        }
+    )
     @action(detail=True, methods=["get"])
     def providers(self, request, pk=None):
         try:
@@ -1046,6 +1223,12 @@ class AgentccGatewayViewSet(ViewSet):
 
     # --- MCP ---
 
+    @swagger_auto_schema(
+        responses={
+            200: GatewayMCPStatusResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        }
+    )
     @action(detail=True, methods=["get"], url_path="mcp-status")
     def mcp_status(self, request, pk=None):
         try:
@@ -1088,13 +1271,21 @@ class AgentccGatewayViewSet(ViewSet):
                         "tools": 0,
                         "resources": 0,
                         "prompts": 0,
-                        "servers": list(servers.keys()),
+                        "servers": [
+                            {"id": server_id, "status": "configured"}
+                            for server_id in servers.keys()
+                        ],
                     }
                 )
         except Exception as e:
             logger.exception("mcp_status_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @swagger_auto_schema(
+        responses={
+            200: AgentccListResultResponseSerializer,
+        }
+    )
     @action(detail=True, methods=["get"], url_path="mcp-tools")
     def mcp_tools(self, request, pk=None):
         try:
@@ -1122,12 +1313,20 @@ class AgentccGatewayViewSet(ViewSet):
             logger.debug("mcp_tools unavailable: %s", e)
             return self._gm.success_response([])
 
+    @validated_request(
+        request_serializer=GatewayMCPServerUpdateRequestSerializer,
+        responses={
+            200: GatewayMutationResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="update-mcp-server")
     def update_mcp_server(self, request, pk=None):
         try:
             org = self._current_org(request)
-            server_id = request.data.get("server_id")
-            server_config = request.data.get("config")
+            server_id = request.validated_data.get("server_id")
+            server_config = request.validated_data.get("config")
             if not server_id or not server_config:
                 return self._gm.bad_request("server_id and config are required")
 
@@ -1157,11 +1356,19 @@ class AgentccGatewayViewSet(ViewSet):
             logger.exception("update_mcp_server_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=GatewayMCPServerRemoveRequestSerializer,
+        responses={
+            200: GatewayMutationResponseSerializer,
+            **GATEWAY_BAD_REQUEST_OR_NOT_FOUND_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="remove-mcp-server")
     def remove_mcp_server(self, request, pk=None):
         try:
             org = self._current_org(request)
-            server_id = request.data.get("server_id")
+            server_id = request.validated_data.get("server_id")
             if not server_id:
                 return self._gm.bad_request("server_id is required")
 
@@ -1196,11 +1403,19 @@ class AgentccGatewayViewSet(ViewSet):
             logger.exception("remove_mcp_server_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=GatewayMCPGuardrailsUpdateRequestSerializer,
+        responses={
+            200: GatewayMutationResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="update-mcp-guardrails")
     def update_mcp_guardrails(self, request, pk=None):
         try:
             org = self._current_org(request)
-            guardrail_config = request.data.get("config")
+            guardrail_config = request.validated_data.get("config")
             if not guardrail_config:
                 return self._gm.bad_request("config is required")
 
@@ -1227,6 +1442,14 @@ class AgentccGatewayViewSet(ViewSet):
             logger.exception("update_mcp_guardrails_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @validated_request(
+        request_serializer=GatewayMCPToolTestRequestSerializer,
+        responses={
+            200: GatewayMCPToolTestResponseSerializer,
+            **GATEWAY_BAD_REQUEST_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     @action(detail=True, methods=["post"], url_path="test-mcp-tool")
     def test_mcp_tool(self, request, pk=None):
         try:
@@ -1239,8 +1462,8 @@ class AgentccGatewayViewSet(ViewSet):
                 return self._gm.bad_request("No MCP servers configured for this org")
 
             client = get_gateway_client()
-            name = request.data.get("name")
-            arguments = request.data.get("arguments", {})
+            name = request.validated_data.get("name")
+            arguments = request.validated_data.get("arguments", {})
             if not name:
                 return self._gm.bad_request("tool name is required")
             result = client.mcp_test_tool(name, arguments)
@@ -1251,6 +1474,11 @@ class AgentccGatewayViewSet(ViewSet):
             logger.exception("test_mcp_tool_error", error=str(e))
             return self._gm.bad_request(str(e))
 
+    @swagger_auto_schema(
+        responses={
+            200: AgentccListResultResponseSerializer,
+        }
+    )
     @action(detail=True, methods=["get"], url_path="mcp-resources")
     def mcp_resources(self, request, pk=None):
         try:
@@ -1278,6 +1506,11 @@ class AgentccGatewayViewSet(ViewSet):
             logger.debug("mcp_resources unavailable: %s", e)
             return self._gm.success_response([])
 
+    @swagger_auto_schema(
+        responses={
+            200: AgentccListResultResponseSerializer,
+        }
+    )
     @action(detail=True, methods=["get"], url_path="mcp-prompts")
     def mcp_prompts(self, request, pk=None):
         try:
@@ -1349,47 +1582,49 @@ class AgentccGatewayViewSet(ViewSet):
                 .first()
             )
             if not active_config:
-                active_config = AgentccOrgConfig.no_workspace_objects.create(
+                new_config = AgentccOrgConfig(
                     organization=org,
                     version=1,
                     is_active=True,
                     cost_tracking=default_cost_tracking_config(),
+                    created_by=user,
+                    change_description=desc or "Config update v1",
                 )
+            else:
+                # Derive next version from locked active config — safe because
+                # select_for_update prevents concurrent reads of this row.
+                next_version = active_config.version + 1
 
-            # Derive next version from locked active config — safe because
-            # select_for_update prevents concurrent reads of this row.
-            next_version = active_config.version + 1
+                AgentccOrgConfig.no_workspace_objects.filter(
+                    organization=org,
+                    is_active=True,
+                    deleted=False,
+                ).update(is_active=False)
 
-            AgentccOrgConfig.no_workspace_objects.filter(
-                organization=org,
-                is_active=True,
-                deleted=False,
-            ).update(is_active=False)
-
-            new_config = AgentccOrgConfig(
-                organization=org,
-                version=next_version,
-                guardrails=active_config.guardrails,
-                routing=active_config.routing,
-                cache=active_config.cache,
-                rate_limiting=active_config.rate_limiting,
-                budgets=active_config.budgets,
-                cost_tracking=normalize_cost_tracking_config(
-                    active_config.cost_tracking
-                ),
-                ip_acl=active_config.ip_acl,
-                alerting=active_config.alerting,
-                privacy=active_config.privacy,
-                tool_policy=active_config.tool_policy,
-                mcp=active_config.mcp,
-                a2a=active_config.a2a,
-                audit=active_config.audit,
-                model_database=active_config.model_database,
-                model_map=active_config.model_map,
-                is_active=True,
-                created_by=user,
-                change_description=desc or f"Config update v{next_version}",
-            )
+                new_config = AgentccOrgConfig(
+                    organization=org,
+                    version=next_version,
+                    guardrails=active_config.guardrails,
+                    routing=active_config.routing,
+                    cache=active_config.cache,
+                    rate_limiting=active_config.rate_limiting,
+                    budgets=active_config.budgets,
+                    cost_tracking=normalize_cost_tracking_config(
+                        active_config.cost_tracking
+                    ),
+                    ip_acl=active_config.ip_acl,
+                    alerting=active_config.alerting,
+                    privacy=active_config.privacy,
+                    tool_policy=active_config.tool_policy,
+                    mcp=active_config.mcp,
+                    a2a=active_config.a2a,
+                    audit=active_config.audit,
+                    model_database=active_config.model_database,
+                    model_map=active_config.model_map,
+                    is_active=True,
+                    created_by=user,
+                    change_description=desc or f"Config update v{next_version}",
+                )
             updater_fn(new_config)
             new_config.save()
 

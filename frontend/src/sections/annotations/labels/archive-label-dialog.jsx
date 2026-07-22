@@ -15,6 +15,7 @@ import {
   annotationLabelEndpoints,
   annotationLabelKeys,
 } from "src/api/annotation-labels/annotation-labels";
+import { getAnnotationLabelUsageCount } from "./annotation-label-usage";
 
 ArchiveLabelDialog.propTypes = {
   label: PropTypes.object,
@@ -27,7 +28,7 @@ export default function ArchiveLabelDialog({ label, onClose }) {
 
   if (!label) return null;
 
-  const usageCount = label.usage_count ?? 0;
+  const usageCount = getAnnotationLabelUsageCount(label);
 
   const handleArchive = () => {
     // Capture label ID before component unmounts

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from rest_framework.response import Response
 
+from tfc.utils.api_errors import build_error_envelope
+
 _TURING_MODELS = frozenset(
     {
         "turing_large",
@@ -41,15 +43,21 @@ def voice_sim_oss_gate_response() -> Response | None:
     except ImportError:
         pass  # ee.usage absent → treat as OSS
 
+    message = (
+        "Voice simulation is not available on OSS. "
+        "Upgrade to cloud or enterprise to run voice calls."
+    )
     return Response(
-        {
-            "error": (
-                "Voice simulation is not available on OSS. "
-                "Upgrade to cloud or enterprise to run voice calls."
-            ),
-            "upgrade_required": True,
-            "feature": "voice_sim",
-        },
+        build_error_envelope(
+            message,
+            status_code=402,
+            error_type="entitlement_error",
+            code="ENTITLEMENT_DENIED",
+            extra={
+                "upgrade_required": True,
+                "feature": "voice_sim",
+            },
+        ),
         status=402,
     )
 
@@ -135,15 +143,21 @@ def turing_oss_gate_response(model_name: object) -> Response | None:
     except ImportError:
         pass  # ee.usage absent → treat as OSS
 
+    message = (
+        "Turing and Protect models are not available on OSS. "
+        "Select a different model (OpenAI, Anthropic, etc.) "
+        "or upgrade your plan."
+    )
     return Response(
-        {
-            "error": (
-                "Turing and Protect models are not available on OSS. "
-                "Select a different model (OpenAI, Anthropic, etc.) "
-                "or upgrade your plan."
-            ),
-            "upgrade_required": True,
-            "feature": "turing",
-        },
+        build_error_envelope(
+            message,
+            status_code=402,
+            error_type="entitlement_error",
+            code="ENTITLEMENT_DENIED",
+            extra={
+                "upgrade_required": True,
+                "feature": "turing",
+            },
+        ),
         status=402,
     )

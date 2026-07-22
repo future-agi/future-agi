@@ -29,11 +29,11 @@ export const useUserTraceFilter = (
       isValidStart && isValidEnd
         ? [
             {
-              columnId: "created_at",
-              filterConfig: {
-                filterType: "datetime",
-                filterOp: "between",
-                filterValue: [
+              column_id: "created_at",
+              filter_config: {
+                filter_type: "datetime",
+                filter_op: "between",
+                filter_value: [
                   new Date(start).toISOString(),
                   new Date(end).toISOString(),
                 ],

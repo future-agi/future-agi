@@ -6,7 +6,9 @@ Following the same patterns as simulate.views.agent_prompt_optimiser.
 
 import structlog
 from django.db import transaction
-from django.db.models import Avg, Count
+from django.http import Http404
+from django.db.models import Avg, Count, Q
+from django.utils import timezone
 from rest_framework import serializers, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -16,10 +18,15 @@ from rest_framework.viewsets import ModelViewSet
 from model_hub.models.dataset_optimization_trial import DatasetOptimizationTrial
 from model_hub.models.dataset_optimization_trial_item import (
     DatasetOptimizationItemEvaluation,
+    DatasetOptimizationTrialItem,
 )
+from model_hub.models.dataset_optimization_step import DatasetOptimizationStep
 from model_hub.models.optimize_dataset import OptimizeDataset
+from drf_yasg.utils import swagger_auto_schema
+
 from model_hub.serializers.dataset_optimization import (
     DatasetOptimizationCreateSerializer,
+    DatasetOptimizationDetailApiResponseSerializer,
     DatasetOptimizationDetailSerializer,
     DatasetOptimizationListSerializer,
     DatasetOptimizationSerializer,
@@ -28,13 +35,11 @@ from model_hub.serializers.dataset_optimization import (
 from model_hub.utils.dataset_optimization import (
     OPTIMIZATION_RUN_TABLE_CONFIG,
     TRIAL_TABLE_BASE_COLUMNS,
-    build_trial_table_data,
     calculate_percentage_point_change,
     create_dataset_optimization_steps,
     get_dataset_optimization_steps,
     get_optimization_graph_data,
 )
-from model_hub.utils.llm_providers import get_provider_logo_url
 from tfc.temporal.dataset_optimization.client import (
     cancel_dataset_optimization,
 )
@@ -44,6 +49,25 @@ from tfc.utils.errors import format_validation_error
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
+
+
+def _request_workspace_filter(request, field_name="column__dataset__workspace"):
+    workspace = getattr(request, "workspace", None)
+    if workspace is None:
+        return Q()
+    if getattr(workspace, "is_default", False):
+        organization = getattr(workspace, "organization", None)
+        query = Q(**{field_name: workspace})
+        if organization is not None:
+            query |= Q(
+                **{
+                    f"{field_name}__is_default": True,
+                    f"{field_name}__organization": organization,
+                }
+            )
+        query |= Q(**{f"{field_name}__isnull": True})
+        return query
+    return Q(**{field_name: workspace})
 
 
 class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
@@ -80,9 +104,15 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
         # Filter by organization via column -> dataset relationship
         # Note: We don't call super().get_queryset() because BaseModelViewSetMixin
         # adds a deleted=False filter, but OptimizeDataset doesn't have that field
-        queryset = self.queryset.filter(
-            column__dataset__organization=user_organization
-        ).order_by("-created_at")
+        queryset = (
+            self.queryset.filter(
+                column__dataset__organization=user_organization,
+                column__dataset__deleted=False,
+                column__deleted=False,
+            )
+            .filter(_request_workspace_filter(self.request))
+            .order_by("-created_at")
+        )
 
         # Optional dataset filter
         dataset_id = self.request.query_params.get("dataset_id")
@@ -106,6 +136,28 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
             queryset = queryset.annotate(trial_count=Count("trials"))
 
         return queryset
+
+    def perform_destroy(self, instance):
+        deleted_at = timezone.now()
+        DatasetOptimizationItemEvaluation.objects.filter(
+            trial_item__trial__optimization_run=instance,
+            deleted=False,
+        ).update(deleted=True, deleted_at=deleted_at)
+        DatasetOptimizationTrialItem.objects.filter(
+            trial__optimization_run=instance,
+            deleted=False,
+        ).update(deleted=True, deleted_at=deleted_at)
+        DatasetOptimizationTrial.objects.filter(
+            optimization_run=instance,
+            deleted=False,
+        ).update(deleted=True, deleted_at=deleted_at)
+        DatasetOptimizationStep.objects.filter(
+            optimization_run=instance,
+            deleted=False,
+        ).update(deleted=True, deleted_at=deleted_at)
+        instance.deleted = True
+        instance.deleted_at = deleted_at
+        instance.save(update_fields=["deleted", "deleted_at"])
 
     def get_serializer_class(self):
         if self.action == "create":
@@ -185,175 +237,23 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
             logger.exception(f"Error creating DatasetOptimization: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
 
+    @swagger_auto_schema(
+        responses={200: DatasetOptimizationDetailApiResponseSerializer}
+    )
     def retrieve(self, request, *args, **kwargs):
-        """
-        Get run details with trial comparison table.
-
-        Returns data in the same format as AgentPromptOptimiserRunViewSet.retrieve()
-        to allow reuse of frontend simulation components.
-        """
+        """Get run details; payload matches AgentPromptOptimiserRunViewSet.retrieve()."""
         try:
             instance = self.get_object()
-
-            # Build trial table data
-            table_data, column_config = build_trial_table_data(instance)
-
-            # Get provider logo if optimizer_model is set
-            provider_logo = None
-            model_name = None
-
-            # First try to get model name from optimizer_model FK
-            if instance.optimizer_model:
-                model_name = instance.optimizer_model.model_name
-            # Fallback to model_name stored in optimizer_config
-            elif instance.optimizer_config and instance.optimizer_config.get(
-                "model_name"
-            ):
-                model_name = instance.optimizer_config.get("model_name")
-
-            # Get provider logo if we have model name and column
-            if model_name and instance.column:
-                dataset = instance.column.dataset
-                organization_id = dataset.organization.id if dataset else None
-                workspace = dataset.workspace if dataset else None
-                workspace_id = workspace.id if workspace else None
-                provider_logo = get_provider_logo_url(
-                    model_name,
-                    organization_id,
-                    workspace_id,
-                )
-
-            # Build parameters array for frontend display (same format as simulation)
-            parameters = self._build_parameters_array(
-                instance.optimizer_config, instance.optimizer_algorithm
-            )
-
-            # Get user eval templates for rerun
-            user_eval_templates = []
-            for eval_metric in instance.user_eval_template_ids.all():
-                user_eval_templates.append(
-                    {
-                        "id": str(eval_metric.id),
-                        "eval_id": str(eval_metric.id),
-                        "name": (
-                            eval_metric.template.name
-                            if eval_metric.template
-                            else "Eval"
-                        ),
-                        "template_id": (
-                            str(eval_metric.template.id)
-                            if eval_metric.template
-                            else None
-                        ),
-                    }
-                )
-
-            # Return in same format as AgentPromptOptimiserRunViewSet for component reuse
-            return self._gm.success_response(
-                {
-                    # Field names matching simulation for frontend component reuse
-                    "optimiser_name": instance.name,
-                    "optimiser_type": instance.optimizer_algorithm,
-                    "model": model_name,
-                    "provider_logo": provider_logo,
-                    "configuration": instance.optimizer_config,
-                    "status": instance.status,
-                    "error_message": instance.error_message,
-                    "start_time": instance.created_at,
-                    "parameters": parameters,
-                    # Additional dataset-specific fields
-                    "column_id": str(instance.column.id) if instance.column else None,
-                    "column_name": instance.column.name if instance.column else None,
-                    "best_score": instance.best_score,
-                    "baseline_score": instance.baseline_score,
-                    "table": table_data,
-                    "column_config": column_config,
-                    # Fields for rerun functionality
-                    # Note: optimizer_model_id is the model NAME (not UUID) for form pre-population
-                    "optimizer_model_id": model_name,
-                    "user_eval_templates": user_eval_templates,
-                }
+            serializer = self.get_serializer(instance)
+            return self._gm.success_response(serializer.data)
+        except Http404:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
             )
         except Exception as e:
             logger.exception(f"Error retrieving DatasetOptimization: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
-
-    def _build_parameters_array(self, optimizer_config, optimizer_algorithm):
-        """Build parameters array for frontend display."""
-        if not optimizer_config:
-            return []
-
-        # Parameter labels and descriptions by optimizer type
-        PARAMETER_LABELS = {
-            "num_variations": {
-                "label": "Number of Variations",
-                "description": "Number of prompt variations to generate",
-            },
-            "max_metric_calls": {
-                "label": "Max Metric Calls",
-                "description": "Maximum number of metric evaluations",
-            },
-            "beam_size": {
-                "label": "Beam Size",
-                "description": "Number of candidates to keep at each step",
-            },
-            "num_gradients": {
-                "label": "Number of Gradients",
-                "description": "Number of gradient samples",
-            },
-            "errors_per_gradient": {
-                "label": "Errors per Gradient",
-                "description": "Number of errors to sample per gradient",
-            },
-            "prompts_per_gradient": {
-                "label": "Prompts per Gradient",
-                "description": "Number of prompts per gradient",
-            },
-            "num_rounds": {
-                "label": "Number of Rounds",
-                "description": "Number of optimization rounds",
-            },
-            "min_examples": {
-                "label": "Min Examples",
-                "description": "Minimum number of examples to use",
-            },
-            "max_examples": {
-                "label": "Max Examples",
-                "description": "Maximum number of examples to use",
-            },
-            "n_trials": {
-                "label": "Number of Trials",
-                "description": "Number of trials to run",
-            },
-            "task_description": {
-                "label": "Task Description",
-                "description": "Description of the task",
-            },
-            "mutate_rounds": {
-                "label": "Mutate Rounds",
-                "description": "Number of mutation rounds",
-            },
-            "refine_iterations": {
-                "label": "Refine Iterations",
-                "description": "Number of refinement iterations",
-            },
-        }
-
-        parameters = []
-        for key, value in optimizer_config.items():
-            if key == "model_name":  # Skip internal config keys
-                continue
-            param_info = PARAMETER_LABELS.get(key, {"label": key, "description": ""})
-            parameters.append(
-                {
-                    "key": key,
-                    "label": param_info["label"],
-                    "description": param_info.get("description", ""),
-                    "value": value,
-                }
-            )
-
-        return parameters
 
     @action(detail=True, methods=["get"])
     def steps(self, request, *args, **kwargs):
@@ -362,6 +262,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
             instance = self.get_object()
             steps = get_dataset_optimization_steps(str(instance.id))
             return self._gm.success_response(steps)
+        except Http404:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         except Exception as e:
             logger.exception(f"Error retrieving dataset optimization steps: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
@@ -375,6 +280,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
             instance = self.get_object()
             graph_data = get_optimization_graph_data(instance)
             return self._gm.success_response(graph_data)
+        except Http404:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         except Exception as e:
             logger.exception(
                 f"Error retrieving dataset optimization graph data: {str(e)}"
@@ -393,8 +303,9 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
             # holding a DB connection and row lock during the external network call.
             with transaction.atomic():
                 instance = self.get_object()
-                instance = OptimizeDataset.objects.select_for_update().get(
-                    pk=instance.pk
+                instance = OptimizeDataset.objects.select_for_update(of=("self",)).get(
+                    pk=instance.pk,
+                    deleted=False,
                 )
 
                 cancellable_statuses = [
@@ -423,6 +334,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
                 }
             )
 
+        except Http404:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         except Exception as e:
             logger.exception(f"Error stopping dataset optimization: {str(e)}")
             return self._gm.bad_request(get_error_message("FAILED_TO_FETCH_DATA"))
@@ -473,6 +389,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "base_prompt": baseline_trial.prompt if baseline_trial else None,
                 }
             )
+        except Http404:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         except DatasetOptimizationTrial.DoesNotExist:
             return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))
         except Exception as e:
@@ -502,6 +423,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
                     **header,
                     "trial": trial_serializer.data,
                 }
+            )
+        except Http404:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
             )
         except DatasetOptimizationTrial.DoesNotExist:
             return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))
@@ -615,6 +541,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "total_items": len(table_data),
                 }
             )
+        except Http404:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
         except DatasetOptimizationTrial.DoesNotExist:
             return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))
         except Exception as e:
@@ -713,6 +644,11 @@ class DatasetOptimizationViewSet(BaseModelViewSetMixin, ModelViewSet):
                     "column_config": column_config,
                     "total_items": len(table_data),
                 }
+            )
+        except Http404:
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
             )
         except DatasetOptimizationTrial.DoesNotExist:
             return self._gm.bad_request(get_error_message("PROMPT_TRIAL_NOT_FOUND"))

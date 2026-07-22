@@ -71,6 +71,15 @@ const defaultProps = {
   projectId: "test-project-id",
 };
 
+const canonicalFilter = (columnId) => ({
+  column_id: columnId,
+  filter_config: {
+    filter_type: "text",
+    filter_op: "equals",
+    filter_value: "ERROR",
+  },
+});
+
 const renderWithCtx = (getViewConfig, props) =>
   render(
     <ObserveHeaderContext.Provider
@@ -94,7 +103,7 @@ describe("ViewConfigModal — config snapshot on save", () => {
   });
 
   it("create mode sends getViewConfig() output as config", async () => {
-    const snapshot = { filters: [{ columnId: "status" }] };
+    const snapshot = { filters: [canonicalFilter("status")] };
     renderWithCtx(() => snapshot);
     fireEvent.change(screen.getByLabelText("Name *"), {
       target: { value: "v1" },
@@ -102,6 +111,7 @@ describe("ViewConfigModal — config snapshot on save", () => {
     fireEvent.click(screen.getByText("Create"));
     await waitFor(() => expect(mockCreate).toHaveBeenCalled());
     expect(mockCreate.mock.calls[0][0].config).toEqual(snapshot);
+    expect(mockCreate.mock.calls[0][0].tab_type).toBe("traces");
   });
 
   it("create mode falls back to {} when getViewConfig returns null", async () => {
@@ -115,25 +125,37 @@ describe("ViewConfigModal — config snapshot on save", () => {
   });
 
   it("edit mode re-captures live config on save", async () => {
-    const fresh = { filters: [{ columnId: "duration" }] };
-    const stale = { filters: [{ columnId: "status" }] };
+    const fresh = { filters: [canonicalFilter("duration")] };
+    const stale = { filters: [canonicalFilter("status")] };
     renderWithCtx(() => fresh, {
       mode: "edit",
-      initialValues: { id: "v9", name: "Old", tab_type: "traces", config: stale },
+      initialValues: {
+        id: "v9",
+        name: "Old",
+        tab_type: "traces",
+        config: stale,
+      },
     });
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
     expect(mockUpdate.mock.calls[0][0].config).toEqual(fresh);
+    expect(mockUpdate.mock.calls[0][0]).not.toHaveProperty("tab_type");
   });
 
   it("edit mode falls back to initialValues.config when getViewConfig returns null", async () => {
-    const stale = { filters: [{ columnId: "status" }] };
+    const stale = { filters: [canonicalFilter("status")] };
     renderWithCtx(() => null, {
       mode: "edit",
-      initialValues: { id: "v9", name: "Old", tab_type: "traces", config: stale },
+      initialValues: {
+        id: "v9",
+        name: "Old",
+        tab_type: "traces",
+        config: stale,
+      },
     });
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
     expect(mockUpdate.mock.calls[0][0].config).toEqual(stale);
+    expect(mockUpdate.mock.calls[0][0]).not.toHaveProperty("tab_type");
   });
 });

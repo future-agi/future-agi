@@ -24,6 +24,7 @@ import { useAuthContext } from "src/auth/hooks";
 import { useSocket } from "src/hooks/use-socket";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  annotationQueueEndpoints,
   annotateKeys,
   useAnnotateDetail,
   useAnnotationQueueDetail,
@@ -40,14 +41,22 @@ import AnnotateHeader from "./annotate-header";
 import AnnotateFooter from "./annotate-footer";
 import ContentPanel from "./content-panel";
 import LabelPanel from "./label-panel";
+import ResizableSplit from "./resizable-split";
 import AnnotationComparisonPanel from "./annotation-comparison-panel";
 import { CollaborationDrawer } from "./discussion-panel";
 import ItemAssignmentPanel from "./item-assignment-panel";
 import {
   ALL_ANNOTATORS,
   WORKSPACE_MODES,
+  annotationSubmitSuccessMessage,
+  canDiscussQueueItem,
+  canReviewCurrentQueueItem,
   canUseCompletedNavigation,
+  getSingleAssignedOtherAnnotatorId,
+  resolveAnnotationFooterProgress,
+  resolveCurrentDetailNavigation,
   resolveAnnotationWorkspaceMode,
+  resolveSelectedAnnotatorScope,
 } from "./annotation-view-mode";
 import useKeyboardShortcuts from "./use-keyboard-shortcuts";
 import { QUEUE_ROLES, hasQueueRole, isQueueAnnotatorRole } from "../constants";
@@ -260,9 +269,6 @@ export default function AnnotateWorkspaceView() {
   });
   const currentUserId = String(
     user?.id ||
-      user?.pk ||
-      user?.user_id ||
-      user?.userId ||
       (typeof window !== "undefined"
         ? window.sessionStorage.getItem("currentUserId")
         : "") ||
@@ -279,7 +285,6 @@ export default function AnnotateWorkspaceView() {
     myQueueMembership,
     QUEUE_ROLES.MANAGER,
   );
-  const canDiscuss = canAnnotate || canReview;
   const requiresReview = queueDetail?.requires_review === true;
   const requestedMode = searchParams.get("mode");
   const workspaceMode = resolveAnnotationWorkspaceMode({
@@ -400,7 +405,10 @@ export default function AnnotateWorkspaceView() {
       !viewingAnnotatorId
     ) {
       setViewingAnnotatorId(ALL_ANNOTATORS);
-    } else if (!isReviewWorkspaceMode && viewingAnnotatorId !== null) {
+    } else if (
+      !isReviewWorkspaceMode &&
+      viewingAnnotatorId === ALL_ANNOTATORS
+    ) {
       setViewingAnnotatorId(null);
     }
   }, [
@@ -413,15 +421,15 @@ export default function AnnotateWorkspaceView() {
 
   const isViewingAllAnnotators =
     isReviewWorkspaceMode && viewingAnnotatorId === ALL_ANNOTATORS;
-  const scopedAnnotatorId =
-    isReviewWorkspaceMode && !isViewingAllAnnotators
-      ? viewingAnnotatorId
-      : undefined;
-  const isViewingOtherAnnotator =
-    isReviewWorkspaceMode &&
-    !!viewingAnnotatorId &&
-    !isViewingAllAnnotators &&
-    String(viewingAnnotatorId) !== currentUserId;
+  const { scopedAnnotatorId, isViewingOtherAnnotator } = useMemo(
+    () =>
+      resolveSelectedAnnotatorScope({
+        canReview,
+        viewingAnnotatorId,
+        currentUserId,
+      }),
+    [canReview, viewingAnnotatorId, currentUserId],
+  );
   const detailEnabled =
     !!queueId &&
     !!currentItemId &&
@@ -431,6 +439,10 @@ export default function AnnotateWorkspaceView() {
   // Reviewers/managers default to a comparison view. When a single annotator
   // is selected, request that annotator only so values never merge into one
   // editable form.
+  // Detail's next/prev item IDs gate the pager buttons; keep them over the same
+  // set the keyboard walks (completed items are navigable in View submissions).
+  const detailIncludeCompleted =
+    isReviewWorkspaceMode && !requiresReview ? true : includeCompletedItems;
   const {
     data: detail,
     isLoading: detailLoading,
@@ -439,16 +451,52 @@ export default function AnnotateWorkspaceView() {
     refetch: refetchAnnotateDetail,
   } = useAnnotateDetail(queueId, currentItemId, {
     annotatorId: scopedAnnotatorId,
-    includeCompleted: includeCompletedItems,
+    includeCompleted: detailIncludeCompleted,
     viewMode: isReviewWorkspaceMode ? "review" : undefined,
     reviewStatus:
       isReviewWorkspaceMode && requiresReview ? "pending_review" : undefined,
     excludeReviewStatus:
       !isReviewWorkspaceMode && requiresReview ? "pending_review" : undefined,
+    reserve: !isReviewWorkspaceMode && queueDetail?.annotations_required === 1,
     enabled: detailEnabled,
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: "always",
+  });
+  const detailNavigationScopeKey = useMemo(
+    () =>
+      JSON.stringify({
+        itemId: currentItemId || null,
+        annotatorId: scopedAnnotatorId || null,
+        mode: workspaceMode,
+        includeCompleted: detailIncludeCompleted,
+        params: navigationModeParams,
+      }),
+    [
+      currentItemId,
+      scopedAnnotatorId,
+      workspaceMode,
+      detailIncludeCompleted,
+      navigationModeParams,
+    ],
+  );
+  const [loadedDetailNavigationScopeKey, setLoadedDetailNavigationScopeKey] =
+    useState(null);
+  useEffect(() => {
+    if (!detail) {
+      setLoadedDetailNavigationScopeKey(null);
+      return;
+    }
+    if (!detailFetching) {
+      setLoadedDetailNavigationScopeKey(detailNavigationScopeKey);
+    }
+  }, [detail, detailFetching, detailNavigationScopeKey]);
+  const detailNavigation = resolveCurrentDetailNavigation({
+    detail,
+    currentItemId,
+    detailFetching,
+    loadedScopeKey: loadedDetailNavigationScopeKey,
+    currentScopeKey: detailNavigationScopeKey,
   });
   const { data: liveDiscussion } = useItemDiscussion(queueId, currentItemId, {
     enabled: detailEnabled,
@@ -493,9 +541,9 @@ export default function AnnotateWorkspaceView() {
 
   // Prefetch adjacent items for instant navigation
   useEffect(() => {
-    if (!detail || !queueId) return;
-    const nextId = detail.next_item_id;
-    const prevId = detail.prev_item_id;
+    if (!detailNavigation.isCurrent || !queueId) return;
+    const nextId = detailNavigation.nextItemId;
+    const prevId = detailNavigation.prevItemId;
     const prefetchParams = {
       ...(scopedAnnotatorId ? { annotator_id: scopedAnnotatorId } : {}),
       ...navigationModeParams,
@@ -516,7 +564,7 @@ export default function AnnotateWorkspaceView() {
         ),
         queryFn: () =>
           axios.get(
-            `/model-hub/annotation-queues/${queueId}/items/${nextId}/annotate-detail/`,
+            annotationQueueEndpoints.annotateDetail(queueId, nextId),
             requestOptions,
           ),
         staleTime: 1000 * 60 * 2,
@@ -532,14 +580,16 @@ export default function AnnotateWorkspaceView() {
         ),
         queryFn: () =>
           axios.get(
-            `/model-hub/annotation-queues/${queueId}/items/${prevId}/annotate-detail/`,
+            annotationQueueEndpoints.annotateDetail(queueId, prevId),
             requestOptions,
           ),
         staleTime: 1000 * 60 * 2,
       });
     }
   }, [
-    detail,
+    detailNavigation.isCurrent,
+    detailNavigation.nextItemId,
+    detailNavigation.prevItemId,
     queueId,
     queryClient,
     scopedAnnotatorId,
@@ -571,13 +621,23 @@ export default function AnnotateWorkspaceView() {
 
   const isPendingReview = detail?.item?.review_status === "pending_review";
   const hasSubmittedAnnotations = (detail?.annotations || []).length > 0;
+  const canReviewCurrentItem = canReviewCurrentQueueItem({
+    item: detail?.item,
+    annotations: detail?.annotations || [],
+    currentUserId,
+    isReviewMode: isReviewWorkspaceMode,
+  });
+  const hasOwnSubmittedReviewAnnotation =
+    isReviewWorkspaceMode &&
+    isPendingReview &&
+    hasSubmittedAnnotations &&
+    !canReviewCurrentItem;
   const isCurrentItemCompleted = detail?.item?.status === "completed";
   const completedByCurrentUser =
     !isReviewWorkspaceMode &&
     isCurrentItemCompleted &&
     (detail?.annotations || []).length > 0;
-  const showReviewActions =
-    isReviewWorkspaceMode && isPendingReview && hasSubmittedAnnotations;
+  const showReviewActions = canReviewCurrentItem;
   const isAnnotateLockedForReview = isLockedForReview({
     detail,
     requiresReview,
@@ -612,6 +672,11 @@ export default function AnnotateWorkspaceView() {
     !isReviewWorkspaceMode && canReview && cannotAnnotate;
   const isBlockedAssignedToOther =
     !isReviewWorkspaceMode && !canReview && cannotAnnotate;
+  const canDiscuss = canDiscussQueueItem({
+    canAnnotate,
+    canReview,
+    isBlockedAssignedToOther,
+  });
   // Backwards-compatible flag passed to header for disabling Skip.
   const isAssignedToOther = !isReviewWorkspaceMode && cannotAnnotate;
   const effectiveQueueStatus = detail?.queue?.status || queueDetail?.status;
@@ -639,8 +704,48 @@ export default function AnnotateWorkspaceView() {
             : null;
 
   const isSubmittingRef = useRef(false);
+  const lastAnnotateItemIdRef = useRef(null);
   const [isChangingCompletedVisibility, setIsChangingCompletedVisibility] =
     useState(false);
+
+  useEffect(() => {
+    if (
+      isReviewWorkspaceMode ||
+      lastAnnotateItemIdRef.current === currentItemId
+    ) {
+      return;
+    }
+    lastAnnotateItemIdRef.current = currentItemId;
+    if (viewingAnnotatorId !== null) {
+      setViewingAnnotatorId(null);
+    }
+  }, [currentItemId, isReviewWorkspaceMode, viewingAnnotatorId]);
+
+  useEffect(() => {
+    if (
+      isReviewWorkspaceMode ||
+      !canReview ||
+      !cannotAnnotate ||
+      viewingAnnotatorId
+    ) {
+      return;
+    }
+
+    const assignedAnnotatorId = getSingleAssignedOtherAnnotatorId(
+      detail?.item?.assigned_users,
+      currentUserId,
+    );
+    if (assignedAnnotatorId) {
+      setViewingAnnotatorId(assignedAnnotatorId);
+    }
+  }, [
+    canReview,
+    cannotAnnotate,
+    currentUserId,
+    detail?.item?.assigned_users,
+    isReviewWorkspaceMode,
+    viewingAnnotatorId,
+  ]);
 
   const handleViewingAnnotatorChange = useCallback(
     (id) => {
@@ -661,11 +766,10 @@ export default function AnnotateWorkspaceView() {
   );
 
   const handleAssignCurrentItem = useCallback(
-    ({ itemIds, userId, userIds, action }) => {
+    ({ itemIds, userIds, action }) => {
       assignItems({
         queueId,
         itemIds,
-        userId,
         userIds,
         action,
         assignees: queueAnnotators,
@@ -687,6 +791,8 @@ export default function AnnotateWorkspaceView() {
       nextParams.delete("itemId");
       if (nextMode === WORKSPACE_MODES.REVIEW) {
         nextParams.delete("includeCompleted");
+      } else {
+        setViewingAnnotatorId(null);
       }
       setSearchParams(nextParams, { replace: true });
       isDirtyRef.current = false;
@@ -697,6 +803,8 @@ export default function AnnotateWorkspaceView() {
 
   const handleIncludeCompletedChange = useCallback(
     async (event) => {
+      const nextIncludeCompleted = Boolean(event?.target?.checked);
+
       if (
         !canUseCompletedControls ||
         isAssignedToOther ||
@@ -766,6 +874,7 @@ export default function AnnotateWorkspaceView() {
           enqueueSnackbar("Queue access changed. Refreshed navigation state.", {
             variant: "info",
           });
+          setIsChangingCompletedVisibility(false);
           return;
         }
       } catch (err) {
@@ -775,12 +884,10 @@ export default function AnnotateWorkspaceView() {
             "Couldn't refresh queue access before changing completed visibility.",
           { variant: "error" },
         );
-        return;
-      } finally {
         setIsChangingCompletedVisibility(false);
+        return;
       }
 
-      const nextIncludeCompleted = event.target.checked;
       const nextParams = new URLSearchParams(searchParams);
       if (nextIncludeCompleted) {
         nextParams.set("includeCompleted", "true");
@@ -796,6 +903,12 @@ export default function AnnotateWorkspaceView() {
       isDirtyRef.current = false;
 
       if (nextIncludeCompleted || !currentItemId) {
+        if (currentItemId) {
+          dispatch({ type: "init", id: currentItemId });
+        } else {
+          dispatch({ type: "clear" });
+        }
+        setIsChangingCompletedVisibility(false);
         return;
       }
 
@@ -805,13 +918,13 @@ export default function AnnotateWorkspaceView() {
       // says completed work is hidden.
       if (detail?.item?.status !== "completed") {
         dispatch({ type: "init", id: currentItemId });
+        setIsChangingCompletedVisibility(false);
         return;
       }
 
-      setIsChangingCompletedVisibility(true);
       try {
         const nextRes = await axios.get(
-          `/model-hub/annotation-queues/${queueId}/items/next-item/`,
+          annotationQueueEndpoints.nextItem(queueId),
           {
             params: {
               exclude: currentItemId,
@@ -832,7 +945,7 @@ export default function AnnotateWorkspaceView() {
         }
 
         const prevRes = await axios.get(
-          `/model-hub/annotation-queues/${queueId}/items/next-item/`,
+          annotationQueueEndpoints.nextItem(queueId),
           {
             params: {
               before: currentItemId,
@@ -882,7 +995,6 @@ export default function AnnotateWorkspaceView() {
       setSearchParams,
       confirmDiscardUnsaved,
       currentItemId,
-      detail?.item?.status,
       queueId,
       openOnlyNavigationParams,
       enqueueSnackbar,
@@ -912,7 +1024,7 @@ export default function AnnotateWorkspaceView() {
               {
                 queueId,
                 itemId: currentItemId,
-                exclude: itemHistory.join(","),
+                exclude: itemHistory,
                 excludeReviewStatus: requiresReview
                   ? "pending_review"
                   : undefined,
@@ -923,12 +1035,17 @@ export default function AnnotateWorkspaceView() {
                   isSubmittingRef.current = false;
                   const result = data?.data?.result || data?.data;
                   const nextItem = result?.nextItem || result?.next_item;
+                  enqueueSnackbar(
+                    annotationSubmitSuccessMessage({
+                      requiresReview,
+                      hasNextItem: Boolean(nextItem?.id),
+                    }),
+                    { variant: "success" },
+                  );
                   if (nextItem?.id) {
                     dispatch({ type: "push", id: nextItem.id });
                   } else {
-                    enqueueSnackbar("Saved. No more items in this queue.", {
-                      variant: "success",
-                    });
+                    navigate(`/dashboard/annotations/queues/${queueId}`);
                   }
                 },
                 onError: () => {
@@ -952,16 +1069,22 @@ export default function AnnotateWorkspaceView() {
       requiresReview,
       includeCompletedItems,
       enqueueSnackbar,
+      navigate,
     ],
   );
 
   const handleSkip = useCallback(() => {
-    if (!currentItemId || isAnnotateLockedForReview) return;
+    if (
+      !currentItemId ||
+      isAnnotateLockedForReview ||
+      isChangingCompletedVisibility
+    )
+      return;
     skipItem(
       {
         queueId,
         itemId: currentItemId,
-        exclude: itemHistory.join(","),
+        exclude: itemHistory,
         excludeReviewStatus: requiresReview ? "pending_review" : undefined,
         includeCompleted: includeCompletedItems,
       },
@@ -984,6 +1107,7 @@ export default function AnnotateWorkspaceView() {
     skipItem,
     requiresReview,
     isAnnotateLockedForReview,
+    isChangingCompletedVisibility,
     includeCompletedItems,
   ]);
 
@@ -1046,11 +1170,16 @@ export default function AnnotateWorkspaceView() {
   }, [navigate, queueId, confirmDiscardUnsaved]);
 
   const [isFetchingPrev, setIsFetchingPrev] = useState(false);
+  // Direction of the in-flight navigation, so the footer can show the spinner
+  // in place of the arrow being navigated toward while its detail loads.
+  const [navDirection, setNavDirection] = useState(null);
 
   const handlePrev = useCallback(async () => {
+    if (isChangingCompletedVisibility) return;
     if (!confirmDiscardUnsaved("You have unsaved changes. Load another item?"))
       return;
     if (historyIndex > 0) {
+      setNavDirection("prev");
       dispatch({ type: "prev" });
       return;
     }
@@ -1058,13 +1187,13 @@ export default function AnnotateWorkspaceView() {
     if (isFetchingPrev || !currentItemId) return;
     setIsFetchingPrev(true);
     try {
-      const res = await axios.get(
-        `/model-hub/annotation-queues/${queueId}/items/next-item/`,
-        { params: { before: currentItemId, ...navigationModeParams } },
-      );
+      const res = await axios.get(annotationQueueEndpoints.nextItem(queueId), {
+        params: { before: currentItemId, ...navigationModeParams },
+      });
       const prevItem =
         res?.data?.data?.item || res?.data?.result?.item || res?.data?.item;
       if (prevItem?.id) {
+        setNavDirection("prev");
         dispatch({ type: "init", id: prevItem.id });
       }
     } catch (err) {
@@ -1089,6 +1218,7 @@ export default function AnnotateWorkspaceView() {
     enqueueSnackbar,
     navigationModeParams,
     confirmDiscardUnsaved,
+    isChangingCompletedVisibility,
   ]);
 
   const [isFetchingNext, setIsFetchingNext] = useState(false);
@@ -1098,16 +1228,19 @@ export default function AnnotateWorkspaceView() {
   useEffect(() => () => nextAbortRef.current?.abort(), []);
 
   const handleNext = useCallback(async () => {
+    if (isChangingCompletedVisibility) return;
     if (!confirmDiscardUnsaved("You have unsaved changes. Load another item?"))
       return;
     // If there are forward items in history, navigate to them
     if (historyIndex < itemHistory.length - 1) {
+      setNavDirection("next");
       dispatch({ type: "next" });
       return;
     }
 
-    if (detail?.next_item_id) {
-      dispatch({ type: "push", id: detail.next_item_id });
+    if (detailNavigation.nextItemId) {
+      setNavDirection("next");
+      dispatch({ type: "push", id: detailNavigation.nextItemId });
       return;
     }
 
@@ -1117,16 +1250,14 @@ export default function AnnotateWorkspaceView() {
     const controller = new AbortController();
     nextAbortRef.current = controller;
     try {
-      const res = await axios.get(
-        `/model-hub/annotation-queues/${queueId}/items/next-item/`,
-        {
-          params: { exclude: itemHistory.join(","), ...navigationModeParams },
-          signal: controller.signal,
-        },
-      );
+      const res = await axios.get(annotationQueueEndpoints.nextItem(queueId), {
+        params: { exclude: itemHistory.join(","), ...navigationModeParams },
+        signal: controller.signal,
+      });
       const nextItem =
         res?.data?.data?.item || res?.data?.result?.item || res?.data?.item;
       if (nextItem?.id) {
+        setNavDirection("next");
         dispatch({ type: "push", id: nextItem.id });
       }
     } catch (err) {
@@ -1154,9 +1285,10 @@ export default function AnnotateWorkspaceView() {
     queueId,
     isFetchingNext,
     enqueueSnackbar,
-    detail,
+    detailNavigation.nextItemId,
     navigationModeParams,
     confirmDiscardUnsaved,
+    isChangingCompletedVisibility,
   ]);
 
   const handleKeyboardSubmit = useCallback(() => {
@@ -1166,7 +1298,8 @@ export default function AnnotateWorkspaceView() {
       isViewingAllAnnotators ||
       isViewingOtherAnnotator ||
       isAnnotatorSwitchPending ||
-      isAnnotateLockedForReview
+      isAnnotateLockedForReview ||
+      isChangingCompletedVisibility
     )
       return;
     labelPanelRef.current?.submit();
@@ -1177,7 +1310,28 @@ export default function AnnotateWorkspaceView() {
     isViewingOtherAnnotator,
     isAnnotatorSwitchPending,
     isAnnotateLockedForReview,
+    isChangingCompletedVisibility,
   ]);
+
+  // Keyed on currentItemId too: navigating to a cached item never toggles
+  // detailFetching, so on that alone navDirection would stay stale.
+  useEffect(() => {
+    if (!detailFetching) setNavDirection(null);
+  }, [detailFetching, currentItemId]);
+
+  const canNavigatePrev =
+    historyIndex > 0 || Boolean(detailNavigation.prevItemId);
+  const canNavigateNext =
+    historyIndex < itemHistory.length - 1 ||
+    Boolean(detailNavigation.nextItemId);
+  const isLoadingPrevNav =
+    isFetchingPrev ||
+    isChangingCompletedVisibility ||
+    (detailFetching && navDirection === "prev");
+  const isLoadingNextNav =
+    isFetchingNext ||
+    isChangingCompletedVisibility ||
+    (detailFetching && navDirection === "next");
 
   useKeyboardShortcuts({
     onSubmit: handleKeyboardSubmit,
@@ -1185,6 +1339,8 @@ export default function AnnotateWorkspaceView() {
     onPrev: handlePrev,
     onNext: handleNext,
     onEscape: handleBack,
+    canPrev: canNavigatePrev,
+    canNext: canNavigateNext,
   });
 
   const isInitialDetailLoading =
@@ -1221,6 +1377,10 @@ export default function AnnotateWorkspaceView() {
       comment?.thread_status === "resolved",
   ).length;
   const commentBadgeCount = activeDiscussionCount + openBlockingFeedbackCount;
+  const footerProgress = resolveAnnotationFooterProgress({
+    progress: detail?.progress,
+    isReviewMode: isReviewWorkspaceMode,
+  });
 
   const handleFocusCommentScope = useCallback(
     ({ labelId, targetAnnotatorId } = {}) => {
@@ -1277,8 +1437,10 @@ export default function AnnotateWorkspaceView() {
 
   // Reservation conflict
   if (
-    detailError?.statusCode === 400 ||
-    detailError?.response?.status === 400
+    detailError?.statusCode === 409 ||
+    detailError?.response?.status === 409 ||
+    detailError?.code === "item_reserved" ||
+    detailError?.response?.data?.code === "item_reserved"
   ) {
     const msg =
       detailError?.detail ||
@@ -1411,10 +1573,17 @@ export default function AnnotateWorkspaceView() {
 
   return (
     <Box
+      data-testid="annotation-workspace-root"
       sx={{
         display: "flex",
         flexDirection: "column",
-        height: "calc(100vh - 64px)",
+        // Fill the dashboard ``Main`` container exactly. ``Main`` is
+        // already ``height: 100vh`` with no header above it inside this
+        // route, so subtracting 64px (the old top-header offset) leaves a
+        // dead band at the bottom — that's the whitespace below the
+        // pagination row.
+        height: "100%",
+        minHeight: 0,
       }}
     >
       <AnnotateHeader
@@ -1425,7 +1594,9 @@ export default function AnnotateWorkspaceView() {
         isSkipping={isSkipping}
         isReviewMode={isReviewWorkspaceMode}
         isAssignedToOther={isAssignedToOther}
-        isSkipDisabled={isAnnotateLockedForReview}
+        isSkipDisabled={
+          isAnnotateLockedForReview || isChangingCompletedVisibility
+        }
         showCompletedToggle={canUseCompletedControls}
         includeCompleted={includeCompletedItems}
         onIncludeCompletedChange={handleIncludeCompletedChange}
@@ -1441,215 +1612,215 @@ export default function AnnotateWorkspaceView() {
         resolvedFeedbackCount={resolvedFeedbackCount}
       />
 
-      <Box
-        sx={{
-          display: "flex",
-          flex: 1,
-          overflow: "hidden",
-          minWidth: 0,
-          flexDirection: { xs: "column", md: "row" },
-        }}
-      >
-        {/* Left: Content */}
-        <Box
-          sx={{
-            flex: 1,
-            minWidth: 0,
-            borderRight: { xs: 0, md: 1 },
-            borderBottom: { xs: 1, md: 0 },
-            borderColor: "divider",
-            overflow: "auto",
-          }}
-        >
-          <ContentPanel item={detail?.item} />
-        </Box>
-
-        {/* Right: Labels or Review */}
-        <Box
-          sx={{
-            flex: isReviewWorkspaceMode
-              ? { xs: "1 1 auto", md: "0 1 clamp(440px, 52vw, 820px)" }
-              : { xs: "1 1 auto", md: "0 0 400px" },
-            width: isReviewWorkspaceMode
-              ? { xs: "100%", md: "clamp(440px, 52vw, 820px)" }
-              : { xs: "100%", md: 400 },
-            minWidth: 0,
-            maxWidth: isReviewWorkspaceMode
-              ? { xs: "100%", md: 820 }
-              : { xs: "100%", md: 440 },
-            overflow: "auto",
-            bgcolor: isReviewWorkspaceMode
-              ? "background.default"
-              : "background.paper",
-          }}
-        >
-          {canReview && canAnnotate && (
-            <Box sx={{ p: 1.5, pb: 0 }}>
-              <Typography
-                variant="caption"
-                fontWeight={700}
-                color="text.secondary"
-                sx={{ display: "block", mb: 0.75 }}
-              >
-                Workspace action
-              </Typography>
-              <ToggleButtonGroup
-                exclusive
-                fullWidth
-                size="small"
-                value={workspaceMode}
-                onChange={handleWorkspaceModeChange}
-                aria-label="annotation workspace mode"
-              >
-                <ToggleButton value={WORKSPACE_MODES.ANNOTATE}>
-                  Annotate my answers
-                </ToggleButton>
-                <ToggleButton value={WORKSPACE_MODES.REVIEW}>
-                  {requiresReview ? "Review submissions" : "View submissions"}
-                </ToggleButton>
-              </ToggleButtonGroup>
-            </Box>
-          )}
-          {!isReviewWorkspaceMode && isManualAssignment && detail?.item && (
-            <ItemAssignmentPanel
-              item={detail.item}
-              annotators={queueAnnotators}
-              currentUserId={currentUserId}
-              canAnnotate={canAnnotate}
-              canManageAssignments={canManageAssignments}
-              onAssign={handleAssignCurrentItem}
-              isPending={isAssigningItem}
-            />
-          )}
-          {isReviewWorkspaceMode ? (
-            <>
-              {requiresReview && !isPendingReview && (
-                <Alert severity="info" sx={{ m: 1.5, mb: 0 }}>
-                  This item is not waiting for review. Review actions appear on
-                  items submitted for review.
-                </Alert>
-              )}
-              <AnnotationComparisonPanel
-                item={detail?.item}
-                annotations={detail?.annotations || []}
-                labels={detail?.labels || []}
-                spanNotes={detail?.span_notes || []}
+      <ResizableSplit
+        storageKey={
+          isReviewWorkspaceMode
+            ? "annotate-workspace-split:review"
+            : "annotate-workspace-split:annotate"
+        }
+        initialRightWidth={isReviewWorkspaceMode ? 620 : 400}
+        minLeftWidth={420}
+        minRightWidth={isReviewWorkspaceMode ? 440 : 320}
+        maxRightWidth={isReviewWorkspaceMode ? 820 : 560}
+        rightBackground={
+          isReviewWorkspaceMode ? "background.default" : "background.paper"
+        }
+        left={<ContentPanel item={detail?.item} />}
+        right={
+          <Box
+            sx={{
+              height: "100%",
+              minHeight: 0,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            {canReview && canAnnotate && (
+              <Box sx={{ p: 1.5, pb: 0 }}>
+                <Typography
+                  variant="caption"
+                  fontWeight={700}
+                  color="text.secondary"
+                  sx={{ display: "block", mb: 0.75 }}
+                >
+                  Workspace action
+                </Typography>
+                <ToggleButtonGroup
+                  exclusive
+                  fullWidth
+                  size="small"
+                  value={workspaceMode}
+                  onChange={handleWorkspaceModeChange}
+                  aria-label="annotation workspace mode"
+                >
+                  <ToggleButton value={WORKSPACE_MODES.ANNOTATE}>
+                    Annotate my answers
+                  </ToggleButton>
+                  <ToggleButton value={WORKSPACE_MODES.REVIEW}>
+                    {requiresReview ? "Review submissions" : "View submissions"}
+                  </ToggleButton>
+                </ToggleButtonGroup>
+              </Box>
+            )}
+            {!isReviewWorkspaceMode && isManualAssignment && detail?.item && (
+              <ItemAssignmentPanel
+                item={detail.item}
                 annotators={queueAnnotators}
                 currentUserId={currentUserId}
-                viewingAnnotatorId={viewingAnnotatorId}
-                onViewingAnnotatorChange={handleViewingAnnotatorChange}
-                onApprove={handleApprove}
-                onReject={handleReject}
-                onDirtyChange={handleDirtyChange}
-                isPending={isReviewing}
-                reviewStatus={detail?.item?.review_status}
-                reviewNotes={detail?.item?.review_notes || ""}
-                reviewComments={reviewComments}
-                queueId={queueId}
-                itemId={currentItemId}
-                showReviewActions={showReviewActions}
-                focusedCommentScope={focusedCommentScope}
+                canAnnotate={canAnnotate}
+                canManageAssignments={canManageAssignments}
+                onAssign={handleAssignCurrentItem}
+                isPending={isAssigningItem}
               />
-            </>
-          ) : isBlockedAssignedToOther ? (
-            <Stack
-              alignItems="center"
-              justifyContent="center"
-              spacing={2}
-              sx={{ height: "100%", p: 3, textAlign: "center" }}
+            )}
+            <Box
+              data-testid="annotation-workspace-side-panel-body"
+              sx={{
+                flex: 1,
+                minHeight: 0,
+                display: "flex",
+                flexDirection: "column",
+              }}
             >
-              <Iconify
-                icon="mingcute:lock-fill"
-                width={48}
-                color="text.disabled"
-              />
-              <Typography variant="subtitle1" color="text.secondary">
-                Assigned to {assignedToName || "another annotator"}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                This item is assigned to someone else. You cannot annotate it.
-              </Typography>
-              <Button
-                variant="outlined"
-                color="primary"
-                size="small"
-                onClick={handleNext}
-                disabled={isFetchingNext}
-              >
-                Skip to Next Item
-              </Button>
-            </Stack>
-          ) : isViewingAllAnnotators ? (
-            <AnnotationComparisonPanel
-              item={detail?.item}
-              labels={detail?.labels || []}
-              annotations={detail?.annotations || []}
-              spanNotes={detail?.span_notes || []}
-              annotators={queueAnnotators}
-              currentUserId={currentUserId}
-              viewingAnnotatorId={viewingAnnotatorId}
-              onViewingAnnotatorChange={handleViewingAnnotatorChange}
-              onDirtyChange={handleDirtyChange}
-              reviewStatus={detail?.item?.review_status}
-              reviewNotes={detail?.item?.review_notes || ""}
-              reviewComments={reviewComments}
-              queueId={queueId}
-              itemId={currentItemId}
-              focusedCommentScope={focusedCommentScope}
-            />
-          ) : (
-            <LabelPanel
-              ref={labelPanelRef}
-              labels={detail?.labels || []}
-              annotations={detail?.annotations || []}
-              initialItemNotes={detail?.existing_notes || ""}
-              reviewFeedback={detail?.item?.review_notes || ""}
-              reviewComments={detail?.review_comments || []}
-              instructions={detail?.queue?.instructions}
-              onSubmit={handleSubmitAndNext}
-              isPending={isSubmitting || isCompleting}
-              queueId={queueId}
-              itemId={currentItemId}
-              detailItemId={detail?.item?.id}
-              onDirtyChange={handleDirtyChange}
-              readOnly={labelPanelReadOnly}
-              readOnlyReason={labelPanelReadOnlyReason}
-              annotators={null}
-              viewingAnnotatorId={viewingAnnotatorId}
-              currentUserId={currentUserId}
-              isAnnotatorSwitchPending={isAnnotatorSwitchPending}
-              onViewingAnnotatorChange={handleViewingAnnotatorChange}
-              focusedCommentScope={focusedCommentScope}
-              submitLabel={
-                isCurrentItemCompleted
-                  ? "Update & Next"
-                  : requiresReview
-                    ? "Submit for Review"
-                    : "Submit & Next"
-              }
-            />
-          )}
-        </Box>
-      </Box>
+              {isReviewWorkspaceMode ? (
+                <>
+                  {requiresReview && !isPendingReview && (
+                    <Alert severity="info" sx={{ m: 1.5, mb: 0 }}>
+                      This item is not waiting for review. Review actions appear
+                      on items submitted for review.
+                    </Alert>
+                  )}
+                  {hasOwnSubmittedReviewAnnotation && (
+                    <Alert severity="info" sx={{ m: 1.5, mb: 0 }}>
+                      You submitted annotations for this item, so review actions
+                      are unavailable.
+                    </Alert>
+                  )}
+                  <Box sx={{ flex: 1, minHeight: 0 }}>
+                    <AnnotationComparisonPanel
+                      item={detail?.item}
+                      annotations={detail?.annotations || []}
+                      labels={detail?.labels || []}
+                      spanNotes={detail?.span_notes || []}
+                      annotators={queueAnnotators}
+                      currentUserId={currentUserId}
+                      viewingAnnotatorId={viewingAnnotatorId}
+                      onViewingAnnotatorChange={handleViewingAnnotatorChange}
+                      onApprove={handleApprove}
+                      onReject={handleReject}
+                      onDirtyChange={handleDirtyChange}
+                      isPending={isReviewing}
+                      reviewStatus={detail?.item?.review_status}
+                      reviewNotes={detail?.item?.review_notes || ""}
+                      reviewComments={reviewComments}
+                      queueId={queueId}
+                      itemId={currentItemId}
+                      showReviewActions={showReviewActions}
+                      focusedCommentScope={focusedCommentScope}
+                    />
+                  </Box>
+                </>
+              ) : isBlockedAssignedToOther ? (
+                <Stack
+                  alignItems="center"
+                  justifyContent="center"
+                  spacing={2}
+                  sx={{ flex: 1, minHeight: 0, p: 3, textAlign: "center" }}
+                >
+                  <Iconify
+                    icon="mingcute:lock-fill"
+                    width={48}
+                    color="text.disabled"
+                  />
+                  <Typography variant="subtitle1" color="text.secondary">
+                    Assigned to {assignedToName || "another annotator"}
+                  </Typography>
+                  <Typography variant="body2" color="text.disabled">
+                    This item is assigned to someone else. You cannot annotate
+                    it.
+                  </Typography>
+                  <Button
+                    variant="outlined"
+                    color="primary"
+                    size="small"
+                    onClick={handleNext}
+                    disabled={isFetchingNext}
+                  >
+                    Skip to Next Item
+                  </Button>
+                </Stack>
+              ) : isViewingAllAnnotators ? (
+                <Box sx={{ flex: 1, minHeight: 0 }}>
+                  <AnnotationComparisonPanel
+                    item={detail?.item}
+                    labels={detail?.labels || []}
+                    annotations={detail?.annotations || []}
+                    spanNotes={detail?.span_notes || []}
+                    annotators={queueAnnotators}
+                    currentUserId={currentUserId}
+                    viewingAnnotatorId={viewingAnnotatorId}
+                    onViewingAnnotatorChange={handleViewingAnnotatorChange}
+                    onDirtyChange={handleDirtyChange}
+                    reviewStatus={detail?.item?.review_status}
+                    reviewNotes={detail?.item?.review_notes || ""}
+                    reviewComments={reviewComments}
+                    queueId={queueId}
+                    itemId={currentItemId}
+                    focusedCommentScope={focusedCommentScope}
+                  />
+                </Box>
+              ) : (
+                <Box sx={{ flex: 1, minHeight: 0 }}>
+                  <LabelPanel
+                    ref={labelPanelRef}
+                    labels={detail?.labels || []}
+                    annotations={detail?.annotations || []}
+                    initialItemNotes={detail?.existing_notes || ""}
+                    reviewFeedback={detail?.item?.review_notes || ""}
+                    reviewComments={detail?.review_comments || []}
+                    instructions={detail?.queue?.instructions}
+                    onSubmit={handleSubmitAndNext}
+                    isPending={isSubmitting || isCompleting}
+                    queueId={queueId}
+                    itemId={currentItemId}
+                    detailItemId={detail?.item?.id}
+                    onDirtyChange={handleDirtyChange}
+                    readOnly={labelPanelReadOnly}
+                    readOnlyReason={labelPanelReadOnlyReason}
+                    annotators={null}
+                    viewingAnnotatorId={viewingAnnotatorId}
+                    currentUserId={currentUserId}
+                    isAnnotatorSwitchPending={isAnnotatorSwitchPending}
+                    onViewingAnnotatorChange={handleViewingAnnotatorChange}
+                    focusedCommentScope={focusedCommentScope}
+                    submitLabel={
+                      isCurrentItemCompleted
+                        ? "Update & Next"
+                        : requiresReview
+                          ? "Submit for Review"
+                          : "Submit & Next"
+                    }
+                  />
+                </Box>
+              )}
+            </Box>
+          </Box>
+        }
+      />
 
-      {!isReviewWorkspaceMode && (
-        <AnnotateFooter
-          currentPosition={
-            detail?.progress?.currentPosition ||
-            detail?.progress?.current_position ||
-            0
-          }
-          total={detail?.progress?.total || 0}
-          onPrev={handlePrev}
-          onNext={handleNext}
-          hasPrev={historyIndex > 0 || Boolean(detail?.prev_item_id)}
-          hasNext={
-            historyIndex < itemHistory.length - 1 ||
-            Boolean(detail?.next_item_id)
-          }
-          isLoadingNext={isFetchingNext}
-        />
-      )}
+      {/* Pagination is available in every workspace mode — reviewers
+          and view-submissions readers need to navigate items the same
+          way annotators do. */}
+      <AnnotateFooter
+        currentPosition={footerProgress.currentPosition}
+        total={footerProgress.total}
+        onPrev={handlePrev}
+        onNext={handleNext}
+        hasPrev={canNavigatePrev}
+        hasNext={canNavigateNext}
+        isLoadingPrev={isLoadingPrevNav}
+        isLoadingNext={isLoadingNextNav}
+      />
 
       <CollaborationDrawer
         open={commentsOpen}

@@ -3,23 +3,23 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import (
     Case,
-    F,
-    FilteredRelation,
     IntegerField,
     Prefetch,
-    Q,
     Value,
     When,
 )
+from django.utils.decorators import method_decorator
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-from agent_playground.models.choices import GraphVersionStatus, PortDirection
+from agent_playground.models.choices import GraphVersionStatus
 from agent_playground.models.graph import Graph
 from agent_playground.models.graph_dataset import GraphDataset
 from agent_playground.models.graph_version import GraphVersion
 from agent_playground.models.node import Node
+from agent_playground.serializers.contracts import AGENT_PLAYGROUND_ERROR_RESPONSES
 from agent_playground.serializers.graph import (
     BulkDeleteSerializer,
     GraphCreateResponseSerializer,
@@ -56,7 +56,25 @@ from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
 
+agent_playground_errors = swagger_auto_schema(
+    responses=AGENT_PLAYGROUND_ERROR_RESPONSES
+)
 
+
+@method_decorator(name="list", decorator=agent_playground_errors)
+@method_decorator(name="create", decorator=agent_playground_errors)
+@method_decorator(name="retrieve", decorator=agent_playground_errors)
+@method_decorator(name="update", decorator=agent_playground_errors)
+@method_decorator(name="partial_update", decorator=agent_playground_errors)
+@method_decorator(name="destroy", decorator=agent_playground_errors)
+@method_decorator(name="bulk_delete", decorator=agent_playground_errors)
+@method_decorator(name="list_versions", decorator=agent_playground_errors)
+@method_decorator(name="create_version", decorator=agent_playground_errors)
+@method_decorator(name="retrieve_version", decorator=agent_playground_errors)
+@method_decorator(name="update_version", decorator=agent_playground_errors)
+@method_decorator(name="delete_version", decorator=agent_playground_errors)
+@method_decorator(name="activate_version", decorator=agent_playground_errors)
+@method_decorator(name="referenceable_graphs", decorator=agent_playground_errors)
 class GraphViewSet(ModelViewSet):
     """
     ViewSet for Graph CRUD and version management.
@@ -80,7 +98,6 @@ class GraphViewSet(ModelViewSet):
 
         # Templates are system-wide, no org/workspace filter
         if is_template_bool:
-
             return Graph.no_workspace_objects.filter(is_template=True)
 
         organization = self.request.organization
@@ -229,7 +246,26 @@ class GraphViewSet(ModelViewSet):
                 get_error_message("FAILED_TO_RETRIEVE_GRAPH")
             )
 
-    def partial_update(self, request, *args, **kwargs):
+    def _blocking_reference_message(self, graphs_to_delete):
+        version_ids = GraphVersion.no_workspace_objects.filter(
+            graph__in=graphs_to_delete
+        ).values_list("id", flat=True)
+
+        blocking_nodes = (
+            Node.no_workspace_objects.filter(ref_graph_version_id__in=version_ids)
+            .exclude(graph_version__graph__in=graphs_to_delete)
+            .select_related("graph_version__graph", "ref_graph_version__graph")
+        )
+
+        if blocking_nodes.exists():
+            node = blocking_nodes.first()
+            deleted_name = node.ref_graph_version.graph.name
+            referencing_name = node.graph_version.graph.name
+            return f"Unable to delete {deleted_name}: referenced by {referencing_name}"
+
+        return None
+
+    def _update_graph_metadata(self, request):
         """
         Update graph metadata only (name, description).
 
@@ -261,6 +297,36 @@ class GraphViewSet(ModelViewSet):
             logger.exception("Error updating graph", error=str(e))
             return self._gm.internal_server_error_response(
                 get_error_message("FAILED_TO_UPDATE_GRAPH")
+            )
+
+    def update(self, request, *args, **kwargs):
+        return self._update_graph_metadata(request)
+
+    def partial_update(self, request, *args, **kwargs):
+        return self._update_graph_metadata(request)
+
+    def destroy(self, request, *args, **kwargs):
+        """
+        Soft-delete a graph through the router detail route with cascade validation.
+        """
+        try:
+            graph = self.get_object()
+            graphs_to_delete = self.get_queryset().filter(id=graph.id)
+
+            blocking_message = self._blocking_reference_message(graphs_to_delete)
+            if blocking_message:
+                return self._gm.bad_request(blocking_message)
+
+            with transaction.atomic():
+                cascade_soft_delete_graph(graph)
+
+            return self._gm.success_response({"message": "Graph deleted successfully"})
+        except Graph.DoesNotExist:
+            return self._gm.not_found(get_error_message("GRAPH_NOT_FOUND"))
+        except Exception as e:
+            logger.exception("Error deleting graph", error=str(e))
+            return self._gm.internal_server_error_response(
+                get_error_message("FAILED_TO_DELETE_GRAPH")
             )
 
     @action(detail=False, methods=["post"], url_path="delete")
@@ -300,23 +366,9 @@ class GraphViewSet(ModelViewSet):
                         }
                     )
 
-            version_ids = GraphVersion.no_workspace_objects.filter(
-                graph__in=graphs_to_delete
-            ).values_list("id", flat=True)
-
-            blocking_nodes = (
-                Node.no_workspace_objects.filter(ref_graph_version_id__in=version_ids)
-                .exclude(graph_version__graph__in=graphs_to_delete)
-                .select_related("graph_version__graph", "ref_graph_version__graph")
-            )
-
-            if blocking_nodes.exists():
-                node = blocking_nodes.first()
-                deleted_name = node.ref_graph_version.graph.name
-                referencing_name = node.graph_version.graph.name
-                return self._gm.bad_request(
-                    f"Unable to delete {deleted_name}: referenced by {referencing_name}"
-                )
+            blocking_message = self._blocking_reference_message(graphs_to_delete)
+            if blocking_message:
+                return self._gm.bad_request(blocking_message)
 
             with transaction.atomic():
                 for graph in graphs_to_delete:

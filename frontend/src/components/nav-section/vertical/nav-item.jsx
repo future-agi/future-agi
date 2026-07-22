@@ -158,7 +158,12 @@ const NavItem = forwardRef(
 
     if (disabled) {
       return (
-        <CustomTooltip title={disabledTooltip || title} show={!!disabledTooltip} placement="right" arrow>
+        <CustomTooltip
+          title={disabledTooltip || title}
+          show={!!disabledTooltip}
+          placement="right"
+          arrow
+        >
           {renderContent}
         </CustomTooltip>
       );

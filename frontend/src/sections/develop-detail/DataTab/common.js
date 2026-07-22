@@ -320,14 +320,10 @@ export const getColumnConfig = ({
   const editCell = useEditCellStore.getState().editCell;
   const setEditCell = useEditCellStore.getState().setEditCell;
 
-  // Read both snake_case (canonical API shape) and camelCase (alias) so
-  // this function works whether `eachCol` came straight from the axios
-  // response (has non-enumerable camelCase getters) or from a spread/clone
-  // (only snake_case keys survive).
-  const colDataType = eachCol?.data_type ?? eachCol?.dataType;
-  const colOriginType = eachCol?.origin_type ?? eachCol?.originType;
-  const colIsFrozen = eachCol?.is_frozen ?? eachCol?.isFrozen;
-  const colIsVisible = eachCol?.is_visible ?? eachCol?.isVisible;
+  const colDataType = eachCol?.data_type;
+  const colOriginType = eachCol?.origin_type;
+  const colIsFrozen = eachCol?.is_frozen;
+  const colIsVisible = eachCol?.is_visible;
 
   const isEditable =
     !isViewerRole &&
@@ -339,7 +335,7 @@ export const getColumnConfig = ({
     headerName: eachCol?.name,
     valueGetter: (v) => {
       const cell = v?.data?.[eachCol?.id];
-      const rawValue = cell?.cell_value ?? cell?.cellValue;
+      const rawValue = cell?.cell_value;
       return parseCellValue(rawValue, AGGridCellDataType[colDataType]);
     },
     valueSetter: (params) => {
@@ -421,7 +417,7 @@ export const getColumnConfig = ({
       ...baseConfig,
       valueGetter: (v) => {
         const cell = v.data?.[eachCol.id];
-        const rawValue = cell?.cell_value ?? cell?.cellValue;
+        const rawValue = cell?.cell_value;
         const date = parseDate(rawValue);
         return date;
       },
@@ -616,7 +612,7 @@ export const onCellValueChangedWrapper = (queryClient, dataset) => (params) => {
   }
 
   const columnId = params?.column?.colId;
-  const rowId = params?.data?.rowId;
+  const rowId = params?.data?.row_id ?? params?.data?.rowId;
   const newValue = params?.newValue;
   const oldValue = params?.oldValue;
   const dataType = params?.column?.colDef?.dataType;
@@ -766,8 +762,6 @@ export const getStatusColor = (value, theme) => {
   };
 };
 
-
-
 export const parsePythonReprIfNeeded = (value) => {
   if (typeof value !== "string") return value;
   const isDict = value.startsWith("{") && value.endsWith("}");
@@ -819,13 +813,11 @@ export const normalizeEvalCellValue = (value) => {
   return v;
 };
 
-
 export const cleanChoiceLabel = (value) => {
   const parsed = parsePythonReprIfNeeded(value);
   if (Array.isArray(parsed)) return parsed.map((v) => String(v)).join(", ");
   return String(parsed ?? value);
 };
-
 
 // Map an outputType string (with all its casing/spelling variants) to a canonical
 // kind. Returns null when no type was given or it isn't recognized.
@@ -844,7 +836,12 @@ const inferKindFromValue = (/** @type {any} */ v) => {
   if (typeof v === "string") {
     const trimmed = v.trim();
     const lowered = trimmed.toLowerCase();
-    if (lowered === "passed" || lowered === "failed" || lowered === "pass" || lowered === "fail") {
+    if (
+      lowered === "passed" ||
+      lowered === "failed" ||
+      lowered === "pass" ||
+      lowered === "fail"
+    ) {
       return "passfail";
     }
     // numeric-looking string → score
@@ -906,13 +903,16 @@ export const normalizeEvalResult = (value, outputType) => {
     }
     items = items
       .map((/** @type {any} */ x) =>
-        x && typeof x === "object" ? (x.choice ?? x.label ?? x.value ?? "") : x,
+        x && typeof x === "object" ? x.choice ?? x.label ?? x.value ?? "" : x,
       )
       .map((/** @type {any} */ x) => String(x ?? ""))
       .filter(Boolean);
     if (items.length === 0) return { kind: "empty" };
     const score =
-      v && typeof v === "object" && !Array.isArray(v) && typeof v.score === "number"
+      v &&
+      typeof v === "object" &&
+      !Array.isArray(v) &&
+      typeof v.score === "number"
         ? v.score
         : null;
     return { kind: "choices", items, score };
@@ -964,23 +964,19 @@ export const DATASET_TYPES = {
 export const enhanceCol = (col, averageMetaData) => {
   const columnConfig = averageMetaData?.find((d) => d.id === col.id);
   if (!columnConfig) return col;
-  // Spread only copies enumerable own properties; the non-enumerable
-  // camelCase aliases installed by the axios response interceptor are
-  // lost. Explicitly re-add them so downstream code reading camelCase
-  // fields (like `eachCol?.dataType`) still works.
   return {
     ...col,
     metadata: columnConfig?.metadata,
-    data_type: col?.data_type ?? col?.dataType,
-    dataType: col?.data_type ?? col?.dataType,
-    origin_type: col?.origin_type ?? col?.originType,
-    originType: col?.origin_type ?? col?.originType,
-    is_frozen: col?.is_frozen ?? col?.isFrozen,
-    isFrozen: col?.is_frozen ?? col?.isFrozen,
-    is_visible: col?.is_visible ?? col?.isVisible,
-    isVisible: col?.is_visible ?? col?.isVisible,
-    source_id: col?.source_id ?? col?.sourceId,
-    sourceId: col?.source_id ?? col?.sourceId,
+    data_type: col?.data_type,
+    dataType: col?.data_type,
+    origin_type: col?.origin_type,
+    originType: col?.origin_type,
+    is_frozen: col?.is_frozen,
+    isFrozen: col?.is_frozen,
+    is_visible: col?.is_visible,
+    isVisible: col?.is_visible,
+    source_id: col?.source_id,
+    sourceId: col?.source_id,
   };
 };
 
@@ -1066,6 +1062,8 @@ export const getDatasetViewOptions = (viewOptions) => {
       viewOptions?.showDrawer !== undefined ? viewOptions?.showDrawer : true,
     bottomRow:
       viewOptions?.bottomRow !== undefined ? viewOptions?.bottomRow : true,
+    showEvals:
+      viewOptions?.showEvals !== undefined ? viewOptions?.showEvals : true,
   };
 };
 

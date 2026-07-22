@@ -33,7 +33,7 @@ const UsersPageTabBar = ({
 }) => {
   const { data: savedViewsData } = useGetWorkspaceSavedViews(USERS_TAB_TYPE);
   const customViews = useMemo(
-    () => savedViewsData?.customViews ?? savedViewsData?.custom_views ?? [],
+    () => savedViewsData?.custom_views ?? [],
     [savedViewsData],
   );
 

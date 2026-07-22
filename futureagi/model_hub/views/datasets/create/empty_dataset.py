@@ -5,19 +5,24 @@ from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.views import APIView
 
-logger = structlog.get_logger(__name__)
 from analytics.utils import (
     MixpanelEvents,
     MixpanelTypes,
     get_mixpanel_properties,
     track_mixpanel_event,
 )
-from model_hub.models.develop_dataset import Dataset
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    CreateEmptyDatasetRequestSerializer,
+)
 from model_hub.serializers.develop_dataset import DatasetSerializer
+from model_hub.serializers.develop_dataset_contracts import (
+    DatasetCreateStartedResponseSerializer,
+)
 from model_hub.validators.dataset_validators import (
     validate_dataset_name_unique,
-    validate_empty_dataset_row_bound,
 )
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
 from tfc.utils.parse_errors import parse_serialized_errors
@@ -27,18 +32,40 @@ try:
 except ImportError:
     log_and_deduct_cost_for_resource_request = None
 
+logger = structlog.get_logger(__name__)
+
 
 class CreateEmptyDatasetView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser, JSONParser)
 
+    @validated_request(
+        request_serializer=CreateEmptyDatasetRequestSerializer,
+        responses={
+            200: DatasetCreateStartedResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, *args, **kwargs):
         try:
+            data = request.validated_data
+            dataset_name = data.get("new_dataset_name")
+            model_type = data.get("model_type")
+            organization = (
+                getattr(request, "organization", None) or request.user.organization
+            )
+            is_sdk = data.get("is_sdk", False)
+
+            try:
+                validate_dataset_name_unique(dataset_name, organization)
+            except Exception as validation_err:
+                return self._gm.bad_request(str(validation_err.detail[0]))
+
             if log_and_deduct_cost_for_resource_request is not None:
                 call_log_row_entry = log_and_deduct_cost_for_resource_request(
-                    organization=getattr(request, "organization", None)
-                    or request.user.organization,
+                    organization=organization,
                     api_call_type=APICallTypeChoices.DATASET_ADD.value,
                     workspace=request.workspace,
                 )
@@ -52,34 +79,6 @@ class CreateEmptyDatasetView(APIView):
                     )
                 call_log_row_entry.status = APICallStatusChoices.SUCCESS.value
                 call_log_row_entry.save()
-
-            dataset_name = request.data.get("new_dataset_name")
-            model_type = request.data.get("model_type")
-            organization = (
-                getattr(request, "organization", None) or request.user.organization
-            )
-            is_sdk = request.data.get("is_sdk", False)
-
-            if not dataset_name:
-                return self._gm.bad_request(
-                    get_error_message("MISSING_NEW_DATASET_NAME")
-                )
-
-            # Enforce upper bound on row count (aligned with UI: max 10)
-            row_count = request.data.get("row", None)
-            if row_count is not None:
-                try:
-                    row_count = int(row_count)
-                    validate_empty_dataset_row_bound(row_count)
-                except (ValueError, TypeError):
-                    pass
-                except Exception as validation_err:
-                    return self._gm.bad_request(str(validation_err.detail[0]))
-
-            try:
-                validate_dataset_name_unique(dataset_name, organization)
-            except Exception as validation_err:
-                return self._gm.bad_request(str(validation_err.detail[0]))
 
             dataset_id = uuid.uuid4()
 
@@ -95,10 +94,11 @@ class CreateEmptyDatasetView(APIView):
 
             if dataset_serializer.is_valid():
                 dataset = dataset_serializer.save(
+                    workspace=getattr(request, "workspace", None),
                     dataset_config={
                         "eval_recommendations": ["Deterministic Evals"],
                         "is_sdk": is_sdk,
-                    }
+                    },
                 )
 
                 if request.headers.get("X-Api-Key") is not None:

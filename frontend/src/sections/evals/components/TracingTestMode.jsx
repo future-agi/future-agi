@@ -27,11 +27,7 @@ import DraggableColResizer from "src/components/draggable-col-resizer";
 import Iconify from "src/components/iconify";
 import axios, { endpoints } from "src/utils/axios";
 import { PROJECT_SOURCE } from "src/utils/constants";
-import {
-  canonicalEntries,
-  canonicalKeys,
-  stripAttributePathPrefix,
-} from "src/utils/utils";
+import { canonicalEntries } from "src/utils/utils";
 
 import {
   InlineAudio,
@@ -51,11 +47,14 @@ import { JsonValueTree } from "./DatasetTestMode";
 import EvalResultDisplay from "./EvalResultDisplay";
 import SpanRowList from "./SpanRowList";
 import useErrorLocalizerPoll from "../hooks/useErrorLocalizerPoll";
+import { resolveMappingFromRow } from "../utils/evalExecution";
 import {
-  buildFlatValueMap,
-  executeEvalForRow,
-} from "../utils/evalExecution";
-
+  walkPaths,
+  expandPaths,
+  sortSpansForMapping,
+} from "../utils/rowPathWalker";
+import { buildCompositeRuntimeConfig } from "../Helpers/compositeRuntimeConfig";
+import { useExecuteCompositeEvalAdhoc } from "../hooks/useCompositeEval";
 
 const ROW_TYPE_OPTIONS = [
   { value: "Span", label: "Spans", icon: "solar:layers-outline" },
@@ -209,6 +208,16 @@ const normalizeRowType = (value) => {
   return "Span";
 };
 
+export const buildTracingPreviewListParams = ({
+  selectedProjectId,
+  effectiveFilters,
+}) => ({
+  project_id: selectedProjectId,
+  page_number: 0,
+  page_size: 50,
+  filters: JSON.stringify(effectiveFilters || []),
+});
+
 const TracingTestMode = React.forwardRef(
   (
     {
@@ -242,14 +251,6 @@ const TracingTestMode = React.forwardRef(
       // TestPlayground (eval detail) where there's no parent form to
       // wire filters from.
       hostsFilter = false,
-      // Optional: precomputed mapping-path list from the parent picker
-      // (e.g. TaskConfigPanel sends sessions / traces paths fetched from
-      // get_eval_attributes_list). When provided AND rowType is Session
-      // or Trace, the variable-mapping dropdown reads from this list
-      // instead of walking the loaded row's data — so users see all
-      // candidate paths immediately, regardless of drill-in depth.
-      // When null/empty, falls back to today's walked-detail behaviour.
-      pickerSourceColumns = null,
       // When true, the mapping Autocomplete accepts arbitrary typed values
       // (freeSolo) instead of being locked to `fieldNames`. The BE resolver
       // (_walk_dotted_path) already handles arbitrary depths safely across
@@ -262,6 +263,7 @@ const TracingTestMode = React.forwardRef(
   ) => {
     const projectLocked = !!initialProjectId;
     const rowTypeLocked = !!initialRowType;
+    const executeCompositeAdhoc = useExecuteCompositeEvalAdhoc();
 
     // Project
     const [projects, setProjects] = useState([]);
@@ -477,13 +479,10 @@ const TracingTestMode = React.forwardRef(
           }
 
           let endpoint;
-          const params = {
-            project_id: selectedProjectId,
-            page_number: 0,
-            page_size: 50,
-            filters: JSON.stringify(effectiveFilters || []),
-            interval: "year",
-          };
+          const params = buildTracingPreviewListParams({
+            selectedProjectId,
+            effectiveFilters,
+          });
 
           if (rowType === "Span") {
             endpoint = endpoints.project.getSpansForObserveProject();
@@ -529,15 +528,11 @@ const TracingTestMode = React.forwardRef(
     const currentRow = rows[currentRowIndex] || null;
 
     // ── Session drill-down queries (rowType=Session only) ──
-    // The mapping dropdown is sourced from `pickerSourceColumns` (the
-    // precomputed paths from get_eval_attributes_list) when present, so
-    // these queries primarily power the preview pane: showing real
-    // values from the session's first trace + spans so users can sanity-
-    // check what their mapping resolves to. Two queries: session detail
-    // (paginated traces) and the first trace's spans (eager-fetched on
-    // session select). React Query handles caching and dedup; cache keys
-    // are namespaced under `picker-` to stay isolated from any sibling
-    // hook in the wider app.
+    // These queries assemble the previewed session so the mapping dropdown
+    // can walk it: session detail (paginated traces) and the first trace's
+    // spans (eager-fetched on session select). React Query handles caching
+    // and dedup; cache keys are namespaced under `picker-` to stay isolated
+    // from any sibling hook in the wider app.
     const sessionRowSessionId =
       rowType === "Session" ? currentRow?.session_id : null;
 
@@ -566,7 +561,9 @@ const TracingTestMode = React.forwardRef(
         const r = resp.data?.result || {};
         return {
           trace: r.trace,
-          spans: flattenSpanTree(r.observation_spans || []),
+          spans: sortSpansForMapping(
+            flattenSpanTree(r.observation_spans || []),
+          ),
         };
       },
       enabled: !!sessionFirstTraceId,
@@ -633,7 +630,7 @@ const TracingTestMode = React.forwardRef(
               }
             } else {
               const traceInfo = traceResult?.trace || {};
-              const allSpans = flattenSpanTree(spans);
+              const allSpans = sortSpansForMapping(flattenSpanTree(spans));
               detailData = {
                 ...traceInfo,
                 spans: allSpans,
@@ -689,10 +686,11 @@ const TracingTestMode = React.forwardRef(
         traces: traces.map((t, i) => ({
           ...t,
           // First trace gets eager-fetched spans for immediate preview;
-          // remaining traces start empty and would be filled when the
-          // user clicks them (lazy fetch hook to be added in a follow-
-          // up if the basic preview proves not enough).
+          // remaining traces start empty and are stamped unloaded so
+          // resolvePath reports their span paths as unknown (silent),
+          // not missing.
           spans: i === 0 ? firstTraceSpans : [],
+          ...(i === 0 ? {} : { _spansLoaded: false }),
         })),
       };
       setSpanDetail(detailData);
@@ -713,7 +711,7 @@ const TracingTestMode = React.forwardRef(
       if (!currentRow) return [];
       if (!columns.length) {
         // No column config — use all row keys directly. canonicalEntries
-        // drops the camelCase aliases the axios interceptor attaches so
+        // drops legacy camelCase aliases attaches so
         // each backend field only appears once.
         return canonicalEntries(currentRow).map(([key, val]) => ({
           key,
@@ -762,104 +760,75 @@ const TracingTestMode = React.forwardRef(
       // have it — avoids rewalking when React reuses the same cached
       // detailData object across row toggles.
       for (const entry of detailCacheRef.current.values()) {
-        if (entry.detail === source && entry.fieldNames) {
-          return entry.fieldNames;
+        if (entry.detail === source && entry.walked) {
+          return entry.walked;
         }
       }
 
-      const keys = [];
-      // Walks both dicts and arrays. Array elements get numeric
-      // indices (e.g. `messages.0.content`) so users can target
-      // individual items in chat-message lists. Limits prevent
-      // runaway recursion: 5000 dict keys, 500 array elements.
-      const ARRAY_PEEK = 500;
-      const DICT_LIMIT = 5000;
-      // Subtrees we deliberately don't recurse into — the key itself
-      // stays selectable, but its (often multi-MB) children are skipped
-      // so the first-row walk finishes in tens of ms on voice traces.
-      // `raw_log` is the Vapi call dump, `metrics_data` / `call_logs`
-      // are the per-turn payloads, `provider_transcript` is the raw
-      // transcript string — none of these are useful as variable paths.
-      const NO_RECURSE_KEYS = new Set([
-        "raw_log",
-        "rawLog",
-        "metrics_data",
-        "metricsData",
-        "call_logs",
-        "callLogs",
-        "provider_transcript",
-        "providerTranscript",
-      ]);
-      const walk = (node, prefix) => {
-        if (Array.isArray(node)) {
-          node.slice(0, ARRAY_PEEK).forEach((item, idx) => {
-            const path = prefix ? `${prefix}.${idx}` : String(idx);
-            keys.push(path);
-            if (item && typeof item === "object") {
-              walk(item, path);
-            }
-          });
-          return;
-        }
-        // canonicalEntries strips the camelCase aliases the axios
-        // interceptor layers on top of snake_case fields, otherwise the
-        // attribute autocomplete dropdown lists every path twice.
-        for (const [k, v] of canonicalEntries(node)) {
-          if (k.startsWith("_")) continue;
-          const path = prefix ? `${prefix}.${k}` : k;
-          keys.push(path);
-          if (NO_RECURSE_KEYS.has(k)) continue;
-          if (v && typeof v === "object") {
-            if (Array.isArray(v) || canonicalKeys(v).length < DICT_LIMIT) {
-              walk(v, path);
-            }
-          }
-        }
-      };
-      walk(source, "");
-      // Strip wrapper/span_attributes prefix and dedupe against top-level keys.
-      const seen = new Set();
-      const flattened = [];
-      keys.forEach((k) => {
-        const short = stripAttributePathPrefix(k);
-        if (seen.has(short)) return;
-        seen.add(short);
-        flattened.push(short);
-      });
+      const walked = walkPaths(source); // { paths, truncated }
 
       // Persist back into the per-row cache so the next row toggle that
       // resolves to this same detail reference short-circuits the walk.
       for (const [key, entry] of detailCacheRef.current.entries()) {
         if (entry.detail === source) {
-          detailCacheRef.current.set(key, { ...entry, fieldNames: flattened });
+          detailCacheRef.current.set(key, { ...entry, walked });
           break;
         }
       }
 
-      return flattened;
+      return walked;
     }, [spanDetail]);
 
-    // Mapping-dropdown source. For Session / Trace row types when the
-    // parent picker passed in a precomputed list (TaskConfigPanel does
-    // this with the get_eval_attributes_list result), use it directly so
-    // users see every candidate path the moment they pick the row-type
-    // tab — no drill-in required. Span row type and any caller that
-    // doesn't pass pickerSourceColumns falls back to walking the loaded
-    // detail (existing behaviour).
+    // Type-to-deepen: options stay at the eager depth from walkPaths; when
+    // the user types past a truncated boundary, expandPaths merges deeper
+    // children in. Reset whenever the previewed row changes.
+    const [deepenedPaths, setDeepenedPaths] = useState([]);
+    const [deepenedTruncated, setDeepenedTruncated] = useState(() => new Set());
+
+    useEffect(() => {
+      setDeepenedPaths([]);
+      setDeepenedTruncated(new Set());
+    }, [spanDetail]);
+
+    // Mapping-dropdown source: paths walked from the previewed row (eager
+    // depth) plus any type-to-deepen additions. Falls back to the row's
+    // column keys before the detail has loaded.
     const fieldNames = useMemo(() => {
-      const usePrecomputed =
-        Array.isArray(pickerSourceColumns) &&
-        pickerSourceColumns.length > 0 &&
-        (rowType === "Session" || rowType === "Trace");
-      if (usePrecomputed) {
-        return pickerSourceColumns
-          .map((c) =>
-            typeof c === "string" ? c : c?.field || c?.name || c?.headerName,
-          )
-          .filter(Boolean);
-      }
-      return walkedFromDetail || rowFields.map((f) => f?.colId || f?.key);
-    }, [pickerSourceColumns, rowType, walkedFromDetail, rowFields]);
+      const base = walkedFromDetail?.paths;
+      if (base?.length) return [...base, ...deepenedPaths];
+      return rowFields.map((f) => f?.colId || f?.key);
+    }, [walkedFromDetail, deepenedPaths, rowFields]);
+
+    const truncatedSet = useMemo(() => {
+      const merged = new Set(walkedFromDetail?.truncated || []);
+      deepenedTruncated.forEach((p) => merged.add(p));
+      return merged;
+    }, [walkedFromDetail, deepenedTruncated]);
+
+    // When the user types a truncated path followed by a dot, walk that node
+    // a few more levels and merge the children into the options. Operates on
+    // already-loaded detail (session traces beyond the first aren't fetched
+    // on demand here — their spans stay unknown, resolved silently).
+    const handleMappingInputChange = useCallback(
+      (_event, inputValue) => {
+        if (!inputValue?.endsWith(".")) return;
+        const prefix = inputValue.slice(0, -1);
+        if (!truncatedSet.has(prefix)) return;
+        const { paths, truncated } = expandPaths(spanDetail, prefix);
+        if (!paths.length) return;
+        setDeepenedPaths((prev) => {
+          const known = new Set([...(walkedFromDetail?.paths || []), ...prev]);
+          const fresh = paths.filter((p) => !known.has(p));
+          return fresh.length ? [...prev, ...fresh] : prev;
+        });
+        setDeepenedTruncated((prev) => {
+          const next = new Set(prev);
+          truncated.forEach((p) => next.add(p));
+          return next;
+        });
+      },
+      [truncatedSet, spanDetail, walkedFromDetail],
+    );
 
     // Notify parent of available fields for autocomplete
     useEffect(() => {
@@ -950,45 +919,119 @@ const TracingTestMode = React.forwardRef(
         return;
       }
 
-      const flatValueMap = buildFlatValueMap(spanDetail);
-      const evalItem = {
-        template_id: tid,
-        template_type: isComposite ? "composite" : undefined,
-        model,
-      };
-      const result = await executeEvalForRow({
-        evalItem,
-        rowType,
-        currentRow,
-        spanDetail,
-        mapping,
-        flatValueMap,
-        rowFields,
-        codeParams,
-        errorLocalizerEnabled,
-        compositeAdhocConfig,
-      });
-
-      if (result.ok) {
-        // EvalResultDisplay reads `compositeResult` for composite, or the
-        // legacy `output`/`reason`/`score` keys for single.
-        const nextResult = result.isComposite
-          ? {
-              output: result.output,
-              reason: result.reason,
-              compositeResult: result.compositeResult,
-            }
-          : result.raw;
-        setResult(nextResult);
-        onTestResult?.(true, nextResult);
-        if (!result.isComposite && errorLocalizerEnabled && result.logId) {
-          startErrorLocalizerPoll(result.logId);
+      try {
+        // Resolve each mapped variable against the previewed row via the
+        // shared per-path walker — the same resolution the dropdown offers,
+        // with rowFields as the fallback for annotation columns.
+        const scopedMapping = {};
+        for (const variable of variables) {
+          if (mapping[variable]) scopedMapping[variable] = mapping[variable];
         }
-      } else {
-        setError(result.errorMessage);
-        onTestResult?.(false, result.errorMessage);
+        const evalMapping = resolveMappingFromRow(
+          scopedMapping,
+          spanDetail,
+          rowFields,
+        );
+
+        // Single-eval playground resolves {{span}} / {{trace}} /
+        // {{session}} server-side from IDs. Composite execution expects
+        // the concrete context objects directly.
+        const autoCtx = {};
+        const _spanId = currentRow?.span_id || currentRow?.spanId;
+        const _traceId = currentRow?.trace_id || currentRow?.traceId;
+        const _sessionId = currentRow?.session_id || currentRow?.sessionId;
+        if (rowType === "Span" && _spanId) autoCtx.span_id = _spanId;
+        if ((rowType === "Span" || rowType === "Trace") && _traceId)
+          autoCtx.trace_id = _traceId;
+        if (rowType === "Session" && _sessionId)
+          autoCtx.session_id = _sessionId;
+        if (rowType === "VoiceCall" && _traceId) autoCtx.trace_id = _traceId;
+
+        const compositeCtx = {};
+        if (rowType === "Span" && spanDetail)
+          compositeCtx.span_context = spanDetail;
+        if (rowType === "Trace" && currentRow)
+          compositeCtx.trace_context = currentRow;
+        if (rowType === "Session" && currentRow)
+          compositeCtx.session_context = currentRow;
+        if (rowType === "VoiceCall" && currentRow)
+          compositeCtx.trace_context = currentRow;
+
+        const compositeConfig = buildCompositeRuntimeConfig({
+          codeParams,
+        });
+
+        const { data } = isComposite
+          ? compositeAdhocConfig
+            ? {
+                data: {
+                  status: true,
+                  result: await executeCompositeAdhoc.mutateAsync({
+                    ...compositeAdhocConfig,
+                    mapping: evalMapping,
+                    model,
+                    error_localizer: errorLocalizerEnabled,
+                    config: compositeConfig,
+                    ...compositeCtx,
+                  }),
+                },
+              }
+            : await axios.post(
+                endpoints.develop.eval.executeCompositeEval(tid),
+                {
+                  mapping: evalMapping,
+                  model,
+                  error_localizer: errorLocalizerEnabled,
+                  config: compositeConfig,
+                  ...compositeCtx,
+                },
+              )
+          : await axios.post(endpoints.develop.eval.evalPlayground, {
+              template_id: tid,
+              model,
+              error_localizer: errorLocalizerEnabled,
+              config: {
+                mapping: evalMapping,
+                ...(Object.keys(codeParams || {}).length > 0
+                  ? { params: codeParams }
+                  : {}),
+              },
+              ...autoCtx,
+            });
+
+        if (data?.status) {
+          const nextResult = isComposite
+            ? {
+                output:
+                  data.result?.aggregation_enabled &&
+                  data.result?.aggregate_score != null
+                    ? data.result.aggregate_score
+                    : null,
+                reason: data.result?.summary || "",
+                compositeResult: data.result,
+              }
+            : data.result;
+          setResult(nextResult);
+          onTestResult?.(true, nextResult);
+          if (!isComposite && errorLocalizerEnabled && data.result?.log_id) {
+            startErrorLocalizerPoll(data.result.log_id);
+          }
+        } else {
+          const errMsg = data?.result || "Evaluation failed";
+          setError(errMsg);
+          onTestResult?.(false, errMsg);
+        }
+      } catch (err) {
+        const errMsg =
+          err?.result ||
+          err?.detail ||
+          err?.message ||
+          "Failed to run evaluation";
+        setError(errMsg);
+        onTestResult?.(false, errMsg);
+      } finally {
+        setIsRunning(false);
       }
-      setIsRunning(false);
     }, [
       templateId,
       variables,
@@ -1358,8 +1401,7 @@ const TracingTestMode = React.forwardRef(
             {/* Rows — iterate span detail keys, flatten span_attributes */}
             <Box sx={{ maxHeight: 400, overflowY: "auto" }}>
               {(() => {
-                // canonicalEntries skips the camelCase aliases the axios
-                // interceptor adds — otherwise every field shows up twice
+                // canonicalEntries skips the camelCase aliases that may exist in legacy objects — otherwise every field shows up twice
                 // in the span detail table.
                 const raw = canonicalEntries(spanDetail).filter(
                   ([key]) => key !== "spans",
@@ -1550,31 +1592,36 @@ const TracingTestMode = React.forwardRef(
           !loading &&
           !isPendingNewFetch &&
           totalRows === 0 && (
-          <Box
-            sx={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: 0.75,
-              py: 3,
-              border: "1px dashed",
-              borderColor: "divider",
-              borderRadius: "8px",
-            }}
-          >
-            <Iconify
-              icon="mdi:table-off"
-              width={28}
-              sx={{ color: "text.disabled" }}
-            />
-            <Typography variant="body2" fontWeight={600} color="text.secondary">
-              No {rowType.toLowerCase()} data found
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              Add {rowType.toLowerCase()} to this project before running a test
-            </Typography>
-          </Box>
-        )}
+            <Box
+              sx={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 0.75,
+                py: 3,
+                border: "1px dashed",
+                borderColor: "divider",
+                borderRadius: "8px",
+              }}
+            >
+              <Iconify
+                icon="mdi:table-off"
+                width={28}
+                sx={{ color: "text.disabled" }}
+              />
+              <Typography
+                variant="body2"
+                fontWeight={600}
+                color="text.secondary"
+              >
+                No {rowType.toLowerCase()} data found
+              </Typography>
+              <Typography variant="caption" color="text.disabled">
+                Add {rowType.toLowerCase()} to this project before running a
+                test
+              </Typography>
+            </Box>
+          )}
 
         {/* Variable mapping */}
         {variables.length > 0 &&
@@ -1619,8 +1666,9 @@ const TracingTestMode = React.forwardRef(
                         {...(allowCustomFieldPath
                           ? {
                               inputValue: mapping[variable] || "",
-                              onInputChange: (_, val, reason) => {
+                              onInputChange: (event, val, reason) => {
                                 if (reason === "reset") return;
+                                handleMappingInputChange(event, val);
                                 setMapping((prev) => ({
                                   ...prev,
                                   [variable]: val || "",
@@ -1684,10 +1732,32 @@ const TracingTestMode = React.forwardRef(
                                   : "text.primary",
                                 whiteSpace: "nowrap",
                                 overflow: "hidden",
-                                textOverflow: "ellipsis",
+                                containerType: "inline-size",
+                                // The option <li> is a flex row, so the span
+                                // is a flex item: releasing max-width alone
+                                // won't widen it — flex-shrink must go too.
+                                "&:hover > span, &.Mui-focused > span": {
+                                  maxWidth: "none",
+                                  flexShrink: 0,
+                                  // Slide left just far enough to reveal the
+                                  // clipped tail; fitting text stays put.
+                                  transform:
+                                    "translateX(min(0px, calc(100cqw - 100%)))",
+                                },
                               }}
                             >
-                              {col}
+                              <Box
+                                component="span"
+                                sx={{
+                                  display: "inline-block",
+                                  maxWidth: "100%",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  verticalAlign: "top",
+                                }}
+                              >
+                                {col}
+                              </Box>
                             </Box>
                           );
                         }}
@@ -1758,6 +1828,9 @@ const TracingTestMode = React.forwardRef(
               ...result,
               ...(errorLocalizerState.status
                 ? { error_localizer_status: errorLocalizerState.status }
+                : {}),
+              ...(errorLocalizerState.message
+                ? { error_localizer_message: errorLocalizerState.message }
                 : {}),
               ...(errorLocalizerState.details
                 ? {

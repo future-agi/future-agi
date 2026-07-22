@@ -1,7 +1,128 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
+import { serializeFilterListForApi } from "src/api/contracts/filter-contract";
 
 export const SAVED_VIEWS_KEY = "saved-views";
+
+const FILTER_CONFIG_KEYS = new Set([
+  "filters",
+  "compare_filters",
+  "extra_filters",
+  "compare_extra_filters",
+]);
+
+const SAVED_VIEW_CONFIG_KEYS = new Set([
+  "filters",
+  "columns",
+  "sort",
+  "display",
+  "widgets",
+  "conversation_id",
+  "sub_tab",
+  "compare_filters",
+  "compare_date_filter",
+  "extra_filters",
+  "compare_extra_filters",
+]);
+
+const CREATE_PAYLOAD_KEYS = new Set([
+  "project_id",
+  "name",
+  "tab_type",
+  "visibility",
+  "icon",
+  "config",
+]);
+
+const UPDATE_PAYLOAD_KEYS = new Set(["name", "visibility", "icon", "config"]);
+
+const mapPayloadKeys = (data, allowedKeys) =>
+  Object.fromEntries(
+    Object.entries(data || {}).filter(([key, value]) => {
+      return allowedKeys.has(key) && value !== undefined;
+    }),
+  );
+
+export const serializeSavedViewConfig = (config = {}) => {
+  if (!config || typeof config !== "object" || Array.isArray(config)) {
+    throw new Error("Saved view config must be an object.");
+  }
+
+  const unknownKeys = Object.keys(config).filter(
+    (key) => !SAVED_VIEW_CONFIG_KEYS.has(key),
+  );
+  if (unknownKeys.length) {
+    throw new Error(
+      `Unknown saved view config keys: ${unknownKeys.join(", ")}`,
+    );
+  }
+
+  return Object.fromEntries(
+    Object.entries(config).map(([key, value]) => {
+      if (FILTER_CONFIG_KEYS.has(key) && value !== null) {
+        if (!Array.isArray(value)) {
+          throw new Error(`Saved view config "${key}" must be a filter list.`);
+        }
+        return [key, serializeFilterListForApi(value)];
+      }
+      return [key, value];
+    }),
+  );
+};
+
+export const buildCreateSavedViewPayload = (data, forcedTabType) => {
+  const payload = mapPayloadKeys(data, CREATE_PAYLOAD_KEYS);
+  if (forcedTabType) payload.tab_type = forcedTabType;
+  if (payload.config !== undefined) {
+    payload.config = serializeSavedViewConfig(payload.config);
+  }
+  return payload;
+};
+
+export const buildUpdateSavedViewPayload = (data) => {
+  const payload = mapPayloadKeys(data, UPDATE_PAYLOAD_KEYS);
+  if (payload.config !== undefined) {
+    payload.config = serializeSavedViewConfig(payload.config);
+  }
+  return payload;
+};
+
+const appendCustomViewToCache = (currentResult, newView) => {
+  if (!currentResult) return currentResult;
+  const currentList = currentResult.custom_views ?? [];
+  if (currentList.some((v) => v.id === newView.id)) return currentResult;
+  return {
+    ...currentResult,
+    custom_views: [...currentList, newView],
+  };
+};
+
+const updateCustomViewInCache = (currentResult, updatedView) => {
+  if (!currentResult) return currentResult;
+  const currentList = currentResult.custom_views ?? [];
+  return {
+    ...currentResult,
+    custom_views: currentList.map((v) =>
+      v.id === updatedView.id ? { ...v, ...updatedView } : v,
+    ),
+  };
+};
+
+const reorderCustomViewsInCache = (currentResult, order) => {
+  if (!currentResult) return currentResult;
+  const positionById = Object.fromEntries(
+    order.map((item) => [item.id, item.position]),
+  );
+  return {
+    ...currentResult,
+    custom_views: (currentResult.custom_views ?? [])
+      .map((view) => ({
+        ...view,
+        position: positionById[view.id] ?? view.position,
+      }))
+      .sort((a, b) => a.position - b.position),
+  };
+};
 
 // ---------------------------------------------------------------------------
 // Queries
@@ -10,11 +131,12 @@ export const SAVED_VIEWS_KEY = "saved-views";
 export const useGetSavedViews = (projectId) => {
   return useQuery({
     queryKey: [SAVED_VIEWS_KEY, projectId],
-    queryFn: () =>
-      axios.get(endpoints.savedViews.list, {
+    queryFn: async () => {
+      const res = await axios.get(endpoints.savedViews.list, {
         params: { project_id: projectId },
-      }),
-    select: (d) => d.data?.result,
+      });
+      return res.data?.result;
+    },
     staleTime: 60_000,
     enabled: !!projectId,
   });
@@ -25,11 +147,12 @@ export const useGetSavedViews = (projectId) => {
 export const useGetWorkspaceSavedViews = (tabType) => {
   return useQuery({
     queryKey: [SAVED_VIEWS_KEY, "workspace", tabType],
-    queryFn: () =>
-      axios.get(endpoints.savedViews.list, {
+    queryFn: async () => {
+      const res = await axios.get(endpoints.savedViews.list, {
         params: { tab_type: tabType },
-      }),
-    select: (d) => d.data?.result,
+      });
+      return res.data?.result;
+    },
     staleTime: 60_000,
     enabled: !!tabType,
   });
@@ -39,31 +162,16 @@ export const useCreateWorkspaceSavedView = (tabType) => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (data) =>
-      axios.post(endpoints.savedViews.create, { ...data, tab_type: tabType }),
+      axios.post(
+        endpoints.savedViews.create,
+        buildCreateSavedViewPayload(data, tabType),
+      ),
     onSuccess: (response) => {
       const newView = response?.data?.result;
       if (newView) {
         queryClient.setQueryData(
           [SAVED_VIEWS_KEY, "workspace", tabType],
-          (old) => {
-            if (!old) return old;
-            const currentResult = old.data?.result ?? {};
-            const currentList =
-              currentResult.custom_views ?? currentResult.customViews ?? [];
-            if (currentList.some((v) => v.id === newView.id)) return old;
-            const nextList = [...currentList, newView];
-            return {
-              ...old,
-              data: {
-                ...old.data,
-                result: {
-                  ...currentResult,
-                  custom_views: nextList,
-                  customViews: nextList,
-                },
-              },
-            };
-          },
+          (old) => appendCustomViewToCache(old, newView),
         );
       }
       queryClient.invalidateQueries({
@@ -77,32 +185,16 @@ export const useUpdateWorkspaceSavedView = (tabType) => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...data }) =>
-      axios.put(endpoints.savedViews.update(id), data),
+      axios.put(
+        endpoints.savedViews.update(id),
+        buildUpdateSavedViewPayload(data),
+      ),
     onSuccess: (response) => {
       const updated = response?.data?.result;
       if (updated?.id) {
         queryClient.setQueryData(
           [SAVED_VIEWS_KEY, "workspace", tabType],
-          (old) => {
-            if (!old) return old;
-            const currentResult = old.data?.result ?? {};
-            const currentList =
-              currentResult.custom_views ?? currentResult.customViews ?? [];
-            const nextList = currentList.map((v) =>
-              v.id === updated.id ? { ...v, ...updated } : v,
-            );
-            return {
-              ...old,
-              data: {
-                ...old.data,
-                result: {
-                  ...currentResult,
-                  custom_views: nextList,
-                  customViews: nextList,
-                },
-              },
-            };
-          },
+          (old) => updateCustomViewInCache(old, updated),
         );
       }
       queryClient.invalidateQueries({
@@ -131,31 +223,16 @@ export const useDeleteWorkspaceSavedView = (tabType) => {
 export const useCreateSavedView = (projectId) => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data) => axios.post(endpoints.savedViews.create, data),
+    mutationFn: (data) =>
+      axios.post(
+        endpoints.savedViews.create,
+        buildCreateSavedViewPayload(data),
+      ),
     onSuccess: (response) => {
       const newView = response?.data?.result;
       if (newView) {
-        queryClient.setQueryData(
-          [SAVED_VIEWS_KEY, projectId],
-          (old) => {
-            if (!old) return old;
-            const currentResult = old.data?.result ?? {};
-            const currentList =
-              currentResult.custom_views ?? currentResult.customViews ?? [];
-            if (currentList.some((v) => v.id === newView.id)) return old;
-            const nextList = [...currentList, newView];
-            return {
-              ...old,
-              data: {
-                ...old.data,
-                result: {
-                  ...currentResult,
-                  custom_views: nextList,
-                  customViews: nextList,
-                },
-              },
-            };
-          },
+        queryClient.setQueryData([SAVED_VIEWS_KEY, projectId], (old) =>
+          appendCustomViewToCache(old, newView),
         );
       }
       queryClient.invalidateQueries({
@@ -169,31 +246,18 @@ export const useUpdateSavedView = (projectId) => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...data }) =>
-      axios.put(endpoints.savedViews.update(id), data, {
-        params: { project_id: projectId },
-      }),
+      axios.put(
+        endpoints.savedViews.update(id),
+        buildUpdateSavedViewPayload(data),
+        {
+          params: { project_id: projectId },
+        },
+      ),
     onSuccess: (response) => {
       const updated = response?.data?.result;
       if (updated?.id) {
         queryClient.setQueryData([SAVED_VIEWS_KEY, projectId], (old) => {
-          if (!old) return old;
-          const currentResult = old.data?.result ?? {};
-          const currentList =
-            currentResult.custom_views ?? currentResult.customViews ?? [];
-          const nextList = currentList.map((v) =>
-            v.id === updated.id ? { ...v, ...updated } : v,
-          );
-          return {
-            ...old,
-            data: {
-              ...old.data,
-              result: {
-                ...currentResult,
-                custom_views: nextList,
-                customViews: nextList,
-              },
-            },
-          };
+          return updateCustomViewInCache(old, updated);
         });
       }
       queryClient.invalidateQueries({
@@ -246,23 +310,7 @@ export const useReorderSavedViews = (projectId) => {
       const previous = queryClient.getQueryData([SAVED_VIEWS_KEY, projectId]);
 
       queryClient.setQueryData([SAVED_VIEWS_KEY, projectId], (old) => {
-        if (!old?.data?.result) return old;
-        const posMap = Object.fromEntries(
-          order.map((item) => [item.id, item.position]),
-        );
-        const updated = old.data.result.custom_views
-          .map((v) => ({
-            ...v,
-            position: posMap[v.id] ?? v.position,
-          }))
-          .sort((a, b) => a.position - b.position);
-        return {
-          ...old,
-          data: {
-            ...old.data,
-            result: { ...old.data.result, custom_views: updated },
-          },
-        };
+        return reorderCustomViewsInCache(old, order);
       });
 
       return { previous };

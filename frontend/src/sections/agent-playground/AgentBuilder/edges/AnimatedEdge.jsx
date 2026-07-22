@@ -23,6 +23,7 @@ import {
 import { EDGE_STATE, NODE_X_OFFSET } from "../../utils/constants";
 import { useSaveDraftContext } from "../saveDraftContext";
 import NodeSelectionPopper from "../../components/NodeSelectionPopper";
+import useCanEditAgent from "../../hooks/useCanEditAgent";
 import { useWorkflowRunStoreShallow } from "../../store";
 import useAddNodeOptimistic from "../hooks/useAddNodeOptimistic";
 import "../agent-graph.css";
@@ -69,6 +70,7 @@ export default function AnimatedEdge({
   const { ensureDraft } = useSaveDraftContext();
   const { setCenter, getZoom, getNode } = useReactFlow();
   const isWorkflowRunning = useWorkflowRunStoreShallow((s) => s.isRunning);
+  const { isReadOnly } = useCanEditAgent();
 
   const { addNode } = useAddNodeOptimistic();
 
@@ -132,7 +134,7 @@ export default function AnimatedEdge({
   const handleDelete = useCallback(
     async (e) => {
       e.stopPropagation();
-      if (isWorkflowRunning) return;
+      if (isWorkflowRunning || isReadOnly) return;
 
       // Always apply optimistic deletion first
       const { edges: prevEdges, nodes } = useAgentPlaygroundStore.getState();
@@ -175,14 +177,19 @@ export default function AnimatedEdge({
       onEdgesChange,
       setGraphData,
       isWorkflowRunning,
+      isReadOnly,
       queryClient,
     ],
   );
 
-  const handleAddClick = useCallback((e) => {
-    e.stopPropagation();
-    setPopperOpen(true);
-  }, []);
+  const handleAddClick = useCallback(
+    (e) => {
+      e.stopPropagation();
+      if (isReadOnly) return;
+      setPopperOpen(true);
+    },
+    [isReadOnly],
+  );
 
   const handlePopperClose = useCallback(() => {
     setPopperOpen(false);
@@ -191,7 +198,7 @@ export default function AnimatedEdge({
 
   const handleNodeSelect = useCallback(
     (nodeType, nodeTemplateId, initialConfig) => {
-      if (isWorkflowRunning) return;
+      if (isWorkflowRunning || isReadOnly) return;
 
       const sourceNode = getNode(source);
 
@@ -223,10 +230,19 @@ export default function AnimatedEdge({
       setPopperOpen(false);
       setHovered(false);
     },
-    [source, isWorkflowRunning, getNode, getZoom, setCenter, addNode],
+    [
+      source,
+      isWorkflowRunning,
+      isReadOnly,
+      getNode,
+      getZoom,
+      setCenter,
+      addNode,
+    ],
   );
 
-  const showActions = hovered && !preview && !isActive && !isWorkflowRunning;
+  const showActions =
+    hovered && !preview && !isActive && !isWorkflowRunning && !isReadOnly;
 
   // When nodes are close, shift action buttons slightly above the edge to avoid
   // overlapping the source node's output label.

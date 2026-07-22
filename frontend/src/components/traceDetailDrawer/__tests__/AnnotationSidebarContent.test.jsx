@@ -45,16 +45,16 @@ vi.mock("src/api/annotation-queues/annotation-queues", () => ({
             allow_notes: true,
           },
         ],
-        existingScores: {
+        existing_scores: {
           "label-thumbs": { value: "up" },
           "label-text": { text: "existing summary" },
         },
-        existingNotes: "existing whole-item note",
-        existingLabelNotes: {
+        existing_notes: "existing whole-item note",
+        existing_label_notes: {
           "label-thumbs": "thumbs note",
           "label-text": "summary note",
         },
-        spanNotesSourceId: "span-1",
+        span_notes_source_id: "span-1",
       },
     ],
     isLoading: false,

@@ -18,11 +18,11 @@ import { enqueueSnackbar } from "notistack";
 import { LoadingButton } from "@mui/lab";
 import { useMutation } from "@tanstack/react-query";
 import axios, { endpoints } from "src/utils/axios";
-import { useDevelopDetailContext } from "src/sections/develop-detail/Context/DevelopDetailContext";
+import { useRefreshScenarioGrid } from "./useRefreshScenarioGrid";
 import { addColumnSchema, columnGenerationOptions } from "./common";
 
 const AddColumnScenario = ({ open, onClose, datasetId, scenarioId }) => {
-  const { refreshGrid } = useDevelopDetailContext();
+  const refreshGrid = useRefreshScenarioGrid(scenarioId);
 
   const addColumnForm = useForm({
     mode: "onSubmit",

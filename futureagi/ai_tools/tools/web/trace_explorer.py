@@ -663,7 +663,8 @@ class TraceExplorerTool(BaseTool):
                 "Provide a trace_id in `query` to list its spans."
             )
         try:
-            from tracer.models.observation_span import ObservationSpan
+            from tracer.models.project import Project
+            from tracer.services.clickhouse.v2 import get_reader
             from tfc.middleware.workspace_context import get_current_organization
 
             # Org scoping is the only authorization check between an
@@ -678,19 +679,43 @@ class TraceExplorerTool(BaseTool):
                     "Cannot list spans without an authenticated organization context."
                 )
 
-            qs = ObservationSpan.objects.filter(
-                trace_id=trace_id, deleted=False, project__organization=org
-            )
-
-            spans = list(
-                qs
-                .order_by("start_time")
-                .values(
-                    "id", "name", "observation_type", "status",
-                    "status_message", "latency_ms", "model",
-                    "total_tokens", "cost", "parent_span_id",
-                )[:limit * 10]  # Allow more for tree view
-            )
+            # Read from CH 25.3 (was ObservationSpan.objects.filter(
+            # trace_id=, deleted=False, project__organization=)
+            # .order_by("start_time").values(...)[: limit*10]).
+            # CHSpanReader.list_by_trace already filters is_deleted=0 and
+            # orders by start_time, id; we hydrate to dicts in the same
+            # shape Django's .values() produced so the tree-building
+            # downstream is unchanged. Org-tenant scope: each span carries
+            # project_id, so verify against Project at the project level
+            # (one query) rather than per-span.
+            with get_reader() as reader:
+                ch_spans_raw = reader.list_by_trace(str(trace_id))
+            if ch_spans_raw:
+                project_ids = {s.project_id for s in ch_spans_raw if s.project_id}
+                if project_ids:
+                    org_project_ids = set(
+                        str(p) for p in Project.objects.filter(
+                            id__in=list(project_ids), organization=org
+                        ).values_list("id", flat=True)
+                    )
+                    ch_spans_raw = [
+                        s for s in ch_spans_raw if s.project_id in org_project_ids
+                    ]
+            spans = [
+                {
+                    "id": s.id,
+                    "name": s.name,
+                    "observation_type": s.observation_type,
+                    "status": s.status,
+                    "status_message": s.status_message,
+                    "latency_ms": s.latency_ms,
+                    "model": s.model,
+                    "total_tokens": s.total_tokens,
+                    "cost": s.cost,
+                    "parent_span_id": s.parent_span_id,
+                }
+                for s in ch_spans_raw[: limit * 10]
+            ]
             if not spans:
                 return ToolResult(
                     content=f"No spans found for trace `{trace_id}`.",
@@ -856,8 +881,9 @@ def _fetch_full_span(span_id: str) -> dict | None:
     an unscoped query against an LLM-supplied span_id.
     """
     try:
-        from tracer.models.observation_span import ObservationSpan
         from tfc.middleware.workspace_context import get_current_organization
+        from tracer.models.project import Project
+        from tracer.services.clickhouse.v2 import get_reader
 
         org = get_current_organization()
         if not org:
@@ -866,34 +892,49 @@ def _fetch_full_span(span_id: str) -> dict | None:
             )
             return None
 
-        span = ObservationSpan.objects.filter(
-            id=str(span_id), deleted=False, project__organization=org
-        ).first()
+        # CH read replaces ObservationSpan.objects.filter(id=, deleted=False,
+        # project__organization=org).first(). Org-tenant scope is verified
+        # via a Project.filter() lookup on the span's project_id since
+        # FK-join across stores is not possible.
+        from tracer.services.clickhouse.v2.span_reader import CHSpanReader
+
+        with get_reader() as reader:
+            span = reader.get(str(span_id))
         if not span:
             return None
+        if not Project.objects.filter(
+            id=span.project_id, organization=org
+        ).exists():
+            return None
 
+        # Build the same shape this function used to emit. The dict the
+        # caller expects looks like Django ORM .__dict__-ish but with
+        # parsed JSON for metadata/tags/span_attributes. CHSpanReader.
+        # to_django_dict() already does that mapping; we read out the
+        # subset this function exposes.
+        full = CHSpanReader.to_django_dict(span)
         result = {
-            "id": span.id,
-            "trace_id": str(span.trace_id) if span.trace_id else None,
-            "name": span.name,
-            "observation_type": span.observation_type,
-            "input": span.input,
-            "output": span.output,
-            "status": span.status,
-            "status_message": span.status_message,
-            "model": span.model,
-            "provider": span.provider,
-            "start_time": str(span.start_time) if span.start_time else None,
-            "end_time": str(span.end_time) if span.end_time else None,
-            "latency_ms": span.latency_ms,
-            "cost": float(span.cost) if span.cost is not None else None,
-            "prompt_tokens": span.prompt_tokens,
-            "completion_tokens": span.completion_tokens,
-            "total_tokens": span.total_tokens,
-            "metadata": span.metadata or {},
-            "tags": span.tags or [],
-            "parent_span_id": span.parent_span_id,
-            "span_attributes": span.span_attributes or {},
+            "id": full["id"],
+            "trace_id": full["trace"],
+            "name": full["name"],
+            "observation_type": full["observation_type"],
+            "input": full["input"],
+            "output": full["output"],
+            "status": full["status"],
+            "status_message": full["status_message"],
+            "model": full["model"],
+            "provider": full["provider"],
+            "start_time": full["start_time"],
+            "end_time": full["end_time"],
+            "latency_ms": full["latency_ms"],
+            "cost": float(full["cost"]) if full["cost"] is not None else None,
+            "prompt_tokens": full["prompt_tokens"],
+            "completion_tokens": full["completion_tokens"],
+            "total_tokens": full["total_tokens"],
+            "metadata": full["metadata"] or {},
+            "tags": full["tags"] or [],
+            "parent_span_id": full["parent_span_id"],
+            "span_attributes": full["span_attributes"] or {},
         }
         return result
     except Exception as e:

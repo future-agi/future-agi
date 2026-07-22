@@ -1,5 +1,5 @@
-import React from'react';
-import DatapointCard from './DatapointCard';
+import React from "react";
+import DatapointCard from "./DatapointCard";
 
 const meta = {
   component: DatapointCard,
@@ -62,4 +62,4 @@ MarkdownValue.args = {
     dataType: "string",
   },
   allowCopy: true,
-}; 
+};

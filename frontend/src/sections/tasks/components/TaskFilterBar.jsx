@@ -13,22 +13,26 @@ import { getRandomId } from "src/utils/utils";
 import TraceFilterPanel, {
   useTraceFilterProperties,
 } from "src/sections/projects/LLMTracing/TraceFilterPanel";
-import { FIELD_CATEGORY_TO_COL_TYPE } from "src/sections/common/EvalsTasks/common";
+import {
+  FIELD_CATEGORY_TO_COL_TYPE,
+  RANGE_OPS,
+  LIST_OPS,
+  NO_VALUE_OPS,
+} from "src/sections/common/EvalsTasks/common";
 import { useDashboardFilterValues } from "src/hooks/useDashboards";
 import {
+  getPickerOptionValue,
   getPickerOptionLabel,
   getPickerOptionSecondaryLabel,
-  getPickerOptionValue,
 } from "src/sections/projects/LLMTracing/filterValuePickerUtils";
 
-// Legacy `is`/`is_not` (from thumbs / categorical / id-only dropdowns) →
-// canonical BE ops emitted by TraceFilterPanel everywhere else.
-const LEGACY_OP_ALIAS = { is: "equals", is_not: "not_equals" };
-
-const RANGE_OPS = new Set(["between", "not_between"]);
-const LIST_OPS = new Set(["in", "not_in"]);
-const NO_VALUE_OPS = new Set(["is_null", "is_not_null"]);
-
+// ── Operator handling — canonical backend ops ──
+//
+// `TraceFilterPanel` (PR #432 / TH-4924) emits canonical backend op names
+// directly: `equals`, `not_equals`, `in`, `not_in`, `contains`,
+// `not_contains`, `starts_with`, `ends_with`, `is_null`, `is_not_null`,
+// `greater_than`, `greater_than_or_equal`, `less_than`,
+// `less_than_or_equal`, `between`, `not_between`.
 const resolveApiColType = (apiColType, fieldCategory) =>
   apiColType || FIELD_CATEGORY_TO_COL_TYPE[fieldCategory] || "SPAN_ATTRIBUTE";
 
@@ -72,11 +76,6 @@ const OP_DISPLAY = {
   less_than_or_equal: "≤",
   between: "between",
   not_between: "not between",
-  // legacy (still rendered if a stale row survives until the next save)
-  is: "is",
-  is_not: "is not",
-  equal_to: "=",
-  not_equal_to: "≠",
 };
 
 // Panel filter → form row(s). List/range ops keep array `filterValue`;
@@ -92,12 +91,8 @@ function convertNewToOld(newFilters) {
         ? "number"
         : fieldType === "boolean"
           ? "boolean"
-          : fieldType === "thumbs"
-            ? "thumbs"
-            : fieldType === "categorical"
-              ? "categorical"
-              : "text";
-    const op = LEGACY_OP_ALIAS[f.operator] || f.operator || "equals";
+          : "text";
+    const op = f.operator || "equals";
 
     const base = {
       property: isAttribute ? "attributes" : f.field,
@@ -167,9 +162,15 @@ function convertNewToOld(newFilters) {
   return out;
 }
 
-// ── form filter → new panel format (one row per property+op group) ──
+// ── form filter → new panel format ──
+// One form row → one panel row. Only ops with a natural multi-value shape
+// (range, list, or string equals/not_equals just rewritten to in/not_in via
+// HYDRATE_STRING_OP) collapse same-(field, op) rows into one multi-value
+// panel row — grouping any other op (e.g. not_contains) would let the chip
+// + panel UI fold "exclude A AND exclude B" into a single "[A, B]" row.
 function convertOldToNew(oldFilters) {
   const groups = new Map();
+  const result = [];
   (oldFilters || []).forEach((f) => {
     if (!f) return;
     const isAttribute = f.property === "attributes";
@@ -182,15 +183,33 @@ function convertOldToNew(oldFilters) {
     const fieldType =
       ft === "number" ? "number" : ft === "boolean" ? "boolean" : "string";
 
-    // Aliased legacy → canonical first, then string-specific rehydration.
-    let op = LEGACY_OP_ALIAS[rawOp] || rawOp;
-    if (isStringLike(fieldType) && HYDRATE_STRING_OP[op]) {
+    let op = rawOp;
+    const hydrated = isStringLike(fieldType) && HYDRATE_STRING_OP[op];
+    if (hydrated) {
       op = HYDRATE_STRING_OP[op];
     }
 
-    const key = `${field}|${op}|${category}`;
-    if (!groups.has(key)) {
-      groups.set(key, {
+    const isMultiValueOp =
+      RANGE_OPS.has(op) || LIST_OPS.has(op) || Boolean(hydrated);
+
+    let entry;
+    if (isMultiValueOp) {
+      const key = `${field}|${op}|${category}`;
+      entry = groups.get(key);
+      if (!entry) {
+        entry = {
+          field,
+          fieldLabel: f.fieldLabel || field,
+          fieldType,
+          fieldCategory: category,
+          operator: op,
+          value: [],
+        };
+        groups.set(key, entry);
+        result.push(entry);
+      }
+    } else {
+      entry = {
         field,
         fieldLabel: f.fieldLabel || field,
         fieldType,
@@ -202,25 +221,25 @@ function convertOldToNew(oldFilters) {
         ),
         operator: op,
         value: [],
-      });
+      };
+      result.push(entry);
     }
 
     if (NO_VALUE_OPS.has(op)) return;
 
     const val = f?.filterConfig?.filterValue;
     if (RANGE_OPS.has(op)) {
-      // Range: the form row carries the [low, high] array directly.
-      groups.get(key).value = Array.isArray(val) ? val : [];
+      entry.value = Array.isArray(val) ? val : [];
       return;
     }
     if (val === undefined || val === null || val === "") return;
     if (Array.isArray(val)) {
-      groups.get(key).value.push(...val);
+      entry.value.push(...val);
     } else {
-      groups.get(key).value.push(val);
+      entry.value.push(val);
     }
   });
-  return Array.from(groups.values());
+  return result;
 }
 
 // ── Chip display for an active filter ──
@@ -380,16 +399,11 @@ const TaskFilterBar = ({
   }, [formFilters]);
 
   const [anchorEl, setAnchorEl] = useState(null);
-  const addBtnRef = useRef(null);
-
-  // Re-anchor when chips swap the trigger DOM node, so an open popover
-  // doesn't end up attached to a detached element.
-  const hasFiltersForEffect = panelFilters.length > 0;
-  useEffect(() => {
-    if (anchorEl && addBtnRef.current && anchorEl !== addBtnRef.current) {
-      setAnchorEl(addBtnRef.current);
-    }
-  }, [hasFiltersForEffect, anchorEl]);
+  // Anchor the panel to the filter bar row (not the "+", which drifts as chips
+  // wrap). It opens flush below the bar and stays glued there as filters are
+  // added/removed — avoiding the value-dropdown float, the "chases the +"
+  // drift, and the stranded panel on delete (TH-6534).
+  const barRef = useRef(null);
 
   const applyPanelFilters = useCallback(
     (next) => {
@@ -415,14 +429,34 @@ const TaskFilterBar = ({
     applyPanelFilters([]);
   }, [applyPanelFilters]);
 
-  const openPanel = useCallback((e) => {
-    setAnchorEl(e?.currentTarget || addBtnRef.current);
-  }, []);
+  const anchorToBar = useCallback(
+    () => ({
+      nodeType: 1,
+      getBoundingClientRect: () => barRef.current?.getBoundingClientRect(),
+    }),
+    [],
+  );
+
+  const openPanel = useCallback(() => {
+    if (!barRef.current) return;
+    setAnchorEl(anchorToBar());
+  }, [anchorToBar]);
+
+  // Keep the panel glued just below the bar as chips wrap/unwrap while it's
+  // open: a size change swaps in a fresh anchor object so MUI re-positions.
+  const isPanelOpen = Boolean(anchorEl);
+  useEffect(() => {
+    const el = barRef.current;
+    if (!isPanelOpen || !el) return undefined;
+    const ro = new ResizeObserver(() => setAnchorEl(anchorToBar()));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [isPanelOpen, anchorToBar]);
 
   const hasFilters = panelFilters.length > 0;
 
   return (
-    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+    <Box ref={barRef} sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
       {hasFilters ? (
         <Box
           sx={{
@@ -440,9 +474,7 @@ const TaskFilterBar = ({
             />
           ))}
 
-          {/* + button to add another filter */}
           <Box
-            ref={addBtnRef}
             component="button"
             type="button"
             onClick={openPanel}
@@ -452,6 +484,7 @@ const TaskFilterBar = ({
               justifyContent: "center",
               width: 26,
               height: 26,
+              p: 0,
               border: "1px solid",
               borderColor: "divider",
               borderRadius: "6px",
@@ -461,7 +494,6 @@ const TaskFilterBar = ({
                   : "background.paper",
               color: "text.secondary",
               cursor: "pointer",
-              p: 0,
               "&:hover": {
                 color: "text.primary",
                 bgcolor:
@@ -493,7 +525,6 @@ const TaskFilterBar = ({
         </Box>
       ) : (
         <Button
-          ref={addBtnRef}
           onClick={openPanel}
           variant="outlined"
           size="small"

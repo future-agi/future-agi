@@ -78,7 +78,7 @@ export default function ResetPasswordView() {
 
   const { mutate: setNewPassword, isPending } = useMutation({
     mutationFn: (body) =>
-      axios.post(`${endpoints.auth.passwordReset}${uuid}/${token}/`, body),
+      axios.post(endpoints.auth.passwordReset(uuid, token), body),
     onSuccess: () => {
       trackEvent(Events.passwordChangeEvents, {
         [PropertyName.formFields]: {

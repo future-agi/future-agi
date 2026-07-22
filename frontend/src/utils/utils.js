@@ -246,15 +246,41 @@ export const getScorePercentage = (s, decimalPlaces = 0) => {
 };
 
 export async function copyToClipboard(text) {
+  // Serialize objects/arrays to JSON to avoid "[object Object]" from .toString();
+  // pass primitives through unchanged.
+  const value =
+    typeof text === "object" && text !== null
+      ? JSON.stringify(text, null, 2)
+      : text;
   try {
-    // Serialize objects/arrays to JSON to avoid "[object Object]" from .toString()
-    const value =
-      typeof text === "object" && text !== null
-        ? JSON.stringify(text, null, 2)
-        : text;
-    await navigator.clipboard.writeText(value);
+    // navigator.clipboard is undefined on insecure (http) origins; guard with
+    // optional chaining before touching .writeText so it never throws
+    // "Cannot read properties of undefined (reading 'writeText')".
+    if (navigator?.clipboard?.writeText) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+    // Fallback for contexts without the async Clipboard API.
+    const textarea = document.createElement("textarea");
+    textarea.value = value == null ? "" : String(value);
+    textarea.style.position = "fixed";
+    textarea.style.top = "-9999px";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    let ok = false;
+    try {
+      ok = document.execCommand("copy");
+    } finally {
+      document.body.removeChild(textarea);
+    }
+    return ok;
   } catch (err) {
-    logger.error("Failed to copy text: ", err);
+    // Expected on non-secure contexts / when clipboard is blocked.
+    // Log as a warning (breadcrumb) rather than an error (Sentry issue).
+    logger.warn("Failed to copy text: ", err);
+    return false;
   }
 }
 
@@ -497,7 +523,7 @@ export const useThrottle = (callback, delay) => {
   return [throttledFn, stop, resume];
 };
 
-// Converts a camelCase string to snake_case. Used by objectCamelToSnake for filter serialization.
+// Converts a camelCase string to snake_case for narrow, explicit call sites.
 export const camelToSnakeCase = (str, strict = false) => {
   if (!strict) {
     return str.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -742,6 +768,28 @@ export function extractVariables(content, templateFormat = "mustache") {
     : [];
 }
 
+// Union of variables across a single instructions string plus every content
+// in a multi-turn messages array. Used by LLM eval surfaces where the user
+// can put a {{var}} in any of System / User / Assistant turns.
+export function extractVariablesFromMessages(
+  instructions,
+  messages,
+  templateFormat = "mustache",
+) {
+  const seen = new Set();
+  extractVariables(instructions || "", templateFormat).forEach((v) =>
+    seen.add(v),
+  );
+  if (Array.isArray(messages)) {
+    for (const m of messages) {
+      extractVariables(m?.content || "", templateFormat).forEach((v) =>
+        seen.add(v),
+      );
+    }
+  }
+  return [...seen];
+}
+
 export function sanitizeContent(content) {
   // Check if content consists only of newline characters
   if (/^\n+$/.test(content)) {
@@ -766,10 +814,11 @@ export function mergeRefs(...refs) {
 // ---------------------------------------------------------------------------
 // canonicalKeys / canonicalEntries / canonicalValues
 //
-// Legacy cached objects and older call sites can still contain both a
-// snake_case key and a camelCase alias for the same value. Those aliases are
-// plain enumerable own-properties, so `Object.keys(obj)` returns both keys and
-// dynamic UI lists can render duplicate fields.
+// Some client-side objects can contain both a snake_case key and a camelCase
+// key for the same value, especially data built outside generated contracts
+// (for example imported JSON, local cache, or developer tooling payloads).
+// Those duplicate keys are plain enumerable own-properties, so `Object.keys`
+// returns both and dynamic UI lists can render duplicate fields.
 //
 // These helpers only de-dupe an object that already has both keys. They do
 // not add aliases or mutate response payloads.
@@ -808,26 +857,6 @@ export const canonicalValues = (obj) => {
   return canonicalKeys(obj).map((key) => obj[key]);
 };
 
-export const objectCamelToSnake = (obj) => {
-  if (obj === null || obj === undefined) {
-    return obj;
-  }
-
-  if (Array.isArray(obj)) {
-    return obj.map((item) => objectCamelToSnake(item));
-  }
-
-  if (typeof obj !== "object") {
-    return obj;
-  }
-
-  return Object.keys(obj).reduce((acc, key) => {
-    const snakeKey = camelToSnakeCase(key);
-    acc[snakeKey] = objectCamelToSnake(obj[key]);
-    return acc;
-  }, {});
-};
-
 // Converts object keys from snake_case to camelCase
 export const objectSnakeToCamel = (obj) => {
   if (obj === null || obj === undefined) return obj;
@@ -847,8 +876,10 @@ export const paramsSerializer = () => {
 
       Object.entries(params).forEach(([key, value]) => {
         if (Array.isArray(value)) {
-          value.forEach((v) => searchParams.append(key, v));
-        } else if (value !== undefined) {
+          value
+            .filter((v) => v !== undefined && v !== null)
+            .forEach((v) => searchParams.append(key, v));
+        } else if (value !== undefined && value !== null) {
           searchParams.append(key, value);
         }
       });
@@ -1101,16 +1132,18 @@ export const normalizeRecordings = (recordings) => {
   if (!recordings)
     return { stereo: "", assistant: "", customer: "", combined: "", mono: "" };
 
-  // Check if it's nested format (has mono object or stereoUrl)
-  const isNestedFormat = recordings.mono || recordings.stereoUrl;
+  // Nested format: backend sends snake_case (stereo_url / mono.*_url);
+  // keep camelCase fallback for the aliased/main response shape.
+  const isNestedFormat =
+    recordings.mono || recordings.stereo_url || recordings.stereoUrl;
 
   if (isNestedFormat) {
     const mono = recordings.mono || {};
-    const combined = mono.combinedUrl || "";
+    const combined = mono.combined_url || mono.combinedUrl || "";
     return {
-      stereo: recordings.stereoUrl || "",
-      assistant: mono.assistantUrl || "",
-      customer: mono.customerUrl || "",
+      stereo: recordings.stereo_url || recordings.stereoUrl || "",
+      assistant: mono.assistant_url || mono.assistantUrl || "",
+      customer: mono.customer_url || mono.customerUrl || "",
       combined,
       mono: combined, // alias for AudioDownloadButton
     };
@@ -1351,3 +1384,15 @@ export const stripAttributePathPrefix = (key) =>
   String(key ?? "")
     .replace(/^observation_span\.\d+\.(?:span_attributes\.)?/, "")
     .replace(/(^|\.)span_attributes\./g, "$1");
+
+export const pluralize = (word, count) => {
+  if (count === 1) return word;
+  if (/[^aeiou]y$/i.test(word)) return word.replace(/y$/i, "ies");
+  if (/(s|x|z|ch|sh)$/i.test(word)) return `${word}es`;
+  return `${word}s`;
+};
+
+export const getVersionLabel = (templateVersion) => {
+  const tv = String(templateVersion ?? "");
+  return tv.startsWith("v") ? tv : `v${tv}`;
+};

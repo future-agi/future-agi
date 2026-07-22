@@ -6,7 +6,6 @@ import CustomTooltip from "src/components/tooltip";
 
 const OptimizationNameRenderer = ({ value, data }) => {
   // Use data directly if value is not properly passed from valueGetter
-  // Note: Backend response uses camelCase (Django middleware converts snake_case to camelCase)
   const title = value?.title || data?.optimizationName;
   const startedAt = value?.startedAt || data?.startedAt;
 

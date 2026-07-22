@@ -2,6 +2,7 @@ from rest_framework import serializers
 
 from model_hub.models.choices import StatusType
 from simulate.models import Scenarios
+from tfc.utils.api_serializers import ApiTextErrorResponseSerializer
 
 
 class SimulatorAgentResponseSerializer(serializers.Serializer):
@@ -181,6 +182,13 @@ class ScenarioPromptItemSerializer(serializers.Serializer):
     content = serializers.CharField(read_only=True)
 
 
+class DatasetColumnConfigEntrySerializer(serializers.Serializer):
+    """Nested serializer for individual dataset column config entries."""
+
+    name = serializers.CharField(read_only=True)
+    type = serializers.CharField(read_only=True)
+
+
 class ScenarioDetailResponseSerializer(serializers.Serializer):
     """Response serializer for GET /scenarios/{scenario_id}/.
 
@@ -209,6 +217,9 @@ class ScenarioDetailResponseSerializer(serializers.Serializer):
         child=ScenarioPromptItemSerializer(), read_only=True
     )
     dataset_rows = serializers.IntegerField(read_only=True)
+    dataset_column_config = serializers.DictField(
+        child=DatasetColumnConfigEntrySerializer(), read_only=True, allow_null=True
+    )
 
 
 class ScenarioListResponseSerializer(serializers.Serializer):
@@ -274,16 +285,6 @@ class ScenarioPromptsUpdateResponseSerializer(serializers.Serializer):
     prompts = serializers.CharField(read_only=True)
 
 
-class ScenarioErrorResponseSerializer(serializers.Serializer):
+class ScenarioErrorResponseSerializer(ApiTextErrorResponseSerializer):
     """Standardized error response shape — used only for Swagger documentation.
-
-    Not applied to actual response construction (preserves existing behavior).
-
-    Shape:
-        {"error": "Human-readable message", "details": {"field": ["validation error"]}}
-
-    `details` is only present for 400 validation errors.
     """
-
-    error = serializers.CharField(read_only=True)
-    details = serializers.DictField(required=False, read_only=True)

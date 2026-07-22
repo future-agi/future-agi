@@ -479,6 +479,7 @@ function ActionsCellRenderer({ data, context }) {
   const isQueueManager = hasQueueRole(viewerEntry, QUEUE_ROLES.MANAGER);
   // Show menu only for queue managers
   if (!isQueueManager) return null;
+  const title = context?.archivedView ? "Restore queue" : "Queue actions";
   return (
     <Box
       sx={{
@@ -490,6 +491,7 @@ function ActionsCellRenderer({ data, context }) {
     >
       <IconButton
         size="small"
+        aria-label={title}
         onClick={(e) => {
           e.stopPropagation();
           context?.onOpenMenu(e, data);
@@ -515,7 +517,9 @@ AnnotationQueueTable.propTypes = {
   onEdit: PropTypes.func,
   onDuplicate: PropTypes.func,
   onArchive: PropTypes.func,
+  onRestore: PropTypes.func,
   onStatusChange: PropTypes.func,
+  archivedView: PropTypes.bool,
 };
 
 export default function AnnotationQueueTable({
@@ -529,16 +533,15 @@ export default function AnnotationQueueTable({
   onEdit,
   onDuplicate,
   onArchive,
+  onRestore,
   onStatusChange,
+  archivedView = false,
 }) {
   const navigate = useNavigate();
   const agTheme = useAgThemeWith(AG_THEME_OVERRIDES.noHeaderBorder);
   const { user, role } = useAuthContext();
   const currentUserId =
     user?.id ||
-    user?.pk ||
-    user?.user_id ||
-    user?.userId ||
     (typeof window !== "undefined"
       ? window.sessionStorage.getItem("currentUserId")
       : "");
@@ -569,6 +572,7 @@ export default function AnnotationQueueTable({
     if (action === "edit") onEdit?.(queue);
     else if (action === "duplicate") onDuplicate?.(queue);
     else if (action === "archive") onArchive?.(queue);
+    else if (action === "restore") onRestore?.(queue);
   };
 
   const getStatusActions = (queue) => {
@@ -665,17 +669,23 @@ export default function AnnotationQueueTable({
   );
 
   const gridContext = useMemo(
-    () => ({ onOpenMenu: handleOpenMenu, currentUserId, canWrite }),
-    [handleOpenMenu, currentUserId, canWrite],
+    () => ({
+      onOpenMenu: handleOpenMenu,
+      currentUserId,
+      canWrite,
+      archivedView,
+    }),
+    [handleOpenMenu, currentUserId, canWrite, archivedView],
   );
 
   const onCellClicked = useCallback(
     (event) => {
       if (!event?.data) return;
       if (event.column?.getColId() === "actions") return;
+      if (archivedView) return;
       navigate(paths.dashboard.annotations.queueDetail(event.data.id));
     },
-    [navigate],
+    [navigate, archivedView],
   );
 
   const getRowId = useCallback((params) => params.data?.id, []);
@@ -710,7 +720,26 @@ export default function AnnotationQueueTable({
           overflow: "hidden",
         }}
       >
-        <Box sx={{ flex: 1 }}>
+        <Box
+          sx={{
+            flex: 1,
+            "& .ag-row": {
+              borderBottom: "1px solid",
+              borderBottomColor: "divider",
+            },
+            "& .ag-cell": {
+              borderRight: "1px solid",
+              borderRightColor: "divider",
+            },
+            "& .ag-cell:last-of-type": {
+              borderRight: 0,
+            },
+            "& .ag-header-cell": {
+              borderRight: "1px solid",
+              borderRightColor: "divider",
+            },
+          }}
+        >
           <AgGridReact
             ref={gridRef}
             theme={agTheme}
@@ -723,7 +752,9 @@ export default function AnnotationQueueTable({
             pagination={false}
             animateRows={false}
             suppressRowClickSelection
-            rowStyle={{ cursor: loading ? "default" : "pointer" }}
+            rowStyle={{
+              cursor: loading || archivedView ? "default" : "pointer",
+            }}
             onCellClicked={loading ? undefined : onCellClicked}
             getRowId={getRowId}
             noRowsOverlayComponent={CustomNoRowsOverlay}
@@ -802,42 +833,55 @@ export default function AnnotationQueueTable({
         transformOrigin={{ vertical: "top", horizontal: "right" }}
       >
         <Box sx={{ py: 0.5 }}>
-          <MenuItem onClick={() => handleAction("edit")}>
-            <SvgColor
-              src="/assets/icons/ic_edit.svg"
-              sx={{ width: 18, height: 18, mr: 1 }}
-            />
-            Edit
-          </MenuItem>
-          <MenuItem onClick={() => handleAction("duplicate")}>
-            <SvgColor
-              src="/assets/icons/ic_duplicate.svg"
-              sx={{ width: 18, height: 18, mr: 1 }}
-            />
-            Duplicate
-          </MenuItem>
-
-          {getStatusActions(menuQueue).map((sa) => (
-            <MenuItem
-              key={sa.value}
-              onClick={() => {
-                const queue = menuQueue;
-                setMenuAnchor(null);
-                onStatusChange?.(queue, sa.value);
-              }}
-            >
-              <Iconify icon={sa.icon} width={18} sx={{ mr: 1 }} />
-              {sa.label}
+          {archivedView ? (
+            <MenuItem onClick={() => handleAction("restore")}>
+              <Iconify icon="solar:archive-up-bold" width={18} sx={{ mr: 1 }} />
+              Restore
             </MenuItem>
-          ))}
+          ) : (
+            <>
+              <MenuItem onClick={() => handleAction("edit")}>
+                <SvgColor
+                  src="/assets/icons/ic_edit.svg"
+                  sx={{ width: 18, height: 18, mr: 1 }}
+                />
+                Edit
+              </MenuItem>
+              <MenuItem onClick={() => handleAction("duplicate")}>
+                <SvgColor
+                  src="/assets/icons/ic_duplicate.svg"
+                  sx={{ width: 18, height: 18, mr: 1 }}
+                />
+                Duplicate
+              </MenuItem>
 
-          <MenuItem
-            onClick={() => handleAction("archive")}
-            sx={{ color: "warning.main" }}
-          >
-            <Iconify icon="solar:archive-down-bold" width={18} sx={{ mr: 1 }} />
-            Archive
-          </MenuItem>
+              {getStatusActions(menuQueue).map((sa) => (
+                <MenuItem
+                  key={sa.value}
+                  onClick={() => {
+                    const queue = menuQueue;
+                    setMenuAnchor(null);
+                    onStatusChange?.(queue, sa.value);
+                  }}
+                >
+                  <Iconify icon={sa.icon} width={18} sx={{ mr: 1 }} />
+                  {sa.label}
+                </MenuItem>
+              ))}
+
+              <MenuItem
+                onClick={() => handleAction("archive")}
+                sx={{ color: "warning.main" }}
+              >
+                <Iconify
+                  icon="solar:archive-down-bold"
+                  width={18}
+                  sx={{ mr: 1 }}
+                />
+                Archive
+              </MenuItem>
+            </>
+          )}
         </Box>
       </Popover>
     </>

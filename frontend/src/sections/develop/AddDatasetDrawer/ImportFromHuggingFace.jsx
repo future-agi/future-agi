@@ -96,7 +96,7 @@ const ImportFromHuggingFace = ({ open, onClose, refreshGrid }) => {
       queryClient.invalidateQueries({
         queryKey: ["develop", "dataset-name-list"],
       });
-      navigate(`/dashboard/develop/${data?.data?.result?.datasetId}?tab=data`);
+      navigate(`/dashboard/develop/${data?.data?.result?.dataset_id}?tab=data`);
       onCloseClick();
     },
     onError: (error) => {
@@ -130,7 +130,7 @@ const ImportFromHuggingFace = ({ open, onClose, refreshGrid }) => {
     let subsetOptions = [];
     let splitOptions = [];
 
-    const datasetInfo = loadedDataset?.data?.result?.datasetInfo?.splits;
+    const datasetInfo = loadedDataset?.data?.result?.dataset_info?.splits;
 
     if (datasetInfo) {
       subsetOptions = Object.keys(datasetInfo)?.map((subset) => ({

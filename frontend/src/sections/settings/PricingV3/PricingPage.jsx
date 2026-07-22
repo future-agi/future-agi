@@ -591,7 +591,7 @@ export default function PricingPage() {
 
   const upgradeMutation = useMutation({
     mutationFn: async () => {
-      const res = await axios.post(endpoints.settings.v2.upgradeToPayg);
+      const res = await axios.post(endpoints.settings.v2.upgradeToPayg, {});
       const checkoutUrl = res.data?.result?.checkout_url;
       if (!checkoutUrl) throw new Error("Failed to create checkout session");
       // Redirect to Stripe Checkout — user enters card on Stripe's hosted page
@@ -652,7 +652,7 @@ export default function PricingPage() {
   });
 
   const downgradeMutation = useMutation({
-    mutationFn: () => axios.post(endpoints.settings.v2.downgradeToFree),
+    mutationFn: () => axios.post(endpoints.settings.v2.downgradeToFree, {}),
     onSuccess: () => {
       enqueueSnackbar("Downgraded to Free plan", { variant: "success" });
       queryClient.invalidateQueries({ queryKey: PLANS_QUERY_KEY });
@@ -714,7 +714,9 @@ export default function PricingPage() {
   }
 
   const currentPlan = data?.current_plan || "free";
-  const isCustomPricing = data?.is_custom_pricing || false;
+  const isCustomPricing =
+    data?.isCustomPricing ?? data?.is_custom_pricing ?? false;
+  const customDetails = data?.customDetails ?? data?.custom_details ?? null;
   const tiers = data?.tiers || [];
   const addons = data?.addons || [];
   const currentAddon = addons.find((a) => a.key === currentPlan);
@@ -764,11 +766,11 @@ export default function PricingPage() {
               <Box>
                 <Typography variant="subtitle1" fontWeight={700}>
                   Custom Pricing
-                  {data?.custom_details?.platform_fee > 0 && (
+                  {customDetails?.platform_fee > 0 && (
                     <Chip
-                      label={`${fCurrency(data.custom_details.per_charge_amount)}/${
+                      label={`${fCurrency(customDetails.per_charge_amount)}/${
                         { 1: "mo", 3: "qtr", 6: "half", 12: "yr" }[
-                          data.custom_details.platform_fee_billing_cycle
+                          customDetails.platform_fee_billing_cycle
                         ] || "mo"
                       }`}
                       size="small"
@@ -785,7 +787,7 @@ export default function PricingPage() {
           </Paper>
 
           {/* Custom plan features */}
-          {data?.custom_details?.features && (
+          {customDetails?.features && (
             <>
               <Typography variant="subtitle1" fontWeight={600} mb={2}>
                 Your plan features
@@ -796,7 +798,7 @@ export default function PricingPage() {
               >
                 <Table size="small">
                   <TableBody>
-                    {canonicalEntries(data.custom_details.features)
+                    {canonicalEntries(customDetails.features)
                       .filter(
                         ([key]) =>
                           !SKIP_FEATURE_PREFIXES.some((p) => key.startsWith(p)),
@@ -838,8 +840,8 @@ export default function PricingPage() {
           )}
 
           {/* Custom pricing tiers */}
-          {data?.custom_details?.pricing &&
-            Object.keys(data.custom_details.pricing).length > 0 && (
+          {customDetails?.pricing &&
+            Object.keys(customDetails.pricing).length > 0 && (
               <>
                 <Typography variant="subtitle1" fontWeight={600} mb={1}>
                   Your pricing tiers
@@ -879,7 +881,7 @@ export default function PricingPage() {
                       </TableRow>
                     </TableHead>
                     <TableBody>
-                      {canonicalEntries(data.custom_details.pricing).flatMap(
+                      {canonicalEntries(customDetails.pricing).flatMap(
                         ([dimKey, dim]) =>
                           dim.tiers.map((tier, idx) => (
                             <TableRow key={`${dimKey}-${idx}`}>

@@ -265,6 +265,66 @@ def insert_record(table_name, updated_values):
     client.execute(insert_query, merged_values)
 
 
+def get_model_hourly_volume(org_id=None, model_ids=None, hours=24):
+    if model_ids is None:
+        model_ids = []
+    hours = int(hours)
+    if len(model_ids) == 0 and not org_id:
+        return [], 0
+
+    client = ClickHouseClientSingleton()
+    where_clauses = [
+        f"EventDateTime >= now() - INTERVAL {hours} HOUR",
+        "has(Features.Key, 'node_id')",
+        "deleted = 0",
+    ]
+    if len(model_ids) > 0:
+        model_ids = ["'" + str(id) + "'" for id in model_ids]
+        where_clauses.append(f"AIModel in ({', '.join(model_ids)})")
+    else:
+        where_clauses.append(f"OrgID = '{org_id}'")
+
+    where_sql = "\n                            AND ".join(where_clauses)
+    query = f"""
+            SELECT
+                seriesTime,
+                COALESCE(SUM(recordsCount), 0) AS RecordCount
+            FROM
+                (
+                    SELECT
+                        arrayJoin(
+                            arrayMap(x -> toStartOfHour(now()) - INTERVAL x HOUR, range({hours}))
+                        ) AS seriesTime
+                ) AS series
+            LEFT JOIN
+                (
+                    SELECT
+                        toStartOfHour(EventDateTime) AS EventHour,
+                        COUNT(*) AS recordsCount
+                    FROM events
+                    WHERE {where_sql}
+                    GROUP BY EventHour
+                ) AS events
+            ON series.seriesTime = events.EventHour
+            GROUP BY seriesTime
+            ORDER BY seriesTime;
+        """
+
+    data = client.execute(query)
+    points = []
+    total_count = 0
+    for row in data:
+        points.append(
+            {
+                "y": row[1],
+                "x": row[0],
+            }
+        )
+        total_count += row[1]
+
+    return points, total_count
+
+
 def get_model_volume(org_id=None, model_ids=None, days=30, hours=24):
     if model_ids is None:
         model_ids = []
@@ -306,10 +366,6 @@ def get_model_volume(org_id=None, model_ids=None, days=30, hours=24):
 
     else:
         query = f"""
-            WITH
-                -- Generate a series of timestamps for the last 24 hours (every hour)
-                arrayMap(x -> toStartOfHour(now()) - INTERVAL x HOUR, range({hours})) AS timeSeries
-
             -- Select from the generated series
             SELECT
                 seriesTime,
@@ -318,7 +374,10 @@ def get_model_volume(org_id=None, model_ids=None, days=30, hours=24):
             FROM
                 (
                     -- Convert the generated numbers to timestamps
-                    SELECT arrayJoin(timeSeries) AS seriesTime
+                    SELECT
+                        arrayJoin(
+                            arrayMap(x -> toStartOfHour(now()) - INTERVAL x HOUR, range({hours}))
+                        ) AS seriesTime
                 ) AS series
             LEFT JOIN
                 (
@@ -328,7 +387,7 @@ def get_model_volume(org_id=None, model_ids=None, days=30, hours=24):
                     FROM events
                     WHERE EventDateTime >= now() - INTERVAL {hours} HOUR AND
                     OrgID = '{org_id}' AND
-                    AND has(Features.Key, 'node_id')
+                    has(Features.Key, 'node_id') AND
                     deleted = 0
                     GROUP BY EventHour
                 ) AS events

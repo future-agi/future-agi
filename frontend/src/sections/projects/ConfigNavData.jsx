@@ -20,8 +20,6 @@ const ICONS = {
   llmTracing: icon("ic_llm"),
   sessions: icon("ic_sessions"),
   embeddings: icon("ic_embeddings"),
-  evalsAndTasks: icon("ic_evalAndTasks"),
-  monitors: icon("ic_alert"),
   users: icon("ic_users"),
   dashboards: icon("ic_chartsObserve"),
   // projectConfig: icon("ic_projectconfig"),
@@ -67,28 +65,8 @@ export function useNavData() {
         ],
       },
       {
-        subheader: "Evaluations",
+        subheader: "Analysis",
         items: [
-          {
-            title: "Evals & Tasks",
-            path: `${base}/evals-tasks`,
-            icon: ICONS.evalsAndTasks,
-            eventTrigger: () => {
-              trackEvent(Events.pObserveShelfSelection, {
-                [PropertyName.click]: "Evals & Tasks",
-              });
-            },
-          },
-          {
-            title: "Alerts",
-            path: `${base}/alerts`,
-            icon: ICONS.monitors,
-            eventTrigger: () => {
-              trackEvent(Events.pObserveShelfSelection, {
-                [PropertyName.click]: "Monitors",
-              });
-            },
-          },
           {
             title: "Charts",
             path: `${base}/charts`,

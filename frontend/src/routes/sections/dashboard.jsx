@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
 import React from "react";
 import { Suspense } from "react";
-import { Navigate, Outlet, useLocation } from "react-router-dom";
+import { Navigate, Outlet, useLocation, useParams } from "react-router-dom";
 
 import { AuthGuard } from "src/auth/guard";
 import DashboardLayout from "src/layouts/dashboard";
@@ -108,9 +108,6 @@ const EvalsUsage = lazyWithRetry(
 const EvalCreate = lazyWithRetry(
   () => import("src/pages/dashboard/evals/EvalCreate"),
 );
-const EvalDetailView = lazyWithRetry(
-  () => import("src/sections/evals/EvalDetails/EvalDetailView"),
-);
 const EvalDetail = lazyWithRetry(
   () => import("src/pages/dashboard/evals/EvalDetail"),
 );
@@ -179,6 +176,40 @@ const ProjectDetail = lazyWithRetry(
 );
 const HuggingFacePage = lazyWithRetry(
   () => import("src/pages/dashboard/huggingface/HuggingFace"),
+);
+const Models = lazyWithRetry(() => import("src/pages/dashboard/models/Models"));
+const ModelDetail = lazyWithRetry(
+  () => import("src/pages/dashboard/models/ModelDetail"),
+);
+const Performance = lazyWithRetry(
+  () => import("src/pages/dashboard/models/Performance/Performance"),
+);
+const CustomMetric = lazyWithRetry(
+  () => import("src/pages/dashboard/models/CustomMetric/CustomMetric"),
+);
+const Datasets = lazyWithRetry(
+  () => import("src/sections/model/datasets/Datasets"),
+);
+const DatasetDetail = lazyWithRetry(
+  () => import("src/pages/dashboard/models/DatasetDetail"),
+);
+const OptimizeList = lazyWithRetry(
+  () => import("src/sections/model/optimize/OptimizeList"),
+);
+const OptimizeDetail = lazyWithRetry(
+  () => import("src/pages/dashboard/models/OptimizeDetail"),
+);
+const PerformanceReport = lazyWithRetry(
+  () =>
+    import("src/pages/dashboard/models/PerformanceReport/PerformanceReport"),
+);
+const ModeConfig = lazyWithRetry(
+  () => import("src/pages/dashboard/models/ModelConfig/ModeConfig"),
+);
+const DatasetContextProvider = lazyWithRetry(() =>
+  import("src/pages/dashboard/models/DatasetContext").then((module) => ({
+    default: module.DatasetContextProvider,
+  })),
 );
 const IndividualExperimentWrapper = lazyWithRetry(
   () => import("src/pages/dashboard/Develop/IndividualExperimentWrapper"),
@@ -363,10 +394,6 @@ const WorkspaceGeneral = lazyWithRetry(
 const FalconAIPage = lazyWithRetry(
   () => import("src/pages/dashboard/falcon-ai/FalconAI"),
 );
-const Feed = lazyWithRetry(() => import("src/pages/dashboard/feed/Feed"));
-const FeedDetail = lazyWithRetry(
-  () => import("src/pages/dashboard/feed/FeedDetail"),
-);
 const ErrorFeed = lazyWithRetry(
   () => import("src/pages/dashboard/error-feed/ErrorFeed"),
 );
@@ -379,6 +406,15 @@ const AnnotationLabelsPage = lazyWithRetry(
 const AnnotationQueuesPage = lazyWithRetry(
   () => import("src/pages/dashboard/annotations/queues"),
 );
+
+function LegacyFeedDetailRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/dashboard/error-feed/${id}`} replace />;
+}
+function ModelDetailDefaultRedirect() {
+  const { id } = useParams();
+  return <Navigate to={`/dashboard/models/${id}/performance`} replace />;
+}
 const QueueDetailPage = lazyWithRetry(
   () => import("src/pages/dashboard/annotations/queue-detail"),
 );
@@ -454,9 +490,8 @@ export const dashboardRoutes = (
   workspaceRole,
   { isOSS = false } = {},
 ) => {
-  const userOrgRole = user?.organization_role ?? user?.organizationRole;
-  const userDefaultWsRole =
-    user?.default_workspace_role ?? user?.defaultWorkspaceRole;
+  const userOrgRole = user?.organization_role;
+  const userDefaultWsRole = user?.default_workspace_role;
   const isOwner = user === null ? true : userOrgRole === "Owner";
   const effectiveWsRole = workspaceRole || userDefaultWsRole;
   const isAdmin =
@@ -694,7 +729,7 @@ export const dashboardRoutes = (
     );
   }
 
-  if (user === null || (user?.ws_enabled ?? user?.wsEnabled)) {
+  if (user === null || user?.ws_enabled) {
     settingsRoute.push({
       path: "workspace",
       children: [
@@ -760,6 +795,16 @@ export const dashboardRoutes = (
               ),
             },
             {
+              path: "integrations/:connectionId",
+              element: (
+                <WorkspaceRoleProtection
+                  allowedRoles={["workspace_admin", "workspace_member"]}
+                >
+                  <IntegrationDetailPage />
+                </WorkspaceRoleProtection>
+              ),
+            },
+            {
               path: "ai-providers",
               element: (
                 <WorkspaceRoleProtection
@@ -789,52 +834,47 @@ export const dashboardRoutes = (
         },
       ],
     },
-    // {
-    //   path: "models",
-    //   children: [
-    //     { element: <Models />, index: true },
-    //     {
-    //       path: ":id",
-    //       element: (
-    //         <DatasetContextProvider>
-    //           <ModelDetail />
-    //         </DatasetContextProvider>
-    //       ),
-    //       children: [
-    //         {
-    //           index: true,
-    //           element: <Navigate to="/dashboard/models" replace />,
-    //         },
-    //         { path: "performance", element: <Performance /> },
-    //         { path: "custom-metrics", element: <CustomMetric /> },
-    //         {
-    //           path: "datasets",
-
-    //           children: [
-    //             { index: true, element: <Datasets /> },
-
-    //             {
-    //               path: ":dataset",
-    //               element: <DatasetDetail />,
-    //             },
-    //           ],
-    //         },
-    //         {
-    //           path: "optimize",
-    //           children: [
-    //             { index: true, element: <OptimizeList /> },
-    //             {
-    //               path: ":optimizeId",
-    //               element: <OptimizeDetail />,
-    //             },
-    //           ],
-    //         },
-    //         { path: "report", element: <PerformanceReport /> },
-    //         { path: "config", element: <ModeConfig /> },
-    //       ],
-    //     },
-    //   ],
-    // },
+    {
+      path: "models",
+      children: [
+        { element: <Models />, index: true },
+        {
+          path: ":id",
+          element: (
+            <DatasetContextProvider>
+              <ModelDetail />
+            </DatasetContextProvider>
+          ),
+          children: [
+            { index: true, element: <ModelDetailDefaultRedirect /> },
+            { path: "performance", element: <Performance /> },
+            { path: "custom-metrics", element: <CustomMetric /> },
+            {
+              path: "datasets",
+              children: [
+                { index: true, element: <Datasets /> },
+                {
+                  path: ":dataset",
+                  element: <DatasetDetail />,
+                },
+              ],
+            },
+            {
+              path: "optimize",
+              children: [
+                { index: true, element: <OptimizeList /> },
+                {
+                  path: ":optimizeId",
+                  element: <OptimizeDetail />,
+                },
+              ],
+            },
+            { path: "report", element: <PerformanceReport /> },
+            { path: "config", element: <ModeConfig /> },
+          ],
+        },
+      ],
+    },
 
     ...(!isOSS
       ? [
@@ -1228,11 +1268,11 @@ export const dashboardRoutes = (
       children: [
         {
           index: true,
-          element: <Feed />,
+          element: <Navigate to="/dashboard/error-feed" replace />,
         },
         {
           path: ":id",
-          element: <FeedDetail />,
+          element: <LegacyFeedDetailRedirect />,
         },
       ],
     },

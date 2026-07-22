@@ -8,10 +8,21 @@ from accounts.models.organization import Organization
 from accounts.models.organization_membership import OrganizationMembership
 from accounts.models.user import OrgApiKey
 from accounts.models.workspace import Workspace, WorkspaceMembership
+from accounts.serializers.contracts import (
+    ACCOUNTS_ERROR_RESPONSES,
+    AdditionalOrganizationCreateResponseSerializer,
+    OrganizationCreateRequestSerializer,
+    OrganizationCreateResponseSerializer,
+    OrganizationNameRequestSerializer,
+    OrganizationUpdateRequestSerializer,
+    OrganizationUpdateResponseSerializer,
+)
+from accounts.services.workspace_membership import create_workspace_membership
 from accounts.utils import process_post_registration
 from tfc.constants.email import FREE_EMAIL_DOMAINS
 from tfc.constants.levels import Level
 from tfc.constants.roles import OrganizationRoles
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.general_methods import GeneralMethods
 
 logger = structlog.get_logger(__name__)
@@ -27,6 +38,14 @@ class OrganizationCreateAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=OrganizationNameRequestSerializer,
+        responses={
+            201: OrganizationCreateResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         gm = GeneralMethods()
         user = request.user
@@ -38,7 +57,7 @@ class OrganizationCreateAPIView(APIView):
         if has_org:
             return gm.bad_request("You already belong to an organization.")
 
-        org_name = (request.data.get("organization_name") or "").strip()
+        org_name = (request.validated_data.get("organization_name") or "").strip()
         if not org_name:
             # Derive from email domain (same logic as first_signup in accounts/utils.py)
             email_parts = user.email.split("@")
@@ -79,12 +98,13 @@ class OrganizationCreateAPIView(APIView):
             )
 
             # 5. Create WorkspaceMembership
-            WorkspaceMembership.objects.create(
+            create_workspace_membership(
                 workspace=workspace,
                 user=user,
                 role=OrganizationRoles.WORKSPACE_ADMIN,
                 level=Level.WORKSPACE_ADMIN,
                 organization_membership=org_membership,
+                manager=WorkspaceMembership.objects,
             )
 
             # 6. Create system API key
@@ -102,7 +122,7 @@ class OrganizationCreateAPIView(APIView):
             user.config["currentOrganizationId"] = str(organization.id)
             user.save(update_fields=["config"])
 
-        # 8. Trigger post-registration onboarding (demo data, etc.)
+        # 8. Trigger post-registration onboarding.
         # Password is None since the user already has an account — the signup
         # email portion will be a no-op or gracefully skipped.
         try:
@@ -136,6 +156,14 @@ class OrganizationUpdateAPIView(APIView):
     permission_classes = [IsAuthenticated]
     _gm = GeneralMethods()
 
+    @validated_request(
+        request_serializer=OrganizationUpdateRequestSerializer,
+        responses={
+            200: OrganizationUpdateResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def patch(self, request):
         org = getattr(request, "organization", None)
         if not org:
@@ -150,8 +178,8 @@ class OrganizationUpdateAPIView(APIView):
                 "Only owners and admins can update organization settings."
             )
 
-        name = request.data.get("name")
-        display_name = request.data.get("display_name")
+        name = request.validated_data.get("name")
+        display_name = request.validated_data.get("display_name")
 
         if name is not None:
             name = name.strip()
@@ -186,12 +214,20 @@ class CreateAdditionalOrganizationView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=OrganizationCreateRequestSerializer,
+        responses={
+            201: AdditionalOrganizationCreateResponseSerializer,
+            **ACCOUNTS_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         gm = GeneralMethods()
         user = request.user
 
-        org_name = (request.data.get("name") or "").strip()
-        display_name = (request.data.get("display_name") or "").strip()
+        org_name = (request.validated_data.get("name") or "").strip()
+        display_name = (request.validated_data.get("display_name") or "").strip()
 
         if not org_name:
             return gm.bad_request("Organization name is required.")
@@ -229,7 +265,7 @@ class CreateAdditionalOrganizationView(APIView):
             )
 
             # 4. Create WorkspaceMembership
-            WorkspaceMembership.no_workspace_objects.create(
+            create_workspace_membership(
                 workspace=workspace,
                 user=user,
                 role=OrganizationRoles.WORKSPACE_ADMIN,

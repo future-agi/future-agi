@@ -2,15 +2,10 @@ import PropTypes from "prop-types";
 
 const collapsedHeight = "150px";
 const expandedHeight = "300px";
-const lineClamp = 6;
 
 export const collapsedStyles = {
   maxHeight: collapsedHeight,
-  display: "-webkit-box",
-  WebkitLineClamp: lineClamp,
-  WebkitBoxOrient: "vertical",
-  overflowY: "hidden",
-  textOverflow: "ellipsis",
+  overflow: "hidden",
 };
 
 export const expandedStyles = {
@@ -75,6 +70,16 @@ export const StatusTypes = {
   RUNNING: "running",
   ERROR: "error",
 };
+
+// Column-level statuses meaning the column is still computing. Shared with the
+// grid polling gate in DevelopDataV2.
+export const RefreshStatus = [
+  "Running",
+  "NotStarted",
+  "Editing",
+  "ExperimentEvaluation",
+  "PartialRun",
+];
 
 export const OriginTypes = {
   EVALUATION: "evaluation",

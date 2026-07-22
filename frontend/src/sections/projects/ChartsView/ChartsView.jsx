@@ -12,6 +12,7 @@ import {
   Typography,
   useTheme,
   Button,
+  Badge,
 } from "@mui/material";
 import {
   StyledIntervalSelect,
@@ -27,10 +28,12 @@ import ChartsGenerator from "./ChartsGenerator";
 import ChartsDateTimeRangePicker from "./ChartsDateTimeRangePicker";
 import EvaluationCharts from "./EvaluationCharts";
 import { useChartsViewContext } from "./ChartsViewProvider/ChartsViewContext";
-import { objectCamelToSnake } from "src/utils/utils";
-import { canonicalizeApiFilterColumnIds } from "src/utils/filter-column-ids";
 import { normalizeTimestamp } from "./ChartsViewProvider/common";
 import SvgColor from "src/components/svg-color";
+import Iconify from "src/components/iconify";
+import TraceFilterPanel from "../LLMTracing/TraceFilterPanel";
+import FilterChips from "../LLMTracing/FilterChips";
+import { buildApiFilterFromPanelRow } from "src/api/contracts/filter-contract";
 
 const DateRangeButtonOptions = [
   { title: "Hour", value: "hour" },
@@ -59,6 +62,8 @@ const ChartsView = () => {
     parentDateFilter,
     setParentDateFilter,
     isMoreThan7Days,
+    extraFilters,
+    setExtraFilters,
     filters,
     handleZoomChange,
     zoomRange,
@@ -68,11 +73,48 @@ const ChartsView = () => {
   const [, setIsData] = useState(false);
   const customDatePickerAnc = useRef(null);
   const [dateOption, setDateOption] = useState("30D");
+  const [isFilterOpen, setIsFilterOpen] = useState(false);
+  const [filterButtonEl, setFilterButtonEl] = useState(null);
+  const [panelFilters, setPanelFilters] = useState(null);
 
   const { observeId } = useParams();
   const queryClient = useQueryClient();
   const theme = useTheme();
   const { setHeaderConfig } = useObserveHeader();
+  const hasActiveFilter = extraFilters?.length > 0;
+
+  const handleFilterToggle = useCallback(() => {
+    setIsFilterOpen((open) => !open);
+  }, []);
+
+  const handleApplyFilters = useCallback(
+    (newFilters) => {
+      setPanelFilters(newFilters);
+      if (!newFilters || newFilters.length === 0) {
+        setExtraFilters([]);
+        return;
+      }
+      setExtraFilters(newFilters.map(buildApiFilterFromPanelRow));
+    },
+    [setExtraFilters],
+  );
+
+  const handleClearFilters = useCallback(() => {
+    setPanelFilters(null);
+    setExtraFilters([]);
+  }, [setExtraFilters]);
+
+  const handleRemoveFilter = useCallback(
+    (index) => {
+      setPanelFilters((current) =>
+        current ? current.filter((_, idx) => idx !== index) : current,
+      );
+      setExtraFilters((current) =>
+        current ? current.filter((_, idx) => idx !== index) : [],
+      );
+    },
+    [setExtraFilters],
+  );
 
   useEffect(() => {
     trackEvent(Events.durationSelected, {
@@ -100,7 +142,12 @@ const ChartsView = () => {
     } else if (isLessThan90Days && selectedInterval === "Month") {
       setSelectedInterval("Week");
     }
-  }, [isMoreThan7Days, selectedInterval, isLessThan90Days]);
+  }, [
+    isMoreThan7Days,
+    selectedInterval,
+    isLessThan90Days,
+    setSelectedInterval,
+  ]);
 
   const navigate = useNavigate();
 
@@ -239,9 +286,7 @@ const ChartsView = () => {
       const response = await axios.get(endpoints.project.showCharts(), {
         params: {
           project_id: observeId,
-          filters: JSON.stringify(
-            canonicalizeApiFilterColumnIds(objectCamelToSnake(filters)),
-          ),
+          filters: JSON.stringify(filters),
           interval: selectedInterval?.toLowerCase(),
         },
       });
@@ -394,6 +439,39 @@ const ChartsView = () => {
           />
           <Box sx={{ display: "flex", gap: theme.spacing(1) }}>
             <Button
+              ref={setFilterButtonEl}
+              variant="outlined"
+              size="small"
+              sx={{
+                px: 1.5,
+                bgcolor: isFilterOpen ? "action.hover" : "background.paper",
+              }}
+              onClick={handleFilterToggle}
+              startIcon={
+                hasActiveFilter ? (
+                  <Badge variant="dot" color="error" overlap="circular">
+                    <Iconify icon="mdi:filter-outline" width={16} />
+                  </Badge>
+                ) : (
+                  <Iconify icon="mdi:filter-outline" width={16} />
+                )
+              }
+            >
+              Filter
+            </Button>
+            <TraceFilterPanel
+              anchorEl={filterButtonEl}
+              open={isFilterOpen && Boolean(filterButtonEl)}
+              onClose={handleFilterToggle}
+              currentFilters={panelFilters}
+              projectId={observeId}
+              source="traces"
+              tab="trace"
+              showAi={false}
+              showQueryTab={false}
+              onApply={handleApplyFilters}
+            />
+            <Button
               variant="outlined"
               size="small"
               sx={{
@@ -469,6 +547,19 @@ const ChartsView = () => {
             </StyledIntervalSelect>
           </Box>
         </Box>
+        <FilterChips
+          extraFilters={extraFilters}
+          onRemoveFilter={handleRemoveFilter}
+          onClearAll={handleClearFilters}
+          onAddFilter={(anchorEl) => {
+            setFilterButtonEl(anchorEl);
+            setIsFilterOpen(true);
+          }}
+          onChipClick={(_index, anchorEl) => {
+            setFilterButtonEl(anchorEl);
+            setIsFilterOpen(true);
+          }}
+        />
       </Box>
 
       {/* Chart Categories and Charts */}

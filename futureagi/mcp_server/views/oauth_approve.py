@@ -10,6 +10,7 @@ import time
 import structlog
 from django.conf import settings
 from django.core.cache import cache
+from drf_yasg.utils import swagger_auto_schema
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -21,6 +22,14 @@ from mcp_server.oauth_provider import (
     CODE_TTL,
     FutureAGIAuthorizationCode,
 )
+from mcp_server.serializers.contracts import (
+    MCPErrorResponseSerializer,
+    MCPOAuthApproveInfoResponseSerializer,
+    MCPOAuthApproveRequestSerializer,
+    MCPOAuthRedirectResponseSerializer,
+)
+from tfc.utils.api_contracts import validated_request
+from tfc.utils.api_errors import build_error_envelope
 
 logger = structlog.get_logger(__name__)
 
@@ -34,18 +43,28 @@ class MCPOAuthApproveInfoView(APIView):
 
     permission_classes = [AllowAny]
 
+    @swagger_auto_schema(
+        responses={
+            200: MCPOAuthApproveInfoResponseSerializer,
+            400: MCPErrorResponseSerializer,
+            404: MCPErrorResponseSerializer,
+        },
+    )
     def get(self, request):
         request_id = request.query_params.get("request_id")
         if not request_id:
             return Response(
-                {"status": False, "error": "Missing request_id"},
+                build_error_envelope("Missing request_id", status_code=400),
                 status=400,
             )
 
         data = cache.get(f"{APPROVE_PREFIX}{request_id}")
         if data is None:
             return Response(
-                {"status": False, "error": "Approval request not found or expired"},
+                build_error_envelope(
+                    "Approval request not found or expired",
+                    status_code=404,
+                ),
                 status=404,
             )
 
@@ -87,6 +106,16 @@ class MCPOAuthApproveView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @validated_request(
+        request_serializer=MCPOAuthApproveRequestSerializer,
+        responses={
+            200: MCPOAuthRedirectResponseSerializer,
+            400: MCPErrorResponseSerializer,
+            403: MCPErrorResponseSerializer,
+            404: MCPErrorResponseSerializer,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request):
         user = request.user
         organization = getattr(request, "organization", None) or getattr(
@@ -96,26 +125,23 @@ class MCPOAuthApproveView(APIView):
             settings, "CURRENT_WORKSPACE", None
         )
 
-        request_id = request.data.get("request_id")
-        approved = request.data.get("approved", False)
-        selected_groups = request.data.get("selected_groups", [])
-
-        if not request_id:
-            return Response(
-                {"status": False, "error": "Missing request_id"},
-                status=400,
-            )
+        request_id = request.validated_data["request_id"]
+        approved = request.validated_data.get("approved", False)
+        selected_groups = request.validated_data.get("selected_groups", [])
 
         if not organization:
             return Response(
-                {"status": False, "error": "No organization context"},
+                build_error_envelope("No organization context", status_code=403),
                 status=403,
             )
 
         data = cache.get(f"{APPROVE_PREFIX}{request_id}")
         if data is None:
             return Response(
-                {"status": False, "error": "Approval request not found or expired"},
+                build_error_envelope(
+                    "Approval request not found or expired",
+                    status_code=404,
+                ),
                 status=404,
             )
 

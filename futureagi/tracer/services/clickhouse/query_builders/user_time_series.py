@@ -11,10 +11,14 @@ at the user level:
 """
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from tracer.services.clickhouse.query_builders.base import BaseQueryBuilder
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
+from tracer.services.clickhouse.v2.id_remap_sql import (
+    remap_left_join,
+    resolved_id_expr,
+)
 
 
 class UserTimeSeriesQueryBuilder(BaseQueryBuilder):
@@ -30,17 +34,17 @@ class UserTimeSeriesQueryBuilder(BaseQueryBuilder):
     def __init__(
         self,
         project_id: str,
-        filters: Optional[List[Dict]] = None,
+        filters: list[dict] | None = None,
         interval: str = "day",
         **kwargs: Any,
     ) -> None:
         super().__init__(project_id, **kwargs)
         self.filters = filters or []
         self.interval = interval
-        self.start_date: Optional[datetime] = None
-        self.end_date: Optional[datetime] = None
+        self.start_date: datetime | None = None
+        self.end_date: datetime | None = None
 
-    def build(self) -> Tuple[str, Dict[str, Any]]:
+    def build(self) -> tuple[str, dict[str, Any]]:
         self.start_date, self.end_date = self.parse_time_range(self.filters)
         self.params["start_date"] = self.start_date
         self.params["end_date"] = self.end_date
@@ -51,6 +55,13 @@ class UserTimeSeriesQueryBuilder(BaseQueryBuilder):
 
         where_clause = extra_where if extra_where else "1 = 1"
         bucket_fn = self.time_bucket_expr(self.interval)
+
+        # P3b step1.5 id-remap resolution (see id_remap_sql / DESIGN §3): resolve
+        # a NEW-id span back to its OLD curated id BEFORE the per-(user, trace)
+        # group, so a straddler's old + new spans aggregate as ONE user. Pre-flip
+        # NO span matches a `new_id`, so this is a byte-identical no-op (gate B).
+        remap_join = remap_left_join("rs.end_user_id", "end_user_id_remap")
+        resolved_eu = resolved_id_expr("rs.end_user_id")
 
         query = f"""
         SELECT
@@ -83,21 +94,34 @@ class UserTimeSeriesQueryBuilder(BaseQueryBuilder):
                 count() AS user_traces
             FROM (
                 SELECT
-                    end_user_id,
-                    trace_id,
-                    min(start_time) AS min_start,
-                    avg(latency_ms) AS span_avg_latency,
-                    sum(total_tokens) AS span_total_tokens,
-                    sum(cost) AS span_total_cost,
-                    sum(prompt_tokens) AS span_prompt_tokens,
-                    sum(completion_tokens) AS span_completion_tokens,
-                    max(if(status = 'ERROR', 1, 0)) AS span_has_error
-                FROM {self.TABLE}
-                {self.project_where()}
-                  AND start_time >= %(start_date)s
-                  AND start_time < %(end_date)s
-                  AND end_user_id IS NOT NULL
-                  AND {where_clause}
+                    {resolved_eu} AS end_user_id,
+                    rs.trace_id AS trace_id,
+                    min(rs.start_time) AS min_start,
+                    avg(rs.latency_ms) AS span_avg_latency,
+                    sum(rs.total_tokens) AS span_total_tokens,
+                    sum(rs.cost) AS span_total_cost,
+                    sum(rs.prompt_tokens) AS span_prompt_tokens,
+                    sum(rs.completion_tokens) AS span_completion_tokens,
+                    max(if(rs.status = 'ERROR', 1, 0)) AS span_has_error
+                FROM (
+                    SELECT
+                        end_user_id,
+                        trace_id,
+                        start_time,
+                        latency_ms,
+                        total_tokens,
+                        cost,
+                        prompt_tokens,
+                        completion_tokens,
+                        status
+                    FROM {self.TABLE}
+                    {self.project_where()}
+                      AND start_time >= %(start_date)s
+                      AND start_time < %(end_date)s
+                      AND end_user_id IS NOT NULL
+                      AND {where_clause}
+                ) AS rs
+                {remap_join}
                 GROUP BY end_user_id, trace_id
             )
             GROUP BY time_bucket, end_user_id
@@ -109,9 +133,9 @@ class UserTimeSeriesQueryBuilder(BaseQueryBuilder):
 
     def format_result(
         self,
-        rows: List[Tuple],
-        columns: List[str],
-    ) -> Dict[str, List[Dict[str, Any]]]:
+        rows: list[tuple],
+        columns: list[str],
+    ) -> dict[str, list[dict[str, Any]]]:
         """Post-process ClickHouse rows into the standard response dict."""
         assert self.start_date is not None and self.end_date is not None
 

@@ -1,6 +1,7 @@
 from typing import List, Optional
 from uuid import UUID
 
+import structlog
 from pydantic import BaseModel as PydanticBaseModel
 from pydantic import Field
 
@@ -10,6 +11,9 @@ from ai_tools.formatting import (
     section,
 )
 from ai_tools.registry import register_tool
+from model_hub.models.choices import QueueItemSourceType
+
+logger = structlog.get_logger(__name__)
 
 
 class UpdateTraceAnnotationInput(PydanticBaseModel):
@@ -105,41 +109,113 @@ class UpdateTraceAnnotationTool(BaseTool):
             annotation.annotation_value_bool = params.value_bool
             changes.append(f"value_bool: {old_val} -> {params.value_bool}")
 
+        # Codex wave-2 P1 (2026-05-26): the legacy TraceAnnotation write
+        # used to commit BEFORE the Score sync. If CH was lagging or the
+        # span had no PG row, the Score path silently skipped — leaving
+        # TraceAnnotation updated but Score stale. Wrap the entire write
+        # block in `transaction.atomic()` so any CH-lookup failure or
+        # queue-scope-unresolvable case rolls the annotation update back
+        # too. Callers see a clean error and can retry.
+        from django.db import transaction
+
         annotation.updated_by = str(context.user.id)
-        annotation.save()
 
         # Sync to unified Score model to keep data consistent
         label = annotation.annotation_label
-        if label and annotation.observation_span_id:
-            from model_hub.models.score import Score
 
-            from .create_trace_annotation import _to_score_value
+        with transaction.atomic():
+            annotation.save()
 
-            # Derive the raw value for score conversion
-            raw_value = None
-            if annotation.annotation_value is not None:
-                raw_value = annotation.annotation_value
-            elif annotation.annotation_value_float is not None:
-                raw_value = annotation.annotation_value_float
-            elif annotation.annotation_value_bool is not None:
-                raw_value = "up" if annotation.annotation_value_bool else "down"
-            elif annotation.annotation_value_str_list is not None:
-                raw_value = annotation.annotation_value_str_list
+            if label and annotation.observation_span_id:
+                from model_hub.models.score import Score
 
-            if raw_value is not None:
-                score_value = _to_score_value(label.type, raw_value)
-                Score.no_workspace_objects.update_or_create(
-                    observation_span_id=annotation.observation_span_id,
-                    label_id=label.pk,
-                    annotator_id=annotation.user_id or context.user.pk,
-                    deleted=False,
-                    defaults={
-                        "source_type": "observation_span",
-                        "value": score_value,
-                        "score_source": "human",
-                        "organization": context.organization,
-                    },
-                )
+                from .create_trace_annotation import _to_score_value
+
+                # Derive the raw value for score conversion
+                raw_value = None
+                if annotation.annotation_value is not None:
+                    raw_value = annotation.annotation_value
+                elif annotation.annotation_value_float is not None:
+                    raw_value = annotation.annotation_value_float
+                elif annotation.annotation_value_bool is not None:
+                    raw_value = "up" if annotation.annotation_value_bool else "down"
+                elif annotation.annotation_value_str_list is not None:
+                    raw_value = annotation.annotation_value_str_list
+
+                if raw_value is not None:
+                    # Resolve default queue item — same rationale as in
+                    # create_trace_annotation.py: per-queue Score uniqueness
+                    # demands every write be scoped by queue_item.
+                    from model_hub.utils.annotation_queue_helpers import (
+                        resolve_default_queue_item_for_source,
+                    )
+
+                    # Fetch the span from CH 25.3 (was
+                    # ObservationSpan.objects.filter(...).first()). The
+                    # subsequent resolve_default_queue_item_for_source now
+                    # duck-types CHSpan via project_id, so threading the
+                    # CH-loaded dataclass through works without a
+                    # cross-store FK join.
+                    span_obj = None
+                    if annotation.observation_span_id:
+                        from tracer.models.project import Project
+                        from tracer.services.clickhouse.v2 import get_reader
+
+                        with get_reader() as reader:
+                            span_obj = reader.get(
+                                str(annotation.observation_span_id)
+                            )
+                        # Tenant gate: the legacy ORM `.get()` joined
+                        # project__organization implicitly; preserve that
+                        # boundary via an explicit PG lookup on the
+                        # CH-loaded project_id.
+                        if span_obj is not None and not Project.objects.filter(
+                            id=span_obj.project_id,
+                            organization=context.organization,
+                        ).exists():
+                            span_obj = None
+                    default_item = (
+                        resolve_default_queue_item_for_source(
+                            QueueItemSourceType.OBSERVATION_SPAN.value,
+                            span_obj,
+                            context.organization,
+                            context.user,
+                        )
+                        if span_obj
+                        else None
+                    )
+                    if default_item is None:
+                        # Codex P1: bail loudly so the surrounding atomic
+                        # rolls back the annotation update. Returning
+                        # success-with-stale-Score caused exactly the
+                        # consistency drift codex flagged.
+                        raise RuntimeError(
+                            "Cannot resolve default annotation queue for "
+                            f"span {annotation.observation_span_id} "
+                            "(CH miss / cross-org / queue unresolved). "
+                            "Per-queue Score uniqueness requires queue "
+                            "scope; refusing partial write."
+                        )
+                    score_value = _to_score_value(label.type, raw_value)
+                    Score.no_workspace_objects.update_or_create(
+                        observation_span_id=annotation.observation_span_id,
+                        label_id=label.pk,
+                        annotator_id=annotation.user_id or context.user.pk,
+                        queue_item=default_item,
+                        deleted=False,
+                        defaults={
+                            "source_type": QueueItemSourceType.OBSERVATION_SPAN.value,
+                            "value": score_value,
+                            "score_source": "human",
+                            "organization": context.organization,
+                            # Denormalized tracer project id for cheap label discovery.
+                            **(
+                                {"tracer_project_id": span_obj.project_id}
+                                if getattr(span_obj, "project_id", None)
+                                else {}
+                            ),
+                        },
+                    )
 
         label_name = label.name if label else "—"
 

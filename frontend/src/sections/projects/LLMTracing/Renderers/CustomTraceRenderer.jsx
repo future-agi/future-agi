@@ -20,7 +20,7 @@ import {
 import { useNavigationHandlers } from "./useNavigationHandlers";
 
 const CustomTraceRenderer = (params) => {
-  const column = params.colDef.col;
+  const column = params.colDef.context?.sourceColumn;
   const colId = column?.id;
   const value = params.value;
   const data = params.data;
@@ -29,6 +29,10 @@ const CustomTraceRenderer = (params) => {
   const isReason = column?.sourceField === "reason";
   const isEval = column?.groupBy === "Evaluation Metrics" && !isReason;
   const isAnnotation = column?.groupBy === "Annotation Metrics";
+
+  // Span-level cells carry a single span's eval (Pass/Fail is 0 or 100);
+  // trace/voice cells are aggregated (Pass/Fail arrives as an averaged rate).
+  const isSpanLevel = params.context?.entityType === "span";
 
   const projectId = data?.project_id;
   const traceIdFromRow = data?.trace_id;
@@ -86,19 +90,37 @@ const CustomTraceRenderer = (params) => {
   }
 
   if (RENDERER_CONFIG.tagColumns?.includes(colId)) {
-    return <TagsCell value={value} />;
+    return (
+      <TagsCell
+        value={value}
+        traceId={data?.trace_id}
+        spanId={data?.span_id}
+        entityType={params.context?.entityType}
+        canEditTags={params.context?.canEditTags}
+        // This grid is AG-Grid server-side, not React Query, so the popover's
+        // cache invalidation can't refresh it — pull the saved tags via the
+        // grid api instead.
+        onTagsUpdated={() => params.api?.refreshServerSide()}
+      />
+    );
   }
 
   if (isEval && column?.outputType === "Pass/Fail") {
     return (
       <div style={{ height: "100%", width: "100%", padding: 0, margin: 0 }}>
-        <EvaluationCell value={value} column={column} />
+        <EvaluationCell
+          value={value}
+          column={column}
+          isSpanLevel={isSpanLevel}
+        />
       </div>
     );
   }
 
   if (isEval) {
-    return <EvaluationCell value={value} column={column} />;
+    return (
+      <EvaluationCell value={value} column={column} isSpanLevel={isSpanLevel} />
+    );
   }
 
   if (isAnnotation) {
@@ -127,6 +149,7 @@ const CustomTraceRenderer = (params) => {
       alignRight={alignRight}
       applyQuickFilters={params.applyQuickFilters}
       onCellClick={() => {
+        if (params.context?.disableCellNavigation) return;
         if (colId === CELL_TYPES.TRACE_ID) {
           handleTraceClick(traceIdFromCell);
         }

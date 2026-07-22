@@ -107,6 +107,15 @@ class ApiKey(BaseModel):
         except Exception:
             return None
 
+    def is_encrypted_key(self, key):
+        if not key:
+            return False
+        try:
+            decoded = base64.b64decode(key, validate=True)
+        except Exception:
+            return False
+        return decoded.startswith(settings.SECRET_KEY[:16].encode())
+
     @property
     def actual_key(self):
         return self._actual_key
@@ -129,14 +138,18 @@ class ApiKey(BaseModel):
         validate_model_provider_choice(self.provider)
 
     def save(self, *args, **kwargs):
-        if self.key and not self.key.startswith(b"gAAAAA".decode()):
+        if self.key and not self.is_encrypted_key(self.key):
             self._actual_key = self.key
             self.key = self.encrypt_key(self.key)
-        if self.config_json and not all(
-            v.startswith(b"gAAAAA".decode()) for v in self.config_json.values()
-        ):
-            self._actual_json = self.config_json
+        elif self.key:
+            self._actual_key = self.decrypt_key()
+        else:
+            self._actual_key = None
+        if self.config_json:
+            self._actual_json = self.decrypt_json(self.config_json)
             self.config_json = self.encrypt_json(self.config_json)
+        else:
+            self._actual_json = {}
         self.full_clean()
         super().save(*args, **kwargs)
 
@@ -158,7 +171,8 @@ class ApiKey(BaseModel):
             # Recursively encrypt nested lists
             return [self._encrypt_value(item) for item in value]
         elif isinstance(value, str):
-            # Only encrypt string values
+            if self.is_encrypted_key(value):
+                return value
             return self.encrypt_key(value)
         else:
             # For other types (int, float, bool, etc.), return as-is
@@ -198,11 +212,18 @@ class ApiKey(BaseModel):
             # Recursively decrypt nested lists
             return [self._decrypt_value(item) for item in value]
         elif isinstance(value, str):
-            # Only decrypt encrypted string values
-            return self.get_decrypted_json_key(value)
+            decrypted_value = self.get_decrypted_json_key(value)
+            return decrypted_value if decrypted_value is not None else value
         else:
             # For other types (int, float, bool, etc.), return as-is
             return value
+
+    def refresh_from_db(self, using=None, fields=None, from_queryset=None):
+        super().refresh_from_db(using=using, fields=fields, from_queryset=from_queryset)
+        self._actual_key = self.decrypt_key() if self.key else None
+        self._actual_json = (
+            self.decrypt_json(self.config_json) if self.config_json else {}
+        )
 
 
 class SecretType(models.TextChoices):  # pragma: allowlist secret
@@ -281,14 +302,29 @@ class SecretModel(BaseModel):
     def actual_key(self):
         return self._actual_key
 
+    def refresh_from_db(self, using=None, fields=None, from_queryset=None):
+        super().refresh_from_db(using=using, fields=fields, from_queryset=from_queryset)
+        self._actual_key = self.decrypt_key() if self.key else None
+
+    def is_encrypted_key(self, key):
+        if not key:
+            return False
+        try:
+            decoded = base64.b64decode(key, validate=True)
+        except Exception:
+            return False
+        return decoded.startswith(settings.SECRET_KEY[:16].encode())
+
     def clean(self):
         super().clean()
         validate_secret_type(self.secret_type)
 
     def save(self, *args, **kwargs):
-        if self.key and not self.key.startswith(b"gAAAAA".decode()):
+        if self.key and not self.is_encrypted_key(self.key):
             self._actual_key = self.key
             self.key = self.encrypt_key(self.key)
+        elif self.key:
+            self._actual_key = self.decrypt_key()
         self.full_clean()
         super().save(*args, **kwargs)
 

@@ -20,29 +20,16 @@ import FieldSelection from "src/sections/develop-detail/Common/FieldSelection";
 import { ShowComponent } from "src/components/show";
 import { FormSearchSelectFieldControl } from "src/components/FromSearchSelectField";
 import { usePromptWorkbenchContext } from "src/sections/workbench/createPrompt/WorkbenchContext";
+import {
+  buildImportColumns,
+  buildVariableData,
+  getMappingValue,
+} from "./utils";
 
 const ImportDatasetDrawerChild = ({ onClose, variables, setVariableData }) => {
   const { setValuesChanged } = usePromptWorkbenchContext();
 
   const theme = useTheme();
-
-  // Helper function to get nested property value from mapping object
-  const getMappingValue = (mapping, variablePath) => {
-    if (!mapping || !variablePath) return null;
-
-    const parts = variablePath.split(".");
-    let current = mapping;
-
-    for (const part of parts) {
-      if (current && typeof current === "object" && part in current) {
-        current = current[part];
-      } else {
-        return null;
-      }
-    }
-
-    return current;
-  };
 
   // Helper function to check if a variable has a mapping
   const hasVariableMapping = useCallback((mapping, variablePath) => {
@@ -104,40 +91,21 @@ const ImportDatasetDrawerChild = ({ onClose, variables, setVariableData }) => {
     });
 
   const onSubmit = (data) => {
-    const mapping = data.config.mapping;
-    const table = datasetDetail?.table || [];
-
-    const variableData = {};
-
-    // Process all variables that have mappings
-    variables.forEach((variableName) => {
-      const columnId = getMappingValue(mapping, variableName);
-
-      if (columnId) {
-        variableData[variableName] = table.map((row) => {
-          const cell = row[columnId];
-          return cell?.cellValue ?? "";
-        });
-      }
-    });
+    const variableData = buildVariableData(
+      data.config.mapping,
+      datasetDetail,
+      variables,
+    );
 
     setValuesChanged(true);
     setVariableData(variableData);
     onClose?.();
   };
 
-  const selectedDatasetColumns = useMemo(() => {
-    return datasetDetail?.columnConfig ?? [];
-  }, [datasetDetail?.columnConfig]);
-
-  const transformedColumns = useMemo(() => {
-    return selectedDatasetColumns
-      .filter((col) => col.dataType === "text")
-      .map((col) => ({
-        headerName: col.name,
-        field: col.id,
-      }));
-  }, [selectedDatasetColumns]);
+  const transformedColumns = useMemo(
+    () => buildImportColumns(datasetDetail),
+    [datasetDetail],
+  );
 
   const isColumnEmpty = transformedColumns?.length > 0;
 

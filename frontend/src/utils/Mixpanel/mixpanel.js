@@ -134,10 +134,7 @@ export const identifyUser = (userData = {}) => {
     mixpanel.people.set_once("$name", userData?.name);
     mixpanel.people.set_once("Org Id", userData?.organization?.id);
     mixpanel.people.set_once("Org Name", userData?.organization?.name);
-    mixpanel.people.set_once(
-      "Workspace Id",
-      userData?.default_workspace_id ?? userData?.defaultWorkspaceId,
-    );
+    mixpanel.people.set_once("Workspace Id", userData?.default_workspace_id);
 
     //set group
     mixpanel.set_group("org_id", userData?.organization?.id);

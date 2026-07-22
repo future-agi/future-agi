@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "src/utils/test-utils";
+import { render, screen, waitFor, userEvent } from "src/utils/test-utils";
 import axios from "src/utils/axios";
 import ContentPanel from "../annotate/content-panel";
 
@@ -28,6 +28,9 @@ vi.mock("src/utils/axios", () => ({
     ),
   },
   endpoints: {
+    project: {
+      traceSession: "/tracer/trace-session/",
+    },
     testExecutions: {
       callDetail: (id) => `/simulate/call-executions/${id}/`,
     },
@@ -41,13 +44,42 @@ vi.mock("src/components/VoiceDetailDrawerV2/ScenarioView", () => ({
 }));
 
 vi.mock("src/components/VoiceDetailDrawerV2", () => ({
-  default: ({ data, embedded, hideAnnotationTab }) => (
+  default: ({ data, embedded, hiddenActionIds = [], hideAnnotationTab }) => (
     <div
       data-testid="voice-drawer"
       data-scenario={data?.scenario}
       data-embedded={String(embedded)}
+      data-hidden-actions={hiddenActionIds.join(",")}
       data-hide-annotation={String(hideAnnotationTab)}
     />
+  ),
+}));
+
+vi.mock("src/components/ChatDetailDrawerV2", () => ({
+  default: ({ data, embedded, hideAnnotationTab }) => (
+    <div
+      data-testid="chat-drawer"
+      data-scenario={data?.scenario}
+      data-embedded={String(embedded)}
+      data-hide-annotation={String(hideAnnotationTab)}
+    />
+  ),
+}));
+
+vi.mock("src/sections/projects/TracesDrawer/SessionHistory", () => ({
+  default: ({ traceDetail = [], onTraceClick }) => (
+    <div data-testid="session-history">
+      {traceDetail.map((trace) => (
+        <button
+          type="button"
+          key={trace.trace_id}
+          data-testid={`session-trace-${trace.trace_id}`}
+          onClick={() => onTraceClick?.(trace.trace_id)}
+        >
+          {trace.input}
+        </button>
+      ))}
+    </div>
   ),
 }));
 
@@ -68,10 +100,6 @@ vi.mock(
 
 vi.mock("src/components/CallLogsDetailDrawer/RightSection", () => ({
   default: () => <div data-testid="call-right-section" />,
-}));
-
-vi.mock("src/components/traceDetailDrawer/trace-detail-drawer", () => ({
-  default: () => <div data-testid="trace-detail-drawer" />,
 }));
 
 vi.mock("src/components/traceDetail/SpanTreeTimeline", () => ({
@@ -117,7 +145,14 @@ vi.mock("src/components/imagine/useImagineStore", () => ({
 }));
 
 describe("Annotation queue ContentPanel", () => {
+  const clipboardWriteText = vi.fn(() => Promise.resolve());
+
   beforeEach(() => {
+    clipboardWriteText.mockClear();
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: clipboardWriteText },
+      configurable: true,
+    });
     axios.get.mockResolvedValue({
       data: {
         status: "completed",
@@ -164,10 +199,14 @@ describe("Annotation queue ContentPanel", () => {
       "data-hide-annotation",
       "true",
     );
+    expect(screen.getByTestId("voice-drawer")).toHaveAttribute(
+      "data-hidden-actions",
+      "queue,tags",
+    );
     expect(screen.queryByTestId("new-scenario-view")).not.toBeInTheDocument();
   });
 
-  it("keeps chat call execution queue items on the chat detail layout", async () => {
+  it("renders ChatDetailDrawerV2 (embedded) for chat call execution queue items", async () => {
     axios.get.mockResolvedValueOnce({
       data: {
         status: "completed",
@@ -197,10 +236,105 @@ describe("Annotation queue ContentPanel", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("new-scenario-view")).toHaveTextContent(
-        "Answer the customer",
+      expect(screen.getByTestId("chat-drawer")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("chat-drawer")).toHaveAttribute(
+      "data-embedded",
+      "true",
+    );
+    expect(screen.getByTestId("chat-drawer")).toHaveAttribute(
+      "data-hide-annotation",
+      "true",
+    );
+    // Chat sims no longer use the voice drawer or the legacy ScenarioView path.
+    expect(screen.queryByTestId("voice-drawer")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("new-scenario-view")).not.toBeInTheDocument();
+  });
+
+  it("copies every dataset field including JSON objects and booleans", async () => {
+    const user = userEvent.setup();
+
+    render(
+      <ContentPanel
+        item={{
+          source_type: "dataset_row",
+          source_content: {
+            fields: {
+              approved: false,
+              options: {
+                expected: false,
+                alternatives: ["passed", "failed"],
+              },
+            },
+            field_types: {
+              approved: "boolean",
+              options: "json",
+            },
+          },
+        }}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Copy approved" }));
+    await waitFor(async () => {
+      await expect(navigator.clipboard.readText()).resolves.toBe("False");
+    });
+
+    await user.click(screen.getByRole("button", { name: "Copy options" }));
+    await waitFor(async () => {
+      await expect(navigator.clipboard.readText()).resolves.toBe(
+        JSON.stringify(
+          {
+            expected: false,
+            alternatives: ["passed", "failed"],
+          },
+          null,
+          2,
+        ),
       );
     });
-    expect(screen.queryByTestId("voice-drawer")).not.toBeInTheDocument();
+  });
+
+  it("renders session traces without the legacy trace detail drawer", async () => {
+    axios.get.mockResolvedValueOnce({
+      data: {
+        result: {
+          session_metadata: { total_traces: 1 },
+          response: [
+            {
+              trace_id: "trace-123",
+              input: "customer asks for help",
+              output: "assistant responds",
+              system_metrics: {},
+              evals_metrics: {},
+            },
+          ],
+          next: null,
+        },
+      },
+    });
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+      },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContentPanel
+          item={{
+            source_type: "trace_session",
+            source_content: { session_id: "session-123" },
+          }}
+        />
+      </QueryClientProvider>,
+    );
+
+    // Session traces render, and the legacy trace-detail-drawer is gone — the
+    // per-card "View Trace" button now opens TraceDetailDrawerV2 instead.
+    expect(
+      await screen.findByText("customer asks for help"),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("trace-detail-drawer")).not.toBeInTheDocument();
   });
 });

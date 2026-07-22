@@ -62,9 +62,7 @@ export const invalidateExperimentCache = (queryClient, datasetId = null) => {
 
   const onError = swallowCancellations("Error invalidating experiment cache:");
 
-  queryClient
-    .invalidateQueries({ queryKey: ["experiments"] })
-    .catch(onError);
+  queryClient.invalidateQueries({ queryKey: ["experiments"] }).catch(onError);
   if (datasetId) {
     queryClient
       .invalidateQueries({ queryKey: ["experiments", datasetId] })

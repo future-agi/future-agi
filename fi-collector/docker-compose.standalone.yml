@@ -1,0 +1,94 @@
+# Standalone test rig for fi-collector.
+#
+#   docker compose -f docker-compose.standalone.yml up --build
+#
+# What you get:
+#   - clickhouse:8123 (HTTP) + :9000 (native), CH 25.3 LTS with the spans
+#     schema pre-applied via the entrypoint init script.
+#   - fi-collector:4317 (OTLP gRPC) + :9464 (admin)
+#
+# To smoke-test from your host:
+#   pip install opentelemetry-exporter-otlp-proto-grpc
+#   python -c "from opentelemetry import trace; from opentelemetry.sdk.trace import TracerProvider; \
+#              from opentelemetry.sdk.trace.export import BatchSpanProcessor; \
+#              from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter; \
+#              trace.set_tracer_provider(TracerProvider()); \
+#              trace.get_tracer_provider().add_span_processor(BatchSpanProcessor(OTLPSpanExporter('localhost:4317', insecure=True))); \
+#              tracer = trace.get_tracer('test'); \
+#              span = tracer.start_span('test'); \
+#              span.set_attribute('gen_ai.request.model', 'gpt-4o-mini'); \
+#              span.end()"
+#   curl -s 'http://localhost:8123/?query=SELECT%20count()%20FROM%20spans'
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.3-alpine
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    ports:
+      - "8123:8123"
+      - "9000:9000"
+    volumes:
+      # The v2 spans table declares `SETTINGS storage_policy='tiered'`. That
+      # policy is a SERVER config (NOT a schema .sql), so it must live in
+      # config.d — mirror docker-compose.test.yml. Without it, init fails on
+      # 002_spans_v2.sql with "Unknown storage policy `tiered`".
+      - ../futureagi/.ci/clickhouse-storage-policy.xml:/etc/clickhouse-server/config.d/001_storage_policy.xml:ro
+      - ../futureagi/.ci/clickhouse-test-config.xml:/etc/clickhouse-server/config.d/test-overrides.xml:ro
+      # Mount the spans schema files so an init script can apply them.
+      - ../futureagi/tracer/services/clickhouse/v2/schema:/docker-entrypoint-initdb.d:ro
+      - ch-data:/var/lib/clickhouse
+    healthcheck:
+      # clickhouse-server:alpine ships no wget; use the bundled client so the
+      # container reports healthy (the collector's depends_on gate needs it).
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  fi-collector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    environment:
+      FI_CH_URL: http://clickhouse:8123
+      FI_GRPC_ADDR: ":4317"
+      FI_HTTP_ADDR: ":4318"
+      FI_ADMIN_ADDR: ":9464"
+      FI_DEAD_LETTER_FILE: /var/lib/fi-collector/dead_letter.jsonl
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "9464:9464"
+    volumes:
+      - fi-dead-letter:/var/lib/fi-collector
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/usr/local/bin/fi-collector",
+          "-config",
+          "/etc/fi-collector/config.yaml",
+          "--healthcheck-noop",
+        ]
+      interval: 10s
+      timeout: 2s
+      retries: 5
+      # The distroless image has no shell so we'd usually need a separate
+      # health-probe binary. For MVP just rely on the admin /healthz being
+      # scraped from the host side.
+      disable: true
+
+volumes:
+  ch-data:
+  fi-dead-letter:

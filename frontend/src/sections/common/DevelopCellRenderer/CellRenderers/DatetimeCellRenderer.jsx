@@ -14,7 +14,8 @@ const DatetimeCellRenderer = ({
   metadata,
 }) => {
   const isValueArray = Array.isArray(value);
-  const isValidDate = value && !isNaN(new Date(value).getTime());
+  const isBlankValue = value === null || value === undefined || value === "";
+  const isValidDate = !isBlankValue && !isNaN(new Date(value).getTime());
 
   return (
     <CustomTooltip
@@ -31,6 +32,8 @@ const DatetimeCellRenderer = ({
           <GenerateDiffText cellText={value} />
         ) : isValidDate ? (
           format(new Date(value), "dd/MM/yyyy HH:mm")
+        ) : isBlankValue ? (
+          ""
         ) : (
           "Invalid Date"
         )}

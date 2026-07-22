@@ -1,13 +1,11 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import requests
 import structlog
 
 from tracer.constants.external_endpoints import ObservabilityRoutes
-
-logger = structlog.get_logger(__name__)
 from tracer.models.observability_provider import ObservabilityProvider, ProviderChoices
 from tracer.models.project import VoiceCallLogs
 
@@ -15,6 +13,7 @@ logger = structlog.get_logger(__name__)
 
 VAPI_PAGE_LIMIT = 100
 VAPI_MAX_PAGES = 10
+OBSERVABILITY_VERIFY_TIMEOUT_SECONDS = 30
 
 
 class ObservabilityService:
@@ -36,7 +35,11 @@ class ObservabilityService:
         else:
             raise ValueError(f"Invalid choice for provider: {provider}")
         headers = {"Authorization": f"Bearer {api_key}"}
-        response = requests.get(api_endpoint, headers=headers)
+        response = requests.get(
+            api_endpoint,
+            headers=headers,
+            timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
+        )
         return response.status_code
 
     @staticmethod
@@ -59,7 +62,7 @@ class ObservabilityService:
         response = requests.get(
             endpoint,
             headers=headers,
-            timeout=30,
+            timeout=OBSERVABILITY_VERIFY_TIMEOUT_SECONDS,
         )
         return response.status_code
 
@@ -82,6 +85,17 @@ class ObservabilityService:
             return ObservabilityService._fetch_eleven_labs_logs(
                 provider, start_time, end_time
             )
+        elif provider.provider == ProviderChoices.BLAND:
+            return ObservabilityService._fetch_bland_logs(
+                provider, start_time, end_time
+            )
+        elif provider.provider == ProviderChoices.TWILIO:
+            return ObservabilityService._fetch_twilio_logs(
+                provider, start_time, end_time
+            )
+        elif provider.provider == ProviderChoices.LIVEKIT:
+            # LiveKit has no hosted call history; [] avoids a crash-loop.
+            return []
         else:
             raise NotImplementedError(f"Provider {provider.provider} not implemented.")
 
@@ -264,6 +278,100 @@ class ObservabilityService:
         return response.json()
 
     @staticmethod
+    def _fetch_bland_logs(
+        provider: ObservabilityProvider,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ):
+        """Pull Bland.ai calls + per-call detail. Auth: ``authorization: <api_key>`` (no Bearer)."""
+        agent = ObservabilityService._get_agent_definition(provider)
+        api_key = ObservabilityService._validate_agent_api_key(agent, provider, "Bland")
+        if not api_key:
+            return []
+
+        headers = {"authorization": api_key}
+        params: dict = {"limit": 100, "ascending": False}
+        if start_time:
+            params["start_date"] = start_time.strftime("%Y-%m-%d")
+        if end_time:
+            # end_date is date-granular and exclusive; send day+1 to keep same-day calls.
+            params["end_date"] = (end_time + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        response = requests.get(
+            ObservabilityRoutes.BLAND_CALLS_URL.value,
+            headers=headers,
+            params=params,
+            timeout=30,
+        )
+        response.raise_for_status()
+        calls = response.json().get("calls", []) or []
+
+        detailed_logs = []
+        for call in calls:
+            call_id = call.get("call_id") or call.get("c_id")
+            if not call_id:
+                continue
+            detail_resp = requests.get(
+                f"{ObservabilityRoutes.BLAND_CALLS_URL.value}/{call_id}",
+                headers=headers,
+                timeout=30,
+            )
+            if detail_resp.status_code != 200:
+                logger.warning(
+                    "bland_call_detail_fetch_failed",
+                    provider_id=str(provider.id),
+                    call_id=call_id,
+                    status_code=detail_resp.status_code,
+                )
+                # Fall back to the listing row (metadata-only, no transcripts).
+                detailed_logs.append(call)
+                continue
+            detailed_logs.append(detail_resp.json())
+
+        return detailed_logs
+
+    @staticmethod
+    def _fetch_twilio_logs(
+        provider: ObservabilityProvider,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+    ):
+        """Pull Twilio Call resources (metadata only). ``api_key`` is ``"<AccountSid>:<AuthToken>"`` for basic auth."""
+        agent = ObservabilityService._get_agent_definition(provider)
+        api_key = ObservabilityService._validate_agent_api_key(
+            agent, provider, "Twilio"
+        )
+        if not api_key:
+            return []
+        if ":" not in api_key:
+            logger.warning(
+                "twilio_api_key_format_invalid",
+                provider_id=str(provider.id),
+                message=(
+                    "Twilio observability needs api_key formatted as "
+                    "'<AccountSid>:<AuthToken>'. Skipping log fetch."
+                ),
+            )
+            return []
+
+        account_sid, auth_token = api_key.split(":", 1)
+        params: dict = {"PageSize": 100}
+        if start_time:
+            params["StartTime>"] = start_time.strftime("%Y-%m-%d")
+        if end_time:
+            # StartTime< is date-granular and exclusive; send day+1 to keep same-day calls.
+            params["StartTime<"] = (end_time + timedelta(days=1)).strftime("%Y-%m-%d")
+
+        response = requests.get(
+            ObservabilityRoutes.TWILIO_CALLS_URL.value.format(account_sid=account_sid),
+            auth=(account_sid, auth_token),
+            params=params,
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json().get("calls", []) or []
+
+    @staticmethod
     def _fetch_eleven_labs_logs(
         provider: ObservabilityProvider,
         start_time: datetime | None = None,
@@ -369,7 +477,7 @@ class ObservabilityService:
         cost = raw_log_get("cost")
         assistant_id = raw_log_get("assistantId")
         duration_seconds = None
-        analysis_data = raw_log_get("analysis")
+        analysis_data = raw_log_get("analysis") or None
 
         # Cost breakdown (STT/LLM/TTS)
         raw_cost_breakdown = raw_log_get("costBreakdown") or {}
@@ -433,7 +541,7 @@ class ObservabilityService:
                             "role": message.get("role"),
                             "content": message.get("message"),
                             "time": datetime.fromtimestamp(
-                                message.get("time") / 1000
+                                message.get("time") / 1000, tz=timezone.utc
                             ).isoformat(),
                             "duration": round(duration, 2) if duration else None,
                         }
@@ -528,12 +636,12 @@ class ObservabilityService:
             else None
         )
         started_at = (
-            datetime.fromtimestamp(started_at_timestamp).isoformat()
+            datetime.fromtimestamp(started_at_timestamp, tz=timezone.utc).isoformat()
             if started_at_timestamp
             else None
         )
         ended_at = (
-            datetime.fromtimestamp(ended_at_timestamp).isoformat()
+            datetime.fromtimestamp(ended_at_timestamp, tz=timezone.utc).isoformat()
             if ended_at_timestamp
             else None
         )
@@ -585,15 +693,19 @@ class ObservabilityService:
                 }
             )
             if transcript.get("role") in ["user", "agent"]:
+                if started_at and seconds_from_start is not None:
+                    abs_time = (
+                        datetime.fromisoformat(started_at)
+                        + timedelta(seconds=seconds_from_start)
+                    ).isoformat()
+                else:
+                    abs_time = None
                 processed_transcripts.append(
                     {
                         "id": str(uuid.uuid4()),
                         "role": role,
                         "content": transcript.get("content"),
-                        "time": (
-                            datetime.fromisoformat(started_at)
-                            + timedelta(seconds=seconds_from_start)
-                        ).isoformat(),
+                        "time": abs_time,
                         "duration": duration,
                     }
                 )
@@ -700,10 +812,35 @@ class ObservabilityService:
         Raises:
             ValueError: If provider is not recognized
         """
+        if not raw_log:
+            # OTLP export drops raw_log; rebuild the call-log shape from the span's call.* attrs.
+            attrs = span_attributes or {}
+            sim_meta = (
+                (attrs.get("metadata") or {})
+                if isinstance(attrs.get("metadata"), dict)
+                else {}
+            )
+            duration = attrs.get("call.duration")
+            return {
+                "call_id": sim_meta.get("call_execution_id"),
+                "status": attrs.get("call.status") or "completed",
+                "started_at": None,  # span start_time is authoritative
+                "duration_seconds": int(duration) if duration is not None else None,
+                "recording_url": attrs.get("conversation.recording.mono.combined"),
+                "stereo_recording_url": attrs.get("conversation.recording.stereo"),
+                "call_metadata": sim_meta,
+            }
+
         if provider == ProviderChoices.VAPI:
             processed = ObservabilityService._process_vapi_logs(raw_log, span_attributes)
         elif provider == ProviderChoices.RETELL:
             processed = ObservabilityService._process_retell_logs(raw_log)
+        elif provider == ProviderChoices.ELEVEN_LABS:
+            processed = ObservabilityService._process_eleven_labs_raw(raw_log)
+        elif provider == ProviderChoices.BLAND:
+            processed = ObservabilityService._process_bland_raw(raw_log)
+        elif provider == ProviderChoices.TWILIO:
+            processed = ObservabilityService._process_twilio_raw(raw_log)
         else:
             raise ValueError(f"Invalid choice for provider: {provider}")
 
@@ -718,13 +855,151 @@ class ObservabilityService:
                 span_attributes.get("stereo_recording_url")
                 or span_attributes.get("conversation.recording.stereo")
             )
-            if mono_s3 and VapiRecordingService.is_s3_url(mono_s3) and not VapiRecordingService.is_s3_url(
+            logger.info(
+                "process_raw_logs: rehost decision",
+                provider=provider,
+                mono_s3=mono_s3,
+                mono_s3_is_fagi=(
+                    VapiRecordingService.is_fagi_s3_url(mono_s3) if mono_s3 else None
+                ),
+                processed_recording_url=processed.get("recording_url"),
+                processed_recording_url_is_fagi=(
+                    VapiRecordingService.is_fagi_s3_url(processed.get("recording_url"))
+                    if processed.get("recording_url")
+                    else None
+                ),
+                stereo_s3=stereo_s3,
+                stereo_s3_is_fagi=(
+                    VapiRecordingService.is_fagi_s3_url(stereo_s3) if stereo_s3 else None
+                ),
+                processed_stereo_url=processed.get("stereo_recording_url"),
+                processed_stereo_url_is_fagi=(
+                    VapiRecordingService.is_fagi_s3_url(processed.get("stereo_recording_url"))
+                    if processed.get("stereo_recording_url")
+                    else None
+                ),
+                fagi_buckets=list(VapiRecordingService._FAGI_S3_BUCKETS),
+            )
+            if mono_s3 and VapiRecordingService.is_fagi_s3_url(mono_s3) and not VapiRecordingService.is_fagi_s3_url(
                 processed.get("recording_url")
             ):
                 processed["recording_url"] = mono_s3
-            if stereo_s3 and VapiRecordingService.is_s3_url(stereo_s3) and not VapiRecordingService.is_s3_url(
+                logger.info("process_raw_logs: mono_s3 rehosted", mono_s3=mono_s3)
+            if stereo_s3 and VapiRecordingService.is_fagi_s3_url(stereo_s3) and not VapiRecordingService.is_fagi_s3_url(
                 processed.get("stereo_recording_url")
             ):
                 processed["stereo_recording_url"] = stereo_s3
+                logger.info("process_raw_logs: stereo_s3 rehosted", stereo_s3=stereo_s3)
 
         return processed
+
+    @staticmethod
+    def _process_eleven_labs_raw(raw_log: dict) -> dict:
+        """ElevenLabs ConvAI conversation raw_log -> VoiceCallLogs dump."""
+        metadata = raw_log.get("metadata") or {}
+        started_at = None
+        if start_unix := metadata.get("start_time_unix_secs"):
+            started_at = datetime.fromtimestamp(
+                start_unix, tz=timezone.utc
+            ).isoformat()
+
+        transcripts = [
+            {
+                "id": str(uuid.uuid4()),
+                "role": msg.get("role"),
+                "content": msg.get("message"),
+                "time": (
+                    str(msg["time_in_call_secs"])
+                    if msg.get("time_in_call_secs") is not None
+                    else None
+                ),
+                "duration": None,
+            }
+            for msg in (raw_log.get("transcript") or [])
+            if isinstance(msg, dict) and msg.get("message")
+        ]
+        cost = metadata.get("cost")
+        processed_log = {
+            "id": None,
+            "call_id": raw_log.get("conversation_id"),
+            "phone_number": None,
+            # Normalize ConvAI 'done'/'ended' to 'completed' to match other providers.
+            "status": (
+                "completed"
+                if raw_log.get("status") in ("done", "ended")
+                else raw_log.get("status")
+            ),
+            "started_at": started_at,
+            "created_at": started_at,
+            "duration_seconds": metadata.get("call_duration_secs"),
+            "recording_url": None,
+            "cost_cents": cost if cost is not None else None,
+            "transcript": transcripts,
+            "call_metadata": {"agent_id": raw_log.get("agent_id")},
+        }
+        return VoiceCallLogs(**processed_log).model_dump()
+
+    @staticmethod
+    def _process_bland_raw(raw_log: dict) -> dict:
+        """Bland.ai call raw_log -> VoiceCallLogs dump (call_length in minutes)."""
+        call_length = raw_log.get("call_length")
+        duration_seconds = (
+            int(round(float(call_length) * 60))
+            if call_length not in (None, "")
+            else None
+        )
+        transcripts = [
+            {
+                "id": str(uuid.uuid4()),
+                "role": row.get("user"),
+                "content": row.get("text"),
+                "time": None,
+                "duration": None,
+            }
+            for row in (raw_log.get("transcripts") or [])
+            if isinstance(row, dict) and row.get("text")
+        ]
+        price = raw_log.get("price")
+        processed_log = {
+            "id": None,
+            "call_id": raw_log.get("call_id"),
+            "phone_number": raw_log.get("to"),
+            "status": raw_log.get("status"),
+            "started_at": raw_log.get("started_at") or raw_log.get("created_at"),
+            # The list's date column binds created_at.
+            "created_at": raw_log.get("created_at") or raw_log.get("started_at"),
+            "duration_seconds": duration_seconds,
+            "recording_url": raw_log.get("recording_url"),
+            "cost_cents": float(price) * 100 if price not in (None, "") else None,
+            "transcript": transcripts,
+            "error_message": raw_log.get("error_message"),
+            "call_metadata": {
+                "from": raw_log.get("from"),
+                "summary": raw_log.get("summary"),
+            },
+        }
+        return VoiceCallLogs(**processed_log).model_dump()
+
+    @staticmethod
+    def _process_twilio_raw(raw_log: dict) -> dict:
+        """Twilio Call resource raw_log -> VoiceCallLogs dump (no transcript)."""
+        duration = raw_log.get("duration")
+        price = raw_log.get("price")
+        processed_log = {
+            "id": None,
+            "call_id": raw_log.get("sid"),
+            "phone_number": raw_log.get("to"),
+            "status": raw_log.get("status"),
+            "started_at": raw_log.get("start_time"),
+            # The list's date column binds created_at.
+            "created_at": raw_log.get("start_time") or raw_log.get("date_created"),
+            "duration_seconds": int(duration) if duration not in (None, "") else None,
+            "recording_url": None,
+            "cost_cents": abs(float(price)) * 100 if price not in (None, "") else None,
+            "transcript": [],
+            "call_metadata": {
+                "from": raw_log.get("from"),
+                "direction": raw_log.get("direction"),
+            },
+        }
+        return VoiceCallLogs(**processed_log).model_dump()

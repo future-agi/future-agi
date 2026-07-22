@@ -140,6 +140,33 @@ describe("GlobalVariableDrawer", () => {
       });
     });
 
+    it("syncs backend snake_case dataset cell column ids", async () => {
+      mockDatasetData = {
+        columns: [
+          { id: "col-1", name: "city" },
+          { id: "col-2", name: "country" },
+        ],
+        rows: [
+          {
+            cells: [
+              { column_id: "col-1", value: "Kyoto" },
+              { column_id: "col-2", value: "Japan" },
+            ],
+          },
+        ],
+      };
+
+      renderDrawer();
+
+      await waitFor(() => {
+        const state = useGlobalVariablesDrawerStore.getState();
+        expect(state.globalVariables).toEqual({
+          city: "Kyoto",
+          country: "Japan",
+        });
+      });
+    });
+
     it("handles missing cells gracefully (empty string fallback)", async () => {
       mockDatasetData = {
         columns: [

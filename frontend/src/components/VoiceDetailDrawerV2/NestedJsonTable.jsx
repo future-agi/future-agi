@@ -41,8 +41,7 @@ const collectStrings = (val, out) => {
     return;
   }
   if (typeof val === "object") {
-    // `canonicalEntries` strips the camelCase aliases the axios interceptor
-    // adds alongside snake_case keys so a single field doesn't get matched
+    // De-dupe mixed-key local objects so a single field doesn't get matched
     // twice in search.
     canonicalEntries(val).forEach(([k, v]) => {
       out.push(String(k).toLowerCase());
@@ -263,13 +262,10 @@ const ValueCell = ({ value, tokens }) => {
     startToggleTransition(() => setExpanded((v) => !v));
   };
 
-  const isObj = value != null && typeof value === "object" && !Array.isArray(value);
+  const isObj =
+    value != null && typeof value === "object" && !Array.isArray(value);
   const isArr = Array.isArray(value);
-  const count = isArr
-    ? value.length
-    : isObj
-      ? canonicalKeys(value).length
-      : 0;
+  const count = isArr ? value.length : isObj ? canonicalKeys(value).length : 0;
 
   if ((isObj || isArr) && count > 0) {
     return (
@@ -540,7 +536,7 @@ const NestedJsonTable = ({
     if (parsed == null) return [];
     if (typeof parsed !== "object") return [["value", parsed]];
     if (Array.isArray(parsed)) return parsed.map((v, i) => [String(i), v]);
-    // Strip camelCase aliases the axios interceptor appends to every
+    // Strip camelCase aliases that may exist in legacy objects to every
     // snake_case key so each field renders once, not twice.
     return canonicalEntries(parsed);
   }, [parsed]);

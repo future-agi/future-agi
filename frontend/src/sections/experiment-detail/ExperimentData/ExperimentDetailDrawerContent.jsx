@@ -14,22 +14,26 @@ import { AgGridReact } from "ag-grid-react";
 import PropTypes from "prop-types";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Iconify from "src/components/iconify";
+import CustomTooltip from "src/components/tooltip/CustomTooltip";
 import { useAgThemeWith } from "src/hooks/use-ag-theme";
 import ExperimentDescriptionCell from "./ExperimentDescriptionCell";
 import DatapointCard from "src/sections/common/DatapointCard";
 import AudioDatapointCard from "src/components/custom-audio/AudioDatapointCard";
 import ViewDetailsModal from "./ViewDetailsModal";
 import { LoadingButton } from "@mui/lab";
-import { getUniqueColorPalette } from "src/utils/utils";
+import { getUniqueColorPalette, copyToClipboard } from "src/utils/utils";
+import { enqueueSnackbar } from "notistack";
 import {
-  getLabel,
   getStatusColor,
+  normalizeEvalResult,
 } from "src/sections/develop-detail/DataTab/common";
 import { ShowComponent } from "src/components/show/ShowComponent";
 import SvgColor from "src/components/svg-color/svg-color";
 import NumericCell from "src/sections/common/DevelopCellRenderer/EvaluateCellRenderer/NumericCell";
 import { OutputTypes } from "src/sections/common/DevelopCellRenderer/CellRenderers/cellRendererHelper";
 import ImageDatapointCard from "src/sections/common/ImageDatapointCard";
+import ImagesDatapointCard from "src/sections/common/ImagesDatapointCard";
+import DocumentDatapointCard from "src/sections/common/DocumentDatapointCard";
 import AgentFlowRenderer from "./AgentFlowRenderer";
 import { useAddEvaluationFeebackStore } from "src/sections/develop-detail/states";
 import AddEvaluationFeeback from "src/sections/develop-detail/DataTab/AddEvaluationFeeback/AddEvaluationFeeback";
@@ -44,13 +48,12 @@ const SkeletonLoader = () => (
   />
 );
 
-// StatusCellRenderer that properly handles different data types like the dataset detail drawer
 export const StatusCellRenderer = (props) => {
   const theme = useTheme();
   const { value } = props;
-  let cellValue = value?.cellValue;
+  const cellValue = value?.cell_value;
   const status = value?.status;
-  const type = props?.data?.dataType;
+  const outputType = props?.data?.output_type;
 
   if (status === "running") return <SkeletonLoader />;
   if (status === "error") {
@@ -67,52 +70,68 @@ export const StatusCellRenderer = (props) => {
     );
   }
 
-  if (type === OutputTypes.NUMERIC) {
+  if (outputType === OutputTypes.NUMERIC) {
     return <NumericCell value={cellValue} sx={{ padding: "0 12px" }} />;
   }
 
-  if (cellValue?.startsWith("['") && cellValue?.endsWith("']")) {
-    cellValue = JSON.parse(cellValue.replace(/'/g, '"'));
-  }
-  if (
-    !cellValue ||
-    cellValue === "[]" ||
-    cellValue === undefined ||
-    cellValue === ""
-  )
-    return "-";
+  const result = normalizeEvalResult(cellValue, outputType);
+  if (result.kind === "empty") return "-";
 
+  const chipSx = (v) => ({
+    ...getStatusColor(v, theme),
+    transition: "none",
+    "&:hover": {
+      backgroundColor: getStatusColor(v, theme).backgroundColor,
+      boxShadow: "none",
+    },
+  });
+
+  if (result.kind === "score") {
+    const pct = result.score <= 1 ? result.score * 100 : result.score;
+    return (
+      <Chip
+        variant="soft"
+        label={`${Math.round(pct)}%`}
+        size="small"
+        sx={chipSx(result.score)}
+      />
+    );
+  }
+
+  if (result.kind === "passfail") {
+    return (
+      <Chip
+        variant="soft"
+        label={result.label}
+        size="small"
+        sx={chipSx(result.label)}
+      />
+    );
+  }
+
+  const first = result.items[0];
   return (
     <Box>
       <Chip
         variant="soft"
-        label={getLabel(cellValue)}
+        label={first}
         size="small"
-        sx={{
-          ...getStatusColor(cellValue, theme),
-          marginRight: "10px",
-          transition: "none",
-          "&:hover": {
-            backgroundColor: getStatusColor(cellValue, theme).backgroundColor, // Lock it to same color
-            boxShadow: "none",
-          },
-        }}
+        sx={{ ...chipSx(first), marginRight: "10px" }}
       />
-
-      {Array.isArray(cellValue) && cellValue.length > 1 && (
-        <Chip
-          variant="soft"
-          label={`+${cellValue.length - 1}`}
+      {result.items.length > 1 && (
+        <CustomTooltip
+          show
+          title={result.items.slice(1).join(", ")}
+          arrow
           size="small"
-          sx={{
-            ...getStatusColor(cellValue, theme),
-            transition: "none",
-            "&:hover": {
-              backgroundColor: getStatusColor(cellValue, theme).backgroundColor, // Lock it to same color
-              boxShadow: "none",
-            },
-          }}
-        />
+        >
+          <Chip
+            variant="soft"
+            label={`+${result.items.length - 1}`}
+            size="small"
+            sx={{ ...chipSx(first), cursor: "default" }}
+          />
+        </CustomTooltip>
       )}
     </Box>
   );
@@ -120,12 +139,13 @@ export const StatusCellRenderer = (props) => {
 
 StatusCellRenderer.propTypes = {
   value: PropTypes.shape({
+    cell_value: PropTypes.any,
     cellValue: PropTypes.any,
     status: PropTypes.string,
-    dataType: PropTypes.string,
   }),
   data: PropTypes.shape({
-    dataType: PropTypes.string,
+    output_type: PropTypes.string,
+    outputType: PropTypes.string,
   }),
 };
 
@@ -157,6 +177,11 @@ export default function ExperimentDetailDrawerContent({
   const [activeTab, setActiveTab] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [openDetailRow, setOpenDetailRow] = useState(null);
+  const handleCopyRowId = () => {
+    if(!row?.rowId) return;
+    copyToClipboard(row.rowId);
+    enqueueSnackbar("Copied to clipboard", { variant: "success" });
+  };
   const [showDescription, setShowDescription] = useState(false);
   const theme = useTheme();
   const agTheme = useAgThemeWith(EXPERIMENT_DRAWER_THEME_PARAMS);
@@ -180,9 +205,8 @@ export default function ExperimentDetailDrawerContent({
     for (const [_, value] of Object.entries(grouping)) {
       if (value.length === 1) {
         const col = value?.[0];
-        const isBaseColumn = col?.is_base_column || col?.isBaseColumn;
-        const originType =
-          col?.origin_type || col?.originType || col?.group?.origin;
+        const isBaseColumn = col?.is_base_column;
+        const originType = col?.origin_type || col?.group?.origin;
         const isExperimentType =
           originType === "Experiment" || originType === "experiment";
 
@@ -265,7 +289,7 @@ export default function ExperimentDetailDrawerContent({
     }
 
     return tabs;
-  }, [showDescription]);
+  }, [showDescription, row]);
   // Custom overlay for empty evaluation data
   const CustomNoRowsOverlay = () => (
     <Box
@@ -296,15 +320,17 @@ export default function ExperimentDetailDrawerContent({
     const datasetEvaluations = {};
     const evaluations = columnConfig?.filter((i) => {
       // Only include evaluation columns, but exclude summary/reason columns
-      return i?.originType === "evaluation" && !i?.name?.includes("-reason");
+      const originType = i?.origin_type;
+      return originType === "evaluation" && !i?.name?.includes("-reason");
     });
 
     if (evaluations && evaluations?.length > 0) {
       for (const item of evaluations) {
-        if (datasetEvaluations[item?.datasetId]) {
-          datasetEvaluations[item?.datasetId].push(item);
+        const dsId = item?.dataset_id;
+        if (datasetEvaluations[dsId]) {
+          datasetEvaluations[dsId].push(item);
         } else {
-          datasetEvaluations[item?.datasetId] = [item];
+          datasetEvaluations[dsId] = [item];
         }
       }
     }
@@ -320,7 +346,7 @@ export default function ExperimentDetailDrawerContent({
     if (datasetCols?.length > 0) {
       const diffTracker = {};
       for (const datasetCol of datasetCols) {
-        if (row?.[datasetCol?.id]?.cellDiffValue) {
+        if (row?.[datasetCol?.id]?.cell_diff_value) {
           diffTracker[datasetCol?.id] = showDiff;
         }
       }
@@ -430,11 +456,11 @@ export default function ExperimentDetailDrawerContent({
   }
 
   const renderDatapoint = (col, row) => {
-    if (col.dataType === "audio") {
+    if (col.data_type === "audio") {
       return <AudioDatapointCard value={row?.[col.id]} column={col} />;
     }
 
-    if (col?.dataType === "image") {
+    if (col?.data_type === "image") {
       return (
         <ImageDatapointCard
           value={row?.[col.id]}
@@ -443,13 +469,31 @@ export default function ExperimentDetailDrawerContent({
       );
     }
 
+    if (col?.data_type === "images") {
+      return (
+        <ImagesDatapointCard
+          value={row?.[col.id]}
+          column={{ ...col, headerName: col?.name, status: col?.status }}
+        />
+      );
+    }
+
+    if (col?.data_type === "document") {
+      return (
+        <DocumentDatapointCard
+          value={row?.[col.id]}
+          column={{ ...col, headerName: col?.name, status: col?.status }}
+        />
+      );
+    }
+
     // Render agent flow for agent columns
-    if (col?.isAgent) {
-      // Use agentGroupedColumns if available, otherwise find them
+    if (col?.is_agent) {
+      // Use agentGroupedColumns (FE-derived alias set at line 226) if available, otherwise find them
       const groupedAgentColumns =
         col?.agentGroupedColumns ||
         datasetCols.filter(
-          (c) => c?.group?.id === col?.group?.id && c?.isAgent,
+          (c) => c?.group?.id === col?.group?.id && c?.is_agent,
         );
 
       if (groupedAgentColumns.length > 0) {
@@ -460,7 +504,7 @@ export default function ExperimentDetailDrawerContent({
           return {
             ...cellData,
             columnName: agentCol?.name,
-            isFinal: agentCol?.isFinal,
+            isFinal: agentCol?.is_final,
           };
         });
 
@@ -468,8 +512,8 @@ export default function ExperimentDetailDrawerContent({
           <AgentFlowRenderer
             outputs={outputs}
             showDiff={
-              row?.[col?.id]?.cellDiffValue ||
-              Array.isArray(row?.[col?.id]?.cellValue)
+              row?.[col?.id]?.cell_diff_value ||
+              Array.isArray(row?.[col?.id]?.cell_value)
             }
             onDiffClick={(tabValue) =>
               handleToggleDiffForSingleCol(col?.id, tabValue)
@@ -488,23 +532,23 @@ export default function ExperimentDetailDrawerContent({
       }
     }
 
-    // insert cellDiffValue key if diffTracker is true
-    // else for raw & markdown if it is still array convert it to string by taking default and added
+    // Reads come off the BE row shape (cell_value / cell_diff_value, snake_case);
+    // writes use the DatapointCard prop names (cellValue / cellDiffValue, camelCase).
     const value = {
       ...(row?.[col.id] || {}),
       ...(indColsDifTracker?.[col?.id] &&
-      Array.isArray(row?.[col.id]?.cellValue)
-        ? { cellDiffValue: row?.[col.id]?.cellValue }
+      Array.isArray(row?.[col.id]?.cell_value)
+        ? { cellDiffValue: row?.[col.id]?.cell_value }
         : {
-            cellValue: Array.isArray(row?.[col.id]?.cellValue)
-              ? row?.[col.id]?.cellValue
+            cellValue: Array.isArray(row?.[col.id]?.cell_value)
+              ? row?.[col.id]?.cell_value
                   .filter(
                     (item) =>
                       item.status === "default" || item.status === "added",
                   )
                   .map((item) => item.text)
                   .join(" ") // if array but not diff tab filter normal text from the array
-              : row?.[col?.id]?.cellValue,
+              : row?.[col?.id]?.cell_value,
           }),
     };
 
@@ -512,11 +556,11 @@ export default function ExperimentDetailDrawerContent({
       <DatapointCard
         value={value}
         showDiff={
-          row?.[col?.id]?.cellDiffValue ||
-          Array.isArray(row?.[col?.id]?.cellValue)
+          row?.[col?.id]?.cell_diff_value ||
+          Array.isArray(row?.[col?.id]?.cell_value)
         }
         column={{
-          dataType: col?.dataType,
+          dataType: col?.data_type,
           headerName: col?.name,
         }}
         onDiffClick={(tabValue) =>
@@ -553,9 +597,46 @@ export default function ExperimentDetailDrawerContent({
             justifyContent: "space-between",
           }}
         >
-          <Typography variant="m3" fontWeight={700} color="text.primary">
-            Experiments
-          </Typography>
+          <Box sx={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <Typography variant="m3" fontWeight={700} color="text.primary">
+              Experiments
+            </Typography>
+            <ShowComponent condition={!!row?.rowId}>
+              <Box
+                sx={{
+                  border: "1px solid",
+                  borderColor: "divider",
+                  display: "flex",
+                  gap: "8px",
+                  alignItems: "center",
+                  borderRadius: "8px",
+                  padding: "2px 8px",
+                  maxWidth: "320px",
+                }}
+              >
+                <Typography
+                  variant="s2"
+                  fontWeight={"fontWeightRegular"}
+                  color="text.primary"
+                  noWrap
+                >
+                  Row ID: {row?.rowId}
+                </Typography>
+                <SvgColor
+                  src="/assets/icons/ic_copy.svg"
+                  alt="Copy"
+                  sx={{
+                    width: "12px",
+                    height: "12px",
+                    color: "text.disabled",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                  }}
+                  onClick={handleCopyRowId}
+                />
+              </Box>
+            </ShowComponent>
+          </Box>
           <Stack direction={"row"} gap={"12px"} alignItems={"center"}>
             <ShowComponent condition={showDiff}>
               <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
@@ -893,7 +974,9 @@ export default function ExperimentDetailDrawerContent({
                         suppressContextMenu={true}
                         columnDefs={TabColumnDefs}
                         defaultColDef={defaultColDef}
-                        rowData={evalsData?.[col?.datasetId] ?? []}
+                        rowData={
+                          evalsData?.[col?.dataset_id] ?? []
+                        }
                         domLayout="normal"
                         suppressRowDrag={true}
                         noRowsOverlayComponent={CustomNoRowsOverlay}
@@ -977,7 +1060,7 @@ export default function ExperimentDetailDrawerContent({
                       }}
                       key={index}
                     >
-                      <ShowComponent condition={!col?.isAgent}>
+                      <ShowComponent condition={!col?.is_agent}>
                         <Typography
                           variant="s1"
                           color={"text.primary"}
@@ -1049,7 +1132,9 @@ export default function ExperimentDetailDrawerContent({
               ...evalData,
               userEvalMetricId: evalData?.group?.id,
               sourceId: evalData?.id,
-              rowData: { rowId: row?.rowId },
+              value:
+                evalData?.value ?? evalData?.output ?? evalData?.cell_value,
+              rowData: { row_id: row?.row_id },
             });
             setOpenDetailRow(null);
           }}

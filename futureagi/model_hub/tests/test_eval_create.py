@@ -219,6 +219,60 @@ class TestEvalTemplateCreateV2API:
         )
         assert response.status_code == 400
 
+    def test_create_variable_only_in_user_message_accepted(self, auth_client):
+        """LLM eval with the variable in a User turn (plain-text System) is
+        accepted. The old gate scanned only req.instructions (mirrored the
+        System turn) and rejected this payload."""
+        response = auth_client.post(
+            self.url,
+            self._valid_payload(
+                name="var-in-user-turn-eval",
+                instructions="Judge the answer.",
+                messages=[
+                    {"role": "system", "content": "Judge the answer."},
+                    {"role": "user", "content": "Input: {{input}}"},
+                ],
+            ),
+            format="json",
+        )
+        assert response.status_code == 200, response.data
+
+    def test_create_variable_only_in_assistant_message_accepted(self, auth_client):
+        """Same widened-gate coverage for a variable that lives in the
+        Assistant turn only."""
+        response = auth_client.post(
+            self.url,
+            self._valid_payload(
+                name="var-in-assistant-turn-eval",
+                instructions="Judge the answer.",
+                messages=[
+                    {"role": "system", "content": "Judge the answer."},
+                    {"role": "user", "content": "See the reply."},
+                    {"role": "assistant", "content": "Expected: {{expected}}"},
+                ],
+            ),
+            format="json",
+        )
+        assert response.status_code == 200, response.data
+
+    def test_create_no_variables_in_any_turn_still_rejected(self, auth_client):
+        """Widening the scan must not open a hole: an LLM eval with no
+        template variable anywhere (instructions or messages) still fails."""
+        response = auth_client.post(
+            self.url,
+            self._valid_payload(
+                name="no-vars-any-turn-eval",
+                instructions="Judge the answer.",
+                messages=[
+                    {"role": "system", "content": "Judge the answer."},
+                    {"role": "user", "content": "Plain text with no braces."},
+                ],
+            ),
+            format="json",
+        )
+        assert response.status_code == 400
+        assert "template variable" in str(response.data["result"]).lower()
+
     # --- Validation: Scoring ---
 
     def test_create_deterministic_without_choices_rejected(self, auth_client):
@@ -353,3 +407,64 @@ class TestEvalTemplateCreateV2API:
         assert template.config["eval_type_id"] == "CustomCodeEval"
         assert template.config["code"] == code
         assert template.config["language"] == "python"
+
+
+# =============================================================================
+# E2E API Tests: DuplicateEvalTemplateView
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.django_db
+class TestDuplicateEvalTemplateAPI:
+    create_url = "/model-hub/eval-templates/create-v2/"
+    url = "/model-hub/duplicate-eval-template/"
+
+    def _create_eval(self, auth_client, name):
+        response = auth_client.post(
+            self.create_url,
+            {
+                "name": name,
+                "eval_type": "llm",
+                "instructions": "Evaluate if {{response}} matches {{expected}}.",
+                "model": "turing_large",
+                "output_type": "pass_fail",
+                "pass_threshold": 0.5,
+                "tags": ["test"],
+            },
+            format="json",
+        )
+        assert response.status_code == 200, response.data
+        return response.data["result"]["id"]
+
+    def test_duplicate_returns_eval_template_id(self, auth_client):
+        """Duplicate returns the new template's id under `eval_template_id` —
+        the key the eval detail page reads to navigate to the copy."""
+        src_id = self._create_eval(auth_client, "dup-source")
+        response = auth_client.post(
+            self.url,
+            {"eval_template_id": src_id, "name": "dup-source-copy-1"},
+            format="json",
+        )
+        assert response.status_code == 200, response.data
+        assert response.data["status"] is True
+        new_id = response.data["result"]["eval_template_id"]
+        assert new_id
+        assert new_id != src_id
+        assert EvalTemplate.objects.get(id=new_id).name == "dup-source-copy-1"
+
+    def test_duplicate_rejects_existing_name(self, auth_client):
+        """A name that already exists is rejected, so the copy name must be unique."""
+        src_id = self._create_eval(auth_client, "dup-dupe")
+        first = auth_client.post(
+            self.url,
+            {"eval_template_id": src_id, "name": "dup-dupe-copy"},
+            format="json",
+        )
+        assert first.status_code == 200, first.data
+        again = auth_client.post(
+            self.url,
+            {"eval_template_id": src_id, "name": "dup-dupe-copy"},
+            format="json",
+        )
+        assert again.status_code == 400

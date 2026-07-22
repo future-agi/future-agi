@@ -13,19 +13,21 @@ export const parseAnnotationValue = (value) => {
 };
 
 const renderChips = (items, theme) =>
-  items.map((item) => (
-    <Chip
-      key={item}
-      label={item}
-      size="small"
-      color="primary"
-      sx={{
-        backgroundColor: theme.palette.action.hover,
-        color: theme.palette.primary.main,
-        fontWeight: 400,
-      }}
-    />
-  ));
+  Array.isArray(items)
+    ? items.map((item) => (
+        <Chip
+          key={item}
+          label={item}
+          size="small"
+          color="primary"
+          sx={{
+            backgroundColor: theme.palette.action.hover,
+            color: theme.palette.primary.main,
+            fontWeight: 400,
+          }}
+        />
+      ))
+    : null;
 
 export const renderAnnotationValue = (value, theme) => {
   const parsed = parseAnnotationValue(value);

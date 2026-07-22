@@ -14,7 +14,7 @@ const UnifiedCallTranscript = ({
   simulationCallType,
 }) => {
   const getItemProps = (item) => {
-    const role = item.speakerRole || item.role;
+    const role = item.speaker_role || item.role;
 
     let duration;
 

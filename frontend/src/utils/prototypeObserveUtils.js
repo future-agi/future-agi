@@ -202,7 +202,9 @@ export const getSystemMetricFilterDefinition = () => {
 };
 export const getAnnotationMetricFilterDefinition = (columns) => {
   const group = "Annotation Metrics";
-  const filteredColumns = (columns || []).filter((col) => col.groupBy === group);
+  const filteredColumns = (columns || []).filter(
+    (col) => col.groupBy === group,
+  );
 
   if (filteredColumns.length === 0) {
     return [];
@@ -263,7 +265,7 @@ export const getFilterExtraProperties = (val) => {
     return {};
   }
   return {
-    colType,
+    col_type: colType,
   };
 };
 
@@ -277,8 +279,8 @@ export const getAttributesDefinition = (
     : [];
 
   const attrFilterTypeHash = attrFilters.reduce((acc, filter) => {
-    if (filter?.filterConfig?.filterType) {
-      acc[filter?.columnId] = filter.filterConfig?.filterType;
+    if (filter?.filter_config?.filter_type) {
+      acc[filter?.column_id] = filter.filter_config?.filter_type;
     }
     return acc;
   }, {});

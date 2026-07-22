@@ -9,7 +9,8 @@ import requests
 import structlog
 import weaviate
 from django.db import close_old_connections, transaction
-from django.shortcuts import get_object_or_404
+from django.db.models import Q
+from drf_yasg.utils import swagger_auto_schema
 from pinecone import Pinecone
 from qdrant_client import QdrantClient
 from rest_framework.permissions import IsAuthenticated
@@ -19,8 +20,6 @@ from weaviate import AuthApiKey
 from agentic_eval.core.embeddings.embedding_manager import (
     model_manager,
 )
-
-logger = structlog.get_logger(__name__)
 from agentic_eval.core_evals.fi_evals import *  # noqa: F403
 from agentic_eval.core_evals.run_prompt.litellm_response import RunPrompt
 from model_hub.models.api_key import ApiKey, SecretModel
@@ -36,6 +35,25 @@ from model_hub.models.develop_dataset import (
     Dataset,
     Row,
 )
+from model_hub.serializers.contracts import (
+    MODEL_HUB_ERROR_RESPONSES,
+    AddApiColumnRequestSerializer,
+    ClassifyColumnRequestSerializer,
+    ConditionalColumnRequestSerializer,
+    ExtractEntitiesRequestSerializer,
+    ExtractJsonColumnRequestSerializer,
+    OperationConfigResponseSerializer,
+    PreviewDatasetOperationRequestSerializer,
+    PythonCodeColumnRequestSerializer,
+    RerunOperationRequestSerializer,
+    RerunOperationResponseSerializer,
+    VectorDBColumnRequestSerializer,
+)
+from model_hub.serializers.develop_dataset_contracts import (
+    DynamicColumnCreateResponseSerializer,
+    DynamicColumnMessageResponseSerializer,
+    PreviewDatasetOperationResponseSerializer,
+)
 from model_hub.utils.json_path_resolver import parse_json_safely, resolve_json_path
 from model_hub.utils.utils import (
     contains_sql,
@@ -47,13 +65,65 @@ from model_hub.views.run_prompt import populate_placeholders
 # Define a Celery task for running the evaluation
 from tfc.telemetry import wrap_for_thread
 from tfc.temporal import temporal_activity
+from tfc.utils.api_contracts import validated_request
 from tfc.utils.error_codes import get_error_message
 from tfc.utils.general_methods import GeneralMethods
+
+logger = structlog.get_logger(__name__)
 
 # =============================================================================
 # Constants for batch processing
 # =============================================================================
 BATCH_SIZE = 500  # Number of cells to process in each batch for bulk operations
+
+
+def _request_organization(request):
+    return getattr(request, "organization", None) or request.user.organization
+
+
+def _request_organization_id(request):
+    organization = _request_organization(request)
+    return getattr(organization, "id", organization)
+
+
+def _request_workspace(request):
+    return getattr(request, "workspace", None)
+
+
+def _request_workspace_filter(request, field_name="workspace"):
+    workspace = _request_workspace(request)
+    if not workspace:
+        return Q()
+
+    if getattr(workspace, "is_default", False):
+        return (
+            Q(**{field_name: workspace})
+            | Q(
+                **{
+                    f"{field_name}__is_default": True,
+                    f"{field_name}__organization_id": workspace.organization_id,
+                }
+            )
+            | Q(**{f"{field_name}__isnull": True})
+        )
+
+    return Q(**{field_name: workspace})
+
+
+def _request_dataset_queryset(request):
+    return Dataset.no_workspace_objects.filter(
+        organization_id=_request_organization_id(request)
+    ).filter(_request_workspace_filter(request))
+
+
+def _request_column_queryset(request):
+    return Column.objects.filter(
+        dataset__organization_id=_request_organization_id(request)
+    ).filter(_request_workspace_filter(request, field_name="dataset__workspace"))
+
+
+def _request_dataset(request, dataset_id):
+    return _request_dataset_queryset(request).filter(id=dataset_id).first()
 
 
 class AddVectorDBColumnView(APIView):
@@ -370,12 +440,19 @@ class AddVectorDBColumnView(APIView):
             logger.error(f"Error processing row: {str(e)}")
             return str(e), {"reason": str(e)}
 
+    @validated_request(
+        request_serializer=VectorDBColumnRequestSerializer,
+        responses={
+            200: DynamicColumnCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            config = request.data
-            self.organization_id = (
-                getattr(request, "organization", None) or request.user.organization.id
-            )
+            config = request.validated_data
+            organization_id = _request_organization_id(request)
+            self.organization_id = organization_id
             column_id = config.get("column_id")
             new_column_name = config.get("new_column_name", "Vector DB Result")
             concurrency = config.get("concurrency", 5)
@@ -385,12 +462,20 @@ class AddVectorDBColumnView(APIView):
                     get_error_message("MISSING_COLUMN_ID_SUB_TYPE_AND_API_KEY")
                 )
 
-            input_column = get_object_or_404(
-                Column, id=column_id, dataset_id=dataset_id
+            dataset = _request_dataset(request, dataset_id)
+            if not dataset:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+
+            input_column = (
+                Column.objects.filter(id=column_id, dataset=dataset, deleted=False)
+                .select_related("dataset")
+                .first()
             )
+            if not input_column:
+                return self._gm.not_found(get_error_message("COLUMN_NOT_FOUND"))
 
             if Column.objects.filter(
-                name=new_column_name, dataset=dataset_id, deleted=False
+                name=new_column_name, dataset=dataset, deleted=False
             ).exists():
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
 
@@ -398,7 +483,7 @@ class AddVectorDBColumnView(APIView):
                 name=new_column_name,
                 data_type=DataTypeChoices.ARRAY.value,
                 source=SourceChoices.VECTOR_DB.value,
-                dataset_id=dataset_id,
+                dataset=dataset,
                 metadata={
                     "sub_type": config["sub_type"],
                     "collection_name": config.get("collection_name"),
@@ -418,7 +503,6 @@ class AddVectorDBColumnView(APIView):
                 },
             )
 
-            dataset = Dataset.objects.get(id=dataset_id)
             column_order = dataset.column_order or []
             column_order.append(str(new_column.id))
 
@@ -427,22 +511,24 @@ class AddVectorDBColumnView(APIView):
 
             dataset.column_order = column_order
             dataset.column_config = column_config
-            dataset.save()
+            dataset.save(update_fields=["column_order", "column_config"])
 
-            # Ensure config is JSON serializable
-            serializable_config = json.loads(json.dumps(config))
+            # Ensure config is JSON serializable (validated_data may contain UUIDs)
+            serializable_config = json.loads(json.dumps(config, default=str))
             Column.objects.filter(id=new_column.id).update(
                 status=StatusType.RUNNING.value
             )
 
             add_vector_db_column_async.delay(
                 serializable_config,
-                dataset_id,
+                dataset.id,
                 concurrency,
                 str(input_column.id),
-                getattr(request, "organization", None) or request.user.organization.id,
+                organization_id,
                 new_column.id,
-                str(request.workspace.id) if request.workspace else None,
+                str(_request_workspace(request).id)
+                if _request_workspace(request)
+                else None,
             )
 
             return self._gm.success_response(
@@ -483,7 +569,9 @@ class ExtractJsonColumnView(APIView):
             try:
                 python_obj = ast.literal_eval(cell.value)
             except (ValueError, SyntaxError) as e:
-                raise ValueError(f"Invalid data format - cannot parse as JSON: {e}")
+                raise ValueError(
+                    f"Invalid data format - cannot parse as JSON: {e}"
+                ) from e
 
             # Convert Python object to JSON
             json_data = json.dumps(python_obj)
@@ -503,14 +591,21 @@ class ExtractJsonColumnView(APIView):
         finally:
             close_old_connections()
 
+    @validated_request(
+        request_serializer=ExtractJsonColumnRequestSerializer,
+        responses={
+            200: DynamicColumnCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            column_id = request.data.get("column_id")
-            json_key = request.data.get("json_key")
-            new_column_name = request.data.get("new_column_name")
-            concurrency = request.data.get(
-                "concurrency", 5
-            )  # Default to 5 concurrent workers
+            data = request.validated_data
+            column_id = data.get("column_id")
+            json_key = data.get("json_key")
+            new_column_name = data.get("new_column_name")
+            concurrency = data.get("concurrency", 5)  # Default to 5 concurrent workers
 
             if not all([column_id, json_key]):
                 return self._gm.bad_request(
@@ -527,18 +622,23 @@ class ExtractJsonColumnView(APIView):
             except ValueError:
                 return self._gm.bad_request(get_error_message("CONCURRENCY_INVALID"))
 
+            dataset = _request_dataset(request, dataset_id)
+            if not dataset:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+
             if Column.objects.filter(
-                name=new_column_name, dataset=dataset_id, deleted=False
+                name=new_column_name, dataset=dataset, deleted=False
             ).exists():
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
 
             # Get source column with related dataset (optimization: select_related)
-            source_column = get_object_or_404(
-                Column.objects.select_related("dataset"),
-                id=column_id,
-                dataset_id=dataset_id,
-                deleted=False,
+            source_column = (
+                Column.objects.select_related("dataset")
+                .filter(id=column_id, dataset=dataset, deleted=False)
+                .first()
             )
+            if not source_column:
+                return self._gm.not_found(get_error_message("COLUMN_NOT_FOUND"))
 
             # Use transaction for atomic column creation and dataset update
             with transaction.atomic():
@@ -547,7 +647,7 @@ class ExtractJsonColumnView(APIView):
                     name=new_column_name or f"{source_column.name}_{json_key}",
                     data_type=DataTypeChoices.TEXT.value,
                     source=SourceChoices.EXTRACTED_JSON.value,
-                    dataset_id=dataset_id,
+                    dataset=dataset,
                     metadata={
                         "column_id": str(source_column.id),
                         "json_key": json_key,
@@ -556,7 +656,6 @@ class ExtractJsonColumnView(APIView):
                 )
 
                 # Update dataset's column order and config
-                dataset = source_column.dataset
                 column_order = dataset.column_order or []
                 column_order.append(str(new_column.id))
 
@@ -573,7 +672,7 @@ class ExtractJsonColumnView(APIView):
                 status=StatusType.RUNNING.value
             )
             extract_json_async.delay(
-                column_id, json_key, concurrency, dataset_id, new_column.id
+                column_id, json_key, concurrency, dataset.id, new_column.id
             )
 
             return self._gm.success_response(
@@ -606,7 +705,7 @@ class ClassifyColumnView(APIView):
         try:
             close_old_connections()
             if not cell.value:
-                return None
+                return None, None
 
             prompt = (
                 f"Classify the following text into exactly one of these labels: {', '.join(labels)}.\n\n"
@@ -652,13 +751,22 @@ class ClassifyColumnView(APIView):
         finally:
             close_old_connections()
 
+    @validated_request(
+        request_serializer=ClassifyColumnRequestSerializer,
+        responses={
+            200: DynamicColumnCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            column_id = request.data.get("column_id")
-            labels = request.data.get("labels", [])
-            model = request.data.get("language_model_id", "gpt-4o")
-            concurrency = request.data.get("concurrency", 5)
-            new_column_name = request.data.get("new_column_name")
+            data = request.validated_data
+            column_id = data.get("column_id")
+            labels = data.get("labels", [])
+            model = data.get("language_model_id", "gpt-4o")
+            concurrency = data.get("concurrency", 5)
+            new_column_name = data.get("new_column_name")
 
             # Validation
             if not column_id or not labels:
@@ -669,16 +777,21 @@ class ClassifyColumnView(APIView):
             if not isinstance(labels, list) or len(labels) < 2:
                 return self._gm.bad_request(get_error_message("LABELS_LIST_NOT_VALID"))
 
+            dataset = _request_dataset(request, dataset_id)
+            if not dataset:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+
             # Get source column with related dataset (optimization: select_related)
-            source_column = get_object_or_404(
-                Column.objects.select_related("dataset"),
-                id=column_id,
-                dataset_id=dataset_id,
-                deleted=False,
+            source_column = (
+                Column.objects.select_related("dataset")
+                .filter(id=column_id, dataset=dataset, deleted=False)
+                .first()
             )
+            if not source_column:
+                return self._gm.not_found(get_error_message("COLUMN_NOT_FOUND"))
 
             if Column.objects.filter(
-                name=new_column_name, dataset=dataset_id, deleted=False
+                name=new_column_name, dataset=dataset, deleted=False
             ).exists():
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
 
@@ -689,7 +802,7 @@ class ClassifyColumnView(APIView):
                     name=new_column_name or f"{source_column.name}_classification",
                     data_type=DataTypeChoices.TEXT.value,
                     source=SourceChoices.CLASSIFICATION.value,
-                    dataset_id=dataset_id,
+                    dataset=dataset,
                     metadata={
                         "labels": labels,
                         "language_model_id": model,
@@ -699,7 +812,6 @@ class ClassifyColumnView(APIView):
                 )
 
                 # Update dataset's column order and config
-                dataset = source_column.dataset
                 column_order = dataset.column_order or []
                 column_order.append(str(new_column.id))
 
@@ -717,7 +829,7 @@ class ClassifyColumnView(APIView):
                 status=StatusType.RUNNING.value
             )
             classify_column_async.delay(
-                column_id, labels, model, concurrency, dataset_id, new_column.id
+                column_id, labels, model, concurrency, dataset.id, new_column.id
             )
 
             return self._gm.success_response(
@@ -826,13 +938,22 @@ Remember, accuracy and adherence to the specified format are crucial. Your task 
         finally:
             close_old_connections()
 
+    @validated_request(
+        request_serializer=ExtractEntitiesRequestSerializer,
+        responses={
+            200: DynamicColumnMessageResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            column_id = request.data.get("column_id")
-            instruction = request.data.get("instruction")
-            model = request.data.get("language_model_id", "gpt-4")
-            concurrency = request.data.get("concurrency", 5)
-            new_column_name = request.data.get("new_column_name")
+            data = request.validated_data
+            column_id = data.get("column_id")
+            instruction = data.get("instruction")
+            model = data.get("language_model_id", "gpt-4")
+            concurrency = data.get("concurrency", 5)
+            new_column_name = data.get("new_column_name")
 
             # Validation
             if not all([column_id, instruction]):
@@ -840,13 +961,19 @@ Remember, accuracy and adherence to the specified format are crucial. Your task 
                     get_error_message("MISSING_COLUMN_ID_AND_INSTRUCTIONS")
                 )
 
+            dataset = _request_dataset(request, dataset_id)
+            if not dataset:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+
             # Get source column
-            source_column = get_object_or_404(
-                Column, id=column_id, dataset_id=dataset_id, deleted=False
-            )
+            source_column = Column.objects.filter(
+                id=column_id, dataset=dataset, deleted=False
+            ).first()
+            if not source_column:
+                return self._gm.not_found(get_error_message("COLUMN_NOT_FOUND"))
 
             if Column.objects.filter(
-                name=new_column_name, dataset=dataset_id, deleted=False
+                name=new_column_name, dataset=dataset, deleted=False
             ).exists():
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
 
@@ -855,7 +982,7 @@ Remember, accuracy and adherence to the specified format are crucial. Your task 
                 name=new_column_name or f"{source_column.name}_entities",
                 data_type=DataTypeChoices.ARRAY.value,
                 source=SourceChoices.EXTRACTED_ENTITIES.value,
-                dataset_id=dataset_id,
+                dataset=dataset,
                 metadata={
                     "instruction": instruction,
                     "language_model_id": model,
@@ -865,7 +992,6 @@ Remember, accuracy and adherence to the specified format are crucial. Your task 
             )
 
             # Update dataset's column order and config
-            dataset = source_column.dataset
             column_order = dataset.column_order or []
             column_order.append(str(new_column.id))
 
@@ -880,12 +1006,14 @@ Remember, accuracy and adherence to the specified format are crucial. Your task 
             )
 
             extract_async.delay(
-                column_id, instruction, model, concurrency, dataset_id, new_column.id
+                column_id, instruction, model, concurrency, dataset.id, new_column.id
             )
 
             return self._gm.success_response(
                 {
                     "message": "Entity extraction completed successfully",
+                    "new_column_id": str(new_column.id),
+                    "new_column_name": new_column.name,
                 }
             )
 
@@ -911,9 +1039,9 @@ class AddApiColumnView(APIView):
         """Resolve a column reference (UUID, optionally followed by a JSON path) to its value."""
         base_col_id = variable_id
         json_path = None
-        if len(variable_id) > 36 and variable_id[36] in ('.', '['):
+        if len(variable_id) > 36 and variable_id[36] in (".", "["):
             base_col_id = variable_id[:36]
-            json_path = variable_id[37:] if variable_id[36] == '.' else variable_id[36:]
+            json_path = variable_id[37:] if variable_id[36] == "." else variable_id[36:]
 
         cell = Cell.objects.get(column__id=base_col_id, row=row)
         if json_path and cell.value is not None:
@@ -953,9 +1081,13 @@ class AddApiColumnView(APIView):
                     try:
                         raw_val = param_config["value"]
                         if "{{" in raw_val:
-                            processed_params[param_name] = self._replace_variables(raw_val, cell.row)
+                            processed_params[param_name] = self._replace_variables(
+                                raw_val, cell.row
+                            )
                         else:
-                            processed_params[param_name] = self._resolve_cell_value(raw_val, cell.row) or ""
+                            processed_params[param_name] = (
+                                self._resolve_cell_value(raw_val, cell.row) or ""
+                            )
                     except Exception as e:
                         logger.error(f"Error replacing variable: {str(e)}")
 
@@ -973,9 +1105,13 @@ class AddApiColumnView(APIView):
                     try:
                         raw_val = header_config["value"]
                         if "{{" in raw_val:
-                            processed_headers[header_name] = self._replace_variables(raw_val, cell.row)
+                            processed_headers[header_name] = self._replace_variables(
+                                raw_val, cell.row
+                            )
                         else:
-                            processed_headers[header_name] = self._resolve_cell_value(raw_val, cell.row)
+                            processed_headers[header_name] = self._resolve_cell_value(
+                                raw_val, cell.row
+                            )
                     except Exception as e:
                         logger.error(f"Error replacing variable: {str(e)}")
 
@@ -1032,11 +1168,20 @@ class AddApiColumnView(APIView):
             logger.exception(f"API call error: {str(e)}")
             return str(e), {"response_status": 400}
 
+    @validated_request(
+        request_serializer=AddApiColumnRequestSerializer,
+        responses={
+            200: DynamicColumnCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            column_name = request.data.get("column_name")
-            config = request.data.get("config")  # URL, method, params, headers, body
-            concurrency = request.data.get("concurrency", 5)
+            data = request.validated_data
+            column_name = data.get("column_name")
+            config = data.get("config")  # URL, method, params, headers, body
+            concurrency = data.get("concurrency", 5)
 
             if not all([column_name, config]):
                 return self._gm.bad_request(
@@ -1050,8 +1195,12 @@ class AddApiColumnView(APIView):
                     f"Config must include: {', '.join(required_fields)}"
                 )
 
+            dataset = _request_dataset(request, dataset_id)
+            if not dataset:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+
             if Column.objects.filter(
-                name=column_name, dataset=dataset_id, deleted=False
+                name=column_name, dataset=dataset, deleted=False
             ).exists():
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
 
@@ -1060,7 +1209,7 @@ class AddApiColumnView(APIView):
                 name=column_name,
                 data_type=DataTypeChoices.TEXT.value,  # You might want to make this configurable
                 source=SourceChoices.API_CALL.value,
-                dataset_id=dataset_id,
+                dataset=dataset,
                 metadata={
                     "url": config["url"],
                     "method": config["method"],
@@ -1073,7 +1222,6 @@ class AddApiColumnView(APIView):
             )
 
             # Update dataset's column order and config
-            dataset = Dataset.objects.get(id=dataset_id)
             column_order = dataset.column_order or []
             column_order.append(str(new_column.id))
 
@@ -1082,11 +1230,11 @@ class AddApiColumnView(APIView):
 
             dataset.column_order = column_order
             dataset.column_config = column_config
-            dataset.save()
+            dataset.save(update_fields=["column_order", "column_config"])
             Column.objects.filter(id=new_column.id).update(
                 status=StatusType.RUNNING.value
             )
-            add_api_column_async.delay(config, dataset_id, concurrency, new_column.id)
+            add_api_column_async.delay(config, dataset.id, concurrency, new_column.id)
 
             return self._gm.success_response(
                 {
@@ -1148,7 +1296,7 @@ class ExecutePythonCodeView(APIView):
             for pattern in dangerous_patterns:
                 if re.search(pattern, code):
                     return f"Dangerous pattern '{pattern}' detected in code.", {
-                        "reason": f"Code contains potentially dangerous pattern for security reasons."
+                        "reason": "Code contains potentially dangerous pattern for security reasons."
                     }
 
             # Fetch cells for the row with column names
@@ -1182,7 +1330,7 @@ class ExecutePythonCodeView(APIView):
                 "tuple": tuple,
                 "zip": zip,
             }
-            global_namespace = {"__builtins__": safe_builtins}
+            _global_namespace = {"__builtins__": safe_builtins}
             local_namespace = {}
 
             # Execute the provided code with restricted globals
@@ -1203,18 +1351,31 @@ class ExecutePythonCodeView(APIView):
             traceback.format_exc()
             return str(e), {"reason": str(e)}
 
+    @validated_request(
+        request_serializer=PythonCodeColumnRequestSerializer,
+        responses={
+            200: DynamicColumnCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            code = request.data.get("code")
-            new_column_name = request.data.get("new_column_name")
-            concurrency = request.data.get("concurrency", 5)
+            data = request.validated_data
+            code = data.get("code")
+            new_column_name = data.get("new_column_name")
+            concurrency = data.get("concurrency", 5)
 
             # Validation
             if not all([code]):
                 return self._gm.bad_request(get_error_message("CODE_MISSING"))
 
+            dataset = _request_dataset(request, dataset_id)
+            if not dataset:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+
             if Column.objects.filter(
-                name=new_column_name, dataset=dataset_id, deleted=False
+                name=new_column_name, dataset=dataset, deleted=False
             ).exists():
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
 
@@ -1223,12 +1384,11 @@ class ExecutePythonCodeView(APIView):
                 name=new_column_name if new_column_name else "Python Code Output",
                 data_type=DataTypeChoices.TEXT.value,
                 source=SourceChoices.PYTHON_CODE.value,
-                dataset_id=dataset_id,
+                dataset=dataset,
                 metadata={"code": code, "concurrency": concurrency},
             )
 
             # Update dataset's column order and config
-            dataset = Dataset.objects.get(id=dataset_id)
             column_order = dataset.column_order or []
             column_order.append(str(new_column.id))
 
@@ -1237,12 +1397,12 @@ class ExecutePythonCodeView(APIView):
 
             dataset.column_order = column_order
             dataset.column_config = column_config
-            dataset.save()
+            dataset.save(update_fields=["column_order", "column_config"])
             Column.objects.filter(id=new_column.id).update(
                 status=StatusType.RUNNING.value
             )
             execute_python_code_async.delay(
-                code, dataset_id, concurrency, new_column.id
+                code, dataset.id, concurrency, new_column.id
             )
 
             return self._gm.success_response(
@@ -1428,7 +1588,9 @@ class ConditionalColumnView(APIView):
                     row_id=row.id,
                     col_id=None,
                     model_name=config.get("model"),
-                    template_format=config.get("configuration", {}).get("template_format"),
+                    template_format=config.get("configuration", {}).get(
+                        "template_format"
+                    ),
                 )
                 messages = remove_empty_text_from_messages(messages)
                 executor = RunPrompt(
@@ -1521,14 +1683,21 @@ class ConditionalColumnView(APIView):
             logger.error(f"Error processing row: {str(e)}")
             return str(e), {"reason": str(e)}
 
+    @validated_request(
+        request_serializer=ConditionalColumnRequestSerializer,
+        responses={
+            200: DynamicColumnCreateResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, dataset_id, *args, **kwargs):
         try:
-            config = request.data.get("config", [])
-            new_column_name = request.data.get("new_column_name")
-            concurrency = request.data.get("concurrency", 5)
-            self.organization_id = (
-                getattr(request, "organization", None) or request.user.organization.id
-            )
+            data = request.validated_data
+            config = data.get("config", [])
+            new_column_name = data.get("new_column_name")
+            concurrency = data.get("concurrency", 5)
+            self.organization_id = _request_organization_id(request)
 
             if not config:
                 return self._gm.bad_request(get_error_message("CONFIG_MISSING"))
@@ -1537,10 +1706,12 @@ class ConditionalColumnView(APIView):
                     get_error_message("NEW_COLUMN_NAME_MISSING")
                 )
 
-            dataset = Dataset.objects.get(id=dataset_id)
+            dataset = _request_dataset(request, dataset_id)
+            if not dataset:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
 
             if Column.objects.filter(
-                name=new_column_name, dataset=dataset_id, deleted=False
+                name=new_column_name, dataset=dataset, deleted=False
             ).exists():
                 return self._gm.bad_request(get_error_message("COLUMN_NAME_EXISTS"))
 
@@ -1549,7 +1720,7 @@ class ConditionalColumnView(APIView):
                 name=new_column_name,
                 data_type=DataTypeChoices.TEXT.value,
                 source=SourceChoices.CONDITIONAL.value,
-                dataset_id=dataset_id,
+                dataset=dataset,
                 metadata={"config": config, "concurrency": concurrency},
             )
 
@@ -1562,13 +1733,13 @@ class ConditionalColumnView(APIView):
 
             dataset.column_order = column_order
             dataset.column_config = column_config
-            dataset.save()
+            dataset.save(update_fields=["column_order", "column_config"])
             Column.objects.filter(id=new_column.id).update(
                 status=StatusType.RUNNING.value
             )
 
             conditional_column_async.delay(
-                config, dataset_id, concurrency, new_column.id
+                config, dataset.id, concurrency, new_column.id
             )
 
             return self._gm.success_response(
@@ -1595,17 +1766,22 @@ class GetOperationConfigView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
+    @swagger_auto_schema(
+        responses={200: OperationConfigResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
+    )
     def get(self, request, column_id, *args, **kwargs):
         """Get the configuration for all operations in a dataset"""
         try:
             # Get column that has operation metadata
-            operation_column = Column.objects.filter(
-                id=column_id,
-                deleted=False,
-                metadata__isnull=False,
-                dataset__organization_id=getattr(request, "organization", None)
-                or request.user.organization.id,
-            ).first()
+            operation_column = (
+                _request_column_queryset(request)
+                .filter(
+                    id=column_id,
+                    deleted=False,
+                    metadata__isnull=False,
+                )
+                .first()
+            )
 
             if not operation_column:
                 return self._gm.bad_request(get_error_message("COLUMN_NOT_FOUND"))
@@ -1627,123 +1803,206 @@ class GetOperationConfigView(APIView):
 class RerunOperationView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
+    valid_operation_types = {
+        "classify",
+        "extract_entities",
+        "extract_json",
+        "execute_code",
+        "conditional",
+        "vector_db",
+        "api_call",
+    }
 
+    @validated_request(
+        request_serializer=RerunOperationRequestSerializer,
+        responses={200: RerunOperationResponseSerializer, **MODEL_HUB_ERROR_RESPONSES},
+        reject_unknown_fields=True,
+    )
     def post(self, request, column_id, *args, **kwargs):
         """Rerun a specific operation with its stored configuration"""
         try:
-            operation_type = request.data.get("operation_type")
-            metadata = request.data.get("config", {})
+            data = request.validated_data
+            operation_type = data.get("operation_type")
+            metadata = data.get("config", {})
 
             if not operation_type:
                 return self._gm.bad_request(get_error_message("MISSING_OPERATION_TYPE"))
 
+            if operation_type not in self.valid_operation_types:
+                return self._gm.bad_request(f"Invalid operation type: {operation_type}")
+
             # Get the column with its metadata
-            column = get_object_or_404(
-                Column,
-                id=column_id,
-                deleted=False,
-                dataset__organization_id=getattr(request, "organization", None)
-                or request.user.organization.id,
+            column = (
+                _request_column_queryset(request)
+                .filter(
+                    id=column_id,
+                    deleted=False,
+                )
+                .first()
             )
+            if not column:
+                return self._gm.not_found(get_error_message("COLUMN_NOT_FOUND"))
+
+            effective_metadata = dict(column.metadata or {})
 
             # Update column metadata with new configuration
             if metadata:
                 # Merge new config with existing metadata, preserving structure
-                existing_metadata = column.metadata or {}
-
                 # Update metadata based on operation type
                 if operation_type == "classify":
-                    existing_metadata.update(
+                    effective_metadata.update(
                         {
-                            "labels": metadata.get("labels"),
-                            "language_model_id": metadata.get(
-                                "language_model_id", "gpt-4o"
+                            "labels": metadata.get(
+                                "labels", effective_metadata.get("labels")
                             ),
-                            "column_id": metadata.get("column_id"),
-                            "concurrency": metadata.get("concurrency", 5),
+                            "language_model_id": metadata.get(
+                                "language_model_id",
+                                effective_metadata.get("language_model_id", "gpt-4o"),
+                            ),
+                            "column_id": metadata.get(
+                                "column_id", effective_metadata.get("column_id")
+                            ),
+                            "concurrency": metadata.get(
+                                "concurrency", effective_metadata.get("concurrency", 5)
+                            ),
                         }
                     )
                 elif operation_type == "extract_entities":
-                    existing_metadata.update(
+                    effective_metadata.update(
                         {
-                            "instruction": metadata.get("instruction"),
-                            "language_model_id": metadata.get(
-                                "language_model_id", "gpt-4"
+                            "instruction": metadata.get(
+                                "instruction", effective_metadata.get("instruction")
                             ),
-                            "column_id": metadata.get("column_id"),
-                            "concurrency": metadata.get("concurrency", 5),
+                            "language_model_id": metadata.get(
+                                "language_model_id",
+                                effective_metadata.get("language_model_id", "gpt-4"),
+                            ),
+                            "column_id": metadata.get(
+                                "column_id", effective_metadata.get("column_id")
+                            ),
+                            "concurrency": metadata.get(
+                                "concurrency", effective_metadata.get("concurrency", 5)
+                            ),
                         }
                     )
                 elif operation_type == "extract_json":
-                    existing_metadata.update(
+                    effective_metadata.update(
                         {
-                            "column_id": metadata.get("column_id"),
-                            "json_key": metadata.get("json_key"),
-                            "concurrency": metadata.get("concurrency", 5),
+                            "column_id": metadata.get(
+                                "column_id", effective_metadata.get("column_id")
+                            ),
+                            "json_key": metadata.get(
+                                "json_key", effective_metadata.get("json_key")
+                            ),
+                            "concurrency": metadata.get(
+                                "concurrency", effective_metadata.get("concurrency", 5)
+                            ),
                         }
                     )
                 elif operation_type == "execute_code":
-                    existing_metadata.update(
+                    effective_metadata.update(
                         {
-                            "code": metadata.get("code"),
-                            "concurrency": metadata.get("concurrency", 5),
+                            "code": metadata.get("code", effective_metadata.get("code")),
+                            "concurrency": metadata.get(
+                                "concurrency", effective_metadata.get("concurrency", 5)
+                            ),
                         }
                     )
                 elif operation_type == "conditional":
-                    existing_metadata.update(
+                    effective_metadata.update(
                         {
-                            "config": metadata.get("config"),
-                            "concurrency": metadata.get("concurrency", 5),
+                            "config": metadata.get(
+                                "config", effective_metadata.get("config")
+                            ),
+                            "concurrency": metadata.get(
+                                "concurrency", effective_metadata.get("concurrency", 5)
+                            ),
                         }
                     )
                 elif operation_type == "vector_db":
-                    existing_metadata.update(
+                    effective_metadata.update(
                         {
-                            "sub_type": metadata.get("sub_type"),
-                            "collection_name": metadata.get("collection_name"),
-                            "url": metadata.get("url"),
-                            "search_type": metadata.get("search_type"),
-                            "key": metadata.get("key"),
-                            "limit": metadata.get("limit", 1),
-                            "index_name": metadata.get("index_name"),
-                            "top_k": metadata.get("top_k", 1),
-                            "namespace": metadata.get("namespace"),
-                            "api_key": metadata.get("api_key"),
-                            "embedding_config": metadata.get("embedding_config"),
-                            "column_id": metadata.get("column_id"),
-                            "concurrency": metadata.get("concurrency", 5),
-                            "query_key": metadata.get("query_key"),
-                            "vector_length": metadata.get("vector_length"),
+                            "sub_type": metadata.get(
+                                "sub_type", effective_metadata.get("sub_type")
+                            ),
+                            "collection_name": metadata.get(
+                                "collection_name",
+                                effective_metadata.get("collection_name"),
+                            ),
+                            "url": metadata.get("url", effective_metadata.get("url")),
+                            "search_type": metadata.get(
+                                "search_type", effective_metadata.get("search_type")
+                            ),
+                            "key": metadata.get("key", effective_metadata.get("key")),
+                            "limit": metadata.get(
+                                "limit", effective_metadata.get("limit", 1)
+                            ),
+                            "index_name": metadata.get(
+                                "index_name", effective_metadata.get("index_name")
+                            ),
+                            "top_k": metadata.get(
+                                "top_k", effective_metadata.get("top_k", 1)
+                            ),
+                            "namespace": metadata.get(
+                                "namespace", effective_metadata.get("namespace")
+                            ),
+                            "api_key": metadata.get(
+                                "api_key", effective_metadata.get("api_key")
+                            ),
+                            "embedding_config": metadata.get(
+                                "embedding_config",
+                                effective_metadata.get("embedding_config"),
+                            ),
+                            "column_id": metadata.get(
+                                "column_id", effective_metadata.get("column_id")
+                            ),
+                            "concurrency": metadata.get(
+                                "concurrency", effective_metadata.get("concurrency", 5)
+                            ),
+                            "query_key": metadata.get(
+                                "query_key", effective_metadata.get("query_key")
+                            ),
+                            "vector_length": metadata.get(
+                                "vector_length", effective_metadata.get("vector_length")
+                            ),
                         }
                     )
                 elif operation_type == "api_call":
-                    api_config = metadata.get("config", {})
-                    existing_metadata.update(
+                    api_config = metadata.get("config") or metadata
+                    effective_metadata.update(
                         {
-                            "url": api_config.get("url", existing_metadata.get("url")),
+                            "url": api_config.get(
+                                "url", effective_metadata.get("url")
+                            ),
                             "method": api_config.get(
-                                "method", existing_metadata.get("method")
+                                "method", effective_metadata.get("method")
                             ),
                             "output_type": api_config.get(
                                 "output_type",
-                                existing_metadata.get("output_type"),
+                                effective_metadata.get("output_type"),
                             ),
                             "params": api_config.get(
-                                "params", existing_metadata.get("params", {})
+                                "params", effective_metadata.get("params", {})
                             ),
                             "headers": api_config.get(
-                                "headers", existing_metadata.get("headers", {})
+                                "headers", effective_metadata.get("headers", {})
                             ),
                             "body": api_config.get(
-                                "body", existing_metadata.get("body", {})
+                                "body", effective_metadata.get("body", {})
                             ),
-                            "concurrency": metadata.get("concurrency", 5),
+                            "concurrency": metadata.get(
+                                "concurrency", effective_metadata.get("concurrency", 5)
+                            ),
                         }
                     )
 
-                # Save updated metadata
-                column.metadata = existing_metadata
-                column.save()
+            config_error = self._rerun_config_error(operation_type, effective_metadata)
+            if config_error:
+                return self._gm.bad_request(get_error_message(config_error))
+
+            if metadata:
+                column.metadata = effective_metadata
+                column.save(update_fields=["metadata"])
 
             # Clear existing cell values but keep the cells
             Cell.objects.filter(column_id=column.id, deleted=False).update(
@@ -1752,32 +2011,81 @@ class RerunOperationView(APIView):
 
             # Reset column status
             column.status = StatusType.RUNNING.value
-            column.save()
+            column.save(update_fields=["status"])
 
             if operation_type == "classify":
-                return self._rerun_classification(column, metadata, column.dataset.id)
+                return self._rerun_classification(
+                    column, effective_metadata, column.dataset.id
+                )
             elif operation_type == "extract_entities":
                 return self._rerun_entity_extraction(
-                    column, metadata, column.dataset.id
+                    column, effective_metadata, column.dataset.id
                 )
             elif operation_type == "extract_json":
-                return self._rerun_json_extraction(column, metadata, column.dataset.id)
+                return self._rerun_json_extraction(
+                    column, effective_metadata, column.dataset.id
+                )
             elif operation_type == "execute_code":
-                return self._rerun_python_code(column, metadata, column.dataset.id)
+                return self._rerun_python_code(
+                    column, effective_metadata, column.dataset.id
+                )
             elif operation_type == "conditional":
-                return self._rerun_conditional(column, metadata, column.dataset.id)
+                return self._rerun_conditional(
+                    column, effective_metadata, column.dataset.id
+                )
             elif operation_type == "vector_db":
-                return self._rerun_vector_db(column, metadata, column.dataset.id)
+                return self._rerun_vector_db(
+                    column, effective_metadata, column.dataset.id
+                )
             elif operation_type == "api_call":
-                return self._rerun_api_call(column, metadata, column.dataset.id)
-            else:
-                return self._gm.bad_request(f"Invalid operation type: {operation_type}")
+                return self._rerun_api_call(column, effective_metadata, column.dataset.id)
 
         except Exception as e:
             logger.exception(f"Error in rerunning operation: {str(e)}")
             return self._gm.internal_server_error_response(
                 get_error_message("FAILED_TO_RERUN_OPERATION")
             )
+
+    def _rerun_config_error(self, operation_type, metadata):
+        if operation_type == "classify":
+            if not all([metadata.get("column_id"), metadata.get("labels")]):
+                return "INVALID_CLASSIFICATION_CONFIGURATION"
+        elif operation_type == "extract_entities":
+            if not all([metadata.get("column_id"), metadata.get("instruction")]):
+                return "INVALID_ENTITY_EXTRACTION_CONFIGURATION"
+        elif operation_type == "extract_json":
+            if not all([metadata.get("column_id"), metadata.get("json_key")]):
+                return "INVALID_JSON_EXTRACTION_CONFIGURATION"
+        elif operation_type == "execute_code":
+            if not metadata.get("code"):
+                return "INVALID_PYTHON_CODE_CONFIGURATION"
+        elif operation_type == "conditional":
+            if not metadata.get("config"):
+                return "INVALID_CONDITIONAL_CONFIGURATION"
+        elif operation_type == "vector_db":
+            if not all([metadata, metadata.get("column_id")]):
+                return "INVALID_VECTOR_DB_CONFIGURATION"
+        elif operation_type == "api_call":
+            api_config = self._api_call_config(metadata)
+            if not all(
+                [
+                    api_config.get("url"),
+                    api_config.get("method"),
+                    api_config.get("output_type"),
+                ]
+            ):
+                return "INVALID_API_CALL_CONFIGURATION"
+        return None
+
+    def _api_call_config(self, metadata):
+        return metadata.get("config") or {
+            "url": metadata.get("url"),
+            "method": metadata.get("method"),
+            "output_type": metadata.get("output_type"),
+            "params": metadata.get("params", {}),
+            "headers": metadata.get("headers", {}),
+            "body": metadata.get("body", {}),
+        }
 
     def _rerun_classification(self, column, metadata, dataset_id):
         """Rerun classification operation"""
@@ -1977,6 +2285,9 @@ class RerunOperationView(APIView):
                 source_column_id,
                 organization_id,
                 str(column.id),
+                str(column.dataset.workspace_id)
+                if column.dataset.workspace_id
+                else None,
                 True,
             )
 
@@ -1998,10 +2309,16 @@ class RerunOperationView(APIView):
         """Rerun API call operation"""
         try:
             # Extract configuration from metadata
-            api_config = metadata.get("config")
+            api_config = self._api_call_config(metadata)
             concurrency = metadata.get("concurrency", 5)
 
-            if not api_config:
+            if not all(
+                [
+                    api_config.get("url"),
+                    api_config.get("method"),
+                    api_config.get("output_type"),
+                ]
+            ):
                 return self._gm.bad_request(
                     get_error_message("INVALID_API_CALL_CONFIGURATION")
                 )
@@ -2852,7 +3169,9 @@ def add_api_column_async(
 ):
     view = AddApiColumnView()
     # Process all rows ordered by row order
-    rows = list(Row.objects.filter(dataset_id=dataset_id, deleted=False).order_by("order"))
+    rows = list(
+        Row.objects.filter(dataset_id=dataset_id, deleted=False).order_by("order")
+    )
     total_processed = 0
     failed_cells = 0
     Column.objects.filter(id=new_column_id).update(status=StatusType.RUNNING.value)
@@ -2873,13 +3192,19 @@ def add_api_column_async(
             future_to_row = {}
             for row in rows:
                 existing_cell = existing_cells_map.get(str(row.id))
-                cell = existing_cell if existing_cell else Cell(
-                    dataset_id=dataset_id,
-                    column_id=new_column_id,
-                    row=row,
-                    value=None,
+                cell = (
+                    existing_cell
+                    if existing_cell
+                    else Cell(
+                        dataset_id=dataset_id,
+                        column_id=new_column_id,
+                        row=row,
+                        value=None,
+                    )
                 )
-                future_to_row[executor.submit(wrapped_make_api_call, cell, config)] = row
+                future_to_row[executor.submit(wrapped_make_api_call, cell, config)] = (
+                    row
+                )
 
             # Flush buffers to DB in batches as results complete
             cells_to_update = []
@@ -2968,7 +3293,9 @@ def add_api_column_async(
                 cell = Cell(
                     dataset_id=dataset_id, column_id=new_column_id, row=row, value=None
                 )
-                future_to_row[executor.submit(wrapped_make_api_call, cell, config)] = row
+                future_to_row[executor.submit(wrapped_make_api_call, cell, config)] = (
+                    row
+                )
 
             # Flush buffer to DB in batches as results complete
             cells_to_create = []
@@ -2983,7 +3310,9 @@ def add_api_column_async(
                             column_id=new_column_id,
                             row=row,
                             value=value,
-                            value_infos=json.dumps(value_infos) if value_infos else None,
+                            value_infos=json.dumps(value_infos)
+                            if value_infos
+                            else None,
                         )
                     )
                     total_processed += 1
@@ -3017,19 +3346,29 @@ class PreviewDatasetOperationView(APIView):
     _gm = GeneralMethods()
     permission_classes = [IsAuthenticated]
 
-    def _get_sample_rows(self, dataset_id, sample_size=3):
+    def _get_sample_rows(self, dataset, sample_size=3):
         """Get a sample of rows from the dataset"""
-        return Row.objects.filter(dataset_id=dataset_id, deleted=False).order_by(
+        return Row.objects.filter(dataset=dataset, deleted=False).order_by(
             "created_at"
         )[:sample_size]
 
+    @validated_request(
+        request_serializer=PreviewDatasetOperationRequestSerializer,
+        responses={
+            200: PreviewDatasetOperationResponseSerializer,
+            **MODEL_HUB_ERROR_RESPONSES,
+        },
+        reject_unknown_fields=True,
+    )
     def post(self, request, dataset_id, operation_type):
         try:
+            dataset = _request_dataset(request, dataset_id)
+            if not dataset:
+                return self._gm.not_found(get_error_message("DATASET_NOT_FOUND"))
+
             # Get sample rows
-            sample_rows = self._get_sample_rows(dataset_id)
-            organization_id = (
-                getattr(request, "organization", None) or request.user.organization.id
-            )
+            sample_rows = self._get_sample_rows(dataset)
+            organization_id = _request_organization_id(request)
 
             # Get the appropriate preview handler based on operation type
             preview_handlers = {
@@ -3047,7 +3386,9 @@ class PreviewDatasetOperationView(APIView):
                 return self._gm.bad_request(f"Invalid operation type: {operation_type}")
 
             # Execute preview
-            preview_results = handler(request.data, sample_rows, organization_id)
+            preview_results = handler(
+                request.validated_data, sample_rows, organization_id, dataset
+            )
 
             return self._gm.success_response(
                 {
@@ -3064,13 +3405,18 @@ class PreviewDatasetOperationView(APIView):
                 get_error_message("FAILED_TO_PREVIEW_DATASET_OPERATIONS")
             )
 
-    def _preview_extract_json(self, config, sample_rows, organization_id):
+    def _preview_extract_json(self, config, sample_rows, organization_id, dataset):
         """Preview JSON extraction operation"""
         extractor = ExtractJsonColumnView()
         results = []
 
         for row in sample_rows:
-            cell = Cell.objects.get(row=row, column_id=config["column_id"])
+            cell = Cell.objects.get(
+                row=row,
+                column_id=config["column_id"],
+                column__dataset=dataset,
+                deleted=False,
+            )
             value = extractor._process_cell(cell, config["json_key"])
             results.append(
                 {"row_id": str(row.id), "input": cell.value, "output": value}
@@ -3078,13 +3424,18 @@ class PreviewDatasetOperationView(APIView):
 
         return results
 
-    def _preview_classify(self, config, sample_rows, organization_id):
+    def _preview_classify(self, config, sample_rows, organization_id, dataset):
         """Preview classification operation"""
         classifier = ClassifyColumnView()
         results = []
 
         for row in sample_rows:
-            cell = Cell.objects.get(row=row, column_id=config["column_id"])
+            cell = Cell.objects.get(
+                row=row,
+                column_id=config["column_id"],
+                column__dataset=dataset,
+                deleted=False,
+            )
             value, value_infos = classifier._classify_cell(
                 cell=cell,
                 labels=config["labels"],
@@ -3101,13 +3452,18 @@ class PreviewDatasetOperationView(APIView):
 
         return results
 
-    def _preview_extract_entities(self, config, sample_rows, organization_id):
+    def _preview_extract_entities(self, config, sample_rows, organization_id, dataset):
         """Preview entity extraction operation"""
         extractor = ExtractEntitiesView()
         results = []
 
         for row in sample_rows:
-            cell = Cell.objects.get(row=row, column_id=config["column_id"])
+            cell = Cell.objects.get(
+                row=row,
+                column_id=config["column_id"],
+                column__dataset=dataset,
+                deleted=False,
+            )
             value, value_infos = extractor._extract_entities(
                 cell=cell,
                 instruction=config["instruction"],
@@ -3124,7 +3480,7 @@ class PreviewDatasetOperationView(APIView):
 
         return results
 
-    def _preview_api_call(self, config, sample_rows, organization_id):
+    def _preview_api_call(self, config, sample_rows, organization_id, dataset):
         """Preview API call operation"""
         api_caller = AddApiColumnView()
         results = []
@@ -3138,7 +3494,12 @@ class PreviewDatasetOperationView(APIView):
                 value = api_caller._make_api_call(cell=cell, config=api_config)
                 results.append({"row_id": str(row.id), "output": json.dumps(value)})
             else:
-                cell = Cell.objects.get(row=row, column_id=config["column_id"])
+                cell = Cell.objects.get(
+                    row=row,
+                    column_id=config["column_id"],
+                    column__dataset=dataset,
+                    deleted=False,
+                )
                 value = api_caller._make_api_call(cell, api_config)
                 results.append(
                     {
@@ -3150,7 +3511,7 @@ class PreviewDatasetOperationView(APIView):
 
         return results
 
-    def _preview_execute_code(self, config, sample_rows, organization_id):
+    def _preview_execute_code(self, config, sample_rows, organization_id, dataset):
         """Preview Python code execution"""
         executor = ExecutePythonCodeView()
         results = []
@@ -3167,7 +3528,7 @@ class PreviewDatasetOperationView(APIView):
 
         return results
 
-    def _preview_conditional(self, config, sample_rows, organization_id):
+    def _preview_conditional(self, config, sample_rows, organization_id, dataset):
         """Preview conditional operation"""
         conditional = ConditionalColumnView()
         results = []
@@ -3186,13 +3547,15 @@ class PreviewDatasetOperationView(APIView):
 
         return results
 
-    def _preview_vector_db(self, config, sample_rows, organization_id):
+    def _preview_vector_db(self, config, sample_rows, organization_id, dataset):
         """Preview vector database operation"""
         vector_db = AddVectorDBColumnView()
         results = []
 
         for row in sample_rows:
-            column = Column.objects.get(id=config["column_id"])
+            column = Column.objects.get(
+                id=config["column_id"], dataset=dataset, deleted=False
+            )
             value, value_infos = vector_db._process_row(
                 row, column, config, organization_id
             )

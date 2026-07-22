@@ -165,7 +165,7 @@ const DataMenuList = ({
       trackEvent(Events.addRowToDatasetSuccessful, {
         [PropertyName.method]: "new dataset",
       });
-      onCreateDatasetRows();
+      onCreateDatasetRows(watchedDatasetName);
     } else {
       setTargetDatasetId(selectedDatasetId);
       const selectedDataset = datasetList?.find(
@@ -180,7 +180,7 @@ const DataMenuList = ({
           select_all: selectAll,
         },
       });
-      onMergeRows();
+      onMergeRows(selectedDatasetId);
     }
     handleClose();
   };
@@ -214,7 +214,7 @@ const DataMenuList = ({
         title="Add to Dataset"
         actionButton={
           <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Icon icon="mdi:plus" width={18} height={18} color="white" />
+            <Icon icon="mdi:plus" width={18} height={18} color="inherit" />
             <Typography
               fontWeight={400}
               fontSize={14}

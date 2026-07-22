@@ -6,6 +6,8 @@ const chartsDefaultValue = {
   parentDateFilter: null,
   setParentDateFilter: (_dates) => {},
   isMoreThan7Days: true,
+  extraFilters: [],
+  setExtraFilters: (_filters) => {},
   filters: [],
   zoomRange: [null, null],
   setZoomRange: (_dates) => {},
