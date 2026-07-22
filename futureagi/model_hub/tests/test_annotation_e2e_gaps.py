@@ -1231,3 +1231,338 @@ def queue(db, auth_client, user):
     )
     assert r.status_code == 200
     return qid
+
+
+
+def _items_url(qid):
+    return f"{QUEUE_URL}{qid}/items/"
+
+
+def _add_items_url(qid):
+    return f"{QUEUE_URL}{qid}/items/add-items/"
+
+
+def _bulk_remove_url(qid):
+    return f"{QUEUE_URL}{qid}/items/bulk-remove/"
+
+
+def _submit_url(qid, iid):
+    return f"{QUEUE_URL}{qid}/items/{iid}/annotations/submit/"
+
+
+def _complete_url(qid, iid):
+    return f"{QUEUE_URL}{qid}/items/{iid}/complete/"
+
+
+def _skip_url(qid, iid):
+    return f"{QUEUE_URL}{qid}/items/{iid}/skip/"
+
+
+def _next_item_url(qid):
+    return f"{QUEUE_URL}{qid}/items/next-item/"
+
+
+def _annotate_detail_url(qid, iid):
+    return f"{QUEUE_URL}{qid}/items/{iid}/annotate-detail/"
+
+
+def _assign_url(qid):
+    return f"{QUEUE_URL}{qid}/items/assign/"
+
+
+def _review_url(qid, iid):
+    return f"{QUEUE_URL}{qid}/items/{iid}/review/"
+
+
+def _discussion_url(qid, iid):
+    return f"{QUEUE_URL}{qid}/items/{iid}/discussion/"
+
+
+def _import_url(qid, iid):
+    return f"{QUEUE_URL}{qid}/items/{iid}/annotations/import/"
+
+
+@pytest.fixture
+def queue_with_item(db, queue, dataset_with_rows, organization):
+    """Org A's active queue with one dataset-row item; returns (queue_id, item_id)."""
+    from model_hub.models.annotation_queues import AnnotationQueue
+
+    _, rows = dataset_with_rows
+    item = QueueItem.objects.create(
+        queue=AnnotationQueue.objects.get(pk=queue),
+        source_type=QueueItemSourceType.DATASET_ROW.value,
+        dataset_row=rows[0],
+        organization=organization,
+        status=QueueItemStatus.PENDING.value,
+    )
+    return queue, str(item.id)
+
+
+@pytest.mark.django_db
+class TestItemActionCrossOrg:
+    """Org B (``other_org_client``) must not reach org A's queue item actions.
+
+    Every read/write against another org's queue item must be rejected at the
+    permission/queryset layer (401/403/404) before any work. The control test
+    asserts org A *can* reach the same URL, so a rejection proves real
+    isolation rather than a mis-typed route.
+    """
+
+    def test_control_owner_can_reach_annotate_detail(
+        self, auth_client, queue_with_item
+    ):
+        qid, iid = queue_with_item
+        resp = auth_client.get(_annotate_detail_url(qid, iid))
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+
+    def test_other_org_cannot_annotate_detail(
+        self, other_org_client, queue_with_item
+    ):
+        qid, iid = queue_with_item
+        resp = other_org_client.get(_annotate_detail_url(qid, iid))
+        assert resp.status_code in (401, 403, 404), resp.status_code
+
+    def test_other_org_cannot_next_item(self, other_org_client, queue_with_item):
+        qid, _ = queue_with_item
+        resp = other_org_client.get(_next_item_url(qid))
+        assert resp.status_code in (401, 403, 404), resp.status_code
+
+    def test_other_org_cannot_submit(self, other_org_client, queue_with_item):
+        qid, iid = queue_with_item
+        resp = other_org_client.post(
+            _submit_url(qid, iid), {"annotations": []}, format="json"
+        )
+        # 400 = payload rejected before the org check; either way org B is refused.
+        assert resp.status_code in (400, 401, 403, 404), resp.status_code
+
+    def test_other_org_cannot_complete(self, other_org_client, queue_with_item):
+        qid, iid = queue_with_item
+        resp = other_org_client.post(_complete_url(qid, iid), {}, format="json")
+        assert resp.status_code in (401, 403, 404), resp.status_code
+
+    def test_other_org_cannot_skip(self, other_org_client, queue_with_item):
+        qid, iid = queue_with_item
+        resp = other_org_client.post(_skip_url(qid, iid), {}, format="json")
+        assert resp.status_code in (401, 403, 404), resp.status_code
+
+    def test_other_org_cannot_assign(self, other_org_client, queue_with_item):
+        qid, iid = queue_with_item
+        resp = other_org_client.post(
+            _assign_url(qid), {"item_ids": [iid], "user_ids": []}, format="json"
+        )
+        assert resp.status_code in (401, 403, 404), resp.status_code
+
+    def test_other_org_cannot_add_items(
+        self, other_org_client, queue_with_item, dataset_with_rows
+    ):
+        qid, _ = queue_with_item
+        _, rows = dataset_with_rows
+        resp = other_org_client.post(
+            _add_items_url(qid),
+            {"items": [{"source_type": "dataset_row", "source_id": str(rows[0].id)}]},
+            format="json",
+        )
+        assert resp.status_code in (401, 403, 404), resp.status_code
+
+    def test_other_org_cannot_bulk_remove(self, other_org_client, queue_with_item):
+        qid, iid = queue_with_item
+        resp = other_org_client.post(
+            _bulk_remove_url(qid), {"item_ids": [iid]}, format="json"
+        )
+        assert resp.status_code in (401, 403, 404), resp.status_code
+
+    def test_other_org_cannot_review(self, other_org_client, queue_with_item):
+        qid, iid = queue_with_item
+        resp = other_org_client.post(
+            _review_url(qid, iid), {"action": "approve"}, format="json"
+        )
+        assert resp.status_code in (401, 403, 404), resp.status_code
+
+    def test_other_org_cannot_discussion(self, other_org_client, queue_with_item):
+        qid, iid = queue_with_item
+        resp = other_org_client.post(
+            _discussion_url(qid, iid), {"comment": "hi"}, format="json"
+        )
+        assert resp.status_code in (401, 403, 404), resp.status_code
+
+    def test_other_org_cannot_import(self, other_org_client, queue_with_item):
+        qid, iid = queue_with_item
+        resp = other_org_client.post(
+            _import_url(qid, iid), {"annotations": []}, format="json"
+        )
+        assert resp.status_code in (400, 401, 403, 404), resp.status_code
+
+def _queue_detail_url(qid):
+    return f"{QUEUE_URL}{qid}/"
+
+
+def _restore_url(qid):
+    return f"{QUEUE_URL}{qid}/restore/"
+
+
+def _hard_delete_url(qid):
+    return f"{QUEUE_URL}{qid}/hard-delete/"
+
+
+def _progress_url(qid):
+    return f"{QUEUE_URL}{qid}/progress/"
+
+
+def _update_status_url(qid):
+    return f"{QUEUE_URL}{qid}/update-status/"
+
+
+def _add_label_url(qid):
+    return f"{QUEUE_URL}{qid}/add-label/"
+
+
+def _remove_label_url(qid):
+    return f"{QUEUE_URL}{qid}/remove-label/"
+
+
+def _analytics_url(qid):
+    return f"{QUEUE_URL}{qid}/analytics/"
+
+
+def _agreement_url(qid):
+    return f"{QUEUE_URL}{qid}/agreement/"
+
+
+def _export_url(qid):
+    return f"{QUEUE_URL}{qid}/export/"
+
+
+def _export_to_dataset_url(qid):
+    return f"{QUEUE_URL}{qid}/export-to-dataset/"
+
+
+# Org B may be refused at several layers depending on the endpoint: 404
+# (queue not in its queryset), 403 (permission), 402 (EE entitlement), or
+# 400 (payload rejected first). All mean "org B could not act".
+_REJECT = (400, 401, 402, 403, 404)
+
+
+@pytest.mark.django_db
+class TestQueueLevelCrossOrg:
+    """Org B must not read/mutate org A's queue-level endpoints, and org A's
+    queue must not surface in org B's list. A control test proves the URLs are
+    valid (org A reaches them), so a rejection is real isolation."""
+
+    def test_control_owner_can_read_progress(self, auth_client, queue):
+        resp = auth_client.get(_progress_url(queue))
+        assert resp.status_code == status.HTTP_200_OK, resp.data
+
+    def test_other_org_list_excludes_queue(self, other_org_client, queue):
+        resp = other_org_client.get(QUEUE_URL)
+        assert resp.status_code == status.HTTP_200_OK
+        ids = [q.get("id") for q in resp.data.get("results", [])]
+        assert str(queue) not in ids
+
+    # NOTE: retrieve (GET /{id}/) is already covered by
+    # TestCrossOrgIsolation.test_other_org_cannot_read_queue — not duplicated here.
+
+    def test_other_org_cannot_progress(self, other_org_client, queue):
+        resp = other_org_client.get(_progress_url(queue))
+        assert resp.status_code in _REJECT, resp.status_code
+
+    def test_other_org_cannot_update_status(self, other_org_client, queue):
+        resp = other_org_client.post(
+            _update_status_url(queue), {"status": "paused"}, format="json"
+        )
+        assert resp.status_code in _REJECT, resp.status_code
+
+    def test_other_org_cannot_restore(self, other_org_client, queue):
+        resp = other_org_client.post(_restore_url(queue), {}, format="json")
+        assert resp.status_code in _REJECT, resp.status_code
+
+    def test_other_org_cannot_hard_delete(self, other_org_client, queue):
+        resp = other_org_client.post(
+            _hard_delete_url(queue),
+            {"force": True, "confirm_name": "E2E Gap Queue"},
+            format="json",
+        )
+        assert resp.status_code in _REJECT, resp.status_code
+
+    def test_other_org_cannot_add_label(
+        self, other_org_client, queue, numeric_label
+    ):
+        resp = other_org_client.post(
+            _add_label_url(queue), {"label_id": str(numeric_label.id)}, format="json"
+        )
+        assert resp.status_code in _REJECT, resp.status_code
+
+    def test_other_org_cannot_remove_label(
+        self, other_org_client, queue, numeric_label
+    ):
+        resp = other_org_client.post(
+            _remove_label_url(queue),
+            {"label_id": str(numeric_label.id)},
+            format="json",
+        )
+        assert resp.status_code in _REJECT, resp.status_code
+
+    def test_other_org_cannot_analytics(self, other_org_client, queue):
+        resp = other_org_client.get(_analytics_url(queue))
+        assert resp.status_code in _REJECT, resp.status_code
+
+    def test_other_org_cannot_agreement(self, other_org_client, queue):
+        resp = other_org_client.get(_agreement_url(queue))
+        assert resp.status_code in _REJECT, resp.status_code
+
+    def test_other_org_cannot_export(self, other_org_client, queue):
+        resp = other_org_client.get(_export_url(queue))
+        assert resp.status_code in _REJECT, resp.status_code
+
+    def test_other_org_cannot_export_to_dataset(self, other_org_client, queue):
+        resp = other_org_client.post(
+            _export_to_dataset_url(queue), {"dataset_name": "x"}, format="json"
+        )
+        assert resp.status_code in _REJECT, resp.status_code
+
+
+@pytest.mark.django_db
+class TestAnnotationRoutesRejectAnonymous:
+    """Auth dimension for the whole feature in one parametrized test: an
+    unauthenticated client must be rejected (401/403) on every route, before
+    any work — no route silently allows anonymous access."""
+
+    # (http method, url builder, needs_item_id)
+    ROUTES = [
+        ("get", _queue_detail_url, False),
+        ("get", _progress_url, False),
+        ("get", _analytics_url, False),
+        ("get", _agreement_url, False),
+        ("get", _export_url, False),
+        ("get", _next_item_url, False),
+        ("get", _annotate_detail_url, True),
+        ("post", _update_status_url, False),
+        ("post", _add_items_url, False),
+        ("post", _bulk_remove_url, False),
+        ("post", _assign_url, False),
+        ("post", _export_to_dataset_url, False),
+        ("post", _submit_url, True),
+        ("post", _complete_url, True),
+        ("post", _skip_url, True),
+        ("post", _review_url, True),
+        ("post", _discussion_url, True),
+        ("post", _import_url, True),
+    ]
+
+    @pytest.mark.parametrize(
+        "method,url_fn,needs_item",
+        ROUTES,
+        ids=[r[1].__name__ for r in ROUTES],
+    )
+    def test_route_rejects_anonymous(
+        self, api_client, queue_with_item, method, url_fn, needs_item
+    ):
+        qid, iid = queue_with_item
+        url = url_fn(qid, iid) if needs_item else url_fn(qid)
+        if method == "post":
+            resp = api_client.post(url, {}, format="json")
+        else:
+            resp = api_client.get(url)
+        assert resp.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        ), resp.status_code

@@ -28,11 +28,9 @@ VALID_STATUS_TRANSITIONS = {
     },
     AnnotationQueueStatusChoices.PAUSED.value: {
         AnnotationQueueStatusChoices.ACTIVE.value,
-        AnnotationQueueStatusChoices.COMPLETED.value,
     },
     AnnotationQueueStatusChoices.COMPLETED.value: {
         AnnotationQueueStatusChoices.ACTIVE.value,
-        AnnotationQueueStatusChoices.PAUSED.value,
     },
 }
 
