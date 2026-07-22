@@ -700,6 +700,10 @@ const TestPlayground = React.forwardRef(
       codeLanguage = "python",
       isSystemEval = false,
       onReadyChange,
+      // Seed the Tracing/Dataset tab from the loaded version's saved mapping
+      // and project so switching versions restores their mapping.
+      initialMapping = null,
+      initialTracingProjectId = null,
     },
     ref,
   ) => {
@@ -1112,6 +1116,23 @@ const TestPlayground = React.forwardRef(
           setActiveMainTab("versions");
           if (versionId) setSelectedVersionId(versionId);
         },
+        // Read by Save Version — delegates to whichever test mode is active
+        // so the mapping/project actually shown gets persisted.
+        getMappingState: () => {
+          if (
+            activeTab === "Tracing" &&
+            tracingTestRef.current?.getMappingState
+          ) {
+            return tracingTestRef.current.getMappingState();
+          }
+          if (
+            activeTab === "Dataset" &&
+            datasetTestRef.current?.getMappingState
+          ) {
+            return datasetTestRef.current.getMappingState();
+          }
+          return null;
+        },
         isRunning,
       }),
       [activeTab, handleRunTest, isRunning],
@@ -1474,6 +1495,7 @@ const TestPlayground = React.forwardRef(
                   onReadyChange={handleDatasetReady}
                   isComposite={isComposite}
                   compositeAdhocConfig={compositeAdhocConfig}
+                  initialMapping={initialMapping}
                 />
               )}
 
@@ -1492,6 +1514,8 @@ const TestPlayground = React.forwardRef(
                   isComposite={isComposite}
                   compositeAdhocConfig={compositeAdhocConfig}
                   hostsFilter
+                  initialMapping={initialMapping}
+                  initialTracingProjectId={initialTracingProjectId}
                 />
               )}
 
@@ -1962,6 +1986,8 @@ TestPlayground.propTypes = {
   codeLanguage: PropTypes.string,
   onReadyChange: PropTypes.func,
   isSystemEval: PropTypes.bool,
+  initialMapping: PropTypes.object,
+  initialTracingProjectId: PropTypes.string,
 };
 
 export default TestPlayground;

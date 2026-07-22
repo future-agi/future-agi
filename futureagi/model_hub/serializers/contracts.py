@@ -1721,7 +1721,9 @@ class EvalUsageQuerySerializer(serializers.Serializer):
     # Optional explicit date range — when provided, overrides the period
     # string. Sent by the frontend for Today, Yesterday, and Custom date
     # picker selections.
-    start_date = serializers.DateTimeField(required=False, allow_null=True, default=None)
+    start_date = serializers.DateTimeField(
+        required=False, allow_null=True, default=None
+    )
     end_date = serializers.DateTimeField(required=False, allow_null=True, default=None)
 
     def validate(self, attrs):
@@ -2298,6 +2300,8 @@ class EvalTemplateVersionCreateRequestSerializer(serializers.Serializer):
     )
     model = serializers.CharField(required=False, allow_null=True, allow_blank=True)
     config_snapshot = serializers.JSONField(required=False, allow_null=True)
+    mapping = serializers.JSONField(required=False, allow_null=True)
+    tracing_project_id = serializers.UUIDField(required=False, allow_null=True)
 
 
 class EvalTemplateVersionItemSerializer(serializers.Serializer):
