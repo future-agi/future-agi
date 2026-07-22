@@ -18,6 +18,11 @@ from tfc.utils.storage_client import get_object_url, get_storage_client
 
 logger = structlog.get_logger(__name__)
 
+# Strong references to fire-and-forget workflow cancellations. The event loop
+# only keeps weak references, so an unreferenced ensure_future() task can be
+# garbage-collected before the cancellation reaches Temporal.
+_pending_cancellations = set()
+
 
 def is_kb_deleted_or_cancelled(kb_id):
     """
@@ -206,7 +211,9 @@ def cancel_kb_ingestion_workflow(kb_id):
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
-            asyncio.ensure_future(_cancel())
+            task = asyncio.ensure_future(_cancel())
+            _pending_cancellations.add(task)
+            task.add_done_callback(_pending_cancellations.discard)
         else:
             asyncio.run(_cancel())
     except RuntimeError:
