@@ -482,6 +482,7 @@ class TestSetupTestExecutionActivity:
 
 
 @pytest.mark.integration
+@pytest.mark.requires_ee
 class TestCreateCallExecutionRecordsActivity:
     """Integration tests for create_call_execution_records activity."""
 
@@ -1640,6 +1641,7 @@ class TestCallExecutionWorkflowIntegration:
 
     @pytest.mark.django_db(transaction=True)
     @pytest.mark.asyncio
+    @pytest.mark.requires_ee
     async def test_workflow_activity_sequence_inbound(self, call_execution):
         """Test that CallExecutionWorkflow calls activities in correct order for inbound calls."""
         from unittest.mock import call
@@ -1810,6 +1812,7 @@ class TestTestExecutionWorkflowIntegration:
 class TestCallExecutionRerunAPI:
     """Integration tests for the CallExecutionRerunView API."""
 
+    @pytest.mark.requires_ee
     @patch("simulate.temporal.client.rerun_call_executions")
     def test_rerun_call_and_eval_with_temporal(
         self, mock_rerun, auth_client, test_execution, call_execution

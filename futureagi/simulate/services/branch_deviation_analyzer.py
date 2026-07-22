@@ -64,7 +64,14 @@ class BranchDeviationAnalyzer:
     """Service to analyze CallExecution transcripts against graph branches using LLM"""
 
     def __init__(self):
-        self.sda = SyntheticDataAgent()
+        self._sda = None
+
+    @property
+    def sda(self):
+        # SyntheticDataAgent() downloads a tokenizer; lazy so short-circuit paths do not pay.
+        if self._sda is None:
+            self._sda = SyntheticDataAgent()
+        return self._sda
 
     def analyze_call_execution_branch(
         self, call_execution: CallExecution

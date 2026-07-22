@@ -402,6 +402,8 @@ def _extract_recording_urls(log: dict, eval_attributes: dict):
 
 def _extract_metrics(log: dict, eval_attributes: dict):
     """Extracts metrics from Vapi call log."""
+    if metrics_calculator is None:
+        return
     artifact = log.get("artifact", {})
     metrics = metrics_calculator.calculate_metrics(artifact)
 

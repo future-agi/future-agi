@@ -3,12 +3,21 @@ Root conftest.py for core-backend tests.
 Provides common fixtures for all test modules.
 """
 
+import os
 import sys
 from pathlib import Path
 
 _project_root = Path(__file__).parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
+
+# Stub live-service credentials so import-time constructors do not fail during collection.
+os.environ.setdefault("VAPI_API_KEY", "test-api-key-for-testing")
+os.environ.setdefault("VAPI_API_BASE_URL", "https://test.vapi.local")
+
+from tfc.ee_loader import has_ee
+
+EE_AVAILABLE = has_ee("ee")
 
 
 def pytest_configure(config):
@@ -20,6 +29,11 @@ def pytest_configure(config):
     project_root = Path(__file__).parent
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
+
+    config.addinivalue_line(
+        "markers",
+        "requires_ee: test needs the enterprise `ee/` package; skipped in the OSS lane",
+    )
 
     _apply_ch25_schema_for_tests()
 
@@ -136,20 +150,22 @@ def _load_ch25_skip_set():
 
 
 def pytest_collection_modifyitems(config, items):
-    """Auto-skip known-broken tests inventoried during the CH25 migration audit.
-
-    The frozen list at tracer/tests/_ch25_skip.txt was captured 2026-05-26.
-    Follow-up PRs will whittle it down; see MIGRATION_TEST_DEBT.md for the plan.
-    """
+    """Auto-skip requires_ee tests when ee/ is absent + the CH25 frozen skip list."""
     import pytest as _pytest
 
     skip_ids = _load_ch25_skip_set()
-    if not skip_ids:
-        return
-    marker = _pytest.mark.skip(reason=_CH25_SKIP_REASON)
+    ch25_marker = _pytest.mark.skip(reason=_CH25_SKIP_REASON) if skip_ids else None
+    ee_marker = (
+        _pytest.mark.skip(reason="requires ee/ (skipped in OSS lane)")
+        if not EE_AVAILABLE
+        else None
+    )
+
     for item in items:
-        if item.nodeid in skip_ids:
-            item.add_marker(marker)
+        if ch25_marker is not None and item.nodeid in skip_ids:
+            item.add_marker(ch25_marker)
+        if ee_marker is not None and item.get_closest_marker("requires_ee") is not None:
+            item.add_marker(ee_marker)
 
 
 from unittest.mock import patch

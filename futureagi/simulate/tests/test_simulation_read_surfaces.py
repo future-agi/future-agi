@@ -1,6 +1,13 @@
-import pytest
+import csv
+import io
+import uuid
 
+import pytest
+from rest_framework import status
+
+from accounts.models.organization import Organization
 from accounts.models.user import OrgApiKey
+from accounts.models.workspace import Workspace
 from model_hub.models.evals_metric import EvalTemplate
 from simulate.models import AgentDefinition, Scenarios
 from simulate.models.eval_config import SimulateEvalConfig
@@ -476,3 +483,437 @@ def test_csv_export_excludes_deleted_evals(auth_client, simulation_tree, eval_co
     body = response.content.decode()
     assert "Live Eval Column" in body
     assert "Deleted Eval Column" not in body
+
+
+# ============================================================================
+# Phase 4 polish: GET /simulate/export/<uuid:item_id>/
+# ============================================================================
+
+
+def _parse_csv_response(response):
+    """Parse a CSV HttpResponse body into (header_row, list_of_dicts)."""
+    body = response.content.decode()
+    reader = csv.reader(io.StringIO(body))
+    rows = list(reader)
+    assert rows, "CSV response is empty"
+    header = rows[0]
+    data_rows = [dict(zip(header, r)) for r in rows[1:]]
+    return header, data_rows
+
+
+def _seed_export_stack(organization, workspace, run_test_name="Export Run"):
+    """Seed a RunTest + Scenarios + TestExecution + CallExecutions suitable
+    for exercising the CSV export view."""
+    agent_definition = AgentDefinition.objects.create(
+        agent_name=f"Export Agent {uuid.uuid4().hex[:6]}",
+        agent_type=AgentDefinition.AgentTypeChoices.TEXT,
+        inbound=True,
+        description="Agent for export tests.",
+        organization=organization,
+        workspace=workspace,
+        languages=["en"],
+    )
+    simulator_agent = SimulatorAgent.objects.create(
+        name=f"Sim {uuid.uuid4().hex[:6]}",
+        prompt="Simulate.",
+        organization=organization,
+        workspace=workspace,
+        voice_provider="openai",
+        voice_name="alloy",
+        model="gpt-4o-mini",
+    )
+    scenario = Scenarios.objects.create(
+        name=f"Scenario {uuid.uuid4().hex[:6]}",
+        description="Export scenario.",
+        source="test",
+        scenario_type=Scenarios.ScenarioTypes.DATASET,
+        organization=organization,
+        workspace=workspace,
+        agent_definition=agent_definition,
+        simulator_agent=simulator_agent,
+    )
+    run_test = RunTest.objects.create(
+        name=run_test_name,
+        description="Export run.",
+        agent_definition=agent_definition,
+        simulator_agent=simulator_agent,
+        organization=organization,
+        workspace=workspace,
+    )
+    run_test.scenarios.add(scenario)
+    test_execution = SimulationTestExecution.objects.create(
+        run_test=run_test,
+        status=SimulationTestExecution.ExecutionStatus.COMPLETED,
+        total_scenarios=1,
+        total_calls=1,
+        completed_calls=1,
+        agent_definition=agent_definition,
+        simulator_agent=simulator_agent,
+    )
+    return {
+        "agent_definition": agent_definition,
+        "simulator_agent": simulator_agent,
+        "scenario": scenario,
+        "run_test": run_test,
+        "test_execution": test_execution,
+    }
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestCSVExportRowFormat:
+    URL = "/simulate/export/{item_id}/"
+
+    def test_csv_export_row_format_matches_seeded_data(
+        self, auth_client, simulation_tree, eval_configs
+    ):
+        live = eval_configs["live"]
+        run_test = simulation_tree["run_test"]
+        # A scenario name with a comma and a double-quote must round-trip
+        # through csv.reader, which validates that the writer is quoting
+        # the field.
+        tricky_scenario = Scenarios.objects.create(
+            name='Comma, and "quote" scenario',
+            description="Scenario stressing CSV escaping.",
+            source="test",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=run_test.organization,
+            workspace=run_test.workspace,
+            agent_definition=simulation_tree["run_test"].agent_definition,
+            simulator_agent=simulation_tree["run_test"].simulator_agent,
+        )
+        run_test.scenarios.add(tricky_scenario)
+        tricky_call = CallExecution.objects.create(
+            test_execution=simulation_tree["test_execution"],
+            scenario=tricky_scenario,
+            phone_number="+15550000000",
+            status=CallExecution.CallStatus.COMPLETED,
+            simulation_call_type=CallExecution.SimulationCallType.TEXT,
+            call_metadata={},
+            duration_seconds=42,
+            overall_score=0.87,
+            response_time_ms=1500,
+            eval_outputs={
+                str(live.id): {
+                    "name": "Live Eval",
+                    "output": "Passed",
+                    "output_type": "Pass/Fail",
+                    "reason": "clean, tidy",
+                },
+            },
+        )
+        # Also populate an eval output on the original call execution so the
+        # header advertises the eval column.
+        original_call = simulation_tree["call_execution"]
+        original_call.eval_outputs = {
+            str(live.id): {
+                "name": "Live Eval",
+                "output": "Failed",
+                "output_type": "Pass/Fail",
+                "reason": "boom",
+            },
+        }
+        original_call.overall_score = 0.5
+        original_call.duration_seconds = 10
+        original_call.save(
+            update_fields=["eval_outputs", "overall_score", "duration_seconds"]
+        )
+
+        response = auth_client.get(
+            self.URL.format(item_id=run_test.id) + "?type=runtest"
+        )
+
+        assert response.status_code == 200
+        assert response["Content-Type"].startswith("text/csv")
+        header, data_rows = _parse_csv_response(response)
+
+        expected_base_columns = [
+            "ID",
+            "Timestamp",
+            "Call Type",
+            "Status",
+            "Duration",
+            "Scenario",
+            "Overall Score",
+            "Response Time",
+            "Audio URL",
+            "Provider call ID",
+        ]
+        for col in expected_base_columns:
+            assert col in header, f"Missing base column {col!r} in {header!r}"
+        # Dynamic eval column pair.
+        assert "Live Eval" in header
+        assert "Live Eval_reason" in header
+
+        # Every seeded call must appear exactly once.
+        ids_in_csv = {row["ID"] for row in data_rows}
+        assert str(tricky_call.id) in ids_in_csv
+        assert str(original_call.id) in ids_in_csv
+
+        tricky_row = next(row for row in data_rows if row["ID"] == str(tricky_call.id))
+        # Escaping check: the raw scenario contained a comma and quotes;
+        # csv.reader gives us back the un-escaped value.
+        assert tricky_row["Scenario"] == 'Comma, and "quote" scenario'
+        # Numeric fields round-trip as their string form.
+        assert tricky_row["Duration"] == "42"
+        assert tricky_row["Overall Score"] == "0.87"
+        # response_time_ms 1500 -> 1.5s.
+        assert tricky_row["Response Time"] == "1.5"
+        assert tricky_row["Live Eval"] == "Passed"
+        assert tricky_row["Live Eval_reason"] == "clean, tidy"
+
+    def test_csv_export_masks_sensitive_fields(
+        self, auth_client, simulation_tree
+    ):
+        call_execution = simulation_tree["call_execution"]
+        call_execution.call_metadata = {
+            "api_key": "sk-should-not-leak-1234",
+            "credentials": {"password": "pw-should-not-leak"},
+            "bearer_token": "bearer-should-not-leak",
+        }
+        call_execution.save(update_fields=["call_metadata"])
+        run_test = simulation_tree["run_test"]
+
+        response = auth_client.get(
+            self.URL.format(item_id=run_test.id) + "?type=runtest"
+        )
+
+        assert response.status_code == 200
+        header, _rows = _parse_csv_response(response)
+        for banned_col in ("api_key", "credentials", "password", "bearer_token"):
+            assert banned_col not in header, (
+                f"Sensitive column {banned_col!r} leaked into export header"
+            )
+        body = response.content.decode()
+        for banned_value in (
+            "sk-should-not-leak-1234",
+            "pw-should-not-leak",
+            "bearer-should-not-leak",
+        ):
+            assert banned_value not in body, (
+                f"Sensitive value {banned_value!r} leaked into export body"
+            )
+
+    def test_csv_export_other_workspace_returns_404(
+        self, auth_client, user
+    ):
+        other_org = Organization.objects.create(name="Other Org For Export")
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Org Default Workspace",
+            organization=other_org,
+            is_default=True,
+            is_active=True,
+            created_by=user,
+        )
+        other = _seed_export_stack(other_org, other_workspace)
+        other_run_test = other["run_test"]
+
+        response = auth_client.get(
+            self.URL.format(item_id=other_run_test.id) + "?type=runtest"
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        # And nothing was written back to the foreign row.
+        other_run_test.refresh_from_db()
+        assert other_run_test.deleted is False
+
+    def test_csv_export_unknown_uuid_returns_404(self, auth_client):
+        response = auth_client.get(
+            self.URL.format(item_id=uuid.uuid4()) + "?type=runtest"
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_csv_export_unauthenticated_is_rejected(self, api_client):
+        response = api_client.get(
+            self.URL.format(item_id=uuid.uuid4()) + "?type=runtest"
+        )
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+
+# ============================================================================
+# Phase 4 polish: PATCH /simulate/run-tests/<uuid:run_test_id>/components/
+# ============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestRunTestComponentsPatch:
+    URL = "/simulate/run-tests/{run_test_id}/components/"
+
+    def test_components_patch_persists_updates(
+        self, auth_client, simulation_tree, organization, workspace
+    ):
+        run_test = simulation_tree["run_test"]
+        new_simulator_agent = SimulatorAgent.objects.create(
+            name="Replacement Simulator",
+            prompt="Simulate a new customer.",
+            organization=organization,
+            workspace=workspace,
+            voice_provider="openai",
+            voice_name="alloy",
+            model="gpt-4o-mini",
+        )
+        new_scenario = Scenarios.objects.create(
+            name="Replacement Scenario",
+            description="Scenario added via components PATCH.",
+            source="test",
+            scenario_type=Scenarios.ScenarioTypes.DATASET,
+            organization=organization,
+            workspace=workspace,
+            agent_definition=run_test.agent_definition,
+            simulator_agent=new_simulator_agent,
+        )
+
+        payload = {
+            "simulator_agent_id": str(new_simulator_agent.id),
+            "scenarios": [str(new_scenario.id)],
+        }
+        response = auth_client.patch(
+            self.URL.format(run_test_id=run_test.id),
+            payload,
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        run_test.refresh_from_db()
+        assert run_test.simulator_agent_id == new_simulator_agent.id
+        scenario_ids_on_run = list(
+            run_test.scenarios.values_list("id", flat=True)
+        )
+        # The view uses .set() which replaces the m2m contents.
+        assert scenario_ids_on_run == [new_scenario.id]
+
+    def test_components_patch_other_workspace_returns_404(
+        self, auth_client, user
+    ):
+        """PATCH against a sibling-organization RunTest must 404 and must not mutate the foreign row."""
+        other_org = Organization.objects.create(name="Other Org For Components")
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Org Default Workspace",
+            organization=other_org,
+            is_default=True,
+            is_active=True,
+            created_by=user,
+        )
+        other = _seed_export_stack(other_org, other_workspace)
+        other_run_test = other["run_test"]
+        original_simulator_id = other_run_test.simulator_agent_id
+        # Count the m2m through table directly: the default `scenarios`
+        # manager is workspace-filtered, and auth_client has set the caller's
+        # workspace on the thread-local, which hides foreign rows and would
+        # give false confidence.
+        RunTestScenariosThrough = RunTest.scenarios.through
+        original_through_count = RunTestScenariosThrough.objects.filter(
+            runtest_id=other_run_test.id
+        ).count()
+        assert original_through_count > 0, (
+            "seed produced no scenarios; assertion below would be vacuous"
+        )
+
+        # Payload uses a real UUID for simulator_agent_id so validation
+        # passes; the request must still 404 on the outer object lookup.
+        response = auth_client.patch(
+            self.URL.format(run_test_id=other_run_test.id),
+            {"simulator_agent_id": str(uuid.uuid4())},
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        other_run_test.refresh_from_db()
+        assert other_run_test.simulator_agent_id == original_simulator_id
+        assert (
+            RunTestScenariosThrough.objects.filter(
+                runtest_id=other_run_test.id
+            ).count()
+            == original_through_count
+        )
+
+    def test_components_patch_unknown_uuid_returns_404(self, auth_client):
+        response = auth_client.patch(
+            self.URL.format(run_test_id=uuid.uuid4()),
+            {"scenarios": []},
+            format="json",
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_components_patch_unauthenticated_is_rejected(self, api_client):
+        response = api_client.patch(
+            self.URL.format(run_test_id=uuid.uuid4()),
+            {"scenarios": []},
+            format="json",
+        )
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
+
+# ============================================================================
+# GET /simulate/run-tests/<uuid:run_test_id>/sdk-code/
+# ============================================================================
+
+
+@pytest.mark.integration
+@pytest.mark.api
+@pytest.mark.django_db
+class TestSDKCodeContent:
+    URL = "/simulate/run-tests/{run_test_id}/sdk-code/"
+
+    def test_sdk_code_returns_expected_content_shape(
+        self, auth_client, simulation_tree
+    ):
+        run_test = simulation_tree["run_test"]
+
+        response = auth_client.get(self.URL.format(run_test_id=run_test.id))
+
+        assert response.status_code == status.HTTP_200_OK
+        payload = _result(response)
+        assert "sdk_code" in payload
+        assert isinstance(payload["sdk_code"], str)
+        assert payload["sdk_code"], "sdk_code snippet is empty"
+        # A downstream user must be able to distinguish snippets between runs:
+        # either the run name or its id should appear in the response.
+        assert payload.get("run_test_id") == str(run_test.id)
+        assert payload.get("run_test_name") == run_test.name
+        assert run_test.name in payload["sdk_code"]
+
+    def test_sdk_code_other_workspace_returns_404(self, auth_client, user):
+        other_org = Organization.objects.create(name="Other Org For SDK Code")
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Org Default Workspace",
+            organization=other_org,
+            is_default=True,
+            is_active=True,
+            created_by=user,
+        )
+        other = _seed_export_stack(
+            other_org, other_workspace, run_test_name="Hidden Cross Tenant Run"
+        )
+        other_run_test = other["run_test"]
+
+        response = auth_client.get(
+            self.URL.format(run_test_id=other_run_test.id)
+        )
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        body = response.content.decode()
+        assert str(other_run_test.id) not in body
+        assert other_run_test.name not in body
+
+    def test_sdk_code_not_found_returns_404(self, auth_client):
+        response = auth_client.get(self.URL.format(run_test_id=uuid.uuid4()))
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
+    def test_sdk_code_unauthenticated_returns_401(self, api_client):
+        response = api_client.get(self.URL.format(run_test_id=uuid.uuid4()))
+
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )

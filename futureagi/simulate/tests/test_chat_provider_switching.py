@@ -46,6 +46,7 @@ class TestProviderSwitching:
         assert manager.provider == ChatProviderChoices.FUTUREAGI
         assert manager.engine.__class__.__name__ == "FutureAGIChatService"
 
+    @pytest.mark.requires_ee
     def test_explicit_provider_override(self):
         """Verify explicit provider parameter works correctly."""
         manager = ChatServiceManager(
