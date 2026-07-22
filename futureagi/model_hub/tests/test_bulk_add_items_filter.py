@@ -996,13 +996,13 @@ class TestAddItemsFilterModeCallExecutionRichFilters:
                 "filters": json.dumps(
                     [
                         _api_filter(
-                            str(priority_column.id),
+                            priority_column.name,
                             "text",
                             "equals",
                             "high",
                         ),
                         _api_filter(
-                            str(attempts_column.id),
+                            attempts_column.name,
                             "number",
                             "less_than",
                             5,

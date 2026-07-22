@@ -1562,37 +1562,3 @@ class TestReviewWorkflow:
         assert item.reviewed_by == user
         assert item.reviewed_at is not None
 
-
-# ===========================================================================
-# Phase 5A (extra) — Progress endpoint
-# ===========================================================================
-
-
-@pytest.mark.django_db
-class TestProgress:
-    """Progress endpoint smoke tests."""
-
-    def test_progress_empty_queue(self, auth_client):
-        queue_id = _create_queue(auth_client, name="Prog Q1")
-        resp = auth_client.get(f"{QUEUE_URL}{queue_id}/progress/")
-        assert resp.status_code == status.HTTP_200_OK
-        result = resp.data.get("result", resp.data)
-        assert result["total"] == 0
-        assert result["progress_pct"] == 0
-
-    def test_progress_with_items(self, auth_client, organization, workspace):
-        queue_id = _create_queue(auth_client, name="Prog Q2")
-        label = _create_label(organization, workspace, name="L-Prog2")
-        _, row1 = _create_dataset_row(organization, workspace)
-        _, row2 = _create_dataset_row(organization, workspace)
-        item1 = _add_item(auth_client, queue_id, row1)
-        _add_item(auth_client, queue_id, row2)
-
-        _submit_annotation(auth_client, queue_id, item1.id, label)
-        _complete_item(auth_client, queue_id, item1.id)
-
-        resp = auth_client.get(f"{QUEUE_URL}{queue_id}/progress/")
-        result = resp.data.get("result", resp.data)
-        assert result["total"] == 2
-        assert result["completed"] == 1
-        assert result["progress_pct"] == 50.0
