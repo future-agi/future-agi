@@ -5,7 +5,7 @@ from typing import Any, Literal
 from django.contrib.postgres.fields import ArrayField
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import models, transaction
-from django.db.models import Max, Q
+from django.db.models import Q
 from pydantic import BaseModel, validator
 
 from accounts.models.organization import Organization
@@ -183,6 +183,19 @@ class EvalTemplate(ModelBaseModel):
         null=True,
         blank=True,
         help_text='Maps choice labels to 0-1 scores: {"Yes": 1.0, "No": 0.0}',
+    )
+
+    # --- Tracing test-tab mapping ---
+    mapping = models.JSONField(
+        null=True,
+        blank=True,
+        default=dict,
+        help_text="Variable→trace-field mapping chosen on the Tracing test tab.",
+    )
+    tracing_project_id = models.UUIDField(
+        null=True,
+        blank=True,
+        help_text="Project selected on the Tracing test tab.",
     )
 
     # --- Error Localization (Phase 19) ---
@@ -548,6 +561,8 @@ class EvalTemplateVersionManager(models.Manager):
         choice_scores=_UNSET,
         error_localizer_enabled=_UNSET,
         eval_tags=_UNSET,
+        mapping=_UNSET,
+        tracing_project_id=_UNSET,
     ):
         """
         Create a new version for an eval template.
@@ -555,11 +570,11 @@ class EvalTemplateVersionManager(models.Manager):
         Uses select_for_update to prevent race conditions.
 
         Snapshot columns (output_type_normalized, pass_threshold, choice_scores,
-        error_localizer_enabled, eval_tags) default to capturing the current
-        template value at version-creation time. Pass an explicit value to
-        override (e.g. composite versions that don't carry these fields).
+        error_localizer_enabled, eval_tags, mapping, tracing_project_id) default
+        to capturing the current template value at version-creation time. Pass an
+        explicit value to override (e.g. composite versions that don't carry
+        these fields).
         """
-        from django.db import transaction
 
         # Resolve snapshot columns from template defaults when caller didn't
         # pass them. Done outside the atomic block — these are just attribute
@@ -576,6 +591,12 @@ class EvalTemplateVersionManager(models.Manager):
             # ArrayField → list copy so later mutations to template.eval_tags
             # don't propagate into the immutable version snapshot.
             eval_tags = list(eval_template.eval_tags or [])
+        if mapping is self._UNSET:
+            src = eval_template.mapping
+            # dict copy so later template edits don't mutate the snapshot.
+            mapping = dict(src) if isinstance(src, dict) else src
+        if tracing_project_id is self._UNSET:
+            tracing_project_id = eval_template.tracing_project_id
 
         with transaction.atomic():
             # Lock the parent template row to serialize concurrent create_version
@@ -598,9 +619,9 @@ class EvalTemplateVersionManager(models.Manager):
             )
             next_version = (last_version or 0) + 1
 
-            self.filter(
-                eval_template=eval_template, is_default=True
-            ).update(is_default=False)
+            self.filter(eval_template=eval_template, is_default=True).update(
+                is_default=False
+            )
 
             version = self.create(
                 eval_template=eval_template,
@@ -618,6 +639,8 @@ class EvalTemplateVersionManager(models.Manager):
                 choice_scores=choice_scores,
                 error_localizer_enabled=error_localizer_enabled,
                 eval_tags=eval_tags,
+                mapping=mapping,
+                tracing_project_id=tracing_project_id,
             )
 
             return version
@@ -766,6 +789,21 @@ class EvalTemplateVersion(ModelBaseModel):
         null=True,
         blank=True,
         help_text="Eval tags at this version. NULL on pre-snapshot versions.",
+    )
+    mapping = models.JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Variable→trace-field mapping at this version. NULL on "
+            "pre-snapshot versions."
+        ),
+    )
+    tracing_project_id = models.UUIDField(
+        null=True,
+        blank=True,
+        help_text=(
+            "Tracing project selected at this version. NULL on pre-snapshot versions."
+        ),
     )
 
     objects = EvalTemplateVersionManager()

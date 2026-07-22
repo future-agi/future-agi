@@ -2,8 +2,9 @@
 Type definitions and dataclasses for model_hub
 """
 
+import uuid
 from dataclasses import dataclass
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -14,10 +15,10 @@ class ConversionResult:
 
     cell_id: str
     success: bool
-    new_value: Optional[str]
+    new_value: str | None
     status: str
     value_infos: dict
-    error_message: Optional[str] = None
+    error_message: str | None = None
 
 
 # =============================================================================
@@ -133,9 +134,7 @@ class EvalCreateRequest(BaseModel):
     data_injection: dict | None = (
         None  # {variables_only, dataset_row, trace_context, ...}
     )
-    summary: dict | None = (
-        None  # {type: short|long|concise|custom, custom: str}
-    )
+    summary: dict | None = None  # {type: short|long|concise|custom, custom: str}
     # Error Localization — mirrors EvalUpdateRequest. Without this here the
     # FE's create payload (which always includes the toggle value) is
     # rejected by `extra="forbid"`.
@@ -255,13 +254,13 @@ class PlaygroundEvalResponse(BaseModel):
     `ground_truth_examples` is omitted when GT is not configured on the template."""
 
     output: str | float | list | dict | None = None
-    reason: Optional[str] = None
-    model: Optional[str] = None
+    reason: str | None = None
+    model: str | None = None
     metadata: Any = None
-    output_type: Optional[str] = None
-    log_id: Optional[str] = None
-    ground_truth_examples: Optional[list] = None
-    warnings: Optional[list] = None
+    output_type: str | None = None
+    log_id: str | None = None
+    ground_truth_examples: list | None = None
+    warnings: list | None = None
 
 
 # =============================================================================
@@ -288,6 +287,8 @@ class EvalVersionItem(BaseModel):
     choice_scores: dict | None = None
     error_localizer_enabled: bool = False
     eval_tags: list = Field(default_factory=list)
+    mapping: dict | None = None
+    tracing_project_id: str | None = None
     # Derived from config_snapshot for FE label rendering.
     choices: list = Field(default_factory=list)
     choices_map: dict = Field(default_factory=dict)
@@ -308,6 +309,8 @@ class CreateVersionRequest(BaseModel):
     criteria: str | None = None
     model: str | None = None
     config_snapshot: dict | None = None
+    mapping: dict | None = None
+    tracing_project_id: uuid.UUID | None = None
 
 
 class CreateVersionResponse(BaseModel):

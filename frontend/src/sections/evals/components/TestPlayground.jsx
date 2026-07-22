@@ -657,6 +657,10 @@ const TestPlayground = React.forwardRef(
       codeLanguage = "python",
       isSystemEval = false,
       onReadyChange,
+      // Seed the Tracing/Dataset tab from the loaded version's saved mapping
+      // and project so switching versions restores their mapping.
+      initialMapping = null,
+      initialTracingProjectId = null,
     },
     ref,
   ) => {
@@ -682,7 +686,7 @@ const TestPlayground = React.forwardRef(
 
     const { role } = useAuthContext();
     const canEditEvals = Boolean(
-      RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role]
+      RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role],
     );
 
     // Version hover menu state
@@ -698,8 +702,7 @@ const TestPlayground = React.forwardRef(
       if (!list.length) return;
       if (urlVersionParam) {
         const match = list.find(
-      ver =>
-            String(ver.version_number) === String(urlVersionParam),
+          (ver) => String(ver.version_number) === String(urlVersionParam),
         );
         if (match && match.id !== selectedVersionId) {
           setSelectedVersionId(match.id);
@@ -871,7 +874,6 @@ const TestPlayground = React.forwardRef(
       Simulation: false,
     });
 
-
     const handleDatasetReady = useCallback(
       (isReady, mapping) => {
         setTabReady((prev) =>
@@ -901,7 +903,7 @@ const TestPlayground = React.forwardRef(
       },
       [onReadyChange],
     );
-  useEffect(() => {
+    useEffect(() => {
       if (!onReadyChange) return;
       onReadyChange(!!tabReady[activeTab]);
     }, [activeTab, tabReady, onReadyChange]);
@@ -1070,6 +1072,23 @@ const TestPlayground = React.forwardRef(
         switchToVersion: (versionId) => {
           setActiveMainTab("versions");
           if (versionId) setSelectedVersionId(versionId);
+        },
+        // Read by Save Version — delegates to whichever test mode is active
+        // so the mapping/project actually shown gets persisted.
+        getMappingState: () => {
+          if (
+            activeTab === "Tracing" &&
+            tracingTestRef.current?.getMappingState
+          ) {
+            return tracingTestRef.current.getMappingState();
+          }
+          if (
+            activeTab === "Dataset" &&
+            datasetTestRef.current?.getMappingState
+          ) {
+            return datasetTestRef.current.getMappingState();
+          }
+          return null;
         },
         isRunning,
       }),
@@ -1433,6 +1452,7 @@ const TestPlayground = React.forwardRef(
                   onReadyChange={handleDatasetReady}
                   isComposite={isComposite}
                   compositeAdhocConfig={compositeAdhocConfig}
+                  initialMapping={initialMapping}
                 />
               )}
 
@@ -1451,6 +1471,8 @@ const TestPlayground = React.forwardRef(
                   isComposite={isComposite}
                   compositeAdhocConfig={compositeAdhocConfig}
                   hostsFilter
+                  initialMapping={initialMapping}
+                  initialTracingProjectId={initialTracingProjectId}
                 />
               )}
 
@@ -1921,6 +1943,8 @@ TestPlayground.propTypes = {
   codeLanguage: PropTypes.string,
   onReadyChange: PropTypes.func,
   isSystemEval: PropTypes.bool,
+  initialMapping: PropTypes.object,
+  initialTracingProjectId: PropTypes.string,
 };
 
 export default TestPlayground;

@@ -39,7 +39,6 @@ from model_hub.models.evals_metric import (
     OwnerChoices,
     UserEvalMetric,
 )
-
 from model_hub.models.run_prompt import PromptEvalConfig
 from model_hub.selectors.feedback import resolve_feedback_edit_contexts
 from model_hub.serializers.contracts import (
@@ -209,8 +208,11 @@ def apply_filters(row_data, filters):
                 }
 
                 if filter_op not in text_ops:
-                    message = "Invalid filter operation. \
-                        Allowed operations are: " + ", ".join(text_ops.keys())
+                    message = (
+                        "Invalid filter operation. \
+                        Allowed operations are: "
+                        + ", ".join(text_ops.keys())
+                    )
                     raise ValueError(message)
 
                 result = []
@@ -1175,7 +1177,10 @@ class GetEvalTemplateNameView(APIView):
             )
             if search_text:
                 from model_hub.utils.eval_list import normalize_search_for_name
-                eval_templates = eval_templates.filter(normalize_search_for_name(search_text))
+
+                eval_templates = eval_templates.filter(
+                    normalize_search_for_name(search_text)
+                )
             eval_template_names = [
                 {
                     "id": str(eval_template.id),
@@ -2866,6 +2871,10 @@ class EvalTemplateVersionListView(APIView):
                         choice_scores=v.choice_scores,
                         error_localizer_enabled=bool(v.error_localizer_enabled),
                         eval_tags=list(v.eval_tags or []),
+                        mapping=v.mapping,
+                        tracing_project_id=(
+                            str(v.tracing_project_id) if v.tracing_project_id else None
+                        ),
                         # Derived; tolerate camelCase from older FE round-trips.
                         choices=cs.get("choices") or [],
                         choices_map=cs.get("choices_map") or cs.get("choicesMap") or {},
@@ -2931,6 +2940,20 @@ class EvalTemplateVersionCreateView(APIView):
             except EvalTemplate.DoesNotExist:
                 return self._gm.not_found("Eval template not found or not editable.")
 
+            # Persist the Tracing-tab mapping / project as their own explicit
+            # fields (the FE-supplied config_snapshot is discarded below, so
+            # they must be threaded separately). create_version then snapshots
+            # the live template value into the new version.
+            live_fields = []
+            if req.mapping is not None:
+                template.mapping = req.mapping
+                live_fields.append("mapping")
+            if req.tracing_project_id is not None:
+                template.tracing_project_id = req.tracing_project_id
+                live_fields.append("tracing_project_id")
+            if live_fields:
+                template.save(update_fields=live_fields)
+
             # Use live template.config; FE-supplied snapshot is incomplete.
             effective_config = template.config or {}
             version = EvalTemplateVersion.objects.create_version(
@@ -2982,14 +3005,16 @@ class _SnapshotField:
 
 # Each entry is nullable on EvalTemplateVersion; NULL → skip on restore
 # so pre-fix rows preserve the live template's current value. eval_tags
-# is list()-copied so later template mutations don't propagate into the
-# version snapshot.
+# and mapping are copied so later template mutations don't propagate into
+# the version snapshot.
 _VERSION_SNAPSHOT_FIELDS: tuple = (
     _SnapshotField("output_type_normalized"),
     _SnapshotField("pass_threshold"),
     _SnapshotField("choice_scores"),
     _SnapshotField("error_localizer_enabled"),
     _SnapshotField("eval_tags", transform=list),
+    _SnapshotField("mapping", transform=dict),
+    _SnapshotField("tracing_project_id"),
 )
 
 
@@ -3170,6 +3195,12 @@ class RestoreVersionView(APIView):
                         if source_version.eval_tags is not None
                         else None
                     ),
+                    mapping=(
+                        dict(source_version.mapping)
+                        if isinstance(source_version.mapping, dict)
+                        else source_version.mapping
+                    ),
+                    tracing_project_id=source_version.tracing_project_id,
                 )
 
                 EvalTemplateVersion.objects.filter(
@@ -3321,7 +3352,6 @@ def _get_accessible_eval_template_for_request(template_id, request, template_typ
 
 
 def _get_accessible_ground_truth(ground_truth_id, request):
-    from model_hub.models.evals_metric import EvalGroundTruth
 
     organization = _request_organization(request)
     return (
@@ -4424,7 +4454,6 @@ class GroundTruthListView(APIView):
         responses={200: GroundTruthListResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, template_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
         from model_hub.types import GroundTruthItem, GroundTruthListResponse
 
         try:
@@ -4520,9 +4549,7 @@ class GroundTruthUploadView(APIView):
         )
 
         try:
-            template = _get_accessible_eval_template_for_request(
-                template_id, request
-            )
+            template = _get_accessible_eval_template_for_request(template_id, request)
         except EvalTemplate.DoesNotExist:
             return self._gm.not_found("Eval template not found.")
 
@@ -4543,9 +4570,7 @@ class GroundTruthUploadView(APIView):
                 )
             except ValueError as exc:
                 return self._gm.bad_request(str(exc))
-            name = (
-                request_data.get("name") or uploaded_file.name.rsplit(".", 1)[0]
-            )
+            name = request_data.get("name") or uploaded_file.name.rsplit(".", 1)[0]
             description = request_data.get("description", "")
             file_name = uploaded_file.name
             variable_mapping = request_data.get("variable_mapping")
@@ -4605,7 +4630,6 @@ class GroundTruthSetupView(APIView):
         reject_unknown_fields=True,
     )
     def put(self, request, ground_truth_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
         from model_hub.services.ground_truth_service import (
             GroundTruthService,
             ServiceError,
@@ -4628,9 +4652,7 @@ class GroundTruthSetupView(APIView):
         )
         if isinstance(result, ServiceError):
             return self._gm.bad_request(result.message)
-        return self._gm.success_response(
-            GroundTruthSetupResult(**result).model_dump()
-        )
+        return self._gm.success_response(GroundTruthSetupResult(**result).model_dump())
 
 
 class GroundTruthDataView(APIView):
@@ -4643,7 +4665,6 @@ class GroundTruthDataView(APIView):
         responses={200: GroundTruthDataResponseSerializer, **MODEL_HUB_ERROR_RESPONSES}
     )
     def get(self, request, ground_truth_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
         from model_hub.types import GroundTruthDataResponse
 
         try:
@@ -4692,7 +4713,6 @@ class GroundTruthStatusView(APIView):
         }
     )
     def get(self, request, ground_truth_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
         from model_hub.types import GroundTruthStatusResponse
 
         try:
@@ -4745,8 +4765,6 @@ class GroundTruthDeleteView(APIView):
     def delete(self, request, ground_truth_id, *args, **kwargs):
         from django.db import transaction
 
-        from model_hub.models.evals_metric import EvalGroundTruth
-
         try:
             try:
                 gt = _get_accessible_ground_truth(ground_truth_id, request)
@@ -4757,7 +4775,9 @@ class GroundTruthDeleteView(APIView):
                 gt.deleted = True
                 gt.deleted_at = timezone.now()
                 gt.is_active = False
-                gt.save(update_fields=["deleted", "deleted_at", "is_active", "updated_at"])
+                gt.save(
+                    update_fields=["deleted", "deleted_at", "is_active", "updated_at"]
+                )
 
             return self._gm.success_response({"deleted": True, "id": str(gt.id)})
 
@@ -4783,7 +4803,6 @@ class GroundTruthTriggerEmbeddingView(APIView):
         reject_unknown_fields=True,
     )
     def post(self, request, ground_truth_id, *args, **kwargs):
-        from model_hub.models.evals_metric import EvalGroundTruth
 
         try:
             try:
@@ -5779,7 +5798,10 @@ def _build_span_context(span) -> dict:
     base["recording_url"] = (
         sa.get("recording_url")
         or sa.get("recordingUrl")
-        or (raw_log.get("artifact") or {}).get("recording", {}).get("mono", {}).get("combinedUrl")
+        or (raw_log.get("artifact") or {})
+        .get("recording", {})
+        .get("mono", {})
+        .get("combinedUrl")
         or raw_log.get("recordingUrl")
         or raw_log.get("recording_url")
     )
@@ -6297,13 +6319,10 @@ class EvalPlayGroundAPIView(APIView):
                         _conversational_roles = (
                             SpeakerRoleResolver.get_conversational_roles()
                         )
-                        _transcript_rows = (
-                            CallTranscript.objects.filter(
-                                call_execution_id=_ce.id,
-                                speaker_role__in=_conversational_roles,
-                            )
-                            .order_by("start_time_ms")[:200]
-                        )
+                        _transcript_rows = CallTranscript.objects.filter(
+                            call_execution_id=_ce.id,
+                            speaker_role__in=_conversational_roles,
+                        ).order_by("start_time_ms")[:200]
                         call_context = {
                             "id": str(_ce.id),
                             "status": _ce.status,
