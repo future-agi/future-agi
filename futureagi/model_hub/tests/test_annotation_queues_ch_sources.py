@@ -45,6 +45,7 @@ from model_hub.models.choices import (
     QueueItemStatus,
 )
 from model_hub.models.develop_annotations import AnnotationsLabels
+from model_hub.models.develop_dataset import Cell, Row
 from tracer.models.observation_span import EvalLogger
 from tracer.models.project import Project
 from tracer.services.clickhouse.v2.span_reader import CHSpan
@@ -299,7 +300,7 @@ class TestExportToDatasetCollectorSpan:
         span = _make_chspan(project_id=project.id)
         queue = _queue(organization, workspace, user, project)
         # export-to-dataset defaults to status_filter="completed".
-        _span_item(
+        item = _span_item(
             organization,
             workspace,
             queue,
@@ -311,14 +312,34 @@ class TestExportToDatasetCollectorSpan:
         with mock.patch(CH_READER_PATH, return_value=_ReaderCM(span)):
             resp = auth_client.post(
                 f"{QUEUE_URL}{queue.id}/export-to-dataset/",
-                {"dataset_name": "CH Span Export DS"},
+                {
+                    "dataset_name": "CH Span Export DS",
+                    "column_mapping": [
+                        {"field": "input", "column": "input"},
+                        {"field": "model", "column": "model"},
+                        {"field": "span_id", "column": "span_id"},
+                    ],
+                },
                 format="json",
             )
 
         assert resp.status_code == status.HTTP_200_OK, resp.data
         result = _result(resp)
         assert result["rows_created"] == 1
-        assert result["columns"]  # source-derived columns were created
+        assert result["columns"] == ["input", "model", "span_id"]
+
+
+        row = Row.objects.get(dataset_id=result["dataset_id"], deleted=False)
+        assert row.metadata["queue_item_id"] == str(item.id)
+        cells = {
+            cell.column.name: cell.value
+            for cell in Cell.objects.filter(row=row, deleted=False).select_related(
+                "column"
+            )
+        }
+        assert cells["model"] == "gpt-4o"
+        assert cells["span_id"] == str(span.id)
+        assert "hi" in cells["input"]
 
 
 @pytest.mark.django_db

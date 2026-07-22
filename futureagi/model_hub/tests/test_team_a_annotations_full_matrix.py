@@ -1322,27 +1322,27 @@ class TestQueueStatusTransitions:
         assert r.status_code == 200
         assert AnnotationQueue.objects.get(pk=queue).status == "active"
 
-    def test_paused_to_completed_invalid_400(self, auth_client, queue):
-        # A paused queue must be reactivated before it can be completed.
-        auth_client.post(
-            _update_status_url(queue), {"status": "paused"}, format="json"
-        )
-        r = auth_client.post(
-            _update_status_url(queue), {"status": "completed"}, format="json"
-        )
-        assert r.status_code == 400
-        assert AnnotationQueue.objects.get(pk=queue).status == "paused"
+    def test_paused_to_completed(self, auth_client, queue):
 
-    def test_completed_to_paused_invalid_400(self, auth_client, queue):
-        # A completed queue can only be reopened to active, not paused directly.
+        auth_client.post(
+            _update_status_url(queue), {"status": "paused"}, format="json"
+        )
+        r = auth_client.post(
+            _update_status_url(queue), {"status": "completed"}, format="json"
+        )
+        assert r.status_code == 200
+        assert AnnotationQueue.objects.get(pk=queue).status == "completed"
+
+    def test_completed_to_paused(self, auth_client, queue):
+
         auth_client.post(
             _update_status_url(queue), {"status": "completed"}, format="json"
         )
         r = auth_client.post(
             _update_status_url(queue), {"status": "paused"}, format="json"
         )
-        assert r.status_code == 400
-        assert AnnotationQueue.objects.get(pk=queue).status == "completed"
+        assert r.status_code == 200
+        assert AnnotationQueue.objects.get(pk=queue).status == "paused"
 
     def test_completed_to_paused_via_active(self, auth_client, queue):
         # The sanctioned path to pause a completed queue: reopen, then pause.
@@ -2893,8 +2893,7 @@ class TestGetAnnotationLabelsLegacy:
     def test_returns_org_labels(self, api_client, user, star_label, thumbs_label):
         api_client.force_authenticate(user=user)
         resp = api_client.get(TRACER_LABELS)
-        if resp.status_code != 200:
-            pytest.skip(f"Expected 200, got {resp.status_code}: {resp.data}")
+        assert resp.status_code == 200, resp.data
         result = _result(resp)
         ids = [str(r["id"]) for r in result]
         assert str(star_label.id) in ids
@@ -2903,8 +2902,7 @@ class TestGetAnnotationLabelsLegacy:
     def test_filter_by_project(self, api_client, user, star_label, project):
         api_client.force_authenticate(user=user)
         resp = api_client.get(TRACER_LABELS, {"project_id": str(project.id)})
-        if resp.status_code != 200:
-            pytest.skip(f"Expected 200, got {resp.status_code}: {resp.data}")
+        assert resp.status_code == 200, resp.data
         result = _result(resp)
         ids = [str(r["id"]) for r in result]
         # star_label is project-scoped to ``project`` so it must appear

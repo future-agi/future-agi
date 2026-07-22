@@ -1298,6 +1298,17 @@ def queue_with_item(db, queue, dataset_with_rows, organization):
     return queue, str(item.id)
 
 
+@pytest.fixture
+def queue_label(db, queue, categorical_label):
+    """A label attached to org A's queue, so annotation payloads are valid."""
+    AnnotationQueueLabel.objects.get_or_create(
+        queue_id=queue,
+        label=categorical_label,
+        defaults={"order": 0, "required": False},
+    )
+    return categorical_label
+
+
 @pytest.mark.django_db
 class TestItemActionCrossOrg:
     """Org B (``other_org_client``) must not reach org A's queue item actions.
@@ -1327,13 +1338,17 @@ class TestItemActionCrossOrg:
         resp = other_org_client.get(_next_item_url(qid))
         assert resp.status_code in (401, 403, 404), resp.status_code
 
-    def test_other_org_cannot_submit(self, other_org_client, queue_with_item):
+    def test_other_org_cannot_submit(
+        self, other_org_client, queue_with_item, queue_label
+    ):
         qid, iid = queue_with_item
+
         resp = other_org_client.post(
-            _submit_url(qid, iid), {"annotations": []}, format="json"
+            _submit_url(qid, iid),
+            {"annotations": [{"label_id": str(queue_label.id), "value": "Yes"}]},
+            format="json",
         )
-        # 400 = payload rejected before the org check; either way org B is refused.
-        assert resp.status_code in (400, 401, 403, 404), resp.status_code
+        assert resp.status_code in (401, 403, 404), resp.status_code
 
     def test_other_org_cannot_complete(self, other_org_client, queue_with_item):
         qid, iid = queue_with_item
@@ -1385,12 +1400,24 @@ class TestItemActionCrossOrg:
         )
         assert resp.status_code in (401, 403, 404), resp.status_code
 
-    def test_other_org_cannot_import(self, other_org_client, queue_with_item):
+    def test_other_org_cannot_import(
+        self, other_org_client, queue_with_item, queue_label
+    ):
         qid, iid = queue_with_item
         resp = other_org_client.post(
-            _import_url(qid, iid), {"annotations": []}, format="json"
+            _import_url(qid, iid),
+            {
+                "annotations": [
+                    {
+                        "label_id": str(queue_label.id),
+                        "value": "Yes",
+                        "score_source": "imported",
+                    }
+                ]
+            },
+            format="json",
         )
-        assert resp.status_code in (400, 401, 403, 404), resp.status_code
+        assert resp.status_code in (401, 403, 404), resp.status_code
 
 def _queue_detail_url(qid):
     return f"{QUEUE_URL}{qid}/"
@@ -1436,10 +1463,8 @@ def _export_to_dataset_url(qid):
     return f"{QUEUE_URL}{qid}/export-to-dataset/"
 
 
-# Org B may be refused at several layers depending on the endpoint: 404
-# (queue not in its queryset), 403 (permission), 402 (EE entitlement), or
-# 400 (payload rejected first). All mean "org B could not act".
-_REJECT = (400, 401, 402, 403, 404)
+
+_REJECT = (401, 402, 403, 404)
 
 
 @pytest.mark.django_db

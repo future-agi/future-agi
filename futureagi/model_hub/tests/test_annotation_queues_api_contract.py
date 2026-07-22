@@ -161,14 +161,18 @@ def test_annotation_queue_contract_debt_stays_burned_down():
     """No annotation-queue endpoint may appear in the contract-debt report —
     i.e. none may lose its body/response schema or regress to a broad shape."""
     report = _debt_report()
-    for bucket in (
+    buckets = (
         "mutation_endpoints_without_body_schema",
         "operations_without_response_schema",
         "broad_success_response_schemas",
-    ):
+    )
+
+    missing = [bucket for bucket in buckets if bucket not in report]
+    assert missing == [], f"debt report is missing bucket keys: {missing}"
+    for bucket in buckets:
         offenders = [
             item
-            for item in report.get(bucket, [])
+            for item in report[bucket]
             if "annotation-queue" in str(
                 item.get("path", "") if isinstance(item, dict) else item
             )
