@@ -338,7 +338,6 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => {
   // so users can drill into nested keys (e.g. `prompt.messages.0.content`)
   // instead of seeing "[object Object]". Strings, numbers, booleans, and
   // null still render as plain text.
-
   const isResultRow =
     typeof label === "string" && label.trim().toLowerCase() === "result";
   // The result may arrive as a string like "{'score': 0.0, 'choice': 'Low'}"
@@ -346,9 +345,9 @@ const DetailRow = ({ label, value, color, chip, chipColor, mono }) => {
   const parsedValue = isResultRow ? parsePythonReprIfNeeded(value) : value;
   const resolvedValue =
     isResultRow &&
-    parsedValue &&
-    typeof parsedValue === "object" &&
-    !Array.isArray(parsedValue)
+      parsedValue &&
+      typeof parsedValue === "object" &&
+      !Array.isArray(parsedValue)
       ? parsedValue.choice ?? parsedValue.score ?? parsedValue
       : parsedValue;
   const isJsonValue =
@@ -637,8 +636,8 @@ const DetailPanelContent = ({ row, isDark }) => {
   const parsedResult = parsePythonReprIfNeeded(row.result);
   const resultScore =
     parsedResult &&
-    typeof parsedResult === "object" &&
-    !Array.isArray(parsedResult)
+      typeof parsedResult === "object" &&
+      !Array.isArray(parsedResult)
       ? parsedResult.score
       : null;
   const effectiveScore = row.score ?? resultScore ?? null;
@@ -674,9 +673,9 @@ const DetailPanelContent = ({ row, isDark }) => {
               backgroundColor:
                 viewMode === m
                   ? (t) =>
-                      t.palette.mode === "dark"
-                        ? "rgba(255,255,255,0.08)"
-                        : "action.hover"
+                    t.palette.mode === "dark"
+                      ? "rgba(255,255,255,0.08)"
+                      : "action.hover"
                   : "transparent",
             }}
           >
@@ -744,8 +743,8 @@ const DetailPanelContent = ({ row, isDark }) => {
                     row.result === "Passed" || row.result === "Pass"
                       ? "success"
                       : row.result === "Failed" ||
-                          row.result === "Fail" ||
-                          row.result === "Error"
+                        row.result === "Fail" ||
+                        row.result === "Error"
                         ? "error"
                         : "default"
                   }
@@ -909,15 +908,29 @@ const TaskUsageTab = ({ taskId }) => {
   const period = DATE_OPTION_TO_PERIOD[dateOption] || "30d";
   const apiEvalId = evalIdFilter === "all" ? undefined : evalIdFilter;
 
+  const customDateParams =
+    dateOption === "Custom" && dateFilter?.[0] && dateFilter?.[1]
+      ? {
+          startDate: new Date(dateFilter[0]).toISOString(),
+          endDate: new Date(dateFilter[1]).toISOString(),
+        }
+      : {};
+
   const { data: chartData, isLoading: chartLoading } = useTaskUsageChart(
     taskId,
-    { period, evalId: apiEvalId },
+    { period, evalId: apiEvalId, ...customDateParams },
   );
   const {
     data: logsData,
     isLoading: logsLoading,
     isFetching: logsFetching,
-  } = useTaskUsageLogs(taskId, { page, pageSize, period, evalId: apiEvalId });
+  } = useTaskUsageLogs(taskId, {
+    page,
+    pageSize,
+    period,
+    evalId: apiEvalId,
+    ...customDateParams,
+  });
 
   const stats = chartData?.stats || {};
   const chart = chartData?.chart || [];
@@ -928,9 +941,8 @@ const TaskUsageTab = ({ taskId }) => {
   // period excluded every run. Surface that to the user as a hint so
   // they don't think the date filter is broken.
   const periodFallback =
-    chartData?.periodUsed === "all" &&
-    chartData?.periodRequested &&
-    chartData?.periodRequested !== "all";
+    chartData?.periodUsed !==
+    chartData?.periodRequested
 
   // Pick the chart's output type. With the "all evals" filter we default
   // to pass_fail. With a specific eval selected, we use that eval's
@@ -1114,30 +1126,61 @@ const TaskUsageTab = ({ taskId }) => {
             sx={(t) => ({
               display: "flex",
               alignItems: "center",
-              gap: 0.75,
-              px: 1.25,
-              py: 0.75,
-              mb: 1,
-              borderRadius: "6px",
+              gap: 1.5,
+              px: 2,
+              py: 1.5,
+              mb: 1.5,
+              borderRadius: "10px",
               border: "1px solid",
-              borderColor: "divider",
-              bgcolor:
-                t.palette.mode === "dark"
-                  ? "rgba(255,255,255,0.03)"
-                  : "background.neutral",
+              borderColor: alpha(t.palette.info.main, 0.32),
+              borderLeft: `4px solid ${t.palette.info.main}`,
+              bgcolor: alpha(
+                t.palette.info.main,
+                t.palette.mode === "dark" ? 0.16 : 0.1,
+              ),
             })}
           >
-            <Iconify
-              icon="solar:info-circle-linear"
-              width={14}
-              sx={{ color: "info.main", flexShrink: 0 }}
-            />
-            <Typography
-              variant="caption"
-              sx={{ fontSize: "11px", color: "text.secondary" }}
+            <Box
+              sx={(t) => ({
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 36,
+                height: 36,
+                borderRadius: "50%",
+                flexShrink: 0,
+                bgcolor: alpha(t.palette.info.main, 0.2),
+              })}
             >
-              No runs in the selected window — showing all-time data instead.
-            </Typography>
+              <Iconify
+                icon="solar:info-circle-bold"
+                width={22}
+                sx={{ color: "info.main" }}
+              />
+            </Box>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography
+                sx={{
+                  display: "block",
+                  fontSize: "14px",
+                  fontWeight: 700,
+                  color: "info.main",
+                  lineHeight: 1.4,
+                }}
+              >
+                No runs in the selected window
+              </Typography>
+              <Typography
+                sx={{
+                  display: "block",
+                  fontSize: "12.5px",
+                  color: "text.secondary",
+                  lineHeight: 1.4,
+                }}
+              >
+                Showing all-time data instead.
+              </Typography>
+            </Box>
           </Box>
         )}
 
