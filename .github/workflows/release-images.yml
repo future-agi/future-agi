@@ -141,10 +141,17 @@ jobs:
           branch="chore/bump-platform-${VERSION}"
           git config user.name "futureagi-release-bot"
           git config user.email "release-bot@futureagi.com"
-          git switch -c "$branch"
+          # Idempotent: a re-run reuses the existing branch instead of failing.
+          git switch -c "$branch" 2>/dev/null || git switch "$branch"
           git add -A
+          git diff --cached --quiet && { echo "values already at ${VERSION}; nothing to do"; exit 0; }
           git commit -m "chore(release): bump platform images to ${VERSION}"
-          git push origin "$branch"
-          gh pr create --repo future-agi/deployment --base main --head "$branch" \
-            --title "chore(release): bump platform to ${VERSION}" \
-            --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). Review release notes (check for the migrations callout) before deploying per the deployment guide."
+          # --force-with-lease -u covers both the new-branch and existing-branch cases.
+          git push --force-with-lease -u origin "$branch"
+          if [ -z "$(gh pr list --repo future-agi/deployment --head "$branch" --state open --json number --jq '.[].number')" ]; then
+            gh pr create --repo future-agi/deployment --base main --head "$branch" \
+              --title "chore(release): bump platform to ${VERSION}" \
+              --body "Automated bump for [${VERSION}](https://github.com/future-agi/future-agi/releases/tag/${VERSION}). Review release notes (check for the migrations callout) before deploying per the deployment guide."
+          else
+            echo "bump PR already open"
+          fi
