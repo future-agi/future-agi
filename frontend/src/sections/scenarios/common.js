@@ -266,7 +266,7 @@ export const extractVersionFromScenarioName = (name, basePattern) => {
 export const createScenarioFileDropHandler =
   ({ enqueueSnackbar, onChange }) =>
   (acceptedFiles, fileRejections = []) => {
-    if (fileRejections.length > 0) {
+    if (fileRejections?.length > 0) {
       fileRejections.forEach((rejection) => {
         const { file, errors = [] } = rejection || {};
         if (!file) return;
@@ -287,7 +287,7 @@ export const createScenarioFileDropHandler =
       return;
     }
 
-    const files = Array.from(acceptedFiles);
+    const files = Array.from(acceptedFiles || []);
     const maxSize = 5 * 1024 * 1024; // 5MB
 
     const filesLargerThanMaxSize = files.filter((file) => file?.size > maxSize);
