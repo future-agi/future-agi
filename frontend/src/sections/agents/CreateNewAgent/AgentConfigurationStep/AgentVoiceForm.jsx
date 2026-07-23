@@ -204,7 +204,6 @@ export default function AgentVoiceForm() {
   });
 
   const debounceTimeoutRef = useRef(null);
-  const prevSyncRef = useRef("");
 
   const debouncedMutate = useCallback(
     (data) => {
@@ -217,33 +216,6 @@ export default function AgentVoiceForm() {
     },
     [mutate],
   );
-
-  // Sync the provider agent (name + prompt) whenever the API key, assistant id,
-  // or provider settle — regardless of whether the values were typed, pasted,
-  // or restored on navigation. The per-field onChange only fired on live
-  // keystrokes in one field, so pasted/prefilled values never synced. LiveKit
-  // has its own validation flow; "others" brings its own endpoint — both skip.
-  useEffect(() => {
-    if (
-      !selectedProvider ||
-      selectedProvider === "others" ||
-      isLiveKitProvider(selectedProvider)
-    ) {
-      return;
-    }
-    if (!apiKey || !assistantId) return;
-
-    const syncKey = `${selectedProvider}|${apiKey}|${assistantId}`;
-    if (syncKey === prevSyncRef.current) return;
-    prevSyncRef.current = syncKey;
-
-    clearErrors("assistantId");
-    debouncedMutate({
-      api_key: apiKey,
-      assistant_id: assistantId,
-      provider: selectedProvider,
-    });
-  }, [apiKey, assistantId, selectedProvider, debouncedMutate, clearErrors]);
 
   const canEnableObservability = Boolean(apiKey && assistantId);
   const keysRequired = inbound === false;
@@ -434,7 +406,17 @@ export default function AgentVoiceForm() {
             required={observabilityEnabled || keysRequired}
             size="small"
             fullWidth
-            onChange={() => trigger("apiKey")}
+            onChange={(e) => {
+              trigger("apiKey");
+              const value = e.target.value;
+              if (assistantId && value && selectedProvider) {
+                debouncedMutate({
+                  api_key: value,
+                  assistant_id: assistantId,
+                  provider: selectedProvider,
+                });
+              }
+            }}
           />
           <FormTextFieldV2
             control={control}
@@ -450,7 +432,17 @@ export default function AgentVoiceForm() {
               },
             }}
             size="small"
-            onChange={() => trigger("assistantId")}
+            onChange={(e) => {
+              trigger("assistantId");
+              const value = e.target.value;
+              if (apiKey && value && selectedProvider) {
+                debouncedMutate({
+                  api_key: apiKey,
+                  assistant_id: value,
+                  provider: selectedProvider,
+                });
+              }
+            }}
             helperText={getVapiFetch()}
           />
           <Box
