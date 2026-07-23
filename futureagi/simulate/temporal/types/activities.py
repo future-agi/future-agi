@@ -929,6 +929,10 @@ class CalculateConversationMetricsInput:
     call_id: str
     is_outbound: bool = False
     provider: str = "livekit"
+    # When the customer's own account holds the call data (SIP outbound), this
+    # is the customer's provider and transcript reads dispatch to its engine.
+    # None for inbound/bridge calls, where the system provider owns the data.
+    client_provider: Optional[str] = None
 
 
 # =============================================================================

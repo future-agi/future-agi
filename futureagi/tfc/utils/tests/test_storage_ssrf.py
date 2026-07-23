@@ -260,6 +260,29 @@ def test_assert_url_host_public_allows_public_ip_literal():
     assert_url_host_public("https://8.8.8.8/recording.mp3")  # no raise
 
 
+def test_assert_url_host_public_allows_public_hostname():
+    # A normal provider hostname (e.g. a CDN) must pass. Mock the resolver so the
+    # test stays hermetic — no real DNS — while proving hostnames, not just IP
+    # literals, go through the guard.
+    with patch(
+        "tfc.utils.ssrf_guard.socket.getaddrinfo",
+        return_value=[(2, 1, 6, "", ("93.184.216.34", 0))],
+    ) as mock_resolve:
+        assert_url_host_public("https://recordings.example.com/rec.mp3")  # no raise
+    assert mock_resolve.call_args.args[0] == "recordings.example.com"
+
+
+def test_assert_url_host_public_blocks_hostname_resolving_to_private():
+    # The real SSRF threat: a public-looking hostname that resolves to an
+    # internal address. The guard must reject on the RESOLVED IP, not the name.
+    with patch(
+        "tfc.utils.ssrf_guard.socket.getaddrinfo",
+        return_value=[(2, 1, 6, "", ("10.0.0.5", 0))],
+    ):
+        with pytest.raises(SsrfBlocked):
+            assert_url_host_public("https://totally-legit.example.com/rec.mp3")
+
+
 async def test_recording_rehost_blocks_ssrf_url_and_fails_open():
     """The converter must not fetch a recording URL that points at an internal
     host: it blocks before the download and fails open to the original URL with

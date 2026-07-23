@@ -65,6 +65,13 @@ class SpeakerRoleResolver:
     }
     _LIVEKIT_OUTBOUND: dict[str, str] = _LIVEKIT_INBOUND
 
+    # Bland's stored transcript shape matches VAPI's role convention today, so it
+    # reuses the VAPI maps — but as its own named seam, so a future Bland payload
+    # change is a one-line map edit here, not an alias hunt. Bland is a
+    # customer-only outbound provider (inbound Bland flows through VAPI).
+    _BLAND_INBOUND: dict[str, str] = _VAPI_INBOUND
+    _BLAND_OUTBOUND: dict[str, str] = _VAPI_OUTBOUND
+
     @staticmethod
     def detect_provider(
         provider_call_data: dict[str, Any] | None,
@@ -82,10 +89,7 @@ class SpeakerRoleResolver:
         if provider_call_data.get(ProviderChoices.VAPI.value):
             return ProviderChoices.VAPI
         if provider_call_data.get(ProviderChoices.BLAND.value):
-            # Bland's stored transcript shape matches VAPI's outbound
-            # convention, so the VAPI role map applies. Handled explicitly to
-            # avoid the unknown-provider error below firing on every read.
-            return ProviderChoices.VAPI
+            return ProviderChoices.BLAND
         logger.error(
             "speaker_role_resolver_unknown_provider",
             provider_call_data_keys=list(provider_call_data.keys()),
@@ -128,6 +132,8 @@ class SpeakerRoleResolver:
             return cls._VAPI_OUTBOUND if is_outbound else cls._VAPI_INBOUND
         if provider == ProviderChoices.LIVEKIT:
             return cls._LIVEKIT_OUTBOUND if is_outbound else cls._LIVEKIT_INBOUND
+        if provider == ProviderChoices.BLAND:
+            return cls._BLAND_OUTBOUND if is_outbound else cls._BLAND_INBOUND
         logger.error(
             "speaker_role_resolver_unsupported_provider",
             provider=str(provider),
