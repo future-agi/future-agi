@@ -576,7 +576,12 @@ const EvaluationData = () => {
   }, [evaluationData, processColumnConfig, hasDeletableRow, handleDeleteRow]);
 
   useEffect(() => {
-    setRows(processRowData(evaluationData));
+    setRows((prev) => {
+      const next = processRowData(evaluationData);
+      const unsavedTail = prev.slice(next.length).filter(isUnsavedRow);
+      if (!unsavedTail.length) return next;
+      return [...next, ...unsavedTail];
+    });
     return () => {
       if (addRowTimeoutRef.current) {
         clearTimeout(addRowTimeoutRef.current);
