@@ -19,14 +19,19 @@ def normalize_twilio_data(log: dict) -> dict:
         "no-answer": "error",
         "canceled": "error",
     }
-    status = status_map.get((log.get("status") or "").lower(), "unset")
+    raw_status = log.get("status")
+    raw_status = raw_status.lower() if isinstance(raw_status, str) else ""
+    status = status_map.get(raw_status, "unset")
 
     start_time = _parse_rfc2822(log.get("start_time"))
     end_time = _parse_rfc2822(log.get("end_time"))
 
     price = log.get("price")
     # Twilio reports price as a negative charge (e.g. "-0.0085"); store magnitude.
-    cost = abs(float(price)) if price not in (None, "") else None
+    try:
+        cost = abs(float(price)) if price not in (None, "") else None
+    except (TypeError, ValueError):
+        cost = None
 
     eval_attributes = {
         SpanAttributes.SPAN_KIND: "conversation",
@@ -39,6 +44,24 @@ def normalize_twilio_data(log: dict) -> dict:
         CallAttributes.BOT_WPM: None,
         CallAttributes.TALK_RATIO: None,
     }
+
+    # Display fields for the voice-call list (mirror _process_twilio_raw).
+    eval_attributes[CallAttributes.STATUS_DISPLAY] = log.get("status")
+    eval_attributes[CallAttributes.RECORDING_AVAILABLE] = False
+    eval_attributes[CallAttributes.MESSAGE_COUNT] = 0
+    eval_attributes[CallAttributes.TRANSCRIPT_AVAILABLE] = False
+    if direction := log.get("direction"):
+        eval_attributes[CallAttributes.CALL_TYPE] = direction
+    if start_time_raw := log.get("start_time"):
+        eval_attributes[CallAttributes.STARTED_AT] = start_time_raw
+        eval_attributes[CallAttributes.CREATED_AT] = start_time_raw
+    elif date_created := log.get("date_created"):
+        eval_attributes[CallAttributes.CREATED_AT] = date_created
+    if price not in (None, ""):
+        try:
+            eval_attributes[CallAttributes.COST_CENTS] = abs(float(price)) * 100
+        except (TypeError, ValueError):
+            pass
 
     return {
         "id": log.get("sid"),

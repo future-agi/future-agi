@@ -21,7 +21,10 @@ def normalize_bland_data(log: dict) -> dict:
     transcript = _transcript_messages(log)
 
     price = log.get("price")
-    cost = float(price) if price not in (None, "") else None
+    try:
+        cost = float(price) if price not in (None, "") else None
+    except (TypeError, ValueError):
+        cost = None
 
     return {
         "id": log.get("call_id") or log.get("c_id"),
@@ -123,3 +126,24 @@ def _extract_common_call_fields(log: dict, eval_attributes: dict):
     eval_attributes[CallAttributes.USER_WPM] = None
     eval_attributes[CallAttributes.BOT_WPM] = None
     eval_attributes[CallAttributes.TALK_RATIO] = None
+
+    # Display fields for the voice-call list (mirror _process_bland_raw).
+    if status := log.get("status"):
+        eval_attributes[CallAttributes.STATUS_DISPLAY] = status
+    if started_at := (log.get("started_at") or log.get("created_at")):
+        eval_attributes[CallAttributes.STARTED_AT] = started_at
+    if created_at := (log.get("created_at") or log.get("started_at")):
+        eval_attributes[CallAttributes.CREATED_AT] = created_at
+    price = log.get("price")
+    if price not in (None, ""):
+        try:
+            eval_attributes[CallAttributes.COST_CENTS] = float(price) * 100
+        except (TypeError, ValueError):
+            pass
+    if summary := log.get("summary"):
+        eval_attributes[CallAttributes.SUMMARY] = summary
+    if error_message := log.get("error_message"):
+        eval_attributes[CallAttributes.ERROR_MESSAGE] = error_message
+    eval_attributes[CallAttributes.RECORDING_AVAILABLE] = bool(log.get("recording_url"))
+    eval_attributes[CallAttributes.MESSAGE_COUNT] = len(transcript)
+    eval_attributes[CallAttributes.TRANSCRIPT_AVAILABLE] = len(transcript) > 0
