@@ -149,7 +149,7 @@ class TestCallExecutionActionScope:
             format="json",
         )
 
-        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert response.status_code == status.HTTP_404_NOT_FOUND
         assert "Call execution not found" in str(response.content)
 
     def test_test_execution_delete_soft_deletes_child_call_execution(

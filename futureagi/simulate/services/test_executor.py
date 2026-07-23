@@ -144,7 +144,9 @@ try:
     from ee.usage.services.metering import check_usage
 except ImportError:
     def check_usage(*args, **kwargs):
-        return None
+        from types import SimpleNamespace
+
+        return SimpleNamespace(allowed=True, reason=None)
 try:
     from ee.usage.utils.usage_entries import deduct_cost_for_request, log_and_deduct_cost_for_api_request
 except ImportError:

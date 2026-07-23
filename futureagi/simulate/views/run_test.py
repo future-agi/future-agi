@@ -633,6 +633,7 @@ class RunTestDetailView(APIView):
 
                 if "eval_config_ids" in validated_data:
                     eval_configs = SimulateEvalConfig.objects.filter(
+                        run_test_workspace_filter(request, "run_test"),
                         id__in=validated_data["eval_config_ids"],
                         run_test__organization=user_organization,
                     )
@@ -970,6 +971,7 @@ class TestExecutionCancelView(APIView):
                 # Verify user has access to this test execution
                 test_execution = get_object_or_404(
                     TestExecution,
+                    run_test_workspace_filter(request, "run_test"),
                     id=test_execution_id,
                     run_test__organization=user_organization,
                     run_test__deleted=False,
@@ -979,6 +981,7 @@ class TestExecutionCancelView(APIView):
                 # Verify user has access to this run test
                 get_object_or_404(
                     RunTest,
+                    run_test_workspace_filter(request),
                     id=run_test_id,
                     organization=user_organization,
                     deleted=False,
@@ -1418,6 +1421,7 @@ class RunTestKPIsView(APIView):
             # Get the run test
             test_executor = get_object_or_404(
                 TestExecution,
+                run_test_workspace_filter(request, "run_test"),
                 id=test_execution_id,
                 run_test__organization=user_organization,
                 run_test__deleted=False,
@@ -1656,6 +1660,8 @@ class RunTestKPIsView(APIView):
 
             return Response(kpi_data, status=status.HTTP_200_OK)
 
+        except Http404:
+            return _gm.not_found("Test execution not found.")
         except Exception as e:
             traceback.print_exc()
             return _gm.internal_server_error_response(
@@ -2625,6 +2631,8 @@ class PerformanceSummaryView(APIView):
 
             return Response(serializer.data, status=status.HTTP_200_OK)
 
+        except Http404:
+            return _gm.not_found("Test execution not found.")
         except Exception as e:
             traceback.print_exc()
             return _gm.internal_server_error_response(
@@ -5391,6 +5399,7 @@ class CSVExportView(APIView):
                 # Export TestExecution data
                 test_execution = get_object_or_404(
                     TestExecution,
+                    run_test_workspace_filter(request, "run_test"),
                     id=item_id,
                     run_test__organization=user_organization,
                     run_test__deleted=False,

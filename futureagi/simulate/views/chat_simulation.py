@@ -605,7 +605,7 @@ class ChatSendMessageView(APIView):
             return self.gm.success_response(response_data.model_dump(exclude_none=True))
 
         except (CallExecution.DoesNotExist, Http404):
-            return self.gm.bad_request("Call execution not found")
+            return self.gm.not_found("Call execution not found")
         except ValidationError as e:
             return self.gm.bad_request(
                 f"Invalid request data format. Expected SendChatRequest schema. Errors: {str(e)}"

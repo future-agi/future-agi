@@ -645,6 +645,13 @@ class TestRunTestEvalSummaryView:
         response = auth_client.get(self.URL_TEMPLATE.format(uuid.uuid4()))
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
+    def test_eval_summary_soft_deleted_run_test_returns_404(
+        self, auth_client, run_test, eval_summary_te1_calls
+    ):
+        RunTest.no_workspace_objects.filter(id=run_test.id).update(deleted=True)
+        response = auth_client.get(self.URL_TEMPLATE.format(run_test.id))
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+
 
 # ============================================================================
 # RunTestEvalSummaryComparisonView

@@ -439,12 +439,7 @@ class TestCallExecutionRerunView:
             {"rerun_type": "eval_only", "select_all": True},
             format="json",
         )
-
-        # get_object_or_404 raises Http404, caught by generic except -> 500
-        assert response.status_code in (
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_rerun_unauthenticated(self, api_client, test_execution):
         """Test rerun without authentication."""
@@ -722,12 +717,7 @@ class TestTestExecutionRerunView:
             {"rerun_type": "eval_only", "select_all": True},
             format="json",
         )
-
-        # get_object_or_404 raises Http404, caught by generic except -> 500
-        assert response.status_code in (
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_rerun_unauthenticated(self, api_client, run_test):
         """Test rerun without authentication."""
@@ -993,6 +983,44 @@ class TestTestExecutionRuntimeContracts:
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert response.data["status"] is False
         assert response.data["details"]["legacy_extra"] == ["Unknown field."]
+
+    def test_cancel_other_workspace_returns_404(
+        self,
+        auth_client,
+        organization,
+        user,
+        agent_definition,
+        simulator_agent,
+    ):
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other Cancel Workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_run_test = RunTest.no_workspace_objects.create(
+            name="Hidden Cancel Run Test",
+            description="Run test in another workspace",
+            agent_definition=agent_definition,
+            simulator_agent=simulator_agent,
+            organization=organization,
+            workspace=other_workspace,
+        )
+        hidden_te = TestExecution.no_workspace_objects.create(
+            run_test=hidden_run_test,
+            status=TestExecution.ExecutionStatus.RUNNING,
+            total_scenarios=1,
+            total_calls=1,
+            simulator_agent=simulator_agent,
+            agent_definition=agent_definition,
+        )
+        url = f"/simulate/test-executions/{hidden_te.id}/cancel/"
+        response = auth_client.post(url, {}, format="json")
+
+        assert response.status_code == status.HTTP_404_NOT_FOUND
+        hidden_te.refresh_from_db()
+        assert hidden_te.status == TestExecution.ExecutionStatus.RUNNING
 
     def test_eval_summary_refresh_rejects_unknown_fields(
         self, auth_client, test_execution
@@ -1316,10 +1344,7 @@ class TestTestExecutionBulkDeleteView:
             format="json",
         )
 
-        assert response.status_code in (
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
 
     def test_delete_unauthenticated(self, api_client, run_test):
         """Test delete without authentication."""

@@ -825,3 +825,36 @@ class TestRunTestKPIsViewAPI:
         assert data["total_calls"] == 0
         assert data["avg_score"] == 0
         assert data["total_duration"] == 0
+
+    def test_kpi_other_workspace_returns_404(
+        self, auth_client, organization, user, agent_definition, simulator_agent
+    ):
+        from accounts.models.workspace import Workspace
+
+        other_workspace = Workspace.no_workspace_objects.create(
+            name="Other KPI Workspace",
+            organization=organization,
+            is_default=False,
+            is_active=True,
+            created_by=user,
+        )
+        hidden_run_test = RunTest.no_workspace_objects.create(
+            name="Hidden KPI Run Test",
+            description="Run test in another workspace",
+            agent_definition=agent_definition,
+            simulator_agent=simulator_agent,
+            organization=organization,
+            workspace=other_workspace,
+        )
+        hidden_test_execution = TestExecution.no_workspace_objects.create(
+            run_test=hidden_run_test,
+            status=TestExecution.ExecutionStatus.COMPLETED,
+            total_scenarios=1,
+            total_calls=1,
+            simulator_agent=simulator_agent,
+            agent_definition=agent_definition,
+        )
+        response = auth_client.get(
+            f"/simulate/test-executions/{hidden_test_execution.id}/kpis/"
+        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND

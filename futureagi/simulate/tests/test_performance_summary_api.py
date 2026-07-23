@@ -205,10 +205,7 @@ class TestGetPerformanceSummary:
         url = self.URL_TEMPLATE.format(uuid.uuid4())
         response = auth_client.get(url)
 
-        assert response.status_code in (
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
         body = response.json()
         assert "test_run_performance_metrics" not in body
         assert "top_performing_scenarios" not in body
@@ -259,10 +256,7 @@ class TestGetPerformanceSummary:
         url = self.URL_TEMPLATE.format(hidden_execution.id)
         response = auth_client.get(url)
 
-        assert response.status_code in (
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
+        assert response.status_code == status.HTTP_404_NOT_FOUND
         body = response.json()
         assert "test_run_performance_metrics" not in body
         assert "top_performing_scenarios" not in body

@@ -324,6 +324,10 @@ class TestAgentPromptOptimiserCRUD:
         assert mock_optimiser_side_effects["steps"] == []
         assert mock_optimiser_side_effects["workflow"] == []
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason="AgentPromptOptimiserRunCreateSerializer silently drops unknown fields; XPASSes when reject_unknown_fields is added.",
+    )
     def test_create_ignores_unknown_body_field(
         self,
         auth_client,
@@ -338,12 +342,6 @@ class TestAgentPromptOptimiserCRUD:
             format="json",
         )
 
-        # The create serializer inherits stock ModelSerializer behavior which
-        # silently drops unknown fields; contract-tightening tracked separately.
-        pytest.xfail(
-            "AgentPromptOptimiserRunCreateSerializer does not reject unknown fields; "
-            "sibling viewsets (e.g. SimulatorAgent) reject with 400."
-        )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
     def test_retrieve_returns_full_detail_body(
