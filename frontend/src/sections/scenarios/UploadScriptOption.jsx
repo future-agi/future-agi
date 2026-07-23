@@ -100,6 +100,8 @@ const UploadScriptOption = ({ control }) => {
             "text/plain": [".txt"],
             "application/pdf": [".pdf"],
           }}
+          maxSize={5 * 1024 * 1024}
+          minSize={1}
           sx={{ paddingY: (theme) => theme.spacing(3) }}
           onDrop={handleFileChange}
         />
