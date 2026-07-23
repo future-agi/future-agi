@@ -239,3 +239,84 @@ def test_execute_template_allows_null_workspace_template_in_same_org(monkeypatch
     # permission reasons).
     for call in consumer.close.await_args_list:
         assert call.kwargs.get("code") != WS_CLOSE_CODE_PERMISSION_DENIED
+
+
+# ---------------------------------------------------------------------------
+# Background prompt task retention
+# ---------------------------------------------------------------------------
+
+
+def test_start_handlers_retain_background_tasks_until_they_finish(monkeypatch):
+    async def run_case(handler_name, execute_name, content):
+        consumer = _make_consumer(workspace_id="ws-a")
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def fake_execute(*args, **kwargs):
+            started.set()
+            await release.wait()
+
+        setattr(consumer, execute_name, fake_execute)
+        if handler_name == "handle_improve_prompt":
+            monkeypatch.setattr(
+                "sockets.prompt_stream_consumer.replace_ids_with_column_name_async",
+                AsyncMock(return_value=content["existing_prompt"]),
+            )
+
+        await getattr(consumer, handler_name)(content)
+
+        await asyncio.wait_for(started.wait(), timeout=1)
+        assert len(consumer._background_tasks) == 1
+        task = next(iter(consumer._background_tasks))
+        assert not task.done()
+
+        release.set()
+        await asyncio.wait_for(task, timeout=1)
+        assert not consumer._background_tasks
+
+    cases = [
+        (
+            "handle_run_template",
+            "execute_template_async",
+            {"template_id": "tmpl-1", "version": 1},
+        ),
+        (
+            "handle_improve_prompt",
+            "execute_improve_prompt_async",
+            {
+                "existing_prompt": "Summarize this",
+                "improvement_requirements": "Make it concise",
+            },
+        ),
+        (
+            "handle_generate_prompt",
+            "execute_generate_prompt_async",
+            {"statement": "Generate a support prompt"},
+        ),
+    ]
+
+    for handler_name, execute_name, content in cases:
+        asyncio.run(run_case(handler_name, execute_name, content))
+
+
+def test_disconnect_cancels_retained_background_tasks():
+    async def run():
+        consumer = _make_consumer(workspace_id="ws-a")
+        started = asyncio.Event()
+
+        async def fake_execute(*args, **kwargs):
+            started.set()
+            await asyncio.Event().wait()
+
+        consumer.execute_template_async = fake_execute
+
+        await consumer.handle_run_template({"template_id": "tmpl-1", "version": 1})
+        await asyncio.wait_for(started.wait(), timeout=1)
+        task = next(iter(consumer._background_tasks))
+
+        await consumer.disconnect(1000)
+
+        assert task.cancelled()
+        assert not consumer._background_tasks
+
+    asyncio.run(run())
