@@ -1,0 +1,50 @@
+# Tripwire for RELEASE-PROCESS-PLAN.md §5.1 step 2: the dev->main release PR
+# must land as a merge commit. GitHub can't restrict merge method per-PR, so
+# this detects a squashed dev->main PR after the fact, alerts Slack, and fails
+# the check on main until the squash is reverted.
+name: merge-guard
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Detect squashed dev->main merge
+        id: detect
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          violation=""
+          for sha in $(jq -r '.commits[].sha' "$GITHUB_EVENT_PATH"); do
+            parents=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha" --jq '.parents | length')
+            [ "$parents" -ge 2 ] && continue
+            pr_json=$(gh api "repos/$GITHUB_REPOSITORY/commits/$sha/pulls" --jq \
+              '[.[] | select(.base.ref == "main" and .head.ref == "dev" and .merged_at != null and .merge_commit_sha == "'"$sha"'")][0] // empty')
+            if [ -n "$pr_json" ]; then
+              violation="$(printf '%s' "$pr_json" | jq -r '.number')"
+              break
+            fi
+          done
+          echo "pr=${violation}" >> "$GITHUB_OUTPUT"
+      - name: Send Slack alert
+        if: steps.detect.outputs.pr != ''
+        continue-on-error: true
+        uses: slackapi/slack-github-action@v2.1.0
+        with:
+          webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          webhook-type: incoming-webhook
+          payload: |
+            text: ":rotating_light: Release PR #${{ steps.detect.outputs.pr }} (dev → main) was *squash-merged* — release notes for the next version will be broken.\nRecovery: revert the squash commit on `main`, re-merge PR #${{ steps.detect.outputs.pr }} with a *merge commit*, and do this *before* merging the release-please PR.\nDetails: RELEASE-PROCESS-PLAN.md §5.1 · https://github.com/${{ github.repository }}/pull/${{ steps.detect.outputs.pr }}"
+      - name: Fail the check
+        if: steps.detect.outputs.pr != ''
+        run: |
+          echo "::error::dev->main PR #${{ steps.detect.outputs.pr }} was squash-merged; revert and re-merge with a merge commit (RELEASE-PROCESS-PLAN.md §5.1)."
+          exit 1
