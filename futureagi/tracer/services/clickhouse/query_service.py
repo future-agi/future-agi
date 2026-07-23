@@ -9,6 +9,7 @@ endpoints assume CH is reachable; if it's down, the request fails loudly.
 
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 from typing import Any
 
@@ -138,7 +139,6 @@ class AnalyticsQueryService:
             params["recent_days"] = int(recent_days)
             recent_filter = "AND start_time >= now() - toIntervalDay(%(recent_days)s)"
 
-        inner_order = "ORDER BY start_time DESC" if recent_days is not None else ""
         outer_select = "SELECT key, argMax(type, cnt) AS type"
         if include_counts:
             outer_select += ", sum(cnt) AS count"
@@ -149,33 +149,30 @@ class AnalyticsQueryService:
         query = f"""
             {outer_select} FROM (
                 SELECT key, 'string' AS type, count() AS cnt FROM (
-                    SELECT attrs_string FROM spans
+                    SELECT attrs_string.keys AS ks FROM spans
                     WHERE project_id IN %(project_ids)s
                       AND is_deleted = 0
                       {recent_filter}
-                    {inner_order}
                     LIMIT 10000
-                ) ARRAY JOIN mapKeys(attrs_string) AS key
+                ) ARRAY JOIN ks AS key
                 GROUP BY key
                 UNION ALL
                 SELECT key, 'number' AS type, count() AS cnt FROM (
-                    SELECT attrs_number FROM spans
+                    SELECT attrs_number.keys AS ks FROM spans
                     WHERE project_id IN %(project_ids)s
                       AND is_deleted = 0
                       {recent_filter}
-                    {inner_order}
                     LIMIT 10000
-                ) ARRAY JOIN mapKeys(attrs_number) AS key
+                ) ARRAY JOIN ks AS key
                 GROUP BY key
                 UNION ALL
                 SELECT key, 'boolean' AS type, count() AS cnt FROM (
-                    SELECT attrs_bool FROM spans
+                    SELECT attrs_bool.keys AS ks FROM spans
                     WHERE project_id IN %(project_ids)s
                       AND is_deleted = 0
                       {recent_filter}
-                    {inner_order}
                     LIMIT 10000
-                ) ARRAY JOIN mapKeys(attrs_bool) AS key
+                ) ARRAY JOIN ks AS key
                 GROUP BY key
             )
             GROUP BY key
@@ -319,15 +316,38 @@ class AnalyticsQueryService:
         return [row["config_id"] for row in result.data]
 
     def get_span_trace_map(
-        self, trace_ids: list[str], timeout_ms: int = 10000
+        self,
+        trace_ids: list[str],
+        project_id: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        timeout_ms: int = 10000,
     ) -> dict[str, str]:
-        """Map span id -> trace id for spans in the given traces (CH-native)."""
+        """Map span id -> trace id for spans in the given traces (CH-native).
+
+        ``project_id`` prunes the scan to the partition/PK prefix; the
+        ``start_date``/``end_date`` window (widened one day each side to cover a
+        trace's full duration) prunes partitions. Without them the query is a
+        full-table scan.
+        """
         if not trace_ids:
             return {}
+        params: dict[str, Any] = {"trace_ids": trace_ids}
+        where = ["trace_id IN %(trace_ids)s", "is_deleted = 0"]
+        if project_id is not None:
+            params["project_id"] = project_id
+            where.append("project_id = %(project_id)s")
+        if start_date is not None and end_date is not None:
+            params["start_date"] = start_date
+            params["end_date"] = end_date
+            where.append(
+                "start_time >= %(start_date)s - INTERVAL 1 DAY "
+                "AND start_time < %(end_date)s + INTERVAL 1 DAY"
+            )
         result = self.execute_ch_query(
             "SELECT toString(id) AS span_id, toString(trace_id) AS trace_id "
-            "FROM spans WHERE trace_id IN %(trace_ids)s AND is_deleted = 0",
-            {"trace_ids": trace_ids},
+            f"FROM spans WHERE {' AND '.join(where)}",
+            params,
             timeout_ms=timeout_ms,
         )
         return {r["span_id"]: r["trace_id"] for r in result.data}

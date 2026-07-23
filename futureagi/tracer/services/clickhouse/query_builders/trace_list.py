@@ -23,8 +23,10 @@ from tracer.services.clickhouse.query_builders.eval_status import (
 )
 from tracer.services.clickhouse.query_builders.filters import ClickHouseFilterBuilder
 
-# TODO: switch this to "start_time" once we create an index on that column .
-TIME_FILTER_COLUMN = "created_at"  # Options: "created_at" | "start_time"
+# On the v2 schema (PARTITION BY toDate(start_time), PK on toStartOfHour(
+# start_time)) start_time prunes partitions and the PK; created_at prunes
+# nothing and scans the whole project.
+TIME_FILTER_COLUMN = "start_time"  # Options: "created_at" | "start_time"
 
 
 class TraceListQueryBuilder(BaseQueryBuilder):
@@ -107,6 +109,24 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         self.annotation_label_ids = annotation_label_ids or []
         self.start_date: datetime | None = None
         self.end_date: datetime | None = None
+
+    def _span_time_window(
+        self, params: dict[str, Any], column: str = "start_time"
+    ) -> str:
+        """Bound a page-scoped span probe to the request window ± 1 day.
+
+        Page trace_ids come from the windowed page scan; every span of an
+        in-window trace starts within the window ± max trace duration (prod
+        max ≈ 5h « 1d). Empty when no build() ran (standalone callers).
+        """
+        if self.start_date is None:
+            return ""
+        params["start_date"] = self.start_date
+        params["end_date"] = self.end_date
+        return (
+            f"AND {column} >= %(start_date)s - INTERVAL 1 DAY\n"
+            f"          AND {column} < %(end_date)s + INTERVAL 1 DAY"
+        )
 
     # ------------------------------------------------------------------
     # Phase 1: Paginated trace list
@@ -207,24 +227,6 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         # Heavy columns are fetched in build_content_query() for just the
         # returned trace_ids — avoids OOM on large tables.
         #
-        # `created_at` is the partition/sort key (`PARTITION BY
-        # toYYYYMM(created_at)`, `ORDER BY (project_id, toDate(created_at),
-        # trace_id, id)`). Adding a **lower bound only** on `created_at`
-        # lets CH prune old partitions — without it, the existing
-        # `start_time` filter alone triggers a full project scan because
-        # `start_time` isn't indexed. `start_time` remains the semantic
-        # bound so user-visible timestamps are respected exactly.
-        #
-        # NO UPPER BOUND on `created_at`: prod data shows 0.5% of rows
-        # arrive >7 days late (SDK buffering, backfills, manual uploads);
-        # an upper bound would silently drop them. A 1-day buffer on the
-        # lower bound tolerates clock skew. This delivers 100% of the
-        # pruning benefit (upper bound tested: zero additional win since
-        # no row has `created_at` in the future).
-        #
-        # On a 3.5M-span project, 7d page-1 drops from 663ms/3.5M rows
-        # to 256ms/306K rows (~2.5x faster, 91% less I/O).
-        #
         # PERF: no `LIMIT 1 BY trace_id`. That clause deduped multi-root /
         # duplicate-version traces, but forced CH to read + full-sort EVERY
         # root span in the window before applying ORDER BY … LIMIT —
@@ -240,7 +242,6 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         FROM {self.TABLE}
         {self.project_where()}
           AND (parent_span_id IS NULL OR parent_span_id = '')
-          AND created_at >= %(start_date)s - INTERVAL 1 DAY
           AND {TIME_FILTER_COLUMN} >= %(start_date)s
           AND {TIME_FILTER_COLUMN} < %(end_date)s
           {pv_fragment}
@@ -290,7 +291,6 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         FROM {self.TABLE}
         {self.project_where()}
           AND (parent_span_id IS NULL OR parent_span_id = '')
-          AND created_at >= %(start_date)s - INTERVAL 1 DAY
           AND {TIME_FILTER_COLUMN} >= %(start_date)s
           AND {TIME_FILTER_COLUMN} < %(end_date)s
           {pv_fragment}
@@ -314,6 +314,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             "content_trace_ids": tuple(trace_ids),
         }
 
+        span_window = self._span_time_window(params)
         query = f"""
         SELECT
             trace_id,
@@ -330,6 +331,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         WHERE {self.project_filter_sql()}
           AND is_deleted = 0
           AND (parent_span_id IS NULL OR parent_span_id = '')
+          {span_window}
         LIMIT 1 BY trace_id
         """
         return query, params
@@ -346,6 +348,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             return "", {}
 
         params = {**self.params, "attr_trace_ids": tuple(trace_ids)}
+        span_window = self._span_time_window(params)
         query = f"""
         SELECT
             trace_id,
@@ -356,6 +359,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
           AND is_deleted = 0
           AND attributes_extra != '{{}}'
           AND attributes_extra != ''
+          {span_window}
         """
         return query, params
 
@@ -396,17 +400,11 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             search_fragment = "AND trace_name ILIKE %(search)s"
             params["search"] = f"%{self.search}%"
 
-        # See comment in build() — lower-bound-only `created_at` filter
-        # prunes old partitions. Drops 7d count from 716ms/3.5M rows to
-        # 255ms/306K rows on a 3.5M-span project, without dropping any
-        # rows that legitimately match the user's `start_time` window.
-
         query = f"""
         SELECT uniq(trace_id) AS total
         FROM {self.TABLE}
         {self.project_where()}
           AND (parent_span_id IS NULL OR parent_span_id = '')
-          AND created_at >= %(start_date)s - INTERVAL 1 DAY
           AND {TIME_FILTER_COLUMN} >= %(start_date)s
           AND {TIME_FILTER_COLUMN} < %(end_date)s
           {pv_fragment}
@@ -603,6 +601,9 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             "trace_ids": tuple(trace_ids),
             "label_ids": tuple(annotation_label_ids),
         }
+        # Bound only the spans (sp) join side; the score (s) side keeps no
+        # upper bound so annotations created after the window still resolve.
+        sp_window = self._span_time_window(params, column="sp.start_time")
 
         query = f"""
         SELECT
@@ -619,6 +620,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
         LEFT JOIN {self.TABLE} AS sp
           ON sp.id = s.observation_span_id
          AND sp._peerdb_is_deleted = 0
+         {sp_window}
         WHERE s._peerdb_is_deleted = 0
           AND s.deleted = false
           AND if(
@@ -646,6 +648,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
             **self.params,
             "user_trace_ids": tuple(trace_ids),
         }
+        span_window = self._span_time_window(params)
 
         query = f"""
         SELECT trace_id, user_id
@@ -659,6 +662,7 @@ class TraceListQueryBuilder(BaseQueryBuilder):
               AND _peerdb_is_deleted = 0
               AND end_user_id IS NOT NULL
               AND end_user_id != toUUID('00000000-0000-0000-0000-000000000000')
+              {span_window}
             GROUP BY trace_id
         )
         WHERE user_id != ''
