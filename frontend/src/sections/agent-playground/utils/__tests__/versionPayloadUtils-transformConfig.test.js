@@ -1,6 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { buildVersionPayload } from "../versionPayloadUtils";
+import { NODE_TYPES } from "../constants";
 import { createPromptNode } from "./fixtures";
+
+const responseSchema = {
+  type: "object",
+  properties: {
+    answer: { type: "string" },
+  },
+  required: ["answer"],
+};
 
 // ---------------------------------------------------------------------------
 // Additional tests for buildPromptTemplateForApi (exercised through buildVersionPayload)
@@ -72,6 +81,186 @@ describe("buildPromptTemplateForApi – via buildVersionPayload", () => {
     expect(pt.tools).toEqual([{ name: "search" }]);
     expect(pt.response_format).toBe("json_object");
     expect(pt.tool_choice).toBe("auto");
+  });
+
+  it("preserves imported output, template format, and response schema in prompt_template", () => {
+    const nodes = [
+      createPromptNode("p1", {
+        config: {
+          prompt_template_id: null,
+          prompt_version_id: null,
+          outputFormat: "json",
+          templateFormat: "jinja",
+          modelConfig: {
+            model: "gpt-4o-mini",
+            modelDetail: { model_name: "gpt-4o-mini", providers: "openai" },
+            responseFormat: "json_schema",
+            responseSchema,
+            toolChoice: "required",
+            tools: [{ name: "lookup" }],
+          },
+          messages: [
+            { role: "user", content: [{ type: "text", text: "Hello" }] },
+          ],
+          payload: {
+            promptConfig: [
+              {
+                configuration: {
+                  maxTokens: 256,
+                  topP: 0.8,
+                  response_schema: responseSchema,
+                  output_format: "json",
+                  template_format: "jinja",
+                },
+              },
+            ],
+            ports: [],
+          },
+        },
+      }),
+    ];
+
+    const result = buildVersionPayload(nodes, []);
+    const pt = result.nodes[0].prompt_template;
+
+    expect(pt.prompt_template_id).toBeNull();
+    expect(pt.prompt_version_id).toBeNull();
+    expect(pt.response_format).toBe("json_schema");
+    expect(pt.response_schema).toEqual(responseSchema);
+    expect(pt.output_format).toBe("json");
+    expect(pt.template_format).toBe("jinja");
+    expect(pt.max_tokens).toBe(256);
+    expect(pt.top_p).toBe(0.8);
+    expect(pt.tool_choice).toBe("required");
+    expect(pt.tools).toEqual([{ name: "lookup" }]);
+  });
+
+  it("preserves detached imported prompt config from _initialConfig during draft creation", () => {
+    const nodes = [
+      {
+        id: "p1",
+        type: NODE_TYPES.LLM_PROMPT,
+        position: { x: 0, y: 0 },
+        data: {
+          label: "Imported Library Prompt",
+          node_template_id: "tpl-prompt",
+          config: {
+            prompt_template_id: null,
+            prompt_version_id: null,
+          },
+          _initialConfig: {
+            prompt_template_id: null,
+            prompt_version_id: null,
+            outputFormat: "string",
+            templateFormat: "jinja",
+            modelConfig: {
+              model: "gpt-4o-mini",
+              modelDetail: {
+                modelName: "gpt-4o-mini",
+                providers: "openai",
+              },
+              responseFormat: "text",
+              responseSchema: null,
+              toolChoice: "auto",
+              tools: [],
+            },
+            messages: [
+              {
+                role: "user",
+                content: [{ type: "text", text: "Hello {{topic}}" }],
+              },
+            ],
+            payload: {
+              promptConfig: [
+                {
+                  configuration: {
+                    output_format: "string",
+                    template_format: "jinja",
+                    temperature: 0.1,
+                  },
+                },
+              ],
+              ports: [],
+            },
+          },
+        },
+      },
+    ];
+
+    const result = buildVersionPayload(nodes, []);
+    const pt = result.nodes[0].prompt_template;
+
+    expect(pt).toMatchObject({
+      prompt_template_id: null,
+      prompt_version_id: null,
+      model: "gpt-4o-mini",
+      output_format: "string",
+      template_format: "jinja",
+      temperature: 0.1,
+      save_prompt_version: false,
+    });
+    expect(pt.messages).toEqual([
+      {
+        id: undefined,
+        role: "user",
+        content: [{ type: "text", text: "Hello {{topic}}" }],
+      },
+    ]);
+  });
+
+  it("serializes model-less imported templates with messages instead of dropping them", () => {
+    const nodes = [
+      createPromptNode("p1", {
+        config: {
+          prompt_template_id: null,
+          prompt_version_id: null,
+          outputFormat: "string",
+          templateFormat: "jinja",
+          modelConfig: {
+            model: "",
+            modelDetail: {},
+            responseFormat: "text",
+            toolChoice: "auto",
+            tools: [],
+          },
+          messages: [
+            { role: "user", content: [{ type: "text", text: "Choose model" }] },
+          ],
+          payload: {
+            promptConfig: [
+              {
+                configuration: {
+                  template_format: "jinja",
+                  output_format: "string",
+                },
+              },
+            ],
+            ports: [],
+          },
+        },
+      }),
+    ];
+
+    const result = buildVersionPayload(nodes, []);
+    const pt = result.nodes[0].prompt_template;
+
+    expect(pt).toMatchObject({
+      prompt_template_id: null,
+      prompt_version_id: null,
+      model: null,
+      model_detail: {},
+      response_format: "text",
+      output_format: "string",
+      template_format: "jinja",
+      save_prompt_version: false,
+    });
+    expect(pt.messages).toEqual([
+      {
+        id: undefined,
+        role: "user",
+        content: [{ type: "text", text: "Choose model" }],
+      },
+    ]);
   });
 
   it("includes variable_names indirectly via model and messages", () => {

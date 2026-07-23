@@ -1,7 +1,7 @@
 import { getRandomId } from "src/utils/utils";
 import {
   normalizeResponseFormat,
-  extractResponseSchema,
+  resolveResponseSchema,
 } from "../AgentBuilder/NodeDrawer/nodeFormUtils";
 
 // Agent builder has no attachment upload and can't surface media, so drop
@@ -23,15 +23,22 @@ export function mapVersionToFormConfig(version) {
   const snapshot = version?.prompt_config_snapshot;
   const cfg = snapshot?.configuration || {};
 
+  const templateFormat =
+    cfg.template_format || snapshot?.template_format || "mustache";
+
   return {
     outputFormat: cfg.output_format || snapshot?.output_format || "string",
+    templateFormat,
     modelConfig: {
       model: cfg.model || "",
       modelDetail: cfg.model_detail || {},
       toolChoice: cfg.tool_choice || "auto",
       tools: cfg.tools || [],
       responseFormat: normalizeResponseFormat(cfg.response_format),
-      responseSchema: extractResponseSchema(cfg.response_format),
+      responseSchema: resolveResponseSchema(
+        cfg.response_format,
+        cfg.response_schema,
+      ),
     },
     messages: (() => {
       const msgs = (snapshot?.messages || []).map((m) => ({
@@ -64,6 +71,10 @@ export function mapVersionToFormConfig(version) {
             topP: cfg.top_p,
             frequencyPenalty: cfg.frequency_penalty,
             presencePenalty: cfg.presence_penalty,
+            ...(cfg.response_schema && {
+              response_schema: cfg.response_schema,
+            }),
+            template_format: templateFormat,
             ...(cfg.reasoning && { reasoning: cfg.reasoning }),
           },
         },

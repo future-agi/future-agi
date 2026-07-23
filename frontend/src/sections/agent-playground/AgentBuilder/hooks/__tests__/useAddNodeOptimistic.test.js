@@ -181,6 +181,154 @@ describe("useAddNodeOptimistic", () => {
     });
   });
 
+  it("draft path: persists full seeded LLM prompt config in addNodeApi payload", async () => {
+    mockEnsureDraft.mockResolvedValue("existing-draft");
+    mockAddOptimisticNode.mockReturnValue(defaultOptimisticResult);
+    mockGetNodeById.mockReturnValue({ id: "node-123", type: "llm_prompt" });
+
+    const libraryPromptConfig = {
+      prompt_template_id: null,
+      prompt_version_id: null,
+      outputFormat: "json",
+      templateFormat: "jinja",
+      modelConfig: {
+        model: "gpt-4o-mini",
+        modelDetail: { model_name: "gpt-4o-mini", providers: "openai" },
+        responseFormat: "text",
+        toolChoice: "auto",
+        tools: [{ name: "search" }],
+      },
+      messages: [
+        {
+          id: "msg-user",
+          role: "user",
+          content: [
+            { type: "text", text: "Describe this image" },
+            {
+              type: "image_url",
+              image_url: { url: "https://example.com/image.png" },
+            },
+          ],
+        },
+      ],
+      payload: {
+        promptConfig: [
+          {
+            configuration: {
+              temperature: 0.2,
+              max_tokens: 512,
+              top_p: 0.9,
+              frequency_penalty: 0.1,
+              presence_penalty: 0.3,
+              output_format: "json",
+              template_format: "jinja",
+              tools: [{ name: "search" }],
+              tool_choice: "auto",
+            },
+          },
+        ],
+      },
+    };
+
+    const { result } = renderHook(() => useAddNodeOptimistic());
+
+    await act(async () => {
+      await result.current.addNode({
+        ...defaultPayload,
+        sourceNodeId: undefined,
+        config: libraryPromptConfig,
+      });
+    });
+
+    expect(addNodeApi).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          prompt_template: expect.objectContaining({
+            prompt_template_id: null,
+            prompt_version_id: null,
+            model: "gpt-4o-mini",
+            model_detail: {
+              model_name: "gpt-4o-mini",
+              providers: "openai",
+            },
+            response_format: "text",
+            output_format: "json",
+            temperature: 0.2,
+            max_tokens: 512,
+            top_p: 0.9,
+            frequency_penalty: 0.1,
+            presence_penalty: 0.3,
+            tools: [{ name: "search" }],
+            tool_choice: "auto",
+            template_format: "jinja",
+            save_prompt_version: false,
+            messages: [
+              {
+                id: "msg-user",
+                role: "user",
+                content: [
+                  { type: "text", text: "Describe this image" },
+                  {
+                    type: "image_url",
+                    image_url: { url: "https://example.com/image.png" },
+                  },
+                ],
+              },
+            ],
+          }),
+        }),
+      }),
+    );
+  });
+
+  it("draft path: derives JSON output port schema from prompt config", async () => {
+    const responseSchema = {
+      type: "object",
+      properties: { answer: { type: "string" } },
+    };
+
+    mockEnsureDraft.mockResolvedValue("existing-draft");
+    mockAddOptimisticNode.mockReturnValue({
+      ...defaultOptimisticResult,
+      ports: [
+        {
+          id: "port-response",
+          key: "response",
+          display_name: "response",
+          direction: "output",
+          data_schema: { type: "string" },
+          required: true,
+        },
+      ],
+    });
+    mockGetNodeById.mockReturnValue({ id: "node-123", type: "llm_prompt" });
+
+    const { result } = renderHook(() => useAddNodeOptimistic());
+
+    await act(async () => {
+      await result.current.addNode({
+        ...defaultPayload,
+        config: {
+          outputFormat: "json",
+          modelConfig: { responseSchema },
+        },
+      });
+    });
+
+    expect(addNodeApi).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          ports: [
+            expect.objectContaining({
+              key: "response",
+              data_schema: responseSchema,
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+
   it("draft path: syncs optimistic edge ID from snake_case node_connection response", async () => {
     mockEnsureDraft.mockResolvedValue("existing-draft");
     mockAddOptimisticNode.mockReturnValue(defaultOptimisticResult);
