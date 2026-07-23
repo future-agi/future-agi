@@ -1,0 +1,35 @@
+# Conventional-commit PR titles feed release-please's notes; this makes the
+# format a merge gate. Skips bot PRs and the dev->main release PR (whose title
+# is a release name, not a commit).
+name: pr-title-lint
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [dev, main]
+
+permissions:
+  pull-requests: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    if: >-
+      !startsWith(github.head_ref, 'release-please--') &&
+      !(github.head_ref == 'dev' && github.base_ref == 'main')
+    steps:
+      - uses: amannn/action-semantic-pull-request@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            chore
+            docs
+            refactor
+            test
+            perf
+            ci
+            revert
+          requireScope: false
