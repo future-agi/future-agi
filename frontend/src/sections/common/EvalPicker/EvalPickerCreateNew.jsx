@@ -651,7 +651,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
       (evalType === "code"
         ? code.trim()
         : instructions.trim() && !needsTemplateVariable) &&
-      (source === "composite" || sourceReady);
+      (source === "composite" || sourceReady || hasDataInjection);
 
   const getDisabledReason = () => {
     if (!name.trim()) return "Name is required";
@@ -1318,7 +1318,7 @@ const EvalPickerCreateNew = ({ onBack, onSave }) => {
             </Typography>
           </Box>
         )}
-        {!sourceReady && !testError && !testPassed && (
+        {!sourceReady && !hasDataInjection && !testError && !testPassed && (
           <Typography
             variant="caption"
             color="text.secondary"
