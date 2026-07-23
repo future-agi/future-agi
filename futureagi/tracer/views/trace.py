@@ -70,7 +70,6 @@ from tracer.serializers.trace import (
     UsersQuerySerializer,
     UsersResponseSerializer,
 )
-from tracer.services.clickhouse.eval_logger_table import eval_logger_source
 from tracer.services.clickhouse.graph_dispatch import (
     fetch_annotation_graph_ch,
     fetch_eval_graph_ch,
@@ -82,9 +81,6 @@ from tracer.services.clickhouse.query_builders import (
 )
 from tracer.services.clickhouse.query_builders.base import NIL_UUID
 from tracer.services.clickhouse.query_service import AnalyticsQueryService
-from tracer.services.clickhouse.v2.query_builders.user_list import (
-    UserListQueryBuilderV2,
-)
 from tracer.services.clickhouse.v2.span_selectors import (
     flatten_span_attributes_into_entry,
     merge_content_rows,
@@ -571,13 +567,22 @@ def _simulation_context_for_voice_call(
 
 
 def _build_annotation_map_from_scores(
-    trace_ids, annotation_label_ids, label_types, span_trace_map=None
+    trace_ids,
+    annotation_label_ids,
+    label_types,
+    span_trace_map=None,
+    project_id=None,
+    start_date=None,
+    end_date=None,
 ):
     """Fetch annotation values from PG Score table and build annotation_map.
 
     Always reads from PG to guarantee read-after-write consistency —
     annotations are written to PG first and CDC replication to ClickHouse
     may lag, causing newly created annotations to be invisible.
+
+    ``project_id``/``start_date``/``end_date`` scope the span->trace CH
+    lookup when this builds the map itself (span_trace_map not supplied).
 
     Returns:
         Dict mapping trace_id -> label_id -> structured annotation data
@@ -588,7 +593,12 @@ def _build_annotation_map_from_scores(
     if span_trace_map is None:
         from tracer.services.clickhouse.query_service import AnalyticsQueryService
 
-        span_trace_map = AnalyticsQueryService().get_span_trace_map(trace_ids)
+        span_trace_map = AnalyticsQueryService().get_span_trace_map(
+            trace_ids,
+            project_id=project_id,
+            start_date=start_date,
+            end_date=end_date,
+        )
     return _build_annotation_map_from_scores_pg(
         trace_ids, annotation_label_ids, label_types, span_trace_map
     )
@@ -3546,6 +3556,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     content_query, content_params, timeout_ms=10000
                 )
                 content_rows = content_result.data
+                # Every in-window trace has a root span, so a shortfall means
+                # spans fell outside the 1-day window buffer (a trace running
+                # longer than the buffer, clock skew, or backfilled
+                # timestamps) and enrichment silently dropped them.
+                if len(content_rows) < len(trace_ids):
+                    logger.warning(
+                        "trace content enrichment returned fewer traces than requested",
+                        returned=len(content_rows),
+                        requested=len(trace_ids),
+                        project_id=str(project_id) if project_id else None,
+                    )
         content_map = merge_content_rows(
             result.data,
             content_rows,
@@ -3589,7 +3610,19 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 )
 
         # Phase 3: Annotations — PG values, span->trace resolved via CH.
-        span_trace_map = analytics.get_span_trace_map(trace_ids) if trace_ids else {}
+        # In org-scoped mode the page spans multiple projects, so scope the
+        # map on the window only (a single project_id would drop other
+        # projects' spans).
+        span_trace_map = (
+            analytics.get_span_trace_map(
+                trace_ids,
+                project_id=None if org_scope else str(project_id),
+                start_date=builder.params.get("start_date"),
+                end_date=builder.params.get("end_date"),
+            )
+            if trace_ids and annotation_label_ids
+            else {}
+        )
         annotation_map = _build_annotation_map_from_scores(
             trace_ids, annotation_label_ids, label_types, span_trace_map
         )
@@ -3876,7 +3909,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Phase 3: Annotations — fetch from PG Score (unified annotation system)
         annotation_map = _build_annotation_map_from_scores(
-            trace_ids, annotation_label_ids, label_types
+            trace_ids,
+            annotation_label_ids,
+            label_types,
+            project_id=str(project_id),
+            start_date=builder.params.get("start_date"),
+            end_date=builder.params.get("end_date"),
         )
 
         # Phase 4 (child spans) removed — observation_span is a detail-only field.
@@ -4242,7 +4280,12 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
 
         # Phase 3: Annotations — fetch from PG Score (unified annotation system)
         annotation_map = _build_annotation_map_from_scores(
-            trace_ids, annotation_label_ids, label_types
+            trace_ids,
+            annotation_label_ids,
+            label_types,
+            project_id=str(project_id),
+            start_date=builder.params.get("start_date"),
+            end_date=builder.params.get("end_date"),
         )
 
         user_id_map = builder.resolve_user_ids(trace_ids, analytics)

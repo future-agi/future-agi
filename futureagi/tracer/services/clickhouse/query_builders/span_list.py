@@ -334,6 +334,10 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         """Fetch input/output + typed attr maps for a page of span IDs."""
         if not span_ids:
             return "", {}
+        if "start_date" not in self.params or "end_date" not in self.params:
+            start_date, end_date = self.parse_time_range(self.filters)
+            self.params["start_date"] = start_date
+            self.params["end_date"] = end_date
         params = {**self.params, "content_span_ids": tuple(span_ids)}
         query = f"""
         SELECT id, input, output, attributes_extra,
@@ -343,6 +347,8 @@ class SpanListQueryBuilder(BaseQueryBuilder):
         FROM {self.TABLE}
         PREWHERE id IN %(content_span_ids)s
         WHERE {self.project_filter_sql()} AND is_deleted = 0
+          AND start_time >= %(start_date)s - INTERVAL 1 DAY
+          AND start_time < %(end_date)s + INTERVAL 1 DAY
         """
         return query, params
 
