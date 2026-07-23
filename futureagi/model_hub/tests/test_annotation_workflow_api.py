@@ -287,7 +287,8 @@ def allow_queue_creation_entitlement():
             entitlements_available = (
                 importlib.util.find_spec("ee.usage.services.entitlements") is not None
             )
-        except ModuleNotFoundError:
+        except (ModuleNotFoundError, ValueError):
+            # ValueError: OSS stub has __spec__=None; see test_annotation_advanced_api.py.
             entitlements_available = False
 
         if entitlements_available:
@@ -2204,7 +2205,14 @@ class TestReviewItem:
         second_user,
         organization,
     ):
-        if importlib.util.find_spec("ee.usage.services.entitlements") is None:
+        try:
+            ee_present = (
+                importlib.util.find_spec("ee.usage.services.entitlements") is not None
+            )
+        except (ModuleNotFoundError, ValueError):
+            # ValueError: OSS stub has __spec__=None; see test_annotation_advanced_api.py.
+            ee_present = False
+        if not ee_present:
             pytest.skip("Enterprise entitlement module is not available.")
 
         queue_id, item_ids, label = queue_with_items
