@@ -966,11 +966,12 @@ class EvaluationRunner:
         """
         cache_key = (id(getattr(self, "eval_template", None)),
                      id(getattr(self, "_resolved_version", None)))
+        cached = getattr(self, "_effective_config_cache", None)
         if (
-            self._effective_config_cache is not None
-            and self._effective_config_cache_key == cache_key
+            cached is not None
+            and getattr(self, "_effective_config_cache_key", None) == cache_key
         ):
-            return self._effective_config_cache
+            return cached
 
         template_config = getattr(self.eval_template, "config", None) or {}
         effective_config = (
