@@ -2,6 +2,7 @@
 status, reusing the per-target_type eval core. Engine + cost are stubbed."""
 
 import uuid
+from unittest.mock import patch
 
 import pytest
 
@@ -12,7 +13,7 @@ from tracer.models.observation_span import (
     ObservationSpan,
 )
 from tracer.models.trace_session import TraceSession
-from tracer.services.eval_tasks.run_entry import run_entry
+from tracer.services.eval_tasks.run_entry import _reseed_eval_clustering, run_entry
 from tracer.tests._ch_seed import seed_ch_span, seed_ch_trace_sessions
 
 _TERMINAL = {
@@ -50,6 +51,54 @@ class TestRunEntrySpan:
         assert entry.status == EvalEntryStatus.COMPLETED
         assert entry.config_hash and len(entry.config_hash) == 64
         assert entry.error is False
+
+    def test_completed_dispatches_clustering(
+        self,
+        observation_span,
+        custom_eval_config,
+        eval_task,
+        stub_run_eval,
+        stub_cost_log,
+    ):
+        """Reaching COMPLETED must invoke the clustering hook — the exact seam
+        the TH-5978 cutover severed. The hook's own fail/pass logic is unit-
+        tested in TestReseedEvalClusteringHook; this pins the *wiring* so
+        deleting the call from run_entry fails a test instead of silently
+        re-orphaning the trigger."""
+        entry = _span_entry(eval_task, observation_span, custom_eval_config)
+        with patch(
+            "tracer.services.eval_tasks.run_entry._reseed_eval_clustering"
+        ) as reseed:
+            assert run_entry(entry) == EvalEntryStatus.COMPLETED
+        reseed.assert_called_once()
+        assert reseed.call_args.args[0].id == entry.id
+        assert reseed.call_args.args[1] == custom_eval_config.project_id
+
+    def test_errored_run_does_not_dispatch_clustering(
+        self,
+        monkeypatch,
+        observation_span,
+        custom_eval_config,
+        eval_task,
+        stub_cost_log,
+    ):
+        """A run that ERRORED produced no eval result, so the hook must not
+        fire. Pins the COMPLETED-only gate against an accidental move of the
+        dispatch out of the status guard."""
+        entry = _span_entry(eval_task, observation_span, custom_eval_config)
+
+        def _boom(*a, **k):
+            raise RuntimeError("engine down")
+
+        monkeypatch.setattr("evaluations.engine.run_eval", _boom, raising=False)
+        monkeypatch.setattr(
+            "evaluations.engine.runner.run_eval", _boom, raising=False
+        )
+        with patch(
+            "tracer.services.eval_tasks.run_entry._reseed_eval_clustering"
+        ) as reseed:
+            assert run_entry(entry) == EvalEntryStatus.ERRORED
+        reseed.assert_not_called()
 
     def test_errored_when_engine_raises(
         self,
@@ -140,6 +189,58 @@ class TestRunEntryTraceAndSession:
         assert run_entry(entry) in _TERMINAL
         entry.refresh_from_db()
         assert entry.status in _TERMINAL  # dispatch ran end-to-end
+
+
+_APPLY_ASYNC = "tracer.tasks.eval_clustering.cluster_eval_results_task.apply_async"
+_PID = "11111111-1111-1111-1111-111111111111"
+
+
+@pytest.mark.unit
+class TestReseedEvalClusteringHook:
+    """The clustering trigger. This is the exact link the TH-5978 cutover
+    orphaned; an untested trigger is what let the regression ship silently."""
+
+    def test_dispatches_on_failure(self):
+        entry = EvalLogger(
+            target_type=EvalTargetType.SPAN, output_bool=False, eval_explanation="bad"
+        )
+        with patch(_APPLY_ASYNC) as m:
+            _reseed_eval_clustering(entry, _PID)
+        m.assert_called_once()
+        assert m.call_args.kwargs["task_id"] == f"eval-cluster-{_PID}"
+
+    def test_dispatches_on_float_below_one(self):
+        entry = EvalLogger(
+            target_type=EvalTargetType.SPAN, output_float=0.4, eval_explanation="meh"
+        )
+        with patch(_APPLY_ASYNC) as m:
+            _reseed_eval_clustering(entry, _PID)
+        m.assert_called_once()
+
+    def test_no_dispatch_on_pass(self):
+        entry = EvalLogger(
+            target_type=EvalTargetType.SPAN, output_bool=True, eval_explanation="good"
+        )
+        with patch(_APPLY_ASYNC) as m:
+            _reseed_eval_clustering(entry, _PID)
+        m.assert_not_called()
+
+    def test_no_dispatch_without_explanation(self):
+        entry = EvalLogger(
+            target_type=EvalTargetType.SPAN, output_bool=False, eval_explanation=""
+        )
+        with patch(_APPLY_ASYNC) as m:
+            _reseed_eval_clustering(entry, _PID)
+        m.assert_not_called()
+
+    def test_dispatch_failure_is_swallowed(self):
+        """A clustering-dispatch hiccup must never fail an eval that already
+        produced a result (fail-open)."""
+        entry = EvalLogger(
+            target_type=EvalTargetType.SPAN, output_bool=False, eval_explanation="bad"
+        )
+        with patch(_APPLY_ASYNC, side_effect=RuntimeError("temporal down")):
+            _reseed_eval_clustering(entry, _PID)  # must not raise
 
     def test_session_dispatch_reaches_terminal(
         self,
