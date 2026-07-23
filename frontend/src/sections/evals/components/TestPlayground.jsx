@@ -52,6 +52,9 @@ import {
 
 const SOURCE_TABS = ["Dataset", "Tracing", "Simulation", "Custom"];
 
+// Stable default so an omitted `requiredKeys` doesn't remint an array each render.
+const NO_REQUIRED_KEYS = [];
+
 const camelizeKey = (key = "") =>
   key.replace(/_([a-z])/g, (_, char) => char.toUpperCase());
 
@@ -143,48 +146,67 @@ const CustomJsonInput = ({
     });
   }, [variables, jsonKeys]);
 
-  // Sync JSON keys with variables - add new ones, remove stale ones
+  // Sync the scaffold with the variables without clobbering what the user is typing.
+  const prevVarsRef = useRef(null);
   useEffect(() => {
-    // Parse current JSON
-    let current = {};
+    const prev = prevVarsRef.current;
+    const varsChanged =
+      prev === null ||
+      prev.length !== variables.length ||
+      !prev.every((v, i) => v === variables[i]);
+
+    let current;
     try {
-      current = JSON.parse(jsonText);
+      current = JSON.parse(jsonText || "{}");
     } catch {
-      /* keep empty */
+      return; // invalid / mid-edit — leave the user's text alone
+    }
+    if (
+      typeof current !== "object" ||
+      current === null ||
+      Array.isArray(current)
+    ) {
+      return;
     }
 
     const varSet = new Set(variables);
-
-    // Remove keys that are no longer in variables (only if their value is empty)
+    const prevSet = new Set(prev || []);
+    const updated = { ...current };
     let changed = false;
-    const updated = {};
-    for (const [k, v] of Object.entries(current)) {
-      if (!varSet.has(k) && (v === "" || v === null || v === undefined)) {
-        changed = true; // drop this stale key
-      } else {
-        updated[k] = v;
+
+    // Drop a removed variable's empty field only — never a user's key.
+    if (varsChanged) {
+      for (const k of Object.keys(updated)) {
+        if (
+          !varSet.has(k) &&
+          prevSet.has(k) &&
+          (updated[k] === "" || updated[k] === null || updated[k] === undefined)
+        ) {
+          delete updated[k];
+          changed = true;
+        }
       }
     }
 
-    // Add new variables that aren't already in the JSON
+    // Add any missing variable field.
     variables.forEach((v) => {
-      updated[v] = v in current ? current[v] : inputValues[v] || "";
-      if (!(v in current)) changed = true;
+      if (!(v in updated)) {
+        updated[v] = inputValues[v] || "";
+        changed = true;
+      }
     });
 
-    // Check if any old keys were removed
-    for (const key of Object.keys(current)) {
-      if (!varSet.has(key)) {
-        changed = true;
-        break;
-      }
-    }
+    prevVarsRef.current = variables;
 
     if (changed) {
-      const keys = Object.keys(updated);
-      setJsonText(keys.length > 0 ? JSON.stringify(updated, null, 2) : "{\n}");
+      setJsonText(
+        Object.keys(updated).length > 0
+          ? JSON.stringify(updated, null, 2)
+          : "{\n}",
+      );
+      setJsonError(null);
     }
-  }, [variables]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [variables, jsonText]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Parse JSON and update individual input values
   const handleJsonChange = useCallback(
@@ -638,7 +660,7 @@ const TestPlayground = React.forwardRef(
       evalName = "",
       evalType,
       model = "turing_large",
-      requiredKeys = [],
+      requiredKeys = NO_REQUIRED_KEYS,
       showVersions,
       onTestResult,
       onColumnsLoaded,
@@ -682,7 +704,7 @@ const TestPlayground = React.forwardRef(
 
     const { role } = useAuthContext();
     const canEditEvals = Boolean(
-      RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role]
+      RolePermission.EVALS[PERMISSIONS.EDIT_CREATE_DELETE_EVALS]?.[role],
     );
 
     // Version hover menu state
@@ -698,8 +720,7 @@ const TestPlayground = React.forwardRef(
       if (!list.length) return;
       if (urlVersionParam) {
         const match = list.find(
-      ver =>
-            String(ver.version_number) === String(urlVersionParam),
+          (ver) => String(ver.version_number) === String(urlVersionParam),
         );
         if (match && match.id !== selectedVersionId) {
           setSelectedVersionId(match.id);
@@ -871,7 +892,6 @@ const TestPlayground = React.forwardRef(
       Simulation: false,
     });
 
-
     const handleDatasetReady = useCallback(
       (isReady, mapping) => {
         setTabReady((prev) =>
@@ -901,7 +921,7 @@ const TestPlayground = React.forwardRef(
       },
       [onReadyChange],
     );
-  useEffect(() => {
+    useEffect(() => {
       if (!onReadyChange) return;
       onReadyChange(!!tabReady[activeTab]);
     }, [activeTab, tabReady, onReadyChange]);
