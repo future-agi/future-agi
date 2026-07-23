@@ -24,6 +24,7 @@ from model_hub.models.annotation_queues import (
 )
 from model_hub.models.choices import AnnotationQueueStatusChoices, AnnotatorRole
 from model_hub.models.develop_annotations import AnnotationsLabels
+from tracer.models.custom_eval_config import CustomEvalConfig
 from model_hub.serializers.scores import ScoreSerializer
 from model_hub.utils.annotation_queue_helpers import (
     FIELD_MAPPING,
@@ -103,6 +104,11 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
     viewer_roles = serializers.SerializerMethodField()
     viewer_role = serializers.SerializerMethodField()
     deleted = serializers.BooleanField(read_only=True)
+    custom_eval_config = serializers.PrimaryKeyRelatedField(
+        queryset=CustomEvalConfig.objects.all(),
+        required=False,
+        allow_null=True,
+    )
 
     class Meta:
         model = AnnotationQueue
@@ -121,6 +127,7 @@ class AnnotationQueueSerializer(serializers.ModelSerializer):
             "project",
             "dataset",
             "agent_definition",
+            "custom_eval_config",
             "is_default",
             "labels",
             "annotators",

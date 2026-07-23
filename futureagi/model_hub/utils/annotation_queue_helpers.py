@@ -4,7 +4,7 @@ from typing import Any, TypedDict
 import structlog
 from django.core.exceptions import ObjectDoesNotExist
 from django.db import DatabaseError
-from django.db.models import DateTimeField, F, FloatField, Q
+from django.db.models import DateTimeField, F, FloatField, OuterRef, Q, Subquery
 from django.db.models.functions import Cast
 
 from model_hub.constants import ANNOTATION_LABEL_VALUE_KEYS
@@ -1733,6 +1733,209 @@ def calculate_agreement(queue):
         "overall_agreement": round(overall, 3) if overall is not None else None,
         "labels": label_results,
         "annotator_pairs": annotator_pairs,
+        "judge_vs_human": _calculate_judge_human_agreement(queue),
+    }
+
+
+def _normalize_eval_output(row, output_type):
+    """Extract and normalise an EvalLogger row value into a human-readable string
+    so it can be compared against annotation scores.
+
+    ``output_type`` is the ``output_type_normalized`` value from the evaluator's
+    template (``pass_fail``, ``percentage``, or ``deterministic``).
+    """
+    if output_type == "pass_fail":
+        val = row.get("output_bool")
+        if val is None:
+            return None
+        return "pass" if val else "fail"
+    elif output_type == "percentage":
+        val = row.get("output_float")
+        if val is None:
+            return None
+        return str(round(float(val), 2))
+    else:
+        val = row.get("output_str")
+        if val is not None:
+            return val
+        str_list = row.get("output_str_list")
+        if str_list is not None:
+            return str(str_list)
+        return None
+
+
+def _majority_value(values):
+    """Return the strict-majority value from a list of annotation values,
+    or ``None`` when there is a tie (no annotator value appears more often
+    than the others).
+
+    Normalises each value through ``_normalize_value`` first so dicts,
+    lists and scalars all compare consistently.  Returns the *original*
+    value (not the normalised form) so the caller can pass it through
+    ``_normalize_value`` for comparison like any other annotation value.
+    """
+    if not values:
+        return None
+    from collections import Counter
+
+    # One annotator → no tie possible.
+    if len(values) == 1:
+        return values[0]
+
+    normalized = [_normalize_value(v) for v in values]
+    top_two = Counter(normalized).most_common(2)
+    # If the top two values have the same count there is no true majority.
+    if len(top_two) >= 2 and top_two[0][1] == top_two[1][1]:
+        return None
+    # Map the winning normalised value back to its first original.
+    winner = top_two[0][0]
+    for orig_val, norm_val in zip(values, normalized):
+        if norm_val == winner:
+            return orig_val
+    return values[0]
+
+
+def _calculate_judge_human_agreement(queue):
+    """Calculate agreement between the evaluator linked to *queue* and the
+    human annotators across the queue's trace and observation-span sourced
+    items.
+
+    Returns ``None`` when no evaluator is linked or no overlapping data
+    exists so the caller can distinguish "not configured" from "0 %
+    agreement".
+    """
+    if queue.custom_eval_config_id is None:
+        return None
+
+    from collections import defaultdict
+
+    from model_hub.models.score import Score
+    from tracer.models.observation_span import EvalLogger
+
+    # Only observation_span-sourced items carry a direct FK to the span
+    # that EvalLogger rows reference.  Trace-, dataset-, and other sources
+    # need a different join path (e.g. trace → children spans) not yet
+    # implemented.
+    item_rows = list(
+        queue.items.filter(
+            deleted=False,
+            source_type=QueueItemSourceType.OBSERVATION_SPAN.value,
+            observation_span_id__isnull=False,
+        ).values_list("id", "observation_span_id")
+    )
+
+    if not item_rows:
+        return None
+
+    # Build both the span-id list (for the EvalLogger query) and the
+    # item→span map (for joining human scores) from a single pass.
+    span_ids = []
+    item_span_map: dict[str, str] = {}
+    for item_id, obs_span_id in item_rows:
+        sid = str(obs_span_id)
+        span_ids.append(sid)
+        item_span_map[str(item_id)] = sid
+
+    # One latest non-error eval row per span, filtered to the linked config.
+    latest_eval = EvalLogger.objects.filter(
+        observation_span_id=OuterRef("observation_span_id"),
+        custom_eval_config_id=queue.custom_eval_config_id,
+        error=False,
+        deleted=False,
+    ).order_by("-created_at")
+
+    eval_rows = EvalLogger.objects.filter(
+        id=Subquery(latest_eval.values("id")[:1]),
+        observation_span_id__in=span_ids,
+        deleted=False,
+    ).values(
+        "observation_span_id",
+        "output_bool",
+        "output_float",
+        "output_str",
+        "output_str_list",
+    )
+
+    output_type = queue.custom_eval_config.eval_template.output_type_normalized
+    eval_map = {}
+    for row in eval_rows:
+        sid = str(row["observation_span_id"])
+        eval_map[sid] = _normalize_eval_output(row, output_type)
+
+    # Human scores for those items (any annotator, per-label majority).
+    human_scores = Score.objects.filter(
+        queue_item_id__in=list(item_span_map.keys()),
+        deleted=False,
+    ).values(
+        "queue_item_id",
+        "label_id",
+        "label__name",
+        "label__type",
+        "value",
+    )
+
+    item_label_human = defaultdict(list)
+    label_info = {}
+    for s in human_scores:
+        key = (s["queue_item_id"], s["label_id"])
+        item_label_human[key].append(s["value"])
+        if s["label_id"] not in label_info:
+            label_info[s["label_id"]] = {
+                "name": s["label__name"],
+                "type": s["label__type"],
+            }
+
+    # Per-label judge-vs-human agreement.  Accumulate agree / total here
+    # so the overall summary is derived from the same loop, not recomputed
+    # from rounded percentages.
+    label_results = {}
+    all_agree = 0
+    all_total = 0
+    for label_id, info in label_info.items():
+        agree = 0
+        total = 0
+        for (qi_id, lid), human_vals in item_label_human.items():
+            if lid != label_id:
+                continue
+            span_id = item_span_map.get(str(qi_id))
+            eval_val = eval_map.get(span_id)
+            if eval_val is None:
+                continue
+            human_majority = _majority_value(human_vals)
+            # Skip when annotators are tied — without a clear human
+            # position there is nothing for the judge to be compared with.
+            if human_majority is None:
+                continue
+            total += 1
+            if _normalize_value(eval_val) == _normalize_value(human_majority):
+                agree += 1
+
+        all_agree += agree
+        all_total += total
+
+        label_results[str(label_id)] = {
+            "label_name": info["name"],
+            "label_type": info["type"],
+            "judge_human_agreement": (
+                round(agree / total, 3) if total > 0 else None
+            ),
+            "total_comparisons": total,
+        }
+
+    overall = all_agree / all_total if all_total > 0 else None
+
+    evaluator_name = (
+        queue.custom_eval_config.name
+        or queue.custom_eval_config.eval_template.name
+    )
+
+    return {
+        "evaluator_name": evaluator_name,
+        "overall_agreement": (
+            round(overall, 3) if overall is not None else None
+        ),
+        "total_comparisons": int(all_total),
+        "labels": label_results,
     }
 
 
