@@ -9,7 +9,7 @@ import asyncio
 import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from typing import Optional
+from typing import Any, Optional
 
 from temporalio.worker import ResourceBasedSlotConfig, Worker, WorkerTuner
 
@@ -34,6 +34,7 @@ async def run_worker(
     target_memory_usage: Optional[float] = None,
     target_cpu_usage: Optional[float] = None,
     skip_otel_init: bool = False,
+    workflow_runner: Any | None = None,
 ) -> None:
     """
     Run a Temporal worker for the specified task queue.
@@ -162,6 +163,8 @@ async def run_worker(
         "max_heartbeat_throttle_interval": timedelta(seconds=5),
         "interceptors": [SentryInterceptor()],
     }
+    if workflow_runner is not None:
+        worker_kwargs["workflow_runner"] = workflow_runner
 
     if graceful_shutdown_timeout:
         worker_kwargs["graceful_shutdown_timeout"] = graceful_shutdown_timeout

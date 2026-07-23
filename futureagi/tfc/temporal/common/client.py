@@ -284,6 +284,18 @@ def signal_workflow_sync(workflow_id: str, signal: str, *args) -> bool:
     )
 
 
+async def query_workflow_async(workflow_id: str, query: str) -> Any:
+    """Query a running workflow."""
+    client = await get_client()
+    handle = client.get_workflow_handle(workflow_id)
+    return await handle.query(query)
+
+
+def query_workflow_sync(workflow_id: str, query: str) -> Any:
+    """Query a running workflow synchronously with OTel context propagation."""
+    return _run_async_in_sync_context(lambda: query_workflow_async(workflow_id, query))
+
+
 async def get_workflow_result_async(workflow_id: str, timeout: float = 3600) -> Any:
     """
     Wait for a workflow to complete and return its result.
@@ -343,6 +355,10 @@ __all__ = [
     "get_workflow_status_sync",
     "cancel_workflow_async",
     "cancel_workflow_sync",
+    "signal_workflow_async",
+    "signal_workflow_sync",
+    "query_workflow_async",
+    "query_workflow_sync",
     "get_workflow_result_async",
     "get_workflow_result_sync",
 ]

@@ -150,6 +150,22 @@ def _ensure_workflows_registered() -> None:
             "could_not_load_experiment_workflows", error=str(e)
         )
 
+    # Historical Vapi recording backfill (dedicated queue)
+    try:
+        from tfc.temporal.backfill.minimal_backfill import (
+            get_workflows as get_vapi_backfill_workflows,
+        )
+
+        register_for_queues(
+            queues=["backfill"], workflows=get_vapi_backfill_workflows()
+        )
+    except ImportError as e:
+        from tfc.logging.temporal import get_logger
+
+        get_logger(__name__).warning(
+            "could_not_load_vapi_backfill_workflows", error=str(e)
+        )
+
     # Agent prompt optimiser workflows (tasks_xl)
     try:
         from tfc.temporal.agent_prompt_optimiser import (
@@ -520,6 +536,19 @@ def _ensure_activities_registered() -> None:
         log.info("registered_agent_playground_activities")
     except ImportError as e:
         log.warning("could_not_load_agent_playground_activities", error=str(e))
+
+    # Historical Vapi recording backfill (dedicated queue)
+    try:
+        from tfc.temporal.backfill.minimal_backfill import (
+            get_activities as get_vapi_backfill_activities,
+        )
+
+        register_for_queues(
+            queues=["backfill"], activities=get_vapi_backfill_activities()
+        )
+        log.info("registered_vapi_backfill_activities")
+    except ImportError as e:
+        log.warning("could_not_load_vapi_backfill_activities", error=str(e))
 
     # Register simulate activities for tasks_xl, tasks_l, and tasks_s queues
     # (tasks_s needed for scheduled cleanup workflows)
