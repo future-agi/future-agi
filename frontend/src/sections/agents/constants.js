@@ -255,8 +255,10 @@ export const LIVEKIT_STEPS = [
   },
 ];
 
-// Bland uses a Conversational Pathway as the "assistant"; its pathway ID goes
-// in the Assistant ID field. Exact dashboard menu paths may need verification.
+// Bland uses a Conversational Pathway as the "assistant": the pathway ID goes
+// in the Assistant ID field, and the API key is sent as a raw authorization
+// header (no Bearer prefix). Copy references Bland's stable product nouns only,
+// not exact dashboard menu labels, so the steps don't drift with UI changes.
 export const BLAND_STEPS = [
   {
     label: "1. Log in to",
@@ -265,14 +267,14 @@ export const BLAND_STEPS = [
   },
   {
     label:
-      "2. Open Settings → 'API Keys' and copy your API key — it is used as the authorization header.",
+      "2. Copy your Bland API key from your account settings — it is sent as the raw authorization header (no 'Bearer' prefix).",
   },
   {
-    label: "3. Go to 'Conversational Pathways' and open the pathway your agent runs.",
+    label: "3. Open the Conversational Pathway your agent runs.",
   },
   {
     label:
-      "4. Click 'Copy ID' on the pathway and paste it into the Assistant ID field (Bland uses the pathway ID as the assistant).",
+      "4. Copy the pathway's ID and paste it into the Assistant ID field — Bland uses the pathway ID as the assistant.",
   },
   {
     label:

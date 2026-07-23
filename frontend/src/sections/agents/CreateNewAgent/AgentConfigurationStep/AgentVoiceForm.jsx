@@ -358,6 +358,9 @@ export default function AgentVoiceForm() {
               "livekit",
               "livekit_bridge",
             ];
+            // "bland" is intentionally excluded: its raw-authorization key is
+            // distinct from these Bearer providers, so switching into or out of
+            // Bland must clear the key rather than carry a stale one.
 
             // Clear authenticationMethod only if switching to or from "others"
             const isPrevMain = mainProviders.includes(selectedProvider);
