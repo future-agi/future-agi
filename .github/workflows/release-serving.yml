@@ -32,7 +32,7 @@ jobs:
       dockerfile: ./futureagi/model_serving/Dockerfile.oss
       version: ${{ inputs.version }}
       ref: ${{ inputs.branch }}
-      platforms: linux/amd64
+      platforms: 'linux/amd64,linux/arm64'
       push-latest: false
       free-disk: false
       cache-scope: serving

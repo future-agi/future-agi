@@ -33,11 +33,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: frontend,        image: futureagi/frontend,        context: ./frontend,                dockerfile: ./frontend/Dockerfile,                    free-disk: true,  platforms: linux/amd64 }
+          - { name: frontend,        image: futureagi/frontend,        context: ./frontend,                dockerfile: ./frontend/Dockerfile,                    free-disk: true,  platforms: 'linux/amd64,linux/arm64' }
           - { name: backend,         image: futureagi/future-agi,      context: ./futureagi,               dockerfile: ./futureagi/Dockerfile.oss,               free-disk: false, platforms: linux/amd64 }
-          - { name: agentcc-gateway, image: futureagi/agentcc-gateway, context: ./agentcc-gateway,         dockerfile: ./agentcc-gateway/Dockerfile,             free-disk: false, platforms: linux/amd64 }
-          - { name: serving,         image: futureagi/serving,         context: ./futureagi/model_serving, dockerfile: ./futureagi/model_serving/Dockerfile.oss, free-disk: false, platforms: linux/amd64 }
-          - { name: code-executor,   image: futureagi/code-executor,   context: ./futureagi/code-executor, dockerfile: ./futureagi/code-executor/Dockerfile,     free-disk: false, platforms: linux/amd64 }
+          - { name: agentcc-gateway, image: futureagi/agentcc-gateway, context: ./agentcc-gateway,         dockerfile: ./agentcc-gateway/Dockerfile,             free-disk: false, platforms: 'linux/amd64,linux/arm64' }
+          - { name: serving,         image: futureagi/serving,         context: ./futureagi/model_serving, dockerfile: ./futureagi/model_serving/Dockerfile.oss, free-disk: false, platforms: 'linux/amd64,linux/arm64' }
+          - { name: code-executor,   image: futureagi/code-executor,   context: ./futureagi/code-executor, dockerfile: ./futureagi/code-executor/Dockerfile,     free-disk: false, platforms: 'linux/amd64,linux/arm64' }
           - { name: fi-collector,    image: futureagi/fi-collector,    context: ./fi-collector,            dockerfile: ./fi-collector/Dockerfile,                free-disk: false, platforms: 'linux/amd64,linux/arm64' }
     uses: ./.github/workflows/build-image.yml
     with:
