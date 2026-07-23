@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from PIL import Image
 
-from tfc.utils.ssrf_guard import SsrfBlocked, SsrfResponse
+from tfc.utils.ssrf_guard import SsrfBlocked, SsrfResponse, assert_url_host_public
 from tfc.utils.storage import (
     _ssrf_safe_get,
     convert_image_from_url_to_base64,
@@ -222,3 +222,58 @@ class TestIsOwnStorageUrl:
             "https://fi-customer-data.s3.attacker-amazonaws.com/x",
             "fi-customer-data",
         )
+
+
+# ---------------------------------------------------------------------------
+# assert_url_host_public — pre-flight guard reused by the async recording rehost
+# (simulate.temporal.utils.async_storage). Provider recording URLs come back
+# inside an API response, so the converter validates the host before fetching.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://169.254.169.254/latest/meta-data/",  # cloud metadata
+        "http://127.0.0.1/secret",  # loopback
+        "http://10.0.0.5/internal",  # private
+        "http://100.64.0.1/cgnat",  # carrier-grade NAT
+        "http://[::1]/x",  # ipv6 loopback
+    ],
+)
+def test_assert_url_host_public_blocks_private_and_metadata(url):
+    with pytest.raises(SsrfBlocked):
+        assert_url_host_public(url)
+
+
+def test_assert_url_host_public_rejects_non_http_scheme():
+    with pytest.raises(SsrfBlocked):
+        assert_url_host_public("ftp://example.com/x")
+
+
+def test_assert_url_host_public_rejects_missing_host():
+    with pytest.raises(SsrfBlocked):
+        assert_url_host_public("http:///nohost")
+
+
+def test_assert_url_host_public_allows_public_ip_literal():
+    # 8.8.8.8 is public; getaddrinfo on a literal doesn't hit DNS, so this stays
+    # hermetic while proving a legit provider host is not rejected.
+    assert_url_host_public("https://8.8.8.8/recording.mp3")  # no raise
+
+
+async def test_recording_rehost_blocks_ssrf_url_and_fails_open():
+    """The converter must not fetch a recording URL that points at an internal
+    host: it blocks before the download and fails open to the original URL with
+    0 bytes (nothing rehosted, nothing metered), never calling the downloader."""
+    from simulate.temporal.utils import async_storage
+
+    blocked = "http://169.254.169.254/latest/meta-data/"
+    with patch.object(
+        async_storage, "_existing_rehosted_audio", return_value=None
+    ), patch.object(async_storage, "download_audio_from_url_async") as mock_dl:
+        s3_url, size = await async_storage.convert_audio_url_to_s3_async_with_size(
+            "call-1", blocked, "recording", provider="bland"
+        )
+
+    assert s3_url == blocked
+    assert size == 0
+    mock_dl.assert_not_called()

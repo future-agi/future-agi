@@ -237,6 +237,23 @@ async def _convert_audio_url_to_s3_async_with_size(
         return existing
 
     try:
+        # SSRF guard: a recording URL arrives inside a provider's API response,
+        # so validate its host resolves to a public address before we fetch it —
+        # a tampered/unexpected value must not reach an internal or cloud-metadata
+        # endpoint. Reuses the shared ssrf_guard classifier. Skips the
+        # authenticated-provider download (fixed host, no free-form URL) and our
+        # own storage (already returned above). Only the converter is guarded:
+        # the raw download_audio_from_url_async intentionally stays open because
+        # the LiveKit egress path fetches internal storage through it.
+        if audio_url and not vapi_authenticated:
+            import asyncio
+
+            from tfc.utils.ssrf_guard import assert_url_host_public
+
+            await asyncio.get_running_loop().run_in_executor(
+                None, assert_url_host_public, audio_url
+            )
+
         # Async download
         audio_bytes = await download_audio_from_url_async(
             audio_url,
