@@ -37,6 +37,7 @@ var overflowKeyPrefixes = []string{
 	"output.value",
 	"retrieval.documents",
 	"embedding.embeddings",
+	"raw_log",
 }
 
 // Float64-safe integer range. Larger ints get demoted to overflow rather
