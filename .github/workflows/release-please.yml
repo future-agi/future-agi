@@ -1,0 +1,20 @@
+# Turns conventional commits on main into a release PR; merging that PR
+# creates tag vX.Y.Z + the GitHub Release (which triggers release-images.yml).
+name: release-please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
