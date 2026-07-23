@@ -11,6 +11,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: release-images-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   guard:
     runs-on: ubuntu-latest

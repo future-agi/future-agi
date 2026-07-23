@@ -1,3 +1,4 @@
+# ROLLOUT NOTE: wire this workflow as a REQUIRED status check on main (Settings → Branches) — manual admin step, tracked as G2 in the internal-docs implementation plan.
 # Tripwire for RELEASE-PROCESS-PLAN.md §5.1 step 2: the dev->main release PR
 # must land as a merge commit. GitHub can't restrict merge method per-PR, so
 # this detects a squashed dev->main PR after the fact, alerts Slack, and fails
