@@ -3556,6 +3556,17 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                     content_query, content_params, timeout_ms=10000
                 )
                 content_rows = content_result.data
+                # Every in-window trace has a root span, so a shortfall means
+                # spans fell outside the 1-day window buffer (a trace running
+                # longer than the buffer, clock skew, or backfilled
+                # timestamps) and enrichment silently dropped them.
+                if len(content_rows) < len(trace_ids):
+                    logger.warning(
+                        "trace content enrichment returned fewer traces than requested",
+                        returned=len(content_rows),
+                        requested=len(trace_ids),
+                        project_id=str(project_id) if project_id else None,
+                    )
         content_map = merge_content_rows(
             result.data,
             content_rows,
@@ -3609,7 +3620,7 @@ class TraceView(BaseModelViewSetMixin, ModelViewSet):
                 start_date=builder.params.get("start_date"),
                 end_date=builder.params.get("end_date"),
             )
-            if trace_ids
+            if trace_ids and annotation_label_ids
             else {}
         )
         annotation_map = _build_annotation_map_from_scores(
