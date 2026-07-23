@@ -25,10 +25,19 @@ jobs:
         id: detect
         run: |
           set -eu
-          last_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' origin/main 2>/dev/null || echo "")
+          # Steady state: a reachable release tag exists on main and the diff is
+          # last_tag..origin/main. A one-time seed tag (v1.22.73, on the commit
+          # the last shipped backend image was built from) must be pushed as a
+          # rollout prerequisite so this steady state holds from the first release.
+          # --exclude '*-dev*' skips pre-release/-dev tags so only stable release
+          # tags are considered.
+          last_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude='*-dev*' origin/main 2>/dev/null || echo "")
           if [ -z "$last_tag" ]; then
-            echo "No previous release tag; treating all migrations in diff as new"
-            range="origin/main"
+            # No release tag yet: diff from the repo root commit so every
+            # migration in main's history counts as new (diffing against
+            # origin/main itself would compare the tree to itself and find none).
+            echo "No previous release tag; diffing from the repo root commit"
+            range="$(git rev-list --max-parents=0 origin/main | tail -1)..origin/main"
           else
             range="$last_tag..origin/main"
           fi
