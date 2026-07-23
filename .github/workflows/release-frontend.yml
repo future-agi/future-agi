@@ -1,14 +1,13 @@
-# Manual trigger only. Run from the Actions tab when ready to cut a frontend release.
-# Publishes futureagi/frontend:<version>, :<minor>, :latest.
-# Required secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN.
-
+# Manual escape hatch for ad-hoc and -dev builds. Stable releases go through
+# release-images.yml (tag-triggered); this wrapper shares the same build via
+# build-image.yml so the two paths cannot drift.
 name: Release frontend
 
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag to publish (e.g. v1.0.0)'
+        description: 'Version tag to publish (e.g. v2.1.0-dev)'
         required: true
         type: string
       branch:
@@ -16,75 +15,24 @@ on:
         required: true
         default: 'main'
         type: choice
-        options:
-          - main
-          - dev
+        options: [main, dev]
 
 permissions:
   contents: read
 
 jobs:
   release:
-    name: Build & push frontend
-    runs-on: ubuntu-latest
-    environment: production
-
-    steps:
-      - name: Free up disk space
-        uses: jlumbroso/free-disk-space@main
-        with:
-          # Reclaim ~20-30 GB by removing preinstalled tooling this build doesn't use.
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: false
-          swap-storage: false
-
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.branch }}
-          submodules: false
-
-      - name: Resolve version & minor
-        id: version
-        run: |
-          set -eu
-          v="${{ inputs.version }}"
-          if ! printf '%s' "$v" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$'; then
-            echo "::error::Version '$v' does not match expected vX.Y.Z[-suffix] form"
-            exit 1
-          fi
-          base="${v%%-*}"
-          minor="${base%.*}"
-          { echo "version=$v"; echo "minor=$minor"; } >> "$GITHUB_OUTPUT"
-          echo "Resolved: version=$v, minor=$minor"
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Build and push
-        uses: docker/build-push-action@v5
-        with:
-          context: ./frontend
-          file: ./frontend/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          provenance: false
-          tags: |
-            futureagi/frontend:${{ steps.version.outputs.version }}
-            futureagi/frontend:${{ steps.version.outputs.minor }}
-            futureagi/frontend:latest
-          cache-from: type=registry,ref=futureagi/frontend:buildcache
-          cache-to: type=registry,ref=futureagi/frontend:buildcache,mode=max
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image: futureagi/frontend
+      context: ./frontend
+      dockerfile: ./frontend/Dockerfile
+      version: ${{ inputs.version }}
+      ref: ${{ inputs.branch }}
+      platforms: linux/amd64
+      push-latest: false
+      free-disk: true
+      cache-scope: frontend
+    secrets:
+      dockerhub-username: ${{ secrets.DOCKERHUB_USERNAME }}
+      dockerhub-token: ${{ secrets.DOCKERHUB_TOKEN }}

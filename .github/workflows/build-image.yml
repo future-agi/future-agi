@@ -1,0 +1,83 @@
+# Reusable image build. Called by release-images.yml (tag releases) and by the
+# per-image workflow_dispatch wrappers (ad-hoc/-dev builds). Pushes
+# <image>:<version>, :<minor>, and optionally :latest.
+name: build-image
+
+on:
+  workflow_call:
+    inputs:
+      image:       { required: true, type: string }   # e.g. futureagi/frontend
+      context:     { required: true, type: string }   # e.g. ./frontend
+      dockerfile:  { required: true, type: string }
+      version:     { required: true, type: string }   # vX.Y.Z or vX.Y.Z-suffix
+      ref:         { required: true, type: string }   # git ref to build from
+      platforms:   { required: false, type: string, default: 'linux/amd64' }
+      push-latest: { required: false, type: boolean, default: false }
+      free-disk:   { required: false, type: boolean, default: false }
+      cache-scope: { required: true, type: string }
+    secrets:
+      dockerhub-username: { required: true }
+      dockerhub-token:    { required: true }
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Free up disk space
+        if: inputs.free-disk
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: false
+          swap-storage: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          submodules: false
+      - name: Resolve version & minor
+        id: version
+        run: |
+          set -eu
+          v="${{ inputs.version }}"
+          if ! printf '%s' "$v" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$'; then
+            echo "::error::Version '$v' does not match vX.Y.Z[-suffix]"
+            exit 1
+          fi
+          base="${v%%-*}"
+          { echo "version=$v"; echo "minor=${base%.*}"; } >> "$GITHUB_OUTPUT"
+      - name: Compose tag list
+        id: tags
+        run: |
+          set -eu
+          tags="${{ inputs.image }}:${{ steps.version.outputs.version }}
+          ${{ inputs.image }}:${{ steps.version.outputs.minor }}"
+          if [ "${{ inputs.push-latest }}" = "true" ]; then
+            tags="$tags
+          ${{ inputs.image }}:latest"
+          fi
+          { echo 'tags<<EOF'; echo "$tags"; echo 'EOF'; } >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-qemu-action@v3
+        if: contains(inputs.platforms, 'arm64')
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.dockerhub-username }}
+          password: ${{ secrets.dockerhub-token }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: true
+          provenance: false
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=${{ inputs.cache-scope }}
+          cache-to: type=gha,scope=${{ inputs.cache-scope }},mode=max
