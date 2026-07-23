@@ -129,6 +129,24 @@ class TestGetRecordingsSwap:
         assert rec["assistant"] == "https://cdn/tested_agent.mp3"
         assert rec["customer"] == "https://cdn/simulator.mp3"
 
+    def test_vapi_normalized_recordings_are_available_to_eval_preview(self):
+        obj = _vapi_outbound_call()
+        obj.recording_url = None
+        obj.stereo_recording_url = None
+        obj.provider_call_data["vapi"]["recording"] = {
+            "combined": "https://s3/combined.mp3",
+            "customer": "https://s3/customer.mp3",
+            "assistant": "https://s3/assistant.mp3",
+            "stereo": "https://s3/stereo.mp3",
+        }
+
+        assert self._get_recordings(obj) == {
+            "combined": "https://s3/combined.mp3",
+            "stereo": "https://s3/stereo.mp3",
+            "customer": "https://s3/customer.mp3",
+            "assistant": "https://s3/assistant.mp3",
+        }
+
     def test_livekit_passthrough(self):
         obj = _livekit_inbound_call(
             recordings={
