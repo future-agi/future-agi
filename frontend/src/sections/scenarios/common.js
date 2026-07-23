@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AGENT_TYPES } from "../agents/constants";
+import axios, { endpoints } from "src/utils/axios";
 
 // Mirrors BE `no_of_rows.min_value`.
 export const MIN_DATASET_ROWS = 10;
@@ -64,7 +65,30 @@ const CreateScenarioDefaultSchema = {
     .default("agent_definition"),
   sourceId: z.string().min(1, "Source is required"),
   sourceLabel: z.string().optional(), // Used for auto-generating scenario name, not sent to API
-  name: z.string().trim().min(1, "Name is required"),
+  name: z
+    .string()
+    .trim()
+    .min(1, "Name is required")
+    .refine(
+      async (name) => {
+        if (!name?.trim()) return true;
+        try {
+          const response = await axios.get(endpoints.scenarios.list, {
+            params: { search: name.trim(), limit: 50 },
+          });
+          const results = response?.data?.results ?? [];
+          // Exact case-sensitive match (backend search is case-insensitive regex)
+          return !results.some((s) => s.name === name.trim());
+        } catch {
+          // Graceful degradation: allow submission if API fails
+          return true;
+        }
+      },
+      {
+        message:
+          "A scenario with this name already exists. Please choose another name.",
+      },
+    ),
   description: z.string().optional(),
   agentDefinitionId: z.string().optional(),
   agentDefinitionVersionId: z.string().optional(),
