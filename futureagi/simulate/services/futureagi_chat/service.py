@@ -284,6 +284,48 @@ class FutureAGIChatService(ChatServiceBlueprint):
             ended_reason = response.get("ended_reason")
             usage: LLMUsage = response.get("usage") or LLMUsage()
 
+            # An empty persona turn is never a valid customer message (an
+            # endCall with no text is fine — has_chat_ended covers it).
+            # Delivering "" sends the agent into "your message didn't come
+            # through" spirals, so retry once and otherwise fail the send
+            # loudly instead of corrupting the conversation.
+            if not content.strip() and not has_chat_ended:
+                logger.warning(
+                    "simulator_empty_response_retrying",
+                    session_id=input.session_id,
+                    model=assistant.model,
+                )
+                response = self._call_llm(
+                    messages=messages,
+                    system_prompt=assistant.system_prompt,
+                    model=assistant.model,
+                    temperature=assistant.temperature,
+                    max_tokens=assistant.max_tokens,
+                    organization_id=org_id,
+                    workspace_id=ws_id,
+                )
+                content = response.get("content", "")
+                has_chat_ended = response.get("has_chat_ended", False)
+                ended_reason = response.get("ended_reason")
+                retry_usage: LLMUsage = response.get("usage") or LLMUsage()
+                usage = LLMUsage(
+                    input_tokens=usage.input_tokens + retry_usage.input_tokens,
+                    output_tokens=usage.output_tokens + retry_usage.output_tokens,
+                    total_tokens=usage.total_tokens + retry_usage.total_tokens,
+                )
+                if not content.strip() and not has_chat_ended:
+                    logger.error(
+                        "simulator_empty_response",
+                        session_id=input.session_id,
+                        model=assistant.model,
+                    )
+                    session.status = "error"
+                    session.save(update_fields=["status"])
+                    return SendMessageResult(
+                        success=False,
+                        error="Simulator returned an empty message twice",
+                    )
+
             # The persona's own tool call (e.g. endCall) is a control signal,
             # captured via has_chat_ended below. It is scrubbed from the stored
             # conversation so the agent-under-test never sees the simulator's
